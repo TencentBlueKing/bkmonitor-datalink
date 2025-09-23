@@ -11,6 +11,7 @@ package base
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"hash/fnv"
 	"strings"
 
@@ -43,7 +44,7 @@ type BasicClient struct {
 }
 
 // NewBasicClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewBasicClient(address string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) (ConsulClient, error) {
+func NewBasicClient(address string, tlsConfig *config.TlsConfig) (ConsulClient, error) {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -51,10 +52,12 @@ func NewBasicClient(address string, caCertFilePath, clientCertFilePath, clientKe
 	var err error
 	client := new(BasicClient)
 	client.address = address
-	client.caFilePath = caCertFilePath
-	client.certFilePath = clientCertFilePath
-	client.keyFilePath = clientKeyFilePath
-	client.skipTlsVerify = skipVerify
+	if tlsConfig != nil {
+		client.caFilePath = tlsConfig.CAFile
+		client.certFilePath = tlsConfig.CertFile
+		client.keyFilePath = tlsConfig.KeyFile
+		client.skipTlsVerify = tlsConfig.SkipVerify
+	}
 	err = GetAPI(client)
 	if err != nil {
 		return nil, err

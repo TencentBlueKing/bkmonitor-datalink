@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"sync"
 
 	"github.com/hashicorp/consul/api"
@@ -38,14 +39,7 @@ func Wait() {
 
 // SetInstance 创建 consul 实例
 func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string,
-) error {
-	return SetInstanceWithTLS(ctx, kvBasePath, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, false)
-}
-
-// SetInstanceWithTLS 创建 consul 实例(适配tls)
-func SetInstanceWithTLS(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string, skipVerify bool,
+	tags []string, address string, port int, ttl string, tlsConfig *config.TlsConfig,
 ) error {
 	lock.Lock()
 	defer lock.Unlock()
@@ -55,7 +49,7 @@ func SetInstanceWithTLS(ctx context.Context, kvBasePath, serviceName, consulAddr
 	}
 
 	globalInstance, err = NewConsulInstance(
-		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, skipVerify,
+		ctx, serviceName, consulAddress, tags, address, port, ttl, tlsConfig,
 	)
 	if err != nil {
 		return err

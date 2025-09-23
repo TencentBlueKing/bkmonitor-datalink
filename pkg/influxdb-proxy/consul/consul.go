@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 
 	"github.com/hashicorp/consul/api"
 
@@ -36,12 +37,12 @@ var TotalPrefix string
 var LockPath string
 
 // GetConsulClient :
-var GetConsulClient = func(address string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) (base.ConsulClient, error) {
-	return base.NewBasicClient(address, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
+var GetConsulClient = func(address string, tlsConfig *config.TlsConfig) (base.ConsulClient, error) {
+	return base.NewBasicClient(address, tlsConfig)
 }
 
 // Init 初始化操作，在调用consul包其他函数前应执行该函数
-var Init = func(address string, prefix string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) error {
+var Init = func(address string, prefix string, tlsConfig *config.TlsConfig) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -57,7 +58,7 @@ var Init = func(address string, prefix string, caCertFilePath, clientCertFilePat
 	initHostPath()
 	initClusterPath()
 	initTagPath()
-	consulClient, err = GetConsulClient(address, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
+	consulClient, err = GetConsulClient(address, tlsConfig)
 	if err != nil {
 		flowLog.Errorf("create consul client failed,error:%s", err)
 		return err
@@ -67,7 +68,7 @@ var Init = func(address string, prefix string, caCertFilePath, clientCertFilePat
 }
 
 // Reload 重启consul，通常是因为处理http的reload
-var Reload = func(address string, prefix string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) error {
+var Reload = func(address string, prefix string, tlsConfig *config.TlsConfig) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -77,7 +78,7 @@ var Reload = func(address string, prefix string, caCertFilePath, clientCertFileP
 	if err != nil {
 		return err
 	}
-	err = Init(address, prefix, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
+	err = Init(address, prefix, tlsConfig)
 	if err != nil {
 		return err
 	}

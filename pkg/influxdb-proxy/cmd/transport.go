@@ -12,6 +12,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -69,8 +70,13 @@ to quickly create a Cobra application.`,
 			logging.StdLogger.Errorf("parse period failed,error:%s", err)
 			return
 		}
-
-		err = consul.Init(address, prefix, caCertFile, certFile, keyFile, skipVerify)
+		tlsConfig := &config.TlsConfig{
+			CAFile:     caCertFile,
+			CertFile:   certFile,
+			KeyFile:    keyFile,
+			SkipVerify: skipVerify,
+		}
+		err = consul.Init(address, prefix, tlsConfig)
 		if err != nil {
 			logging.StdLogger.Errorf("consul init failed,error:%s", err)
 			return

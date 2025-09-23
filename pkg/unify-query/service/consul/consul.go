@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -46,10 +47,15 @@ func (s *Service) Reload(ctx context.Context) {
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "consul service context update success.")
-
-	err := consul.SetInstanceWithTLS(
+	tlsConfig := &config.TlsConfig{
+		CAFile:     CaFilePath,
+		CertFile:   CertFilePath,
+		KeyFile:    KeyFilePath,
+		SkipVerify: SkipTLSVerify,
+	}
+	err := consul.SetInstance(
 		s.ctx, KVBasePath, ServiceName, Address, []string{"unify-query"},
-		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath, SkipTLSVerify,
+		HTTPAddress, Port, TTL, tlsConfig,
 	)
 	if err != nil {
 		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)

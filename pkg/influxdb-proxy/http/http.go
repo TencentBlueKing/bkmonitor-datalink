@@ -12,6 +12,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"net/http"
 	"sync"
 	"time"
@@ -168,7 +169,13 @@ func (httpService *Service) Reload(flowID uint64) error {
 	certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
 	keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
 	skipVerify := common.Config.GetBool(common.ConfigKeyConsulSkipVerify)
-	err = consul.Reload(address, prefix, caCertFile, certFile, keyFile, skipVerify)
+	tlsConfig := &config.TlsConfig{
+		CAFile:     caCertFile,
+		CertFile:   certFile,
+		KeyFile:    keyFile,
+		SkipVerify: skipVerify,
+	}
+	err = consul.Reload(address, prefix, tlsConfig)
 	if err != nil {
 		flowLog.Errorf("consul reload failed,error:%s", err)
 		return err

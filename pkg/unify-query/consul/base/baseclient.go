@@ -10,6 +10,7 @@
 package base
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
@@ -35,20 +36,26 @@ type Client struct {
 }
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewClient(address, caFile, keyFile, certFile string, skipTlsVerify bool) (*Client, error) {
+func NewClient(address string, tlsConfig *config.TlsConfig) (*Client, error) {
 
 	var (
 		err    error
 		client = &Client{
 			address:            address,
-			caFilePath:         caFile,
-			keyFilePath:        keyFile,
-			certFilePath:       certFile,
-			skipTlsVerify:      skipTlsVerify,
+			caFilePath:         "",
+			keyFilePath:        "",
+			certFilePath:       "",
+			skipTlsVerify:      true,
 			watchPlanMap:       make(map[string]*watch.Plan),
 			watchPrefixPlanMap: make(map[string]*watch.Plan),
 		}
 	)
+	if tlsConfig != nil {
+		client.caFilePath = tlsConfig.CAFile
+		client.keyFilePath = tlsConfig.KeyFile
+		client.certFilePath = tlsConfig.CertFile
+		client.skipTlsVerify = tlsConfig.SkipVerify
+	}
 
 	err = GetAPI(client)
 	if err != nil {

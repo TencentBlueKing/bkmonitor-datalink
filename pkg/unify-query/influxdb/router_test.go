@@ -33,7 +33,7 @@ func FakeConsulRouter(t *testing.T) *gostub.Stubs {
 	log.InitTestLogger()
 	_ = consul.SetInstance(
 		context.Background(), "", "test-unify", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		[]string{}, "127.0.0.1", 10205, "30s", nil,
 	)
 	consul.MetadataPath = "test/metadata/v1/default/data_id"
 	consul.MetricRouterPath = "test/metadata/influxdb_metrics"

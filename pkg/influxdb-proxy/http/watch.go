@@ -11,6 +11,7 @@ package http
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/backend"
@@ -319,8 +320,13 @@ func (httpService *Service) InitService() error {
 	certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
 	keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
 	skipVerify := common.Config.GetBool(common.ConfigKeyConsulSkipVerify)
-
-	err = consul.Init(address, prefix, caCertFile, certFile, keyFile, skipVerify)
+	tlsConfig := &config.TlsConfig{
+		CAFile:     caCertFile,
+		CertFile:   certFile,
+		KeyFile:    keyFile,
+		SkipVerify: skipVerify,
+	}
+	err = consul.Init(address, prefix, tlsConfig)
 	if err != nil {
 		flowLog.Errorf("consul init failed")
 		return err

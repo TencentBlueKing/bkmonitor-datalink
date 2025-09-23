@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 
 	"gopkg.in/yaml.v2"
 
@@ -53,21 +54,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = app.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "run sidecar failed: %v\n", err)
-		os.Exit(1)
-	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := app.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "run sidecar failed: %v\n", err)
+			os.Exit(1)
+		}
+	}()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
-
-	for {
-		select {
-		case <-c:
-			app.Stop()
-			return
-		}
-	}
+	<-c
+	app.Stop()
+	wg.Wait()
 }
 
 func loadConfig(path string) (*sidecar.Config, error) {

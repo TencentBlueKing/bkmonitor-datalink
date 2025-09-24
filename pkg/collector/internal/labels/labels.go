@@ -23,8 +23,8 @@ var seps = []byte{'\xff'}
 //
 //go:generate msgp
 type Label struct {
-	Name  string `msg:"n"`
-	Value string `msg:"v"`
+	Name  string
+	Value string
 }
 
 // Labels is a sorted set of labels. Order has to be guaranteed upon

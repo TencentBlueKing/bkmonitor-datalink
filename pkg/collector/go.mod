@@ -38,7 +38,6 @@ require (
 	github.com/rs/cors v1.8.2
 	github.com/spf13/cast v1.5.0
 	github.com/stretchr/testify v1.9.0
-	github.com/tinylib/msgp v1.1.6
 	go.opentelemetry.io/collector/pdata v0.52.0
 	go.opentelemetry.io/collector/semconv v0.52.0
 	go.uber.org/atomic v1.11.0
@@ -139,7 +138,6 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/openzipkin/zipkin-go v0.4.0 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
-	github.com/philhofer/fwd v1.1.1 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.59.1 // indirect

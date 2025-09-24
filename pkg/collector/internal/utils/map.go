@@ -66,6 +66,22 @@ func MergeMaps(ms ...map[string]string) map[string]string {
 	return dst
 }
 
+// MergeMapWith 拷贝 map 并设置指定的键值对
+//
+// 优先考虑使用 MergeMapWith 而不是 MergeMaps 前者性能更优 参见 benchmark
+// 所有的 Map 拷贝都应遵循 COW 原则（Copy On Write）
+func MergeMapWith(m map[string]string, kv ...string) map[string]string {
+	dst := MergeMaps(m)
+	for i := 0; i < len(kv); i += 2 {
+		if i+1 >= len(kv) {
+			break
+		}
+		dst[kv[i]] = kv[i+1]
+	}
+
+	return dst
+}
+
 func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 	dst := make(map[string]string)
 	for _, attr := range attrs {

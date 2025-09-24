@@ -197,16 +197,14 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					continue
 				}
 
-				additional := map[string]string{
-					"quantile": strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64),
-				}
+				fv := strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name: quantile.GetValue(),
 					},
 					Target:     target,
 					Timestamp:  ts,
-					Dimensions: utils.MergeMaps(lbs, additional),
+					Dimensions: utils.MergeMapWith(lbs, "quantile", fv),
 				})
 			}
 		}
@@ -233,32 +231,28 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					infSeen = true
 				}
 
-				additional := map[string]string{
-					"le": strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64),
-				}
+				fv := strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": bucket.GetCumulativeCount(),
 					},
 					Target:     target,
 					Timestamp:  ts,
-					Dimensions: utils.MergeMaps(lbs, additional),
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 					Exemplar:   bucket.Exemplar,
 				})
 			}
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
 			if !infSeen {
-				additional := map[string]string{
-					"le": strconv.FormatFloat(math.Inf(+1), 'f', -1, 64),
-				}
+				fv := strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": histogram.GetSampleCount(),
 					},
 					Target:     target,
 					Timestamp:  ts,
-					Dimensions: utils.MergeMaps(lbs, additional),
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 				})
 			}
 		}

@@ -32,23 +32,112 @@ func TestCloneMap(t *testing.T) {
 	})
 }
 
-func TestMergeMap(t *testing.T) {
-	m1 := map[string]string{
-		"aaa": "111",
-		"bbb": "222",
-	}
-	m2 := map[string]string{
-		"aaa": "112",
-		"ccc": "333",
+func TestMergeMaps(t *testing.T) {
+	tests := []struct {
+		input    map[string]string
+		added    map[string]string
+		expected map[string]string
+	}{
+		{
+			input:    nil,
+			added:    nil,
+			expected: map[string]string{},
+		},
+		{
+			input: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+			added: map[string]string{"aaa": "112", "ccc": "333"},
+			expected: map[string]string{
+				"aaa": "112",
+				"bbb": "222",
+				"ccc": "333",
+			},
+		},
+		{
+			input: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+			expected: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+		},
+		{
+			input: nil,
+			added: map[string]string{"foo": "121", "bar": "333"},
+			expected: map[string]string{
+				"foo": "121",
+				"bar": "333",
+			},
+		},
 	}
 
-	m3 := MergeMaps(m1, m2)
-	expected := map[string]string{
-		"aaa": "112",
-		"bbb": "222",
-		"ccc": "333",
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, MergeMaps(tt.input, tt.added))
 	}
-	assert.Equal(t, expected, m3)
+}
+
+func TestMergeMapWith(t *testing.T) {
+	tests := []struct {
+		input    map[string]string
+		added    []string
+		expected map[string]string
+	}{
+		{
+			input:    nil,
+			added:    nil,
+			expected: map[string]string{},
+		},
+		{
+			input: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+			added: []string{"aaa", "112", "ccc", "333"},
+			expected: map[string]string{
+				"aaa": "112",
+				"bbb": "222",
+				"ccc": "333",
+			},
+		},
+		{
+			input: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+			added: []string{"foo", "121", "bar"},
+			expected: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+				"foo": "121",
+			},
+		},
+		{
+			input: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+			expected: map[string]string{
+				"aaa": "111",
+				"bbb": "222",
+			},
+		},
+		{
+			input: nil,
+			added: []string{"foo", "121", "bar", "333"},
+			expected: map[string]string{
+				"foo": "121",
+				"bar": "333",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, MergeMapWith(tt.input, tt.added...))
+	}
 }
 
 func TestMergeReplaceAttributeMaps(t *testing.T) {
@@ -95,6 +184,41 @@ func BenchmarkMergeReplaceAttributeMapsWithout(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			MergeReplaceAttributeMaps(m)
+		}
+	})
+}
+
+func BenchmarkMergeMapWith(b *testing.B) {
+	m := map[string]string{
+		"telemetry.sdk.name":     "telemetry_sdk_name",
+		"telemetry.sdk.version":  "telemetry_sdk_version",
+		"telemetry.sdk.language": "telemetry_sdk_language",
+		"foo.bar.key.value":      "foo.bar.key.value",
+	}
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeMapWith(m, "net.peer.ip", "127.0.0.1")
+		}
+	})
+}
+
+func BenchmarkMergeMaps(b *testing.B) {
+	m := map[string]string{
+		"telemetry.sdk.name":     "telemetry_sdk_name",
+		"telemetry.sdk.version":  "telemetry_sdk_version",
+		"telemetry.sdk.language": "telemetry_sdk_language",
+		"foo.bar.key.value":      "foo.bar.key.value",
+	}
+
+	additional := map[string]string{
+		"net.peer.ip": "127.0.0.1",
+	}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeMaps(m, additional)
 		}
 	})
 }

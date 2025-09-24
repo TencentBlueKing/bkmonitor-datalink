@@ -26,12 +26,6 @@ type Label struct {
 
 type Labels []Label
 
-func (ls Labels) Len() int { return len(ls) }
-
-func (ls Labels) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
-
-func (ls Labels) Less(i, j int) bool { return ls[i].Name < ls[j].Name }
-
 var bytesPool = sync.Pool{
 	New: func() any {
 		return make([]byte, 0, 1024)

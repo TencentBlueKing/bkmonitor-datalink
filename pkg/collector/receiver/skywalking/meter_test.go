@@ -96,6 +96,21 @@ func mockMeters() *agentv3.MeterDataCollection {
 			ServiceInstance: "instance",
 			Timestamp:       1758276000000000,
 		},
+		{
+			Metric: &agentv3.MeterData_SingleValue{
+				SingleValue: &agentv3.MeterSingleValue{
+					Name:  "dropMetric",
+					Value: 1,
+					Labels: []*agentv3.Label{
+						{Name: "status", Value: "activeConnections"},
+						{Name: "name", Value: "1.1.1.4:3306"},
+					},
+				},
+			},
+			Service:         "service",
+			ServiceInstance: "instance",
+			Timestamp:       1758276000000000,
+		},
 	}
 	return &agentv3.MeterDataCollection{
 		MeterData: meters,
@@ -103,11 +118,8 @@ func mockMeters() *agentv3.MeterDataCollection {
 }
 
 func TestConvertMeters(t *testing.T) {
-	var converter *meterConverter
+	converter := newMeterConverter("service", "instance", 1758276000000000, "my-token")
 	for _, meter := range mockMeters().GetMeterData() {
-		if converter == nil {
-			converter = NewMeterConverter(meter.Service, meter.ServiceInstance, meter.Timestamp, "my-token")
-		}
 		converter.Convert(meter)
 	}
 

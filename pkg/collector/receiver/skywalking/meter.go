@@ -15,33 +15,34 @@ import (
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 )
 
-/**
- * 只保留并上报连接池指标中的三个指标：连接池活跃连接数、空闲连接数、连接池总连接数
- * 适配hikaricp、dbcp、druid三种连接池的指标上报
- * 连接池指标status维度统一保存为activeConnections、idleConnections、totalConnections
-**/
+const (
+	activeConnections = "activeConnections"
+	idleConnections   = "idleConnections"
+	totalConnections  = "totalConnections"
+)
+
 var keepMetricsList = map[string]map[string]map[string]string{
 	"datasource": {
 		"status": {
 			// hikaricp-3.x-4.x
-			"activeConnections": "activeConnections",
-			"idleConnections":   "idleConnections",
-			"totalConnections":  "totalConnections",
+			"activeConnections": activeConnections,
+			"idleConnections":   idleConnections,
+			"totalConnections":  totalConnections,
 
 			// dbcp-2.x
-			"numActive": "activeConnections",
-			"numIdle":   "idleConnections",
-			"maxTotal":  "totalConnections",
+			"numActive": activeConnections,
+			"numIdle":   idleConnections,
+			"maxTotal":  totalConnections,
 
 			// druid-1.x
-			"activeCount":  "activeConnections",
-			"idleCount":    "idleConnections",
-			"poolingCount": "totalConnections",
+			"activeCount":  activeConnections,
+			"idleCount":    idleConnections,
+			"poolingCount": totalConnections,
 		},
 	},
 }
 
-func NewMeterConverter(service string, instance string, ts int64, token string) *meterConverter {
+func newMeterConverter(service string, instance string, ts int64, token string) *meterConverter {
 	converter := &meterConverter{
 		mb: metricsbuilder.New(
 			metricsbuilder.ResourceKv{Key: "service_name", Value: service},
@@ -88,10 +89,14 @@ func (c *meterConverter) convertSingleValue(meter *agentv3.MeterData) {
 }
 
 func (c *meterConverter) filterMetrics(name string, dims map[string]string) bool {
-	for dim, filter := range keepMetricsList[name] {
-		if _, set := dims[dim]; set {
-			if _, set := filter[dims[dim]]; set {
-				dims[dim] = filter[dims[dim]]
+	filter, set := keepMetricsList[name]
+	if !set {
+		return false
+	}
+	for dim, dimMapping := range filter {
+		if oldVal, set := dims[dim]; set {
+			if newVal, set := dimMapping[oldVal]; set {
+				dims[dim] = newVal
 				return true
 			}
 		}

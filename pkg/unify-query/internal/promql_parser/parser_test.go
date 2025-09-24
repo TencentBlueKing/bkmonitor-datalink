@@ -268,6 +268,14 @@ func TestParseMetricSelector(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:     "metric name with special characters",
+			selector: `{caller_name='raid-704-dev.party',inst_id='94351729'}`,
+			want: []*labels.Matcher{
+				{Type: labels.MatchEqual, Name: "caller_name", Value: "raid-704-dev.party"},
+				{Type: labels.MatchEqual, Name: "inst_id", Value: "94351729"},
+			},
+		},
 	}
 
 	mock.Init()

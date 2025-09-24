@@ -128,13 +128,28 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 	metrics := pd.MetricFamilies.Metric
 	pms := make([]*promMapper, 0)
 	for _, metric := range metrics {
-		lbs := map[string]string{}
-		if len(metric.Label) != 0 {
-			for _, label := range metric.Label {
-				if label.GetName() != "" && label.GetValue() != "" {
-					lbs[label.GetName()] = label.GetValue()
-				}
+		ts := getTimestamp(now, metric.TimestampMs)
+		lbs := make(map[string]string)
+		for k, v := range pd.Labels {
+			lbs[k] = v
+		}
+		for _, label := range metric.Label {
+			if label.GetName() != "" && label.GetValue() != "" {
+				lbs[label.GetName()] = label.GetValue()
 			}
+		}
+
+		// 处理未知类型数据
+		untyped := metric.GetUntyped()
+		if untyped != nil && utils.IsValidFloat64(untyped.GetValue()) {
+			pms = append(pms, &promMapper{
+				Metrics: common.MapStr{
+					name: untyped.GetValue(),
+				},
+				Target:     target,
+				Timestamp:  ts,
+				Dimensions: lbs,
+			})
 		}
 
 		// 处理 Counter 类型数据
@@ -145,8 +160,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name: counter.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 				Exemplar:   counter.Exemplar,
 			})
 		}
@@ -159,8 +174,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name: gauge.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 		}
 
@@ -173,8 +188,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name + "_count": summary.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 
 			for _, quantile := range summary.GetQuantile() {
@@ -182,16 +197,14 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					continue
 				}
 
-				quantileLabels := utils.CloneMap(lbs)
-				quantileLabels["quantile"] = strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name: quantile.GetValue(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "quantile", fv),
 				})
 			}
 		}
@@ -205,8 +218,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name + "_count": histogram.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 
 			infSeen := false
@@ -218,46 +231,30 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					infSeen = true
 				}
 
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": bucket.GetCumulativeCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 					Exemplar:   bucket.Exemplar,
 				})
 			}
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
 			if !infSeen {
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
+				fv := strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": histogram.GetSampleCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 				})
 			}
-		}
-
-		// 处理未知类型数据
-		untyped := metric.GetUntyped()
-		if untyped != nil && utils.IsValidFloat64(untyped.GetValue()) {
-			pms = append(pms, &promMapper{
-				Metrics: common.MapStr{
-					name: untyped.GetValue(),
-				},
-				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
-			})
 		}
 	}
 

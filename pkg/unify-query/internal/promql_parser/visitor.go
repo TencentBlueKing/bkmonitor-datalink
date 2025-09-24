@@ -145,6 +145,7 @@ func (m *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 
 	text = strings.Trim(text, `"`)
+	text = strings.Trim(text, `'`)
 	if m.operator != "" {
 		m.value = text
 	}

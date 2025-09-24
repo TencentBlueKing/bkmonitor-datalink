@@ -376,8 +376,7 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 	}
 
 	// 清理 Processor
-	for name, p := range newManager.processors {
-		logger.Infof("manager clean %s processor", name)
+	for _, p := range newManager.processors {
 		p.Clean()
 	}
 

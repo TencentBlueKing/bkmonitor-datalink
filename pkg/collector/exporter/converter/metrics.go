@@ -177,12 +177,10 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 				val = math.Float64frombits(value.StaleNaN)
 			}
 
-			additional := map[string]string{
-				"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
-			}
+			fv := strconv.FormatFloat(bounds[j], 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-				Dimensions: utils.MergeMaps(dimensions, additional),
+				Dimensions: utils.MergeMapWith(dimensions, "le", fv),
 				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
@@ -195,7 +193,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 		}
 		m := otMetricMapper{
 			Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-			Dimensions: utils.MergeMaps(dimensions, map[string]string{"le": "+Inf"}),
+			Dimensions: utils.MergeMapWith(dimensions, "le", "+Inf"),
 			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
@@ -256,12 +254,10 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rs pcom
 				continue
 			}
 
-			additional := map[string]string{
-				"quantile": strconv.FormatFloat(qua.Quantile(), 'f', -1, 64),
-			}
+			fv := strconv.FormatFloat(qua.Quantile(), 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name(): qua.Value()},
-				Dimensions: utils.MergeMaps(dimensions, additional),
+				Dimensions: utils.MergeMapWith(dimensions, "quantile", fv),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())

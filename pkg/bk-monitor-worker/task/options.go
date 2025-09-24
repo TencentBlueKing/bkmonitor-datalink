@@ -38,7 +38,7 @@ const (
 type Option interface {
 	String() string
 	Type() OptionType
-	Value() interface{}
+	Value() any
 }
 
 // Internal Options representations.
@@ -69,7 +69,7 @@ func (n retryOption) String() string { return fmt.Sprintf("MaxRetry(%d)", int(n)
 
 func (n retryOption) Type() OptionType { return MaxRetryOpt }
 
-func (n retryOption) Value() interface{} { return int(n) }
+func (n retryOption) Value() any { return int(n) }
 
 // Queue returns an Options to specify the queue to enqueue the task into.
 func Queue(name string) Option {
@@ -80,7 +80,7 @@ func (name queueOption) String() string { return fmt.Sprintf("Queue(%q)", string
 
 func (name queueOption) Type() OptionType { return QueueOpt }
 
-func (name queueOption) Value() interface{} { return string(name) }
+func (name queueOption) Value() any { return string(name) }
 
 // TaskID returns an Options to specify the task ID.
 func TaskID(id string) Option {
@@ -91,7 +91,7 @@ func (id taskIDOption) String() string { return fmt.Sprintf("TaskID(%q)", string
 
 func (id taskIDOption) Type() OptionType { return TaskIDOpt }
 
-func (id taskIDOption) Value() interface{} { return string(id) }
+func (id taskIDOption) Value() any { return string(id) }
 
 // Timeout returns an Options to specify how long a task may run.
 func Timeout(d time.Duration) Option {
@@ -102,7 +102,7 @@ func (d timeoutOption) String() string { return fmt.Sprintf("Timeout(%v)", time.
 
 func (d timeoutOption) Type() OptionType { return TimeoutOpt }
 
-func (d timeoutOption) Value() interface{} { return time.Duration(d) }
+func (d timeoutOption) Value() any { return time.Duration(d) }
 
 // Deadline returns an Options to specify the deadline for the given task.
 func Deadline(t time.Time) Option {
@@ -115,7 +115,7 @@ func (t deadlineOption) String() string {
 
 func (t deadlineOption) Type() OptionType { return DeadlineOpt }
 
-func (t deadlineOption) Value() interface{} { return time.Time(t) }
+func (t deadlineOption) Value() any { return time.Time(t) }
 
 // Unique returns an Options to enqueue a task only if the given task is unique.
 func Unique(ttl time.Duration) Option {
@@ -126,7 +126,7 @@ func (ttl uniqueOption) String() string { return fmt.Sprintf("Unique(%v)", time.
 
 func (ttl uniqueOption) Type() OptionType { return UniqueOpt }
 
-func (ttl uniqueOption) Value() interface{} { return time.Duration(ttl) }
+func (ttl uniqueOption) Value() any { return time.Duration(ttl) }
 
 // ProcessAt returns an Options to specify when to process the given task.
 //
@@ -141,7 +141,7 @@ func (t processAtOption) String() string {
 
 func (t processAtOption) Type() OptionType { return ProcessAtOpt }
 
-func (t processAtOption) Value() interface{} { return time.Time(t) }
+func (t processAtOption) Value() any { return time.Time(t) }
 
 // ProcessInterval returns an Options to specify when to process the given task relative to the current time.
 //
@@ -156,7 +156,7 @@ func (d processIntervalOption) String() string {
 
 func (d processIntervalOption) Type() OptionType { return ProcessIntervalOpt }
 
-func (d processIntervalOption) Value() interface{} { return time.Duration(d) }
+func (d processIntervalOption) Value() any { return time.Duration(d) }
 
 // Retention returns an Options to specify the duration of retention period for the task.
 func Retention(d time.Duration) Option {
@@ -167,7 +167,7 @@ func (ttl retentionOption) String() string { return fmt.Sprintf("Retention(%v)",
 
 func (ttl retentionOption) Type() OptionType { return RetentionOpt }
 
-func (ttl retentionOption) Value() interface{} { return time.Duration(ttl) }
+func (ttl retentionOption) Value() any { return time.Duration(ttl) }
 
 // ErrDuplicateTask indicates that the given task could not be enqueued since it's a duplicate of another task.
 //

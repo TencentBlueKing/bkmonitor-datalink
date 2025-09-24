@@ -30,14 +30,14 @@ type QueryRouteParams struct {
 // AddRouteParams AddRoute 参数
 type AddRouteParams struct {
 	Metadata      RouteMetadata `json:"metadata"`
-	Route         []interface{} `json:"route,omitempty"`
-	StreamFilters []interface{} `json:"stream_filters,omitempty"`
+	Route         []any         `json:"route,omitempty"`
+	StreamFilters []any         `json:"stream_filters,omitempty"`
 	Operation     Operation     `json:"operation"`
 }
 
 // UpdateRouteParams UpdateRoute 参数
 type UpdateRouteParams struct {
-	Condition     RouteMetadata          `json:"condition"`
-	Specification map[string]interface{} `json:"specification"`
-	Operation     Operation              `json:"operation"`
+	Condition     RouteMetadata  `json:"condition"`
+	Specification map[string]any `json:"specification"`
+	Operation     Operation      `json:"operation"`
 }

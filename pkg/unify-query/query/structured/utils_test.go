@@ -54,7 +54,6 @@ func TestContainElement(t *testing.T) {
 }
 
 func TestJudgeFilter(t *testing.T) {
-
 	testCases := map[string]struct {
 		filters []query.Filter
 		satisfy bool
@@ -90,7 +89,6 @@ func TestJudgeFilter(t *testing.T) {
 			assert.Equal(t, v.length, len(tKeys))
 		})
 	}
-
 }
 
 func TestCompressFilterCondition(t *testing.T) {

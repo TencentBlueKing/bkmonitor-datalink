@@ -13,9 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var (
-	handlerMap = make(map[string][]gin.HandlerFunc)
-)
+var handlerMap = make(map[string][]gin.HandlerFunc)
 
 func AddHandler(handlerPath string, handler ...gin.HandlerFunc) {
 	handlerMap[handlerPath] = append(handlerMap[handlerPath], handler...)

@@ -167,36 +167,36 @@ func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
 	// 输出调试信息
 	fmt.Printf("Result: %+v\n", result)
 
-	expectedResults := map[string]map[string]interface{}{
+	expectedResults := map[string]map[string]any{
 		"table1.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
 			},
 		},
 		"table2.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
 			},
 		},
 		"table3.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
 			},
 		},
 		"table4.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
 			},
 		},
 		"table5.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
 			},
 		},
 		"table6.__default__": {
-			"filters": []map[string]interface{}{
+			"filters": []map[string]any{
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
 				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
@@ -414,19 +414,21 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 	assert.NoError(t, obj3.Create(db))
 	assert.NoError(t, obj4.Create(db))
 
-	var nilMap map[string]map[string]interface{}
+	var nilMap map[string]map[string]any
 
 	tests := []struct {
 		spaceType string
 		spaceId   string
 		hasError  bool
-		want      map[string]map[string]interface{}
+		want      map[string]map[string]any
 	}{
 		{spaceType: "bkcc", spaceId: "3", hasError: true, want: nilMap}, // 数据库无该记录
-		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]interface{}{"apache.net": {"filters": []map[string]interface{}{}}, // bizId=2
-			"system.net": {"filters": []map[string]interface{}{}}}},
-		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]interface{}{"system.mem": {"filters": []map[string]interface{}{}}}},   // bizId=-5
-		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]interface{}{"system.io": {"filters": []map[string]interface{}{}}}}, // bizId=-6
+		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]any{
+			"apache.net": {"filters": []map[string]any{}},
+			"system.net": {"filters": []map[string]any{}},
+		}},
+		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]any{"system.mem": {"filters": []map[string]any{}}}},
+		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]any{"system.io": {"filters": []map[string]any{}}}},
 	}
 
 	s := &SpacePusher{}
@@ -463,19 +465,21 @@ func TestSpacePusher_ComposeDorisTableIds(t *testing.T) {
 	assert.NoError(t, obj3.Create(db))
 	assert.NoError(t, obj4.Create(db))
 
-	var nilMap map[string]map[string]interface{}
+	var nilMap map[string]map[string]any
 
 	tests := []struct {
 		spaceType string
 		spaceId   string
 		hasError  bool
-		want      map[string]map[string]interface{}
+		want      map[string]map[string]any
 	}{
 		{spaceType: "bkcc", spaceId: "3", hasError: true, want: nilMap}, // 数据库无该记录
-		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]interface{}{"apache.net": {"filters": []map[string]interface{}{}}, // bizId=2
-			"system.net": {"filters": []map[string]interface{}{}}}},
-		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]interface{}{"system.mem": {"filters": []map[string]interface{}{}}}},   // bizId=-5
-		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]interface{}{"system.io": {"filters": []map[string]interface{}{}}}}, // bizId=-6
+		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]any{
+			"apache.net": {"filters": []map[string]any{}},
+			"system.net": {"filters": []map[string]any{}},
+		}},
+		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]any{"system.mem": {"filters": []map[string]any{}}}},
+		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]any{"system.io": {"filters": []map[string]any{}}}},
 	}
 
 	s := &SpacePusher{}
@@ -558,7 +562,7 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	assert.Equal(t, map[string]uint{"rt_18001": 18001}, dataMap)
 
 	// 不包含全局数据源
-	opt := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false})
+	opt := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
 	dataMap, err = pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "bkcc_t", "2", nil, nil, opt)
 	fmt.Println(dataMap)
 }
@@ -648,7 +652,7 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	// 比对数据
 	for _, val := range data {
 		filter := val["filters"]
-		mapFilter := filter.([]map[string]interface{})
+		mapFilter := filter.([]map[string]any)
 		assert.Equal(t, len(mapFilter), 1)
 	}
 }
@@ -1229,7 +1233,7 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 
 func TestComposeEsTableIdOptions(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	//mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	// 初始数据
 	db := mysql.GetDBSession().DB
 
@@ -1262,7 +1266,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	spacePusher := NewSpacePusher()
 	data := spacePusher.composeEsTableIdOptions([]string{rt1, rt2, rt3})
 	assert.Equal(t, 3, len(data))
-	assert.Equal(t, map[string]interface{}{"name": "v1"}, data[rt1][rtOp1.Name])
+	assert.Equal(t, map[string]any{"name": "v1"}, data[rt1][rtOp1.Name])
 
 	// 获取不存在的rt数据
 	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
@@ -1561,7 +1565,7 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
 	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
 	tableID3 := "1001_bkmonitor_time_series_50012.__default__"
-	var defaultFilters []map[string]interface{}
+	var defaultFilters []map[string]any
 
 	// 数据源表
 	dataSources := []resulttable.DataSource{
@@ -1709,9 +1713,9 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	valuesForCreator, err := pusher.composeData(tenant.DefaultTenantId, spaceType, spaceId, []string{}, defaultFilters, nil)
 	assert.NoError(t, err, "composeData should not return an error")
 
-	expectedForCreator := map[string]map[string]interface{}{
-		tableID1: {"filters": []map[string]interface{}{}},
-		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{}},
+	expectedForCreator := map[string]map[string]any{
+		tableID1: {"filters": []map[string]any{}},
+		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]any{}},
 	}
 	assert.Equal(t, expectedForCreator, valuesForCreator, "Unexpected result for space 1001")
 
@@ -1719,9 +1723,9 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	valuesForOthers, err := pusher.composeData(tenant.DefaultTenantId, spaceType, "1003", []string{}, defaultFilters, nil)
 	assert.NoError(t, err, "composeData should not return an error")
 
-	expectedForOthers := map[string]map[string]interface{}{
-		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
-		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
+	expectedForOthers := map[string]map[string]any{
+		tableID1: {"filters": []map[string]any{{"appid": "1003"}}},
+		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]any{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
 }
@@ -1774,7 +1778,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
 		tableID1,
-		map[string]interface{}{"option1": "value1"},
+		map[string]any{"option1": "value1"},
 		1,
 		"sourceType1",
 		"indexSet1",
@@ -1786,20 +1790,20 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, tableID1, tableID, "TableID should match")
 
 	// 期望的 JSON 数据（单个对象）
-	expectedDetail := map[string]interface{}{
+	expectedDetail := map[string]any{
 		"measurement":             "__default__",
 		"source_type":             "sourceType1",
-		"options":                 map[string]interface{}{"option1": "value1"},
-		"storage_cluster_records": []interface{}{},
+		"options":                 map[string]any{"option1": "value1"},
+		"storage_cluster_records": []any{},
 		"data_label":              "a",
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
-		"field_alias":             map[string]interface{}{},
+		"field_alias":             map[string]any{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较
-	var actualDetail map[string]interface{}
+	var actualDetail map[string]any
 	err = json.Unmarshal([]byte(detailStr), &actualDetail)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 
@@ -1808,27 +1812,27 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
 		tableID2,
-		map[string]interface{}{"option1": "value1"},
+		map[string]any{"option1": "value1"},
 		1,
 		"sourceType1",
 		"indexSet1",
 		nil,
 	)
 
-	expectedDetail2 := map[string]interface{}{
+	expectedDetail2 := map[string]any{
 		"measurement":             "__default__",
 		"source_type":             "sourceType1",
-		"options":                 map[string]interface{}{"option1": "value1"},
-		"storage_cluster_records": []interface{}{},
+		"options":                 map[string]any{"option1": "value1"},
+		"storage_cluster_records": []any{},
 		"data_label":              nil,
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
-		"field_alias":             map[string]interface{}{},
+		"field_alias":             map[string]any{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较
-	var actualDetail2 map[string]interface{}
+	var actualDetail2 map[string]any
 	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 
@@ -1836,7 +1840,6 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, resTid, tableID2, "TableID should match")
 
 	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
-
 }
 
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
@@ -2121,7 +2124,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		name           string
 		ctx            FilterBuildContext
 		usage          FilterUsage
-		expectedResult []map[string]interface{}
+		expectedResult []map[string]any
 	}{
 		{
 			name: "UsageComposeData",
@@ -2132,7 +2135,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeData,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"bk_biz_id": "1001"},
 			},
 		},
@@ -2146,7 +2149,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeBcsSpaceBizTableIds,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"bk_biz_id": "2001"},
 			},
 		},
@@ -2159,7 +2162,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				FilterAlias: "projectId",
 			},
 			usage: UsageComposeBkciLevelTableIds,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"projectId": "1001"},
 			},
 		},
@@ -2173,7 +2176,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				FilterAlias:    "bk_biz_id",
 			},
 			usage: UsageComposeAllTypeTableIds,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"bk_biz_id": "-1001"},
 			},
 		},
@@ -2188,7 +2191,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				IsShared:      true,
 			},
 			usage: UsageComposeBksaasSpaceClusterTableIds,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"bcs_cluster_id": "cluster_1", "namespace": "namespace_1"},
 				{"bcs_cluster_id": "cluster_1", "namespace": "namespace_2"},
 			},
@@ -2204,7 +2207,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				NamespaceList: []string{},
 			},
 			usage: UsageComposeBksaasSpaceClusterTableIds,
-			expectedResult: []map[string]interface{}{
+			expectedResult: []map[string]any{
 				{"bcs_cluster_id": "cluster_1", "namespace": nil},
 			},
 		},
@@ -2281,15 +2284,14 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 
 	// 测试 composeApmAllTypeTableIds
 	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
-	expected := map[string]map[string]interface{}(map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}})
+	expected := map[string]map[string]any(map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}}})
 
 	assert.NoError(t, err)
 	assert.Equal(t, expected, bkciData, "Expected 2 table IDs for bkci space")
 
 	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
-	expected = map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}}
+	expected = map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}}}
 	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
-
 }
 
 func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
@@ -2368,7 +2370,7 @@ func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
 
 	// 测试 composeBkciLevelTableIds
 	bkciData, err := NewSpacePusher().composeBkciLevelTableIds("system", "bkci", "test_bkci_space")
-	expected := map[string]map[string]interface{}{"bkmonitor_event_60010.__default__": {"filters": []map[string]interface{}{{"dimensions.project_id": "test_bkci_space"}}}}
+	expected := map[string]map[string]any{"bkmonitor_event_60010.__default__": {"filters": []map[string]any{{"dimensions.project_id": "test_bkci_space"}}}}
 	assert.NoError(t, err)
 	assert.Equal(t, expected, bkciData, "Expected 1 table IDs for bkci space")
 }

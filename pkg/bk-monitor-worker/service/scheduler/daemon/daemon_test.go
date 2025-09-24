@@ -18,7 +18,6 @@ import (
 )
 
 func TestApmTaskUniId(t *testing.T) {
-
 	params := map[string]string{"data_id": "543713"}
 	data, _ := jsonx.Marshal(params)
 	taskIns, _ := task.NewSerializerTask(task.Task{

@@ -827,7 +827,7 @@ var SpaceDataSourceDBSchema = struct {
 // Update updates SpaceDataSource fields by primary key
 // nolint: dupl
 func (o *SpaceDataSource) Update(db *gorm.DB, fields ...SpaceDataSourceDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":                 o.Id,
 		"space_type_id":      o.SpaceTypeId,
 		"space_id":           o.SpaceId,
@@ -838,7 +838,7 @@ func (o *SpaceDataSource) Update(db *gorm.DB, fields ...SpaceDataSourceDBSchemaF
 		"updater":            o.Updater,
 		"update_time":        o.UpdateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -857,7 +857,7 @@ func (o *SpaceDataSource) Update(db *gorm.DB, fields ...SpaceDataSourceDBSchemaF
 
 // SpaceDataSourceUpdater is an SpaceDataSource updates manager
 type SpaceDataSourceUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -865,7 +865,7 @@ type SpaceDataSourceUpdater struct {
 // nolint: dupl
 func NewSpaceDataSourceUpdater(db *gorm.DB) SpaceDataSourceUpdater {
 	return SpaceDataSourceUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&SpaceDataSource{}),
 	}
 }

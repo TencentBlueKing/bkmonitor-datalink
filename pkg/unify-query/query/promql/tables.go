@@ -31,7 +31,7 @@ type Table struct {
 
 // NewTableWithSample
 func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(string) string) *Table {
-	var t = new(Table)
+	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
 	t.Types = []string{"float", "float"}
@@ -64,9 +64,7 @@ func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(strin
 
 // NewTable
 func NewTable(index int, series prom.Series, queryRawFormat func(string) string) *Table {
-	var (
-		t = new(Table)
-	)
+	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
 	t.Types = []string{"float", "float"}

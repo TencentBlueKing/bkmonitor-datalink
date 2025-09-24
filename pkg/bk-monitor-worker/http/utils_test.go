@@ -47,12 +47,12 @@ func TestGetMessage(t *testing.T) {
 		name        string
 		candidate   string
 		format      string
-		v           []interface{}
+		v           []any
 		expectedStr string
 	}{
 		{"candidate without format and args", "only candidate", "", nil, "only candidate"},
 		{"candidate with format and args", "candidate", "message", nil, "message"},
-		{"candidate with format and args gt 0", "candidate", "message: %s %s", []interface{}{"this is", "a test"}, "message: this is a test"},
+		{"candidate with format and args gt 0", "candidate", "message: %s %s", []any{"this is", "a test"}, "message: this is a test"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

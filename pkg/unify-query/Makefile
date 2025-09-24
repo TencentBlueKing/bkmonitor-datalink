@@ -37,14 +37,15 @@ swag:
 
 .PHONY: fmt
 fmt:
-	gofmt -r 'interface{} -> any' -w . && gofmt -w -s .
+	gofmt -r 'interface{} -> any' -w .
+	gofumpt -w .
 
 .PHONY: lint
-lint:
+lint: fmt
 	golangci-lint run -c ${ROOTPATH}/.golangci.yml
 
 .PHONY: addlicense
-addlicense:
+addlicense: fmt
 	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \) | xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
 
 .PHONY: imports

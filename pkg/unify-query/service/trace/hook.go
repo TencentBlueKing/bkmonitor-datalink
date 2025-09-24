@@ -33,7 +33,6 @@ func setDefaultConfig() {
 
 // InitConfig
 func InitConfig() {
-
 	Enable = viper.GetBool(EnableConfigPath)
 
 	for key, value := range configLabels {

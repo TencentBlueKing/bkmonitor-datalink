@@ -20,9 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-var (
-	bcsInfo = &BCSInfo{Mutex: new(sync.Mutex)}
-)
+var bcsInfo = &BCSInfo{Mutex: new(sync.Mutex)}
 
 // BCSInfo projectID: clusterID -> []dataIDList
 type BCSInfo struct {

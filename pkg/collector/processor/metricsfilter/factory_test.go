@@ -78,31 +78,30 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func makeMetricsGenerator(n int) *generator.MetricsGenerator {
+func makeMetricsRecord(n int) pmetric.Metrics {
 	opts := define.MetricsOptions{
 		MetricName: "my_metrics",
 		GaugeCount: n,
 	}
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
-func makeMetricsGeneratorWithAttrs(name string, n int, attrs map[string]string) *generator.MetricsGenerator {
+func makeMetricsRecordWith(name string, n int, rs, attrs map[string]string) pmetric.Metrics {
 	opts := define.MetricsOptions{
 		MetricName: name,
 		GaugeCount: n,
 		GeneratorOptions: define.GeneratorOptions{
 			Attributes: attrs,
+			Resources:  rs,
 		},
 	}
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
 func TestMetricsNoAction(t *testing.T) {
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
 	metrics := record.Data.(pmetric.Metrics)
@@ -123,16 +122,12 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
 	assert.Equal(t, 0, metrics.Len())
 }
@@ -148,16 +143,12 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	metrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, metrics.ResourceMetrics().Len())
 
@@ -165,8 +156,14 @@ processor:
 	assert.Equal(t, "my_metrics_replace", name)
 }
 
-func makeRemoteWriteData(name string, attrs map[string]string) define.RemoteWriteData {
+func makeRemoteWriteData(name string, rs, attrs map[string]string) define.RemoteWriteData {
 	labels := []prompb.Label{{Name: "__name__", Value: name}}
+	for k, v := range rs {
+		labels = append(labels, prompb.Label{
+			Name:  k,
+			Value: v,
+		})
+	}
 	for k, v := range attrs {
 		labels = append(labels, prompb.Label{
 			Name:  k,
@@ -185,8 +182,20 @@ func makeRemoteWriteData(name string, attrs map[string]string) define.RemoteWrit
 	return rwData
 }
 
+func makeLabelMap(labels []prompb.Label) map[string]*prompb.Label {
+	m := make(map[string]*prompb.Label, len(labels))
+	for i := 0; i < len(labels); i++ {
+		if labels[i].GetName() == "__name__" {
+			continue
+		}
+		m[labels[i].GetName()] = &labels[i]
+	}
+	return m
+}
+
 type relabelBasedArgs struct {
 	metric string
+	rs     map[string]string
 	attrs  map[string]string
 }
 
@@ -199,32 +208,27 @@ type relabelBasedCase struct {
 func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedCase) {
 	factory := processor.MustCreateFactory(content, NewFactory)
 	for _, tt := range tests {
-		t.Run("OT:"+tt.name, func(t *testing.T) {
-			g := makeMetricsGeneratorWithAttrs(tt.args.metric, 1, tt.args.attrs)
+		t.Run("Map_"+tt.name, func(t *testing.T) {
 			record := define.Record{
 				RecordType: define.RecordMetrics,
-				Data:       g.Generate(),
+				Data:       makeMetricsRecordWith(tt.args.metric, 1, tt.args.rs, tt.args.attrs),
 			}
 
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
-
+			testkits.MustProcess(t, factory, record)
 			metrics := record.Data.(pmetric.Metrics)
-			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				testkits.AssertAttrsStringVal(t, attrs, "code_type", tt.wantValue)
+			foreach.MetricsDataPointWithResource(metrics, func(metric pmetric.Metric, _, attrs pcommon.Map) {
+				testkits.AssertAttrsStringKeyVal(t, attrs, "code_type", tt.wantValue)
 			})
 		})
 
-		t.Run("RW:"+tt.name, func(t *testing.T) {
-			rwData := makeRemoteWriteData(tt.args.metric, tt.args.attrs)
+		t.Run("Labels_"+tt.name, func(t *testing.T) {
+			rwData := makeRemoteWriteData(tt.args.metric, tt.args.rs, tt.args.attrs)
 			record := define.Record{
 				RecordType: define.RecordRemoteWrite,
 				Data:       &rwData,
 			}
 
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
-
+			testkits.MustProcess(t, factory, record)
 			tss := record.Data.(*define.RemoteWriteData).Timeseries
 			for _, ts := range tss {
 				labels := makeLabelMap(ts.GetLabels())
@@ -405,6 +409,13 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "noprefix"
+          - name: "my.server;my.service4;my.method4"
+            codes: 
+            - rule: "err_5003,50004"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "fatal"
 `
 	)
 
@@ -413,11 +424,13 @@ processor:
 			name: "rule err_200~300",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "my.service",
 					"callee_method":  "my.method",
-					"service_name":   "my.service.name",
 					"code":           "err_200",
 				},
 			},
@@ -427,11 +440,13 @@ processor:
 			name: "rule err_400~500",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "my.service",
 					"callee_method":  "my.method",
-					"service_name":   "my.service.name",
 					"code":           "err_500",
 				},
 			},
@@ -441,24 +456,44 @@ processor:
 			name: "rule 600",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "my.service",
 					"callee_method":  "my.method",
-					"service_name":   "my.service.name",
 					"code":           "600",
 				},
 			},
 			wantValue: "normal",
 		},
 		{
+			name: "rule err_5003",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service4",
+					"callee_method":  "my.method4",
+					"code":           "err_5003",
+				},
+			},
+			wantValue: "fatal",
+		},
+		{
 			name: "missing callee_service",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server": "my.server",
 					"callee_method": "my.method",
-					"service_name":  "my.service.name",
 					"code":          "600",
 				},
 			},
@@ -479,11 +514,13 @@ processor:
 			name: "rule skip",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "anything?",
 					"callee_method":  "my.method1",
-					"service_name":   "my.service.name",
 					"code":           "err_200",
 				},
 			},
@@ -493,11 +530,13 @@ processor:
 			name: "rule skip but not method",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "anything?",
 					"callee_method":  "my.method2",
-					"service_name":   "my.service.name",
 					"code":           "err_200",
 				},
 			},
@@ -506,11 +545,13 @@ processor:
 			name: "rule noprofix",
 			args: relabelBasedArgs{
 				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
 				attrs: map[string]string{
 					"callee_server":  "my.server",
 					"callee_service": "anything?",
 					"callee_method":  "my.method3",
-					"service_name":   "my.service.name",
 					"code":           "2000",
 				},
 			},

@@ -315,7 +315,6 @@ func (r *RunMaintainer) handleReloadBinding(taskBinding TaskBinding) {
 }
 
 func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMaintainer {
-
 	operatorMapping := make(map[string]Operator, len(taskDefine))
 
 	for taskKind, define := range taskDefine {

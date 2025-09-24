@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -184,7 +185,7 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql
 		}
 
 		fieldType, ok = list[TableFieldType].(string)
-		if !ok {
+		if !ok || fieldType == "" {
 			continue
 		}
 
@@ -244,6 +245,51 @@ func (i *Instance) Table(query *metadata.Query) string {
 	return table
 }
 
+// QueryFieldMap 查询字段映射
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-field-map")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return nil, err
+	}
+
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	fieldMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]map[string]any)
+	for k, v := range fieldMap {
+		if k == "" || v.Type == "" {
+			continue
+		}
+
+		ks := strings.Split(k, ".")
+		res[k] = map[string]any{
+			"alias_name":        query.FieldAlias.AliasName(k),
+			"field_name":        k,
+			"field_type":        v.Type,
+			"origin_field":      ks[0],
+			"is_agg":            false,
+			"is_analyzed":       v.Analyzed,
+			"is_case_sensitive": false,
+			"tokenize_on_chars": "",
+		}
+	}
+
+	return res, nil
+}
+
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
@@ -265,7 +311,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
 		err = fmt.Errorf("start time must less than end time")
-		return
+		return size, total, option, err
 	}
 
 	rangeLeftTime := end.Sub(start)
@@ -285,27 +331,27 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 
 	// 如果是 dry run 则直接返回 sql 查询语句
 	if query.DryRun {
 		option.SQL = sql
-		return
+		return size, total, option, err
 	}
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
-		return
+		return size, total, option, err
 	}
 
 	if data == nil {
-		return
+		return size, total, option, err
 	}
 
 	if data.ResultSchema != nil {
@@ -327,13 +373,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	size = int64(len(data.List))
 	total = int64(data.TotalRecords)
 
-	return
+	return size, total, option, err
 }
 
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series-set")
 	defer span.End(&err)
 
@@ -411,9 +455,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)

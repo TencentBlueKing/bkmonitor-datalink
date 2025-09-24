@@ -79,7 +79,7 @@ func (e randomEvaluator) Type() string {
 }
 
 func (e randomEvaluator) processTraces(pdTraces ptrace.Traces) ptrace.Traces {
-	foreach.SpansRemoveIf(pdTraces.ResourceSpans(), func(span ptrace.Span) bool {
+	foreach.SpansRemoveIf(pdTraces, func(span ptrace.Span) bool {
 		// 如果 StatusCode 是 Err 类型的则必须保留
 		if span.Status().Code() == ptrace.StatusCodeError {
 			return false

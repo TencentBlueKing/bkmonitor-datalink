@@ -29,8 +29,8 @@ var demoDynamicGroupListStr = `
 `
 
 func TestDynamicGroup(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getDynamicGroupList, func(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]interface{}, error) {
-		var demoDynamicGroupList map[string]map[string]interface{}
+	patch := gomonkey.ApplyFunc(getDynamicGroupList, func(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]any, error) {
+		var demoDynamicGroupList map[string]map[string]any
 		err := json.Unmarshal([]byte(demoDynamicGroupListStr), &demoDynamicGroupList)
 		if err != nil {
 			t.Errorf("Unmarshal failed, err: %v", err)

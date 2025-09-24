@@ -27,9 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
-var (
-	testModel, _ = newModel(context.Background())
-)
+var testModel, _ = newModel(context.Background())
 
 func TestModel_Resources(t *testing.T) {
 	mock.Init()
@@ -466,7 +464,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
 			},
-			expectedTarget: "system"},
+			expectedTarget: "system",
+		},
 		"system to pod": {
 			target: "pod",
 			indexMatcher: cmdb.Matcher{

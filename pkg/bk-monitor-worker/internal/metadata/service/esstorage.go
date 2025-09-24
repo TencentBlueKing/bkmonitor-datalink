@@ -53,9 +53,9 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		return nil, err
 	}
 	// es的consul配置
-	var indexSettingsMap map[string]interface{}
-	var mappingSettingMap map[string]interface{}
-	var WarmPhaseSettingsMap map[string]interface{}
+	var indexSettingsMap map[string]any
+	var mappingSettingMap map[string]any
+	var WarmPhaseSettingsMap map[string]any
 	err = jsonx.UnmarshalString(e.IndexSettings, &indexSettingsMap)
 	if err != nil {
 		return nil, errors.Wrapf(err, "unmarshal IndexSettings failed")
@@ -70,7 +70,7 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	}
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,
-		StorageConfig: map[string]interface{}{
+		StorageConfig: map[string]any{
 			"index_datetime_format":   fmt.Sprintf("write_%s", timex.ParsePyDateFormat(e.DateFormat)),
 			"index_datetime_timezone": e.TimeZone,
 			"date_format":             e.DateFormat,

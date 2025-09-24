@@ -41,23 +41,21 @@ const (
 	dtEventTimeFormat = "2006-01-02 15:04:05"
 )
 
-var (
-	internalDimensionSet = func() *set.Set[string] {
-		s := set.New[string]()
-		for _, k := range []string{
-			dtEventTimeStamp,
-			dtEventTime,
-			localTime,
-			startTime,
-			endTime,
-			theDate,
-			sql_expr.ShardKey,
-		} {
-			s.Add(strings.ToLower(k))
-		}
-		return s
-	}()
-)
+var internalDimensionSet = func() *set.Set[string] {
+	s := set.New[string]()
+	for _, k := range []string{
+		dtEventTimeStamp,
+		dtEventTime,
+		localTime,
+		startTime,
+		endTime,
+		theDate,
+		sql_expr.ShardKey,
+	} {
+		s.Add(strings.ToLower(k))
+	}
+	return s
+}()
 
 func checkInternalDimension(key string) bool {
 	return internalDimensionSet.Existed(strings.ToLower(key))
@@ -165,7 +163,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 
 		newData[k] = d
 	}
-	return
+	return newData
 }
 
 func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
@@ -181,6 +179,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 	tsMap := map[string]*prompb.TimeSeries{}
 	tsTimeMap := make(map[string]map[int64]float64)
+
+	// 判断是否补零
 	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
 
 	// 先获取维度的 key 保证顺序一致
@@ -414,9 +414,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) parserSQL() (sql string, err error) {
-	var (
-		span *trace.Span
-	)
+	var span *trace.Span
 	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
 	defer span.End(&err)
 
@@ -426,7 +424,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 
 	where, err := f.BuildWhere()
 	if err != nil {
-		return
+		return sql, err
 	}
 	span.Set("where", where)
 	if where != "" {
@@ -437,7 +435,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)
-	return
+	return sql, err
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
@@ -456,7 +454,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 
 	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
-		return
+		return sql, err
 	}
 
 	// 用于判定字段是否需要删除
@@ -479,7 +477,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("where-string", whereString)
 
 	if err != nil {
-		return
+		return sql, err
 	}
 	if whereString != "" {
 		sqlBuilder.WriteString(" WHERE ")
@@ -505,5 +503,5 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 	sql = sqlBuilder.String()
 	span.Set("sql", sql)
-	return
+	return sql, err
 }

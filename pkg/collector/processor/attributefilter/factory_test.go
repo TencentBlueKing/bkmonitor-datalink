@@ -79,27 +79,29 @@ const (
 	resourceKeyPerPort = "net.peer.port"
 )
 
-func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
+func makeTracesRecord(n int, valueType string) ptrace.Traces {
 	opts := define.TracesOptions{SpanCount: n}
 	opts.RandomAttributeKeys = []string{
 		resourceKeyPerIp,
 		resourceKeyPerPort,
 	}
 	opts.DimensionsValueType = valueType
-	return generator.NewTracesGenerator(opts)
+	return generator.NewTracesGenerator(opts).Generate()
 }
 
-func makeTracesAttributesGenerator(n int, attrs map[string]string) *generator.TracesGenerator {
-	opts := define.TracesOptions{SpanKind: n}
-	opts.SpanCount = 1
+func makeTracesAttrsRecord(n int, attrs map[string]string) ptrace.Traces {
+	opts := define.TracesOptions{
+		SpanKind:  n,
+		SpanCount: 1,
+	}
 	opts.Attributes = attrs
 	opts.Resources = map[string]string{
 		"http.status_code": "200",
 	}
-	return generator.NewTracesGenerator(opts)
+	return generator.NewTracesGenerator(opts).Generate()
 }
 
-func makeLogsGenerator(n int, valueType string) *generator.LogsGenerator {
+func makeLogsRecord(n int, valueType string) plog.Logs {
 	opts := define.LogsOptions{LogName: "testlog", LogCount: n, LogLength: 10}
 	opts.RandomAttributeKeys = []string{"attr1", "attr2"}
 	opts.DimensionsValueType = valueType
@@ -107,11 +109,11 @@ func makeLogsGenerator(n int, valueType string) *generator.LogsGenerator {
 		resourceKeyPerIp,
 		resourceKeyPerPort,
 	}
-	return generator.NewLogsGenerator(opts)
+	return generator.NewLogsGenerator(opts).Generate()
 }
 
-func makeLogsAttributesGenerator(n int, attrs map[string]string) *generator.LogsGenerator {
-	return generator.NewLogsGenerator(define.LogsOptions{
+func makeLogsAttrsRecord(n int, attrs map[string]string) plog.Logs {
+	opts := define.LogsOptions{
 		GeneratorOptions: define.GeneratorOptions{
 			Resources:  map[string]string{"foo": "bar"},
 			Attributes: attrs,
@@ -119,17 +121,18 @@ func makeLogsAttributesGenerator(n int, attrs map[string]string) *generator.Logs
 		LogName:   "testlog",
 		LogCount:  n,
 		LogLength: 10,
-	})
+	}
+	return generator.NewLogsGenerator(opts).Generate()
 }
 
-func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
+func makeMetricsRecord(n int, valueType string) pmetric.Metrics {
 	opts := define.MetricsOptions{GaugeCount: n}
 	opts.RandomResourceKeys = []string{
 		resourceKeyPerIp,
 		resourceKeyPerPort,
 	}
 	opts.DimensionsValueType = valueType
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
 func TestAsStringAction(t *testing.T) {
@@ -144,16 +147,11 @@ processor:
 	t.Run("traces", func(t *testing.T) {
 		testAsStringAction := func(t *testing.T, valueType string) {
 			factory := processor.MustCreateFactory(content, NewFactory)
-
-			g := makeTracesGenerator(1, valueType)
-			data := g.Generate()
 			record := define.Record{
 				RecordType: define.RecordTraces,
-				Data:       data,
+				Data:       makeTracesRecord(1, valueType),
 			}
-
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, factory, record)
 
 			span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 			attrs := span.Attributes()
@@ -175,13 +173,12 @@ processor:
 			factory := processor.MustCreateFactory(content, NewFactory)
 			record := define.Record{
 				RecordType: define.RecordLogs,
-				Data:       makeLogsGenerator(1, valueType).Generate(),
+				Data:       makeLogsRecord(1, valueType),
 			}
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, factory, record)
 
-			rsAttrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
-			v, ok := rsAttrs.Get(resourceKeyPerIp)
+			attrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
+			v, ok := attrs.Get(resourceKeyPerIp)
 			assert.True(t, ok)
 			assert.Equal(t, pcommon.ValueTypeString, v.Type())
 		}
@@ -206,8 +203,8 @@ processor:
           - "attributes.http.scheme"
 `
 	assertFunc := func(attrs pcommon.Map) {
-		testkits.AssertAttrsFoundIntVal(t, attrs, semconv.AttributeHTTPStatusCode, 200)
-		testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeHTTPScheme, "https")
+		testkits.AssertAttrsIntVal(t, attrs, semconv.AttributeHTTPStatusCode, 200)
+		testkits.AssertAttrsStringKeyVal(t, attrs, semconv.AttributeHTTPScheme, "https")
 	}
 
 	t.Run("traces", func(t *testing.T) {
@@ -216,14 +213,11 @@ processor:
 			"http.status_code": "200",
 			"http.scheme":      "https",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes())
 	})
 
@@ -233,14 +227,11 @@ processor:
 			"http.status_code": "200",
 			"http.scheme":      "https",
 		}
-		g := makeLogsAttributesGenerator(1, m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsAttrsRecord(1, m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes())
 	})
 }
@@ -256,62 +247,52 @@ processor:
 `
 
 	assertFunc := func(attrs pcommon.Map) {
-		testkits.AssertAttrsStringVal(t, attrs, "bk_biz_id", "10086")
-		testkits.AssertAttrsStringVal(t, attrs, "bk_app_name", "my_app_name")
+		testkits.AssertAttrsStringKeyVal(t, attrs, "bk_app_name", "my_app_name")
+		testkits.AssertAttrsIntVal(t, attrs, "bk_biz_id", 10086)
 	}
 
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "float")
-		data := g.Generate()
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "float"),
 			Token: define.Token{
 				BizId:   10086,
 				AppName: "my_app_name",
 			},
 		}
 
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes())
 	})
 
 	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(1, "int")
-		data := g.Generate()
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, "int"),
 			Token: define.Token{
 				BizId:   10086,
 				AppName: "my_app_name",
 			},
 		}
 
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes())
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-
-		g := makeMetricsGenerator(1, "float")
-		data := g.Generate()
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "float"),
 			Token: define.Token{
 				BizId:   10086,
 				AppName: "my_app_name",
 			},
 		}
 
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstGaugeDataPoint(record.Data.(pmetric.Metrics)).Attributes())
 	})
 }
@@ -343,17 +324,14 @@ processor:
 			"http.method": "gET",
 			"http.route":  "testRoute",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindServer), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindServer), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Get:testRoute:")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", "Get:testRoute:")
 	})
 }
 
@@ -383,17 +361,14 @@ processor:
 			"rpc.system": "PRC",
 			"rpc.method": "rpcMethod",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:placeholder")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:placeholder")
 	})
 }
 
@@ -421,17 +396,14 @@ processor:
 		m := map[string]string{
 			"rpc.system": "PRC",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Unknown:TestConstCondition")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", "Unknown:TestConstCondition")
 	})
 }
 
@@ -459,14 +431,11 @@ processor:
 		m := map[string]string{
 			"http.scheme": "HTTP",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 		testkits.AssertAttrsNotFound(t, span.Attributes(), "api_name")
@@ -496,17 +465,13 @@ processor:
 		m := map[string]string{
 			"http.scheme": "HTTP",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
+		testkits.MustProcess(t, factory, record)
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", span.Name())
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", span.Name())
 	})
 
 	t.Run("traces defaultFrom/const", func(t *testing.T) {
@@ -533,17 +498,14 @@ processor:
 		m := map[string]string{
 			"http.scheme": "HTTP",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "TestDefaultFrom")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", "TestDefaultFrom")
 	})
 }
 
@@ -571,14 +533,11 @@ processor:
 		m := map[string]string{
 			"http.scheme": "HTTP",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 		testkits.AssertAttrsNotFound(t, span.Attributes(), "api_name")
@@ -612,17 +571,14 @@ processor:
 			"rpc.method": "rpcMethod",
 			"rpc.target": "",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:")
 	})
 }
 
@@ -652,14 +608,11 @@ processor:
 			"db.parameters": "testDbParameters",
 			"db.statement":  "testDbStatement",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes())
 	})
 
@@ -670,14 +623,11 @@ processor:
 			"db.parameters": "testDbParameters",
 			"db.statement":  "testDbStatement",
 		}
-		g := makeLogsAttributesGenerator(1, m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsAttrsRecord(1, m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes())
 	})
 
@@ -688,15 +638,11 @@ processor:
 			"db.parameters": "testDbParameters",
 			"db.statement":  "testDbStatement",
 		}
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
+		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes()
 		testkits.AssertAttrsFound(t, attrs, semconv.AttributeDBStatement)
 		testkits.AssertAttrsFound(t, attrs, "db.parameters")
@@ -720,8 +666,10 @@ processor:
 `
 	const maxLen = 10
 	assertFunc := func(attrs pcommon.Map) {
-		testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeDBStatement, "testDbStatement"[:maxLen])
-		testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters"[:maxLen])
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			semconv.AttributeDBStatement, "testDbStatement"[:maxLen],
+			"db.parameters", "testDbParameters"[:maxLen],
+		)
 	}
 
 	t.Run("traces", func(t *testing.T) {
@@ -732,14 +680,11 @@ processor:
 			"db.statement":  "testDbStatement",
 		}
 
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes())
 	})
 
@@ -751,14 +696,11 @@ processor:
 			"db.statement":  "testDbStatement",
 		}
 
-		g := makeLogsAttributesGenerator(1, m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsAttrsRecord(1, m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		assertFunc(testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes())
 	})
 
@@ -770,16 +712,15 @@ processor:
 			"db.statement":  "testDbStatement",
 		}
 
-		g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeDBStatement, "testDbStatement")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters")
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			semconv.AttributeDBStatement, "testDbStatement",
+			"db.parameters", "testDbParameters",
+		)
 	})
 }

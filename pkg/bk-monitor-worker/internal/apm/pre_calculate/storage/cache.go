@@ -36,15 +36,13 @@ type CacheKey struct {
 	Ttl    time.Duration
 }
 
-var (
-	// CacheTraceInfoKey origin trace info key instance
-	CacheTraceInfoKey = CacheKey{
-		Format: func(bkBizId, appName, traceId string) string {
-			return fmt.Sprintf("traceInfo:%s:%s:%s", bkBizId, appName, traceId)
-		},
-		Ttl: 5 * time.Minute,
-	}
-)
+// CacheTraceInfoKey origin trace info key instance
+var CacheTraceInfoKey = CacheKey{
+	Format: func(bkBizId, appName, traceId string) string {
+		return fmt.Sprintf("traceInfo:%s:%s:%s", bkBizId, appName, traceId)
+	},
+	Ttl: 5 * time.Minute,
+}
 
 // CacheStorageData storage request of cache
 type CacheStorageData struct {

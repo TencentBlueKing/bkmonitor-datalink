@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -156,10 +155,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	valueField, _ := d.dimTransform(d.valueField)
 
 	var (
-		window        time.Duration
-		offsetMinutes int64
-
-		timezone string
+		window         time.Duration
+		timeZoneOffset int64
 	)
 
 	dimensionSet = set.New[string]([]string{FieldValue}...)
@@ -201,29 +198,27 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 		if agg.Window > 0 {
 			window = agg.Window
-			timezone = agg.TimeZone
+			timeZoneOffset = agg.TimeZoneOffset
 		}
 	}
 
 	if window > 0 {
-		// 获取时区偏移量
-		if function.IsAlignTime(window) {
-			// 时间聚合函数兼容时区
-			loc, locErr := time.LoadLocation(timezone)
-			if locErr != nil {
-				loc = time.UTC
-			}
-			_, offset := time.Now().In(loc).Zone()
-			offsetMinutes = int64(offset) / 60
+		fh_1 := "+"
+		fh_2 := "-"
+		if timeZoneOffset > 0 {
+			fh_1 = "-"
+			fh_2 = "+"
+		} else {
+			timeZoneOffset *= -1
 		}
 
 		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
 		var timeField string
 		if int64(window.Seconds())%60 == 0 {
 			windowMinutes := int(window.Minutes())
-			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) + %d) / %d AS INT) * %d - %d) * 60 * 1000)`, ShardKey, offsetMinutes, windowMinutes, windowMinutes, offsetMinutes)
+			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh_1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh_2, timeZoneOffset/6e4)
 		} else {
-			timeField = fmt.Sprintf(`CAST(FLOOR(%s / %d) AS INT) * %d `, d.timeField, window.Milliseconds(), window.Milliseconds())
+			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh_1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh_2, timeZoneOffset)
 		}
 
 		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
@@ -285,10 +280,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	// 回传时间聚合信息
 	timeAggregate = TimeAggregate{
 		Window:       window,
-		OffsetMillis: offsetMinutes,
+		OffsetMillis: timeZoneOffset,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -328,7 +323,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	// doris 里面 array<int> 类型需要特殊处理
-	var checkArrayIntByOp = func(o string) (string, string, error) {
+	checkArrayIntByOp := func(o string) (string, string, error) {
 		if len(c.Value) != 1 {
 			return "", "", fmt.Errorf("operator %s only support 1 value", o)
 		}
@@ -342,7 +337,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	// doris 里面 array<string> 类型需要特殊处理
-	var checkArrayStringByOp = func(op string) (string, string) {
+	checkArrayStringByOp := func(op string) (string, string) {
 		if d.isArray(c.DimensionName) {
 			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
 			key = ""
@@ -535,7 +530,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 		return s
 	}
 
-	var charChange = func(cur, last rune) rune {
+	charChange := func(cur, last rune) rune {
 		if last == '\\' {
 			return cur
 		}
@@ -649,14 +644,14 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 
 func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
-		return
+		return opt
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.Type = strings.ToUpper(opt.Type)
 	}
-	return
+	return opt
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -678,14 +673,13 @@ func (d *DorisSQLExpr) getArrayType(s string) string {
 }
 
 func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
-
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	ns = s
 	if s == "" || s == "*" {
-		return
+		return ns, as
 	}
 	if alias, ok := d.fieldAlias[s]; ok {
 		ns = alias
@@ -698,7 +692,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {
 		ns = fmt.Sprintf("`%s`", ns)
-		return
+		return ns, as
 	}
 
 	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
@@ -736,7 +730,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
-	return
+	return ns, as
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

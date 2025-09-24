@@ -14,7 +14,7 @@ import (
 )
 
 func (m Matcher) Rename() Matcher {
-	var nameMap = map[string]string{
+	nameMap := map[string]string{
 		"pod_name":       "pod",
 		"container_name": "container",
 	}

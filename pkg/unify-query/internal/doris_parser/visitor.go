@@ -87,9 +87,7 @@ func (v *Statement) ItemString(name string) string {
 }
 
 func (v *Statement) String() string {
-	var (
-		result []string
-	)
+	var result []string
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
 		res := v.ItemString(name)
@@ -596,7 +594,12 @@ func (v *SelectNode) String() string {
 		ss := nodeToString(fn)
 		if ss != "" {
 			if v.Distinct && idx == v.DistinctIndex {
-				ss = fmt.Sprintf("DISTINCT(%s)", ss)
+				// 如果字段包含AS别名，则不添加外层括号
+				if strings.Contains(ss, " AS ") {
+					ss = fmt.Sprintf("DISTINCT %s", ss)
+				} else {
+					ss = fmt.Sprintf("DISTINCT(%s)", ss)
+				}
 			}
 			ns = append(ns, ss)
 		}
@@ -633,9 +636,7 @@ type FieldNode struct {
 }
 
 func (v *FieldNode) String() string {
-	var (
-		result string
-	)
+	var result string
 	result = nodeToString(v.node)
 
 	if v.isField && v.Encode != nil {
@@ -810,7 +811,7 @@ type SearchCaseNode struct {
 }
 
 func (v *SearchCaseNode) String() string {
-	var s = strings.Builder{}
+	s := strings.Builder{}
 	if len(v.nodes) > 0 && len(v.ops) > len(v.nodes) {
 		s.WriteString("CASE")
 		for idx, n := range v.nodes {

@@ -17,8 +17,7 @@ import (
 )
 
 // Service 服务侧初始化consul实例使用
-type Service struct {
-}
+type Service struct{}
 
 // Type
 func (s *Service) Type() string {

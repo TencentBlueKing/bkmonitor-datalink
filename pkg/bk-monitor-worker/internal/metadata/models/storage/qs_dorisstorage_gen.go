@@ -938,7 +938,7 @@ var DorisStorageDBSchema = struct {
 // Update updates DorisStorage fields by primary key
 // nolint: dupl
 func (o *DorisStorage) Update(db *gorm.DB, fields ...DorisStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":             o.TableID,
 		"bk_tenant_id":         o.BkTenantID,
 		"bkbase_table_id":      o.BkbaseTableID,
@@ -949,7 +949,7 @@ func (o *DorisStorage) Update(db *gorm.DB, fields ...DorisStorageDBSchemaField) 
 		"expire_days":          o.ExpireDays,
 		"storage_cluster_id":   o.StorageClusterID,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -968,7 +968,7 @@ func (o *DorisStorage) Update(db *gorm.DB, fields ...DorisStorageDBSchemaField) 
 
 // DorisStorageUpdater is an DorisStorage updates manager
 type DorisStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -976,7 +976,7 @@ type DorisStorageUpdater struct {
 // nolint: dupl
 func NewDorisStorageUpdater(db *gorm.DB) DorisStorageUpdater {
 	return DorisStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&DorisStorage{}),
 	}
 }

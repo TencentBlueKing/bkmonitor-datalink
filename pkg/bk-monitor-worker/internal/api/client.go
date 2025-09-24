@@ -250,9 +250,9 @@ func HandleApiResultError(result apiDefine.ApiCommonRespMeta, err error, message
 }
 
 // BatchApiRequest send one request first and get the total count, then send the rest requests by pageSize
-func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
+func BatchApiRequest(pageSize int, getTotalFunc func(any) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]any, error) {
 	// send the first request to get the total count
-	var resp interface{}
+	var resp any
 	req := getReqFunc(0)
 	_, err := req.SetResult(&resp).Request()
 	if err != nil {
@@ -277,7 +277,7 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 	pageCount := (total + pageSize - 1) / pageSize
 
 	// 初始化结果和错误数组
-	results := make([]interface{}, pageCount)
+	results := make([]any, pageCount)
 	errs := make([]error, pageCount)
 	results[0] = resp
 
@@ -289,7 +289,7 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 				<-limitChan
 				waitGroup.Done()
 			}()
-			var r interface{}
+			var r any
 			req := getReqFunc(page)
 			_, err := req.SetResult(&r).Request()
 			if err != nil {

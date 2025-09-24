@@ -93,16 +93,15 @@ func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
 	assert.NoError(t, mapstructure.Decode(conf, &confMap))
 
 	factory, _ := NewFactory(confMap, nil)
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordMetrics,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	pdMetrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()
@@ -231,7 +230,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 	}
 
 	var errs []error
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(record.Data.(pmetric.Metrics), func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()

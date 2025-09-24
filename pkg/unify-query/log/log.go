@@ -32,7 +32,7 @@ type Logger struct {
 	logger *zap.Logger
 }
 
-func (l *Logger) Printf(format string, v ...interface{}) {
+func (l *Logger) Printf(format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
 	}

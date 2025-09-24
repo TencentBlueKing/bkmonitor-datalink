@@ -172,7 +172,7 @@ func TestSplitEachSpans(t *testing.T) {
 
 	n := 0
 	for i := 0; i < len(statusCode); i++ {
-		foreach.Spans(result[i].ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(result[i], func(span ptrace.Span) {
 			assert.Equal(t, statusCode[n], span.Status().Code())
 			n++
 		})

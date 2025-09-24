@@ -56,7 +56,6 @@ func (c *Conditions) InsertField(field ConditionField) {
 
 // AnalysisConditions
 func (c *Conditions) AnalysisConditions() (AllConditions, error) {
-
 	var (
 		totalBuffer = make([][]ConditionField, 0) // 以or作为分界线，and条件的内容都会放入到一起，然后一起渲染处理
 		rowBuffer   = make([]ConditionField, 0)   // 每一组的缓存
@@ -115,7 +114,6 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 // ToProm
 func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
-
 	var (
 		err         error
 		totalBuffer [][]ConditionField // 以or作为分界线，and条件的内容都会放入到一起，然后一起渲染处理
@@ -379,7 +377,6 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 
 			return true, nil
 		}()
-
 		if err != nil {
 			return false, err
 		}
@@ -476,7 +473,6 @@ func (c *Conditions) GetRequiredFiled() ([]int, []string, []string, error) {
 
 // ReplaceOrAddCondition: 替换或添加条件
 func ReplaceOrAddCondition(c *Conditions, dimension string, values []string) *Conditions {
-
 	// 无效的替换或添加
 	if len(values) == 0 {
 		return c

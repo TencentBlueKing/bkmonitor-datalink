@@ -50,9 +50,9 @@ func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	}
 
 	// 2. 解析JSON数据并按业务ID分组
-	bizDataMap := make(map[int][]map[string]interface{})
+	bizDataMap := make(map[int][]map[string]any)
 	for _, jsonStr := range cacheData {
-		var item map[string]interface{}
+		var item map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &item); err != nil {
 			logger.Warnf("unmarshal module cache failed: %v", err)
 			continue
@@ -72,7 +72,7 @@ func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	return nil
 }
 
-func (m *ModuleCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]interface{}, bizID int) {
+func (m *ModuleCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]any, bizID int) {
 	infos := m.ModuleToRelationInfos(data)
 	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos); err != nil {
 		logger.Errorf("build module relation metrics failed for biz %d: %v", bizID, err)
@@ -93,11 +93,11 @@ func NewModuleCacheManager(bkTenantId string, prefix string, opt *redis.Options,
 }
 
 // getModuleListByBizID 通过业务ID获取模块列表
-func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
+func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.SearchModuleResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -110,16 +110,15 @@ func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchModule().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "bk_set_id": "0"}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchModule().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "bk_set_id": "0"}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to request cmdb api")
 	}
 
-	var moduleList []map[string]interface{}
+	var moduleList []map[string]any
 	for _, item := range result {
 		if item == nil {
 			logger.Warnf("cmdb api response is nil")
@@ -298,7 +297,7 @@ func (m *ModuleCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 根据事件清理缓存
-func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	// 只处理模块事件
 	if resourceType != "module" || len(events) == 0 {
 		return nil
@@ -368,7 +367,7 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 				continue
 			}
 
-			var module map[string]interface{}
+			var module map[string]any
 			err := json.Unmarshal([]byte(cast.ToString(value)), &module)
 			if err != nil {
 				continue
@@ -398,7 +397,7 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 }
 
 // UpdateByEvents 根据事件更新缓存
-func (m *ModuleCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *ModuleCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "module" || len(events) == 0 {
 		return nil
 	}

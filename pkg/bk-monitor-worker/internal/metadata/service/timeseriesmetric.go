@@ -38,10 +38,10 @@ func NewTimeSeriesMetricSvcSvc(obj *customreport.TimeSeriesMetric) TimeSeriesMet
 }
 
 // BulkRefreshTSMetrics 更新或创建时序指标数据
-func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]interface{}, isAutoDiscovery bool) (bool, error) {
+func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
 	// 获取需要批量处理的指标名
 	metricFieldNameSet := mapset.NewSet[string]()
-	metricsMap := make(map[string]map[string]interface{})
+	metricsMap := make(map[string]map[string]any)
 	for _, m := range metricInfoList {
 		fieldName, ok := m["field_name"].(string)
 		if !ok {
@@ -91,7 +91,7 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 }
 
 // BulkCreateMetrics 批量创建指标
-func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map[string]map[string]interface{}, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
+func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
 	for _, name := range metricNames {
 		metricInfo, ok := metricMap[name]
@@ -135,7 +135,7 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 }
 
 // BulkUpdateMetrics 批量更新指标，针对记录仅更新最后更新时间和 tag 字段
-func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map[string]map[string]interface{}, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
+func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
 	var tsmList []customreport.TimeSeriesMetric
 	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
@@ -221,17 +221,16 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldNameIn(disabledList...).Delete(); err != nil {
 			logger.Errorf("BulkUpdateMetrics:delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
 		}
-
 	}
 	// 自动发现且有更新时需要推送路由数据
 	return updated && isAutoDiscovery, nil
 }
 
 // 获取 tags
-func (*TimeSeriesMetricSvc) getMetricTagFromMetricInfo(metricInfo map[string]interface{}) ([]string, error) {
+func (*TimeSeriesMetricSvc) getMetricTagFromMetricInfo(metricInfo map[string]any) ([]string, error) {
 	tags := mapset.NewSet[string]()
 	// 当前从redis中取出的metricInfo只有tag_value_list
-	if tagValues, ok := metricInfo["tag_value_list"].(map[string]interface{}); ok {
+	if tagValues, ok := metricInfo["tag_value_list"].(map[string]any); ok {
 		tags.Append(mapx.GetMapKeys(tagValues)...)
 	} else {
 		return nil, errors.Errorf("metricInfo [%#v] parse tag_value_list failed", metricInfo)

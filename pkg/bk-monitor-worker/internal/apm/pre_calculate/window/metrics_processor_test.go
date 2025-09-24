@@ -29,7 +29,6 @@ func TestMetricsHandleResult(t *testing.T) {
 		return res
 	}
 	t.Run("single-trace", func(t *testing.T) {
-
 		if !runCase(
 			p,
 			"single.json",

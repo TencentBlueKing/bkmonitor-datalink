@@ -56,5 +56,4 @@ func TestRefreshAlias(t *testing.T) {
 	es.RefreshAllAlias()
 	assert.Nil(t, err)
 	assert.True(t, es.AliasExist("testbb.ttt", "testbb_ttt_20210407_read"))
-
 }

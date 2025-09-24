@@ -214,7 +214,6 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 						addLabel(cond.DimensionName, cond.Operator, cond.Value...)
 					}
 				}
-
 			}
 		}
 	}
@@ -456,7 +455,7 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	}
 
 	if vmResultTable.Size() == 0 {
-		return
+		return vmExpand
 	}
 
 	vmExpand = &VmExpand{
@@ -470,7 +469,7 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 		vmExpand.ClusterName = vmClusterNames.First()
 	}
 
-	return
+	return vmExpand
 }
 
 func (vs VmCondition) String() string {
@@ -563,9 +562,18 @@ func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]strin
 	})
 }
 
-func (fa FieldAlias) Alias(f string) string {
+func (fa FieldAlias) OriginField(f string) string {
 	if v, ok := fa[f]; ok {
 		return v
 	}
-	return f
+	return ""
+}
+
+func (fa FieldAlias) AliasName(f string) string {
+	for k, v := range fa {
+		if v == f {
+			return k
+		}
+	}
+	return ""
 }

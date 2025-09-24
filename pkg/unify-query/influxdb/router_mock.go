@@ -186,6 +186,7 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableInfluxDB: &ir.SpaceResultTable{
 						TableId: ResultTableInfluxDB,
 					},
+					"result_table.unify_query": &ir.SpaceResultTable{TableId: "result_table.unify_query"},
 					ResultTableEs: &ir.SpaceResultTable{
 						TableId: ResultTableEs,
 					},
@@ -291,6 +292,18 @@ func MockSpaceRouter(ctx context.Context) {
 					ClusterName:     "default",
 					DataLabel:       "influxdb",
 					StorageType:     consul.InfluxDBStorageType,
+				},
+				"result_table.unify_query": &ir.ResultTableDetail{
+					StorageId:             3,
+					TableId:               "result_table.unify_query",
+					DB:                    "unify_query",
+					SourceType:            "",
+					StorageType:           consul.ElasticsearchStorageType,
+					StorageClusterRecords: []ir.Record{},
+					DataLabel:             "es",
+					FieldAlias: map[string]string{
+						"alias_ns": "__ext.host.bk_set_name",
+					},
 				},
 				ResultTableEs: &ir.ResultTableDetail{
 					StorageId:   3,

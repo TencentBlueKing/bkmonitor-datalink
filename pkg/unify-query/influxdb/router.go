@@ -19,9 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-var (
-	tsDBRouter = NewTsDBRouter()
-)
+var tsDBRouter = NewTsDBRouter()
 
 var Print = func() string {
 	var res string
@@ -127,9 +125,7 @@ var GetTableIDsByDataID = func(dataID consul.DataID) []*consul.TableID {
 	return GetTsDBRouter().GetTableIDs(dataID)
 }
 
-var (
-	bizRouter = NewBizRouter()
-)
+var bizRouter = NewBizRouter()
 
 // BizRouter
 type BizRouter struct {
@@ -181,9 +177,7 @@ func (b *BizRouter) Keys() []int {
 	return b.keys
 }
 
-var (
-	tableRouter = NewTableRouter()
-)
+var tableRouter = NewTableRouter()
 
 // TableRouter
 type TableRouter struct {
@@ -263,7 +257,7 @@ func ReloadTableInfos(pipelineConfMap map[string][]*consul.PipelineConfig) {
 				tmpBizRouter.AddRouter(resultTable.BizID, dataID)
 
 				// 从 pipeline.resultTable 中获取tableInfo
-				var tableID = &consul.TableID{}
+				tableID := &consul.TableID{}
 				err = resultTable.GetTSInfo(dataID, tableID)
 				// 忽略错误
 				if err != nil {
@@ -289,9 +283,7 @@ func ReloadTableInfos(pipelineConfMap map[string][]*consul.PipelineConfig) {
 	tableRouter = tmpTableRouter
 }
 
-var (
-	metricRouter = NewMetricRouter()
-)
+var metricRouter = NewMetricRouter()
 
 // MetricRouter map[string]consul.DataIDs
 type MetricRouter struct {

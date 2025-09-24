@@ -60,7 +60,7 @@ func (ClusterRecord) TableName() string {
 }
 
 // ComposeTableIDStorageClusterRecords 组装指定 table_id 的历史存储集群记录
-func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[string]interface{}, error) {
+func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[string]any, error) {
 	logger.Infof("compose_table_id_storage_cluster_records: try to get storage cluster records for table_id->[%s]", tableID)
 
 	var records []ClusterRecord
@@ -72,14 +72,13 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[str
 		OrderDescByCreateTime(). // 按 create_time 倒序
 		Select("cluster_id", "enable_time", "is_current").
 		All(&records)
-
 	if err != nil {
 		logger.Errorf("compose_table_id_storage_cluster_records: failed to query records for table_id->[%s], error: %v", tableID, err)
 		return nil, err
 	}
 
 	// 组装结果集
-	result := make([]map[string]interface{}, 0)
+	result := make([]map[string]any, 0)
 	for _, record := range records {
 		// 判断 enable_time 是否为 nil，转换为 Unix 时间戳
 		var enableTimestamp int64
@@ -88,7 +87,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[str
 		}
 
 		// 追加到结果集合
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"storage_id":  record.ClusterID,
 			"enable_time": enableTimestamp,
 		})

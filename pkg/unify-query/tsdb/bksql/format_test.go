@@ -111,7 +111,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 75000) AS INT) * 75000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `level` ASC",
+			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 75000) AS INT) * 75000 - 0) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `level` ASC",
 		},
 		"doris sum-with-promql-1": {
 			query: &metadata.Query{
@@ -219,9 +219,10 @@ func TestNewSqlFactory(t *testing.T) {
 				Field:       "__ext.container_id",
 				Aggregates: metadata.Aggregates{
 					{
-						Name:     "count",
-						Window:   time.Hour * 24,
-						TimeZone: "Asia/Shanghai",
+						Name:           "count",
+						Window:         time.Hour * 24,
+						TimeZone:       "Asia/Shanghai",
+						TimeZoneOffset: (time.Hour * -8).Milliseconds(),
 					},
 				},
 			},
@@ -383,7 +384,7 @@ func TestWindowWithTimezone(t *testing.T) {
 			nTime1 := (cTime + offset) - (cTime+offset)%window - offset
 			nTime2 := (cTime+offset)/window*window - offset
 
-			var milliUnixToString = func(milliUnix int64) string {
+			milliUnixToString := func(milliUnix int64) string {
 				return time.UnixMilli(milliUnix).In(loc).String()
 			}
 
@@ -418,7 +419,7 @@ func TestTimeZone(t *testing.T) {
 
 		st := time.Date(2025, 3, 18, 0, 0, 0, 0, time.UTC)
 		for i := 0; i < 50; i++ {
-			//milli := (st.UnixMilli() + offset) - (st.UnixMilli()+offset)%window - offset
+			// milli := (st.UnixMilli() + offset) - (st.UnixMilli()+offset)%window - offset
 			milli := (st.UnixMilli())/window*window - offset
 			ct := st.In(loc).String()
 			ot := time.UnixMilli(milli).In(loc).String()
@@ -685,5 +686,4 @@ UTC
 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 `)
-
 }

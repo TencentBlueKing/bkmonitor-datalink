@@ -38,9 +38,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var (
-		err error
-	)
+	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}

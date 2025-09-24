@@ -17,7 +17,6 @@ import (
 
 // TestNewWhereList
 func TestNewWhereList(t *testing.T) {
-
 	conditions := [][]ConditionField{
 		{
 			{
@@ -62,5 +61,4 @@ func TestNewWhereList(t *testing.T) {
 
 	executed := `(("database"!~/aaa/ and (("tag"='3' or "tag"='4') and ("user"='5' or "user"='6'))) or (("name"='7' or "name"='8') and (test1='9' or test1='10'))) or "database" = 'database' and "tag" != 'tag' and "name" =~ /name/ and test2 =~ /abcdefg.*/ and time >= 0 and time < 10000`
 	assert.Equal(t, executed, whereList.String())
-
 }

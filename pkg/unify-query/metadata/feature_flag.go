@@ -103,9 +103,7 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 }
 
 func GetIsK8sFeatureFlag(ctx context.Context) bool {
-	var (
-		user = GetUser(ctx)
-	)
+	user := GetUser(ctx)
 
 	// 特性开关只有指定空间才启用 vm 查询
 	ffUser := featureFlag.FFUser(user.HashID, map[string]any{

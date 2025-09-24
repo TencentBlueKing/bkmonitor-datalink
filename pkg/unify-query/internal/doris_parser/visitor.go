@@ -99,10 +99,24 @@ func (v *Statement) String() string {
 				if len(v.Tables) == 1 {
 					res = v.Tables[0]
 				} else {
-					res = fmt.Sprintf("(%s)", strings.Join(v.Tables, " UNION ALL "))
+					stmts := make([]string, 0, len(v.Tables))
+					for _, t := range v.Tables {
+						s := fmt.Sprintf("SELECT * FROM %s", t)
+						if v.Where != "" {
+							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
+						}
+						stmts = append(stmts, s)
+					}
+					res = fmt.Sprintf("(%s) AS combined_data", strings.Join(stmts, " UNION ALL "))
+					v.Where = ""
 				}
 			}
 		case WhereItem:
+			// 清空 where 条件
+			if len(v.Tables) > 1 {
+				res = ""
+			}
+
 			if v.Where != "" {
 				if res == "" {
 					res = v.Where

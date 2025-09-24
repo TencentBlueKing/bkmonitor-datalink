@@ -481,19 +481,29 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 
+	whereString, err := f.BuildWhere()
+	span.Set("where-string", whereString)
+
 	if len(f.Tables()) > 0 {
 		var table string
 		if len(f.Tables()) == 1 {
 			table = f.Tables()[0]
 		} else {
-			table = fmt.Sprintf("(%s)", strings.Join(f.Tables(), " UNION ALL "))
+			stmts := make([]string, 0, len(f.Tables()))
+			for _, t := range f.Tables() {
+				s := fmt.Sprintf("SELECT * FROM %s", t)
+				if whereString != "" {
+					s = fmt.Sprintf("%s WHERE %s", s, whereString)
+				}
+				stmts = append(stmts, s)
+			}
+
+			table = fmt.Sprintf("(%s) AS combined_data", strings.Join(stmts, " UNION ALL "))
+			whereString = ""
 		}
 		sqlBuilder.WriteString(" FROM ")
 		sqlBuilder.WriteString(table)
 	}
-
-	whereString, err := f.BuildWhere()
-	span.Set("where-string", whereString)
 
 	if err != nil {
 		return sql, err

@@ -1954,6 +1954,61 @@ LIMIT
 			end:      time.UnixMilli(1752563382292),
 			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
+		{
+			name: "object field eq and aggregate with sql and union table",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: map[string]struct{}{
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis":   {},
+					"100915_bklog_pub_svrlog_pangusvr_other_9_analysis": {},
+				},
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "thedate",
+							Operator:      metadata.ConditionExisted,
+						},
+					},
+				},
+				QueryString: "",
+				SQL: `SELECT 
+    path, 
+    COUNT(*) AS total_count WHERE thedate>='20250923' AND thedate<='20250923' GROUP BY path LIMIT 100`,
+			},
+			start:    time.UnixMilli(1758607200000),
+			end:      time.UnixMilli(1758610800000),
+			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) AS combined_data GROUP BY `path` LIMIT 100",
+		},
+		{
+			name: "object field eq and aggregate with sql and union table",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: map[string]struct{}{
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis":   {},
+					"100915_bklog_pub_svrlog_pangusvr_other_9_analysis": {},
+				},
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "thedate",
+							Operator:      metadata.ConditionExisted,
+						},
+					},
+				},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"path"},
+					},
+				},
+				Size: 100,
+			},
+			start:    time.UnixMilli(1758607200000),
+			end:      time.UnixMilli(1758610800000),
+			expected: "SELECT `path`, COUNT(*) AS `_value_` FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) AS combined_data GROUP BY `path` LIMIT 100",
+		},
 	}
 
 	for _, tc := range testCases {

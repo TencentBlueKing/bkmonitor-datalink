@@ -294,7 +294,7 @@ func (d *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions)
 }
 
 func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error) {
-	if len(c.Value) == 0 {
+	if len(c.Value) == 0 && c.Operator != metadata.ConditionExisted && c.Operator != metadata.ConditionNotExisted {
 		return "", nil
 	}
 
@@ -348,6 +348,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {
+	case metadata.ConditionExisted:
+		op = "IS NOT NULL"
+	case metadata.ConditionNotExisted:
+		op = "IS NULL"
 	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
 		if len(c.Value) == 1 && c.Value[0] == "" {

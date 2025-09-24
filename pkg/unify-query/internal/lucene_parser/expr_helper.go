@@ -7,22 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package doris_parser
+package lucene_parser
 
-// https://github.com/apache/doris/tree/master/fe/fe-core/src/main/antlr4/org/apache/doris/nereids
-//go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
-//go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
+import "github.com/spf13/cast"
 
-// for lexer.g4
-var has_unclosed_bracketed_comment = false
-
-func isValidDecimal(input string) bool {
-	return true
+func getString(fieldExpr Expr) string {
+	if fieldExpr != nil {
+		if s, ok := fieldExpr.(*StringExpr); ok {
+			return s.Value
+		}
+	}
+	return Empty
 }
 
-func markUnclosedComment() {
-	has_unclosed_bracketed_comment = true
+func getValue(expr Expr) string {
+	if expr == nil {
+		return ""
+	}
+	switch e := expr.(type) {
+	case *StringExpr:
+		return e.Value
+	case *NumberExpr:
+		return cast.ToString(e.Value)
+	case *BoolExpr:
+		return cast.ToString(e.Value)
+	}
+	return ""
 }
-
-// for parser.g4
-var ansiSQLSyntax = false

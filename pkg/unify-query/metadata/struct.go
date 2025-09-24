@@ -22,7 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -219,7 +219,7 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	}
 
 	if q.QueryString != "" {
-		err := querystring_parser.LabelMap(q.QueryString, addLabel)
+		err := lucene_parser.LabelMap(q.QueryString, addLabel)
 		if err != nil {
 			return nil, err
 		}

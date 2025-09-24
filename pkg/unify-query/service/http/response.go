@@ -65,7 +65,7 @@ func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
 // ListData 数据返回格式
 type ListData struct {
 	Total              int64                       `json:"total"`
-	List               []map[string]any            `json:"list" json:"list"`
+	List               []map[string]any            `json:"list"`
 	Done               bool                        `json:"done"`
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status"`

@@ -64,12 +64,11 @@ func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
 
 // ListData 数据返回格式
 type ListData struct {
-	Total              int64                       `json:"total,omitempty"`
-	List               []map[string]any            `json:"list" json:"list,omitempty"`
+	Total              int64                       `json:"total"`
+	List               []map[string]any            `json:"list" json:"list"`
 	Done               bool                        `json:"done"`
-	Cache              bool                        `json:"cache"`
 	TraceID            string                      `json:"trace_id,omitempty"`
-	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`
+	Status             *metadata.Status            `json:"status"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 }
 

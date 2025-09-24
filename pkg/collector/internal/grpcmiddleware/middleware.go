@@ -12,7 +12,7 @@ package grpcmiddleware
 import (
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/optmap"
 )
 
 var middlewares = map[string]func(string) grpc.ServerOption{}
@@ -22,7 +22,7 @@ func Register(name string, f func(opt string) grpc.ServerOption) {
 }
 
 func Get(nameOpts string) grpc.ServerOption {
-	name, opts := utils.NameOpts(nameOpts)
+	name, opts := optmap.NameOpts(nameOpts)
 	f, ok := middlewares[name]
 	if !ok {
 		return nil

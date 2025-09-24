@@ -43,29 +43,12 @@ func TestMergeMap(t *testing.T) {
 	}
 
 	m3 := MergeMaps(m1, m2)
-	assert.True(t, reflect.DeepEqual(map[string]string{
+	expected := map[string]string{
 		"aaa": "112",
 		"bbb": "222",
 		"ccc": "333",
-	}, m3))
-}
-
-func TestMergeReplaceMaps(t *testing.T) {
-	m1 := map[string]string{
-		"aaa":   "111",
-		"bbb.x": "222",
 	}
-	m2 := map[string]string{
-		"aaa":   "112",
-		"ccc.x": "333",
-	}
-
-	m3 := MergeReplaceMaps(m1, m2)
-	assert.True(t, reflect.DeepEqual(map[string]string{
-		"aaa":   "112",
-		"bbb_x": "222",
-		"ccc_x": "333",
-	}, m3))
+	assert.Equal(t, expected, m3)
 }
 
 func TestMergeReplaceAttributeMaps(t *testing.T) {
@@ -78,14 +61,15 @@ func TestMergeReplaceAttributeMaps(t *testing.T) {
 	m2.InsertString("ccc.x", "333")
 
 	m3 := MergeReplaceAttributeMaps(m1, m2)
-	assert.True(t, reflect.DeepEqual(map[string]string{
+	expected := map[string]string{
 		"aaa":   "112",
 		"bbb_x": "222",
 		"ccc_x": "333",
-	}, m3))
+	}
+	assert.Equal(t, expected, m3)
 }
 
-func BenchmarkMergeReplaceCache(b *testing.B) {
+func BenchmarkMergeReplaceAttributeMaps(b *testing.B) {
 	m := pcommon.NewMap()
 	m.InsertString("telemetry.sdk.name", "telemetry_sdk_name")
 	m.InsertString("telemetry.sdk.version", "telemetry_sdk_version")
@@ -100,7 +84,7 @@ func BenchmarkMergeReplaceCache(b *testing.B) {
 	})
 }
 
-func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
+func BenchmarkMergeReplaceAttributeMapsWithout(b *testing.B) {
 	m := pcommon.NewMap()
 	m.InsertString("telemetry.sdk.namex", "telemetry_sdk_name")
 	m.InsertString("telemetry.sdk.versionx", "telemetry_sdk_version")
@@ -113,87 +97,4 @@ func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
 			MergeReplaceAttributeMaps(m)
 		}
 	})
-}
-
-func TestAnyMap(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected map[string]int
-	}{
-		{
-			input: `foo=1,bar=2`,
-			expected: map[string]int{
-				"foo": 1,
-				"bar": 2,
-			},
-		},
-		{
-			input: `foo=1, bar=2`,
-			expected: map[string]int{
-				"foo": 1,
-				"bar": 2,
-			},
-		},
-		{
-			input: `foo = 1, bar = 2`,
-			expected: map[string]int{
-				"foo": 1,
-				"bar": 2,
-			},
-		},
-		{
-			input: `foo=1`,
-			expected: map[string]int{
-				"foo": 1,
-			},
-		},
-		{
-			input: `foo=1,`,
-			expected: map[string]int{
-				"foo": 1,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		om := NewOptMap(tt.input)
-		for k, v := range tt.expected {
-			i, ok := om.GetInt(k)
-			assert.True(t, ok)
-			assert.Equal(t, v, i)
-		}
-	}
-}
-
-func TestNameOpts(t *testing.T) {
-	tests := []struct {
-		nameOpts string
-		name     string
-		opts     string
-	}{
-		{
-			nameOpts: "foo1",
-			name:     "foo1",
-		},
-		{
-			nameOpts: "foo1;",
-			name:     "foo1",
-		},
-		{
-			nameOpts: "foo1;k1=v1",
-			name:     "foo1",
-			opts:     "k1=v1",
-		},
-		{
-			nameOpts: "foo1;k1=v1,k2=v2",
-			name:     "foo1",
-			opts:     "k1=v1,k2=v2",
-		},
-	}
-
-	for _, tt := range tests {
-		name, opts := NameOpts(tt.nameOpts)
-		assert.Equal(t, tt.name, name)
-		assert.Equal(t, tt.opts, opts)
-	}
 }

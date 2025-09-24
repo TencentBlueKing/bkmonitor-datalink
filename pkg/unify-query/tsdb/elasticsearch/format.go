@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -148,6 +149,8 @@ type FormatFactory struct {
 
 	fieldMap map[string]map[string]any
 
+	luceneParser *lucene_parser.Parser
+
 	data map[string]any
 
 	aggInfoList aggInfoList
@@ -184,6 +187,8 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 
 func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
 	f.fieldMap = fieldMap
+	f.initLuceneParser()
+
 	return f
 }
 
@@ -204,6 +209,84 @@ func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMa
 
 	f.labelMap = newLabelMap
 	return f
+}
+
+func (f *FormatFactory) initLuceneParser() {
+	if f.fieldMap == nil {
+		return
+	}
+
+	esFieldsMap := f.buildFieldsMap()
+
+	f.luceneParser = lucene_parser.NewParser(
+		lucene_parser.WithMapping(esFieldsMap),
+	)
+}
+
+func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser.FieldOption {
+	if len(f.fieldMap) == 0 {
+		return nil
+	}
+
+	esFieldsMap := make(map[string]lucene_parser.FieldOption)
+
+	for fieldName, fieldInfo := range f.fieldMap {
+		fieldOption := f.processedMap(fieldInfo)
+		if fieldOption.Type != "" {
+			esFieldsMap[fieldName] = fieldOption
+		}
+	}
+
+	return esFieldsMap
+}
+
+func (f *FormatFactory) processedMap(fieldInfo map[string]any) lucene_parser.FieldOption {
+	fieldType := f.extractFieldTypeFromProcessed(fieldInfo)
+	analyzed := f.extractAnalyzedFromProcessed(fieldInfo)
+
+	return lucene_parser.FieldOption{
+		Type:     fieldType,
+		Analyzed: analyzed,
+	}
+}
+
+func (f *FormatFactory) extractFieldTypeFromProcessed(fieldInfo map[string]any) string {
+	if fieldType, ok := fieldInfo["field_type"].(string); ok {
+		return fieldType
+	}
+	return ""
+}
+
+func (f *FormatFactory) extractAnalyzedFromProcessed(fieldInfo map[string]any) bool {
+	if analyzed, ok := fieldInfo["is_analyzed"].(bool); ok {
+		return analyzed
+	}
+	return false
+}
+
+func (f *FormatFactory) extractFieldType(fieldMap map[string]any) string {
+	typeValue, exists := fieldMap["type"]
+	if !exists {
+		return ""
+	}
+
+	typeStr, ok := typeValue.(string)
+	if !ok {
+		return ""
+	}
+
+	return typeStr
+}
+
+func (f *FormatFactory) isFieldAnalyzed(fieldMap map[string]any, fieldType string) bool {
+	// ES 中的 text 类型通常是分析过的
+	if fieldType == "text" {
+		return true
+	}
+
+	// 检查是否明确设置了 analyzer
+	_, hasAnalyzer := fieldMap["analyzer"]
+	return hasAnalyzer
 }
 
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {

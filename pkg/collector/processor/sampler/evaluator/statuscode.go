@@ -175,7 +175,6 @@ func (e *statusCodeEvaluator) gc() {
 			e.mut.Lock()
 			for traceID, ts := range e.traces {
 				drop := now-ts > maxDuration
-				logger.Debugf("traceID=%v, now=%v, ts=%v, drop=%v", traceID, now, ts, drop)
 				if drop {
 					delete(e.traces, traceID)
 				}

@@ -548,6 +548,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			err = bkDataErr
 			return nil, bkDataErr
 		}
+		if route.DB() == "" {
+			return nil, fmt.Errorf("bkdata 的表名不能为空")
+		}
 
 		query := &metadata.Query{
 			StorageType:   consul.BkSqlStorageType,

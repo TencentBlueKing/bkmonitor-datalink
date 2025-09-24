@@ -12,7 +12,7 @@ package httpmiddleware
 import (
 	"net/http"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/optmap"
 )
 
 type MiddlewareFunc func(http.Handler) http.Handler
@@ -24,7 +24,7 @@ func Register(name string, f func(opt string) MiddlewareFunc) {
 }
 
 func Get(nameOpts string) MiddlewareFunc {
-	name, opts := utils.NameOpts(nameOpts)
+	name, opts := optmap.NameOpts(nameOpts)
 	f, ok := middlewares[name]
 	if !ok {
 		return nil

@@ -83,7 +83,6 @@ func (p *rateLimiter) Reload(config map[string]any, customized []processor.SubCo
 func (p *rateLimiter) Process(record *define.Record) (*define.Record, error) {
 	token := record.Token.Original
 	rl := p.rateLimiters.GetByToken(token).(throttle.RateLimiter)
-	logger.Debugf("ratelimiter: token [%s] max qps allowed: %f", token, rl.QPS())
 	if !rl.TryAccept() {
 		return nil, errors.Errorf("ratelimiter rejected the request, token [%s] max qps allowed: %f", token, rl.QPS())
 	}

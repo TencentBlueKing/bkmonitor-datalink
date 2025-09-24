@@ -182,7 +182,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 			}
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
+				Dimensions: utils.MergeMaps(dimensions, additional),
 				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
@@ -195,7 +195,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 		}
 		m := otMetricMapper{
 			Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
+			Dimensions: utils.MergeMaps(dimensions, map[string]string{"le": "+Inf"}),
 			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
@@ -261,7 +261,7 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rs pcom
 			}
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name(): qua.Value()},
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
+				Dimensions: utils.MergeMaps(dimensions, additional),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())

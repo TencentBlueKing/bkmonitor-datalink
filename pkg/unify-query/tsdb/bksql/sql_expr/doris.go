@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samber/lo"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -247,7 +249,13 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 	if len(selectFields) == 0 {
 		if len(d.keepColumns) > 0 {
-			selectFields = append(selectFields, d.keepColumns...)
+			selectFields = append(selectFields, lo.Map(d.keepColumns, func(item string, index int) string {
+				field, as := d.dimTransform(item)
+				if as != "" {
+					return fmt.Sprintf("%s AS `%s`", field, as)
+				}
+				return field
+			})...)
 		} else {
 			selectFields = append(selectFields, SelectAll)
 		}

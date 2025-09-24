@@ -168,6 +168,9 @@ type Query struct {
 	Collapse    *Collapse `json:"collapse,omitempty"`
 
 	DryRun bool `json:"dry_run,omitempty"`
+
+	// sql 使用SELECT DISTINCT 语法
+	IsDistinct bool `json:"is_distinct,omitempty"`
 }
 
 func (q *Query) VMExpand() *VmExpand {

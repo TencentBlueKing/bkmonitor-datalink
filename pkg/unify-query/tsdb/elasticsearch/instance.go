@@ -21,6 +21,7 @@ import (
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -262,19 +263,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	for _, order := range fact.Orders() {
 		source.Sort(order.Name, order.Ast)
 	}
-
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
 		source.Query(esQuery)
 	}
-
 	sources := fact.Source(qb.Source)
 	if len(sources) > 0 {
 		fetchSource := elastic.NewFetchSourceContext(true)
 		fetchSource.Include(sources...)
 		source.FetchSourceContext(fetchSource)
 	}
-
 	// 判断是否有聚合
 	if len(qb.Aggregates) > 0 {
 		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
@@ -289,36 +287,27 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			source.From(qb.From)
 		}
 	}
-
 	collapse := fact.Collapse(qb.Collapse)
 	if collapse != "" {
 		source.Collapse(elastic.NewCollapseBuilder(collapse))
 	}
-
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}
-
 	body, _ := source.Source()
 	if body == nil {
 		return nil, fmt.Errorf("empty query body")
 	}
-
 	qbString, _ := json.Marshal(qb)
-
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
-
 	span.Set("query-indexes", qo.indexes)
-
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
-
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
-
 	startAnalyze := time.Now()
 	client, err := i.getClient(ctx, qo.conn)
 	if err != nil {
@@ -334,7 +323,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
 				return
 			}
-
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
 				source.SearchAfter(opt.SearchAfter...)
@@ -342,7 +330,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 				return
 			}
 		}
-
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
 			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
@@ -356,7 +343,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", option.SliceIndex, option.SliceMax))
 					scroll.Slice(elastic.NewSliceQuery().Id(option.SliceIndex).Max(option.SliceMax))
 				}
-
 			}
 			res, err = scroll.Do(ctx)
 		} else {
@@ -364,15 +350,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
-
 	if err != nil {
 		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
-
 	if res.Error != nil {
 		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
 	}
-
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)
 		span.Set("hits_length", len(res.Hits.Hits))
@@ -380,10 +363,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if res.Aggregations != nil {
 		span.Set("aggregations_length", len(res.Aggregations))
 	}
-
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
-
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
@@ -820,6 +801,106 @@ func (i *Instance) QuerySeriesSet(
 	}
 
 	return i.queryWithAgg(ctx, qo, fact)
+}
+
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-names")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		return nil, fmt.Errorf("query.DB is empty")
+	}
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	ignoreLabelNames := []string{query.TimeField.Name, FieldTime, metadata.KeyDocID, metadata.KeyIndex}
+	allFieldNames := lo.Keys(fieldMap)
+
+	filteredLabelNames := lo.Filter(allFieldNames, func(fieldName string, _ int) bool {
+		return !lo.Contains(ignoreLabelNames, fieldName)
+	})
+
+	sort.Strings(filteredLabelNames)
+
+	span.Set("label-names-count", len(filteredLabelNames))
+	return filteredLabelNames, nil
+}
+
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-values")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		return nil, fmt.Errorf("query.DB is empty")
+	}
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	if err != nil {
+		return nil, err
+	}
+
+	qo := &queryOption{
+		indexes: aliases,
+		start:   start,
+		end:     end,
+		query:   query,
+		conn:    i.connect,
+	}
+
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		return nil, err
+	}
+
+	unit := metadata.GetQueryParams(ctx).TimeUnit
+	fact := NewFormatFactory(ctx).
+		WithQuery(name, query.TimeField, start, end, unit, 0).
+		WithFieldMap(fieldMap)
+
+	// 添加 exists 条件确保字段存在
+	query.AllConditions = append(query.AllConditions, []metadata.ConditionField{
+		{
+			DimensionName: name,
+			Value:         []string{},
+			Operator:      "existed",
+		},
+	})
+
+	query.Aggregates = append(query.Aggregates, metadata.Aggregate{
+		Name:       "cardinality",
+		Field:      name,
+		Dimensions: []string{name},
+		Without:    true,
+	})
+
+	searchResult, err := i.esQuery(ctx, qo, fact)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelValues []string
+	if aggs := searchResult.Aggregations; aggs != nil {
+		if terms, found := aggs.Terms(name); found {
+			labelValues = lo.FilterMap(terms.Buckets, func(bucket *elastic.AggregationBucketKeyItem, _ int) (string, bool) {
+				if bucket.Key == nil {
+					return "", false
+				}
+				if keyStr, ok := bucket.Key.(string); ok && keyStr != "" {
+					return keyStr, true
+				}
+				return "", false
+			})
+		}
+	}
+
+	sort.Strings(labelValues)
+
+	span.Set("label-values-count", len(labelValues))
+	return labelValues, nil
 }
 
 func (i *Instance) InstanceType() string {

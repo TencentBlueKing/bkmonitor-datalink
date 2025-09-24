@@ -339,7 +339,6 @@ func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatc
 
 	md := getMetaDataFromContext(ctx)
 	token, err := getTokenFromMetadata(md)
-
 	if err != nil {
 		logger.Warnf("failed to get token from context, ip=%v, error: %s", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordMetrics)

@@ -71,10 +71,10 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 		return ConditionNotRegEqual
 	default:
 		codedErr := errno.ErrQueryParseInvalidCondition().
-			WithOperation("操作符翻译").
-			WithErrorf("不支持的操作符: %s", matchType).
-			WithDetail("操作符", matchType).
-			WithSolution("使用支持的操作符：eq, ne, reg, nreg等，或检查操作符拼写")
+			WithComponent("结构化查询").
+			WithOperation("转换匹配类型到条件操作").
+			WithContext("match_type", matchType.String()).
+			WithSolution("检查标签匹配类型配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return ConditionEqual
 	}

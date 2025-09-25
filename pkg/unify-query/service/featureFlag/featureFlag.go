@@ -44,13 +44,13 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	data, err := consul.GetFeatureFlags()
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能开关").
-			WithOperation("从Consul获取功能开关").
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("功能标志服务").
+			WithOperation("从 Consul 获取功能标志").
 			WithError(err).
-			WithSolution("检查Consul连接状态和功能开关配置文件路径")
+			WithSolution("检查 Consul 连接和功能标志配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
-		return codedErr
+		return err
 	}
 	err = featureFlag.ReloadFeatureFlags(data)
 	return err
@@ -61,12 +61,12 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能开关").
-			WithOperation("重载功能开关").
+			WithComponent("功能标志服务").
+			WithOperation("重新加载功能标志").
 			WithError(err).
-			WithSolution("检查功能开关重载逻辑和配置格式有效性")
+			WithSolution("检查功能标志配置和数据格式")
 		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
+		return err
 	}
 	ch, err := consul.WatchFeatureFlags(ctx)
 	if err != nil {
@@ -78,10 +78,10 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				codedErr := errno.ErrWarningServiceDegraded().
-					WithComponent("功能开关").
-					WithOperation("重载循环退出").
-					WithDetail("说明", "服务正在关闭，功能开关服务将停止")
+				codedErr := errno.ErrConfigReloadFailed().
+					WithComponent("功能标志服务").
+					WithOperation("退出重载循环").
+					WithSolution("检查功能标志配置和服务状态")
 				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
@@ -89,10 +89,10 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
 					codedErr := errno.ErrConfigReloadFailed().
-						WithComponent("功能开关").
-						WithOperation("动态重载功能开关").
+						WithComponent("功能标志服务").
+						WithOperation("重载功能标志循环").
 						WithError(err).
-						WithSolution("检查Consul通知机制和功能开关数据格式")
+						WithSolution("检查功能标志配置和网络连接")
 					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
 			}
@@ -118,10 +118,10 @@ func (s *Service) Reload(ctx context.Context) {
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能开关").
-			WithOperation("启动功能开关循环").
+			WithComponent("功能标志服务").
+			WithOperation("启动循环重载").
 			WithError(err).
-			WithSolution("检查服务初始化状态和功能开关配置文件")
+			WithSolution("检查功能标志服务配置")
 		log.ErrorWithCodef(s.ctx, codedErr)
 		return
 	}
@@ -138,16 +138,20 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("功能开关").
-			WithOperation("处理服务错误").
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("功能标志客户端").
+			WithOperation("初始化客户端").
 			WithError(err).
-			WithSolution("检查服务整体状态")
+			WithSolution("检查功能标志客户端配置")
 		log.ErrorWithCodef(s.ctx, codedErr)
 		return
 	}
 
-	log.Infof(s.ctx, "feature flag service reloaded or start success.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("FeatureFlag").
+		WithOperation("服务启动").
+		WithContext("状态", "成功")
+	log.InfoWithCodef(s.ctx, codedInfo)
 }
 
 // Wait

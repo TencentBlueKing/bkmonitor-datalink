@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -120,7 +121,14 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	// resp, err = i.cli.QueryCtx(ctx, base.NewQuery(stmt, db, precision))
 	resp, err = i.query(ctx, db, stmt, precision, "application/json", false)
 	if err != nil {
-		log.Errorf(ctx, "inner query:%s failed,error:%s", stmt, err)
+		codedErr := errno.ErrBusinessQueryExecution().
+			WithComponent("InfluxDB实例").
+			WithOperation("执行内部查询").
+			WithContext("database", db).
+			WithContext("statement", stmt).
+			WithContext("error", err.Error()).
+			WithSolution("检查InfluxDB连接和查询语句")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -149,7 +157,13 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	for _, result := range resp.Results {
 		resultsNum++
 		if result.Err != "" {
-			log.Errorf(ctx, "query:%s get err result:%s", stmt, result.Err)
+			codedErr := errno.ErrBusinessQueryExecution().
+				WithComponent("InfluxDB实例").
+				WithOperation("处理查询结果").
+				WithContext("statement", stmt).
+				WithContext("result_error", result.Err).
+				WithSolution("检查查询语句和数据格式")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, errors.New(result.Err)
 		}
 
@@ -273,7 +287,14 @@ func (i *Instance) Query(
 	stmt = i.setLimitAndSLimit(stmt, limit, slimit)
 	resp, err = i.query(ctx, db, stmt, precision, "", true)
 	if err != nil {
-		log.Errorf(ctx, "db: %s inner query:%s failed,error:%s", db, stmt, err)
+		codedErr := errno.ErrBusinessQueryExecution().
+			WithComponent("InfluxDB实例").
+			WithOperation("执行数据库查询").
+			WithContext("database", db).
+			WithContext("statement", stmt).
+			WithContext("error", err.Error()).
+			WithSolution("检查InfluxDB数据库连接和查询语句")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -297,7 +318,13 @@ func (i *Instance) Query(
 	for _, result := range resp.Results {
 		resultNum++
 		if result.Err != "" {
-			log.Errorf(ctx, "query:%s get err result:%s", stmt, result.Err)
+			codedErr := errno.ErrBusinessQueryExecution().
+				WithComponent("InfluxDB实例").
+				WithOperation("处理查询结果错误").
+				WithContext("statement", stmt).
+				WithContext("result_error", result.Err).
+				WithSolution("检查查询语句和数据库状态")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, errors.New(result.Err)
 		}
 

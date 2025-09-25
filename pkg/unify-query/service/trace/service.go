@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -26,6 +25,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -101,11 +101,13 @@ func (s *Service) Start(ctx context.Context) {
 
 	exporter, err = otlptrace.New(ctx, client)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Trace跟踪").
-			WithOperation("创建批处理器").
-			WithError(err).
-			WithSolution("检查Trace导出器配置")
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("Trace导出器").
+			WithOperation("创建 OTLP 导出器").
+			WithContext("otlp_type", OtlpType).
+			WithContext("endpoint", strings.Join([]string{otlpHost, otlpPort}, ":")).
+			WithContext("error", err.Error()).
+			WithSolution("检查OTLP服务器连接和配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
@@ -122,20 +124,32 @@ func (s *Service) Start(ctx context.Context) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
-	log.Infof(context.TODO(), "trace exporter start success.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("Trace导出器").
+		WithOperation("服务启动").
+		WithContext("状态", "成功")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
 	s.Close()
 	s.Start(ctx)
-	log.Infof(context.TODO(), "tracing exporter reload service success.")
+	codedInfo := errno.ErrInfoConfigReload().
+		WithComponent("Trace导出器").
+		WithOperation("服务重载").
+		WithContext("状态", "成功")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }
 
 // Close
 func (s *Service) Close() {
 	if s.tracerProvider == nil {
-		log.Infof(context.TODO(), "no exporter is running, nothing will shutdown.")
+		codedInfo := errno.ErrInfoServiceShutdown().
+			WithComponent("Trace导出器").
+			WithOperation("服务关闭").
+			WithContext("状态", "无运行的导出器")
+		log.InfoWithCodef(context.TODO(), codedInfo)
 		return
 	}
 
@@ -143,15 +157,18 @@ func (s *Service) Close() {
 		defer s.wg.Done()
 		if err := tracerProvider.Shutdown(s.ctx); err != nil {
 			codedErr := errno.ErrBusinessLogicError().
-				WithComponent("Trace跟踪").
-				WithOperation("关闭导出器").
-				WithError(err).
-				WithSolution("检查导出器状态和连接")
-
+				WithComponent("Trace导出器").
+				WithOperation("关闭跟踪导出器").
+				WithContext("error", err.Error()).
+				WithSolution("检查跟踪服务器状态和连接")
 			log.ErrorWithCodef(context.TODO(), codedErr)
 		}
 
-		log.Infof(context.TODO(), "trace exporter is shutdown now.")
+		codedInfo := errno.ErrInfoServiceShutdown().
+			WithComponent("Trace导出器").
+			WithOperation("服务关闭").
+			WithContext("状态", "已关闭")
+		log.InfoWithCodef(context.TODO(), codedInfo)
 	}(s.tracerProvider)
 }
 

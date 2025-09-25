@@ -286,20 +286,22 @@ func (q *QueryTs) ToPromExpr(
 	if q.MetricMerge == "" {
 		err = fmt.Errorf("metric merge is empty")
 		codedErr := errno.ErrBusinessParamInvalid().
-			WithOperation("查询参数验证").
-			WithError(err).
-			WithSolution("检查metric_merge参数")
+			WithComponent("结构化查询").
+			WithOperation("验证指标合并配置").
+			WithContext("metric_merge", q.MetricMerge).
+			WithSolution("配置有效的指标合并表达式")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("解析指标合并配置").
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("结构化查询").
+			WithOperation("解析MetricMerge").
 			WithError(err).
-			WithDetail("配置", string(q.MetricMerge)).
-			WithSolution("检查MetricMerge配置格式")
+			WithContext("MetricMerge", string(q.MetricMerge)).
+			WithSolution("检查MetricMerge格式和语法")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -630,13 +632,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	// 时间转换格式
 	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("时间参数解析").
-			WithError(err).
-			WithDetail("开始时间", q.Start).
-			WithDetail("结束时间", q.End).
-			WithSolution("检查时间格式是否正确")
-
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("结构化查询").
+			WithOperation("时间转换格式").
+			WithContext("start", q.Start).
+			WithContext("end", q.End).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数格式")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -644,13 +646,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	// 时间对齐
 	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("时间对齐处理").
-			WithError(err).
-			WithDetail("步长", q.Step).
-			WithDetail("时区", q.Timezone).
-			WithSolution("检查Step参数和Timezone设置")
-
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("结构化查询").
+			WithOperation("时间对齐").
+			WithContext("start_time", startTime).
+			WithContext("end_time", endTime).
+			WithContext("step", q.Step).
+			WithContext("timezone", q.Timezone).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数和步长设置")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -1030,9 +1034,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		if err != nil {
 			err = errors.WithMessagef(err, "step parse error")
 			codedErr := errno.ErrBusinessParamInvalid().
-				WithOperation("查询参数解析").
-				WithError(err).
-				WithSolution("检查step参数格式")
+				WithComponent("结构化查询").
+				WithOperation("解析步长参数").
+				WithContext("step", q.Step).
+				WithContext("error", err.Error()).
+				WithSolution("检查步长参数格式是否正确")
 			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
@@ -1106,7 +1112,12 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			}
 			method := q.AggregateMethodList[methodIdx]
 			if result, err = method.ToProm(result); err != nil {
-				log.Errorf(ctx, "failed to translate function for->[%s]", err)
+				codedErr := errno.ErrBusinessQueryExecution().
+					WithComponent("结构化查询").
+					WithOperation("翻译函数").
+					WithError(err).
+					WithSolution("检查函数语法和参数")
+				log.ErrorWithCodef(ctx, codedErr)
 				return nil, err
 			}
 		}

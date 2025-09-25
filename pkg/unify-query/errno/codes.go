@@ -41,9 +41,32 @@ var errorDefinitions = map[string]ErrorDefinition{
 	"ErrBusinessQueryExecution": {"BL003", "业务查询执行失败", "业务逻辑"},
 
 	// 警告类错误 (Warning - WN)
-	"ErrWarningConfigDegraded":  {"WN001", "配置降级处理", "警告"},
-	"ErrWarningDataIncomplete":  {"WN002", "数据不完整", "警告"},
-	"ErrWarningServiceDegraded": {"WN003", "服务降级", "警告"},
+	"ErrWarningConfigDegraded":    {"WN001", "配置降级处理", "警告"},
+	"ErrWarningDataIncomplete":    {"WN002", "数据不完整", "警告"},
+	"ErrWarningServiceDegraded":   {"WN003", "服务降级", "警告"},
+	"ErrWarningQueryOptimization": {"WN004", "查询优化警告", "警告"},
+	"ErrWarningDataMissing":       {"WN005", "数据缺失警告", "警告"},
+	"ErrWarningConnectionFail":    {"WN006", "连接失败警告", "警告"},
+	"ErrWarningConfigMissing":     {"WN007", "配置缺失警告", "警告"},
+	"ErrWarningOperationFail":     {"WN008", "操作失败警告", "警告"},
+	"ErrWarningServiceLoop":       {"WN009", "服务循环退出", "警告"},
+	"ErrWarningNotSupported":      {"WN010", "功能不支持", "警告"},
+
+	// 信息类错误 (Information - IN)
+	"ErrInfoServiceReady":    {"IN001", "服务就绪", "信息"},
+	"ErrInfoQueryRequest":    {"IN002", "查询请求", "信息"},
+	"ErrInfoServiceStart":    {"IN003", "服务启动", "信息"},
+	"ErrInfoServiceShutdown": {"IN004", "服务关闭", "信息"},
+	"ErrInfoQueryExecution":  {"IN005", "查询执行", "信息"},
+	"ErrInfoCacheOperation":  {"IN006", "缓存操作", "信息"},
+	"ErrInfoConfigReload":    {"IN007", "配置重载", "信息"},
+	"ErrInfoAPICall":         {"IN008", "API调用", "信息"},
+	"ErrInfoDataOperation":   {"IN009", "数据操作", "信息"},
+	"ErrInfoRouterOperation": {"IN010", "路由操作", "信息"},
+
+	// 数据路由类错误 (Data Routing - DR)
+	"ErrDataRoutingFailed":     {"DR001", "数据路由失败", "数据路由"},
+	"ErrDataRoutingConnFailed": {"DR002", "路由连接失败", "数据路由"},
 }
 
 func newError(name string) *ErrCode {
@@ -55,18 +78,70 @@ func newError(name string) *ErrCode {
 	return NewErrCode(def.Code, def.Message, def.Category)
 }
 
-func ErrQueryParseInvalidSQL() *ErrCode       { return newError("ErrQueryParseInvalidSQL") }
-func ErrQueryParseInvalidPromQL() *ErrCode    { return newError("ErrQueryParseInvalidPromQL") }
-func ErrQueryParseInvalidField() *ErrCode     { return newError("ErrQueryParseInvalidField") }
+func ErrQueryParseInvalidSQL() *ErrCode { return newError("ErrQueryParseInvalidSQL") }
+
+func ErrQueryParseInvalidPromQL() *ErrCode { return newError("ErrQueryParseInvalidPromQL") }
+
+func ErrQueryParseInvalidField() *ErrCode { return newError("ErrQueryParseInvalidField") }
+
 func ErrQueryParseInvalidCondition() *ErrCode { return newError("ErrQueryParseInvalidCondition") }
-func ErrStorageConnFailed() *ErrCode          { return newError("ErrStorageConnFailed") }
-func ErrDataProcessFailed() *ErrCode          { return newError("ErrDataProcessFailed") }
-func ErrDataFormatInvalid() *ErrCode          { return newError("ErrDataFormatInvalid") }
-func ErrDataDeserializeFailed() *ErrCode      { return newError("ErrDataDeserializeFailed") }
-func ErrConfigReloadFailed() *ErrCode         { return newError("ErrConfigReloadFailed") }
-func ErrBusinessParamInvalid() *ErrCode       { return newError("ErrBusinessParamInvalid") }
-func ErrBusinessLogicError() *ErrCode         { return newError("ErrBusinessLogicError") }
-func ErrBusinessQueryExecution() *ErrCode     { return newError("ErrBusinessQueryExecution") }
-func ErrWarningConfigDegraded() *ErrCode      { return newError("ErrWarningConfigDegraded") }
-func ErrWarningDataIncomplete() *ErrCode      { return newError("ErrWarningDataIncomplete") }
-func ErrWarningServiceDegraded() *ErrCode     { return newError("ErrWarningServiceDegraded") }
+
+func ErrStorageConnFailed() *ErrCode { return newError("ErrStorageConnFailed") }
+
+func ErrDataProcessFailed() *ErrCode { return newError("ErrDataProcessFailed") }
+
+func ErrDataFormatInvalid() *ErrCode { return newError("ErrDataFormatInvalid") }
+
+func ErrDataDeserializeFailed() *ErrCode { return newError("ErrDataDeserializeFailed") }
+
+func ErrConfigReloadFailed() *ErrCode { return newError("ErrConfigReloadFailed") }
+
+func ErrBusinessParamInvalid() *ErrCode { return newError("ErrBusinessParamInvalid") }
+
+func ErrBusinessLogicError() *ErrCode { return newError("ErrBusinessLogicError") }
+
+func ErrBusinessQueryExecution() *ErrCode { return newError("ErrBusinessQueryExecution") }
+
+func ErrWarningConfigDegraded() *ErrCode { return newError("ErrWarningConfigDegraded") }
+
+func ErrWarningDataIncomplete() *ErrCode { return newError("ErrWarningDataIncomplete") }
+
+func ErrWarningServiceDegraded() *ErrCode { return newError("ErrWarningServiceDegraded") }
+
+func ErrWarningQueryOptimization() *ErrCode { return newError("ErrWarningQueryOptimization") }
+
+func ErrInfoServiceReady() *ErrCode { return newError("ErrInfoServiceReady") }
+
+func ErrInfoQueryRequest() *ErrCode { return newError("ErrInfoQueryRequest") }
+
+func ErrInfoServiceStart() *ErrCode { return newError("ErrInfoServiceStart") }
+
+func ErrInfoServiceShutdown() *ErrCode { return newError("ErrInfoServiceShutdown") }
+
+func ErrInfoQueryExecution() *ErrCode { return newError("ErrInfoQueryExecution") }
+
+func ErrInfoCacheOperation() *ErrCode { return newError("ErrInfoCacheOperation") }
+
+func ErrInfoConfigReload() *ErrCode { return newError("ErrInfoConfigReload") }
+
+func ErrInfoAPICall() *ErrCode { return newError("ErrInfoAPICall") }
+
+func ErrInfoDataOperation() *ErrCode { return newError("ErrInfoDataOperation") }
+
+func ErrWarningDataMissing() *ErrCode { return newError("ErrWarningDataMissing") }
+
+func ErrWarningConnectionFail() *ErrCode { return newError("ErrWarningConnectionFail") }
+
+func ErrWarningConfigMissing() *ErrCode { return newError("ErrWarningConfigMissing") }
+
+func ErrWarningOperationFail() *ErrCode { return newError("ErrWarningOperationFail") }
+
+func ErrWarningServiceLoop() *ErrCode { return newError("ErrWarningServiceLoop") }
+
+func ErrWarningNotSupported() *ErrCode { return newError("ErrWarningNotSupported") }
+
+func ErrInfoRouterOperation() *ErrCode { return newError("ErrInfoRouterOperation") }
+
+func ErrDataRoutingFailed() *ErrCode { return newError("ErrDataRoutingFailed") }
+
+func ErrDataRoutingConnFailed() *ErrCode { return newError("ErrDataRoutingConnFailed") }

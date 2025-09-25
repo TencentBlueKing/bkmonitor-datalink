@@ -19,6 +19,7 @@ import (
 
 	"github.com/jarcoal/httpmock"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -217,7 +218,13 @@ func mockElasticSearchHandler(ctx context.Context) {
 		d, ok := Es.Get(string(body))
 		if !ok {
 			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrBusinessLogicError().
+				WithComponent("ElasticSearch Mock处理器").
+				WithOperation("获取Mock数据").
+				WithContext("request_body", string(body)).
+				WithContext("error", err.Error()).
+				WithSolution("检查ElasticSearch Mock数据是否已正确设置")
+			log.ErrorWithCodef(ctx, codedErr)
 			return w, err
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
@@ -298,7 +305,13 @@ func mockBKBaseHandler(ctx context.Context) {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
 				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrBusinessLogicError().
+					WithComponent("BkSQL Mock处理器").
+					WithOperation("获取Mock数据").
+					WithContext("sql", request.Sql).
+					WithContext("error", err.Error()).
+					WithSolution("检查BkSQL Mock数据是否已正确设置")
+				log.ErrorWithCodef(ctx, codedErr)
 				return w, err
 			}
 			switch t := d.(type) {

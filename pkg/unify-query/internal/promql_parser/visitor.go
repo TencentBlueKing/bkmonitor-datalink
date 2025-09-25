@@ -17,6 +17,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -108,7 +109,13 @@ func (g *GroupNode) Matchers() []*labels.Matcher {
 	if g.metricName != "" {
 		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, g.metricName)
 		if err != nil {
-			log.Errorf(context.TODO(), "failed to create metric name matcher: %v", err)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("PromQL解析器").
+				WithOperation("创建指标名匹配器").
+				WithContext("metric_name", g.metricName).
+				WithContext("error", err.Error()).
+				WithSolution("检查指标名的格式和合法性")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 		} else {
 			result = append(result, matcher)
 		}
@@ -157,7 +164,15 @@ func (m *MatcherNode) Matchers() []*labels.Matcher {
 	if m.labelName != "" && m.value != "" {
 		matcher, err := labels.NewMatcher(operatorFromString(m.operator), m.labelName, m.value)
 		if err != nil {
-			log.Errorf(context.TODO(), "failed to create label matcher: %v", err)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("PromQL解析器").
+				WithOperation("创建标签匹配器").
+				WithContext("label_name", m.labelName).
+				WithContext("operator", m.operator).
+				WithContext("value", m.value).
+				WithContext("error", err.Error()).
+				WithSolution("检查标签匹配规则的语法")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			return nil
 		}
 		return []*labels.Matcher{matcher}

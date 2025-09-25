@@ -17,9 +17,9 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 )
 
 // Service 服务侧初始化
@@ -46,11 +46,11 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadStorage() error {
 	newData, err := consul.GetESStorageInfo()
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("从Consul获取存储信息").
-			WithError(err).
-			WithSolution("检查Consul连接和ES存储配置")
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("ES存储服务").
+			WithOperation("从CONSUL获取存储信息").
+			WithContext("error", err.Error()).
+			WithSolution("检查CONSUL连接和配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
@@ -71,10 +71,10 @@ func (s *Service) reloadStorage() error {
 	err = es.ReloadStorage(infos)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
+			WithComponent("ES存储服务").
 			WithOperation("重载存储配置").
-			WithError(err).
-			WithSolution("检查ES集群状态和配置参数")
+			WithContext("error", err.Error()).
+			WithSolution("检查ES存储配置格式")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
@@ -86,10 +86,10 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 	err := s.reloadStorage()
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("循环重载存储").
-			WithError(err).
-			WithSolution("检查存储重载逻辑")
+			WithComponent("ES存储服务").
+			WithOperation("重载存储").
+			WithContext("error", err.Error()).
+			WithSolution("检查存储配置和连接")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
@@ -103,16 +103,20 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "storage reload loop exit")
+				codedErr := errno.ErrConfigReloadFailed().
+					WithComponent("ES存储服务").
+					WithOperation("退出存储重载循环").
+					WithSolution("检查ES存储配置和服务状态")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get storage info changed notify")
 				err = s.reloadStorage()
 				if err != nil {
 					codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("动态重载存储").
-			WithError(err).
+						WithComponent("Elasticsearch").
+						WithOperation("动态重载存储").
+						WithError(err).
 						WithSolution("检查Consul通知和存储连接")
 					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
@@ -127,11 +131,11 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 func (s *Service) reloadTableInfo() error {
 	newData, err := consul.GetESTableInfo()
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("从Consul获取表信息").
-			WithError(err).
-			WithSolution("检查Consul连接和ES表配置")
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("ES表服务").
+			WithOperation("从CONSUL获取表信息").
+			WithContext("error", err.Error()).
+			WithSolution("检查CONSUL连接和配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
@@ -152,9 +156,9 @@ func (s *Service) reloadTableInfo() error {
 	err = es.ReloadTableInfo(infos)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("重载表信息").
-			WithError(err).
+			WithComponent("ES表服务").
+			WithOperation("重载表配置").
+			WithContext("error", err.Error()).
 			WithSolution("检查ES表配置格式")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
@@ -167,10 +171,10 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 	err := s.reloadTableInfo()
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("循环重载表信息").
-			WithError(err).
-			WithSolution("检查表信息重载逻辑")
+			WithComponent("ES表服务").
+			WithOperation("重载表信息").
+			WithContext("error", err.Error()).
+			WithSolution("检查表配置和连接")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
@@ -184,16 +188,20 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "table reload loop exit")
+				codedErr := errno.ErrConfigReloadFailed().
+					WithComponent("ES表服务").
+					WithOperation("退出表重载循环").
+					WithSolution("检查ES表配置和服务状态")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get table info changed notify")
 				err1 := s.reloadTableInfo()
 				if err1 != nil {
 					codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("动态重载表信息").
-			WithError(err1).
+						WithComponent("Elasticsearch").
+						WithOperation("动态重载表信息").
+						WithError(err1).
 						WithSolution("检查Consul表信息通知")
 					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
@@ -216,7 +224,11 @@ func (s *Service) loopRefreshAliasInfo(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "alias refresh exit")
+				codedErr := errno.ErrConfigReloadFailed().
+					WithComponent("ES别名服务").
+					WithOperation("退出别名刷新循环").
+					WithSolution("检查ES别名配置和服务状态")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "ticker alarm,start refresh alias")
@@ -248,34 +260,38 @@ func (s *Service) Reload(ctx context.Context) {
 	err := s.loopReloadStorage(s.ctx)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
+			WithComponent("ES存储服务").
 			WithOperation("启动存储重载循环").
-			WithError(err).
-			WithSolution("检查服务初始化逻辑")
+			WithContext("error", err.Error()).
+			WithSolution("检查服务配置和资源")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 	err = s.loopReloadTableInfo(s.ctx)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("启动表信息重载循环").
-			WithError(err).
-			WithSolution("检查表信息重载服务")
+			WithComponent("ES表服务").
+			WithOperation("启动表重载循环").
+			WithContext("error", err.Error()).
+			WithSolution("检查表配置和资源")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 	err = s.loopRefreshAliasInfo(s.ctx)
 	if err != nil {
 		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("Elasticsearch").
+			WithComponent("ES别名服务").
 			WithOperation("启动别名刷新循环").
-			WithError(err).
-			WithSolution("检查别名刷新服务配置")
+			WithContext("error", err.Error()).
+			WithSolution("检查别名配置和资源")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
-	log.Warnf(context.TODO(), "es service reloaded or start success.")
+	codedErr := errno.ErrConfigReloadFailed().
+		WithComponent("ES服务").
+		WithOperation("服务重载或启动成功").
+		WithSolution("ES服务状态正常")
+	log.WarnWithCodef(context.TODO(), codedErr)
 }
 
 // Wait

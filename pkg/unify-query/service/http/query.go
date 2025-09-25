@@ -63,9 +63,11 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
 		err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
 		codedErr := errno.ErrBusinessParamInvalid().
-			WithOperation("查询列表验证").
-			WithError(err).
-			WithSolution(fmt.Sprintf("减少查询数量至%d以下", DefaultQueryListLimit))
+			WithComponent("HTTP查询服务").
+			WithOperation("验证查询列表长度限制").
+			WithContext("current_count", len(query.QueryList)).
+			WithContext("max_limit", DefaultQueryListLimit).
+			WithSolution("减少查询列表数量或联系管理员调整限制")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -73,9 +75,12 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
 		codedErr := errno.ErrBusinessParamInvalid().
-			WithOperation("时间参数解析").
-			WithError(err).
-			WithSolution("检查开始和结束时间格式")
+			WithComponent("HTTP查询服务").
+			WithOperation("解析查询时间戳").
+			WithContext("start", query.Start).
+			WithContext("end", query.End).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数格式是否正确")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -83,9 +88,14 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		codedErr := errno.ErrBusinessParamInvalid().
-			WithOperation("时间对齐处理").
-			WithError(err).
-			WithSolution("检查步长和时区设置")
+			WithComponent("HTTP查询服务").
+			WithOperation("对齐查询时间").
+			WithContext("start_time", startTime).
+			WithContext("end_time", endTime).
+			WithContext("step", query.Step).
+			WithContext("timezone", query.Timezone).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数和步长设置")
 		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
@@ -124,7 +134,12 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
 				if err != nil {
-					log.Errorf(ctx, "query exemplar: %s", err.Error())
+					codedErr := errno.ErrBusinessQueryExecution().
+						WithComponent("HTTP查询").
+						WithOperation("查询示例数据").
+						WithError(err).
+						WithSolution("检查查询参数和数据源")
+					log.ErrorWithCodef(ctx, codedErr)
 					continue
 				}
 				if res.Err != "" {
@@ -360,7 +375,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", qry.StorageID)
+					codedWarn := errno.ErrWarningNotSupported().
+						WithComponent("HTTP查询").
+						WithOperation("查找存储实例").
+						WithContext("存储ID", qry.StorageID).
+						WithSolution("检查存储实例配置")
+					log.WarnWithCodef(ctx, codedWarn)
 					return
 				}
 
@@ -455,7 +475,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				newQry := &metadata.Query{}
 				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
 				if err != nil {
-					log.Errorf(ctx, "copy query ts error: %s", err.Error())
+					codedErr := errno.ErrDataProcessFailed().
+						WithComponent("HTTP查询").
+						WithOperation("复制查询参数").
+						WithError(err).
+						WithSolution("检查查询参数结构和类型")
+					log.ErrorWithCodef(ctx, codedErr)
 					errCh <- err
 					return
 				}
@@ -484,7 +509,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", newQry.StorageID)
+					codedWarn := errno.ErrWarningNotSupported().
+						WithComponent("HTTP查询").
+						WithOperation("查找存储实例").
+						WithContext("存储ID", newQry.StorageID).
+						WithSolution("检查存储实例配置")
+					log.WarnWithCodef(ctx, codedWarn)
 					return
 				}
 
@@ -804,7 +834,14 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("HTTP查询服务").
+			WithOperation("解析查询时间戳").
+			WithContext("start", query.Start).
+			WithContext("end", query.End).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数格式是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -889,7 +926,12 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 
 	promQL, err := query.ToPromQL(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("HTTP查询服务").
+			WithOperation("转换查询结构为PromQL").
+			WithContext("error", err.Error()).
+			WithSolution("检查查询结构语法是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -1008,7 +1050,14 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("HTTP查询服务").
+			WithOperation("解析集群指标查询时间戳").
+			WithContext("start", query.Start).
+			WithContext("end", query.End).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数格式是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 

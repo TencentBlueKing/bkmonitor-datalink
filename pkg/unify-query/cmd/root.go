@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/consul"
@@ -63,7 +64,10 @@ var rootCmd = &cobra.Command{
 			&http.Service{},
 			&featureFlag.Service{},
 		}
-		log.Infof(ctx, "http service started.")
+		codedInfo := errno.ErrInfoServiceStart().
+			WithOperation("服务启动").
+			WithContext("服务", "HTTP")
+		log.InfoWithCodef(ctx, codedInfo)
 
 		// 注册信号（重载配置文件 & 停止）
 		signal.Notify(sc, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
@@ -72,7 +76,10 @@ var rootCmd = &cobra.Command{
 			for _, service := range serviceList {
 				service.Reload(ctx)
 			}
-			log.Infof(ctx, "reload done")
+			codedInfo := errno.ErrInfoConfigReload().
+				WithOperation("配置重载").
+				WithContext("状态", "完成")
+			log.InfoWithCodef(ctx, codedInfo)
 			switch <-sc {
 			case syscall.SIGUSR1:
 				// 触发配置重载动作

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -544,7 +545,12 @@ func TestInstance_queryReference(t *testing.T) {
 			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrBusinessQueryExecution().
+					WithComponent("ElasticSearch实例测试").
+					WithOperation("转换序列集为时间序列").
+					WithContext("error", err.Error()).
+					WithSolution("检查测试数据和序列集转换逻辑")
+				log.ErrorWithCodef(ctx, codedErr)
 				return
 			}
 

@@ -67,10 +67,10 @@ func HandleESQueryRequest(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("HTTP").
-			WithOperation("ES请求体读取").
+			WithComponent("HTTP-ES").
+			WithOperation("读取请求体").
 			WithError(err).
-			WithSolution("检查请求体大小限制和内容格式")
+			WithSolution("检查请求体格式和大小")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
@@ -79,11 +79,11 @@ func HandleESQueryRequest(c *gin.Context) {
 	var req *ESRequest
 	err = json.Unmarshal(body, &req)
 	if err != nil {
-		codedErr := errno.ErrDataFormatInvalid().
-			WithComponent("HTTP").
-			WithOperation("ES查询解析").
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP-ES").
+			WithOperation("解析请求体").
 			WithError(err).
-			WithSolution("检查JSON格式和Elasticsearch查询语法正确性")
+			WithSolution("检查JSON格式和结构")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
@@ -98,11 +98,11 @@ func HandleESQueryRequest(c *gin.Context) {
 	}
 	result, err := es.Query(params)
 	if err != nil {
-		codedErr := errno.ErrBusinessLogicError().
+		codedErr := errno.ErrBusinessQueryExecution().
 			WithComponent("Elasticsearch").
-			WithOperation("执行查询").
+			WithOperation("ES查询执行").
 			WithError(err).
-			WithSolution("检查ES集群状态、索引存在性和查询参数")
+			WithSolution("检查ES连接和查询语句")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})

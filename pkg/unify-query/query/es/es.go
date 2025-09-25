@@ -11,9 +11,11 @@ package es
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -38,12 +40,24 @@ type Params struct {
 func Query(q *Params) (string, error) {
 	info, err := es.GetStorageID(q.TableID)
 	if err != nil {
-		log.Errorf(context.TODO(), "get storage id by table id:%s failed,error:%s", q.TableID, err)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("ES查询处理器").
+			WithOperation("获取存储ID").
+			WithContext("table_id", q.TableID).
+			WithContext("error", err.Error()).
+			WithSolution("检查表ID和存储配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return "", err
 	}
 	aliases := formatAliases(info, q)
 	if len(aliases) == 0 {
-		log.Errorf(context.TODO(), "no alias found by query:%#v", q)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("ES查询处理器").
+			WithOperation("生成别名列表").
+			WithContext("table_id", q.TableID).
+			WithContext("query_params", fmt.Sprintf("%#v", q)).
+			WithSolution("检查时间范围和索引配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return "", ErrNoAliases
 	}
 	return es.SearchByStorage(info.StorageID, q.Body, aliases)

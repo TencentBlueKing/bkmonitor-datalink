@@ -129,26 +129,32 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				errCode := errno.ErrStorageConnFailed().
-					WithComponent("Consul").
-					WithOperation("取消注册检查").
+				codedErr := errno.ErrStorageConnFailed().
+					WithComponent("Consul服务注册").
+					WithOperation("注销健康检查").
+					WithError(err).
 					WithContext("检查ID", i.checkID).
-					WithError(err)
-
-				log.ErrorWithCodef(context.TODO(), errCode)
+					WithSolution("检查Consul连接和服务配置")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 			}
 			err = i.CancelService()
 			if err != nil {
 				errCode := errno.ErrStorageConnFailed().
 					WithComponent("Consul").
 					WithOperation("注销服务").
-					WithContexts(map[string]interface{}{
+					WithContexts(map[string]any{
 						"服务ID": i.serviceID,
 						"错误":   err.Error(),
 					})
 				log.ErrorWithCodef(context.TODO(), errCode)
 			}
-			log.Warnf(context.TODO(), "cancel service:%s with check:%s done", i.serviceID, i.checkID)
+			codedErr := errno.ErrConfigReloadFailed().
+				WithComponent("Consul服务注册").
+				WithOperation("取消服务和检查").
+				WithContext("服务ID", i.serviceID).
+				WithContext("检查ID", i.checkID).
+				WithSolution("Consul服务和检查已成功取消")
+			log.WarnWithCodef(context.TODO(), codedErr)
 		}()
 		defer ticker.Stop()
 
@@ -162,7 +168,7 @@ func (i *Instance) LoopAwakeService() error {
 					errCode := errno.ErrStorageConnFailed().
 						WithComponent("Consul").
 						WithOperation("健康检查通过").
-						WithContexts(map[string]interface{}{
+						WithContexts(map[string]any{
 							"检查ID": i.checkID,
 							"错误":   err.Error(),
 						})

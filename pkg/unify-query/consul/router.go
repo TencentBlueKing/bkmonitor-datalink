@@ -18,9 +18,9 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 )
 
 // MetaFieldType :
@@ -168,12 +168,12 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 		dbStr, ok := db.(string)
 		if !has || !ok {
 			codedErr := errno.ErrDataProcessFailed().
-			WithComponent("InfluxDB").
-			WithOperation("获取数据库").
-			WithErrorf("数据库不存在")
-			log.ErrorWithCodef(context.TODO(), codedErr, map[string]interface{}{
+				WithComponent("InfluxDB").
+				WithOperation("获取数据库").
+				WithErrorf("数据库不存在")
+			log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
 				"数据ID": dataID,
-				"数据库": db,
+				"数据库":  db,
 			})
 			continue
 		}
@@ -189,12 +189,12 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 			measurementStr, ok := measurement.(string)
 			if !has || !ok {
 				codedErr := errno.ErrDataProcessFailed().
-			WithComponent("InfluxDB").
-			WithOperation("获取测量表").
-			WithErrorf("测量表不存在")
-				log.ErrorWithCodef(context.TODO(), codedErr, map[string]interface{}{
+					WithComponent("InfluxDB").
+					WithOperation("获取测量表").
+					WithErrorf("测量表不存在")
+				log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
 					"数据ID": dataID,
-					"测量表": measurement,
+					"测量表":  measurement,
 				})
 				continue
 			}
@@ -278,8 +278,8 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 		err = json.Unmarshal(kvPair.Value, &pipeConf)
 		if err != nil {
 			codedErr := errno.ErrDataDeserializeFailed().
-			WithOperation("管道配置反序列化").
-			WithError(err)
+				WithOperation("管道配置反序列化").
+				WithError(err)
 			log.ErrorWithCodef(context.TODO(), codedErr)
 			continue
 		}
@@ -409,10 +409,10 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		dataid, err := strconv.Atoi(items[0])
 		if err != nil {
 			codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Consul").
-			WithOperation("DataID解析").
-			WithError(err)
-			log.ErrorWithCodef(context.TODO(), codedErr, map[string]interface{}{
+				WithComponent("Consul").
+				WithOperation("DataID解析").
+				WithError(err)
+			log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
 				"DataID": items[0],
 			})
 			continue
@@ -420,10 +420,10 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		metrics := make([]string, 0)
 		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
 			codedErr := errno.ErrWarningDataIncomplete().
-			WithComponent("Consul").
-			WithOperation("DataID指标反序列化").
-			WithError(err)
-			log.WarnWithCodef(context.TODO(), codedErr, map[string]interface{}{
+				WithComponent("Consul").
+				WithOperation("DataID指标反序列化").
+				WithError(err)
+			log.WarnWithCodef(context.TODO(), codedErr, map[string]any{
 				"指标数据": string(kv.Value),
 			})
 			continue

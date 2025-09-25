@@ -55,14 +55,12 @@ func SetInstance(ctx context.Context, serviceName string, options *goRedis.Unive
 	log.Debugf(ctx, "[redis] set instance %s, %+v", serviceName, options)
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
-		errCode := errno.ErrStorageConnFailed().
+		codedErr := errno.ErrStorageConnFailed().
 			WithComponent("Redis").
 			WithOperation("创建实例").
-			WithContext("服务", serviceName).
-			WithSolution("检查 Redis 配置是否正确，网络是否通畅").
-			WithError(err)
-
-		log.ErrorWithCodef(ctx, errCode)
+			WithError(err).
+			WithSolution("检查Redis连接配置和网络")
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 	return err
 }

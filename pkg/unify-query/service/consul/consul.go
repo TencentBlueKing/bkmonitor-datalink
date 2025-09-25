@@ -54,25 +54,33 @@ func (s *Service) Reload(ctx context.Context) {
 	)
 	if err != nil {
 		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Consul").
-			WithOperation("初始化服务实例").
-			WithError(err).
-			WithSolution("检查Consul服务器地址、网络连接和认证配置")
+			WithComponent("Consul服务").
+			WithOperation("初始化Consul实例").
+			WithContext("service_name", ServiceName).
+			WithContext("address", Address).
+			WithContext("http_address", HTTPAddress).
+			WithContext("error", err.Error()).
+			WithSolution("检查Consul服务器连接配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 	err = consul.LoopAwakeService()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Consul").
-			WithOperation("启动服务心跳循环").
-			WithError(err).
-			WithSolution("检查Consul服务注册权限和心跳配置参数")
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("Consul服务").
+			WithOperation("启动服务保活循环").
+			WithContext("service_name", ServiceName).
+			WithContext("error", err.Error()).
+			WithSolution("检查Consul服务注册和保活机制")
 		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 
-	log.Warnf(context.TODO(), "consul service reloaded or start success.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("Consul").
+		WithOperation("服务启动").
+		WithContext("状态", "成功")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }
 
 // Wait

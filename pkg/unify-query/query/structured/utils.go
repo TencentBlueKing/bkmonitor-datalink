@@ -11,7 +11,6 @@ package structured
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
@@ -37,14 +36,13 @@ func getExpressionByParam(param any) (parser.Expr, error) {
 	case int:
 		return &parser.NumberLiteral{Val: float64(param.(int))}, nil
 	default:
-		codedErr := errno.ErrQueryParseInvalidField().
-			WithOperation("参数类型转换").
-			WithErrorf("未知参数类型: %#v", t).
-			WithParam(fmt.Sprintf("%T", t)).
-			WithSolution("检查参数类型是否为支持的基础类型（string, float64, bool等）")
-
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("结构化查询").
+			WithOperation("参数类型处理").
+			WithContext("未知类型", t).
+			WithSolution("检查vArg参数类型是否支持")
 		log.ErrorWithCodef(context.TODO(), codedErr)
-		return nil, codedErr
+		return nil, ErrExprNotAllow
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -440,17 +441,32 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
-	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("直接查询范围").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	log.Warnf(ctx, "%s not support direct query", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("直接查询").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	log.Warnf(ctx, "%s not support query exemplar", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("查询exemplar").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 

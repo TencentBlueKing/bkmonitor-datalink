@@ -46,16 +46,15 @@ func NewTableIDFilter(
 		return tableIDFilter, nil
 	}
 	if err != ErrEmptyTableID {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("路由管理").
-			WithOperation("搜索指标表ID").
-			WithError(err).
-			WithDetail("指标", metricName).
-			WithDetail("表ID", tableID).
-			WithSolution("检查指标与表ID的映射关系和路由配置")
-
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("表ID过滤器").
+			WithOperation("解析表ID路由").
+			WithContext("metric_name", metricName).
+			WithContext("table_id", string(tableID)).
+			WithContext("error", err.Error()).
+			WithSolution("检查表ID格式和配置")
 		log.ErrorWithCodef(context.TODO(), codedErr)
-		return nil, codedErr
+		return tableIDFilter, err
 	}
 
 	// 2. 如果tableID为空，则根据conditions获取bk_biz_id,bcs_cluster_id等，过滤出tableID
@@ -64,14 +63,14 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("字段管理").
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("表ID过滤器").
 			WithOperation("获取必需字段").
-			WithError(err).
-			WithSolution("检查必需字段定义和数据源schema配置")
-
+			WithContext("conditions", fmt.Sprintf("%+v", conditions)).
+			WithContext("error", err.Error()).
+			WithSolution("检查查询条件中的bk_biz_id等必需字段")
 		log.ErrorWithCodef(context.TODO(), codedErr)
-		return nil, codedErr
+		return tableIDFilter, err
 	}
 
 	// 必传biz_id
@@ -101,9 +100,13 @@ func NewTableIDFilter(
 
 	// DataID 查询为空不影响查询后续流程
 	if len(resultDataIDList) == 0 {
-		log.Warnf(context.TODO(),
-			"can not get tableID and dataIDList, condition:[%v] , err:[%s]", conditions, ErrEmptyTableID,
-		)
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("表ID过滤器").
+			WithOperation("获取表ID和数据IDList").
+			WithError(ErrEmptyTableID).
+			WithContext("条件", conditions).
+			WithSolution("检查查询条件和表配置")
+		log.WarnWithCodef(context.TODO(), codedErr)
 	}
 	tableIDFilter.dataIDList = resultDataIDList
 	return tableIDFilter, nil

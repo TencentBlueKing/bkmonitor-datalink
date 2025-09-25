@@ -9,8 +9,7 @@
 
 package lucene_parser
 
-type Expr interface {
-}
+type Expr any
 
 type AndExpr struct {
 	Left  Expr

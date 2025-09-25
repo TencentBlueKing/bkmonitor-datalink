@@ -37,13 +37,13 @@ lexer grammar LuceneLexer;
 // https://github.com/apache/lucene/blob/main/lucene/queryparser/src/java/org/apache/lucene/queryparser/flexible/standard/parser/StandardSyntaxParser.jj
 
 // <AND:           ("AND" | "&&") >
-AND: 'AND' | '&&';
+AND: [Aa][Nn][Dd] | '&&';
 
 // <OR:            ("OR" | "||") >
-OR: 'OR' | '||';
+OR: [Oo][Rr] | '||';
 
 // <NOT:           ("NOT" | "!") >
-NOT: 'NOT' | '!';
+NOT: [Nn][Oo][Tt] | '!';
 
 // <FN_PREFIX:     ("fn:") > : Function
 FN_PREFIX: 'fn:' -> mode(F_MODE);
@@ -207,7 +207,7 @@ mode R_MODE;
 R_SKIP: WHITESPACE -> skip;
 
 // <RANGE_TO:     "TO">
-RANGE_TO: 'TO';
+RANGE_TO: [Tt][Oo];
 
 // <RANGEIN_END:  "]"> : DEFAULT
 RANGEIN_END: ']' -> mode(DEFAULT_MODE);

@@ -1,4 +1,4 @@
-// Code generated from LuceneParser.g4 by ANTLR 4.13.2. DO NOT EDIT.
+// Code generated from LuceneParser.g4 by ANTLR 4.13.1. DO NOT EDIT.
 
 package gen // LuceneParser
 import (
@@ -36,7 +36,7 @@ func luceneparserParserInit() {
 		"'<='", "'>'", "'>='", "'^'", "'~'", "", "", "", "", "'['", "'{'", "",
 		"", "", "", "'after'", "'before'", "", "'containing'", "'extend'", "'or'",
 		"", "", "", "", "", "", "", "'ordered'", "'overlapping'", "'phrase'",
-		"'unordered'", "", "'wildcard'", "'within'", "", "'TO'", "']'", "'}'",
+		"'unordered'", "", "'wildcard'", "'within'", "", "", "']'", "'}'",
 	}
 	staticData.SymbolicNames = []string{
 		"", "AND", "OR", "NOT", "FN_PREFIX", "PLUS", "MINUS", "LPAREN", "RPAREN",
@@ -56,67 +56,70 @@ func luceneparserParserInit() {
 	}
 	staticData.PredictionContextCache = antlr.NewPredictionContextCache()
 	staticData.serializedATN = []int32{
-		4, 1, 52, 142, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
+		4, 1, 52, 148, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
 		4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7,
 		10, 2, 11, 7, 11, 2, 12, 7, 12, 2, 13, 7, 13, 1, 0, 1, 0, 1, 0, 1, 1, 4,
 		1, 33, 8, 1, 11, 1, 12, 1, 34, 1, 2, 1, 2, 1, 2, 5, 2, 40, 8, 2, 10, 2,
-		12, 2, 43, 9, 2, 1, 3, 1, 3, 1, 3, 5, 3, 48, 8, 3, 10, 3, 12, 3, 51, 9,
-		3, 1, 4, 3, 4, 54, 8, 4, 1, 4, 1, 4, 1, 5, 1, 5, 1, 6, 1, 6, 1, 6, 1, 6,
-		3, 6, 64, 8, 6, 1, 6, 1, 6, 3, 6, 68, 8, 6, 3, 6, 70, 8, 6, 1, 7, 1, 7,
-		3, 7, 74, 8, 7, 1, 7, 1, 7, 1, 7, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 83, 8,
-		8, 1, 8, 1, 8, 1, 8, 3, 8, 88, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 93, 8, 8,
-		1, 8, 1, 8, 1, 8, 3, 8, 98, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 103, 8, 8, 3,
-		8, 105, 8, 8, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 111, 8, 8, 5, 8, 113, 8, 8,
-		10, 8, 12, 8, 116, 9, 8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 123, 8, 9,
-		1, 10, 1, 10, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 12, 1, 12, 1,
-		12, 3, 12, 136, 8, 12, 1, 13, 1, 13, 3, 13, 140, 8, 13, 1, 13, 0, 1, 16,
-		14, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 3, 3,
-		5, 6, 1, 0, 9, 10, 1, 0, 11, 14, 1, 0, 17, 19, 1, 0, 21, 22, 2, 0, 48,
-		48, 51, 52, 1, 0, 49, 50, 149, 0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0, 0, 4,
-		36, 1, 0, 0, 0, 6, 44, 1, 0, 0, 0, 8, 53, 1, 0, 0, 0, 10, 57, 1, 0, 0,
-		0, 12, 69, 1, 0, 0, 0, 14, 71, 1, 0, 0, 0, 16, 104, 1, 0, 0, 0, 18, 117,
-		1, 0, 0, 0, 20, 124, 1, 0, 0, 0, 22, 126, 1, 0, 0, 0, 24, 132, 1, 0, 0,
-		0, 26, 137, 1, 0, 0, 0, 28, 29, 3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30, 1,
-		1, 0, 0, 0, 31, 33, 3, 4, 2, 0, 32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0,
-		34, 32, 1, 0, 0, 0, 34, 35, 1, 0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3, 6,
-		3, 0, 37, 38, 5, 2, 0, 0, 38, 40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40, 43,
-		1, 0, 0, 0, 41, 39, 1, 0, 0, 0, 41, 42, 1, 0, 0, 0, 42, 5, 1, 0, 0, 0,
-		43, 41, 1, 0, 0, 0, 44, 49, 3, 8, 4, 0, 45, 46, 5, 1, 0, 0, 46, 48, 3,
-		8, 4, 0, 47, 45, 1, 0, 0, 0, 48, 51, 1, 0, 0, 0, 49, 47, 1, 0, 0, 0, 49,
-		50, 1, 0, 0, 0, 50, 7, 1, 0, 0, 0, 51, 49, 1, 0, 0, 0, 52, 54, 3, 10, 5,
-		0, 53, 52, 1, 0, 0, 0, 53, 54, 1, 0, 0, 0, 54, 55, 1, 0, 0, 0, 55, 56,
-		3, 12, 6, 0, 56, 9, 1, 0, 0, 0, 57, 58, 7, 0, 0, 0, 58, 11, 1, 0, 0, 0,
-		59, 70, 3, 14, 7, 0, 60, 61, 3, 20, 10, 0, 61, 62, 7, 1, 0, 0, 62, 64,
-		1, 0, 0, 0, 63, 60, 1, 0, 0, 0, 63, 64, 1, 0, 0, 0, 64, 67, 1, 0, 0, 0,
-		65, 68, 3, 16, 8, 0, 66, 68, 3, 18, 9, 0, 67, 65, 1, 0, 0, 0, 67, 66, 1,
-		0, 0, 0, 68, 70, 1, 0, 0, 0, 69, 59, 1, 0, 0, 0, 69, 63, 1, 0, 0, 0, 70,
-		13, 1, 0, 0, 0, 71, 73, 3, 20, 10, 0, 72, 74, 5, 9, 0, 0, 73, 72, 1, 0,
-		0, 0, 73, 74, 1, 0, 0, 0, 74, 75, 1, 0, 0, 0, 75, 76, 7, 2, 0, 0, 76, 77,
-		7, 3, 0, 0, 77, 15, 1, 0, 0, 0, 78, 79, 6, 8, -1, 0, 79, 82, 5, 20, 0,
-		0, 80, 81, 5, 15, 0, 0, 81, 83, 5, 18, 0, 0, 82, 80, 1, 0, 0, 0, 82, 83,
-		1, 0, 0, 0, 83, 105, 1, 0, 0, 0, 84, 87, 3, 22, 11, 0, 85, 86, 5, 15, 0,
-		0, 86, 88, 5, 18, 0, 0, 87, 85, 1, 0, 0, 0, 87, 88, 1, 0, 0, 0, 88, 105,
-		1, 0, 0, 0, 89, 92, 3, 24, 12, 0, 90, 91, 5, 15, 0, 0, 91, 93, 5, 18, 0,
-		0, 92, 90, 1, 0, 0, 0, 92, 93, 1, 0, 0, 0, 93, 105, 1, 0, 0, 0, 94, 97,
-		5, 18, 0, 0, 95, 96, 5, 15, 0, 0, 96, 98, 5, 18, 0, 0, 97, 95, 1, 0, 0,
-		0, 97, 98, 1, 0, 0, 0, 98, 105, 1, 0, 0, 0, 99, 102, 5, 19, 0, 0, 100,
-		101, 5, 15, 0, 0, 101, 103, 5, 18, 0, 0, 102, 100, 1, 0, 0, 0, 102, 103,
-		1, 0, 0, 0, 103, 105, 1, 0, 0, 0, 104, 78, 1, 0, 0, 0, 104, 84, 1, 0, 0,
-		0, 104, 89, 1, 0, 0, 0, 104, 94, 1, 0, 0, 0, 104, 99, 1, 0, 0, 0, 105,
-		114, 1, 0, 0, 0, 106, 107, 10, 6, 0, 0, 107, 110, 3, 26, 13, 0, 108, 109,
-		5, 15, 0, 0, 109, 111, 5, 18, 0, 0, 110, 108, 1, 0, 0, 0, 110, 111, 1,
-		0, 0, 0, 111, 113, 1, 0, 0, 0, 112, 106, 1, 0, 0, 0, 113, 116, 1, 0, 0,
-		0, 114, 112, 1, 0, 0, 0, 114, 115, 1, 0, 0, 0, 115, 17, 1, 0, 0, 0, 116,
-		114, 1, 0, 0, 0, 117, 118, 5, 7, 0, 0, 118, 119, 3, 2, 1, 0, 119, 122,
-		5, 8, 0, 0, 120, 121, 5, 15, 0, 0, 121, 123, 5, 18, 0, 0, 122, 120, 1,
-		0, 0, 0, 122, 123, 1, 0, 0, 0, 123, 19, 1, 0, 0, 0, 124, 125, 5, 19, 0,
-		0, 125, 21, 1, 0, 0, 0, 126, 127, 7, 4, 0, 0, 127, 128, 7, 5, 0, 0, 128,
-		129, 5, 48, 0, 0, 129, 130, 7, 5, 0, 0, 130, 131, 7, 6, 0, 0, 131, 23,
-		1, 0, 0, 0, 132, 135, 5, 17, 0, 0, 133, 134, 5, 15, 0, 0, 134, 136, 5,
-		18, 0, 0, 135, 133, 1, 0, 0, 0, 135, 136, 1, 0, 0, 0, 136, 25, 1, 0, 0,
-		0, 137, 139, 5, 16, 0, 0, 138, 140, 5, 18, 0, 0, 139, 138, 1, 0, 0, 0,
-		139, 140, 1, 0, 0, 0, 140, 27, 1, 0, 0, 0, 19, 34, 41, 49, 53, 63, 67,
-		69, 73, 82, 87, 92, 97, 102, 104, 110, 114, 122, 135, 139,
+		12, 2, 43, 9, 2, 1, 2, 3, 2, 46, 8, 2, 1, 3, 1, 3, 1, 3, 5, 3, 51, 8, 3,
+		10, 3, 12, 3, 54, 9, 3, 1, 3, 3, 3, 57, 8, 3, 1, 4, 3, 4, 60, 8, 4, 1,
+		4, 1, 4, 1, 5, 1, 5, 1, 6, 1, 6, 1, 6, 1, 6, 3, 6, 70, 8, 6, 1, 6, 1, 6,
+		3, 6, 74, 8, 6, 3, 6, 76, 8, 6, 1, 7, 1, 7, 3, 7, 80, 8, 7, 1, 7, 1, 7,
+		1, 7, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 89, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 94,
+		8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 99, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 104, 8,
+		8, 1, 8, 1, 8, 1, 8, 3, 8, 109, 8, 8, 3, 8, 111, 8, 8, 1, 8, 1, 8, 1, 8,
+		1, 8, 3, 8, 117, 8, 8, 5, 8, 119, 8, 8, 10, 8, 12, 8, 122, 9, 8, 1, 9,
+		1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 129, 8, 9, 1, 10, 1, 10, 1, 11, 1, 11, 1,
+		11, 1, 11, 1, 11, 1, 11, 1, 12, 1, 12, 1, 12, 3, 12, 142, 8, 12, 1, 13,
+		1, 13, 3, 13, 146, 8, 13, 1, 13, 0, 1, 16, 14, 0, 2, 4, 6, 8, 10, 12, 14,
+		16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 3, 3, 5, 6, 1, 0, 9, 10, 1, 0, 11,
+		14, 1, 0, 17, 19, 1, 0, 21, 22, 2, 0, 48, 48, 51, 52, 1, 0, 49, 50, 157,
+		0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0, 0, 4, 36, 1, 0, 0, 0, 6, 47, 1, 0, 0,
+		0, 8, 59, 1, 0, 0, 0, 10, 63, 1, 0, 0, 0, 12, 75, 1, 0, 0, 0, 14, 77, 1,
+		0, 0, 0, 16, 110, 1, 0, 0, 0, 18, 123, 1, 0, 0, 0, 20, 130, 1, 0, 0, 0,
+		22, 132, 1, 0, 0, 0, 24, 138, 1, 0, 0, 0, 26, 143, 1, 0, 0, 0, 28, 29,
+		3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30, 1, 1, 0, 0, 0, 31, 33, 3, 4, 2, 0,
+		32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0, 34, 32, 1, 0, 0, 0, 34, 35, 1,
+		0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3, 6, 3, 0, 37, 38, 5, 2, 0, 0, 38,
+		40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40, 43, 1, 0, 0, 0, 41, 39, 1, 0, 0,
+		0, 41, 42, 1, 0, 0, 0, 42, 45, 1, 0, 0, 0, 43, 41, 1, 0, 0, 0, 44, 46,
+		5, 2, 0, 0, 45, 44, 1, 0, 0, 0, 45, 46, 1, 0, 0, 0, 46, 5, 1, 0, 0, 0,
+		47, 52, 3, 8, 4, 0, 48, 49, 5, 1, 0, 0, 49, 51, 3, 8, 4, 0, 50, 48, 1,
+		0, 0, 0, 51, 54, 1, 0, 0, 0, 52, 50, 1, 0, 0, 0, 52, 53, 1, 0, 0, 0, 53,
+		56, 1, 0, 0, 0, 54, 52, 1, 0, 0, 0, 55, 57, 5, 1, 0, 0, 56, 55, 1, 0, 0,
+		0, 56, 57, 1, 0, 0, 0, 57, 7, 1, 0, 0, 0, 58, 60, 3, 10, 5, 0, 59, 58,
+		1, 0, 0, 0, 59, 60, 1, 0, 0, 0, 60, 61, 1, 0, 0, 0, 61, 62, 3, 12, 6, 0,
+		62, 9, 1, 0, 0, 0, 63, 64, 7, 0, 0, 0, 64, 11, 1, 0, 0, 0, 65, 76, 3, 14,
+		7, 0, 66, 67, 3, 20, 10, 0, 67, 68, 7, 1, 0, 0, 68, 70, 1, 0, 0, 0, 69,
+		66, 1, 0, 0, 0, 69, 70, 1, 0, 0, 0, 70, 73, 1, 0, 0, 0, 71, 74, 3, 16,
+		8, 0, 72, 74, 3, 18, 9, 0, 73, 71, 1, 0, 0, 0, 73, 72, 1, 0, 0, 0, 74,
+		76, 1, 0, 0, 0, 75, 65, 1, 0, 0, 0, 75, 69, 1, 0, 0, 0, 76, 13, 1, 0, 0,
+		0, 77, 79, 3, 20, 10, 0, 78, 80, 5, 9, 0, 0, 79, 78, 1, 0, 0, 0, 79, 80,
+		1, 0, 0, 0, 80, 81, 1, 0, 0, 0, 81, 82, 7, 2, 0, 0, 82, 83, 7, 3, 0, 0,
+		83, 15, 1, 0, 0, 0, 84, 85, 6, 8, -1, 0, 85, 88, 5, 20, 0, 0, 86, 87, 5,
+		15, 0, 0, 87, 89, 5, 18, 0, 0, 88, 86, 1, 0, 0, 0, 88, 89, 1, 0, 0, 0,
+		89, 111, 1, 0, 0, 0, 90, 93, 3, 22, 11, 0, 91, 92, 5, 15, 0, 0, 92, 94,
+		5, 18, 0, 0, 93, 91, 1, 0, 0, 0, 93, 94, 1, 0, 0, 0, 94, 111, 1, 0, 0,
+		0, 95, 98, 3, 24, 12, 0, 96, 97, 5, 15, 0, 0, 97, 99, 5, 18, 0, 0, 98,
+		96, 1, 0, 0, 0, 98, 99, 1, 0, 0, 0, 99, 111, 1, 0, 0, 0, 100, 103, 5, 18,
+		0, 0, 101, 102, 5, 15, 0, 0, 102, 104, 5, 18, 0, 0, 103, 101, 1, 0, 0,
+		0, 103, 104, 1, 0, 0, 0, 104, 111, 1, 0, 0, 0, 105, 108, 5, 19, 0, 0, 106,
+		107, 5, 15, 0, 0, 107, 109, 5, 18, 0, 0, 108, 106, 1, 0, 0, 0, 108, 109,
+		1, 0, 0, 0, 109, 111, 1, 0, 0, 0, 110, 84, 1, 0, 0, 0, 110, 90, 1, 0, 0,
+		0, 110, 95, 1, 0, 0, 0, 110, 100, 1, 0, 0, 0, 110, 105, 1, 0, 0, 0, 111,
+		120, 1, 0, 0, 0, 112, 113, 10, 6, 0, 0, 113, 116, 3, 26, 13, 0, 114, 115,
+		5, 15, 0, 0, 115, 117, 5, 18, 0, 0, 116, 114, 1, 0, 0, 0, 116, 117, 1,
+		0, 0, 0, 117, 119, 1, 0, 0, 0, 118, 112, 1, 0, 0, 0, 119, 122, 1, 0, 0,
+		0, 120, 118, 1, 0, 0, 0, 120, 121, 1, 0, 0, 0, 121, 17, 1, 0, 0, 0, 122,
+		120, 1, 0, 0, 0, 123, 124, 5, 7, 0, 0, 124, 125, 3, 2, 1, 0, 125, 128,
+		5, 8, 0, 0, 126, 127, 5, 15, 0, 0, 127, 129, 5, 18, 0, 0, 128, 126, 1,
+		0, 0, 0, 128, 129, 1, 0, 0, 0, 129, 19, 1, 0, 0, 0, 130, 131, 5, 19, 0,
+		0, 131, 21, 1, 0, 0, 0, 132, 133, 7, 4, 0, 0, 133, 134, 7, 5, 0, 0, 134,
+		135, 5, 48, 0, 0, 135, 136, 7, 5, 0, 0, 136, 137, 7, 6, 0, 0, 137, 23,
+		1, 0, 0, 0, 138, 141, 5, 17, 0, 0, 139, 140, 5, 15, 0, 0, 140, 142, 5,
+		18, 0, 0, 141, 139, 1, 0, 0, 0, 141, 142, 1, 0, 0, 0, 142, 25, 1, 0, 0,
+		0, 143, 145, 5, 16, 0, 0, 144, 146, 5, 18, 0, 0, 145, 144, 1, 0, 0, 0,
+		145, 146, 1, 0, 0, 0, 146, 27, 1, 0, 0, 0, 21, 34, 41, 45, 52, 56, 59,
+		69, 73, 75, 79, 88, 93, 98, 103, 108, 110, 116, 120, 128, 141, 145,
 	}
 	deserializer := antlr.NewATNDeserializer(nil)
 	staticData.atn = deserializer.Deserialize(staticData.serializedATN)
@@ -302,7 +305,7 @@ func (s *TopLevelQueryContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TopLevelQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TopLevelQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTopLevelQuery(s)
@@ -438,7 +441,7 @@ func (s *QueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitQuery(s)
@@ -594,7 +597,7 @@ func (s *DisjQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitDisjQuery(s)
@@ -609,6 +612,8 @@ func (p *LuceneParser) DisjQuery() (localctx IDisjQueryContext) {
 	p.EnterRule(localctx, 4, LuceneParserRULE_disjQuery)
 	var _la int
 
+	var _alt int
+
 	p.EnterOuterAlt(localctx, 1)
 	{
 		p.SetState(36)
@@ -619,28 +624,53 @@ func (p *LuceneParser) DisjQuery() (localctx IDisjQueryContext) {
 	if p.HasError() {
 		goto errorExit
 	}
+	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 1, p.GetParserRuleContext())
+	if p.HasError() {
+		goto errorExit
+	}
+	for _alt != 2 && _alt != antlr.ATNInvalidAltNumber {
+		if _alt == 1 {
+			{
+				p.SetState(37)
+				p.Match(LuceneParserOR)
+				if p.HasError() {
+					// Recognition error - abort rule
+					goto errorExit
+				}
+			}
+			{
+				p.SetState(38)
+				p.ConjQuery()
+			}
+
+		}
+		p.SetState(43)
+		p.GetErrorHandler().Sync(p)
+		if p.HasError() {
+			goto errorExit
+		}
+		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 1, p.GetParserRuleContext())
+		if p.HasError() {
+			goto errorExit
+		}
+	}
+	p.SetState(45)
+	p.GetErrorHandler().Sync(p)
+	if p.HasError() {
+		goto errorExit
+	}
 	_la = p.GetTokenStream().LA(1)
 
-	for _la == LuceneParserOR {
+	if _la == LuceneParserOR {
 		{
-			p.SetState(37)
+			p.SetState(44)
 			p.Match(LuceneParserOR)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		{
-			p.SetState(38)
-			p.ConjQuery()
-		}
 
-		p.SetState(43)
-		p.GetErrorHandler().Sync(p)
-		if p.HasError() {
-			goto errorExit
-		}
-		_la = p.GetTokenStream().LA(1)
 	}
 
 errorExit:
@@ -762,7 +792,7 @@ func (s *ConjQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ConjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConjQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitConjQuery(s)
@@ -777,38 +807,65 @@ func (p *LuceneParser) ConjQuery() (localctx IConjQueryContext) {
 	p.EnterRule(localctx, 6, LuceneParserRULE_conjQuery)
 	var _la int
 
+	var _alt int
+
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(44)
+		p.SetState(47)
 		p.ModClause()
 	}
-	p.SetState(49)
+	p.SetState(52)
+	p.GetErrorHandler().Sync(p)
+	if p.HasError() {
+		goto errorExit
+	}
+	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 3, p.GetParserRuleContext())
+	if p.HasError() {
+		goto errorExit
+	}
+	for _alt != 2 && _alt != antlr.ATNInvalidAltNumber {
+		if _alt == 1 {
+			{
+				p.SetState(48)
+				p.Match(LuceneParserAND)
+				if p.HasError() {
+					// Recognition error - abort rule
+					goto errorExit
+				}
+			}
+			{
+				p.SetState(49)
+				p.ModClause()
+			}
+
+		}
+		p.SetState(54)
+		p.GetErrorHandler().Sync(p)
+		if p.HasError() {
+			goto errorExit
+		}
+		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 3, p.GetParserRuleContext())
+		if p.HasError() {
+			goto errorExit
+		}
+	}
+	p.SetState(56)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	for _la == LuceneParserAND {
+	if _la == LuceneParserAND {
 		{
-			p.SetState(45)
+			p.SetState(55)
 			p.Match(LuceneParserAND)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		{
-			p.SetState(46)
-			p.ModClause()
-		}
 
-		p.SetState(51)
-		p.GetErrorHandler().Sync(p)
-		if p.HasError() {
-			goto errorExit
-		}
-		_la = p.GetTokenStream().LA(1)
 	}
 
 errorExit:
@@ -911,7 +968,7 @@ func (s *ModClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ModClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitModClause(s)
@@ -927,7 +984,7 @@ func (p *LuceneParser) ModClause() (localctx IModClauseContext) {
 	var _la int
 
 	p.EnterOuterAlt(localctx, 1)
-	p.SetState(53)
+	p.SetState(59)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -936,13 +993,13 @@ func (p *LuceneParser) ModClause() (localctx IModClauseContext) {
 
 	if (int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&104) != 0 {
 		{
-			p.SetState(52)
+			p.SetState(58)
 			p.Modifier()
 		}
 
 	}
 	{
-		p.SetState(55)
+		p.SetState(61)
 		p.Clause()
 	}
 
@@ -1027,7 +1084,7 @@ func (s *ModifierContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ModifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitModifier(s)
@@ -1044,7 +1101,7 @@ func (p *LuceneParser) Modifier() (localctx IModifierContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(57)
+		p.SetState(63)
 		_la = p.GetTokenStream().LA(1)
 
 		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&104) != 0) {
@@ -1199,7 +1256,7 @@ func (s *ClauseContext) ToStringTree(ruleNames []string, recog antlr.Recognizer)
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitClause(s)
@@ -1214,32 +1271,32 @@ func (p *LuceneParser) Clause() (localctx IClauseContext) {
 	p.EnterRule(localctx, 12, LuceneParserRULE_clause)
 	var _la int
 
-	p.SetState(69)
+	p.SetState(75)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
 	}
 
-	switch p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 6, p.GetParserRuleContext()) {
+	switch p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 8, p.GetParserRuleContext()) {
 	case 1:
 		p.EnterOuterAlt(localctx, 1)
 		{
-			p.SetState(59)
+			p.SetState(65)
 			p.FieldRangeExpr()
 		}
 
 	case 2:
 		p.EnterOuterAlt(localctx, 2)
-		p.SetState(63)
+		p.SetState(69)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 4, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 6, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(60)
+				p.SetState(66)
 				p.FieldName()
 			}
 			{
-				p.SetState(61)
+				p.SetState(67)
 				_la = p.GetTokenStream().LA(1)
 
 				if !(_la == LuceneParserOP_COLON || _la == LuceneParserOP_EQUAL) {
@@ -1253,7 +1310,7 @@ func (p *LuceneParser) Clause() (localctx IClauseContext) {
 		} else if p.HasError() { // JIM
 			goto errorExit
 		}
-		p.SetState(67)
+		p.SetState(73)
 		p.GetErrorHandler().Sync(p)
 		if p.HasError() {
 			goto errorExit
@@ -1262,13 +1319,13 @@ func (p *LuceneParser) Clause() (localctx IClauseContext) {
 		switch p.GetTokenStream().LA(1) {
 		case LuceneParserQUOTED, LuceneParserNUMBER, LuceneParserTERM, LuceneParserREGEXPTERM, LuceneParserRANGEIN_START, LuceneParserRANGEEX_START:
 			{
-				p.SetState(65)
+				p.SetState(71)
 				p.term(0)
 			}
 
 		case LuceneParserLPAREN:
 			{
-				p.SetState(66)
+				p.SetState(72)
 				p.GroupingExpr()
 			}
 
@@ -1404,7 +1461,7 @@ func (s *FieldRangeExprContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FieldRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FieldRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFieldRangeExpr(s)
@@ -1421,10 +1478,10 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(71)
+		p.SetState(77)
 		p.FieldName()
 	}
-	p.SetState(73)
+	p.SetState(79)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -1433,7 +1490,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 
 	if _la == LuceneParserOP_COLON {
 		{
-			p.SetState(72)
+			p.SetState(78)
 			p.Match(LuceneParserOP_COLON)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -1443,7 +1500,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 
 	}
 	{
-		p.SetState(75)
+		p.SetState(81)
 		_la = p.GetTokenStream().LA(1)
 
 		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&30720) != 0) {
@@ -1454,7 +1511,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(76)
+		p.SetState(82)
 		_la = p.GetTokenStream().LA(1)
 
 		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&917504) != 0) {
@@ -1624,7 +1681,7 @@ func (s *TermContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) s
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TermContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TermContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTerm(s)
@@ -1650,7 +1707,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 	var _alt int
 
 	p.EnterOuterAlt(localctx, 1)
-	p.SetState(104)
+	p.SetState(110)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -1659,19 +1716,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 	switch p.GetTokenStream().LA(1) {
 	case LuceneParserREGEXPTERM:
 		{
-			p.SetState(79)
+			p.SetState(85)
 			p.Match(LuceneParserREGEXPTERM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(82)
+		p.SetState(88)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 8, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 10, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(80)
+				p.SetState(86)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1679,7 +1736,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(81)
+				p.SetState(87)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1693,15 +1750,15 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserRANGEIN_START, LuceneParserRANGEEX_START:
 		{
-			p.SetState(84)
+			p.SetState(90)
 			p.TermRangeExpr()
 		}
-		p.SetState(87)
+		p.SetState(93)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 9, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 11, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(85)
+				p.SetState(91)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1709,7 +1766,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(86)
+				p.SetState(92)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1723,15 +1780,15 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserQUOTED:
 		{
-			p.SetState(89)
+			p.SetState(95)
 			p.QuotedTerm()
 		}
-		p.SetState(92)
+		p.SetState(98)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 10, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 12, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(90)
+				p.SetState(96)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1739,7 +1796,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(91)
+				p.SetState(97)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1753,19 +1810,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserNUMBER:
 		{
-			p.SetState(94)
+			p.SetState(100)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(97)
+		p.SetState(103)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 11, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 13, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(95)
+				p.SetState(101)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1773,7 +1830,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(96)
+				p.SetState(102)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1787,19 +1844,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserTERM:
 		{
-			p.SetState(99)
+			p.SetState(105)
 			p.Match(LuceneParserTERM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(102)
+		p.SetState(108)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 12, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 14, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(100)
+				p.SetState(106)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1807,7 +1864,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(101)
+				p.SetState(107)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1824,12 +1881,12 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 		goto errorExit
 	}
 	p.GetParserRuleContext().SetStop(p.GetTokenStream().LT(-1))
-	p.SetState(114)
+	p.SetState(120)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
 	}
-	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 15, p.GetParserRuleContext())
+	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 17, p.GetParserRuleContext())
 	if p.HasError() {
 		goto errorExit
 	}
@@ -1841,22 +1898,22 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 			_prevctx = localctx
 			localctx = NewTermContext(p, _parentctx, _parentState)
 			p.PushNewRecursionContext(localctx, _startState, LuceneParserRULE_term)
-			p.SetState(106)
+			p.SetState(112)
 
 			if !(p.Precpred(p.GetParserRuleContext(), 6)) {
 				p.SetError(antlr.NewFailedPredicateException(p, "p.Precpred(p.GetParserRuleContext(), 6)", ""))
 				goto errorExit
 			}
 			{
-				p.SetState(107)
+				p.SetState(113)
 				p.Fuzzy()
 			}
-			p.SetState(110)
+			p.SetState(116)
 			p.GetErrorHandler().Sync(p)
 
-			if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 14, p.GetParserRuleContext()) == 1 {
+			if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 16, p.GetParserRuleContext()) == 1 {
 				{
-					p.SetState(108)
+					p.SetState(114)
 					p.Match(LuceneParserCARAT)
 					if p.HasError() {
 						// Recognition error - abort rule
@@ -1864,7 +1921,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 					}
 				}
 				{
-					p.SetState(109)
+					p.SetState(115)
 					p.Match(LuceneParserNUMBER)
 					if p.HasError() {
 						// Recognition error - abort rule
@@ -1877,12 +1934,12 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 			}
 
 		}
-		p.SetState(116)
+		p.SetState(122)
 		p.GetErrorHandler().Sync(p)
 		if p.HasError() {
 			goto errorExit
 		}
-		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 15, p.GetParserRuleContext())
+		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 17, p.GetParserRuleContext())
 		if p.HasError() {
 			goto errorExit
 		}
@@ -1991,7 +2048,7 @@ func (s *GroupingExprContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupingExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitGroupingExpr(s)
@@ -2008,7 +2065,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(117)
+		p.SetState(123)
 		p.Match(LuceneParserLPAREN)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2016,18 +2073,18 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 		}
 	}
 	{
-		p.SetState(118)
+		p.SetState(124)
 		p.Query()
 	}
 	{
-		p.SetState(119)
+		p.SetState(125)
 		p.Match(LuceneParserRPAREN)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(122)
+	p.SetState(128)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -2036,7 +2093,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 
 	if _la == LuceneParserCARAT {
 		{
-			p.SetState(120)
+			p.SetState(126)
 			p.Match(LuceneParserCARAT)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2044,7 +2101,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 			}
 		}
 		{
-			p.SetState(121)
+			p.SetState(127)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2125,7 +2182,7 @@ func (s *FieldNameContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FieldNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FieldNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFieldName(s)
@@ -2140,7 +2197,7 @@ func (p *LuceneParser) FieldName() (localctx IFieldNameContext) {
 	p.EnterRule(localctx, 20, LuceneParserRULE_fieldName)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(124)
+		p.SetState(130)
 		p.Match(LuceneParserTERM)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2286,7 +2343,7 @@ func (s *TermRangeExprContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TermRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TermRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTermRangeExpr(s)
@@ -2303,7 +2360,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(126)
+		p.SetState(132)
 		_la = p.GetTokenStream().LA(1)
 
 		if !(_la == LuceneParserRANGEIN_START || _la == LuceneParserRANGEEX_START) {
@@ -2314,7 +2371,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(127)
+		p.SetState(133)
 
 		var _lt = p.GetTokenStream().LT(1)
 
@@ -2332,7 +2389,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(128)
+		p.SetState(134)
 		p.Match(LuceneParserRANGE_TO)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2340,7 +2397,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(129)
+		p.SetState(135)
 
 		var _lt = p.GetTokenStream().LT(1)
 
@@ -2358,7 +2415,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(130)
+		p.SetState(136)
 		_la = p.GetTokenStream().LA(1)
 
 		if !(_la == LuceneParserRANGEIN_END || _la == LuceneParserRANGEEX_END) {
@@ -2450,7 +2507,7 @@ func (s *QuotedTermContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QuotedTermContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QuotedTermContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitQuotedTerm(s)
@@ -2465,19 +2522,19 @@ func (p *LuceneParser) QuotedTerm() (localctx IQuotedTermContext) {
 	p.EnterRule(localctx, 24, LuceneParserRULE_quotedTerm)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(132)
+		p.SetState(138)
 		p.Match(LuceneParserQUOTED)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(135)
+	p.SetState(141)
 	p.GetErrorHandler().Sync(p)
 
-	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 17, p.GetParserRuleContext()) == 1 {
+	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 19, p.GetParserRuleContext()) == 1 {
 		{
-			p.SetState(133)
+			p.SetState(139)
 			p.Match(LuceneParserCARAT)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2485,7 +2542,7 @@ func (p *LuceneParser) QuotedTerm() (localctx IQuotedTermContext) {
 			}
 		}
 		{
-			p.SetState(134)
+			p.SetState(140)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2573,7 +2630,7 @@ func (s *FuzzyContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FuzzyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FuzzyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFuzzy(s)
@@ -2588,19 +2645,19 @@ func (p *LuceneParser) Fuzzy() (localctx IFuzzyContext) {
 	p.EnterRule(localctx, 26, LuceneParserRULE_fuzzy)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(137)
+		p.SetState(143)
 		p.Match(LuceneParserTILDE)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(139)
+	p.SetState(145)
 	p.GetErrorHandler().Sync(p)
 
-	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 18, p.GetParserRuleContext()) == 1 {
+	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 20, p.GetParserRuleContext()) == 1 {
 		{
-			p.SetState(138)
+			p.SetState(144)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule

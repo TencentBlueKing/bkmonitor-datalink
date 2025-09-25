@@ -160,7 +160,7 @@ func NewCustomErrorListener() *CustomErrorListener {
 	}
 }
 
-func (c *CustomErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, e antlr.RecognitionException) {
+func (c *CustomErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol any, line, column int, msg string, e antlr.RecognitionException) {
 	c.errors = append(c.errors, fmt.Sprintf("syntax error: %s", msg))
 }
 

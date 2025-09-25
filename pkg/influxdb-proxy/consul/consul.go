@@ -12,10 +12,11 @@ package consul
 import (
 	"context"
 
+	"github.com/hashicorp/consul/api"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
-	"github.com/hashicorp/consul/api"
 )
 
 const (

@@ -14,12 +14,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/transport"
-	"github.com/spf13/cobra"
 )
 
 // transportCmd represents the transport command

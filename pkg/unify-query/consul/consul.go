@@ -13,8 +13,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/hashicorp/consul/api"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 )
 
 var (

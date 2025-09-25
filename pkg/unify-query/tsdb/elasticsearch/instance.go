@@ -148,6 +148,17 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
+func (i *Instance) checkQuery(query *metadata.Query) error {
+	if query == nil {
+		return nil
+	}
+
+	if query.DB == "" {
+		return fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+	}
+	return nil
+}
+
 // fieldMap 获取es索引的字段映射
 func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]map[string]any, error) {
 	if len(aliases) == 0 {
@@ -485,8 +496,8 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-field-map")
 	defer span.End(&err)
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+	err = i.checkQuery(query)
+	if err != nil {
 		return nil, err
 	}
 
@@ -518,8 +529,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("instance-connect", i.connect.String())
 	span.Set("instance-query-result-table-option", query.ResultTableOption)
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+	err = i.checkQuery(query)
+	if err != nil {
 		return size, total, option, err
 	}
 
@@ -697,8 +708,8 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+	err = i.checkQuery(query)
+	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -808,9 +819,6 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-names")
 	defer span.End(&err)
 
-	if query.DB == "" {
-		return nil, fmt.Errorf("query.DB is empty")
-	}
 	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
 	if err != nil {
 		return nil, err
@@ -834,10 +842,6 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-values")
 	defer span.End(&err)
 
-	if query.DB == "" {
-		return nil, fmt.Errorf("query.DB is empty")
-	}
-
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 	if err != nil {
 		return nil, err
@@ -851,7 +855,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		conn:    i.connect,
 	}
 
-	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -866,12 +870,12 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		{
 			DimensionName: name,
 			Value:         []string{},
-			Operator:      "existed",
+			Operator:      metadata.ConditionExisted,
 		},
 	})
 
 	query.Aggregates = append(query.Aggregates, metadata.Aggregate{
-		Name:       "cardinality",
+		Name:       Cardinality,
 		Field:      name,
 		Dimensions: []string{name},
 		Without:    true,

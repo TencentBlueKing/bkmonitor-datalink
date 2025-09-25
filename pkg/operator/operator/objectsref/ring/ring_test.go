@@ -25,7 +25,7 @@ func TestRing(t *testing.T) {
 		assert.Equal(t, ResourceVersion(1), q.MinResourceVersion())
 		assert.Equal(t, ResourceVersion(1), q.MaxResourceVersion())
 
-		objs := []interface{}{"0"}
+		objs := []any{"0"}
 		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
@@ -40,7 +40,7 @@ func TestRing(t *testing.T) {
 		assert.Equal(t, ResourceVersion(1), q.MinResourceVersion())
 		assert.Equal(t, ResourceVersion(5), q.MaxResourceVersion())
 
-		objs := []interface{}{"0", "1", "2", "3", "4"}
+		objs := []any{"0", "1", "2", "3", "4"}
 		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
@@ -49,7 +49,7 @@ func TestRing(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			q.Put(strconv.Itoa(i))
 		}
-		objs := []interface{}{"3", "4"}
+		objs := []any{"3", "4"}
 		assert.Equal(t, objs, q.ReadGt(3))
 	})
 
@@ -62,7 +62,7 @@ func TestRing(t *testing.T) {
 		assert.Equal(t, ResourceVersion(3), q.MinResourceVersion())
 		assert.Equal(t, ResourceVersion(7), q.MaxResourceVersion())
 
-		objs := []interface{}{"2", "3", "4", "5", "6"}
+		objs := []any{"2", "3", "4", "5", "6"}
 		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
@@ -71,7 +71,7 @@ func TestRing(t *testing.T) {
 		for i := 0; i < 7; i++ {
 			q.Put(strconv.Itoa(i))
 		}
-		objs := []interface{}{"5", "6"}
+		objs := []any{"5", "6"}
 		assert.Equal(t, objs, q.ReadGt(5))
 	})
 }

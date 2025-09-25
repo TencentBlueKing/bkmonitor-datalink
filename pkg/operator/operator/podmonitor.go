@@ -16,6 +16,7 @@ import (
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/yaml.v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -28,7 +29,7 @@ func podMonitorID(obj *promv1.PodMonitor) string {
 	return fmt.Sprintf("%s/%s", obj.Namespace, obj.Name)
 }
 
-func (c *Operator) handlePodMonitorAdd(obj interface{}) {
+func (c *Operator) handlePodMonitorAdd(obj any) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
@@ -49,7 +50,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}) {
+func (c *Operator) handlePodMonitorUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", oldObj)
@@ -85,7 +86,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 }
 
-func (c *Operator) handlePodMonitorDelete(obj interface{}) {
+func (c *Operator) handlePodMonitorDelete(obj any) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
@@ -111,6 +112,42 @@ func (c *Operator) getPodMonitorDiscoversName(podMonitor *promv1.PodMonitor) []s
 	return names
 }
 
+func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[string]string) (*v1beta1.DataID, error) {
+	fillLabels := func(obj *v1beta1.DataID) {
+		// labels 高优先级
+		extLabels := feature.ExtendLabels(annotation)
+		for k, v := range extLabels {
+			obj.Spec.Labels[k] = v
+		}
+	}
+
+	// 1) 优先选择 scheduled dataID
+	schedDataID := feature.ScheduledDataID(annotation)
+	if schedDataID > 0 {
+		dataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, true)
+		if err != nil {
+			return nil, err
+		}
+
+		cloned := dataID.DeepCopy()
+		cloned.Spec.DataID = schedDataID
+		cloned.Spec.Labels = make(map[string]string) // schedDataID 不需要内置 labels
+		fillLabels(cloned)
+		return cloned, nil
+	}
+
+	// 2) 根据匹配规则选择
+	systemResource := feature.IfSystemResource(annotation)
+	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	if err != nil {
+		return nil, err
+	}
+
+	cloned := dataID.DeepCopy()
+	fillLabels(cloned)
+	return cloned, nil
+}
+
 func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []discover.Discover {
 	var (
 		namespaces []string
@@ -123,9 +160,9 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		Kind:      monitorKindPodMonitor,
 		Namespace: podMonitor.Namespace,
 	}
-	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	dataID, err := c.pickMonitorDataID(meta, podMonitor.Annotations)
 	if err != nil {
-		logger.Errorf("podmonitor(%+v) no dataid matched", meta)
+		logger.Errorf("podmonitor (%+v) no dataid matched", meta)
 		return discovers
 	}
 	specLabels := dataID.Spec.Labels

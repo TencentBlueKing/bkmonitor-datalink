@@ -195,7 +195,7 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 
 	informer := genericInformer.Informer()
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				logger.Errorf("excepted Node type, got %T", obj)
@@ -205,7 +205,7 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 				logger.Errorf("failed to set node obj: %v", err)
 			}
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			node, ok := newObj.(*corev1.Node)
 			if !ok {
 				logger.Errorf("excepted Node type, got %T", newObj)
@@ -215,7 +215,7 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 				logger.Errorf("failed to set node obj: %v", err)
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				logger.Errorf("excepted Node type, got %T", obj)

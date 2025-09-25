@@ -68,7 +68,7 @@ func (c *Operator) listWatchStatefulSetWorker() error {
 	return nil
 }
 
-func (c *Operator) handleStatefulSetWorkerAdd(obj interface{}) {
+func (c *Operator) handleStatefulSetWorkerAdd(obj any) {
 	statefulset, ok := obj.(*appsv1.StatefulSet)
 	if !ok {
 		logger.Errorf("expected StatefulSet type, got %T", obj)
@@ -82,7 +82,7 @@ func (c *Operator) handleStatefulSetWorkerAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handleStatefulSetWorkerDelete(obj interface{}) {
+func (c *Operator) handleStatefulSetWorkerDelete(obj any) {
 	_, ok := obj.(*appsv1.StatefulSet)
 	if !ok {
 		logger.Errorf("expected StatefulSet type, got %T", obj)
@@ -92,7 +92,7 @@ func (c *Operator) handleStatefulSetWorkerDelete(obj interface{}) {
 	discover.Publish()
 }
 
-func (c *Operator) handleStatefulSetWorkerUpdate(oldObj, newObj interface{}) {
+func (c *Operator) handleStatefulSetWorkerUpdate(oldObj, newObj any) {
 	old, ok := oldObj.(*appsv1.StatefulSet)
 	if !ok {
 		logger.Errorf("expected StatefulSet type, got %T", oldObj)
@@ -148,7 +148,7 @@ func (c *Operator) listWatchStatefulSetSecrets() error {
 	return nil
 }
 
-func (c *Operator) handleStatefulSetSecretAdd(obj interface{}) {
+func (c *Operator) handleStatefulSetSecretAdd(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		logger.Errorf("expected Secret type, got %T", obj)
@@ -160,7 +160,7 @@ func (c *Operator) handleStatefulSetSecretAdd(obj interface{}) {
 	c.statefulSetSecretMap[secret.Name] = struct{}{}
 }
 
-func (c *Operator) handleStatefulSetSecretDelete(obj interface{}) {
+func (c *Operator) handleStatefulSetSecretDelete(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		logger.Errorf("expected Secret type, got %T", obj)
@@ -173,7 +173,7 @@ func (c *Operator) handleStatefulSetSecretDelete(obj interface{}) {
 }
 
 // 无需关心 update 事件
-func (c *Operator) handleStatefulSetSecretUpdate(oldObj, newObj interface{}) {}
+func (c *Operator) handleStatefulSetSecretUpdate(oldObj, newObj any) {}
 
 // reconcileStatefulSetWorker 对 statefulset worker 进行扩缩容
 func (c *Operator) reconcileStatefulSetWorker(configCount int) {

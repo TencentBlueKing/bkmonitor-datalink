@@ -224,7 +224,7 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []PodObject, podName stri
 
 		// 出错原路返回
 		return func(input string) string {
-			var obj interface{}
+			var obj any
 			err := json.Unmarshal([]byte(input), &obj)
 			if err != nil {
 				return input

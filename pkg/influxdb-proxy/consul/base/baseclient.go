@@ -32,11 +32,9 @@ type BasicClient struct {
 	Agent   Agent
 	Session Session
 	// address IP:Port
-	address       string
-	caFilePath    string // ca根证书路径
-	keyFilePath   string // client端身份证书，供server验证client身份
-	certFilePath  string // server端身份证书
-	skipTlsVerify bool   // 是否跳过hostname验证
+	address string
+
+	tlsConfig *config.TlsConfig
 
 	watchPlanMap       map[string]Plan
 	watchPrefixPlanMap map[string]Plan
@@ -53,10 +51,7 @@ func NewBasicClient(address string, tlsConfig *config.TlsConfig) (ConsulClient, 
 	client := new(BasicClient)
 	client.address = address
 	if tlsConfig != nil {
-		client.caFilePath = tlsConfig.CAFile
-		client.certFilePath = tlsConfig.CertFile
-		client.keyFilePath = tlsConfig.KeyFile
-		client.skipTlsVerify = tlsConfig.SkipVerify
+		client.tlsConfig = tlsConfig
 	}
 	err = GetAPI(client)
 	if err != nil {
@@ -78,11 +73,12 @@ var GetAPI = func(client *BasicClient) error {
 	flowLog.Debugf("called")
 	conf := api.DefaultConfig()
 	conf.Address = client.address
-	conf.TLSConfig.InsecureSkipVerify = client.skipTlsVerify
-
-	conf.TLSConfig.CAFile = client.caFilePath
-	conf.TLSConfig.CertFile = client.certFilePath
-	conf.TLSConfig.KeyFile = client.keyFilePath
+	if client.tlsConfig != nil {
+		conf.TLSConfig.InsecureSkipVerify = client.tlsConfig.SkipVerify
+		conf.TLSConfig.CAFile = client.tlsConfig.CAFile
+		conf.TLSConfig.CertFile = client.tlsConfig.CertFile
+		conf.TLSConfig.KeyFile = client.tlsConfig.KeyFile
+	}
 
 	apiClient, err := api.NewClient(conf)
 	if err != nil {
@@ -470,10 +466,12 @@ func (bc *BasicClient) Watch(path string, separator string) (<-chan interface{},
 
 	conf := api.DefaultConfig()
 	conf.Address = bc.address
-	conf.TLSConfig.InsecureSkipVerify = bc.skipTlsVerify
-	conf.TLSConfig.CAFile = bc.caFilePath
-	conf.TLSConfig.CertFile = bc.certFilePath
-	conf.TLSConfig.KeyFile = bc.keyFilePath
+	if bc.tlsConfig != nil {
+		conf.TLSConfig.InsecureSkipVerify = bc.tlsConfig.SkipVerify
+		conf.TLSConfig.CAFile = bc.tlsConfig.CAFile
+		conf.TLSConfig.CertFile = bc.tlsConfig.CertFile
+		conf.TLSConfig.KeyFile = bc.tlsConfig.KeyFile
+	}
 
 	// NOTE: 暂时不用考虑删除 集群和 backend 对应路径的场景
 	// 1. 检查 path 对应的 plan 是否已经存在

@@ -21,15 +21,17 @@ import (
 	"github.com/TencentBlueKing/bk-log-sidecar/define"
 )
 
-// ContainerdRuntime container runtime
-type ContainerdRuntime struct {
-	ContainerdBase
-	criClient v1alpha2.RuntimeServiceClient
+type CRIClient interface {
+	ListContainers(ctx context.Context) ([]define.SimpleContainer, error)
+	ContainerStatus(ctx context.Context, containerID string) (interface{}, error)
 }
 
-// Containers list of containers
-func (r *ContainerdRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.criClient.ListContainers(ctx, &v1alpha2.ListContainersRequest{
+type CRIClientV1Alpha2 struct {
+	client v1alpha2.RuntimeServiceClient
+}
+
+func (c *CRIClientV1Alpha2) ListContainers(ctx context.Context) ([]define.SimpleContainer, error) {
+	resp, err := c.client.ListContainers(ctx, &v1alpha2.ListContainersRequest{
 		Filter: &v1alpha2.ContainerFilter{
 			State: &v1alpha2.ContainerStateValue{
 				State: v1alpha2.ContainerState_CONTAINER_RUNNING,
@@ -40,27 +42,72 @@ func (r *ContainerdRuntime) Containers(ctx context.Context) ([]define.SimpleCont
 		return nil, err
 	}
 	var result []define.SimpleContainer
-	for _, container := range containers.GetContainers() {
+	for _, container := range resp.GetContainers() {
 		if container == nil {
 			continue
 		}
-		result = append(result, define.SimpleContainer{
-			ID: container.Id,
-		})
+		result = append(result, define.SimpleContainer{ID: container.Id})
 	}
 	return result, nil
 }
 
-// Inspect check container status and mount info
-func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
-	containerStatus, err := r.criClient.ContainerStatus(ctx, &v1alpha2.ContainerStatusRequest{
+func (c *CRIClientV1Alpha2) ContainerStatus(ctx context.Context, containerID string) (interface{}, error) {
+	return c.client.ContainerStatus(ctx, &v1alpha2.ContainerStatusRequest{
 		ContainerId: containerID,
 		Verbose:     true,
 	})
+}
+
+type CRIClientV1 struct {
+	client v1.RuntimeServiceClient
+}
+
+func (c *CRIClientV1) ListContainers(ctx context.Context) ([]define.SimpleContainer, error) {
+	resp, err := c.client.ListContainers(ctx, &v1.ListContainersRequest{
+		Filter: &v1.ContainerFilter{
+			State: &v1.ContainerStateValue{
+				State: v1.ContainerState_CONTAINER_RUNNING,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []define.SimpleContainer
+	for _, container := range resp.GetContainers() {
+		if container == nil {
+			continue
+		}
+		result = append(result, define.SimpleContainer{ID: container.Id})
+	}
+	return result, nil
+}
+
+func (c *CRIClientV1) ContainerStatus(ctx context.Context, containerID string) (interface{}, error) {
+	return c.client.ContainerStatus(ctx, &v1.ContainerStatusRequest{
+		ContainerId: containerID,
+		Verbose:     true,
+	})
+}
+
+type ContainerdRuntime struct {
+	ContainerdBase
+	criClient CRIClient
+}
+
+func (r *ContainerdRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
+	return r.criClient.ListContainers(ctx)
+}
+
+func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
+	resp, err := r.criClient.ContainerStatus(ctx, containerID)
 	if err != nil {
 		return define.Container{}, err
 	}
-
+	containerStatus, ok := resp.(*v1alpha2.ContainerStatusResponse)
+	if !ok {
+		return define.Container{}, fmt.Errorf("unexpected response type for v1alpha2.ContainerStatusResponse")
+	}
 	var mounts []define.Mount
 	for _, mount := range containerStatus.Status.Mounts {
 		mounts = append(mounts, define.Mount{
@@ -79,7 +126,6 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 	if err != nil {
 		r.log.Info(fmt.Sprintf("container [%s] info unmarshal error: %s", containerID, containerStatus.Info["info"]))
 	}
-
 	rootPath, logPath, err := resolveContainerdPath(containerStatus, containerInfo.Pid)
 	if err != nil {
 		r.log.Error(err, fmt.Sprintf("container [%s] failed to eval symlink for log path [%s]", containerID, logPath))
@@ -90,7 +136,6 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 	if containerStatus.Status.Image != nil {
 		image = containerStatus.Status.Image.Image
 	}
-
 	return define.Container{
 		ID:       containerStatus.Status.Id,
 		Labels:   containerStatus.Status.Labels,
@@ -103,42 +148,22 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 
 type ContainerdV2Runtime struct {
 	ContainerdBase
-	criClient v1.RuntimeServiceClient
+	criClient CRIClient
 }
 
 func (r *ContainerdV2Runtime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.criClient.ListContainers(ctx, &v1.ListContainersRequest{
-		Filter: &v1.ContainerFilter{
-			State: &v1.ContainerStateValue{
-				State: v1.ContainerState_CONTAINER_RUNNING,
-			},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	var result []define.SimpleContainer
-	for _, container := range containers.GetContainers() {
-		if container == nil {
-			continue
-		}
-		result = append(result, define.SimpleContainer{
-			ID: container.Id,
-		})
-	}
-	return result, nil
+	return r.criClient.ListContainers(ctx)
 }
 
-// Inspect check container status and mount info
 func (r *ContainerdV2Runtime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
-	containerStatus, err := r.criClient.ContainerStatus(ctx, &v1.ContainerStatusRequest{
-		ContainerId: containerID,
-		Verbose:     true,
-	})
+	resp, err := r.criClient.ContainerStatus(ctx, containerID)
 	if err != nil {
 		return define.Container{}, err
 	}
-
+	containerStatus, ok := resp.(*v1.ContainerStatusResponse)
+	if !ok {
+		return define.Container{}, fmt.Errorf("unexpected response type for v1.ContainerStatusResponse")
+	}
 	var mounts []define.Mount
 	for _, mount := range containerStatus.Status.Mounts {
 		mounts = append(mounts, define.Mount{
@@ -168,7 +193,6 @@ func (r *ContainerdV2Runtime) Inspect(ctx context.Context, containerID string) (
 	if containerStatus.Status.Image != nil {
 		image = containerStatus.Status.Image.Image
 	}
-
 	return define.Container{
 		ID:       containerStatus.Status.Id,
 		Labels:   containerStatus.Status.Labels,

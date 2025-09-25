@@ -46,7 +46,7 @@ func NewContainerdRuntime() define.Runtime {
 			containerdClient: client,
 			log:              ctrl.Log.WithName("containerd"),
 		},
-		criClient: v1alpha2.NewRuntimeServiceClient(conn),
+		criClient: &CRIClientV1Alpha2{client: v1alpha2.NewRuntimeServiceClient(conn)},
 	}
 }
 
@@ -66,6 +66,6 @@ func NewContainerdV2Runtime() define.Runtime {
 			containerdClient: client,
 			log:              ctrl.Log.WithName("containerd"),
 		},
-		criClient: v1.NewRuntimeServiceClient(conn),
+		criClient: &CRIClientV1{client: v1.NewRuntimeServiceClient(conn)},
 	}
 }

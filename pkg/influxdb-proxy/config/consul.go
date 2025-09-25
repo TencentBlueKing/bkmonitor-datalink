@@ -7,32 +7,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package consul
+package config
 
-const (
-	ServiceNameConfigPath = "consul.service_name"
-	KVBasePathConfigPath  = "consul.kv_base_path"
-	AddressConfigPath     = "consul.consul_address"
-	TLSCaFileConfigPath   = "consul.tls.ca_file_path"
-	TLSKeyFileConfigPath  = "consul.tls.key_file_path"
-	TLSCertFileConfigPath = "consul.tls.cert_file_path"
-	TLSSkipVerify         = "consul.tls.skip_verify"
-	HTTPAddressConfigPath = "http.address"
-	PortConfigPath        = "http.port"
-	TTLConfigPath         = "consul.check_ttl"
-)
-
-var (
-	ServiceName string
-	KVBasePath  string
-
-	HTTPAddress string
-	Port        int
-	TTL         string
-
-	Address       string
-	CaFilePath    string
-	KeyFilePath   string
-	CertFilePath  string
-	SkipTLSVerify bool
-)
+type TlsConfig struct {
+	SkipVerify bool   `yaml:"skip_verify"`
+	CAFile     string `yaml:"ca_file"`
+	KeyFile    string `yaml:"key_file"`
+	CertFile   string `yaml:"cert_file"`
+}

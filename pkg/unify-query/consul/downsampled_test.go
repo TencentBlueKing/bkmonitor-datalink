@@ -98,7 +98,7 @@ func TestGetDownsampledInfo(t *testing.T) {
 	log.Infof(context.TODO(), "TestGetDownsampledInfo Start")
 	_ = SetInstance(
 		context.Background(), "", "downsampled-test", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		[]string{}, "127.0.0.1", 10205, "30s", nil,
 	)
 
 	err = LoadDownsampledInfo()

@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/transport"
@@ -38,6 +39,11 @@ to quickly create a Cobra application.`,
 		defer cancel()
 		address := common.Config.GetString(common.ConfigKeyConsulAddress)
 		prefix := common.Config.GetString(common.ConfigKeyConsulPrefix)
+		caCertFile := common.Config.GetString(common.ConfigKeyConsulCACertFile)
+		certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
+		keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
+		skipVerify := common.Config.GetBool(common.ConfigKeyConsulSkipVerify)
+
 		periodParam, err := cmd.Flags().GetString("period")
 		if err != nil {
 			logging.StdLogger.Errorf("get period failed,error:%s", err)
@@ -64,8 +70,13 @@ to quickly create a Cobra application.`,
 			logging.StdLogger.Errorf("parse period failed,error:%s", err)
 			return
 		}
-
-		err = consul.Init(address, prefix)
+		tlsConfig := &config.TlsConfig{
+			CAFile:     caCertFile,
+			CertFile:   certFile,
+			KeyFile:    keyFile,
+			SkipVerify: skipVerify,
+		}
+		err = consul.Init(address, prefix, tlsConfig)
 		if err != nil {
 			logging.StdLogger.Errorf("consul init failed,error:%s", err)
 			return

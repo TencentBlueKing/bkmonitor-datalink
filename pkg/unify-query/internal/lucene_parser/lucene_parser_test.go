@@ -467,6 +467,34 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"range":{"price":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
 			sql: "`price` >= 1.5 AND `price` <= 3.6",
 		},
+
+		// =================================================================
+		// Test Suite: eof_operator_support - 测试末尾操作符支持
+		// =================================================================
+		"eof_operator_and_basic": {
+			q:   `log:error AND`,
+			// 预期：应该将末尾的AND忽略，只保留log:error部分
+			e:   &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+			es:  `{"match_phrase":{"log":{"query":"error"}}}`,
+			sql: "`log` MATCH_PHRASE 'error'",
+		},
+		"eof_operator_or_basic": {
+			q:   `status:active OR`,
+			// 预期：应该将末尾的OR忽略，只保留status:active部分
+			e:   &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+			es:  `{"term":{"status":"active"}}`,
+			sql: "`status` = 'active'",
+		},
+		"eof_operator_and_complex": {
+			q:   `log:error AND status:active AND`,
+			// 预期：应该将末尾的AND忽略，保留前面的正常表达式
+			e:   &AndExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+			},
+			es:  `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` = 'active'",
+		},
 	}
 
 	parser := NewParser(

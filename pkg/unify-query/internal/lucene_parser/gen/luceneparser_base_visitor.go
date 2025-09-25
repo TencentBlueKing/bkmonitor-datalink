@@ -1,4 +1,4 @@
-// Code generated from LuceneParser.g4 by ANTLR 4.13.2. DO NOT EDIT.
+// Code generated from LuceneParser.g4 by ANTLR 4.13.1. DO NOT EDIT.
 
 package gen // LuceneParser
 import "github.com/antlr4-go/antlr/v4"

@@ -10,9 +10,9 @@
 package base
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
 )

@@ -12,7 +12,6 @@ package consul
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/hashicorp/consul/api"
 	"github.com/prometheus/common/model"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )

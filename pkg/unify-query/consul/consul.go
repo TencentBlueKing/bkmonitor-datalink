@@ -11,9 +11,9 @@ package consul
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/hashicorp/consul/api"
 )
 

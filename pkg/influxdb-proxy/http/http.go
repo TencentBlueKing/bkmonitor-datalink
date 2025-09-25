@@ -12,7 +12,6 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"net/http"
 	"sync"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/backend"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/http/auth"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"

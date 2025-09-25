@@ -11,7 +11,6 @@ package base
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"hash/fnv"
 	"strings"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/hashicorp/consul/api/watch"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
 )
 

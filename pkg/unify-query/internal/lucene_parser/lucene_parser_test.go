@@ -244,7 +244,9 @@ func TestLuceneParser(t *testing.T) {
 			e: &GroupingExpr{
 				Expr: &OrExpr{
 					Left:  &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value1"}},
-					Right: &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value2"}}}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value2"}},
+				},
+			},
 			es:  `{"bool":{"should":[{"match_phrase":{"author":{"query":"value1"}}},{"match_phrase":{"author":{"query":"value2"}}}]}}`,
 			sql: "(`author` MATCH_PHRASE 'value1' OR `author` MATCH_PHRASE 'value2')",
 		},
@@ -379,7 +381,8 @@ func TestLuceneParser(t *testing.T) {
 				Boost: 0.5,
 				Expr: &OrExpr{
 					Left:  &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "machine learning"}, IsQuoted: true, Boost: 3},
-					Right: &OperatorExpr{Field: &StringExpr{Value: "message"}, Op: OpMatch, Value: &StringExpr{Value: "artificial intelligence"}, IsQuoted: true, Boost: 2}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "message"}, Op: OpMatch, Value: &StringExpr{Value: "artificial intelligence"}, IsQuoted: true, Boost: 2},
+				},
 			},
 			// boost参数应该在ES查询结构中正确处理
 			es:  `{"bool":{"boost":0.5,"should":[{"match_phrase":{"author":{"boost":3,"query":"machine learning"}}},{"match_phrase":{"message":{"boost":2,"query":"artificial intelligence"}}}]}}`,

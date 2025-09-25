@@ -510,18 +510,14 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	// 使用聚合的方式统计维度组合
-	query.Aggregates = metadata.Aggregates{
-		{
-			Dimensions: []string{name},
-			Name:       "count",
-		},
-	}
-
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
+
+	queryFactory.WithKeepColumns([]string{name})
+	query.IsDistinct = true
+
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err
@@ -554,18 +550,6 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	}
 
 	return lbs, err
-}
-
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	return nil, nil
-}
-
-func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
-}
-
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
 }
 
 func (i *Instance) InstanceType() string {

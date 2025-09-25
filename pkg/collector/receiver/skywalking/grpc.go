@@ -302,9 +302,6 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 
 	for {
 		meter, err := stream.Recv()
-		if converter == nil {
-			converter = NewMeterConverter(meter.GetService(), meter.GetServiceInstance(), meter.GetTimestamp(), token)
-		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				r := &define.Record{
@@ -313,18 +310,21 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 					RequestClient: define.RequestClient{IP: ip},
 					Data:          converter.Get(),
 				}
+				prettyprint.Pretty(define.RecordMetrics, r)
 				code, processorName, err := s.Validate(r)
 				if err != nil {
 					err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
 					logger.WarnRate(time.Minute, r.Token.Original, err)
 					metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 				} else {
-					prettyprint.Pretty(define.RecordMetrics, r)
 					s.Publish(r)
 				}
 				return stream.SendAndClose(&commonv3.Commands{})
 			}
 			return err
+		}
+		if converter == nil {
+			converter = newMeterConverter(meter.GetService(), meter.GetServiceInstance(), meter.GetTimestamp(), token)
 		}
 		converter.Convert(meter)
 	}
@@ -355,7 +355,7 @@ func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatc
 			return err
 		}
 		for _, meter := range meterCollection.MeterData {
-			converter := NewMeterConverter(meter.GetService(), meter.GetServiceInstance(), meter.GetTimestamp(), token)
+			converter := newMeterConverter(meter.GetService(), meter.GetServiceInstance(), meter.GetTimestamp(), token)
 			converter.Convert(meter)
 			r := &define.Record{
 				RecordType:    define.RecordMetrics,

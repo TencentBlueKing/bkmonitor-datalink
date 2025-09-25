@@ -67,7 +67,7 @@ func (s *Statement) Error() error {
 	return s.err
 }
 
-func (s *Statement) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
+func (s *Statement) VisitErrorNode(ctx antlr.ErrorNode) any {
 	s.err = errors.Wrapf(s.err, "parse error at: %s", ctx.GetText())
 	return nil
 }
@@ -79,7 +79,7 @@ func (s *Statement) Expr() Expr {
 	return s.node.Expr()
 }
 
-func (s *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (s *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = s
 
@@ -127,7 +127,7 @@ func (n *QueryNode) Expr() Expr {
 	return buildBooleanExpression(mustClauses, mustNotClauses, shouldClauses)
 }
 
-func (n *QueryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *QueryNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -250,7 +250,7 @@ func (n *OrNode) Expr() Expr {
 	return buildRight(n.nodes)
 }
 
-func (n *OrNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *OrNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -295,7 +295,7 @@ func (n *AndNode) Expr() Expr {
 	return result
 }
 
-func (n *AndNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *AndNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -327,7 +327,7 @@ func (n *ModClauseNode) Expr() Expr {
 	return expr
 }
 
-func (n *ModClauseNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (n *ModClauseNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 	if text != "" {
 		n.modifier = text
@@ -335,7 +335,7 @@ func (n *ModClauseNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
 	return nil
 }
 
-func (n *ModClauseNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *ModClauseNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -393,7 +393,7 @@ func (n *ClauseNode) Expr() Expr {
 	return expr
 }
 
-func (n *ClauseNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *ClauseNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -480,7 +480,7 @@ func (n *TermNode) Expr() Expr {
 	return expr
 }
 
-func (n *TermNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *TermNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -504,7 +504,7 @@ func (n *TermNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(next, ctx)
 }
 
-func (n *TermNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (n *TermNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 	tokenType := ctx.GetSymbol().GetTokenType()
 
@@ -657,7 +657,7 @@ func (n *RangeNode) Expr() Expr {
 	return expr
 }
 
-func (n *RangeNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *RangeNode) VisitChildren(ctx antlr.RuleNode) any {
 	switch c := ctx.(type) {
 	case *gen.FieldNameContext:
 		n.field = c.GetText()
@@ -667,7 +667,7 @@ func (n *RangeNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(n, ctx)
 }
 
-func (n *RangeNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (n *RangeNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 	tokenType := ctx.GetSymbol().GetTokenType()
 
@@ -704,7 +704,7 @@ type GroupNode struct {
 	expectingBoost bool    // 临时状态标记
 }
 
-func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
@@ -718,7 +718,7 @@ func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(next, ctx)
 }
 
-func (n *GroupNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (n *GroupNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 	tokenType := ctx.GetSymbol().GetTokenType()
 
@@ -895,16 +895,16 @@ func splitClauseHelper(nodes []Node, defaultHandler func(Node) []Expr) (mustClau
 			}
 		}
 	}
-	return
+	return mustClauses, mustNotClauses, shouldClauses
 }
 
-func visitChildren(next Node, node antlr.RuleNode) interface{} {
+func visitChildren(next Node, node antlr.RuleNode) any {
 	for _, child := range node.GetChildren() {
 		switch tree := child.(type) {
 		case antlr.ParseTree:
-			//log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
+			// log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
 			tree.Accept(next)
-			//log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
+			// log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
 		}
 	}
 	return nil
@@ -971,7 +971,7 @@ func parseAndClassifyString(text string) (value string, isWildcard bool, isQuote
 	} else {
 		isQuoted = true
 	}
-	return
+	return value, isWildcard, isQuoted
 }
 
 // createValueExpr creates a NumberExpr for numeric values, StringExpr otherwise

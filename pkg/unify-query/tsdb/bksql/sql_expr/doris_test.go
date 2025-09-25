@@ -42,9 +42,9 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			want:  "((`a` = '1' AND (`b` = '2' OR `c` = '3')) OR NOT (`d` = '4'))",
 		},
 		{
-			name:  "invalid syntax",
+			name:  "trailing operators ignored",
 			input: "name:test AND OR",
-			err:   "parse lucene query (name:test AND OR) error: syntax error: mismatched input 'OR' expecting {NOT, '+', '-', '(', QUOTED, NUMBER, TERM, REGEXPTERM, '[', '{'}",
+			want:  "`name` = 'test'",
 		},
 		{
 			name:  "empty input",

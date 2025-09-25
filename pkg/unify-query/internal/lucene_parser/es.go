@@ -92,7 +92,7 @@ func (p *Parser) walkEs(expr Expr, isPrefix bool, allowNestedWrap bool) elastic.
 }
 
 // getESValueInterface returns the interface{} value for ES queries
-func getESValueInterface(expr Expr) interface{} {
+func getESValueInterface(expr Expr) any {
 	if expr == nil {
 		return nil
 	}
@@ -249,7 +249,7 @@ func (p *Parser) buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, isPre
 
 	fieldType, exist := p.esSchema.getFieldType(field)
 	if isSimpleTermsQuery(e) && exist && fieldType == FieldTypeKeyword {
-		var terms []interface{}
+		var terms []any
 		for _, andGroup := range e.Value.Values {
 			if len(andGroup) == 1 {
 				terms = append(terms, getValue(andGroup[0]))

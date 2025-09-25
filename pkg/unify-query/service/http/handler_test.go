@@ -528,7 +528,7 @@ func TestQueryHandler(t *testing.T) {
 			handler:  HandlerQueryPromQL,
 			promql:   `sum(increase({__name__=~"bkdata:.*trace.*:span_name", span_name=~"handler-query-.*"}[3h])) by (span_name)`,
 			step:     "3h",
-			expected: ``,
+			expected: `{"series":[],"is_partial":false}`,
 		},
 	}
 

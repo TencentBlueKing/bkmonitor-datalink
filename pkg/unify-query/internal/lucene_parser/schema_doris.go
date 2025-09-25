@@ -72,31 +72,31 @@ func NewDorisSchema(
 }
 
 func (s *dorisSchema) isText(field string) bool {
-    cleanField := strings.Trim(field, "`")
+	cleanField := strings.Trim(field, "`")
 
-    if s.fieldOptions != nil {
-        if option, ok := s.fieldOptions[cleanField]; ok {
-            // 若显式声明为分词字段，则直接认为是文本类型
-            if option.Analyzed {
-                return true
-            }
-            // 未显式声明 Analyzed 时，根据类型兜底判断：
-            // - 兼容 ES 映射中的 "text"
-            // - 兼容 Doris 类型中的 "TEXT"
-            if option.Type != "" {
-                if strings.EqualFold(option.Type, FieldTypeText) || strings.EqualFold(option.Type, DorisTypeText) {
-                    return true
-                }
-            }
-            // 没有类型信息时，继续走下方的 getFieldType 兜底逻辑
-        }
-    }
+	if s.fieldOptions != nil {
+		if option, ok := s.fieldOptions[cleanField]; ok {
+			// 若显式声明为分词字段，则直接认为是文本类型
+			if option.Analyzed {
+				return true
+			}
+			// 未显式声明 Analyzed 时，根据类型兜底判断：
+			// - 兼容 ES 映射中的 "text"
+			// - 兼容 Doris 类型中的 "TEXT"
+			if option.Type != "" {
+				if strings.EqualFold(option.Type, FieldTypeText) || strings.EqualFold(option.Type, DorisTypeText) {
+					return true
+				}
+			}
+			// 没有类型信息时，继续走下方的 getFieldType 兜底逻辑
+		}
+	}
 
-    if fieldType, ok := s.getFieldType(cleanField); ok && fieldType == DorisTypeText {
-        return true
-    }
+	if fieldType, ok := s.getFieldType(cleanField); ok && fieldType == DorisTypeText {
+		return true
+	}
 
-    return false
+	return false
 }
 
 // transformField 转换字段名，处理对象字段的CAST逻辑

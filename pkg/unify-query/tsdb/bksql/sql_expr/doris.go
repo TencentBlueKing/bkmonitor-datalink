@@ -308,7 +308,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		OffsetMillis: timeZoneOffset,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -585,14 +585,14 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 
 func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
-		return
+		return opt
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.Type = strings.ToUpper(opt.Type)
 	}
-	return
+	return opt
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {

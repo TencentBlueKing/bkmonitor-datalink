@@ -36,7 +36,7 @@ func luceneparserParserInit() {
 		"'<='", "'>'", "'>='", "'^'", "'~'", "", "", "", "", "'['", "'{'", "",
 		"", "", "", "'after'", "'before'", "", "'containing'", "'extend'", "'or'",
 		"", "", "", "", "", "", "", "'ordered'", "'overlapping'", "'phrase'",
-		"'unordered'", "", "'wildcard'", "'within'", "", "'TO'", "']'", "'}'",
+		"'unordered'", "", "'wildcard'", "'within'", "", "", "']'", "'}'",
 	}
 	staticData.SymbolicNames = []string{
 		"", "AND", "OR", "NOT", "FN_PREFIX", "PLUS", "MINUS", "LPAREN", "RPAREN",
@@ -305,7 +305,7 @@ func (s *TopLevelQueryContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TopLevelQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TopLevelQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTopLevelQuery(s)
@@ -441,7 +441,7 @@ func (s *QueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitQuery(s)
@@ -597,7 +597,7 @@ func (s *DisjQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitDisjQuery(s)
@@ -792,7 +792,7 @@ func (s *ConjQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ConjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConjQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitConjQuery(s)
@@ -968,7 +968,7 @@ func (s *ModClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ModClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitModClause(s)
@@ -1084,7 +1084,7 @@ func (s *ModifierContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ModifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitModifier(s)
@@ -1256,7 +1256,7 @@ func (s *ClauseContext) ToStringTree(ruleNames []string, recog antlr.Recognizer)
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitClause(s)
@@ -1461,7 +1461,7 @@ func (s *FieldRangeExprContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FieldRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FieldRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFieldRangeExpr(s)
@@ -1681,7 +1681,7 @@ func (s *TermContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) s
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TermContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TermContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTerm(s)
@@ -2048,7 +2048,7 @@ func (s *GroupingExprContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupingExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitGroupingExpr(s)
@@ -2182,7 +2182,7 @@ func (s *FieldNameContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FieldNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FieldNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFieldName(s)
@@ -2343,7 +2343,7 @@ func (s *TermRangeExprContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TermRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TermRangeExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitTermRangeExpr(s)
@@ -2507,7 +2507,7 @@ func (s *QuotedTermContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QuotedTermContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QuotedTermContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitQuotedTerm(s)
@@ -2630,7 +2630,7 @@ func (s *FuzzyContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FuzzyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FuzzyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitFuzzy(s)

@@ -244,7 +244,9 @@ func TestLuceneParser(t *testing.T) {
 			e: &GroupingExpr{
 				Expr: &OrExpr{
 					Left:  &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value1"}},
-					Right: &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value2"}}}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "value2"}},
+				},
+			},
 			es:  `{"bool":{"should":[{"match_phrase":{"author":{"query":"value1"}}},{"match_phrase":{"author":{"query":"value2"}}}]}}`,
 			sql: "(`author` MATCH_PHRASE 'value1' OR `author` MATCH_PHRASE 'value2')",
 		},
@@ -379,7 +381,8 @@ func TestLuceneParser(t *testing.T) {
 				Boost: 0.5,
 				Expr: &OrExpr{
 					Left:  &OperatorExpr{Field: &StringExpr{Value: "author"}, Op: OpMatch, Value: &StringExpr{Value: "machine learning"}, IsQuoted: true, Boost: 3},
-					Right: &OperatorExpr{Field: &StringExpr{Value: "message"}, Op: OpMatch, Value: &StringExpr{Value: "artificial intelligence"}, IsQuoted: true, Boost: 2}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "message"}, Op: OpMatch, Value: &StringExpr{Value: "artificial intelligence"}, IsQuoted: true, Boost: 2},
+				},
 			},
 			// boost参数应该在ES查询结构中正确处理
 			es:  `{"bool":{"boost":0.5,"should":[{"match_phrase":{"author":{"boost":3,"query":"machine learning"}}},{"match_phrase":{"message":{"boost":2,"query":"artificial intelligence"}}}]}}`,
@@ -472,28 +475,116 @@ func TestLuceneParser(t *testing.T) {
 		// Test Suite: eof_operator_support - 测试末尾操作符支持
 		// =================================================================
 		"eof_operator_and_basic": {
-			q:   `log:error AND`,
+			q: `log:error AND`,
 			// 预期：应该将末尾的AND忽略，只保留log:error部分
 			e:   &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
 			es:  `{"match_phrase":{"log":{"query":"error"}}}`,
 			sql: "`log` MATCH_PHRASE 'error'",
 		},
 		"eof_operator_or_basic": {
-			q:   `status:active OR`,
+			q: `status:active OR`,
 			// 预期：应该将末尾的OR忽略，只保留status:active部分
 			e:   &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
 			es:  `{"term":{"status":"active"}}`,
 			sql: "`status` = 'active'",
 		},
 		"eof_operator_and_complex": {
-			q:   `log:error AND status:active AND`,
+			q: `log:error and status:active AND`,
 			// 预期：应该将末尾的AND忽略，保留前面的正常表达式
-			e:   &AndExpr{
+			e: &AndExpr{
 				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
 				Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
 			},
 			es:  `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}}`,
 			sql: "`log` MATCH_PHRASE 'error' AND `status` = 'active'",
+		},
+
+		// =================================================================
+		// Test Suite: case_insensitive_operators - 测试大小写不敏感操作符
+		// =================================================================
+		"case_insensitive_and_lowercase": {
+			q: `log:error and status:active`,
+			e: &AndExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+			},
+			es:  `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` = 'active'",
+		},
+		"case_insensitive_and_mixed": {
+			q: `log:error And status:active`,
+			e: &AndExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+			},
+			es:  `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` = 'active'",
+		},
+		"case_insensitive_and_variations": {
+			q: `log:error aNd status:active anD level:info`,
+			e: &AndExpr{
+				Left: &AndExpr{
+					Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+				},
+				Right: &OperatorExpr{Field: &StringExpr{Value: "level"}, Op: OpMatch, Value: &StringExpr{Value: "info"}},
+			},
+			es:  `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}},{"term":{"level":"info"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` = 'active' AND `level` = 'info'",
+		},
+		"case_insensitive_or_lowercase": {
+			q: `log:error or status:active`,
+			e: &OrExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+			},
+			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'error' OR `status` = 'active')",
+		},
+		"case_insensitive_or_mixed": {
+			q: `log:error Or status:active oR level:info`,
+			e: &OrExpr{
+				Left: &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &OrExpr{
+					Left:  &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "level"}, Op: OpMatch, Value: &StringExpr{Value: "info"}},
+				},
+			},
+			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}},{"term":{"level":"info"}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'error' OR (`status` = 'active' OR `level` = 'info'))",
+		},
+		"case_insensitive_not_lowercase": {
+			q: `log:error not status:active`,
+			e: &OrExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &NotExpr{Expr: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}}},
+			},
+			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"bool":{"must_not":{"term":{"status":"active"}}}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'error' OR NOT (`status` = 'active'))",
+		},
+		"case_insensitive_not_mixed": {
+			q: `log:error Not status:active`,
+			e: &OrExpr{
+				Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+				Right: &NotExpr{Expr: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}}},
+			},
+			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"bool":{"must_not":{"term":{"status":"active"}}}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'error' OR NOT (`status` = 'active'))",
+		},
+		"case_insensitive_mixed_complex": {
+			q: `(log:error AND status:active) or (level:warn Not type:system)`,
+			e: &OrExpr{
+				Left: &GroupingExpr{Expr: &AndExpr{
+					Left:  &OperatorExpr{Field: &StringExpr{Value: "log"}, Op: OpMatch, Value: &StringExpr{Value: "error"}},
+					Right: &OperatorExpr{Field: &StringExpr{Value: "status"}, Op: OpMatch, Value: &StringExpr{Value: "active"}},
+				}},
+				Right: &GroupingExpr{Expr: &OrExpr{
+					Left:  &OperatorExpr{Field: &StringExpr{Value: "level"}, Op: OpMatch, Value: &StringExpr{Value: "warn"}},
+					Right: &NotExpr{Expr: &OperatorExpr{Field: &StringExpr{Value: "type"}, Op: OpMatch, Value: &StringExpr{Value: "system"}}},
+				}},
+			},
+			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}},{"bool":{"should":[{"term":{"level":"warn"}},{"bool":{"must_not":{"term":{"type":"system"}}}}]}}]}}`,
+			sql: "((`log` MATCH_PHRASE 'error' AND `status` = 'active') OR (`level` = 'warn' OR NOT (`type` = 'system')))",
 		},
 	}
 
@@ -533,12 +624,13 @@ func loadTestMapping() map[string]FieldOption {
 		"c":        {Type: FieldTypeLong},
 		"d":        {Type: FieldTypeLong},
 		"status":   {Type: FieldTypeKeyword},
-		"level":    {Type: FieldTypeText},
+		"level":    {Type: FieldTypeKeyword},
 		"loglevel": {Type: FieldTypeKeyword},
 		"author":   {Type: FieldTypeText},
 		"message":  {Type: FieldTypeText},
 		"log":      {Type: FieldTypeText},
 		"path":     {Type: FieldTypeKeyword},
 		"datetime": {Type: FieldTypeDate},
+		"type":     {Type: FieldTypeKeyword},
 	}
 }

@@ -17,7 +17,7 @@ import (
 // table_id LIKE ? OR table_id LIKE ?", "L12%", "A12%
 func (qs ResultTableQuerySet) TableIdsLike(tableIds []string) ResultTableQuerySet {
 	var sqlList []string
-	interfaceSlice := make([]interface{}, len(tableIds))
+	interfaceSlice := make([]any, len(tableIds))
 	for i, v := range tableIds {
 		sqlList = append(sqlList, "table_id LIKE ?")
 		interfaceSlice[i] = v

@@ -258,9 +258,7 @@ func HandlerTagValues(c *gin.Context) {
 					return
 				}
 
-				var (
-					res []string
-				)
+				var res []string
 
 				res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
 				if err != nil {
@@ -508,6 +506,113 @@ func HandlerLabelValues(c *gin.Context) {
 	return
 }
 
+// HandlerFieldMap
+// @Summary  info field map
+// @ID       info_field_map
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  SeriesDataList
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/field_map [post]
+func HandlerFieldMap(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-field-map")
+	defer func() {
+		span.End(&err)
+		if err != nil {
+			resp.failed(ctx, err)
+		}
+	}()
+
+	params := &infos.Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
+	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	if err != nil {
+		return
+	}
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	var (
+		wg      sync.WaitGroup
+		lock    sync.Mutex
+		dataMap = make(map[string]map[string]any)
+		keys    []string
+	)
+
+	queryRef.Range("", func(qry *metadata.Query) {
+		wg.Add(1)
+		err = p.Submit(func() {
+			defer wg.Done()
+
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				return
+			}
+
+			res, qErr := instance.QueryFieldMap(ctx, qry, start, end)
+			if qErr != nil {
+				log.Warnf(ctx, "TableUUID:%s queryFieldMap error %s", qry.TableUUID(), qErr)
+				return
+			}
+
+			span.Set(fmt.Sprintf("field-map-length-%s", qry.TableUUID()), len(res))
+
+			for k, v := range res {
+				lock.Lock()
+				if _, ok := dataMap[k]; !ok {
+					keys = append(keys, k)
+					dataMap[k] = v
+				}
+				lock.Unlock()
+			}
+		})
+		if err != nil {
+			wg.Done()
+		}
+	})
+	wg.Wait()
+
+	sort.Strings(keys)
+
+	span.Set("keys", keys)
+
+	data := make([]map[string]any, 0, len(dataMap))
+	for _, k := range keys {
+		if v, ok := dataMap[k]; ok && v != nil {
+			data = append(data, dataMap[k])
+		}
+	}
+
+	resp.success(ctx, &DataResponse{
+		Data:    data,
+		TraceID: span.TraceID(),
+	})
+}
+
 func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
@@ -544,5 +649,5 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	// 写入查询时间到全局缓存
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
-	return
+	return queryRef, startTime, endTime, err
 }

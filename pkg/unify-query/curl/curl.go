@@ -30,13 +30,11 @@ const (
 	Post = "POST"
 )
 
-var (
-	bufPool = sync.Pool{
-		New: func() any {
-			return bytes.NewBuffer(make([]byte, 0, 1024))
-		},
-	}
-)
+var bufPool = sync.Pool{
+	New: func() any {
+		return bytes.NewBuffer(make([]byte, 0, 1024))
+	},
+}
 
 // Options Curl 入参
 type Options struct {
@@ -51,22 +49,21 @@ type Options struct {
 }
 
 type Curl interface {
-	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error))
-	Request(ctx context.Context, method string, opt Options, res interface{}) (int, error)
+	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error))
+	Request(ctx context.Context, method string, opt Options, res any) (int, error)
 }
 
 // HttpCurl http 请求方法
 type HttpCurl struct {
 	Log     *log.Logger
-	decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)
+	decoder func(ctx context.Context, reader io.Reader, res any) (int, error)
 }
 
-func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)) {
+func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res any) (int, error)) {
 	c.decoder = decoder
 }
 
-func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (size int, err error) {
-
+func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res any) (size int, err error) {
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)
 
@@ -77,13 +74,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	if opt.UrlPath == "" {
 		err = fmt.Errorf("url is emtpy")
-		return
+		return size, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
 		c.Log.Errorf(ctx, "client new request error:%v", err)
-		return
+		return size, err
 	}
 
 	if opt.UserName != "" {
@@ -103,7 +100,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return size, HandleClientError(ctx, opt.UrlPath, err)
 	}
 
 	buf := bufPool.Get().(*bytes.Buffer)
@@ -115,21 +112,21 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	if resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("http code error: %s", resp.Status)
-		return
+		return size, err
 	}
 
 	if c.decoder != nil {
 		size, err = c.decoder(ctx, resp.Body, res)
-		return
+		return size, err
 	} else {
 		_, err = io.Copy(buf, resp.Body)
 		if err != nil {
-			return
+			return size, err
 		}
 		size = buf.Len()
 
 		decoder := json.NewDecoder(buf)
 		err = decoder.Decode(&res)
-		return
+		return size, err
 	}
 }

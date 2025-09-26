@@ -27,9 +27,7 @@ func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt 
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
 
 	for storageID, tsDB := range tsDBs {
-		var (
-			storage *Storage
-		)
+		var storage *Storage
 
 		storage = &Storage{
 			Type:     tsDB.Type,

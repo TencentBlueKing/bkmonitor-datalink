@@ -24,11 +24,11 @@ func init() {
 	processor.Register(define.ProcessorRateLimiter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*rateLimiter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*rateLimiter, error) {
 	rateLimiters := confengine.NewTierConfig()
 
 	var c throttle.Config
@@ -69,7 +69,7 @@ func (p *rateLimiter) IsPreCheck() bool {
 	return true
 }
 
-func (p *rateLimiter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *rateLimiter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -83,7 +83,6 @@ func (p *rateLimiter) Reload(config map[string]interface{}, customized []process
 func (p *rateLimiter) Process(record *define.Record) (*define.Record, error) {
 	token := record.Token.Original
 	rl := p.rateLimiters.GetByToken(token).(throttle.RateLimiter)
-	logger.Debugf("ratelimiter: token [%s] max qps allowed: %f", token, rl.QPS())
 	if !rl.TryAccept() {
 		return nil, errors.Errorf("ratelimiter rejected the request, token [%s] max qps allowed: %f", token, rl.QPS())
 	}

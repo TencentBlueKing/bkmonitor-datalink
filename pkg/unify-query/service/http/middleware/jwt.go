@@ -68,7 +68,7 @@ func (j JwtPayLoad) UserName() string {
 }
 
 func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error) {
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
+	keyFunc := func(token *jwt.Token) (any, error) {
 		pubKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKey)
 		if err != nil {
 			return pubKey, errors.Wrap(err, "jwt parse fail")

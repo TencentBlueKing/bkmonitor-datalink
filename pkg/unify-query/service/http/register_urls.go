@@ -44,6 +44,10 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRaw)
 
+	// query/raw/with_scroll
+	handlerPath = viper.GetString(TSQueryRawQueryWithScrollHandlePathConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRawWithScroll)
+
 	// query/ts/exemplar
 	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryExemplar)
@@ -75,6 +79,10 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
 	registerHandler.Register(http.MethodGet, handlerPath, HandlerLabelValues)
 
+	// query/ts/info/field_map
+	handlerPath = path.Join(infoPath, string(infos.FieldMap))
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerFieldMap)
+
 	// query/ts/cluster_metrics/
 	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
@@ -82,7 +90,6 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// query/es/
 	handlerPath = viper.GetString(ESHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandleESQueryRequest)
-
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

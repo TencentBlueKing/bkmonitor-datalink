@@ -32,6 +32,13 @@ type Logger struct {
 	logger *zap.Logger
 }
 
+func (l *Logger) Printf(format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
+	l.logger.Info(withTraceID(context.Background(), format, v...))
+}
+
 func (l *Logger) Warnf(ctx context.Context, format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
@@ -87,7 +94,8 @@ func Errorf(ctx context.Context, format string, v ...any) {
 }
 
 func Debugf(ctx context.Context, format string, v ...any) {
-	DefaultLogger.Debugf(ctx, format, v...)
+	// DefaultLogger.Debugf(ctx, format, v...)
+	fmt.Printf(format+"\n", v...)
 }
 
 func Panicf(ctx context.Context, format string, v ...any) {

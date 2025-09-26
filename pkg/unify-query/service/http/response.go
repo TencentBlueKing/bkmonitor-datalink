@@ -45,7 +45,7 @@ func (r *response) failed(ctx context.Context, err error) {
 	})
 }
 
-func (r *response) success(ctx context.Context, data interface{}) {
+func (r *response) success(ctx context.Context, data any) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
@@ -64,9 +64,16 @@ func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
 
 // ListData 数据返回格式
 type ListData struct {
-	Total              int64                       `json:"total,omitempty"`
-	List               []map[string]any            `json:"list" json:"list,omitempty"`
+	Total              int64                       `json:"total"`
+	List               []map[string]any            `json:"list"`
+	Done               bool                        `json:"done"`
 	TraceID            string                      `json:"trace_id,omitempty"`
-	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`
+	Status             *metadata.Status            `json:"status"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+}
+
+// DataResponse 返回数据结构体
+type DataResponse struct {
+	Data    any    `json:"data"`
+	TraceID string `json:"trace_id,omitempty"`
 }

@@ -38,6 +38,11 @@ var (
 	ErrorMatchAll = "不支持全字段检索"
 )
 
+type FieldOption struct {
+	Type     string
+	Analyzed bool
+}
+
 type TimeAggregate struct {
 	Window       time.Duration
 	OffsetMillis int64
@@ -51,7 +56,7 @@ type SQLExpr interface {
 	// WithFieldAlias 设置字段别名
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
-	WithFieldsMap(fieldsMap map[string]string) SQLExpr
+	WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -69,7 +74,7 @@ type SQLExpr interface {
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
-	FieldMap() map[string]string
+	FieldMap() map[string]FieldOption
 	// Type 返回表达式类型
 	Type() string
 }
@@ -101,7 +106,7 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    map[string]string
+	fieldMap    map[string]FieldOption
 	fieldAlias  metadata.FieldAlias
 
 	timeField  string
@@ -130,7 +135,7 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]FieldOption) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
 }
@@ -148,7 +153,7 @@ func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
 	return nil
 }
 
-func (d *DefaultSQLExpr) FieldMap() map[string]string {
+func (d *DefaultSQLExpr) FieldMap() map[string]FieldOption {
 	return d.fieldMap
 }
 
@@ -161,7 +166,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
-		return
+		return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 	}
 
 	var (
@@ -174,14 +179,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	dimensionSet = set.New[string]([]string{FieldValue}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			var (
-				newDim string
-			)
+			var newDim string
 
 			dimensionSet.Add(dim)
 			newDim, err = d.dimTransform(dim)
 			if err != nil {
-				return
+				return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 			}
 
 			selectFields = append(selectFields, newDim)
@@ -259,7 +262,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		orderField, err = d.dimTransform(orderField)
 		if err != nil {
-			return
+			return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 		}
 
 		// 移除重复的排序字段
@@ -281,7 +284,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		OffsetMillis: offsetMillis,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -454,9 +457,7 @@ func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
 }
 
 func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
-	var (
-		orConditions []string
-	)
+	var orConditions []string
 
 	// 遍历所有OR条件组
 	for _, conditions := range allConditions {

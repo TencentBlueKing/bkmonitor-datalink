@@ -17,8 +17,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/forwarder/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/queue"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -88,7 +88,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 
 	// 先遍历一遍确定哪些 span 需要采样 并记录 traceID
 	allTraceIDs := make(map[pcommon.TraceID]struct{})
-	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		allTraceIDs[span.TraceID()] = struct{}{}
 		code := span.Status().Code().String()
 		if _, ok := e.status[statusMap[code]]; ok {
@@ -106,7 +106,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 
 	// 移除无须采样的 span 并记录需要缓存的 spanID
 	holdSpanIDs := make(map[pcommon.SpanID]struct{})
-	foreach.SpansRemoveIf(pdTraces.ResourceSpans(), func(span ptrace.Span) bool {
+	foreach.SpansRemoveIf(pdTraces, func(span ptrace.Span) bool {
 		e.mut.RLock()
 		_, ok := e.traces[span.TraceID()]
 		e.mut.RUnlock()
@@ -116,7 +116,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 		return !ok
 	})
 
-	// 没有 batch 则无须后续处理流程
+	// batch 为空无需处理
 	if len(batch) == 0 {
 		return
 	}
@@ -175,7 +175,6 @@ func (e *statusCodeEvaluator) gc() {
 			e.mut.Lock()
 			for traceID, ts := range e.traces {
 				drop := now-ts > maxDuration
-				logger.Debugf("traceID=%v, now=%v, ts=%v, drop=%v", traceID, now, ts, drop)
 				if drop {
 					delete(e.traces, traceID)
 				}

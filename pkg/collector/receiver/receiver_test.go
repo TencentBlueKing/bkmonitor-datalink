@@ -63,44 +63,23 @@ func TestReceiver(t *testing.T) {
       # 服务监听端点
       # default: ""
       endpoint: ":4319"
-
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      zipkin:
-        enabled: true
-      remotewrite:
-        enabled: true
-      skywalking:
-        enabled: true
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
 	r, err := New(config)
 	assert.NoError(t, err)
 
-	componentsReady[define.SourceJaeger] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceJaeger) }
-	componentsReady[define.SourceOtlp] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceOtlp) }
-	componentsReady[define.SourcePushGateway] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourcePushGateway) }
-	componentsReady[define.SourceRemoteWrite] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceRemoteWrite) }
-	componentsReady[define.SourceZipkin] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceZipkin) }
-	componentsReady[define.SourceSkywalking] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceSkywalking) }
-	componentsReady[define.SourcePyroscope] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourcePyroscope) }
-	componentsReady[define.SourceFta] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceFta) }
-	componentsReady[define.SourceBeat] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceBeat) }
-	componentsReady[define.SourceTars] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceTars) }
+	componentsReady[define.SourceJaeger] = func() {}
+	componentsReady[define.SourceOtlp] = func() {}
+	componentsReady[define.SourcePushGateway] = func() {}
+	componentsReady[define.SourceRemoteWrite] = func() {}
+	componentsReady[define.SourceZipkin] = func() {}
+	componentsReady[define.SourceSkywalking] = func() {}
+	componentsReady[define.SourcePyroscope] = func() {}
+	componentsReady[define.SourceFta] = func() {}
+	componentsReady[define.SourceBeat] = func() {}
+	componentsReady[define.SourceTars] = func() {}
+	componentsReady[define.SourceLogPush] = func() {}
 
 	r.ready()
 	assert.NoError(t, r.Start())

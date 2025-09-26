@@ -22,9 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-var (
-	mockInitOnce sync.Once
-)
+var mockInitOnce sync.Once
 
 func Init() {
 	mockInitOnce.Do(func() {

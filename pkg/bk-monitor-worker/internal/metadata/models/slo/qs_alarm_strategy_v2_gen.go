@@ -1669,7 +1669,7 @@ var AlarmStrategyV2DBSchema = struct {
 // Update updates AlarmStrategyV2 fields by primary key
 // nolint: dupl
 func (o *AlarmStrategyV2) Update(db *gorm.DB, fields ...AlarmStrategyV2DBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":                 o.ID,
 		"name":               o.Name,
 		"bk_biz_id":          o.BkBizID,
@@ -1690,7 +1690,7 @@ func (o *AlarmStrategyV2) Update(db *gorm.DB, fields ...AlarmStrategyV2DBSchemaF
 		"priority":           o.Priority,
 		"priority_group_key": o.PriorityGroupKey,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1709,7 +1709,7 @@ func (o *AlarmStrategyV2) Update(db *gorm.DB, fields ...AlarmStrategyV2DBSchemaF
 
 // AlarmStrategyV2Updater is an AlarmStrategyV2 updates manager
 type AlarmStrategyV2Updater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1717,7 +1717,7 @@ type AlarmStrategyV2Updater struct {
 // nolint: dupl
 func NewAlarmStrategyV2Updater(db *gorm.DB) AlarmStrategyV2Updater {
 	return AlarmStrategyV2Updater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&AlarmStrategyV2{}),
 	}
 }

@@ -38,7 +38,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	parser := gen.NewDorisParserParser(tokens)
 
 	// 创建解析树
-	//visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
+	// visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
 
 	stmt := &Statement{}
 	if opt != nil {

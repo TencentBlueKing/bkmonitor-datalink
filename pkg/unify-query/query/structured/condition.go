@@ -56,7 +56,6 @@ func (c *Conditions) InsertField(field ConditionField) {
 
 // AnalysisConditions
 func (c *Conditions) AnalysisConditions() (AllConditions, error) {
-
 	var (
 		totalBuffer = make([][]ConditionField, 0) // 以or作为分界线，and条件的内容都会放入到一起，然后一起渲染处理
 		rowBuffer   = make([]ConditionField, 0)   // 每一组的缓存
@@ -78,8 +77,8 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	// 先循环遍历所有的内容，加入到各个列表中
 	for index, field := range c.FieldList {
-		// 当 value 为空的时候，直接忽略该查询条件
-		if len(field.Value) == 0 {
+		// 当 value 为空的时候，直接忽略该查询条件，如果 operator 为存在或者不存在，则忽略 values 的值
+		if len(field.Value) == 0 && field.Operator != ConditionExisted && field.Operator != ConditionNotExisted {
 			continue
 		}
 
@@ -115,7 +114,6 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 // ToProm
 func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
-
 	var (
 		err         error
 		totalBuffer [][]ConditionField // 以or作为分界线，and条件的内容都会放入到一起，然后一起渲染处理
@@ -214,7 +212,6 @@ func (c AllConditions) MetaDataAllConditions() metadata.AllConditions {
 				IsWildcard:    cond.IsWildcard,
 				IsPrefix:      cond.IsPrefix,
 				IsSuffix:      cond.IsSuffix,
-				IsForceEq:     cond.IsForceEq,
 			})
 		}
 		allConditions = append(allConditions, conds)
@@ -297,6 +294,10 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 		lbl := make([]string, 0, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
+			if len(nf.Value) == 0 {
+				continue
+			}
+
 			val := nf.Value[0]
 			val = strings.ReplaceAll(val, `\`, `\\`)
 			val = strings.ReplaceAll(val, `"`, `\"`)
@@ -376,7 +377,6 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 
 			return true, nil
 		}()
-
 		if err != nil {
 			return false, err
 		}
@@ -473,7 +473,6 @@ func (c *Conditions) GetRequiredFiled() ([]int, []string, []string, error) {
 
 // ReplaceOrAddCondition: 替换或添加条件
 func ReplaceOrAddCondition(c *Conditions, dimension string, values []string) *Conditions {
-
 	// 无效的替换或添加
 	if len(values) == 0 {
 		return c

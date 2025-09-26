@@ -44,7 +44,7 @@ var (
 func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 	newKey = key
 	if !MultiTenantMode {
-		return
+		return newKey
 	}
 
 	user := metadata.GetUser(ctx)
@@ -52,7 +52,7 @@ func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 
 	newKey = key + "|" + tenantID
 
-	return
+	return newKey
 }
 
 type SpaceTsDbRouter struct {
@@ -119,9 +119,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	createdCount := 0
 	updatedCount := 0
 	for _, entity := range entities {
-		var (
-			keyNotFound bool
-		)
+		var keyNotFound bool
 		k := fmt.Sprintf("%s:%s", stoPrefix, entity.Key)
 		v, err := entity.Val.Marshal(nil)
 		if err != nil {
@@ -188,6 +186,24 @@ func (r *SpaceTsDbRouter) Add(ctx context.Context, stoPrefix string, stoKey stri
 	entities := make([]influxdb.GenericKV, 0, 1)
 	entities = append(entities, influxdb.GenericKV{Key: stoKey, Val: stoValue})
 	return r.BatchAdd(ctx, stoPrefix, entities, true, true)
+}
+
+// Delete a space data from db
+func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey string) error {
+	fullKey := fmt.Sprintf("%s:%s", stoPrefix, stoKey)
+
+	err := r.kvClient.Delete(kvstore.String2byte(fullKey))
+	if err != nil {
+		log.Warnf(ctx, "Failed to delete key(%s) from kvClient: %v", fullKey, err)
+		return err
+	}
+
+	if r.isCache {
+		r.cache.Del(fullKey)
+	}
+
+	log.Infof(ctx, "Deleted key from storage and cache: %s", fullKey)
+	return nil
 }
 
 // Get a space data from db
@@ -325,6 +341,11 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 		if err != nil {
 			return err
 		}
+	case influxdb.ResultTableDetailChannelDeleteKey:
+		err := r.Delete(ctx, influxdb.ResultTableDetailKey, hashKey)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("Invalid channel key(%s) from subscribe process ", channelKey)
 	}
@@ -412,7 +433,6 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 	genericRet := r.Get(ctx, influxdb.BkAppToSpaceKey, bkAppCode, true, true)
 	if genericRet != nil {
 		return genericRet.(*influxdb.SpaceUIDList)
-
 	}
 	return nil
 }

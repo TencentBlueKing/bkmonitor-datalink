@@ -25,11 +25,11 @@ func init() {
 	processor.Register(define.ProcessorDbFilter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*dbFilter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*dbFilter, error) {
 	configs := confengine.NewTierConfig()
 
 	c := &Config{}
@@ -77,7 +77,7 @@ func (p *dbFilter) IsPreCheck() bool {
 	return false
 }
 
-func (p *dbFilter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *dbFilter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -100,7 +100,7 @@ func (p *dbFilter) processSlowQuery(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			attrs := span.Attributes()
 
 			// 先确定 db.system 属性是否存在 不存在代表非 db 类型 span 则无需处理

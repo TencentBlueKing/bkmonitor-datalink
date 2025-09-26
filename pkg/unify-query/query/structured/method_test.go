@@ -35,7 +35,7 @@ func TestFuncToProm(t *testing.T) {
 		{
 			request: AggregateMethod{
 				Method:    "quantile",
-				VArgsList: []interface{}{0.9},
+				VArgsList: []any{0.9},
 			},
 			result: "quantile(0.9, \"test\")",
 		},

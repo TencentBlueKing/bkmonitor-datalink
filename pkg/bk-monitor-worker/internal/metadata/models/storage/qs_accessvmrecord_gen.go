@@ -922,7 +922,7 @@ var AccessVMRecordDBSchema = struct {
 // Update updates AccessVMRecord fields by primary key
 // nolint: dupl
 func (o *AccessVMRecord) Update(db *gorm.DB, fields ...AccessVMRecordDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id":       o.BkTenantId,
 		"data_type":          o.DataType,
 		"result_table_id":    o.ResultTableId,
@@ -934,7 +934,7 @@ func (o *AccessVMRecord) Update(db *gorm.DB, fields ...AccessVMRecordDBSchemaFie
 		"vm_result_table_id": o.VmResultTableId,
 		"remark":             o.Remark,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -953,7 +953,7 @@ func (o *AccessVMRecord) Update(db *gorm.DB, fields ...AccessVMRecordDBSchemaFie
 
 // AccessVMRecordUpdater is an AccessVMRecord updates manager
 type AccessVMRecordUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -961,7 +961,7 @@ type AccessVMRecordUpdater struct {
 // nolint: dupl
 func NewAccessVMRecordUpdater(db *gorm.DB) AccessVMRecordUpdater {
 	return AccessVMRecordUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&AccessVMRecord{}),
 	}
 }

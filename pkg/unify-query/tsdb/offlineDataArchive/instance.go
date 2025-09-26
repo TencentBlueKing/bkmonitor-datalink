@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -26,7 +24,6 @@ import (
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -70,9 +67,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
-	var (
-		resultLimit, resultSLimit int
-	)
+	var resultLimit, resultSLimit int
 
 	if limit > 0 {
 		resultLimit = limit
@@ -113,19 +108,12 @@ func (i Instance) setClient() error {
 	return nil
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i Instance) QuerySeriesSet(
 	ctx context.Context, query *metadata.Query,
 	start, end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "offline-data-archive-query-raw-grpc-stream")
 
@@ -196,40 +184,6 @@ func (i Instance) QuerySeriesSet(
 			Timeout: i.Timeout,
 		},
 	)
-}
-
-func (i Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	panic("implement me")
-}
-
-func (i Instance) DirectQuery(ctx context.Context, promql string, end time.Time) (promql.Vector, error) {
-	panic("implement me")
-}
-
-func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	panic("implement me")
-}
-
-func (i Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	panic("implement me")
-}
-
-func (i Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
-	panic("implement me")
-}
-
-func (i Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	panic("implement me")
-}
-
-func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
 }
 
 func (i Instance) InstanceType() string {

@@ -34,21 +34,21 @@ func TestMetrics(t *testing.T) {
 	var n int
 
 	n = 0
-	Metrics(g.Generate().ResourceMetrics(), func(metric pmetric.Metric) { n++ })
+	Metrics(g.Generate(), func(metric pmetric.Metric) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 1
-	MetricsSliceResource(g.Generate().ResourceMetrics(), func(rs pcommon.Resource) { n++ })
+	MetricsSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
 
 	n = 0
-	MetricsWithResourceAttrs(g.Generate().ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) { n++ })
+	MetricsWithResource(g.Generate(), func(rs pcommon.Map, metric pmetric.Metric) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	MetricDataPointsAttrs(testkits.FirstMetric(g.Generate()), func(attrs pcommon.Map) { n++ })
+	MetricsDataPoint(testkits.FirstMetric(g.Generate()), func(attrs pcommon.Map) { n++ })
 
 	n = 0
-	MetricsSliceDataPointsAttrs(g.Generate().ResourceMetrics(), func(name string, attrs pcommon.Map) { n++ })
+	MetricsDataPointWithResource(g.Generate(), func(metric pmetric.Metric, rs, attrs pcommon.Map) { n++ })
 	assert.Equal(t, 8, n)
 }
 
@@ -60,20 +60,20 @@ func TestTraces(t *testing.T) {
 	var n int
 
 	n = 0
-	Spans(g.Generate().ResourceSpans(), func(span ptrace.Span) { n++ })
+	Spans(g.Generate(), func(span ptrace.Span) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	SpansSliceResource(g.Generate().ResourceSpans(), func(rs pcommon.Resource) { n++ })
+	SpansSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
 	assert.Equal(t, 1, n)
 
 	n = 0
-	SpansWithResourceAttrs(g.Generate().ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) { n++ })
+	SpansWithResource(g.Generate(), func(rs pcommon.Map, span ptrace.Span) { n++ })
 	assert.Equal(t, 8, n)
 
-	spans := g.Generate().ResourceSpans()
+	spans := g.Generate()
 	SpansRemoveIf(spans, func(span ptrace.Span) bool { return true })
-	assert.Equal(t, 0, spans.Len())
+	assert.Equal(t, 0, spans.ResourceSpans().Len())
 }
 
 func TestLogs(t *testing.T) {
@@ -84,14 +84,14 @@ func TestLogs(t *testing.T) {
 	var n int
 
 	n = 0
-	Logs(g.Generate().ResourceLogs(), func(logRecord plog.LogRecord) { n++ })
+	Logs(g.Generate(), func(logRecord plog.LogRecord) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	LogsSliceResource(g.Generate().ResourceLogs(), func(rs pcommon.Resource) { n++ })
+	LogsSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
 	assert.Equal(t, 1, n)
 
 	n = 0
-	LogsWithResourceAttrs(g.Generate().ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) { n++ })
+	LogsWithResource(g.Generate(), func(rs pcommon.Map, logRecord plog.LogRecord) { n++ })
 	assert.Equal(t, 8, n)
 }

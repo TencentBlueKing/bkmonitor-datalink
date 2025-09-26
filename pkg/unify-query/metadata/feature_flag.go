@@ -26,7 +26,7 @@ func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	ctx, span = trace.NewSpan(ctx, "get-bk-data-table-id-auth-feature-flag")
 	defer span.End(&err)
 
-	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+	u := featureFlag.FFUser(user.HashID, map[string]any{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUID,
@@ -50,7 +50,7 @@ func GetJwtAuthFeatureFlag(ctx context.Context) bool {
 	ctx, span = trace.NewSpan(ctx, "get-jwt-auth-feature-flag")
 	defer span.End(&err)
 
-	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+	u := featureFlag.FFUser(user.HashID, map[string]any{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUID,
@@ -75,7 +75,7 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	defer span.End(&err)
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
+	ffUser := featureFlag.FFUser(user.HashID, map[string]any{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUID,
@@ -103,12 +103,10 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 }
 
 func GetIsK8sFeatureFlag(ctx context.Context) bool {
-	var (
-		user = GetUser(ctx)
-	)
+	user := GetUser(ctx)
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
+	ffUser := featureFlag.FFUser(user.HashID, map[string]any{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUID,

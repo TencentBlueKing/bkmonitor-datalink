@@ -187,7 +187,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -209,7 +209,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	return res, nil
 }
 
-func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, float64, error) {
+func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64, error) {
 	var (
 		t        time.Time
 		err      error
@@ -314,9 +314,7 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
-	var (
-		resultLimit, resultSLimit int
-	)
+	var resultLimit, resultSLimit int
 
 	if limit > 0 {
 		resultLimit = limit
@@ -485,7 +483,7 @@ func (i *Instance) query(
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -664,11 +662,6 @@ func (i *Instance) grpcStream(
 	return seriesSet
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
@@ -676,9 +669,7 @@ func (i *Instance) QuerySeriesSet(
 	start time.Time,
 	end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
@@ -772,8 +763,8 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promql string,
 	start, end time.Time, step time.Duration,
-) (promPromql.Matrix, error) {
-	return nil, nil
+) (promPromql.Matrix, bool, error) {
+	return nil, false, nil
 }
 
 // Query instant 查询
@@ -852,7 +843,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})
@@ -963,7 +954,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -1105,7 +1096,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})
@@ -1159,7 +1150,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	if ss.Err() != nil {
 		err = ss.Err()
-		return
+		return series, err
 	}
 
 	series = make([]map[string]string, 0)
@@ -1175,11 +1166,11 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }

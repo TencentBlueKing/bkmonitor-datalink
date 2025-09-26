@@ -21,8 +21,7 @@ import (
 var jsonType = "application/json"
 
 // JSONDecoder
-type JSONDecoder struct {
-}
+type JSONDecoder struct{}
 
 // Decode :
 func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader, resp *Response) (size int, err error) {
@@ -34,28 +33,26 @@ func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader, resp *Respon
 		select {
 		case <-ctx.Done():
 			err = fmt.Errorf("context timeout")
-			return
+			return size, err
 		default:
-			var (
-				line []byte
-			)
+			var line []byte
 			line, err = rd.ReadBytes('\n')
 			if len(line) > 0 {
 				res := new(Response)
 				size += len(line)
 				err = json.Unmarshal(line, res)
 				if err != nil {
-					return
+					return size, err
 				}
 				resp.Results = append(resp.Results, res.Results...)
 			}
 
 			if err == io.EOF {
 				err = nil
-				return
+				return size, err
 			}
 			if err != nil {
-				return
+				return size, err
 			}
 		}
 	}

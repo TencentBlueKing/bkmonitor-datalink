@@ -61,5 +61,4 @@ func TestGetDataUrl(t *testing.T) {
 			assert.Equal(t, c.url, url)
 		})
 	}
-
 }

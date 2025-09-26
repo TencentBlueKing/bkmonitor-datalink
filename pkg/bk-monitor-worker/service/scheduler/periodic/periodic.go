@@ -89,9 +89,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	}
 }
 
-var (
-	initPeriodicTaskOnce sync.Once
-)
+var initPeriodicTaskOnce sync.Once
 
 func GetPeriodicTaskMapping() map[string]PeriodicTask {
 	initPeriodicTaskOnce.Do(func() {

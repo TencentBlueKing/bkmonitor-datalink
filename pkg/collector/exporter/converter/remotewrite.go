@@ -59,7 +59,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				Metrics:    common.MapStr{name: sample.GetValue()},
 				Target:     target,
 				Timestamp:  sample.GetTimestamp(),
-				Dimensions: utils.CloneMap(dims),
+				Dimensions: dims, // 无需拷贝
 			}
 			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
 		}

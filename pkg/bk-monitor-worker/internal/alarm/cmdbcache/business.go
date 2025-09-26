@@ -39,7 +39,7 @@ type BusinessCacheManager struct {
 }
 
 func (m *BusinessCacheManager) BuildRelationMetrics(ctx context.Context) error {
-	//TODO implement me
+	// TODO implement me
 	return errors.New("BuildRelationMetrics not implemented for BusinessCacheManager")
 }
 
@@ -57,19 +57,19 @@ func NewBusinessCacheManager(bkTenantId string, prefix string, opt *redis.Option
 }
 
 // getBusinessList 获取业务列表
-func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]interface{}, error) {
-	bizList := make([]map[string]interface{}, 0)
+func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]any, error) {
+	bizList := make([]map[string]any, 0)
 	cmdbApi := getCmdbApi(bkTenantId)
 	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
 		// 获取总数
-		func(resp interface{}) (int, error) {
-			data, ok := resp.(map[string]interface{})["data"]
+		func(resp any) (int, error) {
+			data, ok := resp.(map[string]any)["data"]
 			if !ok {
 				return 0, errors.Errorf("response data not found, resp: %v", resp)
 			}
-			count, ok := data.(map[string]interface{})["count"]
+			count, ok := data.(map[string]any)["count"]
 			if !ok {
 				return 0, errors.Errorf("response count not found, resp: %v", resp)
 			}
@@ -77,7 +77,7 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]inter
 		},
 		// 设置分页参数
 		func(page int) define.Operation {
-			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
@@ -98,12 +98,12 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]inter
 	}
 
 	for _, item := range result {
-		bizResp := item.(map[string]interface{})
-		bizData := bizResp["data"].(map[string]interface{})
-		bizInfo := bizData["info"].([]interface{})
+		bizResp := item.(map[string]any)
+		bizData := bizResp["data"].(map[string]any)
+		bizInfo := bizData["info"].([]any)
 
 		for _, info := range bizInfo {
-			biz := info.(map[string]interface{})
+			biz := info.(map[string]any)
 			biz["bk_tenant_id"] = bkTenantId
 
 			// 处理用户类型字段
@@ -134,7 +134,7 @@ func getBusinessAttribute(ctx context.Context, tenantId string) ([]cmdb.SearchOb
 
 	// 获取业务对象字段说明
 	var attrResult cmdb.SearchObjectAttributeResp
-	_, err := cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]interface{}{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
+	_, err := cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]any{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
 	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 		}
 
 		// 构造业务信息
-		biz := map[string]interface{}{
+		biz := map[string]any{
 			"bk_tenant_id":      s.BkTenantId,
 			"bk_biz_id":         bkBizId,
 			"bk_biz_name":       fmt.Sprintf("[%s]%s", s.SpaceId, s.SpaceName),
@@ -270,7 +270,7 @@ func (m *BusinessCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 根据事件清理缓存
-func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "biz" {
 		return nil
 	}
@@ -292,7 +292,7 @@ func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType s
 }
 
 // UpdateByEvents 根据事件更新缓存
-func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "biz" || len(events) == 0 {
 		return nil
 	}

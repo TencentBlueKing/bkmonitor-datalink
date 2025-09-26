@@ -90,12 +90,12 @@ type ParamsLabelValues struct {
 
 type Metric map[string]string
 
-type Value []interface{}
+type Value []any
 
 func (f Value) Point() (t int64, v float64, err error) {
 	if len(f) != 2 {
 		err = fmt.Errorf("%+v length is not 2", f)
-		return
+		return t, v, err
 	}
 
 	switch pt := f[0].(type) {
@@ -104,7 +104,7 @@ func (f Value) Point() (t int64, v float64, err error) {
 		t = int64(pt) * 1e3
 	default:
 		err = fmt.Errorf("%+v type is not float64", f[0])
-		return
+		return t, v, err
 	}
 
 	// 值从 string 转换为 float64
@@ -113,16 +113,16 @@ func (f Value) Point() (t int64, v float64, err error) {
 		v, err = strconv.ParseFloat(pv, 64)
 		if err != nil {
 			err = fmt.Errorf("%+v %s", f[1], err)
-			return
+			return t, v, err
 		}
 	case int, int64, int32:
 		v = float64(v)
 	default:
 		err = fmt.Errorf("%+v type is not string", f[0])
-		return
+		return t, v, err
 	}
 
-	return
+	return t, v, err
 }
 
 type Series struct {
@@ -142,21 +142,21 @@ type VmResponse struct {
 	Message string `json:"message"`
 	Code    string `json:"code"`
 	Data    struct {
-		ResultTableScanRange interface{} `json:"result_table_scan_range"`
-		Cluster              string      `json:"cluster"`
-		TotalRecords         int         `json:"totalRecords"`
-		Timetaken            float64     `json:"timetaken"`
+		ResultTableScanRange any     `json:"result_table_scan_range"`
+		Cluster              string  `json:"cluster"`
+		TotalRecords         int     `json:"totalRecords"`
+		Timetaken            float64 `json:"timetaken"`
 		List                 []struct {
 			Data      Data   `json:"data,omitempty"`
 			IsPartial bool   `json:"isPartial,omitempty"`
 			Status    string `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
-		Device               string        `json:"device"`
-		ResultTableIds       []string      `json:"result_table_ids"`
-		SelectFieldsOrder    []interface{} `json:"select_fields_order"`
-		SQL                  string        `json:"sql"`
+		BkBizIDs             []string `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
+		Device               string   `json:"device"`
+		ResultTableIds       []string `json:"result_table_ids"`
+		SelectFieldsOrder    []any    `json:"select_fields_order"`
+		SQL                  string   `json:"sql"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`
@@ -170,21 +170,21 @@ type VmLableValuesResponse struct {
 	Message string `json:"message"`
 	Code    string `json:"code"`
 	Data    struct {
-		ResultTableScanRange interface{} `json:"result_table_scan_range"`
-		Cluster              string      `json:"cluster"`
-		TotalRecords         int         `json:"totalRecords"`
-		Timetaken            float64     `json:"timetaken"`
+		ResultTableScanRange any     `json:"result_table_scan_range"`
+		Cluster              string  `json:"cluster"`
+		TotalRecords         int     `json:"totalRecords"`
+		Timetaken            float64 `json:"timetaken"`
 		List                 []struct {
 			Data      []string `json:"data,omitempty"`
 			IsPartial bool     `json:"isPartial,omitempty"`
 			Status    string   `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
-		Device               string        `json:"device"`
-		ResultTableIds       []string      `json:"result_table_ids"`
-		SelectFieldsOrder    []interface{} `json:"select_fields_order"`
-		SQL                  string        `json:"sql"`
+		BkBizIDs             []string `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
+		Device               string   `json:"device"`
+		ResultTableIds       []string `json:"result_table_ids"`
+		SelectFieldsOrder    []any    `json:"select_fields_order"`
+		SQL                  string   `json:"sql"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`
@@ -198,21 +198,21 @@ type VmSeriesResponse struct {
 	Message string `json:"message"`
 	Code    string `json:"code"`
 	Data    struct {
-		ResultTableScanRange interface{} `json:"result_table_scan_range"`
-		Cluster              string      `json:"cluster"`
-		TotalRecords         int         `json:"totalRecords"`
-		Timetaken            float64     `json:"timetaken"`
+		ResultTableScanRange any     `json:"result_table_scan_range"`
+		Cluster              string  `json:"cluster"`
+		TotalRecords         int     `json:"totalRecords"`
+		Timetaken            float64 `json:"timetaken"`
 		List                 []struct {
 			Data      []map[string]string `json:"data,omitempty"`
 			IsPartial bool                `json:"isPartial,omitempty"`
 			Status    string              `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
-		Device               string        `json:"device"`
-		ResultTableIds       []string      `json:"result_table_ids"`
-		SelectFieldsOrder    []interface{} `json:"select_fields_order"`
-		SQL                  string        `json:"sql"`
+		BkBizIDs             []string `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
+		Device               string   `json:"device"`
+		ResultTableIds       []string `json:"result_table_ids"`
+		SelectFieldsOrder    []any    `json:"select_fields_order"`
+		SQL                  string   `json:"sql"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`

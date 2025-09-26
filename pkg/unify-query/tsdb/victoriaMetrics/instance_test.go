@@ -120,7 +120,7 @@ func TestInstance_DirectQueryRange(t *testing.T) {
 			}
 			metadata.SetExpand(ctx, expand)
 
-			res, err := instance.DirectQueryRange(ctx, c.promql, start, end, step)
+			res, _, err := instance.DirectQueryRange(ctx, c.promql, start, end, step)
 			if err != nil {
 				log.Fatalf(ctx, err.Error())
 				return

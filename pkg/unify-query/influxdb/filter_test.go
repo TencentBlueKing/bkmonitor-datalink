@@ -115,7 +115,7 @@ func TestFilter(t *testing.T) {
 	ReloadMetricRouter(metricData)
 
 	type testProcess struct {
-		ids    interface{} // []int, []string
+		ids    any // []int, []string
 		idType string
 	}
 

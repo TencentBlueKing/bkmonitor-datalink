@@ -63,8 +63,8 @@ func (b *BaseModel) BeforeUpdate(tx *gorm.DB) error {
 }
 
 // InterfaceValue 将字符串转为interface{}类型
-func (r *OptionBase) InterfaceValue() (interface{}, error) {
-	var value interface{}
+func (r *OptionBase) InterfaceValue() (any, error) {
+	var value any
 	switch r.ValueType {
 	case "string":
 		value = r.Value
@@ -82,7 +82,7 @@ func (r *OptionBase) InterfaceValue() (interface{}, error) {
 }
 
 // ParseOptionValue 解析option的interface{}的类型
-func ParseOptionValue(value interface{}) (string, string, error) {
+func ParseOptionValue(value any) (string, string, error) {
 	if value == nil {
 		return "", "", errors.New("ParseOptionValue value can not be nil")
 	}

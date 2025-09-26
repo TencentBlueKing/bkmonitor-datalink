@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -248,6 +249,143 @@ func HandlerQueryRaw(c *gin.Context) {
 		return
 	}
 
+	// 避免空切片被解析成 null 的问题
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
+	}
+	if listData.ResultTableOptions == nil {
+		listData.ResultTableOptions = make(metadata.ResultTableOptions)
+	}
+
+	resp.success(ctx, listData)
+}
+
+// HandlerQueryRawWithScroll
+// @Summary query monitor by raw data with scroll
+// @ID query_raw_with_scroll
+// @Produce json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      structured.QueryTs  			true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/raw_with_scroll [post]
+func HandlerQueryRawWithScroll(c *gin.Context) {
+	var (
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
+	)
+
+	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
+	defer func() {
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			resp.failed(ctx, err)
+		}
+
+		span.End(&err)
+	}()
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-tenant-id", user.TenantID)
+	span.Set("query-space-uid", user.SpaceUID)
+
+	queryTs := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	if err != nil {
+		return
+	}
+
+	if user.SpaceUID != "" {
+		queryTs.SpaceUid = user.SpaceUID
+	}
+
+	if queryTs.Scroll == "" {
+		queryTs.Scroll = ScrollWindowTimeout
+	}
+	if queryTs.Limit == 0 {
+		queryTs.Limit = ScrollSliceLimit
+	}
+
+	// 把是否清理的标记位提取出来，避免后续生成的 key 不一致
+	clearCache := queryTs.ClearCache
+	queryTs.ClearCache = false
+	queryByte, _ := json.Marshal(queryTs)
+	queryStr := string(queryByte)
+	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
+	if err != nil {
+		return
+	}
+
+	span.Set("query-body", queryStr)
+
+	if clearCache {
+		span.Set("clear-cache", "true")
+		err = session.Clear(ctx)
+		if err != nil {
+			return
+		}
+		// 清理后需要重新初始化 session，确保从头开始查询
+		// 重新创建一个新的 session 来替换被清理的 session
+		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
+		if err != nil {
+			return
+		}
+	}
+
+	sessionStr, _ := json.Marshal(session)
+	span.Set("session-object", sessionStr)
+
+	if err = session.Lock(ctx); err != nil {
+		return
+	}
+	defer func() {
+		if listData.Done {
+			err = session.Clear(ctx)
+			span.Set("clear-cache", "true")
+			if err != nil {
+				return
+			}
+		} else {
+			err = session.Update(ctx)
+			if err != nil {
+				return
+			}
+		}
+
+		err = session.UnLock(ctx)
+		if err != nil {
+			return
+		}
+	}()
+
+	span.Set("session-lock-key", queryStrWithUserName)
+	listData.TraceID = span.TraceID()
+	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
+	listData.Done = session.Done()
+	if err != nil {
+		listData.Status = &metadata.Status{
+			Code:    metadata.QueryRawError,
+			Message: err.Error(),
+		}
+		return
+	}
+
+	// 避免空切片被解析成 null 的问题
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
+	}
+
 	resp.success(ctx, listData)
 }
 
@@ -385,7 +523,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 
 // HandlerQueryReference
 // @Summary  query monitor by reference
-// @ID       query_ts
+// @ID       query_reference
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)

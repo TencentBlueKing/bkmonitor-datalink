@@ -13,8 +13,7 @@ import (
 	"context"
 )
 
-type ResourceWatchDaemon struct {
-}
+type ResourceWatchDaemon struct{}
 
 // Start 启动CMDB资源监控
 func (c *ResourceWatchDaemon) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {

@@ -1184,7 +1184,7 @@ var TimeSeriesGroupDBSchema = struct {
 // Update updates TimeSeriesGroup fields by primary key
 // nolint: dupl
 func (o *TimeSeriesGroup) Update(db *gorm.DB, fields ...TimeSeriesGroupDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id":           o.BkTenantId,
 		"bk_data_id":             o.BkDataID,
 		"bk_biz_id":              o.BkBizID,
@@ -1201,7 +1201,7 @@ func (o *TimeSeriesGroup) Update(db *gorm.DB, fields ...TimeSeriesGroupDBSchemaF
 		"time_series_group_id":   o.TimeSeriesGroupID,
 		"time_series_group_name": o.TimeSeriesGroupName,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1220,7 +1220,7 @@ func (o *TimeSeriesGroup) Update(db *gorm.DB, fields ...TimeSeriesGroupDBSchemaF
 
 // TimeSeriesGroupUpdater is an TimeSeriesGroup updates manager
 type TimeSeriesGroupUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1228,7 +1228,7 @@ type TimeSeriesGroupUpdater struct {
 // nolint: dupl
 func NewTimeSeriesGroupUpdater(db *gorm.DB) TimeSeriesGroupUpdater {
 	return TimeSeriesGroupUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&TimeSeriesGroup{}),
 	}
 }

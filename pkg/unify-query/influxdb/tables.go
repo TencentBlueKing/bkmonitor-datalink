@@ -34,7 +34,7 @@ type Table struct {
 	Types       []string
 	GroupKeys   []string
 	GroupValues []string
-	Data        [][]interface{}
+	Data        [][]any
 }
 
 // Length
@@ -139,7 +139,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 			resultColumns := []string{ResultColumnName, TimeColumnName}
 
 			// 获取value的值
-			resultValues := make([]interface{}, 0)
+			resultValues := make([]any, 0)
 			for _, resultColumn := range resultColumns {
 				if index, ok := columnIndex[resultColumn]; ok {
 					resultValues = append(resultValues, values[index])
@@ -159,7 +159,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					Name:    fmt.Sprintf("result_%d", seriesCount),
 					Tags:    tags,
 					Columns: resultColumns,
-					Values:  make([][]interface{}, 0),
+					Values:  make([][]any, 0),
 				}
 				seriesMap[key] = row
 				seriesLimit[key] = 1
@@ -247,7 +247,6 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 	}
 
 	return t
-
 }
 
 // String
@@ -308,7 +307,7 @@ func (t *Tables) Clear() error {
 // MergeTables : 直接合并相同维度的数据
 func MergeTables(tableList []*Tables, ignoreMetric bool) *Tables {
 	resultTab := NewTables()
-	var mapTag = make(map[uint64]*Table, 0)
+	mapTag := make(map[uint64]*Table, 0)
 
 	// 增加排序逻辑
 	sort.SliceStable(tableList, func(i, j int) bool {

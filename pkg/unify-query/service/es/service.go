@@ -183,7 +183,6 @@ func (s *Service) loopRefreshAliasInfo(ctx context.Context) error {
 				log.Debugf(context.TODO(), "refresh alias done")
 			}
 		}
-
 	}()
 	return nil
 }

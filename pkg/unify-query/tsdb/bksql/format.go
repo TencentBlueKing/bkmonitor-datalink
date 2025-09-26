@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -37,25 +38,25 @@ const (
 	startTime        = "_startTime_"
 	endTime          = "_endTime_"
 	theDate          = "thedate"
+
+	dtEventTimeFormat = "2006-01-02 15:04:05"
 )
 
-var (
-	internalDimensionSet = func() *set.Set[string] {
-		s := set.New[string]()
-		for _, k := range []string{
-			dtEventTimeStamp,
-			dtEventTime,
-			localTime,
-			startTime,
-			endTime,
-			theDate,
-			sql_expr.ShardKey,
-		} {
-			s.Add(strings.ToLower(k))
-		}
-		return s
-	}()
-)
+var internalDimensionSet = func() *set.Set[string] {
+	s := set.New[string]()
+	for _, k := range []string{
+		dtEventTimeStamp,
+		dtEventTime,
+		localTime,
+		startTime,
+		endTime,
+		theDate,
+		sql_expr.ShardKey,
+	} {
+		s.Add(strings.ToLower(k))
+	}
+	return s
+}()
 
 func checkInternalDimension(key string) bool {
 	return internalDimensionSet.Existed(strings.ToLower(key))
@@ -111,7 +112,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]string) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -133,7 +134,7 @@ func (f *QueryFactory) DescribeTableSQL() string {
 	return f.expr.DescribeTableSQL(f.Table())
 }
 
-func (f *QueryFactory) FieldMap() map[string]string {
+func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
 	return f.expr.FieldMap()
 }
 
@@ -147,9 +148,9 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if v, ok := fieldMap[k]; ok {
-			if v == TableTypeVariant {
-				objectData, err := json.ParseObject(k, d.(string))
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+			if nd, ok := d.(string); ok {
+				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
 					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
 					continue
@@ -163,10 +164,10 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 
 		newData[k] = d
 	}
-	return
+	return newData
 }
 
-func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -179,6 +180,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 	tsMap := map[string]*prompb.TimeSeries{}
 	tsTimeMap := make(map[string]map[int64]float64)
+
+	// 判断是否补零
 	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
 
 	// 先获取维度的 key 保证顺序一致
@@ -189,8 +192,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vt int64
 			vv float64
 
-			vtLong   interface{}
-			vvDouble interface{}
+			vtLong   any
+			vvDouble any
 
 			ok bool
 		)
@@ -343,29 +346,32 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 	return res, nil
 }
 
-func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
+func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
+	var conditions []string
+
 	// bkbase 使用 时区东八区 转换为 thedate
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
-		return
+		return "", err
 	}
 
 	start := f.start.In(loc)
 	end := f.end.In(loc)
 
+	conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", dtEventTime, start.Format(dtEventTimeFormat)))
+	// 为了兼容毫秒纳秒等单位，需要+1s
+	conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", dtEventTime, end.Add(time.Second).Format(dtEventTimeFormat)))
+
 	dates := function.RangeDateWithUnit("day", start, end, 1)
 
-	if len(dates) == 0 {
-		return
-	}
-
 	if len(dates) == 1 {
-		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
-		return
+		conditions = append(conditions, fmt.Sprintf("`%s` = '%s'", theDate, dates[0]))
+	} else if len(dates) > 1 {
+		conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", theDate, dates[0]))
+		conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", theDate, dates[len(dates)-1]))
 	}
 
-	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
-	return
+	return strings.Join(conditions, " AND "), nil
 }
 
 func (f *QueryFactory) BuildWhere() (string, error) {
@@ -409,9 +415,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) parserSQL() (sql string, err error) {
-	var (
-		span *trace.Span
-	)
+	var span *trace.Span
 	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
 	defer span.End(&err)
 
@@ -421,7 +425,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 
 	where, err := f.BuildWhere()
 	if err != nil {
-		return
+		return sql, err
 	}
 	span.Set("where", where)
 	if where != "" {
@@ -432,7 +436,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)
-	return
+	return sql, err
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
@@ -451,7 +455,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 
 	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
-		return
+		return sql, err
 	}
 
 	// 用于判定字段是否需要删除
@@ -465,16 +469,15 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())
 
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
-
 	if err != nil {
-		return
+		return sql, err
 	}
 	if whereString != "" {
 		sqlBuilder.WriteString(" WHERE ")
@@ -500,5 +503,5 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 	sql = sqlBuilder.String()
 	span.Set("sql", sql)
-	return
+	return sql, err
 }

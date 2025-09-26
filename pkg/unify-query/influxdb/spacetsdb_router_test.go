@@ -185,7 +185,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 }
 
 func (s *TestSuite) TestReloadKeyWithBigData() {
-	//s.SetupBigData()
+	// s.SetupBigData()
 	router := s.router
 	err := router.LoadRouter(s.ctx, routerInfluxdb.ResultTableDetailKey, true)
 	if err != nil {

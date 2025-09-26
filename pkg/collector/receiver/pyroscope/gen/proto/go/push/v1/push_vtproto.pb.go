@@ -73,7 +73,7 @@ func (m *RawProfileSeries) CloneVT() *RawProfileSeries {
 	if rhs := m.Labels; rhs != nil {
 		tmpContainer := make([]*v1.LabelPair, len(rhs))
 		for k, v := range rhs {
-			if vtpb, ok := interface{}(v).(interface{ CloneVT() *v1.LabelPair }); ok {
+			if vtpb, ok := any(v).(interface{ CloneVT() *v1.LabelPair }); ok {
 				tmpContainer[k] = vtpb.CloneVT()
 			} else {
 				tmpContainer[k] = proto.Clone(v).(*v1.LabelPair)
@@ -188,7 +188,7 @@ func (this *RawProfileSeries) EqualVT(that *RawProfileSeries) bool {
 			if q == nil {
 				q = &v1.LabelPair{}
 			}
-			if equal, ok := interface{}(p).(interface{ EqualVT(*v1.LabelPair) bool }); ok {
+			if equal, ok := any(p).(interface{ EqualVT(*v1.LabelPair) bool }); ok {
 				if !equal.EqualVT(q) {
 					return false
 				}
@@ -304,7 +304,7 @@ func RegisterPusherServiceServer(s grpc.ServiceRegistrar, srv PusherServiceServe
 	s.RegisterService(&PusherService_ServiceDesc, srv)
 }
 
-func _PusherService_Push_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _PusherService_Push_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(PushRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -316,7 +316,7 @@ func _PusherService_Push_Handler(srv interface{}, ctx context.Context, dec func(
 		Server:     srv,
 		FullMethod: "/push.v1.PusherService/Push",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(PusherServiceServer).Push(ctx, req.(*PushRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -460,7 +460,7 @@ func (m *RawProfileSeries) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Labels) > 0 {
 		for iNdEx := len(m.Labels) - 1; iNdEx >= 0; iNdEx-- {
-			if vtmsg, ok := interface{}(m.Labels[iNdEx]).(interface {
+			if vtmsg, ok := any(m.Labels[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
 				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
@@ -566,7 +566,7 @@ func (m *RawProfileSeries) SizeVT() (n int) {
 	_ = l
 	if len(m.Labels) > 0 {
 		for _, e := range m.Labels {
-			if size, ok := interface{}(e).(interface {
+			if size, ok := any(e).(interface {
 				SizeVT() int
 			}); ok {
 				l = size.SizeVT()
@@ -799,7 +799,7 @@ func (m *RawProfileSeries) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Labels = append(m.Labels, &v1.LabelPair{})
-			if unmarshal, ok := interface{}(m.Labels[len(m.Labels)-1]).(interface {
+			if unmarshal, ok := any(m.Labels[len(m.Labels)-1]).(interface {
 				UnmarshalVT([]byte) error
 			}); ok {
 				if err := unmarshal.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {

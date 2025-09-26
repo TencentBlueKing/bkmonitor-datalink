@@ -278,7 +278,7 @@ func file_push_v1_push_proto_rawDescGZIP() []byte {
 }
 
 var file_push_v1_push_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
-var file_push_v1_push_proto_goTypes = []interface{}{
+var file_push_v1_push_proto_goTypes = []any{
 	(*PushResponse)(nil),     // 0: push.v1.PushResponse
 	(*PushRequest)(nil),      // 1: push.v1.PushRequest
 	(*RawProfileSeries)(nil), // 2: push.v1.RawProfileSeries
@@ -304,7 +304,7 @@ func file_push_v1_push_proto_init() {
 		return
 	}
 	if !protoimpl.UnsafeEnabled {
-		file_push_v1_push_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_push_v1_push_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*PushResponse); i {
 			case 0:
 				return &v.state
@@ -316,7 +316,7 @@ func file_push_v1_push_proto_init() {
 				return nil
 			}
 		}
-		file_push_v1_push_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+		file_push_v1_push_proto_msgTypes[1].Exporter = func(v any, i int) any {
 			switch v := v.(*PushRequest); i {
 			case 0:
 				return &v.state
@@ -328,7 +328,7 @@ func file_push_v1_push_proto_init() {
 				return nil
 			}
 		}
-		file_push_v1_push_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+		file_push_v1_push_proto_msgTypes[2].Exporter = func(v any, i int) any {
 			switch v := v.(*RawProfileSeries); i {
 			case 0:
 				return &v.state
@@ -340,7 +340,7 @@ func file_push_v1_push_proto_init() {
 				return nil
 			}
 		}
-		file_push_v1_push_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+		file_push_v1_push_proto_msgTypes[3].Exporter = func(v any, i int) any {
 			switch v := v.(*RawSample); i {
 			case 0:
 				return &v.state

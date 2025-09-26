@@ -24,11 +24,11 @@ func init() {
 	processor.Register(define.ProcessorServiceDiscover, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*serviceDiscover, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*serviceDiscover, error) {
 	configs := confengine.NewTierConfig()
 
 	c := &Config{}
@@ -75,7 +75,7 @@ func (p *serviceDiscover) IsPreCheck() bool {
 	return false
 }
 
-func (p *serviceDiscover) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *serviceDiscover) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -102,7 +102,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 	pdTraces := record.Data.(ptrace.Traces)
 	ch := p.configs.GetByToken(record.Token.Original).(*ConfigHandler)
 
-	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		rules := ch.Get(span.Kind().String())
 	loop:
 		for _, rule := range rules {
@@ -125,8 +125,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}
@@ -149,8 +148,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}

@@ -32,7 +32,7 @@ import (
 
 // generateToken 生成 bk token
 func generateToken(data map[string]any, privateKey []byte) (string, error) {
-	//设置token有效时间
+	// 设置token有效时间
 	nowTime := time.Now().Add(-1 * time.Hour)
 	expireTime := nowTime.Add(2 * time.Hour)
 
@@ -45,7 +45,7 @@ func generateToken(data map[string]any, privateKey []byte) (string, error) {
 	}
 
 	tokenClaims := jwt.NewWithClaims(jwt.SigningMethodRS512, claims)
-	//该方法内部生成签名字符串，再用于获取完整、已签名的token
+	// 该方法内部生成签名字符串，再用于获取完整、已签名的token
 
 	priKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKey)
 	if err != nil {

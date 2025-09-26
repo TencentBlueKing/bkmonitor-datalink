@@ -53,7 +53,7 @@ const (
 	UsageComposeRecordRuleTableIds
 	// UsageComposeEsTableIds BKCC & BKCI & BKSAAS 适用,组装ES链路数据
 	UsageComposeEsTableIds
-	//UsageComposeEsBkciTableIds BKCI类型适用,组装BKCI关联的ES链路数据
+	// UsageComposeEsBkciTableIds BKCI类型适用,组装BKCI关联的ES链路数据
 	UsageComposeEsBkciTableIds
 	// UsageComposeBcsSpaceBizTableIds BKCI类型适用,组装BKCI关联的业务数据
 	UsageComposeBcsSpaceBizTableIds
@@ -140,7 +140,7 @@ type SpaceRedisSvc struct {
 	goroutineLimit int
 }
 
-func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContext, usage FilterUsage) []map[string]interface{} {
+func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContext, usage FilterUsage) []map[string]any {
 	logger.Infof("buildFiltersByUsage: try to build space router fitlers for spaceType->[%s],spaceId->[%s],tableId->[%s],Usage->[%d]",
 		filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, usage)
 
@@ -148,28 +148,28 @@ func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContex
 
 	case UsageComposeData: // BKCC类型,业务关联数据路由
 		key := filterBuilderOptions.FilterAlias
-		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
+		return []map[string]any{{key: filterBuilderOptions.SpaceId}}
 
 	case UsageComposeBcsSpaceBizTableIds: // 适用于BKCI类型, BKCI空间关联的归属业务数据,如主机数据、插件数据等
 		key := filterBuilderOptions.FilterAlias
-		return []map[string]interface{}{{key: filterBuilderOptions.BkBizId}} // 	这里拼接的过滤条件,是BKCI项目归属的业务ID
+		return []map[string]any{{key: filterBuilderOptions.BkBizId}} // 	这里拼接的过滤条件,是BKCI项目归属的业务ID
 
 	case UsageComposeBkciLevelTableIds, UsageComposeBkciCrossTableIds: // BKCI类型,自身数据,关联跨空间数据
 		key := filterBuilderOptions.FilterAlias
-		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
+		return []map[string]any{{key: filterBuilderOptions.SpaceId}}
 
 	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds, UsageComposeDorisTableIds:
-		return []map[string]interface{}{}
+		return []map[string]any{}
 
 	case UsageComposeAllTypeTableIds: // BKCI&BKSAAS类型，组装指定全空间的可以访问的结果表数据
 		key := filterBuilderOptions.FilterAlias
-		return []map[string]interface{}{{key: filterBuilderOptions.ExtraStringVal}} // e.g. "-1001"
+		return []map[string]any{{key: filterBuilderOptions.ExtraStringVal}} // e.g. "-1001"
 
 	case UsageComposeBksaasSpaceClusterTableIds, UsageComposeBcsSpaceClusterTableIds: // 适用于BKCI、BKSAAS类型,推送关联的集群数据,包括共享集群
 		if filterBuilderOptions.IsShared && len(filterBuilderOptions.NamespaceList) > 0 {
-			filters := make([]map[string]interface{}, 0, len(filterBuilderOptions.NamespaceList))
+			filters := make([]map[string]any, 0, len(filterBuilderOptions.NamespaceList))
 			for _, ns := range filterBuilderOptions.NamespaceList {
-				filters = append(filters, map[string]interface{}{
+				filters = append(filters, map[string]any{
 					"bcs_cluster_id": filterBuilderOptions.ClusterId,
 					"namespace":      ns,
 				})
@@ -177,13 +177,13 @@ func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContex
 			return filters
 		}
 		// 单集群
-		return []map[string]interface{}{{
+		return []map[string]any{{
 			"bcs_cluster_id": filterBuilderOptions.ClusterId,
 			"namespace":      nil,
 		}}
 
 	default:
-		return []map[string]interface{}{}
+		return []map[string]any{}
 	}
 }
 
@@ -310,7 +310,6 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 
 		// 多租户模式下添加内置数据源
 		if cfg.EnableMultiTenantMode {
-
 		}
 
 	}
@@ -719,7 +718,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
 		logger.Infof("PushTableIdDetail:start push and publish redis result_table_detail, table_id[%s],channel_name->[%s],channel_key->[%s]", tableId, cfg.ResultTableDetailChannel, tableId)
 		isSuccess, err := client.HSetWithCompareAndPublish(rtDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
-
 		if err != nil {
 			logger.Errorf("PushTableIdDetail:push and publish redis result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
 			return err
@@ -729,7 +727,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 
 	logger.Info("PushTableIdDetail:push redis result_table_detail")
 	return nil
-
 }
 
 // PushEsTableIdDetail compose the es table id detail
@@ -783,10 +780,10 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 		// 获取 option 数据
 		options, ok := tidOptionMap[es.TableID]
 		if !ok {
-			options = make(map[string]interface{})
+			options = make(map[string]any)
 		}
 		ch <- struct{}{}
-		go func(es storage.ESStorage, options map[string]interface{}, wg *sync.WaitGroup, ch chan struct{}) {
+		go func(es storage.ESStorage, options map[string]any, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -804,7 +801,6 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			}
 
 			composedTableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
-
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -886,7 +882,6 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 			}
 
 			composedTableId, detailStr, err := s.composeDorisTableIdDetail(tableId, doris.BkbaseTableID, fieldAliasSettings)
-
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -908,10 +903,10 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 }
 
 // composeEsTableIdOptions 组装 es
-func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]interface{} {
+func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]any {
 	db := mysql.GetDBSession().DB
 	// 分批获取结果表的option
-	tidOptionMap := make(map[string]map[string]interface{})
+	tidOptionMap := make(map[string]map[string]any)
 	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTableOption
 		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
@@ -921,11 +916,11 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 		for _, option := range tempList {
 			tidOption, ok := tidOptionMap[option.TableID]
 
-			var opValue interface{}
+			var opValue any
 			opValue, err := option.InterfaceValue()
 			if err != nil {
 				logger.Errorf("unmarshal result table option value error, table_id: %s, option_value: %s, error: %s", option.TableID, option.Value, err)
-				opValue = make(map[string]interface{})
+				opValue = make(map[string]any)
 			}
 			// 如果已经存在，则追加数据
 			if ok {
@@ -933,7 +928,7 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 				tidOptionMap[option.TableID] = tidOption
 			} else {
 				// 否则，直接赋值
-				tidOptionMap[option.TableID] = map[string]interface{}{option.Name: opValue}
+				tidOptionMap[option.TableID] = map[string]any{option.Name: opValue}
 			}
 		}
 	}
@@ -991,7 +986,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 	return fieldAliasMap, nil
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
+func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
 	// 获取历史存储集群记录
@@ -1111,7 +1106,7 @@ type InfluxdbTableData struct {
 }
 
 // 获取influxdb 和 vm的结果表
-func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdList []string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdList []string) (map[string]map[string]any, error) {
 	logger.Debugf("start to push table_id detail data, table_id_list->[%s]", tableIdList)
 	db := mysql.GetDBSession().DB
 
@@ -1169,9 +1164,9 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdLis
 			return nil, err
 		}
 	}
-	vmTableMap := make(map[string]map[string]interface{})
+	vmTableMap := make(map[string]map[string]any)
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
+		vmTableMap[record.ResultTableId] = map[string]any{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
 	}
 
 	var rtCmdbLevelOptionList []resulttable.ResultTableOption
@@ -1194,12 +1189,12 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdLis
 		storageClusterMap[p.ID] = p
 	}
 
-	tableIdInfo := make(map[string]map[string]interface{})
+	tableIdInfo := make(map[string]map[string]any)
 
 	for tableId, detail := range influxdbTableMap {
 		storageCluster := storageClusterMap[detail.InfluxdbProxyStorageId]
 
-		tableIdInfo[tableId] = map[string]interface{}{
+		tableIdInfo[tableId] = map[string]any{
 			"storage_id":   storageCluster.ProxyClusterId,
 			"storage_name": "",
 			"cluster_name": storageCluster.InstanceClusterName,
@@ -1437,21 +1432,23 @@ func (s *SpacePusher) composeTableIdFields(bkTenantId string, tableIds []string)
 	}
 	// 组装结果表对应的指标数据
 	tableIdMetrics := make(map[string][]string)
-	if tsInfo == nil {
-		return tableIdMetrics, nil
-	}
-	var existTableIdList []string
-	for tableId, groupId := range tsInfo.TableIdTsGroupIdMap {
-		if metrics, ok := tsInfo.GroupIdFieldsMap[groupId]; ok {
-			tableIdMetrics[tableId] = metrics
-		} else {
-			tableIdMetrics[tableId] = []string{}
+	existTableIdList := make(map[string]bool)
+
+	// 如果是自定义指标，优先使用自定义指标的字段信息
+	if tsInfo != nil {
+		for tableId, groupId := range tsInfo.TableIdTsGroupIdMap {
+			if metrics, ok := tsInfo.GroupIdFieldsMap[groupId]; ok {
+				tableIdMetrics[tableId] = metrics
+			} else {
+				tableIdMetrics[tableId] = []string{}
+			}
+			existTableIdList[tableId] = true
 		}
-		existTableIdList = append(existTableIdList, tableId)
 	}
-	// 处理非时序结果表指标
+
+	// 处理非自定义指标
 	for tableId, fieldList := range tableIdFieldMap {
-		if !stringx.StringInSlice(tableId, existTableIdList) {
+		if !existTableIdList[tableId] {
 			tableIdMetrics[tableId] = fieldList
 		}
 	}
@@ -1623,9 +1620,7 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 
 // PushBkAppToSpace  推送 bk_app_code 对应的 space 关联
 func (s *SpacePusher) PushBkAppToSpace() (err error) {
-	var (
-		appSpaces space.BkAppSpaces
-	)
+	var appSpaces space.BkAppSpaces
 
 	defer func() {
 		if err != nil {
@@ -1723,11 +1718,10 @@ func (s *SpacePusher) PushSpaceTableIds(bkTenantId, spaceType, spaceId string) e
 	logger.Infof("PushSpaceTableIds:push space table_id data successfully, space_type [%s], space_id [%s],is_success [%v]", spaceType, spaceId, isSuccess)
 
 	return nil
-
 }
 
 // composeValue 组装数据
-func (s *SpacePusher) composeValue(values *map[string]map[string]interface{}, composedData *map[string]map[string]interface{}) {
+func (s *SpacePusher) composeValue(values *map[string]map[string]any, composedData *map[string]map[string]any) {
 	if composedData != nil && len(*composedData) != 0 {
 		for tid, val := range *composedData {
 			(*values)[tid] = val
@@ -1748,7 +1742,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	// 如果为空，则初始化一次
 	if values == nil {
-		values = make(map[string]map[string]interface{})
+		values = make(map[string]map[string]any)
 	}
 
 	// 添加预计算结果表,不需要filters
@@ -1773,7 +1767,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	s.composeValue(&values, &dorisValues)
 
 	// 追加关联的BKCI相关的ES结果表,不需要filters
-	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
+	esBkciValues, errEsBkci := s.ComposeRelatedBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
 		logger.Warnf("pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEsBkci)
 	}
@@ -1783,7 +1777,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 如果有异常，则直接返回
 	if errMetric != nil && errEs != nil && errRecordRule != nil {
 		return false, errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
-
 	}
 	if len(values) != 0 {
 		var redisKey string
@@ -1828,7 +1821,7 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	// 处理为空的情况
 	if values == nil {
-		values = make(map[string]map[string]interface{})
+		values = make(map[string]map[string]any)
 	}
 	// 追加 bcs 集群结果表
 	bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
@@ -1935,7 +1928,7 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	logger.Infof("pushBksaasSpaceTableIds: pushBksaasSpaceTableIds values: %v", values)
 	if values == nil {
-		values = make(map[string]map[string]interface{})
+		values = make(map[string]map[string]any)
 	}
 	bksaasOtherValues, errOther := s.composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId, tableIdList)
 	if errOther != nil {
@@ -2011,7 +2004,7 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 }
 
 // composeRecordRuleTableIds compose record rule table ids 预计算结果表
-func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push record rule table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	db := mysql.GetDBSession().DB
 	var recordRuleList []recordrule.RecordRule
@@ -2019,19 +2012,19 @@ func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[
 		return nil, err
 	}
 	// 组装数据
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	for _, recordRuleObj := range recordRuleList {
-		//dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": []interface{}{}}
+		// dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": []interface{}{}}
 		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   recordRuleObj.TableId,
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeRecordRuleTableIds)
-		dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[recordRuleObj.TableId] = map[string]any{"filters": filters}
 	}
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2040,7 +2033,7 @@ func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[
 }
 
 // ComposeEsTableIds 组装关联的ES结果表
-func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
 	if err != nil {
@@ -2051,7 +2044,7 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeES).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	for _, rt := range rtList {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 		options := FilterBuildContext{
@@ -2061,11 +2054,11 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeEsTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2075,7 +2068,7 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 }
 
 // ComposeDorisTableIds 组装关联的Doris结果表
-func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("ComposeDorisTableIds: start to push doris table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
 	if err != nil {
@@ -2087,7 +2080,7 @@ func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[strin
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeDoris).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	for _, rt := range rtList {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 		options := FilterBuildContext{
@@ -2097,11 +2090,11 @@ func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[strin
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeDorisTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2111,23 +2104,23 @@ func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[strin
 	return dataValuesToRedis, nil
 }
 
-// ComposeEsBkciTableIds 组装关联的BKCI类型的ES结果表
-func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+// ComposeRelatedBkciTableIds 组装关联的BKCI类型的es/doris结果表
+func (s *SpacePusher) ComposeRelatedBkciTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	var bizIdsList []int
 	// 获取关联的BKCI类型的空间ID列表
 	relatedSpaces, err := s.GetRelatedSpaces(spaceType, spaceId, models.SpaceTypeBKCI)
 	if err != nil {
-		logger.Errorf("ComposeEsBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s], err: %s", spaceType, spaceId, err)
+		logger.Errorf("ComposeRelatedBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s], err: %s", spaceType, spaceId, err)
 		return nil, err
 	}
 
-	logger.Infof("ComposeEsBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
+	logger.Infof("ComposeRelatedBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
 	for _, bkciSpaceId := range relatedSpaces {
 		// 获取该BKCI空间对应的业务ID（负数）
 		bizId, err := s.getBizIdBySpace(models.SpaceTypeBKCI, bkciSpaceId)
 		if err != nil {
-			logger.Errorf("ComposeEsBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
+			logger.Errorf("ComposeRelatedBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
 			continue
 		}
 		bizIdsList = append(bizIdsList, bizId)
@@ -2135,7 +2128,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 
 	// 如果关联的BKCI空间没有业务ID，则不进行处理
 	if len(bizIdsList) == 0 {
-		logger.Infof("ComposeEsBkciTableIds, no related bkci spaces, space_type->[%s],space_id->[%s]", spaceType, spaceId)
+		logger.Infof("ComposeRelatedBkciTableIds, no related bkci spaces, space_type->[%s],space_id->[%s]", spaceType, spaceId)
 		return nil, nil
 	}
 
@@ -2145,16 +2138,16 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	if err := resulttable.NewResultTableQuerySet(db).
 		Select(resulttable.ResultTableDBSchema.TableId).
 		BkBizIdIn(bizIdsList...).
-		DefaultStorageEq(models.StorageTypeES).
+		DefaultStorageIn(models.StorageTypeES, models.StorageTypeDoris).
 		IsDeletedEq(false).
 		IsEnableEq(true).
 		All(&rtList); err != nil {
 		return nil, err
 	}
 
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	for _, rt := range rtList {
-		//dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
+		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
@@ -2162,16 +2155,16 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeEsBkciTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
-	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
+	logger.Infof("ComposeRelatedBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
 	return dataValuesToRedis, nil
 }
 
@@ -2223,7 +2216,7 @@ func (s *SpacePusher) getBizIdBySpace(spaceType, spaceId string) (int, error) {
 	defer s.mut.Unlock()
 
 	ok := false
-	var data interface{}
+	var data any
 	dataMap := make(map[string]int)
 	data, ok = cache.Get(CachedSpaceBizIdKey)
 	if ok {
@@ -2307,7 +2300,7 @@ func reformatTableId(tid string) string {
 }
 
 // UsageComposeData 组装业务关联数据路由
-func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]interface{}, options *optionx.Options) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]any, options *optionx.Options) (map[string]map[string]any, error) {
 	logger.Infof("composeData space_type [%s], space_id [%s], table_id_list [%s]", spaceType, spaceId, tableIdList)
 	if options == nil {
 		options = optionx.NewOptions(nil)
@@ -2316,7 +2309,7 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 
 	includePlatformDataId, _ := options.GetBool("includePlatformDataId")
 	// 过滤到对应的结果表
-	ops := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": includePlatformDataId})
+	ops := optionx.NewOptions(map[string]any{"includePlatformDataId": includePlatformDataId})
 	if need, ok := options.GetBool("fromAuthorization"); ok {
 		ops.Set("fromAuthorization", need)
 	}
@@ -2325,7 +2318,7 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 		logger.Errorf("composeData: GetSpaceTableIdDataId failed,space_type [%s], space_id [%s],err[%v]", spaceType, spaceId, err)
 		return nil, err
 	}
-	valueData := make(map[string]map[string]interface{})
+	valueData := make(map[string]map[string]any)
 	// 如果为空，返回默认值
 	if len(tableIdDataId) == 0 {
 		logger.Errorf("space_type [%s], space_id [%s] not found table_id and data_id", spaceType, spaceId)
@@ -2399,7 +2392,7 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 		// NOTE: 特殊逻辑，针对 `dbm_system` 开头的结果表，授权给DBM业务访问全部数据,之所以没走常规授权,是因为这部分数据的DataId都是1001
 		spaceUid := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		if strings.HasPrefix(tid, models.Dbm1001TableIdPrefix) && stringx.StringInSlice(spaceUid, cfg.GlobalAccessDbmRtSpaceUid) {
-			valueData[tid] = map[string]interface{}{"filters": []interface{}{}}
+			valueData[tid] = map[string]any{"filters": []any{}}
 			continue
 		}
 		// 如果查询不到类型，则忽略
@@ -2424,9 +2417,9 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 		}
 		// 拼装过滤条件, 如果有指定，则按照指定数据设置过滤条件
 		if len(defaultFilters) != 0 { // 当存在指定过滤条件时,则使用指定过滤条件
-			valueData[tid] = map[string]interface{}{"filters": defaultFilters}
+			valueData[tid] = map[string]any{"filters": defaultFilters}
 		} else {
-			filters := make([]map[string]interface{}, 0)
+			filters := make([]map[string]any, 0)
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
 				// 若需要拼接过滤条件,那么调用通用filters生成方法,生成filters
 				builderContext := FilterBuildContext{
@@ -2444,12 +2437,12 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 				newFilters := s.buildFiltersByUsage(builderContext, UsageComposeData)
 				filters = append(filters, newFilters...)
 			}
-			valueData[tid] = map[string]interface{}{"filters": filters}
+			valueData[tid] = map[string]any{"filters": filters}
 		}
 	}
 
 	// 二段式补充&校验
-	valueDataToRedis := make(map[string]map[string]interface{})
+	valueDataToRedis := make(map[string]map[string]any)
 	for tid, value := range valueData {
 		// 处理key
 		reformattedTid := reformatTableId(tid)
@@ -2509,14 +2502,14 @@ func (s *SpacePusher) isNeedFilterForBkcc(measurementType, spaceType, spaceId st
 }
 
 // composeBcsSpaceBizTableIds 推送 bcs 类型空间下的集群数据
-func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push cluster of bcs space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 首先获取关联业务的数据
 	resourceType := models.SpaceTypeBKCC
 	db := mysql.GetDBSession().DB
 	var sr space.SpaceResource
 	// 设置默认值，如果有异常，则返回默认值
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).ResourceTypeEq(resourceType).One(&sr); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("space: [%s__%s], resource_type [%s] not found", spaceType, spaceId, resourceType)
@@ -2543,7 +2536,7 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 		return nil, err
 	}
 	for _, rt := range rtList {
-		//dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
+		// dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,
 			SpaceId:     spaceId,
@@ -2552,11 +2545,11 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 			FilterAlias: "bk_biz_id", // 过滤条件的别名
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeBcsSpaceBizTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2565,14 +2558,14 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 }
 
 // composeBksaasSpaceClusterTableIds 推送 bksaas空间关联的集群数据
-func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]any, error) {
 	logger.Infof("start to push cluster of bksaas space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 获取空间的集群数据
 	resourceType := models.SpaceTypeBKSAAS
 	// 优先进行判断项目相关联的容器资源，减少等待
 	db := mysql.GetDBSession().DB
 	var sr space.SpaceResource
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).ResourceTypeEq(resourceType).ResourceIdEq(spaceId).One(&sr); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("space: [%s__%s], resource_type [%s] not found", spaceType, spaceId, resourceType)
@@ -2580,7 +2573,7 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 		}
 		return dataValues, err
 	}
-	var resList []map[string]interface{}
+	var resList []map[string]any
 	if err := jsonx.UnmarshalString(sr.DimensionValues, &resList); err != nil {
 		return nil, errors.Wrap(err, "unmarshal space resource dimension failed")
 	}
@@ -2589,7 +2582,7 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 		return dataValues, nil
 	}
 	// 获取集群的数据, 格式: {cluster_id: {"bcs_cluster_id": xxx, "namespace": xxx}}
-	clusterInfoMap := make(map[string]interface{})
+	clusterInfoMap := make(map[string]any)
 	var clusterIdList []string
 	for _, res := range resList {
 		resOptions := optionx.NewOptions(res)
@@ -2661,28 +2654,27 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 		// 获取对应的集群及命名空间信息
 		filters := clusterInfoMap[clusterId]
 		if filters == nil {
-			filters = make([]interface{}, 0)
+			filters = make([]any, 0)
 		}
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
 	return dataValuesToRedis, nil
-
 }
 
 // composeBcsSpaceClusterTableIds 推送BKCI空间关联的集群信息,包括共享集群等
-func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push cluster of bcs space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 获取空间的集群数据
 	resourceType := models.SpaceTypeBCS
 	// 优先进行判断项目相关联的容器资源，减少等待
 	db := mysql.GetDBSession().DB
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	var sr space.SpaceResource
 	if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).ResourceTypeEq(resourceType).ResourceIdEq(spaceId).One(&sr); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
@@ -2691,7 +2683,7 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 		}
 		return nil, err
 	}
-	var resList []map[string]interface{}
+	var resList []map[string]any
 	if err := jsonx.UnmarshalString(sr.DimensionValues, &resList); err != nil {
 		return nil, errors.Wrap(err, "unmarshal space resource dimension failed")
 	}
@@ -2700,7 +2692,7 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 		return dataValues, nil
 	}
 	// 获取集群的数据, 格式: {cluster_id: {"bcs_cluster_id": xxx, "namespace": xxx}}
-	clusterInfoMap := make(map[string]interface{})
+	clusterInfoMap := make(map[string]any)
 	var clusterIdList []string
 	for _, res := range resList {
 		resOptions := optionx.NewOptions(res)
@@ -2773,12 +2765,12 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 		// 获取对应的集群及命名空间信息
 		filters, ok := clusterInfoMap[clusterId]
 		if !ok {
-			filters = make([]interface{}, 0)
+			filters = make([]any, 0)
 		}
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2862,14 +2854,14 @@ func (s *SpacePusher) getResultTablesByDataIds(dataIdList []uint, tableIdList []
 }
 
 // composeBkciLevelTableIds 组装 bkci 全局下的结果表
-func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci level table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 过滤空间级的数据源
 	dataIds, err := s.getPlatformDataIds(bkTenantId, spaceType)
 	if err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if len(dataIds) == 0 {
 		return dataValues, nil
 	}
@@ -2891,7 +2883,7 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 		return nil, err
 	}
 	for _, tid := range tableIds {
-		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
+		// dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 		filterAlias := "projectId"
 		if slices.Contains(cfg.SpecialRtRouterAliasResultTableList, tid) {
 			logger.Infof("composeBkciLevelTableIds: table_id->[%s] in special rt router alias list, use rt bk_biz_id_alias as filter alias", tid)
@@ -2910,11 +2902,11 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciLevelTableIds)
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -2923,7 +2915,7 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 }
 
 // composeBkciOtherTableIds 组装BKCI级别结果表
-func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 针对集群缓存对应的数据源，避免频繁的访问db
 	excludeDataIdList, err := s.getCachedClusterDataIdList()
@@ -2931,12 +2923,12 @@ func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId st
 		logger.Errorf("composeBkciOtherTableIds get cached cluster data id list error, %s", err)
 		return nil, err
 	}
-	options := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false, "fromAuthorization": false})
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "fromAuthorization": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, excludeDataIdList, options)
 	if err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if len(tableIdDataIdMap) == 0 {
 		logger.Errorf("space_type [%s], space_id [%s] not found table_id and data_id", spaceType, spaceId)
 		return dataValues, nil
@@ -2952,35 +2944,34 @@ func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId st
 		if strings.HasPrefix(tid, models.SystemTableIdPrefix) || strings.HasPrefix(tid, models.Dbm1001TableIdPrefix) {
 			continue
 		}
-		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
+		// dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
 		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   tid,
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciOtherTableIds)
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
 
 	return dataValuesToRedis, nil
-
 }
 
-func (s *SpacePusher) composeBkciCrossTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBkciCrossTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci cross table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).TableIdLike(fmt.Sprintf("%s%%", models.Bkci1001TableIdPrefix)).All(&rtList); err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	for _, rt := range rtList {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 		options := FilterBuildContext{
@@ -2991,7 +2982,7 @@ func (s *SpacePusher) composeBkciCrossTableIds(bkTenantId, spaceType, spaceId st
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciCrossTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 添加P4主机数据相关
@@ -3010,11 +3001,11 @@ func (s *SpacePusher) composeBkciCrossTableIds(bkTenantId, spaceType, spaceId st
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciCrossTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -3028,7 +3019,7 @@ func (s *SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
 	cache, cacheErr := memcache.GetMemCache()
 	// 存放
 	ok := false
-	var data interface{}
+	var data any
 	if cacheErr == nil {
 		data, ok = cache.Get(CachedClusterDataIdKey)
 		if ok {
@@ -3054,7 +3045,7 @@ func (s *SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
 }
 
 // composeBksaasOtherTableIds 组装蓝鲸应用非集群数据
-func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId string, tableIdList []string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bksaas other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 针对集群缓存对应的数据源，避免频繁的访问db
 	excludeDataIdList, err := s.getCachedClusterDataIdList()
@@ -3062,12 +3053,12 @@ func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId 
 		logger.Errorf("composeBksaasOtherTableIds get cached cluster data id list error, %s", err)
 		return nil, err
 	}
-	options := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false})
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, tableIdList, excludeDataIdList, options)
 	if err != nil {
 		return nil, err
 	}
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if len(tableIdDataIdMap) == 0 {
 		logger.Errorf("space_type [%s], space_id [%s] not found table_id and data_id", spaceType, spaceId)
 		return dataValues, nil
@@ -3087,11 +3078,11 @@ func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId 
 			TableId:   tid,
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeBksaasOtherTableIds)
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -3100,12 +3091,12 @@ func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId 
 }
 
 // composeAllTypeTableIds 组装指定全空间的可以访问的结果表数据
-func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push all type table_id, space_type: %s, space_id: %s", spaceType, spaceId)
 	// 获取数据空间记录的ID
 	// NOTE: ID 需要转换为负值
 	var spaceObj space.Space
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
 		return dataValues, err
 	}
@@ -3122,10 +3113,10 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 			FilterAlias:    "bk_biz_id",
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
-		dataValues[tid] = map[string]interface{}{"filters": filters}
+		dataValues[tid] = map[string]any{"filters": filters}
 	}
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
@@ -3134,13 +3125,13 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 }
 
 // composeApmAllTypeTableIds 组装 APM 特殊空间类型的结果表数据（仅限 bkci 和 bksaas）
-func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push apm all space type table_id, space_type: %s, space_id: %s", spaceType, spaceId)
 
 	db := mysql.GetDBSession().DB
 
 	var spaceObj space.Space
-	dataValues := make(map[string]map[string]interface{})
+	dataValues := make(map[string]map[string]any)
 	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
 		return dataValues, err
 	}
@@ -3170,18 +3161,17 @@ func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[
 			FilterAlias:    rt.BkBizIdAlias,
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
-		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+		dataValues[rt.TableId] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]interface{})
+	dataValuesToRedis := make(map[string]map[string]any)
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
 	logger.Infof("compose apm all space type table_id, space_type: %s, space_id: %s, data: %v", spaceType, spaceId, dataValues)
 	return dataValuesToRedis, nil
-
 }
 
 // SpaceRedisClearer 清理空间路由缓存

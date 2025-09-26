@@ -136,7 +136,6 @@ func (c *flowMetricsCollector) Collect() prompb.WriteRequest {
 }
 
 func (c *flowMetricsCollector) convert() prompb.WriteRequest {
-
 	copyLabels := func(labels []prompb.Label) []prompb.Label {
 		newLabels := make([]prompb.Label, len(labels))
 		copy(newLabels, labels)
@@ -238,7 +237,6 @@ func (r *relationMetricsCollector) Collect() prompb.WriteRequest {
 }
 
 func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteRequest {
-
 	var series []prompb.TimeSeries
 	metricName := make(map[string]int, len(dimensionKeys))
 

@@ -48,11 +48,11 @@ func init() {
 	processor.Register(define.ProcessorLicenseChecker, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*licenseChecker, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*licenseChecker, error) {
 	configs := confengine.NewTierConfig()
 	cacheMgrs := confengine.NewTierConfig()
 
@@ -98,7 +98,7 @@ func (p *licenseChecker) IsPreCheck() bool {
 	return true
 }
 
-func (p *licenseChecker) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *licenseChecker) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

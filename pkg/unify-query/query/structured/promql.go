@@ -64,7 +64,6 @@ func (p *PromExpr) GetCtx() context.Context {
 
 // handleVectorExpr
 func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		name      string
 		grouping  []string
@@ -119,7 +118,6 @@ func handlerUnaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 
 // handleBinaryExpr
 func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		expr                  *parser.BinaryExpr
 		finalGroup            []string
@@ -203,7 +201,6 @@ func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 
 	log.Debugf(context.TODO(), "expr->[%s] transfer to final expr->[%s] with group->[%s]", e, expr, finalGroup)
 	return expr, finalGroup, nil
-
 }
 
 // handleParenExpr
@@ -320,7 +317,6 @@ func handleNumberLiteral(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []
 
 // handleExpr: 处理各个表达式之间的维度对齐内容
 func handleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		result parser.Expr
 		group  []string

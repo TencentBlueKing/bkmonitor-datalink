@@ -27,11 +27,11 @@ func init() {
 	processor.Register(define.ProcessorApdexCalculator, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
 	configs := confengine.NewTierConfig()
 	calculators := confengine.NewTierConfig()
 
@@ -79,7 +79,7 @@ func (p *apdexCalculator) IsPreCheck() bool {
 	return false
 }
 
-func (p *apdexCalculator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *apdexCalculator) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -105,12 +105,12 @@ func (p *apdexCalculator) Process(record *define.Record) (*define.Record, error)
 
 func (p *apdexCalculator) processTraces(record *define.Record) {
 	pdTraces := record.Data.(ptrace.Traces)
-	foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+	foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 		var service, instance string
-		if v, ok := rsAttrs.Get(processor.KeyInstance); ok {
+		if v, ok := rs.Get(processor.KeyInstance); ok {
 			instance = v.AsString()
 		}
-		if v, ok := rsAttrs.Get(processor.KeyService); ok {
+		if v, ok := rs.Get(processor.KeyService); ok {
 			service = v.AsString()
 		}
 
@@ -130,7 +130,6 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		rule, found := config.Rule(kind, foundPk)
 		if !found {
-			logger.Debugf("no rules found, kind=%v, pk=%v", kind, foundPk)
 			return
 		}
 
@@ -151,7 +150,7 @@ var spanKindMap = map[string]string{
 
 func (p *apdexCalculator) processMetrics(record *define.Record) {
 	pdMetrics := record.Data.(pmetric.Metrics)
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		name := metric.Name()
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
@@ -186,7 +185,6 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 
 				rule, found := matchRules(config, kind, foundPk, name)
 				if !found {
-					logger.Debugf("no rules found, kind=%v, pk=%v, name=%v", kind, foundPk, name)
 					continue
 				}
 

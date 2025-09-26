@@ -53,9 +53,9 @@ func TestSearch(t *testing.T) {
 	aliases := []string{startTime, nowTime}
 	aliasInfo := map[string]*es.AliasInfo{
 		"testbb_ttt_20210407_01": {
-			Aliases: map[string]interface{}{
-				startTime: map[string]interface{}{},
-				nowTime:   map[string]interface{}{},
+			Aliases: map[string]any{
+				startTime: map[string]any{},
+				nowTime:   map[string]any{},
 			},
 		},
 	}
@@ -98,5 +98,4 @@ func TestSearch(t *testing.T) {
 	result, err := inner.Query(q)
 	assert.Nil(t, err)
 	assert.Equal(t, "any result", result)
-
 }

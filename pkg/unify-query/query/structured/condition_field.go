@@ -88,8 +88,6 @@ type ConditionField struct {
 	IsPrefix bool `json:"is_prefix,omitempty"`
 	// IsSuffix 是否是后缀
 	IsSuffix bool `json:"is_suffix,omitempty"`
-	// IsForceEq 是否强制等于
-	IsForceEq bool `json:"is_force_eq,omitempty"`
 }
 
 // String
@@ -189,7 +187,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	}
 
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下
-	var resultValues = make([]string, 0, len(c.Value))
+	resultValues := make([]string, 0, len(c.Value))
 	for _, v := range c.Value {
 		var nv string
 		if isRegx {

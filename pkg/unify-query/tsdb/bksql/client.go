@@ -105,7 +105,7 @@ func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *R
 	return res
 }
 
-func (c *Client) response(data interface{}) *Result {
+func (c *Client) response(data any) *Result {
 	return &Result{Data: data}
 }
 

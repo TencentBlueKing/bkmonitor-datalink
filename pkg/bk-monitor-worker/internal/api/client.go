@@ -11,7 +11,6 @@ package api
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
@@ -19,45 +18,27 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsproject"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsstorage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	apiDefine "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var (
-	muForGseApi            sync.Mutex
-	muForBcsApi            sync.Mutex
-	muForBcsProjectApi     sync.Mutex
-	muForBcsClusterManager sync.Mutex
-	muForBcsStorage        sync.Mutex
-	muForCmdbApi           sync.RWMutex
-	muForNodemanApi        sync.Mutex
-	muForBkdataApi         sync.Mutex
-	muForMetadataApi       sync.Mutex
-	muForMonitorApi        sync.RWMutex
-	muForUserApi           sync.Mutex
+	muForGseApi     sync.Mutex
+	muForCmdbApi    sync.RWMutex
+	muForBkdataApi  sync.Mutex
+	muForMonitorApi sync.RWMutex
+	muForUserApi    sync.Mutex
 )
 
 var (
 	gseApi            *bkgse.Client
-	bcsApi            *bcs.Client
-	bcsProjectApi     *bcsproject.Client
-	bcsClusterManager *bcsclustermanager.Client
-	bcsStorage        *bcsstorage.Client
 	cmdbApiClients    map[string]*cmdb.Client
-	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
-	metadataApi       *metadata.Client
 	monitorApiClients map[string]*monitor.Client
 	userApi           *user.Client
 )
@@ -67,125 +48,34 @@ func init() {
 	monitorApiClients = make(map[string]*monitor.Client)
 }
 
-// todo: tenant
 // GetGseApi 获取GseApi客户端
-func GetGseApi() (*bkgse.Client, error) {
+func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 	muForGseApi.Lock()
 	defer muForGseApi.Unlock()
 	if gseApi != nil {
 		return gseApi, nil
 	}
 	var config define.ClientConfigProvider
-	useApiGateWay := cfg.BkApiEnabled
-	if useApiGateWay {
-		config = bkapi.ClientConfig{
-			Endpoint:      cfg.BkApiGseApiGwUrl,
-			Stage:         cfg.BkApiStage,
-			AppCode:       cfg.BkApiAppCode,
-			AppSecret:     cfg.BkApiAppSecret,
-			JsonMarshaler: jsonx.Marshal,
-		}
-	} else {
-		config = bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl),
-			Stage:               cfg.BkApiStage,
-			AppCode:             cfg.BkApiAppCode,
-			AppSecret:           cfg.BkApiAppSecret,
-			JsonMarshaler:       jsonx.Marshal,
-			AuthorizationParams: map[string]string{"bk_username": "admin"},
-		}
+	endpoint := cfg.BkApiGseApiGwUrl
+	useApiGateWay := true
+	if endpoint == "" {
+		useApiGateWay = false
+		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl)
+	}
+	config = bkapi.ClientConfig{
+		Endpoint:            endpoint,
+		Stage:               cfg.BkApiStage,
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+		AuthorizationParams: map[string]string{"bk_username": "admin"},
 	}
 	var err error
-	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": bkTenantId}))
 	if err != nil {
 		return nil, err
 	}
 	return gseApi, nil
-}
-
-// todo: tenant
-// GetBcsApi 获取BcsApi客户端
-func GetBcsApi() (*bcs.Client, error) {
-	muForBcsApi.Lock()
-	defer muForBcsApi.Unlock()
-	if bcsApi != nil {
-		return bcsApi, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint: strings.TrimRight(cfg.BkApiBcsApiGatewayBaseUrl, "/"),
-		AuthorizationParams: map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken),
-		},
-		AppCode:       cfg.BkApiAppCode,
-		AppSecret:     cfg.BkApiAppSecret,
-		JsonMarshaler: jsonx.Marshal,
-	}
-	var err error
-	bcsApi, err = bcs.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
-	if err != nil {
-		return nil, err
-	}
-	return bcsApi, nil
-}
-
-// todo: tenant
-// GetBcsStorageApi 获取BcsStorageApi客户端
-func GetBcsStorageApi() (*bcsstorage.Client, error) {
-	muForBcsStorage.Lock()
-	defer muForBcsStorage.Unlock()
-	if bcsClusterManager != nil {
-		return bcsStorage, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/storage/k8s/dynamic/all_resources/clusters", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
-		JsonMarshaler: jsonx.Marshal,
-	}
-	var err error
-	bcsStorage, err = bcsstorage.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)}))
-	if err != nil {
-		return nil, err
-	}
-	return bcsStorage, nil
-}
-
-// todo: tenant
-// GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
-func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
-	muForBcsClusterManager.Lock()
-	defer muForBcsClusterManager.Unlock()
-	if bcsClusterManager != nil {
-		return bcsClusterManager, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
-		JsonMarshaler: jsonx.Marshal,
-	}
-	var err error
-	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)}))
-	if err != nil {
-		return nil, err
-	}
-	return bcsClusterManager, nil
-}
-
-// todo: tenant
-// GetBcsProjectApi 获取GetBcsProjectApi客户端
-func GetBcsProjectApi() (*bcsproject.Client, error) {
-	muForBcsProjectApi.Lock()
-	defer muForBcsProjectApi.Unlock()
-	if bcsProjectApi != nil {
-		return bcsProjectApi, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/bcsproject/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
-		JsonMarshaler: jsonx.Marshal,
-	}
-	var err error
-	bcsProjectApi, err = bcsproject.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken), "X-Project-Username": "admin"}))
-	if err != nil {
-		return nil, err
-	}
-	return bcsProjectApi, nil
 }
 
 // GetCmdbApi 获取CmdbApi客户端
@@ -231,35 +121,6 @@ func GetCmdbApi(tenantId string) (*cmdb.Client, error) {
 	return cmdbApiClients[tenantId], nil
 }
 
-// todo: tenant
-// GetNodemanApi NodemanApi
-func GetNodemanApi() (*nodeman.Client, error) {
-	muForNodemanApi.Lock()
-	defer muForNodemanApi.Unlock()
-	if nodemanApi != nil {
-		return nodemanApi, nil
-	}
-	endpoint := cfg.BkApiNodemanApiBaseUrl
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/nodeman/", cfg.BkApiUrl)
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
-	}
-
-	var err error
-	nodemanApi, err = nodeman.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
-	if err != nil {
-		return nil, err
-	}
-	return nodemanApi, nil
-}
-
-// todo: tenant
 // GetBkdataApi BkdataApi
 func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 	muForBkdataApi.Lock()
@@ -287,30 +148,6 @@ func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 	return bkdataApi, nil
 }
 
-// todo: tenant
-// GetMetadataApi 获取metadataApi客户端
-func GetMetadataApi() (*metadata.Client, error) {
-	muForMetadataApi.Lock()
-	defer muForMetadataApi.Unlock()
-	if metadataApi != nil {
-		return metadataApi, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
-	}
-
-	var err error
-	metadataApi, err = metadata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
-	if err != nil {
-		return nil, err
-	}
-	return metadataApi, nil
-}
-
 // GetMonitorApi 获取metadataApi客户端
 func GetMonitorApi(tenantId string) (*monitor.Client, error) {
 	// 首先尝试读锁获取已存在的客户端
@@ -330,28 +167,22 @@ func GetMonitorApi(tenantId string) (*monitor.Client, error) {
 		return client, nil
 	}
 
-	var config define.ClientConfigProvider
-	useBkMonitorApigw := cfg.BkMonitorApiGatewayEnabled
-	if useBkMonitorApigw {
-		config = bkapi.ClientConfig{
-			Endpoint:      cfg.BkMonitorApiGatewayBaseUrl,
-			Stage:         cfg.BkMonitorApiGatewayStage,
-			AppCode:       cfg.BkApiAppCode,
-			AppSecret:     cfg.BkApiAppSecret,
-			JsonMarshaler: jsonx.Marshal,
-		}
-	} else {
-		config = bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
-			Stage:               cfg.BkApiStage,
-			AppCode:             cfg.BkApiAppCode,
-			AppSecret:           cfg.BkApiAppSecret,
-			JsonMarshaler:       jsonx.Marshal,
-			AuthorizationParams: map[string]string{"bk_username": "admin"},
-		}
+	endpoint := cfg.BkMonitorApiGatewayBaseUrl
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl)
 	}
+
+	config := bkapi.ClientConfig{
+		Endpoint:            endpoint,
+		Stage:               cfg.BkApiStage,
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+		AuthorizationParams: map[string]string{"bk_username": "admin"},
+	}
+
 	var err error
-	monitorApiClients[tenantId], err = monitor.New(useBkMonitorApigw, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
+	monitorApiClients[tenantId], err = monitor.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}
@@ -419,9 +250,9 @@ func HandleApiResultError(result apiDefine.ApiCommonRespMeta, err error, message
 }
 
 // BatchApiRequest send one request first and get the total count, then send the rest requests by pageSize
-func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
+func BatchApiRequest(pageSize int, getTotalFunc func(any) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]any, error) {
 	// send the first request to get the total count
-	var resp interface{}
+	var resp any
 	req := getReqFunc(0)
 	_, err := req.SetResult(&resp).Request()
 	if err != nil {
@@ -446,7 +277,7 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 	pageCount := (total + pageSize - 1) / pageSize
 
 	// 初始化结果和错误数组
-	results := make([]interface{}, pageCount)
+	results := make([]any, pageCount)
 	errs := make([]error, pageCount)
 	results[0] = resp
 
@@ -458,7 +289,7 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 				<-limitChan
 				waitGroup.Done()
 			}()
-			var r interface{}
+			var r any
 			req := getReqFunc(page)
 			_, err := req.SetResult(&r).Request()
 			if err != nil {

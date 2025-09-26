@@ -26,23 +26,55 @@ processor:
 
       # Relabel Action
       relabel:
-        - metrics:
-          - "test_metric1"
-          - "test_metric2"
-          rules:						# 规则之间为 && 关系
-            - label: "label1"			# 字段名
-              op: "in"					# 操作符，支持 in, notin, range
-              values: ["val1", "val2"]	# in, notin 操作时，values 为字符串列表，range 操作时，values 为范围列表
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          rules:
+            - label: "callee_method"
+              op: "in"
+              values: ["hello"]
+            - label: "callee_service"
+              op: "in"
+              values: ["example.greeter"]
             - label: "code"
               op: "range"
               values:
-                - prefix: "err_"			# 前缀可为空
+                - prefix: "err_"
                   min: 10
                   max: 19
-          destinations:
-            - action: "upsert"				# 操作，目前支持覆写
-              label: "code_type"			# 要插入/覆盖的字段
-              value: "success"
+                - prefix: "trpc_"
+                  min: 11
+                  max: 12
+                - prefix: "ret_"
+                  min: 100
+                  max: 200
+                - min: 200
+                  max: 200
+          target:
+            action: "upsert"
+            label: "code_type"
+            value: "success"
+
+      # CodeRelabel Action
+      code_relabel:
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes:
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
+            - rule: "err_400~500"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "error"
+            - rule: "600"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "normal"
 */
 
 package metricsfilter

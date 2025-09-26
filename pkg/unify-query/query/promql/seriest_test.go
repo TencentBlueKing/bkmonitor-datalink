@@ -110,5 +110,4 @@ func TestSeriesAnalysis(t *testing.T) {
 			assert.Equalf(t, data.labels[label.Name], label.Value, "rounds->[%d] label match failed", round)
 		}
 	}
-
 }

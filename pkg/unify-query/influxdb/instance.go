@@ -145,7 +145,12 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
 	)
 	if resp == nil {
-		log.Warnf(ctx, "query:%s get nil response", stmt)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfluxDB").
+			WithOperation("执行查询").
+			WithContext("查询语句", stmt).
+			WithSolution("检查InfluxDB连接状态和查询语法")
+		log.WarnWithCodef(ctx, codedErr)
 		return nil, errors.New("get nil response")
 	}
 	if resp.Err != "" {
@@ -303,7 +308,12 @@ func (i *Instance) Query(
 	span.Set("query-cost", startAnaylize.Sub(startQuery))
 	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
-		log.Warnf(ctx, "query:%s get nil response", stmt)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfluxDB").
+			WithOperation("执行查询").
+			WithContext("查询语句", stmt).
+			WithSolution("检查InfluxDB连接状态和查询语法")
+		log.WarnWithCodef(ctx, codedErr)
 		return nil, errors.New("get nil response")
 	}
 	if resp.Err != "" {
@@ -357,13 +367,25 @@ func (i *Instance) Query(
 	if i.maxLimit > 0 && pointNum > i.maxLimit {
 		message = fmt.Sprintf("%s: %d", ErrPointBeyondLimit.Error(), i.maxLimit)
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumLimit, message)
-		log.Warnf(ctx, message)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfluxDB").
+			WithOperation("数据点限制检查").
+			WithContext("当前数量", pointNum).
+			WithContext("最大限制", i.maxLimit).
+			WithSolution("减少查询时间范围或增加聚合粒度")
+		log.WarnWithCodef(ctx, codedErr)
 	}
 	// 只有聚合场景下 slimit才会有效
 	if withGroupBy && i.maxSLimit > 0 && seriesNum > i.maxSLimit {
 		message = fmt.Sprintf("%s: %d", ErrSeriesBeyondSLimit.Error(), i.maxSLimit)
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumSlimit, message)
-		log.Warnf(ctx, message)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfluxDB").
+			WithOperation("序列数量限制检查").
+			WithContext("当前数量", seriesNum).
+			WithContext("最大限制", i.maxSLimit).
+			WithSolution("增加聚合条件或减少查询范围")
+		log.WarnWithCodef(ctx, codedErr)
 	}
 
 	span.Set("analyzer_cost", time.Since(startAnaylize))

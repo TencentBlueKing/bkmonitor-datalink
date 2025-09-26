@@ -106,5 +106,9 @@ func (s *Service) Close() {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
-	log.Infof(context.TODO(), "redis service context cancel func called.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("RedisService").
+		WithOperation("服务关闭").
+		WithSolution("Redis服务已成功关闭")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }

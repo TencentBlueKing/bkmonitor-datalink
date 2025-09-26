@@ -130,7 +130,13 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 		return data, nil
 	}
 
-	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("BkSQL").
+		WithOperation("执行查询").
+		WithContext("实例类型", i.InstanceType()).
+		WithContext("查询语句", sql).
+		WithSolution("正在执行BkSQL查询")
+	log.InfoWithCodef(ctx, codedInfo)
 	span.Set("query-sql", sql)
 
 	user := metadata.GetUser(ctx)

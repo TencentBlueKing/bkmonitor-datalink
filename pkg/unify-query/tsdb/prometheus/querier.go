@@ -84,7 +84,12 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
-			log.Warnf(ctx, "not instance in %s", qry.StorageID)
+			codedErr := errno.ErrStorageConnFailed().
+				WithComponent("PrometheusQuerier").
+				WithOperation("获取实例").
+				WithContext("存储ID", qry.StorageID).
+				WithSolution("检查存储实例配置和连接状态")
+			log.WarnWithCodef(ctx, codedErr)
 			return
 		}
 

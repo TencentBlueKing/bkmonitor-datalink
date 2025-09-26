@@ -50,7 +50,12 @@ var rootCmd = &cobra.Command{
 
 		// 启动 gops
 		if err := agent.Listen(agent.Options{}); err != nil {
-			log.Warnf(ctx, err.Error())
+			codedErr := errno.ErrConfigReloadFailed().
+				WithComponent("Service").
+				WithOperation("启动gops代理").
+				WithContext("错误信息", err.Error()).
+				WithSolution("检查端口占用和系统权限")
+			log.WarnWithCodef(ctx, codedErr)
 		}
 
 		// 初始化启动任务
@@ -88,18 +93,37 @@ var rootCmd = &cobra.Command{
 			case syscall.SIGTERM, syscall.SIGINT:
 				log.Debugf(ctx, "shutdown signal got, will shutdown server")
 				cancelFunc()
-				log.Warnf(ctx, "shutdown signal process done")
+				codedInfo := errno.ErrInfoServiceStart().
+					WithComponent("Service").
+					WithOperation("处理关闭信号").
+					WithSolution("服务正在优雅关闭")
+				log.WarnWithCodef(ctx, codedInfo)
 				break LOOP
 			}
 		}
 		log.Debugf(ctx, "loop break, wait for all service exit.")
 		for _, service := range serviceList {
-			log.Warnf(ctx, "close service:%s", service.Type())
+			codedInfo := errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("关闭服务").
+				WithContext("服务类型", service.Type()).
+				WithSolution("正在优雅关闭服务")
+			log.WarnWithCodef(ctx, codedInfo)
 			service.Close()
-			log.Warnf(ctx, "waiting for service:%s", service.Type())
+			codedInfo = errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("等待服务关闭").
+				WithContext("服务类型", service.Type()).
+				WithSolution("等待服务完成清理工作")
+			log.WarnWithCodef(ctx, codedInfo)
 
 			service.Wait()
-			log.Warnf(ctx, "waiting for service:%s done", service.Type())
+			codedInfo = errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("服务关闭完成").
+				WithContext("服务类型", service.Type()).
+				WithSolution("服务已成功关闭")
+			log.WarnWithCodef(ctx, codedInfo)
 		}
 		log.Debugf(ctx, "all service exit, server exit now.")
 		os.Exit(0)

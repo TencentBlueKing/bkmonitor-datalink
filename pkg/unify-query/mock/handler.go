@@ -165,13 +165,21 @@ type elasticSearchResultData struct {
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
 
-	log.Infof(context.Background(), "mock handler start")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("MockHandler").
+		WithOperation("启动Mock处理器").
+		WithSolution("Mock处理器开始启动")
+	log.InfoWithCodef(context.Background(), codedInfo)
 
 	mockBKBaseHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockElasticSearchHandler(ctx)
 
-	log.Infof(context.Background(), "mock handler end")
+	codedInfo = errno.ErrInfoServiceStart().
+		WithComponent("MockHandler").
+		WithOperation("Mock处理器完成").
+		WithSolution("Mock处理器已成功完成")
+	log.InfoWithCodef(context.Background(), codedInfo)
 }
 
 const (

@@ -197,7 +197,14 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				log.Infof(s.ctx, "table_id_change: (%s: %s => %s)", mName, defaultTsDB.TableID, sepRt.TableId)
+				codedInfo := errno.ErrInfoServiceStart().
+					WithComponent("StructuredQuery").
+					WithOperation("表ID变更").
+					WithContext("指标名", mName).
+					WithContext("原表ID", defaultTsDB.TableID).
+					WithContext("新表ID", sepRt.TableId).
+					WithSolution("表ID已成功更新")
+				log.InfoWithCodef(s.ctx, codedInfo)
 
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)

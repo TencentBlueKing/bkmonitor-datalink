@@ -91,5 +91,9 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	log.Infof(context.TODO(), "consul service context cancel func called.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("ConsulService").
+		WithOperation("服务关闭").
+		WithSolution("Consul服务已成功关闭")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }

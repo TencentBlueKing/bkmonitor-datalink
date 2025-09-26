@@ -30,6 +30,7 @@ const (
 	ConfigFieldExporter   = "exporter"
 	ConfigFieldProxy      = "proxy"
 	ConfigFieldPingserver = "pingserver"
+	ConfigFieldAlias      = "field_alias"
 )
 
 type ApmConfig struct {

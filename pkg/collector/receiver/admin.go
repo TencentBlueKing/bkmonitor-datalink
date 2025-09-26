@@ -56,6 +56,20 @@ func init() {
 		w.WriteHeader(http.StatusServiceUnavailable) // 未加载到平台配置表示服务未就绪
 	})
 
+	RegisterRecvHttpRoute("healthz", []RouteWithFunc{
+		{
+			Method:       http.MethodGet,
+			RelativePath: "/healthz",
+			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				if confengine.LoadedPlatformConfig() {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusServiceUnavailable) // 未加载到平台配置表示服务未就绪
+			},
+		},
+	})
+
 	const pprofSource = "pprof"
 	registerAdminHttpGetRoute(pprofSource, "/debug/pprof/snapshot", pprofsnapshot.HandlerFuncFor())
 	registerAdminHttpGetRoute(pprofSource, "/debug/pprof/cmdline", pprof.Cmdline)

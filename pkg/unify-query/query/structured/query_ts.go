@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -284,13 +285,24 @@ func (q *QueryTs) ToPromExpr(
 
 	if q.MetricMerge == "" {
 		err = fmt.Errorf("metric merge is empty")
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("结构化查询").
+			WithOperation("验证指标合并配置").
+			WithContext("metric_merge", q.MetricMerge).
+			WithSolution("配置有效的指标合并表达式")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		log.Errorf(ctx, "failed to parser metric_merge->[%s] for err->[%s]", string(q.MetricMerge), err)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("结构化查询").
+			WithOperation("解析MetricMerge").
+			WithError(err).
+			WithContext("MetricMerge", string(q.MetricMerge)).
+			WithSolution("检查MetricMerge格式和语法")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -620,14 +632,30 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	// 时间转换格式
 	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("结构化查询").
+			WithOperation("时间转换格式").
+			WithContext("start", q.Start).
+			WithContext("end", q.End).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	// 时间对齐
 	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("结构化查询").
+			WithOperation("时间对齐").
+			WithContext("start_time", startTime).
+			WithContext("end_time", endTime).
+			WithContext("step", q.Step).
+			WithContext("timezone", q.Timezone).
+			WithContext("error", err.Error()).
+			WithSolution("检查时间参数和步长设置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -1005,7 +1033,13 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
 			err = errors.WithMessagef(err, "step parse error")
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrBusinessParamInvalid().
+				WithComponent("结构化查询").
+				WithOperation("解析步长参数").
+				WithContext("step", q.Step).
+				WithContext("error", err.Error()).
+				WithSolution("检查步长参数格式是否正确")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 		step = time.Duration(dTmp)
@@ -1078,7 +1112,12 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			}
 			method := q.AggregateMethodList[methodIdx]
 			if result, err = method.ToProm(result); err != nil {
-				log.Errorf(ctx, "failed to translate function for->[%s]", err)
+				codedErr := errno.ErrBusinessQueryExecution().
+					WithComponent("结构化查询").
+					WithOperation("翻译函数").
+					WithError(err).
+					WithSolution("检查函数语法和参数")
+				log.ErrorWithCodef(ctx, codedErr)
 				return nil, err
 			}
 		}

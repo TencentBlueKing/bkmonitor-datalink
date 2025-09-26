@@ -17,6 +17,7 @@ import (
 	"github.com/thomaspoignant/go-feature-flag/exporter"
 	"github.com/thomaspoignant/go-feature-flag/ffuser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -52,7 +53,15 @@ func Print() string {
 func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue string) string {
 	res, err := ffclient.StringVariation(flagKey, user, defaultValue)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("特性开关服务").
+			WithOperation("获取字符串特性标志").
+			WithContext("flag_key", flagKey).
+			WithContext("user", user.GetKey()).
+			WithContext("default_value", defaultValue).
+			WithContext("error", err.Error()).
+			WithSolution("检查特性标志配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return defaultValue
 	}
 	return res

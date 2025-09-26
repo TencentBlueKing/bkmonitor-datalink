@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -179,7 +180,12 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("VictoriaMetrics").
+					WithOperation("解析数据点值").
+					WithContext("错误信息", err.Error()).
+					WithSolution("检查数据点格式是否正确")
+				log.ErrorWithCodef(ctx, codedErr)
 				continue
 			}
 			point.T = nt
@@ -243,7 +249,12 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					codedErr := errno.ErrDataProcessFailed().
+						WithComponent("VictoriaMetrics").
+						WithOperation("解析向量数据点值").
+						WithContext("错误信息", err.Error()).
+						WithSolution("检查向量数据点格式是否正确")
+					log.ErrorWithCodef(ctx, codedErr)
 					continue
 				}
 				points = append(points, promql.Point{
@@ -254,7 +265,12 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						log.Errorf(ctx, err.Error())
+						codedErr := errno.ErrDataProcessFailed().
+							WithComponent("VictoriaMetrics").
+							WithOperation("解析矩阵数据点值").
+							WithContext("错误信息", err.Error()).
+							WithSolution("检查矩阵数据点格式是否正确")
+						log.ErrorWithCodef(ctx, codedErr)
 						continue
 					}
 					points = append(points, promql.Point{
@@ -287,7 +303,13 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		log.Errorf(ctx, resp.Errors.Error)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("VictoriaMetrics").
+			WithOperation("API请求响应检查").
+			WithContext("响应码", resp.Code).
+			WithContext("错误信息", resp.Errors.Error).
+			WithSolution("检查API请求参数和后端服务状态")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
 		)

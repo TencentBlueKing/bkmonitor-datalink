@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -123,14 +124,27 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
 		// 指标配置不存在，则返回空 DF
-		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", metricName, err)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("Redis").
+			WithOperation("获取指标元数据").
+			WithContext("指标名", metricName).
+			WithContext("错误信息", err.Error()).
+			WithSolution("检查指标配置是否存在")
+		log.WarnWithCodef(ctx, codedErr)
 		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, metricName, err)
+			codedErr := errno.ErrBusinessLogicError().
+				WithComponent("Redis").
+				WithOperation("加载集群指标数据").
+				WithContext("集群名", clusterName).
+				WithContext("指标名", metricName).
+				WithContext("错误信息", err.Error()).
+				WithSolution("检查集群连接状态和数据可用性")
+			log.WarnWithCodef(ctx, codedErr)
 			continue
 		}
 		if dfPointer.Nrow() > 0 {

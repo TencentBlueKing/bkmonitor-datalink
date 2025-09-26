@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	baseInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -40,7 +41,13 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, "get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error())
+			codedErr := errno.ErrStorageConnFailed().
+				WithComponent("Prometheus-TSDB").
+				WithOperation("获取TSDB实例").
+				WithError(err).
+				WithContext("表ID", qry.TableID).
+				WithSolution("检查TSDB表配置和连接")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 		span.End(&err)
 	}()

@@ -18,6 +18,7 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -181,13 +182,26 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					log.Errorf(ctx, "%s %s", err.Error(), clusterID)
+					codedErr := errno.ErrStorageConnFailed().
+						WithComponent("InfluxDB查询").
+						WithOperation("获取客户端").
+						WithError(err).
+						WithContext("集群ID", clusterID).
+						WithSolution("检查集群配置和连接")
+					log.ErrorWithCodef(ctx, codedErr)
 					return
 				}
 
 				tables, err := instance.QueryInfos(ctx, metricName, db, sql, precision, limit)
 				if err != nil {
-					log.Errorf(ctx, "query failed,db:%s,sql:%s,error:%s", db, sql, err)
+					codedErr := errno.ErrBusinessQueryExecution().
+						WithComponent("InfluxDB查询").
+						WithOperation("SQL查询执行").
+						WithError(err).
+						WithContext("数据库", db).
+						WithContext("SQL", sql).
+						WithSolution("检查SQL语法和数据库连接")
+					log.ErrorWithCodef(ctx, codedErr)
 					errs = append(errs, err)
 					return
 				}
@@ -204,10 +218,20 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 					tablesCh <- tables
 				}
 			} else {
-				log.Errorf(ctx, "sql index error: %+v", index)
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("InfluxDB查询").
+					WithOperation("SQL索引处理").
+					WithContext("index", index).
+					WithSolution("检查SQL索引参数")
+				log.ErrorWithCodef(ctx, codedErr)
 			}
 		} else {
-			log.Errorf(ctx, "sql index error: %+v", index)
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("InfluxDB查询").
+				WithOperation("SQL索引处理").
+				WithContext("index", index).
+				WithSolution("检查SQL索引参数")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	})
 	defer p.Release()
@@ -289,7 +313,13 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					log.Errorf(ctx, fmt.Sprintf("%s [%v]", err.Error(), sqlInfo))
+					codedErr := errno.ErrBusinessQueryExecution().
+						WithComponent("InfluxDB查询").
+						WithOperation("并发查询执行").
+						WithError(err).
+						WithContext("SQL信息", sqlInfo).
+						WithSolution("检查并发查询参数和资源")
+					log.ErrorWithCodef(ctx, codedErr)
 					return
 				}
 
@@ -312,10 +342,20 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 				tables.Index = index
 				tablesCh <- tables
 			} else {
-				log.Errorf(ctx, "sql index error: %+v", index)
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("InfluxDB查询").
+					WithOperation("SQL索引处理").
+					WithContext("index", index).
+					WithSolution("检查SQL索引参数")
+				log.ErrorWithCodef(ctx, codedErr)
 			}
 		} else {
-			log.Errorf(ctx, "sql index error: %+v", index)
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("InfluxDB查询").
+				WithOperation("SQL索引处理").
+				WithContext("index", index).
+				WithSolution("检查SQL索引参数")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	})
 	defer p.Release()

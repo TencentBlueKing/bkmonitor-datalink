@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/samber/lo"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -152,7 +153,14 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
-					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("BkSQL查询工厂").
+						WithOperation("解析JSON对象").
+						WithContext("field_name", k).
+						WithContext("field_data", nd).
+						WithContext("error", err.Error()).
+						WithSolution("检查JSON数据格式是否正确")
+					log.ErrorWithCodef(f.ctx, codedErr)
 					continue
 				}
 				for nk, nd := range objectData {
@@ -233,7 +241,15 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 				// 获取维度信息
 				val, err := getValue(k, nd)
 				if err != nil {
-					log.Errorf(ctx, "get dimension (%s) value error in %+v %s", k, d, err.Error())
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("BkSQL查询工厂").
+						WithOperation("获取维度值").
+						WithContext("dimension_key", k).
+						WithContext("original_data", fmt.Sprintf("%+v", d)).
+						WithContext("processed_data", fmt.Sprintf("%+v", nd)).
+						WithContext("error", err.Error()).
+						WithSolution("检查维度数据类型和值")
+					log.ErrorWithCodef(ctx, codedErr)
 					continue
 				}
 

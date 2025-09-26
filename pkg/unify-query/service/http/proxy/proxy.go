@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -70,7 +71,14 @@ func HandleProxy(c *gin.Context) {
 
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrBusinessLogicError().
+				WithComponent("HTTP代理").
+				WithOperation("处理代理请求").
+				WithContext("url", c.Request.URL.Path).
+				WithContext("method", c.Request.Method).
+				WithContext("error", err.Error()).
+				WithSolution("检查代理配置和目标服务状态")
+			log.ErrorWithCodef(ctx, codedErr)
 			resp.failed(err)
 		}
 

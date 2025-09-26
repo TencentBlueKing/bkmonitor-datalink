@@ -26,6 +26,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -200,7 +201,12 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	log.Errorf(s.ctx, "StartStreamSeriesSet handle err: %s", err.Error())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("InfluxDB数据流").
+		WithOperation("启动数据流处理").
+		WithError(err).
+		WithSolution("检查数据流处理器配置")
+	log.ErrorWithCodef(s.ctx, codedErr)
 	s.err = nil
 	s.errMtx.Unlock()
 }
@@ -239,7 +245,13 @@ func (s *streamSeriesSet) Err() error {
 	defer s.errMtx.Unlock()
 
 	if s.err != nil {
-		log.Errorf(s.ctx, s.err.Error())
+		codedErr := errno.ErrBusinessQueryExecution().
+			WithComponent("InfluxDB序列集").
+			WithOperation("获取错误信息").
+			WithContext("series_name", s.name).
+			WithContext("error", s.err.Error()).
+			WithSolution("检查InfluxDB查询和数据处理")
+		log.ErrorWithCodef(s.ctx, codedErr)
 	}
 	return errors.Wrap(s.err, s.name)
 }

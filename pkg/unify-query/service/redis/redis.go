@@ -15,6 +15,7 @@ import (
 
 	goRedis "github.com/go-redis/redis/v8"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
@@ -63,18 +64,37 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err := redis.SetInstance(s.ctx, ServiceName, options)
 	if err != nil {
-		log.Errorf(context.TODO(), "redis service init failed for->[%s]", err)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("Redis服务").
+			WithOperation("初始化Redis实例").
+			WithContext("service_name", ServiceName).
+			WithContext("mode", Mode).
+			WithContext("host", fmt.Sprintf("%s:%d", Host, Port)).
+			WithContext("error", err.Error()).
+			WithSolution("检查Redis连接配置和服务状态")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 
 	// redis 是关键依赖路径，如果没有则直接报错
 	out, err := redis.Ping(s.ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "redis ping errors: %s", err.Error())
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("Redis服务").
+			WithOperation("测试Redis连接").
+			WithContext("service_name", ServiceName).
+			WithContext("error", err.Error()).
+			WithSolution("检查Redis服务器可用性和网络连接")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return
 	}
 
-	log.Warnf(context.TODO(), "redis service reloaded or start success, with %s", out)
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("Redis").
+		WithOperation("服务启动").
+		WithContext("状态", "成功").
+		WithContext("输出", out)
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }
 
 func (s *Service) Wait() {
@@ -86,5 +106,9 @@ func (s *Service) Close() {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
-	log.Infof(context.TODO(), "redis service context cancel func called.")
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("RedisService").
+		WithOperation("服务关闭").
+		WithSolution("Redis服务已成功关闭")
+	log.InfoWithCodef(context.TODO(), codedInfo)
 }

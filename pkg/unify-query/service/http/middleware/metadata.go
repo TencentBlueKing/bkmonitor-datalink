@@ -10,11 +10,11 @@
 package middleware
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -68,12 +68,13 @@ func MetaData(p *Params) gin.HandlerFunc {
 				// 记录慢查询
 				if p != nil {
 					if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-						log.Warnf(ctx,
-							fmt.Sprintf(
-								"slow query log request: %s, duration: %s",
-								c.Request.URL.Path, sub.String(),
-							),
-						)
+						codedErr := errno.ErrDataProcessFailed().
+							WithComponent("HTTP中间件").
+							WithOperation("慢查询监控").
+							WithContext("请求路径", c.Request.URL.Path).
+							WithContext("持续时间", sub.String()).
+							WithSolution("检查查询性能和索引优化")
+						log.WarnWithCodef(ctx, codedErr)
 					}
 				}
 

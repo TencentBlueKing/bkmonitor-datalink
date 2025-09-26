@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -128,13 +129,32 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				log.Errorf(context.TODO(), "deregister check:%s failed,error:%s", i.checkID, err)
+				codedErr := errno.ErrStorageConnFailed().
+					WithComponent("Consul服务注册").
+					WithOperation("注销健康检查").
+					WithError(err).
+					WithContext("检查ID", i.checkID).
+					WithSolution("检查Consul连接和服务配置")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 			}
 			err = i.CancelService()
 			if err != nil {
-				log.Errorf(context.TODO(), "cancel service:%s failed,error:%s", i.serviceID, err)
+				errCode := errno.ErrStorageConnFailed().
+					WithComponent("Consul").
+					WithOperation("注销服务").
+					WithContexts(map[string]any{
+						"服务ID": i.serviceID,
+						"错误":   err.Error(),
+					})
+				log.ErrorWithCodef(context.TODO(), errCode)
 			}
-			log.Warnf(context.TODO(), "cancel service:%s with check:%s done", i.serviceID, i.checkID)
+			codedErr := errno.ErrConfigReloadFailed().
+				WithComponent("Consul服务注册").
+				WithOperation("取消服务和检查").
+				WithContext("服务ID", i.serviceID).
+				WithContext("检查ID", i.checkID).
+				WithSolution("Consul服务和检查已成功取消")
+			log.WarnWithCodef(context.TODO(), codedErr)
 		}()
 		defer ticker.Stop()
 
@@ -145,7 +165,15 @@ func (i *Instance) LoopAwakeService() error {
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
 				if err := i.CheckPass(); err != nil {
-					log.Errorf(context.TODO(), "FAILED TO CHECK CONSUL, may cause the domain name failed for err->[%s]!", err)
+					errCode := errno.ErrStorageConnFailed().
+						WithComponent("Consul").
+						WithOperation("健康检查通过").
+						WithContexts(map[string]any{
+							"检查ID": i.checkID,
+							"错误":   err.Error(),
+						})
+
+					log.ErrorWithCodef(context.TODO(), errCode)
 				}
 			}
 		}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -292,7 +293,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	if len(ts) == 0 {
-		log.Warnf(ctx, strings.Join(errorMessage, "\n"))
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("CMDB").
+			WithOperation("时间序列数据获取").
+			WithContext("错误信息", strings.Join(errorMessage, "\n")).
+			WithSolution("检查CMDB查询条件和数据源状态")
+		log.WarnWithCodef(ctx, codedErr)
 	}
 
 	span.Set("hit_path", hitPath)
@@ -469,7 +475,12 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	}
 
 	if len(matrix) == 0 {
-		log.Warnf(ctx, "instance data empty, promql: %s", realPromQL)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("CMDB").
+			WithOperation("实例数据查询").
+			WithContext("PromQL", realPromQL).
+			WithSolution("检查查询条件和数据源是否有效")
+		log.WarnWithCodef(ctx, codedErr)
 		return nil, nil
 	}
 

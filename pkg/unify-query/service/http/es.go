@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -65,7 +66,12 @@ func HandleESQueryRequest(c *gin.Context) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Errorf(context.TODO(), "read es request body failed for->[%s]", err)
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("HTTP-ES").
+			WithOperation("读取请求体").
+			WithError(err).
+			WithSolution("检查请求体格式和大小")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
@@ -73,7 +79,12 @@ func HandleESQueryRequest(c *gin.Context) {
 	var req *ESRequest
 	err = json.Unmarshal(body, &req)
 	if err != nil {
-		log.Errorf(context.TODO(), "anaylize es request body failed for->[%s]", err)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP-ES").
+			WithOperation("解析请求体").
+			WithError(err).
+			WithSolution("检查JSON格式和结构")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
@@ -87,7 +98,12 @@ func HandleESQueryRequest(c *gin.Context) {
 	}
 	result, err := es.Query(params)
 	if err != nil {
-		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
+		codedErr := errno.ErrBusinessQueryExecution().
+			WithComponent("Elasticsearch").
+			WithOperation("ES查询执行").
+			WithError(err).
+			WithSolution("检查ES连接和查询语句")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return

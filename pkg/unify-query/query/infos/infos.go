@@ -20,6 +20,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -452,14 +453,27 @@ func makeInfluxQLList(
 func QueryAsync(ctx context.Context, infoType InfoType, params *Params, spaceUid string) (*influxdb.Tables, error) {
 	sqlInfos, err := makeInfluxQLList(ctx, infoType, params, spaceUid)
 	if err != nil {
-		log.Errorf(ctx, "get info sql failed,error:%s", err)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("信息查询处理器").
+			WithOperation("生成SQL查询列表").
+			WithContext("info_type", string(infoType)).
+			WithContext("space_uid", spaceUid).
+			WithContext("error", err.Error()).
+			WithSolution("检查查询参数和表配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 	log.Debugf(context.TODO(), "get sqlInfos:%#v", sqlInfos)
 
 	result, errs := influxdb.QueryInfosAsync(ctx, sqlInfos, "", params.Limit)
 	if len(errs) != 0 {
-		log.Errorf(ctx, "query info failed,error:%v", errs)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("信息查询处理器").
+			WithOperation("执行异步查询").
+			WithContext("info_type", string(infoType)).
+			WithContext("errors", fmt.Sprintf("%v", errs)).
+			WithSolution("检查InfluxDB连接和SQL语法")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, errs[0]
 	}
 

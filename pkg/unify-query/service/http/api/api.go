@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -173,7 +174,15 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrBusinessQueryExecution().
+					WithComponent("HTTP API").
+					WithOperation("查询资源匹配范围").
+					WithContext("space_uid", user.SpaceUID).
+					WithContext("target_type", qry.TargetType).
+					WithContext("source_type", qry.SourceType).
+					WithContext("error", err.Error()).
+					WithSolution("检查查询参数和资源配置")
+				log.ErrorWithCodef(ctx, codedErr)
 
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest

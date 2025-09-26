@@ -26,6 +26,7 @@ import (
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -192,7 +193,12 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	log.Errorf(s.ctx, "StartStreamSeriesSet handle err: %s", err.Error())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("离线数据归档流").
+		WithOperation("启动数据流处理").
+		WithError(err).
+		WithSolution("检查数据流处理器配置")
+	log.ErrorWithCodef(s.ctx, codedErr)
 	s.err = nil
 	s.errMtx.Unlock()
 }
@@ -231,7 +237,12 @@ func (s *streamSeriesSet) Err() error {
 	defer s.errMtx.Unlock()
 
 	if s.err != nil {
-		log.Errorf(s.ctx, s.err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("离线数据归档流").
+			WithOperation("处理数据流错误").
+			WithError(s.err).
+			WithSolution("检查数据流处理器配置")
+		log.ErrorWithCodef(s.ctx, codedErr)
 	}
 	return errors.Wrap(s.err, s.name)
 }

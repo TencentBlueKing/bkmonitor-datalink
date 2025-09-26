@@ -11,6 +11,7 @@ package metric
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -205,7 +207,13 @@ func counterAdd(
 				"spanID":  sp.SpanID().String(),
 			})
 		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
+			codedErr := errno.ErrDataFormatInvalid().
+				WithComponent("指标收集器").
+				WithOperation("添加计数器Exemplar").
+				WithContext("metric_type", fmt.Sprintf("%T", metric)).
+				WithContext("metric_value", fmt.Sprintf("%v", metric)).
+				WithSolution("检查指标类型是否支持ExemplarAdder接口")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	} else {
 		metric.Add(val)
@@ -229,7 +237,13 @@ func observe(
 				"spanID":  sp.SpanID().String(),
 			})
 		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
+			codedErr := errno.ErrDataFormatInvalid().
+				WithComponent("指标收集器").
+				WithOperation("观察指标Exemplar").
+				WithContext("metric_type", fmt.Sprintf("%T", metric)).
+				WithContext("metric_value", fmt.Sprintf("%v", metric)).
+				WithSolution("检查指标类型是否支持ExemplarObserver接口")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	} else {
 		metric.Observe(value)

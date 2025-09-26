@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -92,7 +93,12 @@ func FormatSeriesData(infoData *InfoData, keys []string) []*SeriesData {
 	for _, table := range infoData.Tables {
 		for _, value := range table.Values {
 			if len(value) != 1 {
-				log.Errorf(context.TODO(), "table get wrong num of field,origin data:%v", value)
+				codedErr := errno.ErrDataDeserializeFailed().
+					WithComponent("InfoData").
+					WithOperation("解析系列数据字段").
+					WithContext("原始数据", value).
+					WithSolution("检查表格数据字段数量是否为1")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 				continue
 			}
 			row := SplitByte(value[0].(string), 44)
@@ -111,7 +117,12 @@ func FormatSeriesData(infoData *InfoData, keys []string) []*SeriesData {
 			for _, columnStr := range row[1:] {
 				column := SplitByte(columnStr, 61)
 				if len(column) != 2 {
-					log.Errorf(context.TODO(), "tag split wrong,origin data:%v", columnStr)
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("InfoData").
+						WithOperation("解析标签数据").
+						WithContext("原始数据", columnStr).
+						WithSolution("检查标签分割后是否为键值对格式")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 					continue
 				}
 
@@ -176,17 +187,32 @@ func NewTagValuesData(infoData *InfoData) *TagValuesData {
 	for _, table := range infoData.Tables {
 		for _, value := range table.Values {
 			if len(value) != 2 {
-				log.Errorf(context.TODO(), "table get wrong num of field,origin data:%v", value)
+				codedErr := errno.ErrDataDeserializeFailed().
+					WithComponent("TagValuesData").
+					WithOperation("解析标签值数据字段").
+					WithContext("原始数据", value).
+					WithSolution("检查表格数据字段数量是否为2")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 				continue
 			}
 			tagKey, ok := value[0].(string)
 			if !ok {
-				log.Errorf(context.TODO(), "table get wrong type of field,origin data:%v", value)
+				codedErr := errno.ErrDataDeserializeFailed().
+					WithComponent("TagValuesData").
+					WithOperation("解析标签键类型").
+					WithContext("原始数据", value).
+					WithSolution("检查字段类型是否为字符串")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 				continue
 			}
 			tagValue, ok := value[1].(string)
 			if !ok {
-				log.Errorf(context.TODO(), "table get wrong type of field,origin data:%v", value)
+				codedErr := errno.ErrDataDeserializeFailed().
+					WithComponent("TagValuesData").
+					WithOperation("解析标签值类型").
+					WithContext("原始数据", value).
+					WithSolution("检查字段类型是否为字符串")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 				continue
 			}
 			tagValues, ok := values[tagKey]
@@ -495,7 +521,12 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	// 获取body中的具体参数
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("InfoHandler").
+			WithOperation("读取请求体").
+			WithContext("错误信息", err.Error()).
+			WithSolution("检查请求体格式和大小限制")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -510,14 +541,27 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 
 	params, err := infos.AnalysisQuery(string(queryStmt))
 	if err != nil {
-		log.Errorf(context.TODO(), "analysis info query failed for->[%s]", err)
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("InfoHandler").
+			WithOperation("解析查询语句").
+			WithContext("查询语句", string(queryStmt)).
+			WithContext("错误信息", err.Error()).
+			WithSolution("检查查询语句语法格式")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 
 	result, err := infos.QueryAsync(ctx, infoType, params, spaceUid)
 	if err != nil {
-		log.Errorf(context.TODO(), "query info failed for->[%s]", err)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfoHandler").
+			WithOperation("执行信息查询").
+			WithContext("查询类型", infoType).
+			WithContext("空间ID", spaceUid).
+			WithContext("错误信息", err.Error()).
+			WithSolution("检查查询参数和后端服务状态")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -541,7 +585,12 @@ func convertInfoData(
 	}
 	err := resp.Fill(tables)
 	if err != nil {
-		log.Errorf(context.TODO(), "fill info data failed for->[%s]", err)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("InfoData").
+			WithOperation("填充响应数据").
+			WithContext("错误信息", err.Error()).
+			WithSolution("检查表格数据结构完整性")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return nil, err
 	}
 
@@ -605,12 +654,24 @@ func convertInfoData(
 			}
 			for _, value := range table.Values {
 				if len(value) <= fieldIndex+1 {
-					log.Errorf(context.TODO(), "get wrong length value:%v", value)
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("InfoData").
+						WithOperation("解析字段键数据长度").
+						WithContext("原始数据", value).
+						WithContext("期望索引", fieldIndex+1).
+						WithSolution("检查数据长度是否足够")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 					continue
 				}
 				v, ok := value[fieldIndex].(string)
 				if !ok {
-					log.Errorf(context.TODO(), "get wrong type value:%v", value)
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("InfoData").
+						WithOperation("解析字段键数据类型").
+						WithContext("原始数据", value).
+						WithContext("字段索引", fieldIndex).
+						WithSolution("检查字段类型是否为字符串")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 					continue
 				}
 				if _, ok = res[v]; !ok {

@@ -43,6 +43,10 @@ func (b *Binding) addTask(t task.SerializerTask) {
 		return
 	}
 	taskUniId := ComputeTaskUniId(t)
+	if taskUniId == "" {
+		logger.Errorf("add task, task uni id is empty")
+		return
+	}
 
 	if err = b.addBinding(
 		TaskBinding{UniId: taskUniId, SerializerTask: t},
@@ -242,6 +246,9 @@ func (b *Binding) getWorkerByTask(ctx context.Context, taskUniId string) (string
 // GetBindingWorkerIdByTask Get the worker which bound to the task (maybe not running)
 func (b *Binding) GetBindingWorkerIdByTask(t task.SerializerTask) (string, error) {
 	taskUniId := ComputeTaskUniId(t)
+	if taskUniId == "" {
+		return "", fmt.Errorf("GetBindingWorkerIdByTask: taskUniId is empty")
+	}
 	return b.GetBindingWorkerIdByTaskUniId(taskUniId)
 }
 

@@ -24,7 +24,7 @@ type Operator interface {
 	Clean()
 }
 
-func NewTracesOperator(conf Config) Operator {
+func NewOperator(conf Config) Operator {
 	ch := NewConfigHandler(conf)
 
 	to := tracesOperator{

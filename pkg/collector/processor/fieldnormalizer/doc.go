@@ -7,4 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+/*
+# 字段标准化
+processor:
+  - name: "field_normalizer/common"
+    config:
+      fields:
+        - kind: "SPAN_KIND_SERVER"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.name"
+              op: contact
+              values:
+                - "attributes.client.address"
+                - "attributes.client.port"
+
+        - kind: "SPAN_KIND_CLIENT"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.ip"
+              op: contact
+              values:
+                - "attributes.client.address"
+                - "attributes.net.ip"
+*/
+
 package fieldnormalizer

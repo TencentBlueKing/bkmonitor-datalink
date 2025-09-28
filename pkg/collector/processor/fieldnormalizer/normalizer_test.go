@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package alias
+package fieldnormalizer
 
 import (
 	"testing"
@@ -20,13 +20,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
-func TestGetAttributes(t *testing.T) {
+func TestNormalizer(t *testing.T) {
 	t.Run("FuncContact", func(t *testing.T) {
 		g := generator.NewTracesGenerator(define.TracesOptions{
 			GeneratorOptions: define.GeneratorOptions{
 				Attributes: map[string]string{
 					"client.address": "localhost",
 					"client.port":    "8080",
+					"http.method":    "GET",
 				},
 			},
 			SpanCount: 2,
@@ -34,15 +35,32 @@ func TestGetAttributes(t *testing.T) {
 		})
 		data := g.Generate()
 
-		mgr := New()
-		mgr.Register(
-			KF{K: ServerKind("net.peer.name"), F: FuncContact("client.address", "client.port", ":")},
-		)
+		conf := Config{
+			Fields: []FieldConfig{
+				{
+					Kind:         "SPAN_KIND_SERVER",
+					PredicateKey: "attributes.http.method",
+					Rules: []FieldRule{
+						{
+							Key: "attributes.net.peer.name",
+							Values: []string{
+								"attributes.client.address",
+								"attributes.client.port",
+							},
+							Op: funcContact,
+						},
+					},
+				},
+			},
+		}
 
 		var n int
+		normalizer := NewSpanFieldNormalizer(conf)
 		foreach.Spans(data, func(span ptrace.Span) {
-			v, _ := mgr.GetAttributes(span, "net.peer.name")
-			assert.Equal(t, "localhost:8080", v)
+			normalizer.Normalize(span)
+			v, ok := span.Attributes().Get("net.peer.name")
+			assert.True(t, ok)
+			assert.Equal(t, "localhost:8080", v.AsString())
 			n++
 		})
 		assert.Equal(t, 2, n)
@@ -53,6 +71,7 @@ func TestGetAttributes(t *testing.T) {
 			GeneratorOptions: define.GeneratorOptions{
 				Attributes: map[string]string{
 					"network.peer.address": "localhost",
+					"http.method":          "GET",
 				},
 			},
 			SpanCount: 2,
@@ -60,15 +79,32 @@ func TestGetAttributes(t *testing.T) {
 		})
 		data := g.Generate()
 
-		mgr := New()
-		mgr.Register(
-			KF{K: ClientKind("net.peer.ip"), F: FuncOr("server.address", "network.peer.address")},
-		)
+		conf := Config{
+			Fields: []FieldConfig{
+				{
+					Kind:         "SPAN_KIND_CLIENT",
+					PredicateKey: "attributes.http.method",
+					Rules: []FieldRule{
+						{
+							Key: "attributes.net.peer.ip",
+							Values: []string{
+								"attributes.server.address",
+								"attributes.network.peer.address",
+							},
+							Op: funcOr,
+						},
+					},
+				},
+			},
+		}
 
 		var n int
+		normalizer := NewSpanFieldNormalizer(conf)
 		foreach.Spans(data, func(span ptrace.Span) {
-			v, _ := mgr.GetAttributes(span, "net.peer.ip")
-			assert.Equal(t, "localhost", v)
+			normalizer.Normalize(span)
+			v, ok := span.Attributes().Get("net.peer.ip")
+			assert.True(t, ok)
+			assert.Equal(t, "localhost", v.AsString())
 			n++
 		})
 		assert.Equal(t, 2, n)

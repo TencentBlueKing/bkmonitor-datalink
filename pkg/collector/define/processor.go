@@ -25,4 +25,5 @@ const (
 	ProcessorProbeFilter     = "probe_filter"
 	ProcessorPprofTranslator = "pprof_translator"
 	ProcessorTextSpliter     = "text_spliter"
+	ProcessorFieldNormalizer = "field_normalizer"
 )

@@ -53,24 +53,6 @@ func TestDimensionFetcher(t *testing.T) {
 	})
 }
 
-func TestDecodeDimensionFrom(t *testing.T) {
-	typ, s := DecodeDimensionFrom("")
-	assert.Equal(t, DimensionFromUnknown, typ)
-	assert.Equal(t, "", s)
-
-	typ, s = DecodeDimensionFrom("resource.s")
-	assert.Equal(t, DimensionFromResource, typ)
-	assert.Equal(t, "s", s)
-
-	typ, s = DecodeDimensionFrom("attributes.a")
-	assert.Equal(t, DimensionFromAttribute, typ)
-	assert.Equal(t, "a", s)
-
-	typ, s = DecodeDimensionFrom("other")
-	assert.Equal(t, DimensionFromMethod, typ)
-	assert.Equal(t, "other", s)
-}
-
 func BenchmarkFormatItoa(b *testing.B) {
 	span := ptrace.NewSpan()
 	span.SetKind(ptrace.SpanKindClient)

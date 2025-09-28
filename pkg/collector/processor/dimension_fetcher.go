@@ -11,35 +11,9 @@ package processor
 
 import (
 	"strconv"
-	"strings"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/alias"
 )
-
-type DimensionFromType uint8
-
-const (
-	DimensionFromUnknown DimensionFromType = iota
-	DimensionFromResource
-	DimensionFromAttribute
-	DimensionFromMethod
-)
-
-func DecodeDimensionFrom(s string) (DimensionFromType, string) {
-	switch {
-	case len(s) == 0:
-		return DimensionFromUnknown, s
-	case strings.HasPrefix(s, define.ResourceKeyPrefix):
-		return DimensionFromResource, s[len(define.ResourceKeyPrefix):]
-	case strings.HasPrefix(s, define.AttributeKeyPrefix):
-		return DimensionFromAttribute, s[len(define.AttributeKeyPrefix):]
-	default:
-		return DimensionFromMethod, s
-	}
-}
 
 func NewSpanDimensionFetcher() SpanDimensionFetcher {
 	return SpanDimensionFetcher{}
@@ -67,14 +41,18 @@ func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpan
 }
 
 func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) string {
-	v, _ := alias.GetAttributes(span, key)
-	return v
+	v, ok := span.Attributes().Get(key)
+	if ok {
+		return v.AsString()
+	}
+	return ""
 }
 
 func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys []string) {
+	attrs := span.Attributes()
 	for _, key := range keys {
-		if v, ok := alias.GetAttributes(span, key); ok {
-			dimensions[key] = v
+		if v, ok := attrs.Get(key); ok {
+			dimensions[key] = v.AsString()
 		}
 	}
 }

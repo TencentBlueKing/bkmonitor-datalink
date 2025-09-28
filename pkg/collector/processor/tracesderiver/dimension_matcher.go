@@ -12,6 +12,7 @@ package tracesderiver
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
@@ -52,10 +53,10 @@ func (sdm spanDimensionMatcher) Match(t string, span ptrace.Span) (map[string]st
 	var found bool
 loop:
 	for _, pk := range predicateKeys {
-		df, k := processor.DecodeDimensionFrom(pk)
-		switch df {
+		ff, k := fields.DecodeFieldFrom(pk)
+		switch ff {
 		// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-		case processor.DimensionFromAttribute:
+		case fields.FieldFromAttributes:
 			// 如果 key 空值则跳过
 			if s := sdm.fetcher.FetchAttribute(span, k); s == "" {
 				continue
@@ -66,7 +67,7 @@ loop:
 			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk))
 			break loop
 
-		case processor.DimensionFromUnknown:
+		case fields.FieldFromUnknown:
 			// 退避处理
 			found = true
 			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk))

@@ -7,22 +7,4 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
-
-const (
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorDbFilter        = "db_filter"
-	ProcessorProbeFilter     = "probe_filter"
-	ProcessorPprofTranslator = "pprof_translator"
-	ProcessorTextSpliter     = "text_spliter"
-)
+package fieldnormalizer

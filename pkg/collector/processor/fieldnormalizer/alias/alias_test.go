@@ -36,7 +36,7 @@ func TestGetAttributes(t *testing.T) {
 
 		mgr := New()
 		mgr.Register(
-			KF{K: serverKind("net.peer.name"), F: FuncContact("client.address", "client.port", ":")},
+			KF{K: ServerKind("net.peer.name"), F: FuncContact("client.address", "client.port", ":")},
 		)
 
 		var n int
@@ -62,7 +62,7 @@ func TestGetAttributes(t *testing.T) {
 
 		mgr := New()
 		mgr.Register(
-			KF{K: clientKind("net.peer.ip"), F: FuncOr("server.address", "network.peer.address")},
+			KF{K: ClientKind("net.peer.ip"), F: FuncOr("server.address", "network.peer.address")},
 		)
 
 		var n int

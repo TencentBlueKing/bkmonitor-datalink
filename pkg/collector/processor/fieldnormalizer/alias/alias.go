@@ -13,6 +13,14 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
+func ServerKind(s string) KindKey {
+	return KindKey{Kind: "SPAN_KIND_SERVER", Key: s} // 2
+}
+
+func ClientKind(s string) KindKey {
+	return KindKey{Kind: "SPAN_KIND_CLIENT", Key: s} // 3
+}
+
 type KindKey struct {
 	Kind string
 	Key  string

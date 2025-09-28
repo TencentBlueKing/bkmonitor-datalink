@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -208,11 +209,11 @@ func matchRules(config *Config, kind, foundPk, name string) (RuleConfig, bool) {
 	return rule, true
 }
 
-func findMetricsAttributes(pk string, attrMap pcommon.Map) bool {
-	df, s := processor.DecodeDimensionFrom(pk)
-	switch df {
-	case processor.DimensionFromAttribute:
-		v, ok := attrMap.Get(s)
+func findMetricsAttributes(pk string, attrs pcommon.Map) bool {
+	ff, s := fields.DecodeFieldFrom(pk)
+	switch ff {
+	case fields.FieldFromAttributes:
+		v, ok := attrs.Get(s)
 		if ok {
 			return v.AsString() != ""
 		}

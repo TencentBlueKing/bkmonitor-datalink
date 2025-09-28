@@ -108,7 +108,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 				}
 			}
 		}
-
 	}
 
 	for k, v := range metricItems {

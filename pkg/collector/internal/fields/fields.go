@@ -55,6 +55,8 @@ func TrimResourcePrefix(keys ...string) StringOrSlice {
 	for _, key := range keys {
 		if strings.HasPrefix(key, PrefixResource) {
 			ret = append(ret, key[len(PrefixResource):])
+		} else {
+			ret = append(ret, key)
 		}
 	}
 	return ret
@@ -65,6 +67,8 @@ func TrimAttributesPrefix(keys ...string) StringOrSlice {
 	for _, key := range keys {
 		if strings.HasPrefix(key, PrefixAttributes) {
 			ret = append(ret, key[len(PrefixAttributes):])
+		} else {
+			ret = append(ret, key)
 		}
 	}
 	return ret

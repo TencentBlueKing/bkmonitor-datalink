@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
@@ -106,10 +107,10 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 		rules := ch.Get(span.Kind().String())
 	loop:
 		for _, rule := range rules {
-			df, pk := processor.DecodeDimensionFrom(rule.PredicateKey)
-			switch df {
+			ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
+			switch ff {
 			// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-			case processor.DimensionFromAttribute:
+			case fields.FieldFromAttributes:
 				// 1) 先判断是否有 predicateKey
 				if s := p.fetcher.FetchAttribute(span, pk); s == "" {
 					continue
@@ -132,7 +133,8 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 
 				p.matcher.Match(span, mappings, rule.ReplaceType)
 				break loop
-			case processor.DimensionFromMethod:
+
+			case fields.FieldFromMethod:
 				// 1) 先判断是否有 predicateKey
 				if s := p.fetcher.FetchMethod(span, pk); s == "" {
 					continue

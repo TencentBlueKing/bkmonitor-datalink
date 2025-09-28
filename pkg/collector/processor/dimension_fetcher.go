@@ -42,10 +42,10 @@ func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpan
 
 func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) string {
 	v, ok := span.Attributes().Get(key)
-	if ok {
-		return v.AsString()
+	if !ok {
+		return ""
 	}
-	return ""
+	return v.AsString()
 }
 
 func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys []string) {

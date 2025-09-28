@@ -49,3 +49,75 @@ func TestDecodeFieldFrom(t *testing.T) {
 		assert.Equal(t, tt.expectedKey, key)
 	}
 }
+
+func TestTrimResourcePrefix(t *testing.T) {
+	tests := []struct {
+		input    []string
+		expected StringOrSlice
+	}{
+		{
+			input:    []string{"resource.s"},
+			expected: []string{"s"},
+		},
+		{
+			input:    []string{"resource.s", "resourcex.t"},
+			expected: []string{"s", "resourcex.t"},
+		},
+		{
+			input:    []string{"s"},
+			expected: []string{"s"},
+		},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, TrimResourcePrefix(tt.input...))
+	}
+}
+
+func TestTrimAttributesPrefix(t *testing.T) {
+	tests := []struct {
+		input    []string
+		expected StringOrSlice
+	}{
+		{
+			input:    []string{"attributes.s"},
+			expected: []string{"s"},
+		},
+		{
+			input:    []string{"attributes.s", "attributesx.t"},
+			expected: []string{"s", "attributesx.t"},
+		},
+		{
+			input:    []string{"s"},
+			expected: []string{"s"},
+		},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, TrimAttributesPrefix(tt.input...))
+	}
+}
+
+func TestTrimPrefix(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "resource.s",
+			expected: "s",
+		},
+		{
+			input:    "attributes.s",
+			expected: "s",
+		},
+		{
+			input:    "s",
+			expected: "s",
+		},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, TrimPrefix(tt.input))
+	}
+}

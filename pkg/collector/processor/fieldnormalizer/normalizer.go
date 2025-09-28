@@ -56,7 +56,7 @@ func FuncOr(keys ...string) NormalizeFunc {
 
 		for _, k := range keys {
 			if v, ok := attrs.Get(k); ok {
-				attrs.InsertString(key, v.AsString())
+				attrs.Insert(key, v)
 				return
 			}
 		}

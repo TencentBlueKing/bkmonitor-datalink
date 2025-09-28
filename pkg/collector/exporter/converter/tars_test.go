@@ -379,45 +379,33 @@ func TestTarsStat(t *testing.T) {
 	})
 }
 
-func TestTarsStatAggregate(t *testing.T) {
-	var totalEvents []define.Event
-	gatherFunc := func(events ...define.Event) {
-		totalEvents = append(totalEvents, events...)
-	}
-
-	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true})
-	defer conv.Clean()
-
-	for i := 0; i < 100000; i++ {
-		data := &define.TarsData{
-			Type:      define.TarsStatType,
-			Timestamp: 1719417736,
-			Data: &define.TarsStatData{
-				FromClient: true,
-				Stats: map[statf.StatMicMsgHead]statf.StatMicMsgBody{
-					statMicMsgHead: {
-						Count:         4,
-						TimeoutCount:  0,
-						ExecCount:     0,
-						IntervalCount: map[int32]int32{100: 1, 200: 1, 500: 1, 1000: 1},
-						TotalRspTime:  1,
-					},
+func getTarsStatRecord() *define.Record {
+	data := &define.TarsData{
+		Type:      define.TarsStatType,
+		Timestamp: 1719417736,
+		Data: &define.TarsStatData{
+			FromClient: true,
+			Stats: map[statf.StatMicMsgHead]statf.StatMicMsgBody{
+				statMicMsgHead: {
+					Count:         4,
+					TimeoutCount:  0,
+					ExecCount:     0,
+					IntervalCount: map[int32]int32{100: 1, 200: 1, 500: 1, 1000: 1},
+					TotalRspTime:  1,
 				},
 			},
-		}
-		record := &define.Record{
-			RecordType:    define.RecordTars,
-			RequestType:   define.RequestTars,
-			RequestClient: define.RequestClient{IP: "127.0.0.1"},
-			Token:         define.Token{Original: "xxx", MetricsDataId: 123},
-			Data:          data,
-		}
-		conv.Convert(record, gatherFunc)
+		},
 	}
+	return &define.Record{
+		RecordType:    define.RecordTars,
+		RequestType:   define.RequestTars,
+		RequestClient: define.RequestClient{IP: "127.0.0.1"},
+		Token:         define.Token{Original: "xxx", MetricsDataId: 123},
+		Data:          data,
+	}
+}
 
-	// 等待一段时间，确保所有事件都被处理
-	time.Sleep(500 * time.Millisecond)
-
+func assertAggregateResult(t testing.TB, expect map[string]float64, totalEvents []define.Event) {
 	metricAggregateSumMap := make(map[string]float64)
 	for _, event := range totalEvents {
 		for metric, value := range event.Data()["metrics"].(common.MapStr) {
@@ -431,7 +419,26 @@ func TestTarsStatAggregate(t *testing.T) {
 		metricAggregateSumMap[metric] = cast.ToFloat64(fmt.Sprintf("%.9f", math.Trunc(value*shift)/shift))
 	}
 
-	assert.Equal(t, map[string]float64{
+	assert.Equal(t, expect, metricAggregateSumMap)
+}
+
+func TestTarsStatAggregate(t *testing.T) {
+	var totalEvents []define.Event
+	gatherFunc := func(events ...define.Event) {
+		totalEvents = append(totalEvents, events...)
+	}
+
+	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true})
+	defer conv.Clean()
+
+	for i := 0; i < 100000; i++ {
+		conv.Convert(getTarsStatRecord(), gatherFunc)
+	}
+
+	// 等待一段时间，确保所有事件都被处理
+	time.Sleep(500 * time.Millisecond)
+
+	expect := map[string]float64{
 		"rpc_client_handled_seconds_sum":    100,
 		"rpc_client_handled_seconds_count":  400000,
 		"rpc_client_handled_seconds_bucket": 1400000,
@@ -440,7 +447,41 @@ func TestTarsStatAggregate(t *testing.T) {
 		"rpc_server_handled_seconds_count":  400000,
 		"rpc_server_handled_seconds_bucket": 1400000,
 		"rpc_server_handled_total":          400000,
-	}, metricAggregateSumMap)
+	}
+	assertAggregateResult(t, expect, totalEvents)
+}
+
+func TestTarsStatAggregateDropServices(t *testing.T) {
+	var totalEvents []define.Event
+	gatherFunc := func(events ...define.Event) {
+		totalEvents = append(totalEvents, events...)
+	}
+
+	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, DropOriginalServices: []string{"TestApp.HelloGo"}})
+	defer conv.Clean()
+
+	conv.Convert(getTarsStatRecord(), gatherFunc)
+
+	// 等待一段时间，确保所有事件都被处理
+	time.Sleep(500 * time.Millisecond)
+
+	expect := map[string]float64{
+		// 主调转被调，原始数据没有被丢弃。
+		"origin_rpc_server_handled_seconds_bucket": 14,
+		"origin_rpc_server_handled_seconds_count":  4,
+		"origin_rpc_server_handled_seconds_sum":    0.001,
+		"origin_rpc_server_handled_total":          4,
+		"rpc_client_handled_seconds_sum":           0.001,
+		"rpc_client_handled_seconds_count":         4,
+		"rpc_client_handled_seconds_bucket":        14,
+		"rpc_client_handled_total":                 4,
+		// 被调指标，原始数据被丢弃。
+		"rpc_server_handled_seconds_sum":    0.001,
+		"rpc_server_handled_seconds_count":  4,
+		"rpc_server_handled_seconds_bucket": 14,
+		"rpc_server_handled_total":          4,
+	}
+	assertAggregateResult(t, expect, totalEvents)
 }
 
 // BenchmarkTarsStat 基准测试 TarsStat 转换性能
@@ -477,6 +518,10 @@ func BenchmarkTarsStat(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		conv.Convert(record, func(events ...define.Event) {})
 	}
+
+	// 等待一段时间，确保所有事件都被处理
+	time.Sleep(500 * time.Millisecond)
+
 }
 
 // BenchmarkTarsProperty 基准测试 TarsProperty 转换性能

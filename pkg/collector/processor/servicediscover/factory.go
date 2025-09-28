@@ -51,7 +51,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 
 	return &serviceDiscover{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
-		fetcher:         processor.NewSpanDimensionFetcher(),
+		fetcher:         fields.NewSpanFieldFetcher(),
 		matcher:         NewMatcher(),
 		configs:         configs,
 	}, nil
@@ -60,7 +60,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 type serviceDiscover struct {
 	processor.CommonProcessor
 	matcher Matcher
-	fetcher processor.SpanDimensionFetcher
+	fetcher fields.SpanFieldFetcher
 	configs *confengine.TierConfig // type: *ConfigHandler
 }
 

@@ -12,6 +12,7 @@ package fieldnormalizer
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstrings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/fieldnormalizer/alias"
 )
 
 type Config struct {
@@ -29,6 +30,9 @@ type FieldRule struct {
 	Type        string `config:"type" mapstructure:"type"`
 	FuncOr      string `config:"or" mapstructure:"or"`
 	FuncContact string `config:"contact" mapstructure:"contact"`
+
+	funcOr      alias.LookupFunc
+	funcContact alias.LookupFunc
 }
 
 type ConfigHandler struct {

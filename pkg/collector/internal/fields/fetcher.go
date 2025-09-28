@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package processor
+package fields
 
 import (
 	"strconv"
@@ -15,13 +15,13 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-func NewSpanDimensionFetcher() SpanDimensionFetcher {
-	return SpanDimensionFetcher{}
+type SpanFieldFetcher struct{}
+
+func NewSpanFieldFetcher() SpanFieldFetcher {
+	return SpanFieldFetcher{}
 }
 
-type SpanDimensionFetcher struct{}
-
-func (sdf SpanDimensionFetcher) FetchResource(resourceSpans ptrace.ResourceSpans, key string) string {
+func (sff SpanFieldFetcher) FetchResource(resourceSpans ptrace.ResourceSpans, key string) string {
 	attrs := resourceSpans.Resource().Attributes()
 	if v, ok := attrs.Get(key); ok {
 		return v.AsString()
@@ -29,18 +29,18 @@ func (sdf SpanDimensionFetcher) FetchResource(resourceSpans ptrace.ResourceSpans
 	return ""
 }
 
-func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpans, keys []string) map[string]string {
+func (sff SpanFieldFetcher) FetchResources(resourceSpans ptrace.ResourceSpans, keys []string) map[string]string {
 	attrs := resourceSpans.Resource().Attributes()
-	dimensions := make(map[string]string)
+	dst := make(map[string]string)
 	for _, key := range keys {
 		if v, ok := attrs.Get(key); ok {
-			dimensions[key] = v.AsString()
+			dst[key] = v.AsString()
 		}
 	}
-	return dimensions
+	return dst
 }
 
-func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) string {
+func (sff SpanFieldFetcher) FetchAttribute(span ptrace.Span, key string) string {
 	v, ok := span.Attributes().Get(key)
 	if !ok {
 		return ""
@@ -48,16 +48,16 @@ func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) str
 	return v.AsString()
 }
 
-func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys []string) {
+func (sff SpanFieldFetcher) FetchAttributesTo(span ptrace.Span, keys []string, dst map[string]string) {
 	attrs := span.Attributes()
 	for _, key := range keys {
 		if v, ok := attrs.Get(key); ok {
-			dimensions[key] = v.AsString()
+			dst[key] = v.AsString()
 		}
 	}
 }
 
-func (sdf SpanDimensionFetcher) FetchMethod(span ptrace.Span, key string) string {
+func (sff SpanFieldFetcher) FetchMethod(span ptrace.Span, key string) string {
 	switch key {
 	case "span_id":
 		return span.SpanID().HexString()
@@ -73,8 +73,8 @@ func (sdf SpanDimensionFetcher) FetchMethod(span ptrace.Span, key string) string
 	return ""
 }
 
-func (sdf SpanDimensionFetcher) FetchMethods(span ptrace.Span, dimensions map[string]string, keys []string) {
+func (sff SpanFieldFetcher) FetchMethodsTo(span ptrace.Span, keys []string, dst map[string]string) {
 	for _, key := range keys {
-		dimensions[key] = sdf.FetchMethod(span, key)
+		dst[key] = sff.FetchMethod(span, key)
 	}
 }

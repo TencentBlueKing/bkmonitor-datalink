@@ -55,7 +55,7 @@ func (sdf SpanDimensionFetcher) FetchResource(resourceSpans ptrace.ResourceSpans
 	return ""
 }
 
-func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpans, keys ...string) map[string]string {
+func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpans, keys []string) map[string]string {
 	attrs := resourceSpans.Resource().Attributes()
 	dimensions := make(map[string]string)
 	for _, key := range keys {

@@ -93,7 +93,7 @@ func (sdm spanDimensionMatcher) MatchResource(resourceSpans ptrace.ResourceSpans
 	ret := make(map[string]string)
 	types := sdm.ch.GetTypes()
 	for i := 0; i < len(types); i++ {
-		m := sdm.fetcher.FetchResources(resourceSpans, sdm.ch.GetResourceKeys(types[i].Type)...)
+		m := sdm.fetcher.FetchResources(resourceSpans, sdm.ch.GetResourceKeys(types[i].Type))
 		for k, v := range m {
 			ret[k] = v
 		}

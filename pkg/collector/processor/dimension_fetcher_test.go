@@ -37,7 +37,7 @@ func TestDimensionFetcher(t *testing.T) {
 	resourceSpans := pdTraces.ResourceSpans().At(0)
 
 	assert.Equal(t, "res1", fetcher.FetchResource(resourceSpans, "r1"))
-	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, fetcher.FetchResources(resourceSpans, "r2", "r3"))
+	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, fetcher.FetchResources(resourceSpans, []string{"r2", "r3"}))
 
 	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))

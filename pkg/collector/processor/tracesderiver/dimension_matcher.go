@@ -62,15 +62,15 @@ loop:
 			}
 
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
+			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk))
+			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk))
 			break loop
 
 		case processor.DimensionFromUnknown:
 			// 退避处理
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
+			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk))
+			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk))
 			break loop
 		}
 	}

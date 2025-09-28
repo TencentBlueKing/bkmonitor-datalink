@@ -44,11 +44,11 @@ func TestDimensionFetcher(t *testing.T) {
 		assert.Equal(t, "attr1", fetcher.FetchAttribute(span, "a1"))
 
 		dimensions := make(map[string]string)
-		fetcher.FetchAttributes(span, dimensions, "a2", "a3")
+		fetcher.FetchAttributes(span, dimensions, []string{"a2", "a3"})
 		assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dimensions)
 
 		dimensions = make(map[string]string)
-		fetcher.FetchMethods(span, dimensions, "kind", "span_name", "trace_id", "span_id", "status.code", "not_exist")
+		fetcher.FetchMethods(span, dimensions, []string{"kind", "span_name", "trace_id", "span_id", "status.code", "not_exist"})
 		assert.Len(t, dimensions, 6)
 	})
 }

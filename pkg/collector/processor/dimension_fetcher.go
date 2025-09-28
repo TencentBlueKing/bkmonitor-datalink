@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/alias"
 )
 
 type DimensionFromType uint8
@@ -66,18 +67,14 @@ func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpan
 }
 
 func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) string {
-	v, ok := span.Attributes().Get(key)
-	if !ok {
-		return ""
-	}
-	return v.AsString()
+	v, _ := alias.GetAttributes(span, key)
+	return v
 }
 
-func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys ...string) {
-	attrs := span.Attributes()
+func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys []string) {
 	for _, key := range keys {
-		if v, ok := attrs.Get(key); ok {
-			dimensions[key] = v.AsString()
+		if v, ok := alias.GetAttributes(span, key); ok {
+			dimensions[key] = v
 		}
 	}
 }
@@ -98,7 +95,7 @@ func (sdf SpanDimensionFetcher) FetchMethod(span ptrace.Span, key string) string
 	return ""
 }
 
-func (sdf SpanDimensionFetcher) FetchMethods(span ptrace.Span, dimensions map[string]string, keys ...string) {
+func (sdf SpanDimensionFetcher) FetchMethods(span ptrace.Span, dimensions map[string]string, keys []string) {
 	for _, key := range keys {
 		dimensions[key] = sdf.FetchMethod(span, key)
 	}

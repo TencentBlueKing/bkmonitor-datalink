@@ -8,7 +8,7 @@
 // specific language governing permissions and limitations under the License.
 
 /*
-# Translator: Pprof 数据协议转换器
+# PprofTranslator: Pprof 数据协议转换器
 
 processor:
     - name: "pprof_translator/common"

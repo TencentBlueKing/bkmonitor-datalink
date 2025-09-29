@@ -81,9 +81,13 @@ func (p *fieldNormalizer) Reload(config map[string]any, customized []processor.S
 }
 
 func (p *fieldNormalizer) Process(record *define.Record) (derivedRecord *define.Record, err error) {
+	normalizer := p.normalizers.GetByToken(record.Token.Original).(*SpanFieldNormalizer)
+	if normalizer.Keys() == 0 {
+		return nil, nil
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
-		normalizer := p.normalizers.GetByToken(record.Token.Original).(*SpanFieldNormalizer)
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			normalizer.Normalize(span)

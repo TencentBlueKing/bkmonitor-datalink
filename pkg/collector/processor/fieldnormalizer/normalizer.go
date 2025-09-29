@@ -103,6 +103,10 @@ func NewSpanFieldNormalizer(conf Config) *SpanFieldNormalizer {
 	}
 }
 
+func (sfn SpanFieldNormalizer) Keys() int {
+	return len(sfn.funcs)
+}
+
 func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 	spanKind := span.Kind().String()
 	predicateKeys := sfn.ch.GetPredicateKeys(spanKind)

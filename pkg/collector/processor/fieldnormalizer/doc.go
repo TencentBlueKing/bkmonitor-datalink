@@ -26,10 +26,10 @@ processor:
           predicate_key: "attributes.http.method"
           rules:
             - key: "attributes.net.peer.ip"
-              op: contact
+              op: or
               values:
                 - "attributes.client.address"
-                - "attributes.net.ip"
+                - "attributes.net.peer.address"
 */
 
 package fieldnormalizer

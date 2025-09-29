@@ -19,29 +19,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
-	testMapping := func() map[string]lucene_parser.FieldOption {
-		return map[string]lucene_parser.FieldOption{
-			"log":                              {Type: lucene_parser.FieldTypeText},
-			"level":                            {Type: lucene_parser.FieldTypeKeyword},
-			"loglevel":                         {Type: lucene_parser.FieldTypeKeyword},
-			"word.key":                         {Type: lucene_parser.FieldTypeText},
-			"ms":                               {Type: lucene_parser.FieldTypeLong},
-			"events.attributes.message.detail": {Type: lucene_parser.FieldTypeText},
-			"nested.key":                       {Type: lucene_parser.FieldTypeText},
-			"events":                           {Type: lucene_parser.FieldTypeNested},
-			"nested":                           {Type: lucene_parser.FieldTypeNested},
-			"user":                             {Type: lucene_parser.FieldTypeNested},
+	testMapping := func() map[string]lucene_parser_old.FieldOption {
+		return map[string]lucene_parser_old.FieldOption{
+			"log":                              {Type: lucene_parser_old.FieldTypeText},
+			"level":                            {Type: lucene_parser_old.FieldTypeKeyword},
+			"loglevel":                         {Type: lucene_parser_old.FieldTypeKeyword},
+			"word.key":                         {Type: lucene_parser_old.FieldTypeText},
+			"ms":                               {Type: lucene_parser_old.FieldTypeLong},
+			"events.attributes.message.detail": {Type: lucene_parser_old.FieldTypeText},
+			"nested.key":                       {Type: lucene_parser_old.FieldTypeText},
+			"events":                           {Type: lucene_parser_old.FieldTypeNested},
+			"nested":                           {Type: lucene_parser_old.FieldTypeNested},
+			"user":                             {Type: lucene_parser_old.FieldTypeNested},
 			"event_detail": {
 				Type: "events.attributes.message.detail",
 			},
-			"group": {Type: lucene_parser.FieldTypeText},
+			"group": {Type: lucene_parser_old.FieldTypeText},
 		}
 	}
 
@@ -168,9 +167,9 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			parser := lucene_parser.NewParser(
-				lucene_parser.WithMapping(testMapping()),
-				lucene_parser.WithAlias(testAlias()),
+			parser := lucene_parser_old.NewParser(
+				lucene_parser_old.WithMapping(testMapping()),
+				lucene_parser_old.WithAlias(testAlias()),
 			)
 			result, err := parser.Parse(c.q, c.isPrefix)
 			if c.err != nil {

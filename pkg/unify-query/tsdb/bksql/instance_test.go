@@ -1288,7 +1288,7 @@ func TestInstance_bkSql(t *testing.T) {
 				c.end = end
 			}
 
-			fieldsMap := map[string]sql_expr.FieldOption{
+			fieldsMap := metadata.FieldsMap{
 				"text": {
 					Type:     sql_expr.DorisTypeText,
 					Analyzed: false,
@@ -1961,7 +1961,7 @@ LIMIT
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]sql_expr.FieldOption{
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
 				"text":                             {Type: sql_expr.DorisTypeText},
 				"events.attributes.exception.type": {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
 				"events.timestamp":                 {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},

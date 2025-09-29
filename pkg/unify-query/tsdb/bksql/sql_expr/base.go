@@ -56,7 +56,7 @@ type SQLExpr interface {
 	// WithFieldAlias 设置字段别名
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
-	WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr
+	WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -64,7 +64,7 @@ type SQLExpr interface {
 	// ParserRangeTime 解析开始结束时间
 	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
-	ParserQueryString(qs string) (string, error)
+	ParserQueryString(ctx context.Context, qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
@@ -74,7 +74,7 @@ type SQLExpr interface {
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
-	FieldMap() map[string]FieldOption
+	FieldMap() metadata.FieldsMap
 	// Type 返回表达式类型
 	Type() string
 }
@@ -106,7 +106,7 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    map[string]FieldOption
+	fieldMap    metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
 
 	timeField  string
@@ -135,7 +135,7 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]FieldOption) SQLExpr {
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap metadata.FieldsMap) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
 }
@@ -153,12 +153,12 @@ func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
 	return nil
 }
 
-func (d *DefaultSQLExpr) FieldMap() map[string]FieldOption {
+func (d *DefaultSQLExpr) FieldMap() metadata.FieldsMap {
 	return d.fieldMap
 }
 
 // ParserQueryString 解析查询字符串（当前实现返回空）
-func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
+func (d *DefaultSQLExpr) ParserQueryString(ctx context.Context, _ string) (string, error) {
 	return "", nil
 }
 

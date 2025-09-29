@@ -7,7 +7,7 @@
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
-package lucene_parser
+package lucene_parser_old
 
 import (
 	"testing"
@@ -42,6 +42,10 @@ func TestLuceneParser(t *testing.T) {
 			e:   &OperatorExpr{Op: OpMatch, Value: &StringExpr{Value: `中国`}},
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"中国"}}`,
 			sql: "`log` MATCH_PHRASE '中国'",
+		},
+		"test": {
+			q:   `a:1 AND b:2 OR c:3`,
+			sql: "(`a` = '1' AND `b` = '2' OR `c` = '3')",
 		},
 		"accented_term": {
 			q:   `café`,

@@ -159,8 +159,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
-	fieldsMap := make(map[string]sql_expr.FieldOption)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.FieldsMap, error) {
+	fieldsMap := make(metadata.FieldsMap)
 
 	if sql == "" {
 		return nil, nil
@@ -189,13 +189,13 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql
 			continue
 		}
 
-		opt := sql_expr.FieldOption{
-			Type: fieldType,
+		opt := metadata.FieldOption{
+			FieldType: fieldType,
 		}
 
 		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
 			if fieldAnalyzed == "true" {
-				opt.Analyzed = true
+				opt.IsAnalyzed = true
 			}
 		}
 
@@ -270,18 +270,20 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 
 	res := make(map[string]map[string]any)
 	for k, v := range fieldMap {
-		if k == "" || v.Type == "" {
+		if k == "" || v.FieldType == "" {
 			continue
 		}
+
+		v.AliasName = query.FieldAlias.AliasName(k)
 
 		ks := strings.Split(k, ".")
 		res[k] = map[string]any{
 			"alias_name":        query.FieldAlias.AliasName(k),
 			"field_name":        k,
-			"field_type":        v.Type,
+			"field_type":        v.FieldType,
 			"origin_field":      ks[0],
 			"is_agg":            false,
-			"is_analyzed":       v.Analyzed,
+			"is_analyzed":       v.IsAnalyzed,
 			"is_case_sensitive": false,
 			"tokenize_on_chars": "",
 		}

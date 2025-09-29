@@ -22,7 +22,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -58,6 +57,23 @@ const (
 	TypeDate      = "date"
 	TypeDateNanos = "date_nanos"
 )
+
+type FieldsMap map[string]FieldOption
+
+func (f FieldsMap) Field(k string) FieldOption {
+	return f[k]
+}
+
+type FieldOption struct {
+	AliasName       string   `json:"alias_name"`
+	FieldName       string   `json:"field_name"`
+	FieldType       string   `json:"field_type"`
+	OriginField     string   `json:"origin_field"`
+	IsAgg           bool     `json:"is_agg"`
+	IsAnalyzed      bool     `json:"is_analyzed"`
+	IsCaseSensitive bool     `json:"is_case_sensitive"`
+	TokenizeOnChars []string `json:"tokenize_on_chars"`
+}
 
 type VmCondition string
 
@@ -222,10 +238,6 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	}
 
 	if q.QueryString != "" {
-		err := lucene_parser.LabelMap(q.QueryString, addLabel)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return labelMap, nil

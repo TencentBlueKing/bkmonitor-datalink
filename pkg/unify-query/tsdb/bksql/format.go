@@ -112,7 +112,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -134,7 +134,7 @@ func (f *QueryFactory) DescribeTableSQL() string {
 	return f.expr.DescribeTableSQL(f.Table())
 }
 
-func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
+func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
 }
 

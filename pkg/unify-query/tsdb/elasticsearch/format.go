@@ -24,7 +24,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -149,7 +148,7 @@ type FormatFactory struct {
 
 	fieldMap map[string]map[string]any
 
-	luceneParser *lucene_parser.Parser
+	luceneParser *lucene_parser_old.Parser
 
 	data map[string]any
 
@@ -218,17 +217,17 @@ func (f *FormatFactory) initLuceneParser() {
 
 	esFieldsMap := f.buildFieldsMap()
 
-	f.luceneParser = lucene_parser.NewParser(
-		lucene_parser.WithMapping(esFieldsMap),
+	f.luceneParser = lucene_parser_old.NewParser(
+		lucene_parser_old.WithMapping(esFieldsMap),
 	)
 }
 
-func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser.FieldOption {
+func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser_old.FieldOption {
 	if len(f.fieldMap) == 0 {
 		return nil
 	}
 
-	esFieldsMap := make(map[string]lucene_parser.FieldOption)
+	esFieldsMap := make(map[string]lucene_parser_old.FieldOption)
 
 	for fieldName, fieldInfo := range f.fieldMap {
 		fieldOption := f.processedMap(fieldInfo)
@@ -240,11 +239,11 @@ func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser.FieldOption {
 	return esFieldsMap
 }
 
-func (f *FormatFactory) processedMap(fieldInfo map[string]any) lucene_parser.FieldOption {
+func (f *FormatFactory) processedMap(fieldInfo map[string]any) lucene_parser_old.FieldOption {
 	fieldType := f.extractFieldTypeFromProcessed(fieldInfo)
 	analyzed := f.extractAnalyzedFromProcessed(fieldInfo)
 
-	return lucene_parser.FieldOption{
+	return lucene_parser_old.FieldOption{
 		Type:     fieldType,
 		Analyzed: analyzed,
 	}

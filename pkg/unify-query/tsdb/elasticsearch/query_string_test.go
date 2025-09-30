@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser_old"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -29,20 +28,20 @@ func TestQsToDsl(t *testing.T) {
 	mock.Init()
 	testMapping := func() metadata.FieldsMap {
 		return metadata.FieldsMap{
-			"log":      {FieldType: lucene_parser_old.FieldTypeText},
-			"level":    {FieldType: lucene_parser_old.FieldTypeKeyword},
-			"loglevel": {FieldType: lucene_parser_old.FieldTypeKeyword},
-			"word.key": {FieldType: lucene_parser_old.FieldTypeText},
-			"ms":       {FieldType: lucene_parser_old.FieldTypeLong},
+			"log":      {FieldType: Text},
+			"level":    {FieldType: KeyWord},
+			"loglevel": {FieldType: KeyWord},
+			"word.key": {FieldType: Text},
+			"ms":       {FieldType: Long},
 			"events.attributes.message.detail": {
 				AliasName: "event_detail",
-				FieldType: lucene_parser_old.FieldTypeText,
+				FieldType: Text,
 			},
-			"nested.key": {FieldType: lucene_parser_old.FieldTypeText},
-			"events":     {FieldType: lucene_parser_old.FieldTypeNested},
-			"nested":     {FieldType: lucene_parser_old.FieldTypeNested},
-			"user":       {FieldType: lucene_parser_old.FieldTypeNested},
-			"group":      {FieldType: lucene_parser_old.FieldTypeText},
+			"nested.key": {FieldType: Text},
+			"events":     {FieldType: Nested},
+			"nested":     {FieldType: Nested},
+			"user":       {FieldType: Nested},
+			"group":      {FieldType: Text},
 		}
 	}
 

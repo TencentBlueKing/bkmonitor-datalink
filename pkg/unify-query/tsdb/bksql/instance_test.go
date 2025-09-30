@@ -1290,8 +1290,8 @@ func TestInstance_bkSql(t *testing.T) {
 
 			fieldsMap := metadata.FieldsMap{
 				"text": {
-					Type:     sql_expr.DorisTypeText,
-					Analyzed: false,
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
 				},
 			}
 
@@ -1962,10 +1962,10 @@ LIMIT
 
 			// SQL生成验证
 			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {Type: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {Type: sql_expr.DorisTypeInt},
+				"text":                             {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

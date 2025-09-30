@@ -24,138 +24,156 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
-var fieldEncodeFunc = func(aliasMap map[string]string) func(string) string {
-	return func(s string) string {
-		if ns, ok := aliasMap[s]; ok {
-			s = ns
-		}
-
-		fs := strings.Split(s, ".")
-		if len(fs) == 1 {
-			s = fmt.Sprintf("`%s`", s)
-			return s
-		}
-
-		var (
-			suffixFields strings.Builder
-			// 协议自定义是 map 结构
-			sep string
-		)
-
-		mapFieldSet := set.New[string]([]string{"resource", "attributes"}...)
-		for index, f := range fs {
-			// 第一个补充开头
-			if index == 0 {
-				sep = `['`
-			} else if index == len(fs)-1 {
-				// 最后一个不需要补充
-				sep = `']`
-			}
-
-			suffixFields.WriteString(f + sep)
-			// 用户上报的分隔符为 .
-			if mapFieldSet.Existed(f) {
-				sep = "."
-			} else if sep != "." {
-				sep = "']['"
-			}
-		}
-
-		s = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), "STRING")
+var fieldEncodeFunc = func(s string) string {
+	fs := strings.Split(s, ".")
+	if len(fs) == 1 {
+		s = fmt.Sprintf("`%s`", s)
 		return s
 	}
+
+	var (
+		suffixFields strings.Builder
+		// 协议自定义是 map 结构
+		sep string
+	)
+
+	mapFieldSet := set.New[string]([]string{"resource", "attributes"}...)
+	for index, f := range fs {
+		// 第一个补充开头
+		if index == 0 {
+			sep = `['`
+		} else if index == len(fs)-1 {
+			// 最后一个不需要补充
+			sep = `']`
+		}
+
+		suffixFields.WriteString(f + sep)
+		// 用户上报的分隔符为 .
+		if mapFieldSet.Existed(f) {
+			sep = "."
+		} else if sep != "." {
+			sep = "']['"
+		}
+	}
+
+	s = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), "STRING")
+	return s
 }
 
 func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  string
+		sql   string
+		dsl   string
 		err   string
 	}{
 		{
 			name:  "simple match",
 			input: "name:test",
-			want:  "`name` = 'test'",
+			sql:   "`name` = 'test'",
+			dsl:   `{"term":{"name":"test"}}`,
 		},
 		{
 			name:  "one word",
 			input: "test",
-			want:  "`log` MATCH_PHRASE 'test'",
+			sql:   "`log` MATCH_PHRASE 'test'",
+			dsl:   `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test"}}`,
 		},
 		{
 			name:  "complex nested query",
 			input: "(a:1 AND (b:2 OR c:3)) OR NOT d:4",
-			want:  "(`a` = '1' AND (`b` = '2' OR `c` = '3')) OR `d` != '4'",
+			sql:   "(`a` = '1' AND (`b` = '2' OR `c` = '3')) OR `d` != '4'",
+			dsl:   `{"bool":{"should":[{"bool":{"must":[{"term":{"a":"1"}},{"bool":{"should":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}}]}},{"bool":{"must_not":{"term":{"d":"4"}}}}]}}`,
 		},
 		{
 			name:  "invalid syntax",
 			input: "name:test AND OR",
-			want:  "`name` = 'test'",
+			sql:   "`name` = 'test'",
+			dsl:   `{"term":{"name":"test"}}`,
 		},
 		{
 			name:  "empty input",
 			input: "",
+			dsl:   "",
 		},
 		{
 			name:  "OR expression with multiple terms",
-			input: "a:1 OR b:2 OR c:3",
-			want:  "`a` = '1' OR `b` = '2' OR `c` = '3'",
+			input: "(a:1 OR b:2) AND c:3",
+			sql:   "(`a` = '1' OR `b` = '2') AND `c` = '3'",
+			dsl:   `{"bool":{"must":[{"bool":{"should":[{"term":{"a":"1"}},{"term":{"b":"2"}}]}},{"term":{"c":"3"}}]}}`,
 		},
 		{
 			name:  "mixed AND/OR with proper precedence",
 			input: "a:1 AND b:2 OR c:3",
-			want:  "`a` = '1' AND `b` = '2' OR `c` = '3'",
+			sql:   "`a` = '1' AND `b` = '2' OR `c` = '3'",
+			dsl:   `{"bool":{"must":[{"term":{"a":"1"}},{"term":{"b":"2"}},{"term":{"c":"3"}}]}}`,
 		},
 		{
 			name:  "mixed AND/OR with proper precedence -1",
 			input: "a:1 AND (b:2 OR c:3)",
-			want:  "`a` = '1' AND (`b` = '2' OR `c` = '3')",
+			sql:   "`a` = '1' AND (`b` = '2' OR `c` = '3')",
+			dsl:   `{"bool":{"must":[{"term":{"a":"1"}},{"bool":{"should":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}}]}}`,
 		},
 		{
 			name:  "exact match with quotes",
 			input: "name:\"exact match\"",
-			want:  "`name` = 'exact match'",
+			sql:   "`name` = 'exact match'",
+			dsl:   `{"term":{"name":"exact match"}}`,
 		},
 		{
 			name:  "numeric equality",
 			input: "age:25",
-			want:  "`age` = '25'",
+			sql:   "`age` = '25'",
+			dsl:   `{"term":{"age":"25"}}`,
 		},
 		{
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
-			want:  "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
 		},
 		{
 			name:  "date range query - 1",
 			input: "count:[1 TO 10}",
-			want:  "`count` >= '1' AND `count` < '10'",
+			sql:   "`count` >= '1' AND `count` < '10'",
+			dsl:   `{"range":{"count":{"from":"1","include_lower":true,"include_upper":false,"to":"10"}}}`,
 		},
 		{
 			name:  "date range query - 2",
 			input: "count:{10 TO *]",
-			want:  "`count` > '10'",
+			sql:   "`count` > '10'",
+			dsl:   `{"range":{"count":{"from":"10","include_lower":false,"include_upper":true,"to":null}}}`,
 		},
 		{
 			name:  "invalid field name",
 			input: "123field:value",
-			want:  "`123field` = 'value'",
+			sql:   "`123field` = 'value'",
+			dsl:   `{"term":{"123field":"value"}}`,
 		},
 		{
 			name:  "text filter",
 			input: "text:value",
-			want:  "`text` = 'value'",
+			sql:   "`text` = 'value'",
+			dsl:   `{"term":{"text":"value"}}`,
 		},
 		{
 			name:  "object field",
 			input: "__ext.container_name: value",
-			want:  "CAST(__ext['container_name'] AS STRING) = 'value'",
+			sql:   "CAST(__ext['container_name'] AS STRING) = 'value'",
+			dsl:   `{"term":{"__ext.container_name":"value"}}`,
+		},
+		{
+			name:  "object field and alias",
+			input: "container_name: value",
+			sql:   "CAST(__ext['container_name'] AS STRING) = 'value'",
+			dsl:   `{"term":{"__ext.container_name":"value"}}`,
 		},
 		{
 			name:  "start",
 			input: "a: >100",
-			want:  "`a` > '100'",
+			sql:   "`a` > '100'",
+			dsl:   `{"term":{"a":"100"}}`,
 		},
 	}
 
@@ -168,6 +186,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			FieldType:  "text",
 		},
 		"__ext.container_name": {
+			AliasName: "container_name",
 			FieldType: "text",
 		},
 		"author": {
@@ -182,18 +201,33 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		aliasMap[o.AliasName] = k
 	}
 
-	opt := Option{
-		FieldsMap:       fieldsMap,
-		FieldEncodeFunc: fieldEncodeFunc(aliasMap),
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			node := ParseLuceneWithVisitor(ctx, tt.input, opt)
-			assert.Nil(t, node.Error())
 
-			assert.Equal(t, tt.want, node.SQL())
+			// 解析 sql
+			node := ParseLuceneWithVisitor(ctx, tt.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			assert.Nil(t, node.Error())
+			assert.Equal(t, tt.sql, node.SQL())
+
+			// 解析  dsl
+			node = ParseLuceneWithVisitor(ctx, tt.input, Option{
+				FieldsMap: fieldsMap,
+			})
+			source := MergeQuery(node.DSL())
+
+			if source != nil {
+				s, err := source.Source()
+				assert.Nil(t, err)
+
+				dsl, _ := json.Marshal(s)
+				assert.Equal(t, tt.dsl, string(dsl))
+			} else {
+				assert.Equal(t, tt.dsl, "")
+			}
 		})
 	}
 }
@@ -310,7 +344,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"多条件组合，括号调整优先级": {
 			q:   `author:"John Smith" AND (age:20 OR status:active)`,
-			es:  ``,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"term":{"age":"20"}},{"term":{"status":"active"}}]}},{"match_phrase":{"author":{"query":"John Smith"}}}]}}`,
 			sql: "`author` MATCH_PHRASE 'John Smith' AND (`age` = '20' OR `status` = 'active')",
 		},
 		"多条件组合，and 和 or 的优先级": {
@@ -1065,24 +1099,25 @@ func TestLuceneParser(t *testing.T) {
 		aliasMap[o.AliasName] = k
 	}
 
-	opt := Option{
-		FieldsMap:       fieldsMap,
-		FieldEncodeFunc: fieldEncodeFunc(aliasMap),
-	}
-
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			node := ParseLuceneWithVisitor(ctx, c.q, opt)
+			node := ParseLuceneWithVisitor(ctx, c.q, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
 			assert.Nil(t, node.Error())
 
 			sql := node.SQL()
 			assert.Equal(t, c.sql, sql)
 
-			// dsl, err := parser.DSL()
-			// assert.Nil(t, err)
-			// dslActual, _ := queryToJSON(dsl)
-			// assert.Equal(t, c.es, dslActual)
+			node = ParseLuceneWithVisitor(ctx, c.q, Option{
+				FieldsMap: fieldsMap,
+			})
+			assert.Nil(t, node.Error())
+			dsl := MergeQuery(node.DSL())
+			dslActual, _ := queryToJSON(dsl)
+			assert.Equal(t, c.es, dslActual)
 		})
 	}
 }

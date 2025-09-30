@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -146,9 +147,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	fieldMap map[string]map[string]any
-
-	luceneParser *lucene_parser_old.Parser
+	fieldsMap metadata.FieldsMap
 
 	data map[string]any
 
@@ -184,10 +183,8 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
-	f.fieldMap = fieldMap
-	f.initLuceneParser()
-
+func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
+	f.fieldsMap = fieldsMap
 	return f
 }
 
@@ -208,84 +205,6 @@ func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMa
 
 	f.labelMap = newLabelMap
 	return f
-}
-
-func (f *FormatFactory) initLuceneParser() {
-	if f.fieldMap == nil {
-		return
-	}
-
-	esFieldsMap := f.buildFieldsMap()
-
-	f.luceneParser = lucene_parser_old.NewParser(
-		lucene_parser_old.WithMapping(esFieldsMap),
-	)
-}
-
-func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser_old.FieldOption {
-	if len(f.fieldMap) == 0 {
-		return nil
-	}
-
-	esFieldsMap := make(map[string]lucene_parser_old.FieldOption)
-
-	for fieldName, fieldInfo := range f.fieldMap {
-		fieldOption := f.processedMap(fieldInfo)
-		if fieldOption.Type != "" {
-			esFieldsMap[fieldName] = fieldOption
-		}
-	}
-
-	return esFieldsMap
-}
-
-func (f *FormatFactory) processedMap(fieldInfo map[string]any) lucene_parser_old.FieldOption {
-	fieldType := f.extractFieldTypeFromProcessed(fieldInfo)
-	analyzed := f.extractAnalyzedFromProcessed(fieldInfo)
-
-	return lucene_parser_old.FieldOption{
-		Type:     fieldType,
-		Analyzed: analyzed,
-	}
-}
-
-func (f *FormatFactory) extractFieldTypeFromProcessed(fieldInfo map[string]any) string {
-	if fieldType, ok := fieldInfo["field_type"].(string); ok {
-		return fieldType
-	}
-	return ""
-}
-
-func (f *FormatFactory) extractAnalyzedFromProcessed(fieldInfo map[string]any) bool {
-	if analyzed, ok := fieldInfo["is_analyzed"].(bool); ok {
-		return analyzed
-	}
-	return false
-}
-
-func (f *FormatFactory) extractFieldType(fieldMap map[string]any) string {
-	typeValue, exists := fieldMap["type"]
-	if !exists {
-		return ""
-	}
-
-	typeStr, ok := typeValue.(string)
-	if !ok {
-		return ""
-	}
-
-	return typeStr
-}
-
-func (f *FormatFactory) isFieldAnalyzed(fieldMap map[string]any, fieldType string) bool {
-	// ES 中的 text 类型通常是分析过的
-	if fieldType == "text" {
-		return true
-	}
-
-	// 检查是否明确设置了 analyzer
-	_, hasAnalyzer := fieldMap["analyzer"]
-	return hasAnalyzer
 }
 
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
@@ -402,16 +321,25 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
-		return v
+	if v, ok := f.fieldsMap[k]; ok {
+		return v.FieldType
 	}
 
 	return ""
 }
 
+func (f *FormatFactory) ParserQueryString(ctx context.Context, q string) (elastic.Query, error) {
+	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
+		FieldsMap:       f.fieldsMap,
+		FieldEncodeFunc: f.encode,
+	})
+
+	return lucene_parser.MergeQuery(node.DSL()), node.Error()
+}
+
 func (f *FormatFactory) FieldType() map[string]string {
 	ft := make(map[string]string)
-	for k := range f.fieldMap {
+	for k := range f.fieldsMap {
 		nv := f.GetFieldType(k)
 		if nv != "" {
 			ft[k] = nv

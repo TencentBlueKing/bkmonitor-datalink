@@ -19,36 +19,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser_old"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
-	testMapping := func() map[string]lucene_parser_old.FieldOption {
-		return map[string]lucene_parser_old.FieldOption{
-			"log":                              {Type: lucene_parser_old.FieldTypeText},
-			"level":                            {Type: lucene_parser_old.FieldTypeKeyword},
-			"loglevel":                         {Type: lucene_parser_old.FieldTypeKeyword},
-			"word.key":                         {Type: lucene_parser_old.FieldTypeText},
-			"ms":                               {Type: lucene_parser_old.FieldTypeLong},
-			"events.attributes.message.detail": {Type: lucene_parser_old.FieldTypeText},
-			"nested.key":                       {Type: lucene_parser_old.FieldTypeText},
-			"events":                           {Type: lucene_parser_old.FieldTypeNested},
-			"nested":                           {Type: lucene_parser_old.FieldTypeNested},
-			"user":                             {Type: lucene_parser_old.FieldTypeNested},
-			"event_detail": {
-				Type: "events.attributes.message.detail",
+	testMapping := func() metadata.FieldsMap {
+		return metadata.FieldsMap{
+			"log":      {FieldType: lucene_parser_old.FieldTypeText},
+			"level":    {FieldType: lucene_parser_old.FieldTypeKeyword},
+			"loglevel": {FieldType: lucene_parser_old.FieldTypeKeyword},
+			"word.key": {FieldType: lucene_parser_old.FieldTypeText},
+			"ms":       {FieldType: lucene_parser_old.FieldTypeLong},
+			"events.attributes.message.detail": {
+				AliasName: "event_detail",
+				FieldType: lucene_parser_old.FieldTypeText,
 			},
-			"group": {Type: lucene_parser_old.FieldTypeText},
+			"nested.key": {FieldType: lucene_parser_old.FieldTypeText},
+			"events":     {FieldType: lucene_parser_old.FieldTypeNested},
+			"nested":     {FieldType: lucene_parser_old.FieldTypeNested},
+			"user":       {FieldType: lucene_parser_old.FieldTypeNested},
+			"group":      {FieldType: lucene_parser_old.FieldTypeText},
 		}
 	}
 
-	testAlias := func() map[string]string {
-		a := make(map[string]string)
-		a["event_detail"] = "events.attributes.message.detail"
-		return a
-	}
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
@@ -167,22 +164,21 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			parser := lucene_parser_old.NewParser(
-				lucene_parser_old.WithMapping(testMapping()),
-				lucene_parser_old.WithAlias(testAlias()),
-			)
-			result, err := parser.Parse(c.q, c.isPrefix)
+			node := lucene_parser.ParseLuceneWithVisitor(ctx, c.q, lucene_parser.Option{
+				FieldsMap: testMapping(),
+			})
 			if c.err != nil {
-				assert.Equal(t, c.err.Error(), err.Error())
+				assert.Equal(t, c.err.Error(), node.Error().Error())
 			} else if c.expected != "" {
-				require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
-				body, err := result.ES.Source()
+				q := lucene_parser.MergeQuery(node.DSL())
+				require.NotNil(t, q, "ES query should not be nil when expected result is provided")
+				body, err := q.Source()
 				assert.Nil(t, err)
 				require.NotNil(t, body)
 				bodyJson, _ := json.Marshal(body)
 				assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
 			} else {
-				t.Logf("Query: %s, ES result: %v", c.q, result.ES != nil)
+				t.Logf("Query: %s, ES result: %v", c.q, node != nil)
 			}
 		})
 	}

@@ -148,7 +148,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
@@ -389,7 +389,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 	// QueryString to sql
 	if f.query.QueryString != "" && f.query.QueryString != "*" {
-		qs, err := f.expr.ParserQueryString(f.query.QueryString)
+		qs, err := f.expr.ParserQueryString(f.ctx, f.query.QueryString)
 		if err != nil {
 			return "", err
 		}

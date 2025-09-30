@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -277,7 +278,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 
-			assert.Equal(t, c.metric.ToJson(true), metric.ToJson(true))
+			assert.Equal(t, c.metric, metric)
 		})
 	}
 }
@@ -1527,7 +1528,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			assert.JSONEq(t, tc.refString, string(refJson))
 
-			vmExpand = ref.ToVmExpand(ctx)
+			vmExpand = query.ToVmExpand(ctx, ref)
 			isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()
 
 			assert.Equal(t, tc.isDirectQuery, isDirectQuery)
@@ -1612,7 +1613,7 @@ func TestOrderBy(t *testing.T) {
 		"-minute1",
 	}}
 
-	queryTs.OrderBy.Orders().SortSliceList(data, map[string]string{
+	query.SortSliceListWithTime(data, queryTs.OrderBy.Orders(), map[string]string{
 		"minute1": md.TypeDateNanos,
 	})
 

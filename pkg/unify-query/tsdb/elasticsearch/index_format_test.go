@@ -88,7 +88,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			iof := NewIndexOptionFormat(nil)
 			iof.Parse(c.settings, c.mappings)
 
-			fieldMap := iof.FieldMap()
+			fieldMap := iof.FieldsMap()
 
 			actual, _ := json.Marshal(fieldMap)
 

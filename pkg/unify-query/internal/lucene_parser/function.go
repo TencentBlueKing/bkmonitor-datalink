@@ -43,8 +43,8 @@ func (n *BaseNode) SQL() string {
 	return ""
 }
 
-func (n *BaseNode) DSL() elastic.Query {
-	return nil
+func (n *BaseNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
+	return nil, nil, nil
 }
 
 func (n *BaseNode) Error() error {
@@ -117,4 +117,26 @@ func parseTerm(s string) Node {
 	return &StringNode{
 		Value: s,
 	}
+}
+
+func FilterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) ([]elastic.Query, []elastic.Query, []elastic.Query) {
+	if len(should) == 1 {
+		must = append(must, should...)
+		should = nil
+	}
+
+	return must, should, mustNot
+}
+
+func MergeQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) elastic.Query {
+	must, should, mustNot = FilterQuery(must, should, mustNot)
+	if len(mustNot) == 0 && len(should) == 0 {
+		if len(must) == 1 {
+			return must[0]
+		} else if len(must) == 0 {
+			return nil
+		}
+	}
+
+	return elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
 }

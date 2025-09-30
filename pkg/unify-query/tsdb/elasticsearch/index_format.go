@@ -26,8 +26,8 @@ const (
 )
 
 type IndexOptionFormat struct {
-	analyzer map[string]map[string]any
-	fieldMap map[string]map[string]any
+	analyzer  map[string]map[string]any
+	fieldsMap metadata.FieldsMap
 
 	fieldAlias metadata.FieldAlias
 }
@@ -35,13 +35,13 @@ type IndexOptionFormat struct {
 func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
 	return &IndexOptionFormat{
 		analyzer:   make(map[string]map[string]any),
-		fieldMap:   make(map[string]map[string]any),
+		fieldsMap:  make(metadata.FieldsMap),
 		fieldAlias: fieldAlias,
 	}
 }
 
-func (f *IndexOptionFormat) FieldMap() map[string]map[string]any {
-	return f.fieldMap
+func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
+	return f.fieldsMap
 }
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
@@ -98,13 +98,13 @@ func (f *IndexOptionFormat) mapMappings(prefix string, data map[string]any) {
 	}
 
 	if prefix != "" {
-		if _, ok := f.fieldMap[prefix]; ok {
+		if _, ok := f.fieldsMap[prefix]; ok {
 			return
 		}
 
 		fm := f.esToFieldMap(prefix, data)
-		if fm != nil {
-			f.fieldMap[prefix] = fm
+		if fm.FieldType != "" {
+			f.fieldsMap[prefix] = fm
 		}
 	}
 }
@@ -117,42 +117,44 @@ func (f *IndexOptionFormat) setValue(k string, data map[string]any) any {
 	return nil
 }
 
-func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) map[string]any {
+func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata.FieldOption {
+	fieldMap := metadata.FieldOption{}
 	if k == "" {
-		return nil
+		return fieldMap
 	}
 	if data["type"] == nil {
-		return nil
+		return fieldMap
 	}
 
-	fieldMap := make(map[string]any)
-	fieldMap["alias_name"] = f.fieldAlias.AliasName(k)
-	fieldMap["field_name"] = k
-	fieldMap["field_type"] = data["type"]
+	fieldMap.AliasName = f.fieldAlias.AliasName(k)
+	fieldMap.FieldName = k
+	fieldMap.FieldType, _ = data["type"].(string)
 
-	fieldMap["is_agg"] = false
-	fieldMap["tokenize_on_chars"] = ""
+	fieldMap.IsAgg = false
+	fieldMap.TokenizeOnChars = make([]string, 0)
 	ks := strings.Split(k, ESStep)
-	fieldMap["origin_field"] = ks[0]
-	fieldMap["is_analyzed"] = false
-	fieldMap["is_case_sensitive"] = false
+	fieldMap.OriginField = ks[0]
+	fieldMap.IsAnalyzed = false
+	fieldMap.IsCaseSensitive = false
 
 	if v, ok := data["doc_values"].(bool); ok {
-		fieldMap["is_agg"] = v
+		fieldMap.IsAgg = v
 	}
 
-	if t, ok := fieldMap["field_type"].(string); ok && t == Text {
-		fieldMap["is_analyzed"] = true
+	if fieldMap.FieldType == Text {
+		fieldMap.IsAnalyzed = true
 	}
 
 	if v, ok := data["normalizer"].(bool); ok {
-		fieldMap["is_case_sensitive"] = v
+		fieldMap.IsCaseSensitive = v
 	}
 
 	if name, ok := data["analyzer"].(string); ok {
 		analyzer := f.analyzer[name]
 		if analyzer != nil {
-			fieldMap["tokenize_on_chars"] = analyzer["tokenize_on_chars"]
+			if toc, ok := analyzer["tokenize_on_chars"].([]string); ok {
+				fieldMap.TokenizeOnChars = toc
+			}
 		}
 	}
 

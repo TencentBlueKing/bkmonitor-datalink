@@ -246,7 +246,7 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
@@ -268,25 +268,18 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		return nil, err
 	}
 
-	res := make(map[string]map[string]any)
+	res := make(metadata.FieldsMap)
 	for k, v := range fieldMap {
 		if k == "" || v.FieldType == "" {
 			continue
 		}
 
 		v.AliasName = query.FieldAlias.AliasName(k)
-
+		v.FieldName = k
 		ks := strings.Split(k, ".")
-		res[k] = map[string]any{
-			"alias_name":        query.FieldAlias.AliasName(k),
-			"field_name":        k,
-			"field_type":        v.FieldType,
-			"origin_field":      ks[0],
-			"is_agg":            false,
-			"is_analyzed":       v.IsAnalyzed,
-			"is_case_sensitive": false,
-			"tokenize_on_chars": "",
-		}
+		v.OriginField = ks[0]
+
+		res[k] = v
 	}
 
 	return res, nil

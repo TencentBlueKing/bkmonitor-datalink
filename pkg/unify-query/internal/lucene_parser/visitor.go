@@ -46,7 +46,7 @@ type Node interface {
 	SetField(Node)
 	Error() error
 	SQL() string
-	DSL() elastic.Query
+	DSL() ([]elastic.Query, []elastic.Query, []elastic.Query)
 }
 
 type ErrorNode struct {
@@ -185,6 +185,44 @@ func (n *LogicNode) SQL() string {
 	return sql.String()
 }
 
+func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
+	allMust := make([]elastic.Query, 0)
+	allShould := make([]elastic.Query, 0)
+	allMustNot := make([]elastic.Query, 0)
+
+	for i, c := range n.Nodes {
+		q := MergeQuery(c.DSL())
+		// 只有为显性的使用 AND 和 OR 才需要进行拼接
+		logic := ""
+		if i > 0 {
+			logic = n.logics[i-1]
+		}
+
+		if logic == logicAnd {
+			allMust = append(allMust, q)
+			continue
+		}
+
+		// 判断一下后面的是 and 的话，依然要加入到 must 分组
+		if len(n.logics) > i {
+			nextLogic := n.logics[i]
+			if nextLogic == logicAnd {
+				allMust = append(allMust, q)
+				continue
+			}
+		}
+
+		allShould = append(allShould, q)
+	}
+
+	if len(allShould) == 1 {
+		allMust = append(allMust, allShould...)
+		allShould = nil
+	}
+
+	return allMust, allShould, allMustNot
+}
+
 func (n *LogicNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	v := strings.ToUpper(ctx.GetText())
 	switch v {
@@ -314,6 +352,13 @@ func (n *ConditionNode) SQL() string {
 	if op == "" {
 		op = "="
 	}
+
+	// 别名替换
+	if nf, ok := n.Option.ReverseFieldAlias[field]; ok {
+		field = nf
+	}
+
+	// 外部注入字段转换函数
 	if n.Option.FieldEncodeFunc != nil {
 		field = n.Option.FieldEncodeFunc(field)
 	}
@@ -379,6 +424,109 @@ func (n *ConditionNode) SQL() string {
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
 }
 
+func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
+	var q elastic.Query
+	defer func() {
+		if n.reverseOp {
+			allMustNot = append(allMustNot, q)
+		} else {
+			allMust = append(allMust, q)
+		}
+	}()
+
+	if n.isGroup {
+		if n.value != nil {
+			if n.field != nil {
+				n.value.SetField(n.field)
+			}
+			must, should, mustNot := n.value.DSL()
+			q = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
+			return allMust, allShould, allMustNot
+		}
+	}
+
+	// 根据类型重写操作符
+	var (
+		field string
+		op    string
+		value string
+	)
+
+	if n.value != nil {
+		value = n.value.SQL()
+	}
+	if n.isQuoted {
+		value = strings.ReplaceAll(value, `\`, ``)
+		value = strings.Trim(value, `"`)
+	}
+
+	if n.field != nil {
+		field = n.field.SQL()
+	}
+
+	if field == "" {
+		q = elastic.NewQueryStringQuery(value).
+			AnalyzeWildcard(true).
+			Field("*").
+			Field("__*").
+			Lenient(true)
+		return allMust, allShould, allMustNot
+	}
+
+	// 别名替换
+	if nf, ok := n.Option.ReverseFieldAlias[field]; ok {
+		field = nf
+	}
+
+	var fieldOption metadata.FieldOption
+	if n.Option.FieldsMap != nil {
+		fieldOption = n.Option.FieldsMap.Field(field)
+	}
+
+	if n.op != nil {
+		op = n.op.SQL()
+	}
+	if op == "" {
+		op = "="
+	}
+	if n.Option.FieldEncodeFunc != nil {
+		field = n.Option.FieldEncodeFunc(field)
+	}
+
+	switch v := n.value.(type) {
+	case *RangeNode:
+		rn := elastic.NewRangeQuery(field)
+		if v.Start != nil {
+			if v.IsIncludeStart {
+				rn.Gte(v.Start.SQL())
+			} else {
+				rn.Gt(v.Start.SQL())
+			}
+		}
+
+		if v.End != nil {
+			if v.IsIncludeEnd {
+				rn.Lte(v.End.SQL())
+			} else {
+				rn.Lt(v.End.SQL())
+			}
+		}
+		q = rn
+	case *WildCardNode:
+		q = elastic.NewWildcardQuery(field, value)
+	case *RegexpNode:
+		q = elastic.NewRegexpQuery(field, value)
+	case *StringNode:
+		if fieldOption.IsAnalyzed {
+			q = elastic.NewMatchPhraseQuery(field, value)
+		} else {
+			q = elastic.NewTermQuery(field, value)
+		}
+	}
+
+	return allMust, allShould, allMustNot
+}
+
 func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	switch ctx.GetText() {
 	case ">", "<", ">=", "<=":
@@ -400,8 +548,6 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 	next = n
 
 	switch ctx.(type) {
-	case *gen.FieldRangeExprContext:
-
 	case *gen.GroupingExprContext:
 		node := n.MakeInitNode(&LogicNode{})
 		n.isGroup = true

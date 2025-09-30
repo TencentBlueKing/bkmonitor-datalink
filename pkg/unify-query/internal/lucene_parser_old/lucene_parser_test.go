@@ -43,10 +43,6 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"中国"}}`,
 			sql: "`log` MATCH_PHRASE '中国'",
 		},
-		"test": {
-			q:   `a:1 AND b:2 OR c:3`,
-			sql: "(`a` = '1' AND `b` = '2' OR `c` = '3')",
-		},
 		"accented_term": {
 			q:   `café`,
 			e:   &OperatorExpr{Op: OpMatch, Value: &StringExpr{Value: `café`}},

@@ -23,6 +23,10 @@ import (
 type Option struct {
 	FieldsMap       metadata.FieldsMap
 	FieldEncodeFunc func(string) string
+
+	ReverseFieldAlias map[string]string
+
+	AddLabels func(key string, operator string, values ...string)
 }
 
 // ParseLuceneWithVisitor 解析
@@ -33,6 +37,13 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 			log.Errorf(ctx, "parse lucene error: %v", r)
 		}
 	}()
+
+	opt.ReverseFieldAlias = make(map[string]string)
+	for k, v := range opt.FieldsMap {
+		if v.AliasName != "" {
+			opt.ReverseFieldAlias[v.AliasName] = k
+		}
+	}
 
 	if q == "" || q == "*" {
 		return &StringNode{

@@ -606,10 +606,6 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if s == "" || s == "*" {
 		return ns, as
 	}
-	if alias, ok := d.fieldAlias[s]; ok {
-		ns = alias
-		as = s
-	}
 
 	fieldType := d.getFieldType(s)
 	castType, _ := d.caseAs(fieldType.FieldType)

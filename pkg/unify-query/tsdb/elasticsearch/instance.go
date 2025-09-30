@@ -581,6 +581,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s
+			if alias, ok := reverseAlias[s]; ok {
+				ns = alias
+			}
 
 			// 格式转换
 			if encodeFunc != nil {
@@ -589,13 +592,14 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			return ns
 		}, func(s string) string {
 			ns := s
+
 			// 格式转换
 			if decodeFunc != nil {
 				ns = decodeFunc(ns)
 			}
 
 			// 别名替换
-			if alias := fieldMap.Field(ns).AliasName; alias != "" {
+			if alias, ok := query.FieldAlias[s]; ok {
 				ns = alias
 			}
 			return ns

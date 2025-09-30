@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
@@ -108,6 +109,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `__name__="kube_pod_info_value"`,
 						VmConditionNum:  1,
 						DataLabel:       "influxdb",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 					{
 						DataSource:      BkMonitor,
@@ -125,6 +127,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum:  2,
 						DataLabel:       "vm",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -160,6 +163,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:        "UTC",
 						VmCondition:     `__name__="kube_pod_info_value"`,
 						VmConditionNum:  1,
+						Aggregates:      make(md.Aggregates, 0),
 					},
 					{
 						DataSource:      BkMonitor,
@@ -177,6 +181,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum:  2,
 						DataLabel:       "vm",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -213,6 +218,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `__name__=~"kube_.*_value"`,
 						VmConditionNum:  1,
 						DataLabel:       "influxdb",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -278,7 +284,13 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 
-			assert.Equal(t, c.metric, metric)
+			sort.SliceStable(metric.QueryList, func(i, j int) bool {
+				return metric.QueryList[i].TableID < metric.QueryList[j].TableID
+			})
+
+			a, _ := json.Marshal(c.metric)
+			b, _ := json.Marshal(metric)
+			assert.Equal(t, string(a), string(b))
 		})
 	}
 }

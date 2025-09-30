@@ -16,6 +16,7 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -61,6 +62,8 @@ func (s *ErrorNode) Error() error {
 type StringNode struct {
 	BaseNode
 	Value string
+
+	Boost string
 }
 
 func (n *StringNode) SQL() string {
@@ -85,16 +88,6 @@ func (n *RegexpNode) SQL() string {
 	return n.Value
 }
 
-type BoostNode struct {
-	BaseNode
-	Value string
-	Boost string
-}
-
-func (n *BoostNode) SQL() string {
-	return n.Value
-}
-
 type RangeNode struct {
 	BaseNode
 
@@ -106,6 +99,8 @@ type RangeNode struct {
 
 type LogicNode struct {
 	BaseNode
+
+	boost string
 
 	reverseOp bool
 	mustOp    bool
@@ -198,7 +193,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 			logic = n.logics[i-1]
 		}
 
-		if logic == logicAnd {
+		if logic == logicAnd || (logic == "" && (n.reverseOp || n.mustOp)) {
 			allMust = append(allMust, q)
 			continue
 		}
@@ -215,12 +210,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 		allShould = append(allShould, q)
 	}
 
-	if len(allShould) == 1 {
-		allMust = append(allMust, allShould...)
-		allShould = nil
-	}
-
-	return allMust, allShould, allMustNot
+	return FilterQuery(allMust, allShould, allMustNot)
 }
 
 func (n *LogicNode) VisitTerminal(ctx antlr.TerminalNode) any {
@@ -270,6 +260,7 @@ type ConditionNode struct {
 	isQuoted   bool
 	isGroup    bool
 	isWildcard bool
+	fuzziness  string
 
 	field Node
 	op    Node
@@ -425,12 +416,12 @@ func (n *ConditionNode) SQL() string {
 }
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
-	var q elastic.Query
+	var result elastic.Query
 	defer func() {
 		if n.reverseOp {
-			allMustNot = append(allMustNot, q)
+			allMustNot = append(allMustNot, result)
 		} else {
-			allMust = append(allMust, q)
+			allMust = append(allMust, result)
 		}
 	}()
 
@@ -439,8 +430,15 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			if n.field != nil {
 				n.value.SetField(n.field)
 			}
+
 			must, should, mustNot := n.value.DSL()
-			q = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
+			if b, ok := n.value.(*LogicNode); ok {
+				if b.boost != "" {
+					result = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...).Boost(cast.ToFloat64(b.boost))
+				} else {
+					result = MergeQuery(must, should, mustNot)
+				}
+			}
 			return allMust, allShould, allMustNot
 		}
 	}
@@ -455,22 +453,42 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	if n.value != nil {
 		value = n.value.SQL()
 	}
-	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
-	}
 
 	if n.field != nil {
 		field = n.field.SQL()
 	}
 
 	if field == "" {
-		q = elastic.NewQueryStringQuery(value).
+		var boost string
+		switch v := n.value.(type) {
+		case *RegexpNode:
+			value = fmt.Sprintf(`/%s/`, value)
+		case *StringNode:
+			boost = v.Boost
+		}
+
+		if n.fuzziness != "" {
+			value = fmt.Sprintf("%s~", value)
+			if n.fuzziness != "AUTO" {
+				fuzziness := cast.ToFloat64(n.fuzziness)
+				value = fmt.Sprintf("%s%v", value, fuzziness)
+			}
+		}
+		cq := elastic.NewQueryStringQuery(value).
 			AnalyzeWildcard(true).
 			Field("*").
 			Field("__*").
 			Lenient(true)
+		if boost != "" {
+			cq.Boost(cast.ToFloat64(boost))
+		}
+		result = cq
 		return allMust, allShould, allMustNot
+	}
+
+	if n.isQuoted {
+		value = strings.ReplaceAll(value, `\`, ``)
+		value = strings.Trim(value, `"`)
 	}
 
 	// 别名替换
@@ -493,35 +511,60 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 		field = n.Option.FieldEncodeFunc(field)
 	}
 
-	switch v := n.value.(type) {
+	switch cv := n.value.(type) {
 	case *RangeNode:
-		rn := elastic.NewRangeQuery(field)
-		if v.Start != nil {
-			if v.IsIncludeStart {
-				rn.Gte(v.Start.SQL())
-			} else {
-				rn.Gt(v.Start.SQL())
-			}
+		cq := elastic.NewRangeQuery(field)
+		if cv.Start != nil {
+			cq.From(realValue(cv.Start))
 		}
+		cq.IncludeLower(cv.IsIncludeStart)
 
-		if v.End != nil {
-			if v.IsIncludeEnd {
-				rn.Lte(v.End.SQL())
+		if cv.End != nil {
+			cq.To(realValue(cv.End))
+		}
+		cq.IncludeUpper(cv.IsIncludeEnd)
+		result = cq
+	case *WildCardNode:
+		cq := elastic.NewWildcardQuery(field, value)
+		result = cq
+	case *RegexpNode:
+		cq := elastic.NewRegexpQuery(field, value)
+		result = cq
+	case *StringNode:
+		switch op {
+		case ">":
+			result = elastic.NewRangeQuery(field).Gt(realValue(n.value))
+		case ">=":
+			result = elastic.NewRangeQuery(field).Gte(realValue(n.value))
+		case "<":
+			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
+		case "<=":
+			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+		default:
+			if n.fuzziness != "" {
+				result = elastic.NewFuzzyQuery(field, value).Fuzziness(n.fuzziness)
+				break
+			}
+
+			if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
 			} else {
-				rn.Lt(v.End.SQL())
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
 			}
 		}
-		q = rn
-	case *WildCardNode:
-		q = elastic.NewWildcardQuery(field, value)
-	case *RegexpNode:
-		q = elastic.NewRegexpQuery(field, value)
-	case *StringNode:
-		if fieldOption.IsAnalyzed {
-			q = elastic.NewMatchPhraseQuery(field, value)
-		} else {
-			q = elastic.NewTermQuery(field, value)
-		}
+	}
+
+	originField := n.Option.FieldsMap.Field(strings.Split(field, ".")[0])
+	if strings.ToUpper(originField.FieldType) == "NESTED" {
+		result = elastic.NewNestedQuery(fieldOption.OriginField, result)
 	}
 
 	return allMust, allShould, allMustNot
@@ -549,7 +592,13 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.GroupingExprContext:
-		node := n.MakeInitNode(&LogicNode{})
+		// checkBoost
+		logicNode := &LogicNode{}
+		termNode := parseTerm(ctx.GetText())
+		if v, ok := termNode.(*StringNode); ok {
+			logicNode.boost = v.Boost
+		}
+		node := n.MakeInitNode(logicNode)
 		n.isGroup = true
 		n.value = node
 		next = node
@@ -567,8 +616,17 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 		n.field = n.MakeInitNode(&StringNode{
 			Value: ctx.GetText(),
 		})
+	case *gen.FuzzyContext:
+		s := ctx.GetText()
+		if s != "" {
+			n.fuzziness = s[1:]
+			if n.fuzziness == "" {
+				n.fuzziness = "AUTO"
+			}
+		}
 	case *gen.TermContext:
-		n.value = n.MakeInitNode(parseTerm(ctx.GetText()))
+		node := parseTerm(ctx.GetText())
+		n.value = n.MakeInitNode(node)
 	}
 
 	n.Next(next, ctx)

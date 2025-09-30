@@ -10,14 +10,12 @@
 package lucene_parser
 
 import (
-	"context"
 	"regexp"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
 	elastic "github.com/olivere/elastic/v7"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/spf13/cast"
 )
 
 type BaseNode struct {
@@ -56,9 +54,9 @@ func (n *BaseNode) Next(next Node, ctx antlr.RuleNode) {
 	for _, child := range ctx.GetChildren() {
 		switch tree := child.(type) {
 		case antlr.ParseTree:
-			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
+			// log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
 			tree.Accept(next)
-			log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
+			// log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
 		}
 	}
 }
@@ -75,11 +73,14 @@ func parseTerm(s string) Node {
 			IsIncludeStart: all[1] == "[",
 			IsIncludeEnd:   all[4] == "]",
 		}
+
+		all[2] = strings.Trim(all[2], `"`)
 		if all[2] != "*" {
 			node.Start = &StringNode{
 				Value: all[2],
 			}
 		}
+		all[3] = strings.Trim(all[3], `"`)
 		if all[3] != "*" {
 			node.End = &StringNode{
 				Value: all[3],
@@ -88,10 +89,10 @@ func parseTerm(s string) Node {
 		return node
 	}
 
-	boostParent := regexp.MustCompile(`^([^\^]+)\^([\d\.]+)$`)
+	boostParent := regexp.MustCompile(`^(.+)\^([\d\.]+)$`)
 	all = boostParent.FindStringSubmatch(s)
 	if len(all) == 3 {
-		return &BoostNode{
+		return &StringNode{
 			Value: all[1],
 			Boost: all[2],
 		}
@@ -120,12 +121,24 @@ func parseTerm(s string) Node {
 }
 
 func FilterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) ([]elastic.Query, []elastic.Query, []elastic.Query) {
-	if len(should) == 1 {
+	if len(should) == 1 && len(must) == 0 && len(mustNot) == 0 {
 		must = append(must, should...)
 		should = nil
 	}
 
 	return must, should, mustNot
+}
+
+func realValue(node Node) any {
+	var res any
+	// 判断是否是数字，如果是则返回数字
+	res, err := cast.ToFloat64E(node.SQL())
+	if err != nil {
+		value := node.SQL()
+		res = value
+	}
+
+	return res
 }
 
 func MergeQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) elastic.Query {

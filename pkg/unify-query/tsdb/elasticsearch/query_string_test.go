@@ -26,23 +26,54 @@ import (
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
-	testMapping := func() metadata.FieldsMap {
-		return metadata.FieldsMap{
-			"log":      {FieldType: Text},
-			"level":    {FieldType: KeyWord},
-			"loglevel": {FieldType: KeyWord},
-			"word.key": {FieldType: Text},
-			"ms":       {FieldType: Long},
-			"events.attributes.message.detail": {
-				AliasName: "event_detail",
-				FieldType: Text,
-			},
-			"nested.key": {FieldType: Text},
-			"events":     {FieldType: Nested},
-			"nested":     {FieldType: Nested},
-			"user":       {FieldType: Nested},
-			"group":      {FieldType: Text},
-		}
+	testMapping := metadata.FieldsMap{
+		"log": {
+			FieldName:   "log",
+			FieldType:   Text,
+			OriginField: "log",
+			IsAnalyzed:  true,
+		},
+		"level": {
+			FieldName: "level",
+			FieldType: KeyWord,
+		},
+		"loglevel": {
+			FieldName: "loglevel",
+			FieldType: KeyWord,
+		},
+		"word.key": {
+			FieldName:   "word.key",
+			OriginField: "word",
+			FieldType:   Text,
+		},
+		"ms": {
+			FieldName: "ms",
+			FieldType: Long,
+		},
+		"events.attributes.message.detail": {
+			AliasName:   "event_detail",
+			OriginField: "events",
+			FieldType:   Text,
+		},
+		"nested.key": {
+			FieldName:   "nested.key",
+			OriginField: "nested",
+			IsAnalyzed:  true,
+			FieldType:   Text,
+		},
+		"events": {
+			FieldName: "events",
+			FieldType: Nested,
+		},
+		"nested": {
+			FieldType: Nested,
+		},
+		"user": {
+			FieldType: Nested,
+		},
+		"group": {
+			FieldType: Text,
+		},
 	}
 
 	ctx := metadata.InitHashID(context.Background())
@@ -66,39 +97,11 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
-			q: `nested.key: test AND demo`,
-			expected: `{
-  "bool": {
-    "must": [
-      {
-        "nested": {
-          "path": "nested",
-          "query": {
-            "match_phrase": {
-              "nested.key": {
-                "query": "test"
-              }
-            }
-          }
-        }
-      }, 
-		{
-        "query_string": {
-          "analyze_wildcard": true,
-          "fields": [
-            "*",
-            "__*"
-          ],
-          "lenient": true,
-          "query": "demo"
-        }
-      }
-    ]
-  }
-}`,
+			q:        `nested.key: test AND demo`,
+			expected: `{"bool":{"must":[{"nested":{"path":"nested","query":{"match_phrase":{"nested.key":{"query":"test"}}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo"}}]}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
@@ -164,7 +167,7 @@ func TestQsToDsl(t *testing.T) {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			node := lucene_parser.ParseLuceneWithVisitor(ctx, c.q, lucene_parser.Option{
-				FieldsMap: testMapping(),
+				FieldsMap: testMapping,
 			})
 			if c.err != nil {
 				assert.Equal(t, c.err.Error(), node.Error().Error())
@@ -175,7 +178,7 @@ func TestQsToDsl(t *testing.T) {
 				assert.Nil(t, err)
 				require.NotNil(t, body)
 				bodyJson, _ := json.Marshal(body)
-				assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
+				assert.Equal(t, c.expected, cast.ToString(bodyJson))
 			} else {
 				t.Logf("Query: %s, ES result: %v", c.q, node != nil)
 			}

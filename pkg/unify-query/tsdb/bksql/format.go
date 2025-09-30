@@ -395,7 +395,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 		}
 
 		if qs != "" {
-			s = append(s, qs)
+			s = append(s, fmt.Sprintf("(%s)", qs))
 		}
 	}
 

@@ -35,7 +35,9 @@ func TestSpanFieldFetcher(t *testing.T) {
 	resourceSpans := pdTraces.ResourceSpans().At(0)
 
 	assert.Equal(t, "res1", fetcher.FetchResource(resourceSpans, "r1"))
-	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, fetcher.FetchResources(resourceSpans, []string{"r2", "r3"}))
+	dst := make(map[string]string)
+	fetcher.FetchResourcesTo(resourceSpans, []string{"r2", "r3"}, dst)
+	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, dst)
 
 	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))

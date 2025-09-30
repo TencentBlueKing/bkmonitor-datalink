@@ -22,18 +22,17 @@ func NewSpanFieldFetcher() SpanFieldFetcher {
 }
 
 func (sff SpanFieldFetcher) FetchResource(resourceSpans ptrace.ResourceSpans, key string) string {
-	attrs := resourceSpans.Resource().Attributes()
-	if v, ok := attrs.Get(key); ok {
+	rs := resourceSpans.Resource().Attributes()
+	if v, ok := rs.Get(key); ok {
 		return v.AsString()
 	}
 	return ""
 }
 
-func (sff SpanFieldFetcher) FetchResources(resourceSpans ptrace.ResourceSpans, keys []string) map[string]string {
-	attrs := resourceSpans.Resource().Attributes()
-	dst := make(map[string]string)
+func (sff SpanFieldFetcher) FetchResourcesTo(resourceSpans ptrace.ResourceSpans, keys []string, dst map[string]string) map[string]string {
+	rs := resourceSpans.Resource().Attributes()
 	for _, key := range keys {
-		if v, ok := attrs.Get(key); ok {
+		if v, ok := rs.Get(key); ok {
 			dst[key] = v.AsString()
 		}
 	}

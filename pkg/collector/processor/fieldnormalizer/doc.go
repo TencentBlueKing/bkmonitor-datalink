@@ -17,7 +17,7 @@ processor:
           predicate_key: "attributes.http.method"
           rules:
             - key: "attributes.net.peer.name"
-              op: contact
+              op: concat
               values:
                 - "attributes.client.address"
                 - "attributes.client.port"

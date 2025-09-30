@@ -21,7 +21,7 @@ import (
 )
 
 func TestNormalizer(t *testing.T) {
-	t.Run("FuncContact", func(t *testing.T) {
+	t.Run("FuncConcat", func(t *testing.T) {
 		g := generator.NewTracesGenerator(define.TracesOptions{
 			GeneratorOptions: define.GeneratorOptions{
 				Attributes: map[string]string{
@@ -47,7 +47,7 @@ func TestNormalizer(t *testing.T) {
 								"attributes.client.address",
 								"attributes.client.port",
 							},
-							Op: funcContact,
+							Op: funcConcat,
 						},
 					},
 				},

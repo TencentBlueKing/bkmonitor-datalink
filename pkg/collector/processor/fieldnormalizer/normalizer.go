@@ -22,13 +22,13 @@ type funcKey struct {
 }
 
 const (
-	funcOr      = "or"
-	funcContact = "contact"
+	funcOr     = "or"
+	funcConcat = "concat"
 )
 
 type NormalizeFunc func(span ptrace.Span, key string)
 
-func FuncContact(l, r, op string) NormalizeFunc {
+func FuncConcat(l, r, op string) NormalizeFunc {
 	return func(span ptrace.Span, key string) {
 		attrs := span.Attributes()
 		if _, ok := attrs.Get(key); ok {
@@ -87,12 +87,12 @@ func NewSpanFieldNormalizer(conf Config) *SpanFieldNormalizer {
 			switch rule.Op {
 			case funcOr:
 				funcs[fk] = FuncOr(fields.TrimAttributesPrefix(rule.Values...)...)
-			case funcContact:
+			case funcConcat:
 				if len(rule.Values) != 2 {
 					continue
 				}
 				vs := fields.TrimAttributesPrefix(rule.Values...)
-				funcs[fk] = FuncContact(vs[0], vs[1], ":") // TODO(mando): 后续可考虑连接符配置化
+				funcs[fk] = FuncConcat(vs[0], vs[1], ":") // TODO(mando): 后续可考虑连接符配置化
 			}
 		}
 	}

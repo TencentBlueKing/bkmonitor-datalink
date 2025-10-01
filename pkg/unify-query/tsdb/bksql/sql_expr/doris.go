@@ -122,7 +122,7 @@ func (d *DorisSQLExpr) ParserQueryString(ctx context.Context, qs string) (string
 	}
 
 	node := lucene_parser.ParseLuceneWithVisitor(ctx, qs, opt)
-	return node.SQL(), node.Error()
+	return node.String(), node.Error()
 }
 
 func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
@@ -135,19 +135,9 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := &doris_parser.Option{
-		DimensionTransform: func(field string) (string, bool) {
-			var (
-				originFiled string
-				ok          bool
-			)
-			if originFiled, ok = d.fieldAlias[field]; ok {
-				field = originFiled
-			}
-			field, _ = d.dimTransform(field)
-			return field, ok
-		},
-		Table: table,
-		Where: where,
+		DimensionTransform: d.dimTransform,
+		Table:              table,
+		Where:              where,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -602,15 +592,20 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
-	ns = s
 	if s == "" || s == "*" {
 		return ns, as
 	}
 
-	fieldType := d.getFieldType(s)
+	ns = s
+	if alias, ok := d.fieldAlias[ns]; ok {
+		as = ns
+		ns = alias
+	}
+
+	fieldType := d.getFieldType(ns)
 	castType, _ := d.caseAs(fieldType.FieldType)
 
-	fs := strings.Split(s, ".")
+	fs := strings.Split(ns, ".")
 	if len(fs) == 1 {
 		ns = fmt.Sprintf("`%s`", ns)
 		return ns, as
@@ -643,9 +638,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		}
 	}
 
-	if as == "" {
-		as = s
-	}
+	as = s
 	if d.encodeFunc != nil {
 		as = d.encodeFunc(as)
 	}

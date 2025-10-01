@@ -69,7 +69,7 @@ type SQLExpr interface {
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
-	// ParserSQL 解析 SQL 语句
+	// ParserSQL 解析 String 语句
 	ParserSQL(ctx context.Context, q, table, where string) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string

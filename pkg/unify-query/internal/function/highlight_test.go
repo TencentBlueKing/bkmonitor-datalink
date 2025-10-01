@@ -148,6 +148,9 @@ func TestQuery_LabelMap(t *testing.T) {
 					{Value: "us-east-1", Operator: metadata.ConditionEqual},
 					{Value: "us-east-2", Operator: metadata.ConditionContains},
 				},
+				"service": {
+					{Value: "web", Operator: metadata.ConditionNotEqual},
+				},
 			},
 		},
 		{

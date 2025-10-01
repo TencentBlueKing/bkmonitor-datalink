@@ -153,7 +153,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
-			expected: `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
+			expected: `{"bool":{"must":[{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO "}},{"term":{"loglevel":"WARN "}},{"term":{"loglevel":"ERROR"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
 		},
 		{
 			q:        `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,

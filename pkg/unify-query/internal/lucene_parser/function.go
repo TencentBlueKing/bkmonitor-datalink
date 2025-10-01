@@ -16,6 +16,8 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/spf13/cast"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type BaseNode struct {
@@ -37,7 +39,7 @@ func (n *BaseNode) WithOption(opt Option) Node {
 func (n *BaseNode) SetField(Node) {
 }
 
-func (n *BaseNode) SQL() string {
+func (n *BaseNode) String() string {
 	return ""
 }
 
@@ -132,9 +134,9 @@ func FilterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic
 func realValue(node Node) any {
 	var res any
 	// 判断是否是数字，如果是则返回数字
-	res, err := cast.ToFloat64E(node.SQL())
+	res, err := cast.ToFloat64E(node.String())
 	if err != nil {
-		value := node.SQL()
+		value := node.String()
 		res = value
 	}
 
@@ -152,4 +154,63 @@ func MergeQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.
 	}
 
 	return elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
+}
+
+func addLabels(node Node, addFunc func(key string, operator string, values ...string)) {
+	if node == nil {
+		return
+	}
+
+	switch n := node.(type) {
+	case *ConditionNode:
+		var (
+			field string
+			op    string
+		)
+		if n.field != nil {
+			field = n.field.String()
+		}
+		if n.op != nil {
+			op = n.op.String()
+		}
+
+		switch n.value.(type) {
+		case *WildCardNode:
+			op = metadata.ConditionContains
+		case *RegexpNode:
+			op = metadata.ConditionRegEqual
+		case *StringNode:
+			op = metadata.ConditionEqual
+		case *LogicNode:
+			addLabels(n.value, addFunc)
+			return
+		default:
+			return
+		}
+
+		if n.reverseOp {
+			switch op {
+			case metadata.ConditionEqual:
+				op = metadata.ConditionNotEqual
+			case metadata.ConditionNotEqual:
+				op = metadata.ConditionEqual
+			case metadata.ConditionContains:
+				op = metadata.ConditionNotContains
+			case metadata.ConditionNotContains:
+				op = metadata.ConditionContains
+			case metadata.ConditionRegEqual:
+				op = metadata.ConditionNotRegEqual
+			case metadata.ConditionNotRegEqual:
+				op = metadata.ConditionRegEqual
+			}
+		}
+
+		if n.value != nil {
+			addFunc(field, op, n.value.String())
+		}
+	case *LogicNode:
+		for _, ln := range n.Nodes {
+			addLabels(ln, addFunc)
+		}
+	}
 }

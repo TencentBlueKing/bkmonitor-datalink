@@ -231,7 +231,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 				FieldEncodeFunc: fieldEncodeFunc,
 			})
 			assert.Nil(t, node.Error())
-			assert.Equal(t, tt.sql, node.SQL())
+			assert.Equal(t, tt.sql, node.String())
 
 			// 解析  dsl
 			node = ParseLuceneWithVisitor(ctx, tt.input, Option{
@@ -930,7 +930,7 @@ func TestLuceneParser(t *testing.T) {
 			})
 			assert.Nil(t, node.Error())
 
-			sql := node.SQL()
+			sql := node.String()
 			assert.Equal(t, c.sql, sql)
 
 			node = ParseLuceneWithVisitor(ctx, c.q, Option{

@@ -46,7 +46,7 @@ type Node interface {
 	WithOption(opt Option) Node
 	SetField(Node)
 	Error() error
-	SQL() string
+	String() string
 	DSL() ([]elastic.Query, []elastic.Query, []elastic.Query)
 }
 
@@ -66,7 +66,7 @@ type StringNode struct {
 	Boost string
 }
 
-func (n *StringNode) SQL() string {
+func (n *StringNode) String() string {
 	return n.Value
 }
 
@@ -75,7 +75,7 @@ type WildCardNode struct {
 	Value string
 }
 
-func (n *WildCardNode) SQL() string {
+func (n *WildCardNode) String() string {
 	return n.Value
 }
 
@@ -84,7 +84,7 @@ type RegexpNode struct {
 	Value string
 }
 
-func (n *RegexpNode) SQL() string {
+func (n *RegexpNode) String() string {
 	return n.Value
 }
 
@@ -126,7 +126,7 @@ func (n *LogicNode) VisitErrorNode(ctx antlr.ErrorNode) any {
 	return nil
 }
 
-func (n *LogicNode) SQL() string {
+func (n *LogicNode) String() string {
 	firstGroup := make([]string, 0)
 	shouldGroup := make([]string, 0)
 	mustGroup := make([]string, 0)
@@ -140,15 +140,15 @@ func (n *LogicNode) SQL() string {
 
 		if logic == "" {
 			if c.mustOp || c.reverseOp {
-				firstGroup = append(firstGroup, c.SQL())
+				firstGroup = append(firstGroup, c.String())
 				continue
 			}
 		}
 
 		if logic == logicAnd {
-			mustGroup = append(mustGroup, c.SQL())
+			mustGroup = append(mustGroup, c.String())
 		} else {
-			shouldGroup = append(shouldGroup, c.SQL())
+			shouldGroup = append(shouldGroup, c.String())
 		}
 	}
 
@@ -175,8 +175,9 @@ func (n *LogicNode) SQL() string {
 			}
 			sql.WriteString(fmt.Sprintf(" %s ", logic))
 		}
-		sql.WriteString(node.SQL())
+		sql.WriteString(node.String())
 	}
+
 	return sql.String()
 }
 
@@ -255,12 +256,11 @@ func (n *LogicNode) VisitChildren(ctx antlr.RuleNode) any {
 type ConditionNode struct {
 	BaseNode
 
-	mustOp     bool
-	reverseOp  bool
-	isQuoted   bool
-	isGroup    bool
-	isWildcard bool
-	fuzziness  string
+	mustOp    bool
+	reverseOp bool
+	isQuoted  bool
+	isGroup   bool
+	fuzziness string
 
 	field Node
 	op    Node
@@ -306,14 +306,14 @@ func (n *ConditionNode) SetField(field Node) {
 	}
 }
 
-func (n *ConditionNode) SQL() string {
+func (n *ConditionNode) String() string {
 	// 如果是分组则，直接返回 value
 	if n.isGroup {
 		if n.value != nil {
 			if n.field != nil {
 				n.value.SetField(n.field)
 			}
-			sql := n.value.SQL()
+			sql := n.value.String()
 			return fmt.Sprintf("(%s)", sql)
 		}
 	}
@@ -326,7 +326,7 @@ func (n *ConditionNode) SQL() string {
 	)
 
 	if n.field != nil {
-		field = n.field.SQL()
+		field = n.field.String()
 	}
 	if field == "" {
 		field = DefaultLogField
@@ -338,7 +338,7 @@ func (n *ConditionNode) SQL() string {
 	}
 
 	if n.op != nil {
-		op = n.op.SQL()
+		op = n.op.String()
 	}
 	if op == "" {
 		op = "="
@@ -363,7 +363,7 @@ func (n *ConditionNode) SQL() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.SQL()))
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.String()))
 		}
 		if v.End != nil {
 			o := "<"
@@ -371,7 +371,7 @@ func (n *ConditionNode) SQL() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.SQL()))
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.String()))
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
@@ -385,7 +385,7 @@ func (n *ConditionNode) SQL() string {
 	}
 
 	if n.value != nil {
-		value = n.value.SQL()
+		value = n.value.String()
 	}
 	if n.isQuoted {
 		value = strings.ReplaceAll(value, `\`, ``)
@@ -451,11 +451,11 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	)
 
 	if n.value != nil {
-		value = n.value.SQL()
+		value = n.value.String()
 	}
 
 	if n.field != nil {
-		field = n.field.SQL()
+		field = n.field.String()
 	}
 
 	if field == "" {
@@ -502,7 +502,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	if n.op != nil {
-		op = n.op.SQL()
+		op = n.op.String()
 	}
 	if op == "" {
 		op = "="
@@ -627,6 +627,9 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.TermContext:
 		node := parseTerm(ctx.GetText())
 		n.value = n.MakeInitNode(node)
+		if n.Option.AddLabels != nil {
+			addLabels(n, n.Option.AddLabels)
+		}
 	}
 
 	n.Next(next, ctx)

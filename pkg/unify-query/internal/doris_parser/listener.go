@@ -103,7 +103,7 @@ func (l *DorisListener) WithOptions(opt DorisListenerOption) *DorisListener {
 
 func (l *DorisListener) SQL() (string, error) {
 	if len(l.selectClause) == 0 {
-		return "", fmt.Errorf("SQL 解析失败：%s", l.originSQL)
+		return "", fmt.Errorf("String 解析失败：%s", l.originSQL)
 	}
 
 	var sql strings.Builder

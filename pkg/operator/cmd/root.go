@@ -17,7 +17,7 @@ import (
 )
 
 func init() {
-	maxprocs.Logger(func(s string, i ...interface{}) {})
+	maxprocs.Logger(func(s string, i ...any) {})
 }
 
 var rootCmd = &cobra.Command{

@@ -241,11 +241,11 @@ group by
 
 			// antlr4 and visitor
 			opt := DorisListenerOption{
-				DimensionTransform: func(s string) (string, bool) {
+				DimensionTransform: func(s string) (string, string) {
 					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], true
+						return fieldAlias[s], s
 					}
-					return s, false
+					return s, ""
 				},
 			}
 			listener := ParseDorisSQLWithListener(ctx, c.q, opt)
@@ -454,6 +454,11 @@ LIMIT 10000;`,
 			name: "函数参数嵌套表达式",
 			q:    `select array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') as cat`,
 			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') AS cat`,
+		},
+		{
+			name: "test-2",
+			q:    `SELECT DISTINCT(regexp_extract(log, 'openid:(\\d+)', 1)) AS id LIMIT 100000`,
+			sql:  `SELECT DISTINCT regexp_extract(log, 'openid:(\\d+)', 1) AS id LIMIT 100000`,
 		},
 		{
 			name: "test-1",
@@ -793,11 +798,11 @@ group by
 
 			// antlr4 and visitor
 			opt := &Option{
-				DimensionTransform: func(s string) (string, bool) {
+				DimensionTransform: func(s string) (string, string) {
 					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], true
+						return fieldAlias[s], s
 					}
-					return s, false
+					return s, ""
 				},
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)

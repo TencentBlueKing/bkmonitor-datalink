@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -49,7 +50,15 @@ func RefreshAllAlias() {
 			defer wg.Done()
 			err := refreshAlias(tableID, storageID, indexName)
 			if err != nil {
-				log.Errorf(context.TODO(), "refresh alias of tableid:%s failed,error:%v", tableID, err)
+				codedErr := errno.ErrConfigReloadFailed().
+					WithComponent("ES别名服务").
+					WithOperation("刷新表别名").
+					WithContext("table_id", tableID).
+					WithContext("storage_id", storageID).
+					WithContext("index_name", indexName).
+					WithContext("error", err.Error()).
+					WithSolution("检查ES连接和别名配置")
+				log.ErrorWithCodef(context.TODO(), codedErr)
 				return
 			}
 		}(tableID, info.StorageID, ConvertTableIDToFuzzyIndexName(tableID))

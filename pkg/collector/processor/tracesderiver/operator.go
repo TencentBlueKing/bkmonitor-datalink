@@ -24,7 +24,7 @@ type Operator interface {
 	Clean()
 }
 
-func NewTracesOperator(conf Config) Operator {
+func NewOperator(conf Config) Operator {
 	ch := NewConfigHandler(conf)
 
 	to := tracesOperator{
@@ -108,7 +108,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 				}
 			}
 		}
-
 	}
 
 	for k, v := range metricItems {

@@ -51,7 +51,7 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 				DB:          db,
 				Measurement: measurement,
 			},
-			expected: `{"__ext":{"Type":"varchar(65533)","Analyzed":false},"__shard_key__":{"Type":"bigint","Analyzed":false},"c1":{"Type":"text","Analyzed":false},"c2":{"Type":"text","Analyzed":false},"cloudid":{"Type":"double","Analyzed":false},"dteventtime":{"Type":"varchar(32)","Analyzed":false},"dteventtimestamp":{"Type":"bigint","Analyzed":false},"file":{"Type":"varchar(65533)","Analyzed":false},"gseindex":{"Type":"double","Analyzed":false},"iterationindex":{"Type":"double","Analyzed":false},"level":{"Type":"varchar(65533)","Analyzed":false},"localtime":{"Type":"varchar(32)","Analyzed":false},"log":{"Type":"text","Analyzed":true},"message":{"Type":"varchar(65533)","Analyzed":false},"path":{"Type":"text","Analyzed":false},"report_time":{"Type":"varchar(65533)","Analyzed":false},"serverip":{"Type":"varchar(65533)","Analyzed":false},"thedate":{"Type":"int","Analyzed":false},"time":{"Type":"text","Analyzed":false},"trace_id":{"Type":"varchar(65533)","Analyzed":false}}`,
+			expected: `{"__ext":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"__shard_key__":{"alias_name":"","field_name":"","field_type":"bigint","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"c1":{"alias_name":"","field_name":"","field_type":"text","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"c2":{"alias_name":"","field_name":"","field_type":"text","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"cloudid":{"alias_name":"","field_name":"","field_type":"double","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"dteventtime":{"alias_name":"","field_name":"","field_type":"varchar(32)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"dteventtimestamp":{"alias_name":"","field_name":"","field_type":"bigint","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"file":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"gseindex":{"alias_name":"","field_name":"","field_type":"double","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"iterationindex":{"alias_name":"","field_name":"","field_type":"double","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"level":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"localtime":{"alias_name":"","field_name":"","field_type":"varchar(32)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"log":{"alias_name":"","field_name":"","field_type":"text","origin_field":"","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":null},"message":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"path":{"alias_name":"","field_name":"","field_type":"text","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"report_time":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"serverip":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"thedate":{"alias_name":"","field_name":"","field_type":"int","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"time":{"alias_name":"","field_name":"","field_type":"text","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null},"trace_id":{"alias_name":"","field_name":"","field_type":"varchar(65533)","origin_field":"","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":null}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -61,7 +61,7 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 			assert.Nil(t, err)
 
 			actual, _ := json.Marshal(fact.FieldMap())
-			assert.JSONEq(t, c.expected, string(actual))
+			assert.Equal(t, c.expected, string(actual))
 		})
 	}
 }
@@ -1239,21 +1239,21 @@ func TestInstance_bkSql(t *testing.T) {
 			query: &metadata.Query{
 				DB:          "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
 				Measurement: sql_expr.Doris,
-				Field:       "origin_field",
+				Field:       "alias_field",
 				FieldAlias: map[string]string{
-					"origin_field": "new_field",
+					"alias_field": "origin_field",
 				},
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",
 						Window:     time.Hour,
-						Dimensions: []string{"origin_field"},
+						Dimensions: []string{"alias_field"},
 					},
 				},
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "origin_field",
+							DimensionName: "alias_field",
 							Operator:      "eq",
 							Value:         []string{"123"},
 						},
@@ -1261,7 +1261,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT `new_field` AS `origin_field`, COUNT(`new_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `new_field` = '123' GROUP BY origin_field, _timestamp_",
+			expected: "SELECT `origin_field` AS `alias_field`, COUNT(`origin_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `origin_field` = '123' GROUP BY alias_field, _timestamp_",
 		},
 		{
 			name:  "query with regexp_extract and AS alias",
@@ -1288,10 +1288,15 @@ func TestInstance_bkSql(t *testing.T) {
 				c.end = end
 			}
 
-			fieldsMap := map[string]sql_expr.FieldOption{
+			fieldsMap := metadata.FieldsMap{
 				"text": {
-					Type:     sql_expr.DorisTypeText,
-					Analyzed: false,
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
+				},
+				"origin_field": {
+					AliasName:  "alias_field",
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
 				},
 			}
 
@@ -1909,7 +1914,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
 		},
 		{
 			name: "object field eq and aggregate with sql - 2",
@@ -1942,7 +1947,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
+			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
 	}
 
@@ -1961,11 +1966,11 @@ LIMIT
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]sql_expr.FieldOption{
-				"text":                             {Type: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {Type: sql_expr.DorisTypeInt},
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
+				"text":                             {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

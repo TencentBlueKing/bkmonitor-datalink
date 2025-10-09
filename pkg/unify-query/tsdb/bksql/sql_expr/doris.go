@@ -69,10 +69,8 @@ type DorisSQLExpr struct {
 	valueField string
 
 	keepColumns []string
-	fieldsMap   map[string]FieldOption
+	fieldsMap   metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
-
-	queryStringParser *lucene_parser.Parser
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -100,27 +98,9 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
+func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	d.fieldsMap = fieldsMap
-	d.initQueryStringParser()
 	return d
-}
-
-func (d *DorisSQLExpr) initQueryStringParser() {
-	var luceneFieldsMap map[string]lucene_parser.FieldOption
-	if len(d.fieldsMap) > 0 {
-		luceneFieldsMap = make(map[string]lucene_parser.FieldOption, len(d.fieldsMap))
-		for field, option := range d.fieldsMap {
-			luceneFieldsMap[field] = lucene_parser.FieldOption{
-				Type:     strings.ToUpper(option.Type),
-				Analyzed: option.Analyzed,
-			}
-		}
-	}
-	d.queryStringParser = lucene_parser.NewParser(
-		lucene_parser.WithAlias(d.fieldAlias),
-		lucene_parser.WithMapping(luceneFieldsMap),
-	)
 }
 
 func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
@@ -128,17 +108,21 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) FieldMap() map[string]FieldOption {
+func (d *DorisSQLExpr) FieldMap() metadata.FieldsMap {
 	return d.fieldsMap
 }
 
-func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	result, err := d.queryStringParser.Parse(qs, false)
-	if err != nil {
-		return "", err
+func (d *DorisSQLExpr) ParserQueryString(ctx context.Context, qs string) (string, error) {
+	opt := lucene_parser.Option{
+		FieldsMap: d.fieldsMap,
+		FieldEncodeFunc: func(s string) string {
+			s, _ = d.dimTransform(s)
+			return s
+		},
 	}
 
-	return result.SQL, nil
+	node := lucene_parser.ParseLuceneWithVisitor(ctx, qs, opt)
+	return node.String(), node.Error()
 }
 
 func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
@@ -151,19 +135,9 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := &doris_parser.Option{
-		DimensionTransform: func(field string) (string, bool) {
-			var (
-				originFiled string
-				ok          bool
-			)
-			if originFiled, ok = d.fieldAlias[field]; ok {
-				field = originFiled
-			}
-			field, _ = d.dimTransform(field)
-			return field, ok
-		},
-		Table: table,
-		Where: where,
+		DimensionTransform: d.dimTransform,
+		Table:              table,
+		Where:              where,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -308,7 +282,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		OffsetMillis: timeZoneOffset,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -538,16 +512,16 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) isArray(k string) bool {
 	fieldType := d.getFieldType(k)
-	_, ok := d.caseAs(fieldType.Type)
+	_, ok := d.caseAs(fieldType.FieldType)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k).Type == DorisTypeText
+	return d.getFieldType(k).FieldType == DorisTypeText
 }
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
-	return d.getFieldType(k).Analyzed
+	return d.getFieldType(k).IsAnalyzed
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -583,16 +557,16 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption) {
 	if d.fieldsMap == nil {
-		return
+		return opt
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
-		opt.Type = strings.ToUpper(opt.Type)
+		opt.FieldType = strings.ToUpper(opt.FieldType)
 	}
-	return
+	return opt
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -618,19 +592,20 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
-	ns = s
 	if s == "" || s == "*" {
 		return ns, as
 	}
-	if alias, ok := d.fieldAlias[s]; ok {
+
+	ns = s
+	if alias, ok := d.fieldAlias[ns]; ok {
+		as = ns
 		ns = alias
-		as = s
 	}
 
-	fieldType := d.getFieldType(s)
-	castType, _ := d.caseAs(fieldType.Type)
+	fieldType := d.getFieldType(ns)
+	castType, _ := d.caseAs(fieldType.FieldType)
 
-	fs := strings.Split(s, ".")
+	fs := strings.Split(ns, ".")
 	if len(fs) == 1 {
 		ns = fmt.Sprintf("`%s`", ns)
 		return ns, as
@@ -663,9 +638,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		}
 	}
 
-	if as == "" {
-		as = s
-	}
+	as = s
 	if d.encodeFunc != nil {
 		as = d.encodeFunc(as)
 	}

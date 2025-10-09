@@ -23,6 +23,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -129,7 +130,13 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 		return data, nil
 	}
 
-	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
+	codedInfo := errno.ErrInfoServiceStart().
+		WithComponent("BkSQL").
+		WithOperation("执行查询").
+		WithContext("实例类型", i.InstanceType()).
+		WithContext("查询语句", sql).
+		WithSolution("正在执行BkSQL查询")
+	log.InfoWithCodef(ctx, codedInfo)
 	span.Set("query-sql", sql)
 
 	user := metadata.GetUser(ctx)
@@ -159,8 +166,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
-	fieldsMap := make(map[string]sql_expr.FieldOption)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.FieldsMap, error) {
+	fieldsMap := make(metadata.FieldsMap)
 
 	if sql == "" {
 		return nil, nil
@@ -189,14 +196,12 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql
 			continue
 		}
 
-		opt := sql_expr.FieldOption{
-			Type: fieldType,
+		opt := metadata.FieldOption{
+			FieldType: fieldType,
 		}
 
 		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
-			if fieldAnalyzed == "true" {
-				opt.Analyzed = true
-			}
+			opt.IsAnalyzed = fieldAnalyzed == "true"
 		}
 
 		fieldsMap[k] = opt
@@ -246,7 +251,7 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
@@ -268,23 +273,18 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		return nil, err
 	}
 
-	res := make(map[string]map[string]any)
+	res := make(metadata.FieldsMap)
 	for k, v := range fieldMap {
-		if k == "" || v.Type == "" {
+		if k == "" || v.FieldType == "" {
 			continue
 		}
 
+		v.AliasName = query.FieldAlias.AliasName(k)
+		v.FieldName = k
 		ks := strings.Split(k, ".")
-		res[k] = map[string]any{
-			"alias_name":        query.FieldAlias.AliasName(k),
-			"field_name":        k,
-			"field_type":        v.Type,
-			"origin_field":      ks[0],
-			"is_agg":            false,
-			"is_analyzed":       v.Analyzed,
-			"is_case_sensitive": false,
-			"tokenize_on_chars": "",
-		}
+		v.OriginField = ks[0]
+
+		res[k] = v
 	}
 
 	return res, nil
@@ -440,17 +440,32 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
-	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("直接查询范围").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	log.Warnf(ctx, "%s not support direct query", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("直接查询").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	log.Warnf(ctx, "%s not support query exemplar", i.InstanceType())
+	codedErr := errno.ErrDataProcessFailed().
+		WithComponent("BkSQL查询引擎").
+		WithOperation("查询exemplar").
+		WithContext("实例类型", i.InstanceType()).
+		WithSolution("使用适合的查询接口")
+	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 

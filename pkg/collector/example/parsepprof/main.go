@@ -78,7 +78,7 @@ func main() {
 			log.Fatalf("read data file failed: %v", err)
 		}
 
-		translator := &pproftranslator.DefaultTranslator{}
+		translator := pproftranslator.NewTranslator(pproftranslator.Config{})
 		profiles, err := translator.Translate(
 			define.ProfilesRawData{
 				Metadata: metadata,

@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -100,7 +101,11 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 			// 然后创建一个新的行数组放置新的内容
 			rowBuffer = []ConditionField{field}
 		} else {
-			log.Errorf(context.TODO(), "unknown condition->[%s] in condition list, nothing will do.", c.ConditionList[index-1])
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithOperation("条件解析").
+				WithErrorf("不支持的条件: %s", c.ConditionList[index-1]).
+				WithSolution("使用and或or条件")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			return nil, ErrUnknownConditionOperator
 		}
 	}
@@ -133,7 +138,11 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 	}
 
 	if totalBuffer, err = c.AnalysisConditions(); err != nil {
-		log.Errorf(context.TODO(), "failed to analysis conditions for->[%s], nothing will return.", err)
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("条件分析").
+			WithError(err).
+			WithSolution("检查查询条件格式")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return nil, nil, err
 	}
 
@@ -163,7 +172,11 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 
 		// 否则，就先构建对应的labelMatcher信息
 		if label, err = labels.NewMatcher(c.ToPromOperator(), c.DimensionName, c.Value[0]); err != nil {
-			log.Errorf(context.TODO(), "failed to make matcher for->[%s], will return err", err)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithOperation("创建标签匹配器").
+				WithError(err).
+				WithSolution("检查标签名和值格式")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			return nil, nil, err
 		}
 

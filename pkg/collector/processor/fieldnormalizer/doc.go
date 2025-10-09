@@ -7,30 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package lucene_parser
+/*
+# 字段标准化
+processor:
+  - name: "field_normalizer/common"
+    config:
+      fields:
+        - kind: "SPAN_KIND_SERVER"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.name"
+              op: concat
+              values:
+                - "attributes.client.address"
+                - "attributes.client.port"
 
-import "github.com/spf13/cast"
+        - kind: "SPAN_KIND_CLIENT"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.ip"
+              op: or
+              values:
+                - "attributes.client.address"
+                - "attributes.net.peer.address"
+*/
 
-func getString(fieldExpr Expr) string {
-	if fieldExpr != nil {
-		if s, ok := fieldExpr.(*StringExpr); ok {
-			return s.Value
-		}
-	}
-	return Empty
-}
-
-func getValue(expr Expr) string {
-	if expr == nil {
-		return ""
-	}
-	switch e := expr.(type) {
-	case *StringExpr:
-		return e.Value
-	case *NumberExpr:
-		return cast.ToString(e.Value)
-	case *BoolExpr:
-		return cast.ToString(e.Value)
-	}
-	return ""
-}
+package fieldnormalizer

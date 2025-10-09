@@ -49,14 +49,14 @@ query
     : disjQuery+
     ;
 
-// DisjQuery ::= ConjQuery ( OR ConjQuery )*
+// DisjQuery ::= ConjQuery ( OR ConjQuery )* ( OR )?
 disjQuery
-    : conjQuery (OR conjQuery)*
+    : conjQuery (OR conjQuery)* (OR)?
     ;
 
-// ConjQuery ::= ModClause ( AND ModClause )*
+// ConjQuery ::= ModClause ( AND ModClause )* ( AND )?
 conjQuery
-    : modClause (AND modClause)*
+    : modClause (AND modClause)* (AND)?
     ;
 
 // ModClause ::= (Modifier)? Clause

@@ -11,6 +11,7 @@ package promql
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -98,7 +100,13 @@ func NewInfluxdbSeries(t *influxdb.Table) *InfluxdbSeries {
 
 	// 提前获取所有的label信息
 	if len(t.GroupKeys) != len(t.GroupValues) {
-		log.Errorf(context.TODO(), "WHAT? Got result group length->[%d|%d] is different", len(t.GroupKeys), len(t.GroupValues))
+		codedErr := errno.ErrDataFormatInvalid().
+			WithComponent("PromQL序列").
+			WithOperation("验证分组键值长度").
+			WithContext("group_keys_length", len(t.GroupKeys)).
+			WithContext("group_values_length", len(t.GroupValues)).
+			WithSolution("检查数据分组配置，确保键值对应")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return nil
 	}
 
@@ -143,7 +151,13 @@ func NewInfluxdbSeriesIterator(t *influxdb.Table) *InfluxdbSeriesIterator {
 	)
 
 	if len(t.Types) != len(t.Headers) {
-		log.Errorf(context.TODO(), "WHAT? Got header length->[%d|%d] is different", len(t.Types), len(t.Headers))
+		codedErr := errno.ErrDataFormatInvalid().
+			WithComponent("PromQL序列迭代器").
+			WithOperation("验证头部类型长度").
+			WithContext("types_length", len(t.Types)).
+			WithContext("headers_length", len(t.Headers)).
+			WithSolution("检查数据表结构，确保类型和头部对应")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return nil
 	}
 
@@ -254,20 +268,36 @@ func (i *InfluxdbSeriesIterator) getRawPoint(index int) (time.Time, float64, err
 	case string:
 		timeItem, ok = data[i.timeColumnIndex].(string)
 		if !ok {
-			log.Errorf(context.TODO(), "parse time type failed,data: %#v", data[i.resultColumnIndex])
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("PromQL序列迭代器").
+				WithOperation("解析时间类型").
+				WithContext("data", data[i.resultColumnIndex]).
+				WithContext("column_index", i.resultColumnIndex).
+				WithSolution("检查时间数据格式是否为字符串类型")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			return t, 0, nil
 		}
 		if t, err = time.Parse(time.RFC3339Nano, timeItem); err != nil {
-			log.Errorf(context.TODO(),
-				"failed to transfer datetime->[%s] for err->[%s], will return empty data", data[i.timeColumnIndex], err,
-			)
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("PromQL序列迭代器").
+				WithOperation("解析RFC3339时间格式").
+				WithContext("datetime", timeItem).
+				WithContext("error", err.Error()).
+				WithSolution("检查时间格式是否符合RFC3339Nano标准")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			i.lastError = ErrDatetimeParseFailed
 			return t, 0, i.lastError
 		}
 	case time.Time:
 		t, ok = data[i.timeColumnIndex].(time.Time)
 		if !ok {
-			log.Errorf(context.TODO(), "parse time type failed,data: %#v", data[i.timeColumnIndex])
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("PromQL序列迭代器").
+				WithOperation("解析Time类型").
+				WithContext("data", data[i.timeColumnIndex]).
+				WithContext("column_index", i.timeColumnIndex).
+				WithSolution("检查时间数据格式是否为Time类型")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			return t, 0, nil
 		}
 	}
@@ -282,7 +312,13 @@ func (i *InfluxdbSeriesIterator) getRawPoint(index int) (time.Time, float64, err
 	case json.Number:
 		result, err1 := v.Float64()
 		if err1 != nil {
-			log.Errorf(context.TODO(), "parse value from string failed,data:%#v", data[i.resultColumnIndex])
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("PromQL序列迭代器").
+				WithOperation("从json.Number解析浮点数").
+				WithContext("data", data[i.resultColumnIndex]).
+				WithContext("error", err1.Error()).
+				WithSolution("检查JSON数值格式")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			i.lastError = err1
 			return t, 0, err1
 		}
@@ -290,7 +326,14 @@ func (i *InfluxdbSeriesIterator) getRawPoint(index int) (time.Time, float64, err
 	case string:
 		result, err1 := strconv.ParseFloat(v, 64)
 		if err1 != nil {
-			log.Errorf(context.TODO(), "parse value from string failed,data:%#v", data[i.resultColumnIndex])
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("PromQL序列迭代器").
+				WithOperation("从字符串解析浮点数").
+				WithContext("data", data[i.resultColumnIndex]).
+				WithContext("string_value", v).
+				WithContext("error", err1.Error()).
+				WithSolution("检查字符串数值格式")
+			log.ErrorWithCodef(context.TODO(), codedErr)
 			i.lastError = err1
 			return t, 0, err1
 		}
@@ -299,10 +342,14 @@ func (i *InfluxdbSeriesIterator) getRawPoint(index int) (time.Time, float64, err
 		log.Debugf(context.TODO(), "value data is nil, skip this")
 		return t, 0, ErrInvalidValue
 	default:
-		log.Errorf(context.TODO(),
-			"get value type failed, type: %T, data: %+v, resultColumnIndex: %d",
-			data[i.resultColumnIndex], data, i.resultColumnIndex,
-		)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("PromQL序列迭代器").
+			WithOperation("获取未知数值类型").
+			WithContext("data_type", fmt.Sprintf("%T", data[i.resultColumnIndex])).
+			WithContext("data", data).
+			WithContext("result_column_index", i.resultColumnIndex).
+			WithSolution("检查数据类型是否支持转换为float64")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 	}
 	log.Debugf(context.TODO(),
 		"parser data->[%v] to time->[%s] result->[%f] success", data, t.String(), value,

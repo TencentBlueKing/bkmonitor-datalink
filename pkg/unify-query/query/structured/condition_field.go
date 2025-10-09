@@ -17,6 +17,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -69,7 +70,12 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to condition op.Will return default op", matchType)
+		codedErr := errno.ErrQueryParseInvalidCondition().
+			WithComponent("结构化查询").
+			WithOperation("转换匹配类型到条件操作").
+			WithContext("match_type", matchType.String()).
+			WithSolution("检查标签匹配类型配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return ConditionEqual
 	}
 }

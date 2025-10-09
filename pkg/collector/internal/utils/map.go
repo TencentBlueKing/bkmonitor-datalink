@@ -29,6 +29,9 @@ var dotToUnderline = map[string]string{
 	"db.system":                  "db_system",
 	"net.host.port":              "net_host_port",
 	"net.host.name":              "net_host_name",
+	"net.peer.name":              "net_peer_name",
+	"net.peer.ip":                "net_peer_ip",
+	"net.peer.port":              "net_peer_port",
 	"http.scheme":                "http_scheme",
 	"http.method":                "http_method",
 	"http.flavor":                "http_favor",
@@ -36,11 +39,15 @@ var dotToUnderline = map[string]string{
 	"http.server_name":           "http_server_name",
 	"rpc.method":                 "rpc_method",
 	"rpc.service":                "rpc_service",
+	"rpc.system":                 "rpc_system",
 	"rpc.grpc.status_code":       "rpc_grpc_status_code",
 	"peer.service":               "peer_service",
 	"messaging.system":           "messaging_system",
 	"messaging.destination":      "messaging_destination",
 	"messaging.destination_kind": "messaging_destination_kind",
+	"celery.action":              "celery_action",
+	"celery.state":               "celery_state",
+	"celery.task_name":           "celery_task_name",
 }
 
 func CloneMap(m map[string]string) map[string]string {

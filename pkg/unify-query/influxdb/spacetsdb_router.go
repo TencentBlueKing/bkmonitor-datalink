@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/viper"
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/kvstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/kvstore/bbolt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -123,8 +124,13 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 		k := fmt.Sprintf("%s:%s", stoPrefix, entity.Key)
 		v, err := entity.Val.Marshal(nil)
 		if err != nil {
-			log.Errorf(
-				ctx, "Fail to parse value for MarshalMsg, %+v, error: %v", entity, err)
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("空间TSDB路由").
+				WithOperation("序列化实体数据").
+				WithError(err).
+				WithContext("实体", entity).
+				WithSolution("检查数据格式和序列化逻辑")
+			log.ErrorWithCodef(ctx, codedErr)
 			if once {
 				return err
 			}
@@ -194,7 +200,13 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 
 	err := r.kvClient.Delete(kvstore.String2byte(fullKey))
 	if err != nil {
-		log.Warnf(ctx, "Failed to delete key(%s) from kvClient: %v", fullKey, err)
+		codedWarn := errno.ErrWarningOperationFail().
+			WithComponent("SpaceTSDB路由").
+			WithOperation("从 KV存储删除键").
+			WithError(err).
+			WithContext("键名", fullKey).
+			WithSolution("检查KV存储连接和键格式")
+		log.WarnWithCodef(ctx, codedWarn)
 		return err
 	}
 
@@ -202,7 +214,12 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 		r.cache.Del(fullKey)
 	}
 
-	log.Infof(ctx, "Deleted key from storage and cache: %s", fullKey)
+	codedInfo := errno.ErrInfoDataOperation().
+		WithComponent("SpaceTSDB路由").
+		WithOperation("删除存储和缓存键").
+		WithContext("键名", fullKey).
+		WithContext("状态", "成功")
+	log.InfoWithCodef(ctx, codedInfo)
 	return nil
 }
 
@@ -211,7 +228,12 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	stoKey = fmt.Sprintf("%s:%s", stoPrefix, stoKey)
 	stoVal, err := influxdb.NewGenericValue(stoPrefix)
 	if err != nil {
-		log.Warnf(ctx, "Fail to new generic value, %s", err)
+		codedWarn := errno.ErrWarningDataMissing().
+			WithComponent("SpaceTSDB路由").
+			WithOperation("创建通用值").
+			WithError(err).
+			WithSolution("检查数据格式和序列化")
+		log.WarnWithCodef(ctx, codedWarn)
 		return nil
 	}
 	if cached && r.isCache {
@@ -225,7 +247,12 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 			if ok {
 				return value
 			}
-			log.Warnf(ctx, "Fail to unSerialize cached data, %s, %v", stoKey, data)
+			codedWarn := errno.ErrWarningDataIncomplete().
+				WithComponent("SpaceTSDB路由").
+				WithOperation("反序列化缓存数据").
+				WithContext("存储键", stoKey).
+				WithSolution("检查缓存数据格式")
+			log.WarnWithCodef(ctx, codedWarn)
 		}
 	}
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
@@ -235,12 +262,24 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 				log.Debugf(ctx, "Key(%s) not found in KVBolt", stoKey)
 			}
 		} else {
-			log.Warnf(ctx, "Fail to get value in KVBolt, key: %s, error: %v", stoKey, err)
+			codedWarn := errno.ErrWarningOperationFail().
+				WithComponent("KVBolt存储").
+				WithOperation("获取值").
+				WithError(err).
+				WithContext("键名", stoKey).
+				WithSolution("检查KVBolt数据库和键存在")
+			log.WarnWithCodef(ctx, codedWarn)
 		}
 		stoVal = nil
 	} else {
 		if _, err := stoVal.Unmarshal(v); err != nil {
-			log.Errorf(ctx, "Fail to parse value in KVBolt, key: %s, data: %+v, error: %v", stoKey, v, err)
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("KVBolt存储").
+				WithOperation("解析值").
+				WithError(err).
+				WithContext("键名", stoKey).
+				WithSolution("检查数据格式和序列化方式")
+			log.ErrorWithCodef(ctx, codedErr)
 			stoVal = nil
 		}
 	}
@@ -377,7 +416,12 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		case val, ok = <-genericCh:
 			if ok {
 				if val.Err != nil {
-					log.Errorf(ctx, "Record error when loading, %v", val.Err)
+					codedErr := errno.ErrDataProcessFailed().
+						WithComponent("空间TSDB路由").
+						WithOperation("加载记录").
+						WithError(val.Err).
+						WithSolution("检查数据加载逻辑和数据完整性")
+					log.ErrorWithCodef(ctx, codedErr)
 					continue
 				}
 				entities = append(entities, val)
@@ -387,7 +431,13 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false, printBytes)
 				if err != nil {
-					log.Errorf(ctx, "Fail to add batch from key(%s), %v", key, err)
+					codedErr := errno.ErrDataProcessFailed().
+						WithComponent("空间TSDB路由").
+						WithOperation("批量添加数据").
+						WithError(err).
+						WithContext("键", key).
+						WithSolution("检查批量操作逻辑和键值格式")
+					log.ErrorWithCodef(ctx, codedErr)
 				}
 				// 清空缓存
 				count = 0
@@ -495,11 +545,23 @@ func (r *SpaceTsDbRouter) Print(ctx context.Context, typeKey string, includeCont
 			// 遍历并解析存储值
 			stoVal, err := influxdb.NewGenericValue(parts[0])
 			if err != nil {
-				log.Errorf(ctx, "Fail to new generic value, %v", err)
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("空间TSDB路由").
+					WithOperation("创建通用值").
+					WithError(err).
+					WithSolution("检查通用值创建逻辑")
+				log.ErrorWithCodef(ctx, codedErr)
 				continue
 			}
 			if _, err := stoVal.Unmarshal(v); err != nil {
-				log.Errorf(ctx, "Fail to parse value in KVBolt, key: %s, data: %+v, error: %v", ks, v, err)
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("空间TSDB路由").
+					WithOperation("解析KVBolt值").
+					WithError(err).
+					WithContext("键", ks).
+					WithContext("数据", v).
+					WithSolution("检查KVBolt数据格式和解析逻辑")
+				log.ErrorWithCodef(ctx, codedErr)
 				continue
 			}
 			ret = append(ret, fmt.Sprintf("$%-80s : %+v", ks, stoVal.Print()))

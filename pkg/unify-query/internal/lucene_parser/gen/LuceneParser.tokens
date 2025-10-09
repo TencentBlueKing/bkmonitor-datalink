@@ -76,6 +76,5 @@ RANGE_GOOP=52
 'unordered'=43
 'wildcard'=45
 'within'=46
-'TO'=48
 ']'=49
 '}'=50

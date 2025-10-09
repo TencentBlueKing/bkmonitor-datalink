@@ -14,6 +14,7 @@ import (
 
 	"github.com/influxdata/influxql"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -21,30 +22,71 @@ import (
 func CheckSelectSQL(ctx context.Context, sql string) error {
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		log.Errorf(ctx, "parse query:%s failed,error:%s", sql, err)
-		return err
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("InfluxQL解析").
+			WithError(err).
+			WithContexts(map[string]any{
+				"SQL": sql,
+				"解决":  "检查InfluxQL语法规范，确保字段名和表名正确",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	if len(query.Statements) != 1 {
-		log.Errorf(ctx, "get wrong format query:%s,statement should only one", sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL语句数量检查").
+			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
+			WithContexts(map[string]any{
+				"SQL": sql,
+				"解决":  "确保查询只包含一个语句，移除多余的分号和语句",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	if _, ok := query.Statements[0].(*influxql.SelectStatement); !ok {
-		log.Errorf(ctx, "get wrong format query:%s which is not a select statement", sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL类型检查").
+			WithErrorf("非SELECT语句，禁止执行").
+			WithContexts(map[string]any{
+				"SQL": sql,
+				"解决":  "只允许执行SELECT查询语句，请使用正确的查询语法",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	return nil
 }
 
 // CheckSQLInject 检查sql注入
 func CheckSQLInject(sql string) error {
+	ctx := context.TODO()
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		log.Errorf(context.TODO(), "parse query:%s failed,error:%s", sql, err)
-		return err
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL注入检查-InfluxQL解析").
+			WithError(err).
+			WithContexts(map[string]any{
+				"SQL": sql,
+				"解决":  "检查InfluxQL语法规范，确保字段名和表名正确",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	if len(query.Statements) != 1 {
-		log.Errorf(context.TODO(), "get wrong format query:%s,statement should only one", sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL注入检查-语句数量检查").
+			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
+			WithContexts(map[string]any{
+				"SQL": sql,
+				"解决":  "确保查询只包含一个语句，移除多余的分号和语句",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	return nil
 }

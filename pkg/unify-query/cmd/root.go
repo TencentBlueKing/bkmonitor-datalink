@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/consul"
@@ -49,7 +50,12 @@ var rootCmd = &cobra.Command{
 
 		// 启动 gops
 		if err := agent.Listen(agent.Options{}); err != nil {
-			log.Warnf(ctx, err.Error())
+			codedErr := errno.ErrConfigReloadFailed().
+				WithComponent("Service").
+				WithOperation("启动gops代理").
+				WithContext("错误信息", err.Error()).
+				WithSolution("检查端口占用和系统权限")
+			log.WarnWithCodef(ctx, codedErr)
 		}
 
 		// 初始化启动任务
@@ -63,7 +69,10 @@ var rootCmd = &cobra.Command{
 			&http.Service{},
 			&featureFlag.Service{},
 		}
-		log.Infof(ctx, "http service started.")
+		codedInfo := errno.ErrInfoServiceStart().
+			WithOperation("服务启动").
+			WithContext("服务", "HTTP")
+		log.InfoWithCodef(ctx, codedInfo)
 
 		// 注册信号（重载配置文件 & 停止）
 		signal.Notify(sc, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
@@ -72,7 +81,10 @@ var rootCmd = &cobra.Command{
 			for _, service := range serviceList {
 				service.Reload(ctx)
 			}
-			log.Infof(ctx, "reload done")
+			codedInfo := errno.ErrInfoConfigReload().
+				WithOperation("配置重载").
+				WithContext("状态", "完成")
+			log.InfoWithCodef(ctx, codedInfo)
 			switch <-sc {
 			case syscall.SIGUSR1:
 				// 触发配置重载动作
@@ -81,18 +93,37 @@ var rootCmd = &cobra.Command{
 			case syscall.SIGTERM, syscall.SIGINT:
 				log.Debugf(ctx, "shutdown signal got, will shutdown server")
 				cancelFunc()
-				log.Warnf(ctx, "shutdown signal process done")
+				codedInfo := errno.ErrInfoServiceStart().
+					WithComponent("Service").
+					WithOperation("处理关闭信号").
+					WithSolution("服务正在优雅关闭")
+				log.WarnWithCodef(ctx, codedInfo)
 				break LOOP
 			}
 		}
 		log.Debugf(ctx, "loop break, wait for all service exit.")
 		for _, service := range serviceList {
-			log.Warnf(ctx, "close service:%s", service.Type())
+			codedInfo := errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("关闭服务").
+				WithContext("服务类型", service.Type()).
+				WithSolution("正在优雅关闭服务")
+			log.WarnWithCodef(ctx, codedInfo)
 			service.Close()
-			log.Warnf(ctx, "waiting for service:%s", service.Type())
+			codedInfo = errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("等待服务关闭").
+				WithContext("服务类型", service.Type()).
+				WithSolution("等待服务完成清理工作")
+			log.WarnWithCodef(ctx, codedInfo)
 
 			service.Wait()
-			log.Warnf(ctx, "waiting for service:%s done", service.Type())
+			codedInfo = errno.ErrInfoServiceStart().
+				WithComponent("Service").
+				WithOperation("服务关闭完成").
+				WithContext("服务类型", service.Type()).
+				WithSolution("服务已成功关闭")
+			log.WarnWithCodef(ctx, codedInfo)
 		}
 		log.Debugf(ctx, "all service exit, server exit now.")
 		os.Exit(0)

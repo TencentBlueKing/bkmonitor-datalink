@@ -15,6 +15,7 @@ import (
 
 	antlr "github.com/antlr4-go/antlr/v4"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -23,7 +24,13 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
-			log.Errorf(ctx, "parse doris sql error: %v", r)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("Doris SQL解析器").
+				WithOperation("解析SQL语句").
+				WithContext("sql", q).
+				WithContext("panic", fmt.Sprintf("%v", r)).
+				WithSolution("检查SQL语法和表结构")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	}()
 
@@ -64,7 +71,13 @@ func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerO
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
-			log.Errorf(ctx, "parse doris sql error: %v", r)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("Doris SQL解析器").
+				WithOperation("解析SQL语句(监听器模式)").
+				WithContext("sql", q).
+				WithContext("panic", fmt.Sprintf("%v", r)).
+				WithSolution("检查SQL语法和表结构")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	}()
 

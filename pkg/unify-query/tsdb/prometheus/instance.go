@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -100,23 +101,43 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("执行查询").
+			WithError(err).
+			WithSolution("检查查询语句和查询引擎配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("查询结果处理").
+			WithError(result.Err).
+			WithSolution("检查查询结果处理逻辑")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, false, result.Err
 	}
 
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrWarningQueryOptimization().
+			WithComponent("Prometheus").
+			WithOperation("查询警告").
+			WithError(err).
+			WithSolution("检查查询优化")
+		log.WarnWithCodef(ctx, codedErr)
 		return nil, false, err
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("执行查询").
+			WithError(err).
+			WithSolution("检查查询语句和查询引擎配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, false, err
 	}
 
@@ -142,22 +163,42 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("执行查询").
+			WithError(err).
+			WithSolution("检查查询语句和查询引擎配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("查询结果处理").
+			WithError(result.Err).
+			WithSolution("检查查询结果处理逻辑")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, result.Err
 	}
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("执行查询").
+			WithError(err).
+			WithSolution("检查查询语句和查询引擎配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Prometheus查询引擎").
+			WithOperation("执行查询").
+			WithError(err).
+			WithSolution("检查查询语句和查询引擎配置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 

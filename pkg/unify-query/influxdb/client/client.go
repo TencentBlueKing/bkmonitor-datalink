@@ -23,6 +23,7 @@ import (
 	influxclient "github.com/influxdata/influxdb1-client/v2"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -80,7 +81,13 @@ func (c *BasicClient) Query(
 	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
 	if err != nil {
-		log.Errorf(ctx, "client new request error:%s", err)
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("InfluxDB客户端").
+			WithOperation("创建HTTP请求").
+			WithContext("url_path", urlPath).
+			WithContext("error", err.Error()).
+			WithSolution("检查URL格式和网络连接")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 	req.SetBasicAuth(c.username, c.password)
@@ -96,19 +103,37 @@ func (c *BasicClient) Query(
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Errorf(ctx, "client do request:%s error:%s", sql, err)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("InfluxDB客户端").
+			WithOperation("执行HTTP请求").
+			WithContext("sql", sql).
+			WithContext("error", err.Error()).
+			WithSolution("检查InfluxDB连接和网络状态")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			log.Errorf(ctx, "resp body close (%s) error:%s", sql, err)
+			codedErr := errno.ErrStorageConnFailed().
+				WithComponent("InfluxDB客户端").
+				WithOperation("关闭响应体").
+				WithContext("sql", sql).
+				WithContext("error", err.Error()).
+				WithSolution("检查网络连接和资源管理")
+			log.ErrorWithCodef(ctx, codedErr)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		err = errors.New(resp.Status)
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("InfluxDB客户端").
+			WithOperation("检查HTTP响应状态").
+			WithContext("status_code", resp.StatusCode).
+			WithContext("status", resp.Status).
+			WithSolution("检查InfluxDB服务状态和查询语句")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -129,16 +154,36 @@ func (c *BasicClient) decodeWithContentType(
 	if err != nil {
 		data, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("InfluxDB客户端").
+				WithOperation("获取解码器失败后读取数据").
+				WithContext("content_type", respContentType).
+				WithContext("decoder_error", err.Error()).
+				WithContext("read_error", readErr.Error()).
+				WithSolution("检查响应内容类型和数据格式")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
-		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("InfluxDB客户端").
+			WithOperation("获取解码器失败").
+			WithContext("content_type", respContentType).
+			WithContext("error", err.Error()).
+			WithContext("body_data", string(data)).
+			WithSolution("检查响应内容类型和解码器支持")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 	result := new(decoder.Response)
 	_, err = dec.Decode(ctx, resp.Body, result)
 	if err != nil {
-		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("InfluxDB客户端").
+			WithOperation("解码响应数据").
+			WithContext("content_type", respContentType).
+			WithContext("error", err.Error()).
+			WithSolution("检查响应数据格式和解码器实现")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 

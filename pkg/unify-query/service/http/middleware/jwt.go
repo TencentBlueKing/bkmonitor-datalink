@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -152,7 +153,14 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 				}
 
 				err = fmt.Errorf("jwt auth unauthorized: %s, app_code: %s, space_uid: %s", err, appCode, spaceUID)
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrBusinessParamInvalid().
+					WithComponent("JWT中间件").
+					WithOperation("JWT认证授权").
+					WithContext("app_code", appCode).
+					WithContext("space_uid", spaceUID).
+					WithContext("error", err.Error()).
+					WithSolution("检查JWT令牌和认证配置")
+				log.ErrorWithCodef(ctx, codedErr)
 
 				res := gin.H{
 					"error": err.Error(),

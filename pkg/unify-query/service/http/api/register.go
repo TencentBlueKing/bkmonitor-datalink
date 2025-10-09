@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
@@ -23,6 +24,15 @@ func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
 
 	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
 	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
+	codedInfo1 := errno.ErrInfoAPICall().
+		WithComponent("API注册").
+		WithOperation("注册Relation接口").
+		WithContext("路由", "[POST] "+RelationMultiResource)
+	log.InfoWithCodef(ctx, codedInfo1)
+
+	codedInfo2 := errno.ErrInfoAPICall().
+		WithComponent("API注册").
+		WithOperation("注册Relation范围接口").
+		WithContext("路由", "[POST] "+RelationMultiResourceRange)
+	log.InfoWithCodef(ctx, codedInfo2)
 }

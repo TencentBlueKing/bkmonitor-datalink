@@ -24,6 +24,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -186,7 +187,12 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
-		log.Warnf(ctx, "get index error: %s", indicesErr)
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Elasticsearch索引").
+			WithOperation("获取索引信息").
+			WithError(indicesErr).
+			WithSolution("检查ES索引配置和连接")
+		log.WarnWithCodef(ctx, codedErr)
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
@@ -317,8 +323,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
-	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
-	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
+	codedInfo := errno.ErrInfoQueryExecution().
+		WithComponent("Elasticsearch").
+		WithOperation("查询执行").
+		WithContext("索引", qo.indexes).
+		WithContext("查询体", bodyString)
+	log.InfoWithCodef(ctx, codedInfo)
 	startAnalyze := time.Now()
 	client, err := i.getClient(ctx, qo.conn)
 	if err != nil {
@@ -552,7 +562,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("Elasticsearch").
+			WithOperation("获取空索引").
+			WithError(err).
+			WithSolution("检查索引存在性")
+		log.WarnWithCodef(ctx, codedErr)
 		return size, total, option, err
 	}
 	span.Set("field-map-length", len(fieldMap))
@@ -613,7 +628,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", err.Error()))
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("Elasticsearch查询").
+			WithOperation("查询原始数据").
+			WithError(err).
+			WithSolution("检查ES查询语句和集群连接")
+		log.ErrorWithCodef(ctx, codedErr)
 		return size, total, option, err
 	}
 
@@ -747,7 +767,12 @@ func (i *Instance) QuerySeriesSet(
 	}
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("Elasticsearch").
+			WithOperation("获取空索引(标签值)").
+			WithError(err).
+			WithSolution("检查索引数据")
+		log.WarnWithCodef(ctx, codedErr)
 		return storage.EmptySeriesSet()
 	}
 	span.Set("field-map-length", len(fieldMap))

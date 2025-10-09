@@ -22,6 +22,7 @@ const (
 	ComponentField = "组件"
 	OperationField = "操作"
 	SolutionField  = "解决方案"
+	SeverityField  = "严重程度"
 )
 
 type ErrCode struct {
@@ -46,6 +47,7 @@ func (e *ErrCode) String() string {
 		ComponentField: "组件",
 		OperationField: "操作",
 		SolutionField:  "解决方案",
+		SeverityField:  "严重程度",
 	}
 
 	for field, label := range fieldMap {
@@ -54,7 +56,7 @@ func (e *ErrCode) String() string {
 		}
 	}
 
-	excludeFields := []string{CategoryField, ComponentField, OperationField, SolutionField}
+	excludeFields := []string{CategoryField, ComponentField, OperationField, SolutionField, SeverityField}
 
 	customFields := lo.MapToSlice(e.context, func(key string, value any) string {
 		if lo.Contains(excludeFields, key) {
@@ -68,13 +70,58 @@ func (e *ErrCode) String() string {
 	})
 	parts = append(parts, customFields...)
 
-	// 处理子错误：如果是 ErrCode 类型，用方括号包裹递归展示；否则直接展示
 	if e.err != nil {
 		if childErr, ok := e.err.(*ErrCode); ok {
-			// 子错误也是 ErrCode，递归展示并用方括号包裹
-			parts = append(parts, fmt.Sprintf("[%s]", childErr.String()))
+			parts = append(parts, fmt.Sprintf("[%s]", childErr.formatWithoutCode()))
 		} else {
-			// 普通错误，直接展示
+			parts = append(parts, fmt.Sprintf("错误: %v", e.err))
+		}
+	}
+
+	return lo.Reduce(parts, func(acc string, part string, index int) string {
+		if index == 0 {
+			return part
+		}
+		return acc + " | " + part
+	}, "")
+}
+
+// formatWithoutCode 格式化错误信息但不显示错误码，用于子错误显示
+func (e *ErrCode) formatWithoutCode() string {
+	parts := []string{e.Message()} // 只显示消息，不显示错误码
+	fieldMap := map[string]string{
+		CategoryField:  "分类",
+		ComponentField: "组件",
+		OperationField: "操作",
+		SolutionField:  "解决方案",
+		SeverityField:  "严重程度",
+	}
+
+	for field, label := range fieldMap {
+		if value := e.getString(field); value != "" {
+			parts = append(parts, fmt.Sprintf("%s: %s", label, value))
+		}
+	}
+
+	// 在子错误显示中，除了基本字段外，还要排除错误码和消息字段，避免重复显示
+	excludeFields := []string{CategoryField, ComponentField, OperationField, SolutionField, SeverityField, CodeField, MessageField}
+
+	customFields := lo.MapToSlice(e.context, func(key string, value any) string {
+		if lo.Contains(excludeFields, key) {
+			return ""
+		}
+		return fmt.Sprintf("%s: %v", key, value)
+	})
+
+	customFields = lo.Filter(customFields, func(field string, _ int) bool {
+		return field != ""
+	})
+	parts = append(parts, customFields...)
+
+	if e.err != nil {
+		if childErr, ok := e.err.(*ErrCode); ok {
+			parts = append(parts, fmt.Sprintf("[%s]", childErr.formatWithoutCode()))
+		} else {
 			parts = append(parts, fmt.Sprintf("错误: %v", e.err))
 		}
 	}
@@ -103,6 +150,8 @@ func (e *ErrCode) Operation() string { return e.getString(OperationField) }
 
 func (e *ErrCode) Solution() string { return e.getString(SolutionField) }
 
+func (e *ErrCode) Severity() string { return e.getString(SeverityField) }
+
 func (e *ErrCode) getString(key string) string {
 	if v, ok := e.context[key]; ok {
 		if s, ok := v.(string); ok {
@@ -124,6 +173,11 @@ func (e *ErrCode) WithOperation(operation string) *ErrCode {
 
 func (e *ErrCode) WithSolution(solution string) *ErrCode {
 	e.context[SolutionField] = solution
+	return e
+}
+
+func (e *ErrCode) WithSeverity(severity string) *ErrCode {
+	e.context[SeverityField] = severity
 	return e
 }
 

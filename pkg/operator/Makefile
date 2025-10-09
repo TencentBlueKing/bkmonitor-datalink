@@ -38,7 +38,7 @@ lint:
 
 .PHONY: test
 test:
-	$(GO) test ./... -buildmode=pie -parallel=4 -cover
+	$(GO) test ./... -buildmode=pie -parallel=4 -cover -ldflags "-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore"
 
 .PHONY: build
 build:
@@ -63,3 +63,7 @@ image: build
 codegen:
 	chmod +x ./hack/update-codegen.sh && bash ./hack/update-codegen.sh
 	controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=crd/bases
+	rm -rf ./client/clientset/versioned/fake
+	rm -rf ./client/clientset/versioned/typed/monitoring/v1beta1/fake
+	rm -rf ./client/clientset/versioned/typed/logging/v1alpha1/fake
+	gofmt -r 'interface{} -> any' -w .

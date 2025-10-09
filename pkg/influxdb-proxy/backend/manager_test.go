@@ -96,7 +96,7 @@ func (t *TestSuite) TestManageBackend() {
 	viper.Set("kafka.topic_prefix", "bkmonitor")
 	viper.Set("kafka.version", "0.10.2.0")
 	var err error
-	err = consul.Init("127.0.0.1:8500", consul.TotalPrefix)
+	err = consul.Init("127.0.0.1:8500", consul.TotalPrefix, nil)
 	t.Nil(err)
 	err = backend.Init(context.Background())
 	t.Nil(err)

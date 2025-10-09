@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/consul/api/watch"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
 )
 
@@ -31,14 +32,17 @@ type BasicClient struct {
 	Agent   Agent
 	Session Session
 	// address IP:Port
-	address            string
+	address string
+
+	tlsConfig *config.TlsConfig
+
 	watchPlanMap       map[string]Plan
 	watchPrefixPlanMap map[string]Plan
 	outChanMap         map[string]chan interface{}
 }
 
 // NewBasicClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewBasicClient(address string) (ConsulClient, error) {
+func NewBasicClient(address string, tlsConfig *config.TlsConfig) (ConsulClient, error) {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -46,7 +50,10 @@ func NewBasicClient(address string) (ConsulClient, error) {
 	var err error
 	client := new(BasicClient)
 	client.address = address
-	err = GetAPI(client, address)
+	if tlsConfig != nil {
+		client.tlsConfig = tlsConfig
+	}
+	err = GetAPI(client)
 	if err != nil {
 		return nil, err
 	}
@@ -59,14 +66,20 @@ func NewBasicClient(address string) (ConsulClient, error) {
 }
 
 // GetAPI 获取api包中的对象
-var GetAPI = func(client *BasicClient, address string) error {
+var GetAPI = func(client *BasicClient) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
 	flowLog.Debugf("called")
 	conf := api.DefaultConfig()
-	conf.Address = address
-	// 这里的client是api接口的，不是本地的BasicClient，不要搞混了
+	conf.Address = client.address
+	if client.tlsConfig != nil {
+		conf.TLSConfig.InsecureSkipVerify = client.tlsConfig.SkipVerify
+		conf.TLSConfig.CAFile = client.tlsConfig.CAFile
+		conf.TLSConfig.CertFile = client.tlsConfig.CertFile
+		conf.TLSConfig.KeyFile = client.tlsConfig.KeyFile
+	}
+
 	apiClient, err := api.NewClient(conf)
 	if err != nil {
 		return err
@@ -450,6 +463,16 @@ func (bc *BasicClient) Watch(path string, separator string) (<-chan interface{},
 	})
 	var err error
 	var watchParams map[string]interface{}
+
+	conf := api.DefaultConfig()
+	conf.Address = bc.address
+	if bc.tlsConfig != nil {
+		conf.TLSConfig.InsecureSkipVerify = bc.tlsConfig.SkipVerify
+		conf.TLSConfig.CAFile = bc.tlsConfig.CAFile
+		conf.TLSConfig.CertFile = bc.tlsConfig.CertFile
+		conf.TLSConfig.KeyFile = bc.tlsConfig.KeyFile
+	}
+
 	// NOTE: 暂时不用考虑删除 集群和 backend 对应路径的场景
 	// 1. 检查 path 对应的 plan 是否已经存在
 	_, exist := bc.watchPlanMap[path]
@@ -481,7 +504,7 @@ func (bc *BasicClient) Watch(path string, separator string) (<-chan interface{},
 			close(outChan)
 			flowLog.Debugf("outChan closed")
 		}()
-		err := plan.Run(bc.address)
+		err := plan.RunWithConfig(bc.address, conf)
 		if err != nil {
 			flowLog.Errorf("plan run failed,error:%s", err)
 			if !plan.IsStopped() {

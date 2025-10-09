@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/backend"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/http/auth"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/influxdb-proxy/logging"
@@ -164,7 +165,17 @@ func (httpService *Service) Reload(flowID uint64) error {
 	// 配置读取结束,重启consul
 	address := common.Config.GetString(common.ConfigKeyConsulAddress)
 	prefix := common.Config.GetString(common.ConfigKeyConsulPrefix)
-	err = consul.Reload(address, prefix)
+	caCertFile := common.Config.GetString(common.ConfigKeyConsulCACertFile)
+	certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
+	keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
+	skipVerify := common.Config.GetBool(common.ConfigKeyConsulSkipVerify)
+	tlsConfig := &config.TlsConfig{
+		CAFile:     caCertFile,
+		CertFile:   certFile,
+		KeyFile:    keyFile,
+		SkipVerify: skipVerify,
+	}
+	err = consul.Reload(address, prefix, tlsConfig)
 	if err != nil {
 		flowLog.Errorf("consul reload failed,error:%s", err)
 		return err

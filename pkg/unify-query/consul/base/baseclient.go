@@ -14,6 +14,8 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 )
 
 // Client 标准consul读写
@@ -27,22 +29,19 @@ type Client struct {
 
 	// 链接相关信息
 	// address IP:Port
-	address      string
-	caFilePath   string // ca根证书路径
-	keyFilePath  string // client端身份证书，供server验证client身份
-	certFilePath string // server端身份证书
+	address string
+
+	tlsConfig *config.TlsConfig
 }
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
+func NewClient(address string, tlsConfig *config.TlsConfig) (*Client, error) {
 
 	var (
 		err    error
 		client = &Client{
 			address:            address,
-			caFilePath:         caFile,
-			keyFilePath:        keyFile,
-			certFilePath:       certFile,
+			tlsConfig:          tlsConfig,
 			watchPlanMap:       make(map[string]*watch.Plan),
 			watchPrefixPlanMap: make(map[string]*watch.Plan),
 		}
@@ -63,9 +62,12 @@ var GetAPI = func(client *Client) error {
 
 	// 添加链接配置信息
 	conf.Address = client.address
-	conf.TLSConfig.CAFile = client.caFilePath
-	conf.TLSConfig.KeyFile = client.keyFilePath
-	conf.TLSConfig.CertFile = client.certFilePath
+	if client.tlsConfig != nil {
+		conf.TLSConfig.CAFile = client.tlsConfig.CAFile
+		conf.TLSConfig.KeyFile = client.tlsConfig.KeyFile
+		conf.TLSConfig.CertFile = client.tlsConfig.CertFile
+		conf.TLSConfig.InsecureSkipVerify = client.tlsConfig.SkipVerify
+	}
 
 	// 这里的client是api接口的，不是本地的Client，不要搞混了
 	apiClient, err := api.NewClient(conf)

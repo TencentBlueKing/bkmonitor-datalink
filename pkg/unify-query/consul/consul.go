@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 )
 
 var (
@@ -38,7 +40,7 @@ func Wait() {
 
 // SetInstance 创建 consul 实例
 func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string,
+	tags []string, address string, port int, ttl string, tlsConfig *config.TlsConfig,
 ) error {
 	lock.Lock()
 	defer lock.Unlock()
@@ -48,7 +50,7 @@ func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress str
 	}
 
 	globalInstance, err = NewConsulInstance(
-		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile,
+		ctx, serviceName, consulAddress, tags, address, port, ttl, tlsConfig,
 	)
 	if err != nil {
 		return err

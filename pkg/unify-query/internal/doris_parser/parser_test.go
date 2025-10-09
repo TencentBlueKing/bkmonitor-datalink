@@ -456,6 +456,11 @@ LIMIT 10000;`,
 			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') AS cat`,
 		},
 		{
+			name: "test-2",
+			q:    `SELECT DISTINCT(regexp_extract(log, 'openid:(\\d+)', 1)) AS id LIMIT 100000`,
+			sql:  `SELECT DISTINCT regexp_extract(log, 'openid:(\\d+)', 1) AS id LIMIT 100000`,
+		},
+		{
 			name: "test-1",
 			q: `select pod_namespace, 
 count(*) AS log_count 

@@ -190,22 +190,18 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 		q := MergeQuery(c.DSL())
 		// 只有为显性的使用 AND 和 OR 才需要进行拼接
 		logic := ""
-		if i > 0 {
+		if i == 0 {
+			// 第一个根据后面的来判断
+			if len(n.logics) > 0 {
+				logic = n.logics[i]
+			}
+		} else {
 			logic = n.logics[i-1]
 		}
 
 		if logic == logicAnd || (logic == "" && (n.reverseOp || n.mustOp)) {
 			allMust = append(allMust, q)
 			continue
-		}
-
-		// 判断一下后面的是 and 的话，依然要加入到 must 分组
-		if len(n.logics) > i {
-			nextLogic := n.logics[i]
-			if nextLogic == logicAnd {
-				allMust = append(allMust, q)
-				continue
-			}
 		}
 
 		allShould = append(allShould, q)

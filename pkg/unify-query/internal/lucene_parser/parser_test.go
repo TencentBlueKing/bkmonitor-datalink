@@ -359,7 +359,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"嵌套逻辑表达式 - 4": {
 			q:   `a:1 OR (b:2 OR c:3) AND d:4`,
-			es:  `{"bool":{"must":[{"bool":{"should":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}},{"term":{"d":"4"}}],"should":{"term":{"a":"1"}}}}`,
+			es:  `{"bool":{"must":{"term":{"d":"4"}},"should":[{"term":{"a":"1"}},{"bool":{"should":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}}]}}`,
 			sql: "`a` = '1' OR (`b` = '2' OR `c` = '3') AND `d` = '4'",
 		},
 		"new-1": {
@@ -505,7 +505,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"test - Single Bracket And  ": {
 			q:   `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
-			es:  `{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}},{"term":{"loglevel":"222"}},{"term":{"loglevel":"333"}}],"should":{"term":{"loglevel":"SIMON"}}}}`,
+			es:  `{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}},{"term":{"loglevel":"333"}}],"should":[{"term":{"loglevel":"SIMON"}},{"term":{"loglevel":"222"}}]}}`,
 			sql: "(`loglevel` = 'TRACE' AND `loglevel` = '111' AND `loglevel` = 'DEBUG' AND `loglevel` = 'INFO' OR `loglevel` = 'SIMON' OR `loglevel` = '222' AND `loglevel` = '333')",
 		},
 		"test - Self Bracket ": {

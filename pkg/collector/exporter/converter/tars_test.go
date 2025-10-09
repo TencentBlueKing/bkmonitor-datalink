@@ -521,7 +521,6 @@ func BenchmarkTarsStat(b *testing.B) {
 
 	// 等待一段时间，确保所有事件都被处理
 	time.Sleep(500 * time.Millisecond)
-
 }
 
 // BenchmarkTarsProperty 基准测试 TarsProperty 转换性能

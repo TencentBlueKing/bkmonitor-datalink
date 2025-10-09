@@ -534,11 +534,11 @@ func (c tarsConverter) statToEvents(stat *stat) []define.Event {
 	}
 
 	if c.conf.IsDropOriginal {
-		if len(c.conf.DropOriginalServiceMap) == 0 {
+		if len(c.conf.dropOriginalServiceMap) == 0 {
 			// 丢弃所有原始指标。
 			return nil
 		}
-		if _, ok := c.conf.DropOriginalServiceMap[stat.dimensions[resourceTagServiceName]]; ok {
+		if _, ok := c.conf.dropOriginalServiceMap[stat.dimensions[resourceTagServiceName]]; ok {
 			// 丢弃指定服务的原始指标。
 			return nil
 		}

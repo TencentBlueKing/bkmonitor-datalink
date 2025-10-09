@@ -63,6 +63,19 @@ func (n *BaseNode) Next(next Node, ctx antlr.RuleNode) {
 	}
 }
 
+func MergeQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) elastic.Query {
+	must, should, mustNot = filterQuery(must, should, mustNot)
+	if len(mustNot) == 0 && len(should) == 0 {
+		if len(must) == 1 {
+			return must[0]
+		} else if len(must) == 0 {
+			return nil
+		}
+	}
+
+	return elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
+}
+
 func getErrorNode(s string) Node {
 	return &ErrorNode{value: s}
 }
@@ -122,7 +135,7 @@ func parseTerm(s string) Node {
 	}
 }
 
-func FilterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) ([]elastic.Query, []elastic.Query, []elastic.Query) {
+func filterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	if len(should) == 1 && len(must) == 0 && len(mustNot) == 0 {
 		must = append(must, should...)
 		should = nil
@@ -141,19 +154,6 @@ func realValue(node Node) any {
 	}
 
 	return res
-}
-
-func MergeQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) elastic.Query {
-	must, should, mustNot = FilterQuery(must, should, mustNot)
-	if len(mustNot) == 0 && len(should) == 0 {
-		if len(must) == 1 {
-			return must[0]
-		} else if len(must) == 0 {
-			return nil
-		}
-	}
-
-	return elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...)
 }
 
 func addLabels(node Node, addFunc func(key string, operator string, values ...string)) {

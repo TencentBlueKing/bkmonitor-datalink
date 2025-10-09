@@ -199,7 +199,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 		allShould = append(allShould, q)
 	}
 
-	return FilterQuery(allMust, allShould, allMustNot)
+	return filterQuery(allMust, allShould, allMustNot)
 }
 
 func (n *LogicNode) VisitTerminal(ctx antlr.TerminalNode) any {

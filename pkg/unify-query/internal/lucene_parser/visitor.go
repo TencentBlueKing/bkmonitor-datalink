@@ -191,7 +191,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 			logic = n.logics[i-1]
 		}
 
-		if logic == logicAnd || (logic == "" && (n.reverseOp || n.mustOp)) {
+		if logic == logicAnd || (logic == "" && (c.reverseOp || c.mustOp)) {
 			allMust = append(allMust, q)
 			continue
 		}

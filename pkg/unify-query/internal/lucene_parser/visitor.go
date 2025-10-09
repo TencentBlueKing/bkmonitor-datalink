@@ -208,9 +208,9 @@ func (n *LogicNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	case logicOR, logicAnd:
 		n.logics = append(n.logics, v)
 	case "&&":
-		n.logics = append(n.logics, "AND")
+		n.logics = append(n.logics, logicAnd)
 	case "||":
-		n.logics = append(n.logics, "OR")
+		n.logics = append(n.logics, logicOR)
 	}
 
 	return nil

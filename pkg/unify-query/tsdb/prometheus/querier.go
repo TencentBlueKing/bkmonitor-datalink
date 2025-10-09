@@ -20,9 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -84,12 +82,10 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
-			codedErr := errno.ErrStorageConnFailed().
-				WithComponent("PrometheusQuerier").
-				WithOperation("获取实例").
-				WithContext("存储ID", qry.StorageID).
-				WithSolution("检查存储实例配置和连接状态")
-			log.WarnWithCodef(ctx, codedErr)
+			metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询实例为空",
+			).Warn(ctx)
 			return
 		}
 
@@ -208,13 +204,11 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		create: func() (s storage.SeriesSet, ok bool) {
 			set, ok := <-promise
 			if set.Err() != nil {
-				codedErr := errno.ErrStorageConnFailed().
-					WithComponent("Prometheus查询器").
-					WithOperation("获取序列集合").
-					WithContext("error", set.Err().Error()).
-					WithSolution("检查存储连接和查询参数")
-				log.ErrorWithCodef(q.ctx, codedErr)
-				return storage.ErrSeriesSet(set.Err()), false
+				err := metadata.Sprintf(
+					metadata.MsgQueryTs,
+					"查询异常",
+				).Error(q.ctx, set.Err())
+				return storage.ErrSeriesSet(err), false
 			}
 			if !ok {
 				return storage.ErrSeriesSet(ErrChannelReceived), false
@@ -249,14 +243,10 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
-			codedErr := errno.ErrStorageConnFailed().
-				WithComponent("Prometheus查询器").
-				WithOperation("查询标签值").
-				WithContext("label_name", name).
-				WithContext("query_db", query.qry.DB).
-				WithContext("error", err.Error()).
-				WithSolution("检查存储实例连接和标签配置")
-			log.ErrorWithCodef(ctx, codedErr)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询异常",
+			).Error(q.ctx, err)
 			continue
 		}
 		for _, l := range lbl {

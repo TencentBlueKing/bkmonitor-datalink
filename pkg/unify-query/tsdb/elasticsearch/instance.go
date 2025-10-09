@@ -23,11 +23,8 @@ import (
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/samber/lo"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
@@ -187,16 +184,21 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Elasticsearch索引").
-			WithOperation("获取索引信息").
-			WithError(indicesErr).
-			WithSolution("检查ES索引配置和连接")
-		log.WarnWithCodef(ctx, codedErr)
+		// 兼容没有索引接口的情况，例如 bkbase
+		metadata.Sprintf(
+			metadata.MsgQueryES,
+			"索引查询 index 接口异常: %+v",
+			aliases,
+		).Warn(ctx)
+
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("index get error: %w", err)
+			return nil, metadata.Sprintf(
+				metadata.MsgQueryES,
+				"索引查询异常: %+v",
+				aliases,
+			).Error(ctx, indicesErr)
 		}
 
 		for index, r := range res {
@@ -323,12 +325,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
-	codedInfo := errno.ErrInfoQueryExecution().
-		WithComponent("Elasticsearch").
-		WithOperation("查询执行").
-		WithContext("索引", qo.indexes).
-		WithContext("查询体", bodyString)
-	log.InfoWithCodef(ctx, codedInfo)
+
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"es 查询 index: %+v, body: %s",
+		qo.indexes, bodyString,
+	).Info(ctx)
+
 	startAnalyze := time.Now()
 	client, err := i.getClient(ctx, qo.conn)
 	if err != nil {
@@ -387,7 +390,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
-		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
+		ctx, queryCost, metadata.ElasticsearchStorageType, qo.conn.Address,
 	)
 	return res, err
 }
@@ -562,13 +565,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("Elasticsearch").
-			WithOperation("获取空索引").
-			WithError(err).
-			WithSolution("检查索引存在性")
-		log.WarnWithCodef(ctx, codedErr)
-		return size, total, option, err
+		return size, total, option, metadata.Sprintf(
+			metadata.MsgQueryES,
+			"字段查询异常: %+v",
+			aliases,
+		).Error(ctx, err)
 	}
 	span.Set("field-map-length", len(fieldMap))
 
@@ -628,13 +629,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Elasticsearch查询").
-			WithOperation("查询原始数据").
-			WithError(err).
-			WithSolution("检查ES查询语句和集群连接")
-		log.ErrorWithCodef(ctx, codedErr)
-		return size, total, option, err
+		return size, total, option, metadata.Sprintf(
+			metadata.MsgQueryES,
+			"原始数据查询异常",
+		).Error(ctx, err)
 	}
 
 	option = &metadata.ResultTableOption{
@@ -767,12 +765,11 @@ func (i *Instance) QuerySeriesSet(
 	}
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("Elasticsearch").
-			WithOperation("获取空索引(标签值)").
-			WithError(err).
-			WithSolution("检查索引数据")
-		log.WarnWithCodef(ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryES,
+			"字段查询异常: %v",
+			err,
+		).Warn(ctx)
 		return storage.EmptySeriesSet()
 	}
 	span.Set("field-map-length", len(fieldMap))
@@ -928,5 +925,5 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) InstanceType() string {
-	return consul.ElasticsearchStorageType
+	return metadata.ElasticsearchStorageType
 }

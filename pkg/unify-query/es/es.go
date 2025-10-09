@@ -14,8 +14,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func init() {
@@ -35,13 +34,10 @@ func SearchByStorage(storageID int, body string, aliases []string) (string, erro
 	defer storageLock.RUnlock()
 	client, ok := storageMap[strconv.Itoa(storageID)]
 	if !ok {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("ES存储").
-			WithOperation("根据ID获取存储客户端").
-			WithContext("storage_id", storageID).
-			WithSolution("检查存储ID是否正确配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", ErrStorageNotFound
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"查询失败",
+		).Error(context.TODO(), ErrStorageNotFound)
 	}
 	return client.Search(body, aliases...)
 }

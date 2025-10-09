@@ -18,8 +18,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -216,7 +214,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
 				Source:        []string{"group", "user.first", "user.last"},
-				StorageType:   consul.ElasticsearchStorageType,
+				StorageType:   metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{},
 				Aggregates: metadata.Aggregates{
 					{
@@ -242,7 +240,7 @@ func TestInstance_queryReference(t *testing.T) {
 						Ast:  false,
 					},
 				},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -276,7 +274,7 @@ func TestInstance_queryReference(t *testing.T) {
 						Ast:  false,
 					},
 				},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -304,7 +302,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -328,7 +326,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        3,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -347,7 +345,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -369,7 +367,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -395,7 +393,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -423,7 +421,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Min,
@@ -448,7 +446,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DB:          db,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -472,7 +470,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				Field:       "namespace",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -511,7 +509,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				Field:       "__ext.io_kubernetes_pod_namespace",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -544,18 +542,12 @@ func TestInstance_queryReference(t *testing.T) {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
-			if err != nil {
-				codedErr := errno.ErrBusinessQueryExecution().
-					WithComponent("ElasticSearch实例测试").
-					WithOperation("转换序列集为时间序列").
-					WithContext("error", err.Error()).
-					WithSolution("检查测试数据和序列集转换逻辑")
-				log.ErrorWithCodef(ctx, codedErr)
-				return
-			}
 
-			actual := timeSeries.String()
-			assert.JSONEq(t, c.expected, actual)
+			assert.Nil(t, err)
+			if err == nil {
+				actual := timeSeries.String()
+				assert.JSONEq(t, c.expected, actual)
+			}
 		})
 	}
 }
@@ -639,7 +631,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
 					{
@@ -698,7 +690,7 @@ func TestInstance_queryRawData(t *testing.T) {
 					"time": "dtEventTimeStamp",
 				},
 				Source:      []string{"id"},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -817,7 +809,7 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				Source:      []string{"__ext.container_id"},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -920,7 +912,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
 				DataLabel:   "bk_log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",
 					Type: TimeFieldTypeTime,
@@ -1031,7 +1023,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				ResultTableOption: &metadata.ResultTableOption{
 					ScrollID: "scroll_id_1",
 				},
@@ -1104,7 +1096,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				ResultTableOption: &metadata.ResultTableOption{
 					ScrollID: "scroll_id_2",
 				},
@@ -1127,7 +1119,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Orders: []metadata.Order{
 					{
 						Name: "timestamp",

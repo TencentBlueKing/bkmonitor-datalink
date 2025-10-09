@@ -17,10 +17,9 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -146,21 +145,17 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusFailed)
 
 				// 通过特性开关判断是否开启验证，如果未开启验证则不进行 504 校验，但是错误指标还正常处理
-				ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
+				ffStatus := featureFlag.GetJwtAuthFeatureFlag(ctx)
 				if !ffStatus {
 					c.Next()
 					return
 				}
 
-				err = fmt.Errorf("jwt auth unauthorized: %s, app_code: %s, space_uid: %s", err, appCode, spaceUID)
-				codedErr := errno.ErrBusinessParamInvalid().
-					WithComponent("JWT中间件").
-					WithOperation("JWT认证授权").
-					WithContext("app_code", appCode).
-					WithContext("space_uid", spaceUID).
-					WithContext("error", err.Error()).
-					WithSolution("检查JWT令牌和认证配置")
-				log.ErrorWithCodef(ctx, codedErr)
+				err = metadata.Sprintf(
+					metadata.MsgHandlerAPI,
+					"jwt auth unauthorized: %s, app_code: %s, space_uid: %s",
+					err, appCode, spaceUID,
+				).Error(ctx, err)
 
 				res := gin.H{
 					"error": err.Error(),

@@ -22,11 +22,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -136,38 +133,16 @@ func (i Instance) QuerySeriesSet(
 	// 配置 client
 	err = i.setClient()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("离线数据归档实例").
-			WithOperation("设置客户端连接").
-			WithContext("address", i.Address).
-			WithContext("error", err.Error()).
-			WithSolution("检查离线数据归档服务连接配置")
-		log.ErrorWithCodef(ctx, codedErr)
 		return storage.ErrSeriesSet(err)
 	}
 
 	if client == nil {
 		err = fmt.Errorf("offline data archive client is null, %s", i.Address)
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("离线数据归档实例").
-			WithOperation("检查客户端实例").
-			WithContext("address", i.Address).
-			WithContext("error", err.Error()).
-			WithSolution("检查离线数据归档服务的配置和连接")
-		log.ErrorWithCodef(ctx, codedErr)
 		return storage.ErrSeriesSet(err)
 	}
 
 	tagRouter, err := influxdbRouter.GetTagRouter(ctx, query.TagsKey, query.Condition)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("离线数据归档实例").
-			WithOperation("获取标签路由").
-			WithContext("tags_key", query.TagsKey).
-			WithContext("condition", query.Condition).
-			WithContext("error", err.Error()).
-			WithSolution("检查标签路由配置")
-		log.ErrorWithCodef(ctx, codedErr)
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -190,13 +165,6 @@ func (i Instance) QuerySeriesSet(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("离线数据归档实例").
-			WithOperation("执行gRPC流式查询").
-			WithContext("address", i.Address).
-			WithContext("error", err.Error()).
-			WithSolution("检查离线数据归档服务的gRPC连接和查询请求")
-		log.ErrorWithCodef(ctx, codedErr)
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.ReadRateLimit), int(i.ReadRateLimit))
@@ -213,5 +181,5 @@ func (i Instance) QuerySeriesSet(
 }
 
 func (i Instance) InstanceType() string {
-	return consul.OfflineDataArchive
+	return metadata.OfflineDataArchive
 }

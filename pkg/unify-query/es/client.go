@@ -16,8 +16,8 @@ import (
 
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type Client interface {
@@ -61,14 +61,10 @@ func (c *ESClient) Search(body string, indexNames ...string) (string, error) {
 	es := c.client
 	result, err := es.Search(es.Search.WithIndex(indexNames...), es.Search.WithBody(strings.NewReader(body)))
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("搜索查询").
-			WithError(err).
-			WithDetail("索引", indexNames).
-			WithSolution("检查ES集群状态和连接配置，确认索引是否存在")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", codedErr
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"查询失败",
+		).Error(context.TODO(), err)
 	}
 	res, err := io.ReadAll(result.Body)
 	log.Debugf(context.TODO(), "search index:%v,body:%s get result:%s", indexNames, body, res)
@@ -84,12 +80,10 @@ func (c *ESClient) Aliases() (string, error) {
 	es := c.client
 	result, err := es.Cat.Aliases()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("获取别名列表").
-			WithError(err)
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", codedErr
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"查询失败",
+		).Error(context.TODO(), err)
 	}
 	res, err := io.ReadAll(result.Body)
 	log.Debugf(context.TODO(), "cat aliases get result:%s", res)
@@ -105,13 +99,10 @@ func (c *ESClient) AliasWithIndex(index string) (string, error) {
 	es := c.client
 	result, err := es.Indices.GetAlias(es.Indices.GetAlias.WithIndex(index))
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("获取索引别名").
-			WithError(err).
-			WithDetail("索引", index)
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", codedErr
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"查询失败",
+		).Error(context.TODO(), err)
 	}
 	res, err := io.ReadAll(result.Body)
 	log.Debugf(context.TODO(), "cat aliases with index:%s, get result:%s", index, res)
@@ -127,13 +118,10 @@ func (c *ESClient) Indices() (string, error) {
 	es := c.client
 	result, err := es.API.Cat.Indices()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Elasticsearch").
-			WithOperation("获取索引列表").
-			WithError(err).
-			WithSolution("检查ES集群状态和权限配置，确认服务可访问")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", codedErr
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"查询失败",
+		).Error(context.TODO(), err)
 	}
 	res, err := io.ReadAll(result.Body)
 	log.Debugf(context.TODO(), "cat indices get result:%s", res)

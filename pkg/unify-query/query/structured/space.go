@@ -17,10 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -53,15 +52,11 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	if !opt.IsSkipSpace {
 		if space == nil {
 			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
-
-			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
-			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-			codedErr := errno.ErrQueryParseInvalidSQL().
-				WithComponent("空间过滤器").
-				WithOperation("检查空间存在性").
-				WithContext("空间ID", opt.SpaceUid).
-				WithSolution("检查空间ID是否正确")
-			log.WarnWithCodef(ctx, codedErr)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"空间 %s 不存在",
+				opt.SpaceUid,
+			).Status(context.TODO(), metadata.SpaceIsNotExists)
 		}
 	}
 
@@ -197,15 +192,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				codedInfo := errno.ErrInfoServiceStart().
-					WithComponent("StructuredQuery").
-					WithOperation("表ID变更").
-					WithContext("指标名", mName).
-					WithContext("原表ID", defaultTsDB.TableID).
-					WithContext("新表ID", sepRt.TableId).
-					WithSolution("表ID已成功更新")
-				log.InfoWithCodef(s.ctx, codedInfo)
-
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
 
@@ -229,12 +215,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
 	route := strings.Split(tableID, ".")
 	if len(route) != 2 {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithComponent("空间过滤").
-			WithOperation("解析表ID格式").
-			WithContext("表ID", tableID).
-			WithSolution("检查表ID格式是否符合规范")
-		log.ErrorWithCodef(s.ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"表ID格式不符合规范",
+		).Warn(s.ctx)
 		return nil
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
@@ -269,14 +253,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
-
-			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
-			codedErr := errno.ErrQueryParseInvalidSQL().
-				WithComponent("空间路由").
-				WithOperation("检查表ID字段存在性").
-				WithContext("路由信息", routerMessage).
-				WithSolution("检查表ID和字段配置")
-			log.WarnWithCodef(s.ctx, codedErr)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				routerMessage,
+			).Status(s.ctx, metadata.SpaceTableIDFieldIsNotExists)
 		}
 	}()
 
@@ -333,7 +313,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	}
 
-	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
+	isK8sFeatureFlag := featureFlag.GetIsK8sFeatureFlag(s.ctx)
 
 	for _, tID := range tableIDs.ToArray() {
 		spaceRt := s.GetSpaceRtInfo(tID)

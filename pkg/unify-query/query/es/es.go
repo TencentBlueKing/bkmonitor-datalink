@@ -11,13 +11,12 @@ package es
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // Params 查询传入参数
@@ -40,25 +39,19 @@ type Params struct {
 func Query(q *Params) (string, error) {
 	info, err := es.GetStorageID(q.TableID)
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("ES查询处理器").
-			WithOperation("获取存储ID").
-			WithContext("table_id", q.TableID).
-			WithContext("error", err.Error()).
-			WithSolution("检查表ID和存储配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", err
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"ES 获取数据库失败 %v",
+			q.TableID,
+		).Error(context.TODO(), err)
 	}
 	aliases := formatAliases(info, q)
 	if len(aliases) == 0 {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("ES查询处理器").
-			WithOperation("生成别名列表").
-			WithContext("table_id", q.TableID).
-			WithContext("query_params", fmt.Sprintf("%#v", q)).
-			WithSolution("检查时间范围和索引配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return "", ErrNoAliases
+		return "", metadata.Sprintf(
+			metadata.MsgQueryES,
+			"ES 查询失败 %v",
+			q.TableID,
+		).Error(context.TODO(), ErrNoAliases)
 	}
 	return es.SearchByStorage(info.StorageID, q.Body, aliases)
 }

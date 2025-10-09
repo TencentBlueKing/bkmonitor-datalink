@@ -25,9 +25,7 @@ import (
 	"golang.org/x/time/rate"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -111,7 +109,7 @@ func StartStreamSeriesSet(
 				span.Set("resp-point-num", pointsNum)
 
 				metric.TsDBRequestSecond(
-					ctx, sub, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
+					ctx, sub, fmt.Sprintf("%s_grpc", metadata.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)
@@ -193,12 +191,6 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	codedErr := errno.ErrDataProcessFailed().
-		WithComponent("离线数据归档流").
-		WithOperation("启动数据流处理").
-		WithError(err).
-		WithSolution("检查数据流处理器配置")
-	log.ErrorWithCodef(s.ctx, codedErr)
 	s.err = nil
 	s.errMtx.Unlock()
 }
@@ -235,15 +227,6 @@ func (s *streamSeriesSet) At() storage.Series {
 func (s *streamSeriesSet) Err() error {
 	s.errMtx.Lock()
 	defer s.errMtx.Unlock()
-
-	if s.err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("离线数据归档流").
-			WithOperation("处理数据流错误").
-			WithError(s.err).
-			WithSolution("检查数据流处理器配置")
-		log.ErrorWithCodef(s.ctx, codedErr)
-	}
 	return errors.Wrap(s.err, s.name)
 }
 

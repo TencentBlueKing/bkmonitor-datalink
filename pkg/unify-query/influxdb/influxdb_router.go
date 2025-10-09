@@ -22,9 +22,7 @@ import (
 	"github.com/influxdata/influxdb/prometheus/remote"
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -137,23 +135,20 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 			addr := fmt.Sprintf("%s://%s:%d/ping", HTTP, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
-				codedWarn := errno.ErrWarningOperationFail().
-					WithComponent("InfluxDB路由").
-					WithOperation("创建请求").
-					WithError(err).
-					WithContext("地址", addr).
-					WithSolution("检查服务器地址格式")
-				log.WarnWithCodef(ctx, codedWarn)
+				metadata.Sprintf(
+					metadata.MsgQueryInfluxDB,
+					"创建请求失败 %s %v",
+					addr, err,
+				).Warn(ctx)
 				continue
 			}
 			resp, err := clint.Do(req)
 			if err != nil {
-				codedWarn := errno.ErrWarningConnectionFail().
-					WithComponent("InfluxDB路由").
-					WithOperation("Ping检测").
-					WithError(err).
-					WithSolution("检查InfluxDB服务器可达性")
-				log.WarnWithCodef(ctx, codedWarn)
+				metadata.Sprintf(
+					metadata.MsgQueryInfluxDB,
+					"Ping 检测 %s %v",
+					addr, err,
+				).Warn(ctx)
 				continue
 			}
 			// 状态码 204 变更 read 跳出循环
@@ -349,13 +344,11 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 		for _, k := range influxdb.AllKey {
 			err := r.loadRouter(ctx, k)
 			if err != nil {
-				codedErr := errno.ErrConfigReloadFailed().
-					WithComponent("InfluxDB路由器").
-					WithOperation("加载路由配置").
-					WithContext("router_key", k).
-					WithContext("error", err.Error()).
-					WithSolution("检查路由配置和连接状态")
-				log.ErrorWithCodef(ctx, codedErr)
+				_ = metadata.Sprintf(
+					metadata.MsgQueryInfluxDB,
+					"加载路由配置 %s 失败",
+					k,
+				).Error(ctx, err)
 			}
 		}
 	}

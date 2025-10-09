@@ -18,9 +18,9 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -139,7 +139,6 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 		tablesCh    = make(chan *Tables, 1)
 		totalTables = NewTables()
 		recvDone    = make(chan struct{})
-		errs        []error // 由于查询模块无法知道指标在某个具体表上，所以当任意表查询失败，都返回失败
 		wg          sync.WaitGroup
 		start       = time.Now()
 		err         error
@@ -182,27 +181,21 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					codedErr := errno.ErrStorageConnFailed().
-						WithComponent("InfluxDB查询").
-						WithOperation("获取客户端").
-						WithError(err).
-						WithContext("集群ID", clusterID).
-						WithSolution("检查集群配置和连接")
-					log.ErrorWithCodef(ctx, codedErr)
+					_ = metadata.Sprintf(
+						metadata.MsgQueryInfo,
+						"集群 %s 获取失败",
+						clusterID,
+					).Error(ctx, err)
 					return
 				}
 
 				tables, err := instance.QueryInfos(ctx, metricName, db, sql, precision, limit)
 				if err != nil {
-					codedErr := errno.ErrBusinessQueryExecution().
-						WithComponent("InfluxDB查询").
-						WithOperation("SQL查询执行").
-						WithError(err).
-						WithContext("数据库", db).
-						WithContext("SQL", sql).
-						WithSolution("检查SQL语法和数据库连接")
-					log.ErrorWithCodef(ctx, codedErr)
-					errs = append(errs, err)
+					_ = metadata.Sprintf(
+						metadata.MsgQueryInfo,
+						"%s 查询失败",
+						sql,
+					).Error(ctx, err)
 					return
 				}
 
@@ -216,23 +209,15 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 					// 增加一个顺序标记位
 					tables.Index = index
 					tablesCh <- tables
+					return
 				}
-			} else {
-				codedErr := errno.ErrDataProcessFailed().
-					WithComponent("InfluxDB查询").
-					WithOperation("SQL索引处理").
-					WithContext("index", index).
-					WithSolution("检查SQL索引参数")
-				log.ErrorWithCodef(ctx, codedErr)
 			}
-		} else {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("InfluxDB查询").
-				WithOperation("SQL索引处理").
-				WithContext("index", index).
-				WithSolution("检查SQL索引参数")
-			log.ErrorWithCodef(ctx, codedErr)
 		}
+
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfo,
+			"查询失败",
+		).Error(ctx, err)
 	})
 	defer p.Release()
 
@@ -313,13 +298,11 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					codedErr := errno.ErrBusinessQueryExecution().
-						WithComponent("InfluxDB查询").
-						WithOperation("并发查询执行").
-						WithError(err).
-						WithContext("SQL信息", sqlInfo).
-						WithSolution("检查并发查询参数和资源")
-					log.ErrorWithCodef(ctx, codedErr)
+					_ = metadata.Sprintf(
+						metadata.MsgQueryInfluxDB,
+						"%+v 查询失败",
+						sqlInfo,
+					).Error(ctx, err)
 					return
 				}
 
@@ -341,22 +324,14 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 				// 增加一个顺序标记位
 				tables.Index = index
 				tablesCh <- tables
-			} else {
-				codedErr := errno.ErrDataProcessFailed().
-					WithComponent("InfluxDB查询").
-					WithOperation("SQL索引处理").
-					WithContext("index", index).
-					WithSolution("检查SQL索引参数")
-				log.ErrorWithCodef(ctx, codedErr)
+				return
 			}
-		} else {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("InfluxDB查询").
-				WithOperation("SQL索引处理").
-				WithContext("index", index).
-				WithSolution("检查SQL索引参数")
-			log.ErrorWithCodef(ctx, codedErr)
 		}
+
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"查询失败",
+		).Error(ctx, err)
 	})
 	defer p.Release()
 

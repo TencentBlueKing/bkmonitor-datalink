@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -34,14 +33,6 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
-	codedErr := errno.ErrBusinessLogicError().
-		WithComponent("HTTP API响应").
-		WithOperation("处理API请求失败").
-		WithContext("url", r.c.Request.URL.Path).
-		WithContext("method", r.c.Request.Method).
-		WithContext("error", err.Error()).
-		WithSolution("检查API请求参数和服务状态")
-	log.ErrorWithCodef(ctx, codedErr)
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 	// 需要阻止响应返回, 交给统一响应处理

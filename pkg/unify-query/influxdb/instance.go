@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -118,18 +117,13 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 
 	startQuery = time.Now()
 
-	// resp, err = i.cli.QueryCtx(ctx, base.NewQuery(stmt, db, precision))
 	resp, err = i.query(ctx, db, stmt, precision, "application/json", false)
 	if err != nil {
-		codedErr := errno.ErrBusinessQueryExecution().
-			WithComponent("InfluxDB实例").
-			WithOperation("执行内部查询").
-			WithContext("database", db).
-			WithContext("statement", stmt).
-			WithContext("error", err.Error()).
-			WithSolution("检查InfluxDB连接和查询语句")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 查询失败",
+			stmt,
+		).Error(ctx, err)
 	}
 
 	startAnaylize = time.Now()
@@ -145,13 +139,11 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
 	)
 	if resp == nil {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("InfluxDB").
-			WithOperation("执行查询").
-			WithContext("查询语句", stmt).
-			WithSolution("检查InfluxDB连接状态和查询语法")
-		log.WarnWithCodef(ctx, codedErr)
-		return nil, errors.New("get nil response")
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 查询失败",
+			stmt,
+		).Error(ctx, errors.New("返回解析失败"))
 	}
 	if resp.Err != "" {
 		return nil, errors.New(resp.Err)
@@ -162,14 +154,11 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	for _, result := range resp.Results {
 		resultsNum++
 		if result.Err != "" {
-			codedErr := errno.ErrBusinessQueryExecution().
-				WithComponent("InfluxDB实例").
-				WithOperation("处理查询结果").
-				WithContext("statement", stmt).
-				WithContext("result_error", result.Err).
-				WithSolution("检查查询语句和数据格式")
-			log.ErrorWithCodef(ctx, codedErr)
-			return nil, errors.New(result.Err)
+			return nil, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"%s 查询失败",
+				stmt,
+			).Error(ctx, errors.New(result.Err))
 		}
 
 		for _, series := range result.Series {
@@ -269,8 +258,6 @@ func (i *Instance) Query(
 		resultNum = 0
 		seriesNum = 0
 		pointNum  = 0
-
-		message string
 	)
 
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-select")
@@ -292,15 +279,11 @@ func (i *Instance) Query(
 	stmt = i.setLimitAndSLimit(stmt, limit, slimit)
 	resp, err = i.query(ctx, db, stmt, precision, "", true)
 	if err != nil {
-		codedErr := errno.ErrBusinessQueryExecution().
-			WithComponent("InfluxDB实例").
-			WithOperation("执行数据库查询").
-			WithContext("database", db).
-			WithContext("statement", stmt).
-			WithContext("error", err.Error()).
-			WithSolution("检查InfluxDB数据库连接和查询语句")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 查询失败",
+			stmt,
+		).Error(ctx, err)
 	}
 
 	startAnaylize = time.Now()
@@ -308,13 +291,11 @@ func (i *Instance) Query(
 	span.Set("query-cost", startAnaylize.Sub(startQuery))
 	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("InfluxDB").
-			WithOperation("执行查询").
-			WithContext("查询语句", stmt).
-			WithSolution("检查InfluxDB连接状态和查询语法")
-		log.WarnWithCodef(ctx, codedErr)
-		return nil, errors.New("get nil response")
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 查询失败",
+			stmt,
+		).Error(ctx, errors.New("get nil response"))
 	}
 	if resp.Err != "" {
 		return nil, errors.New(resp.Err)
@@ -328,14 +309,11 @@ func (i *Instance) Query(
 	for _, result := range resp.Results {
 		resultNum++
 		if result.Err != "" {
-			codedErr := errno.ErrBusinessQueryExecution().
-				WithComponent("InfluxDB实例").
-				WithOperation("处理查询结果错误").
-				WithContext("statement", stmt).
-				WithContext("result_error", result.Err).
-				WithSolution("检查查询语句和数据库状态")
-			log.ErrorWithCodef(ctx, codedErr)
-			return nil, errors.New(result.Err)
+			return nil, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"%s 查询失败",
+				stmt,
+			).Error(ctx, errors.New(result.Err))
 		}
 
 		series = append(series, result.Series...)
@@ -365,27 +343,19 @@ func (i *Instance) Query(
 
 	// 由于 ctx 信息无法向上传递，所以增加一个全局 cache 存放异常信息
 	if i.maxLimit > 0 && pointNum > i.maxLimit {
-		message = fmt.Sprintf("%s: %d", ErrPointBeyondLimit.Error(), i.maxLimit)
-		metadata.SetStatus(ctx, metadata.ExceedsMaximumLimit, message)
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("InfluxDB").
-			WithOperation("数据点限制检查").
-			WithContext("当前数量", pointNum).
-			WithContext("最大限制", i.maxLimit).
-			WithSolution("减少查询时间范围或增加聚合粒度")
-		log.WarnWithCodef(ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s: %d",
+			ErrPointBeyondLimit.Error(), i.maxLimit,
+		).Status(ctx, metadata.ExceedsMaximumLimit)
 	}
 	// 只有聚合场景下 slimit才会有效
 	if withGroupBy && i.maxSLimit > 0 && seriesNum > i.maxSLimit {
-		message = fmt.Sprintf("%s: %d", ErrSeriesBeyondSLimit.Error(), i.maxSLimit)
-		metadata.SetStatus(ctx, metadata.ExceedsMaximumSlimit, message)
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("InfluxDB").
-			WithOperation("序列数量限制检查").
-			WithContext("当前数量", seriesNum).
-			WithContext("最大限制", i.maxSLimit).
-			WithSolution("增加聚合条件或减少查询范围")
-		log.WarnWithCodef(ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s: %d",
+			ErrSeriesBeyondSLimit.Error(), i.maxSLimit,
+		).Status(ctx, metadata.ExceedsMaximumSlimit)
 	}
 
 	span.Set("analyzer_cost", time.Since(startAnaylize))

@@ -11,82 +11,34 @@ package influxdb
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/influxdata/influxql"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-// CheckSelectSQL 检查是否是查询语句，防止sql注入
-func CheckSelectSQL(ctx context.Context, sql string) error {
+// CheckSQLInject 检查sql注入
+func CheckSQLInject(ctx context.Context, sql string) error {
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("InfluxQL解析").
-			WithError(err).
-			WithContexts(map[string]any{
-				"SQL": sql,
-				"解决":  "检查InfluxQL语法规范，确保字段名和表名正确",
-			})
-
-		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
+		return metadata.Sprintf(
+			metadata.MsgParserSQL,
+			"InfluxQL 语法解析",
+		).Error(ctx, err)
 	}
-	if len(query.Statements) != 1 {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("SQL语句数量检查").
-			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
-			WithContexts(map[string]any{
-				"SQL": sql,
-				"解决":  "确保查询只包含一个语句，移除多余的分号和语句",
-			})
 
-		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
+	if len(query.Statements) != 1 {
+		return metadata.Sprintf(
+			metadata.MsgParserSQL,
+			"InfluxQL 语法解析",
+		).Error(ctx, fmt.Errorf("语句数量应为1个，实际为%d个", len(query.Statements)))
 	}
 	if _, ok := query.Statements[0].(*influxql.SelectStatement); !ok {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("SQL类型检查").
-			WithErrorf("非SELECT语句，禁止执行").
-			WithContexts(map[string]any{
-				"SQL": sql,
-				"解决":  "只允许执行SELECT查询语句，请使用正确的查询语法",
-			})
-
-		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
-	}
-	return nil
-}
-
-// CheckSQLInject 检查sql注入
-func CheckSQLInject(sql string) error {
-	ctx := context.TODO()
-	query, err := influxql.ParseQuery(sql)
-	if err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("SQL注入检查-InfluxQL解析").
-			WithError(err).
-			WithContexts(map[string]any{
-				"SQL": sql,
-				"解决":  "检查InfluxQL语法规范，确保字段名和表名正确",
-			})
-
-		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
-	}
-	if len(query.Statements) != 1 {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithOperation("SQL注入检查-语句数量检查").
-			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
-			WithContexts(map[string]any{
-				"SQL": sql,
-				"解决":  "确保查询只包含一个语句，移除多余的分号和语句",
-			})
-
-		log.ErrorWithCodef(ctx, codedErr)
-		return codedErr
+		return metadata.Sprintf(
+			metadata.MsgParserSQL,
+			"InfluxQL 语法解析",
+		).Error(ctx, fmt.Errorf("非SELECT语句，禁止执行"))
 	}
 	return nil
 }

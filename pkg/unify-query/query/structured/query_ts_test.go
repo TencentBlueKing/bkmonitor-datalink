@@ -18,7 +18,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -65,7 +64,7 @@ func TestQueryToMetric(t *testing.T) {
 						DB:              db,
 						Measurement:     field,
 						StorageID:       storageID,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						ClusterName:     clusterName,
 						MeasurementType: redis.BkSplitMeasurement,
 						Field:           promql.StaticField,
@@ -96,7 +95,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -113,7 +112,7 @@ func TestQueryToMetric(t *testing.T) {
 					},
 					{
 						DataSource:      BkMonitor,
-						StorageType:     consul.VictoriaMetricsStorageType,
+						StorageType:     md.VictoriaMetricsStorageType,
 						StorageID:       "2",
 						TableID:         "result_table.vm",
 						VmRt:            "2_bcs_prom_computation_result_table",
@@ -151,7 +150,7 @@ func TestQueryToMetric(t *testing.T) {
 						TableID:         tableID,
 						DataLabel:       "influxdb",
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -167,7 +166,7 @@ func TestQueryToMetric(t *testing.T) {
 					},
 					{
 						DataSource:      BkMonitor,
-						StorageType:     consul.VictoriaMetricsStorageType,
+						StorageType:     md.VictoriaMetricsStorageType,
 						StorageID:       "2",
 						TableID:         "result_table.vm",
 						VmRt:            "2_bcs_prom_computation_result_table",
@@ -205,7 +204,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -238,7 +237,7 @@ func TestQueryToMetric(t *testing.T) {
 					{
 						DataSource:  BkData,
 						TableID:     "2_table_id",
-						StorageType: consul.BkSqlStorageType,
+						StorageType: md.BkSqlStorageType,
 						DB:          "2_table_id",
 						Field:       "kube_.*",
 					},
@@ -352,7 +351,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -386,7 +385,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -450,7 +449,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -484,7 +483,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -535,7 +534,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -598,7 +597,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  4,
 								VmCondition:     `bk_biz_id="2", bk_obj_id!="0", result_table_id="rt_by_cmdb_level", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -665,7 +664,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  4,
 								VmCondition:     `bk_biz_id="2", bk_obj_id!="0", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -737,7 +736,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -805,7 +804,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -881,7 +880,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -956,7 +955,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1030,7 +1029,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1103,7 +1102,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1174,7 +1173,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								DataLabel:       "cpu_summary",
@@ -1255,7 +1254,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								FieldAlias: md.FieldAlias{
 									"alias_ns": "__ext.host.bk_set_name",
 								},
-								StorageType: consul.ElasticsearchStorageType,
+								StorageType: md.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1328,7 +1327,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									"alias_ns": "__ext.host.bk_set_name",
 								},
 								MetricNames: []string{"bklog:result_table:es:usage"},
-								StorageType: consul.ElasticsearchStorageType,
+								StorageType: md.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1391,7 +1390,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "exporter",
 								Measurements:    []string{"exporter"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "metric_value",
 								MeasurementType: redis.BkExporter,
 								Aggregates: md.Aggregates{
@@ -1456,7 +1455,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "standard_v2_time_series",
 								Measurements:    []string{"standard_v2_time_series"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								MeasurementType: redis.BkStandardV2TimeSeries,
 								Field:           ".*",
 								Aggregates: md.Aggregates{

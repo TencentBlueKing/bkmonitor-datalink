@@ -73,7 +73,7 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	// query/ts/info/time_series
 	handlerPath = path.Join(infoPath, string(infos.TimeSeries))
-	registerHandler.Register(http.MethodPost, handlerPath, HandleTimeSeries)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerTimeSeries)
 
 	// query/ts/label/:label_name/values
 	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
@@ -86,10 +86,6 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// query/ts/cluster_metrics/
 	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
-
-	// query/es/
-	handlerPath = viper.GetString(ESHandlePathConfigPath)
-	registerHandler.Register(http.MethodPost, handlerPath, HandleESQueryRequest)
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

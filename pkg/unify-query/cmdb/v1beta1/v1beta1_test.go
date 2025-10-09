@@ -20,9 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
@@ -542,14 +540,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
-			if err != nil {
-				codedErr := errno.ErrBusinessLogicError().
-					WithComponent("CMDB").
-					WithOperation("查询资源匹配器").
-					WithContext("错误信息", err.Error()).
-					WithSolution("检查CMDB查询参数和服务状态")
-				log.ErrorWithCodef(ctx, codedErr)
-			} else {
+			if err == nil {
 				assert.Equal(t, c.expectedPath, path)
 				assert.Equal(t, c.expectedTargetList, rets)
 				assert.Equal(t, c.expectedSource, source)
@@ -744,14 +735,7 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
-			if err != nil {
-				codedErr := errno.ErrBusinessLogicError().
-					WithComponent("CMDB").
-					WithOperation("查询资源匹配器").
-					WithContext("错误信息", err.Error()).
-					WithSolution("检查CMDB查询参数和服务状态")
-				log.ErrorWithCodef(ctx, codedErr)
-			} else {
+			if err == nil {
 				assert.Equal(t, c.expectedPath, path)
 				assert.Equal(t, c.expectedTargetList, rets)
 				assert.Equal(t, c.expectedSource, source)

@@ -17,7 +17,6 @@ import (
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -44,12 +43,7 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	data, err := consul.GetFeatureFlags()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("功能标志服务").
-			WithOperation("从 Consul 获取功能标志").
-			WithError(err).
-			WithSolution("检查 Consul 连接和功能标志配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(ctx, "get feature flags failed: %s", err.Error())
 		return err
 	}
 	err = featureFlag.ReloadFeatureFlags(data)
@@ -60,12 +54,7 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能标志服务").
-			WithOperation("重新加载功能标志").
-			WithError(err).
-			WithSolution("检查功能标志配置和数据格式")
-		log.ErrorWithCodef(ctx, codedErr)
+		log.Errorf(ctx, "reload feature flags failed: %s", err.Error())
 		return err
 	}
 	ch, err := consul.WatchFeatureFlags(ctx)
@@ -78,22 +67,12 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				codedErr := errno.ErrConfigReloadFailed().
-					WithComponent("功能标志服务").
-					WithOperation("退出重载循环").
-					WithSolution("检查功能标志配置和服务状态")
-				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
-				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					codedErr := errno.ErrConfigReloadFailed().
-						WithComponent("功能标志服务").
-						WithOperation("重载功能标志循环").
-						WithError(err).
-						WithSolution("检查功能标志配置和网络连接")
-					log.ErrorWithCodef(context.TODO(), codedErr)
+					log.Errorf(ctx, "reload feature flags failed: %s", err.Error())
+					return
 				}
 			}
 		}
@@ -117,12 +96,7 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能标志服务").
-			WithOperation("启动循环重载").
-			WithError(err).
-			WithSolution("检查功能标志服务配置")
-		log.ErrorWithCodef(s.ctx, codedErr)
+		log.Errorf(s.ctx, "reload feature flags failed: %s", err.Error())
 		return
 	}
 
@@ -138,20 +112,11 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("功能标志客户端").
-			WithOperation("初始化客户端").
-			WithError(err).
-			WithSolution("检查功能标志客户端配置")
-		log.ErrorWithCodef(s.ctx, codedErr)
+		log.Errorf(s.ctx, "init feature flags failed: %s", err.Error())
 		return
 	}
 
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("FeatureFlag").
-		WithOperation("服务启动").
-		WithContext("状态", "成功")
-	log.InfoWithCodef(s.ctx, codedInfo)
+	log.Infof(s.ctx, "reload feature flags success")
 }
 
 // Wait

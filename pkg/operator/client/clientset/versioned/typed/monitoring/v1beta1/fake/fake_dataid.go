@@ -12,111 +12,30 @@
 package fake
 
 import (
-	"context"
-
 	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/monitoring/v1beta1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeDataIDs implements DataIDInterface
-type FakeDataIDs struct {
+// fakeDataIDs implements DataIDInterface
+type fakeDataIDs struct {
+	*gentype.FakeClientWithList[*v1beta1.DataID, *v1beta1.DataIDList]
 	Fake *FakeMonitoringV1beta1
-	ns   string
 }
 
-var dataidsResource = v1beta1.SchemeGroupVersion.WithResource("dataids")
-
-var dataidsKind = v1beta1.SchemeGroupVersion.WithKind("DataID")
-
-// Get takes name of the dataID, and returns the corresponding dataID object, and an error if there is any.
-func (c *FakeDataIDs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.DataID, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewGetAction(dataidsResource, c.ns, name), &v1beta1.DataID{})
-
-	if obj == nil {
-		return nil, err
+func newFakeDataIDs(fake *FakeMonitoringV1beta1, namespace string) monitoringv1beta1.DataIDInterface {
+	return &fakeDataIDs{
+		gentype.NewFakeClientWithList[*v1beta1.DataID, *v1beta1.DataIDList](
+			fake.Fake,
+			namespace,
+			v1beta1.SchemeGroupVersion.WithResource("dataids"),
+			v1beta1.SchemeGroupVersion.WithKind("DataID"),
+			func() *v1beta1.DataID { return &v1beta1.DataID{} },
+			func() *v1beta1.DataIDList { return &v1beta1.DataIDList{} },
+			func(dst, src *v1beta1.DataIDList) { dst.ListMeta = src.ListMeta },
+			func(list *v1beta1.DataIDList) []*v1beta1.DataID { return gentype.ToPointerSlice(list.Items) },
+			func(list *v1beta1.DataIDList, items []*v1beta1.DataID) { list.Items = gentype.FromPointerSlice(items) },
+		),
+		fake,
 	}
-	return obj.(*v1beta1.DataID), err
-}
-
-// List takes label and field selectors, and returns the list of DataIDs that match those selectors.
-func (c *FakeDataIDs) List(ctx context.Context, opts v1.ListOptions) (result *v1beta1.DataIDList, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewListAction(dataidsResource, dataidsKind, c.ns, opts), &v1beta1.DataIDList{})
-
-	if obj == nil {
-		return nil, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1beta1.DataIDList{ListMeta: obj.(*v1beta1.DataIDList).ListMeta}
-	for _, item := range obj.(*v1beta1.DataIDList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested dataIDs.
-func (c *FakeDataIDs) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewWatchAction(dataidsResource, c.ns, opts))
-
-}
-
-// Create takes the representation of a dataID and creates it.  Returns the server's representation of the dataID, and an error, if there is any.
-func (c *FakeDataIDs) Create(ctx context.Context, dataID *v1beta1.DataID, opts v1.CreateOptions) (result *v1beta1.DataID, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewCreateAction(dataidsResource, c.ns, dataID), &v1beta1.DataID{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1beta1.DataID), err
-}
-
-// Update takes the representation of a dataID and updates it. Returns the server's representation of the dataID, and an error, if there is any.
-func (c *FakeDataIDs) Update(ctx context.Context, dataID *v1beta1.DataID, opts v1.UpdateOptions) (result *v1beta1.DataID, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateAction(dataidsResource, c.ns, dataID), &v1beta1.DataID{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1beta1.DataID), err
-}
-
-// Delete takes name of the dataID and deletes it. Returns an error if one occurs.
-func (c *FakeDataIDs) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewDeleteActionWithOptions(dataidsResource, c.ns, name, opts), &v1beta1.DataID{})
-
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeDataIDs) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewDeleteCollectionAction(dataidsResource, c.ns, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1beta1.DataIDList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched dataID.
-func (c *FakeDataIDs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.DataID, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceAction(dataidsResource, c.ns, name, pt, data, subresources...), &v1beta1.DataID{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1beta1.DataID), err
 }

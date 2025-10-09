@@ -19,8 +19,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bkinfs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/action"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
@@ -84,9 +84,9 @@ type dataIDWatcher struct {
 	eventDataIDs  map[string]*bkv1beta1.DataID
 }
 
-func New(ctx context.Context, client bkversioned.Interface) Watcher {
+func New(ctx context.Context, client bkcli.Interface) Watcher {
 	ctx, cancel := context.WithCancel(ctx)
-	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
+	factory := bkinfs.NewSharedInformerFactory(client, define.ReSyncPeriod)
 
 	return &dataIDWatcher{
 		ctx:           ctx,
@@ -341,7 +341,7 @@ func (w *dataIDWatcher) Stop() {
 	w.wg.Wait()
 }
 
-func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
+func (w *dataIDWatcher) handleDataIDAdd(obj any) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", obj)
@@ -357,7 +357,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 	w.updateDataID(dataID)
 }
 
-func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
+func (w *dataIDWatcher) handleDataIDDelete(obj any) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", obj)
@@ -373,7 +373,7 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 	w.deleteDataID(dataID)
 }
 
-func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
+func (w *dataIDWatcher) handleDataIDUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", oldObj)

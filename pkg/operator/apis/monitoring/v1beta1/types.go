@@ -93,7 +93,7 @@ type DataIDList struct {
 	// +optional
 	metav1.ListMeta `json:"metadata,omitempty"`
 
-	Items []*DataID `json:"items"`
+	Items []DataID `json:"items"`
 }
 
 // Duration is a valid time duration that can be parsed by Prometheus model.ParseDuration() function.
@@ -108,7 +108,7 @@ type QCloudMonitorList struct {
 	// +optional
 	metav1.ListMeta `json:"metadata,omitempty"`
 
-	Items []*QCloudMonitor `json:"items"`
+	Items []QCloudMonitor `json:"items"`
 }
 
 // +genclient

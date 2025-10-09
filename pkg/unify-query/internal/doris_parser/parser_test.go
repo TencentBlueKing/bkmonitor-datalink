@@ -39,7 +39,7 @@ where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverI
 		{
 			name: "test-2",
 			q:    `show TABLES`,
-			err:  fmt.Errorf("String 解析失败：show TABLES"),
+			err:  fmt.Errorf("SQL 解析失败：show TABLES"),
 		},
 		{
 			name: "test-3",
@@ -98,12 +98,12 @@ LIMIT
 		{
 			name: "test-8",
 			q:    `test error sql`,
-			err:  fmt.Errorf("String 解析失败：test error sql"),
+			err:  fmt.Errorf("SQL 解析失败：test error sql"),
 		},
 		{
 			name: "test-9",
 			q:    `select_1 * from_1 where 1=1'`,
-			err:  fmt.Errorf("String 解析失败：select_1 * from_1 where 1=1'"),
+			err:  fmt.Errorf("SQL 解析失败：select_1 * from_1 where 1=1'"),
 		},
 		{
 			name: "test-10",

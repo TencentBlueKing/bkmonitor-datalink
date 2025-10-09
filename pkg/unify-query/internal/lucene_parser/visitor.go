@@ -341,7 +341,7 @@ func (n *ConditionNode) String() string {
 	}
 
 	// 别名替换
-	if nf, ok := n.Option.ReverseFieldAlias[field]; ok {
+	if nf, ok := n.Option.reverseFieldAlias[field]; ok {
 		field = nf
 	}
 
@@ -488,7 +488,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	// 别名替换
-	if nf, ok := n.Option.ReverseFieldAlias[field]; ok {
+	if nf, ok := n.Option.reverseFieldAlias[field]; ok {
 		field = nf
 	}
 

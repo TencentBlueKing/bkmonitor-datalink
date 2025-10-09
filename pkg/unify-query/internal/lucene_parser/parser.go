@@ -24,7 +24,7 @@ type Option struct {
 	FieldsMap       metadata.FieldsMap
 	FieldEncodeFunc func(string) string
 
-	ReverseFieldAlias map[string]string
+	reverseFieldAlias map[string]string
 
 	AddLabels func(key string, operator string, values ...string)
 }
@@ -38,10 +38,10 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 		}
 	}()
 
-	opt.ReverseFieldAlias = make(map[string]string)
+	opt.reverseFieldAlias = make(map[string]string)
 	for k, v := range opt.FieldsMap {
 		if v.AliasName != "" {
-			opt.ReverseFieldAlias[v.AliasName] = k
+			opt.reverseFieldAlias[v.AliasName] = k
 		}
 	}
 

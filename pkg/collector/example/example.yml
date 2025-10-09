@@ -475,6 +475,17 @@ bk-collector:
             rule:
               regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
 
+    - name: "field_normalizer/common"
+      config:
+        fields:
+          - kind: "SPAN_KIND_CLIENT"
+            predicate_key: "attributes.http.method"
+            rules:
+              - key: "attributes.http.conn.host"
+                op: or
+                values:
+                  - "attributes.http.host"
+
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
@@ -1029,6 +1040,7 @@ bk-collector:
         #- "forwarder/traces"
         #- "sampler/status_code"
 #        - "resource_filter/default_value"
+        - "field_normalizer/common"
         - "resource_filter/common"
         - "attribute_filter/common"
         - "resource_filter/user_metadata"

@@ -125,7 +125,9 @@ func toIntBuckets(bucketMap map[int32]int32) []bucket {
 
 // toSecondBuckets 将分布统计数据转为符合 Prometheus Histogram 格式，且单位为 Seconds 的分桶数据
 func toSecondBuckets(bucketMap map[int32]int32) []bucket {
-	return toBuckets(bucketMap, func(val int) string { return cast.ToString(float64(val) / 1000) })
+	return toBuckets(bucketMap, func(val int) string {
+		return strconv.FormatFloat(float64(val)/1000, 'f', -1, 64)
+	})
 }
 
 // toBucketMap 将分布统计字符串（"0|0,50|1,100|5"）转为结构化数据
@@ -146,23 +148,23 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
-	rpcHistogramBucketMetricName := name + "_bucket"
 	for _, b := range buckets {
-		dims := utils.CloneMap(dims)
-		dims["le"] = b.Val
-		pm := &promMapper{
-			Metrics:    common.MapStr{rpcHistogramBucketMetricName: b.Cnt},
+		pms = append(pms, &promMapper{
+			Metrics: common.MapStr{
+				name + "_bucket": b.Cnt,
+			},
 			Target:     target,
 			Timestamp:  timestamp,
-			Dimensions: dims,
-		}
-		pms = append(pms, pm)
+			Dimensions: utils.MergeMapWith(dims, "le", b.Val),
+		})
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{name + "_count": buckets[len(buckets)-1].Cnt},
+		Metrics: common.MapStr{
+			name + "_count": buckets[len(buckets)-1].Cnt,
+		},
 		Target:     target,
 		Timestamp:  timestamp,
-		Dimensions: utils.CloneMap(dims),
+		Dimensions: dims, // 无需拷贝
 	})
 	return pms
 }
@@ -366,7 +368,7 @@ func (s *stat) ToEvents(metricPrefix string) []define.Event {
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
 	pms = append(pms, &promMapper{
 		Metrics: common.MapStr{
-			histogramMetric + "_sum": cast.ToFloat64(s.totalRspTime) / 1000,
+			histogramMetric + "_sum": float64(s.totalRspTime) / 1000,
 		},
 		Target:     s.target,
 		Timestamp:  s.timestamp,

@@ -7,32 +7,35 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package tracesderiver
+package fieldnormalizer
 
 import (
+	"go.opentelemetry.io/collector/pdata/ptrace"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func init() {
-	processor.Register(define.ProcessorTracesDeriver, NewFactory)
+	processor.Register(define.ProcessorFieldNormalizer, NewFactory)
 }
 
 func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*tracesDeriver, error) {
-	operators := confengine.NewTierConfig()
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*fieldNormalizer, error) {
+	normalizers := confengine.NewTierConfig()
 
 	var c Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
-	operators.SetGlobal(NewOperator(c))
+	normalizers.SetGlobal(NewSpanFieldNormalizer(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -40,78 +43,55 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		operators.Set(custom.Token, custom.Type, custom.ID, NewOperator(cfg))
+		normalizers.Set(custom.Token, custom.Type, custom.ID, NewSpanFieldNormalizer(cfg))
 	}
 
-	return &tracesDeriver{
+	return &fieldNormalizer{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
-		operators:       operators,
+		normalizers:     normalizers,
 	}, nil
 }
 
-type tracesDeriver struct {
+type fieldNormalizer struct {
 	processor.CommonProcessor
-	operators *confengine.TierConfig // type: Operator
+	normalizers *confengine.TierConfig // type: *SpanFieldNormalizer
 }
 
-func (p *tracesDeriver) Name() string {
-	return define.ProcessorTracesDeriver
+func (p *fieldNormalizer) Name() string {
+	return define.ProcessorFieldNormalizer
 }
 
-func (p *tracesDeriver) IsDerived() bool {
-	return true
-}
-
-func (p *tracesDeriver) IsPreCheck() bool {
+func (p *fieldNormalizer) IsDerived() bool {
 	return false
 }
 
-func (p *tracesDeriver) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
+func (p *fieldNormalizer) IsPreCheck() bool {
+	return false
+}
+
+func (p *fieldNormalizer) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
 		return
 	}
 
-	equal := processor.DiffMainConfig(p.MainConfig(), config)
-	if equal {
-		f.operators.GetGlobal().(Operator).Clean()
-	} else {
-		p.operators.GetGlobal().(Operator).Clean()
-		p.operators.SetGlobal(f.operators.GetGlobal())
-	}
-
-	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
-	for _, obj := range diffRet.Keep {
-		f.operators.Get(obj.Token, obj.Type, obj.ID).(Operator).Clean()
-	}
-
-	for _, obj := range diffRet.Updated {
-		p.operators.Get(obj.Token, obj.Type, obj.ID).(Operator).Clean()
-		newOperator := f.operators.Get(obj.Token, obj.Type, obj.ID)
-		p.operators.Set(obj.Token, obj.Type, obj.ID, newOperator)
-	}
-
-	for _, obj := range diffRet.Deleted {
-		p.operators.Get(obj.Token, obj.Type, obj.ID).(Operator).Clean()
-		p.operators.Del(obj.Token, obj.Type, obj.ID)
-	}
-
 	p.CommonProcessor = f.CommonProcessor
+	p.normalizers = f.normalizers
 }
 
-func (p *tracesDeriver) Clean() {
-	for _, obj := range p.operators.All() {
-		obj.(Operator).Clean()
+func (p *fieldNormalizer) Process(record *define.Record) (derivedRecord *define.Record, err error) {
+	normalizer := p.normalizers.GetByToken(record.Token.Original).(*SpanFieldNormalizer)
+	if normalizer.Keys() == 0 {
+		return nil, nil
 	}
-}
 
-func (p *tracesDeriver) Process(record *define.Record) (*define.Record, error) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		operator := p.operators.GetByToken(record.Token.Original).(Operator)
-		r := operator.Operate(record)
-		return r, nil
+		pdTraces := record.Data.(ptrace.Traces)
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
+			normalizer.Normalize(span)
+		})
 	}
 
 	return nil, nil

@@ -10,9 +10,7 @@
 package attributefilter
 
 import (
-	"strings"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 )
 
 type Config struct {
@@ -45,7 +43,7 @@ type AsStringAction struct {
 }
 
 func (c *AsStringAction) Clean() {
-	c.Keys = cleanAttributesPrefixes(c.Keys)
+	c.Keys = fields.TrimAttributesPrefix(c.Keys...)
 }
 
 type AsIntAction struct {
@@ -53,7 +51,7 @@ type AsIntAction struct {
 }
 
 func (c *AsIntAction) Clean() {
-	c.Keys = cleanAttributesPrefixes(c.Keys)
+	c.Keys = fields.TrimAttributesPrefix(c.Keys...)
 }
 
 type FromTokenAction struct {
@@ -72,8 +70,8 @@ type AssembleRule struct {
 }
 
 func (c *AssembleRule) Clean() {
-	c.Keys = cleanAttributesPrefixes(c.Keys)
-	c.FirstUpper = cleanAttributesPrefixes(c.FirstUpper)
+	c.Keys = fields.TrimAttributesPrefix(c.Keys...)
+	c.FirstUpper = fields.TrimAttributesPrefix(c.FirstUpper...)
 
 	c.upper = make(map[string]struct{})
 	for _, s := range c.FirstUpper {
@@ -89,8 +87,8 @@ type AssembleAction struct {
 }
 
 func (c *AssembleAction) Clean() {
-	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
-	c.DefaultFrom = cleanAttributesPrefix(c.DefaultFrom)
+	c.PredicateKey = fields.TrimAttributesPrefix(c.PredicateKey).String()
+	c.DefaultFrom = fields.TrimAttributesPrefix(c.DefaultFrom).String()
 	for i := 0; i < len(c.Rules); i++ {
 		c.Rules[i].Clean()
 	}
@@ -105,9 +103,9 @@ type DropAction struct {
 }
 
 func (c *DropAction) Clean() {
-	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
-	c.Match = cleanAttributesPrefixes(c.Match)
-	c.Keys = cleanAttributesPrefixes(c.Keys)
+	c.PredicateKey = fields.TrimAttributesPrefix(c.PredicateKey).String()
+	c.Match = fields.TrimAttributesPrefix(c.Match...)
+	c.Keys = fields.TrimAttributesPrefix(c.Keys...)
 
 	c.match = make(map[string]struct{})
 	for _, s := range c.Match {
@@ -125,31 +123,12 @@ type CutAction struct {
 }
 
 func (c *CutAction) Clean() {
-	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
-	c.Match = cleanAttributesPrefixes(c.Match)
-	c.Keys = cleanAttributesPrefixes(c.Keys)
+	c.PredicateKey = fields.TrimAttributesPrefix(c.PredicateKey).String()
+	c.Match = fields.TrimAttributesPrefix(c.Match...)
+	c.Keys = fields.TrimAttributesPrefix(c.Keys...)
 
 	c.match = make(map[string]struct{})
 	for _, s := range c.Match {
 		c.match[s] = struct{}{}
 	}
-}
-
-func cleanAttributesPrefixes(keys []string) []string {
-	var ret []string
-	for _, key := range keys {
-		if strings.HasPrefix(key, define.AttributeKeyPrefix) {
-			ret = append(ret, key[len(define.AttributeKeyPrefix):])
-		} else {
-			ret = append(ret, key)
-		}
-	}
-	return ret
-}
-
-func cleanAttributesPrefix(s string) string {
-	if !strings.HasPrefix(s, define.AttributeKeyPrefix) {
-		return s
-	}
-	return s[len(define.AttributeKeyPrefix):]
 }

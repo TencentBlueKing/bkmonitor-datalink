@@ -7,35 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package processor
+/*
+# 字段标准化
+processor:
+  - name: "field_normalizer/common"
+    config:
+      fields:
+        - kind: "SPAN_KIND_SERVER"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.name"
+              op: concat
+              values:
+                - "attributes.client.address"
+                - "attributes.client.port"
 
-type Configs []Config
+        - kind: "SPAN_KIND_CLIENT"
+          predicate_key: "attributes.http.method"
+          rules:
+            - key: "attributes.net.peer.ip"
+              op: or
+              values:
+                - "attributes.client.address"
+                - "attributes.net.peer.address"
+*/
 
-type Config struct {
-	Name   string         `config:"name"`
-	Config map[string]any `config:"config"`
-}
-
-type IDConfig struct {
-	ID        string   `config:"id"`
-	Processor []Config `config:"processor"`
-}
-
-type SubConfig struct {
-	Type     string           `config:"type"`
-	Token    string           `config:"token"`
-	Default  SubConfigDefault `config:"default"`
-	Service  []IDConfig       `config:"service"`
-	Instance []IDConfig       `config:"instance"`
-}
-
-type SubConfigDefault struct {
-	Processor []Config `config:"processor"`
-}
-
-type SubConfigProcessor struct {
-	Token  string
-	Type   string
-	ID     string
-	Config Config
-}
+package fieldnormalizer

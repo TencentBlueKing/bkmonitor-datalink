@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -103,14 +104,20 @@ func (p *apdexCalculator) Process(record *define.Record) (*define.Record, error)
 	return nil, nil
 }
 
+const (
+	keyInstance = "bk.instance.id"
+	keyService  = "service.name"
+	keyKind     = "kind"
+)
+
 func (p *apdexCalculator) processTraces(record *define.Record) {
 	pdTraces := record.Data.(ptrace.Traces)
 	foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 		var service, instance string
-		if v, ok := rs.Get(processor.KeyInstance); ok {
+		if v, ok := rs.Get(keyInstance); ok {
 			instance = v.AsString()
 		}
-		if v, ok := rs.Get(processor.KeyService); ok {
+		if v, ok := rs.Get(keyService); ok {
 			service = v.AsString()
 		}
 
@@ -130,7 +137,6 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		rule, found := config.Rule(kind, foundPk)
 		if !found {
-			logger.Debugf("no rules found, kind=%v, pk=%v", kind, foundPk)
 			return
 		}
 
@@ -161,16 +167,16 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 				attrs := dp.Attributes()
 
 				var service, instance string
-				if v, ok := attrs.Get(processor.KeyService); ok {
+				if v, ok := attrs.Get(keyService); ok {
 					service = v.AsString()
 				}
-				if v, ok := attrs.Get(processor.KeyInstance); ok {
+				if v, ok := attrs.Get(keyInstance); ok {
 					instance = v.AsString()
 				}
 
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
-				if v, ok := attrs.Get(processor.KeyKind); ok {
+				if v, ok := attrs.Get(keyKind); ok {
 					kind = spanKindMap[v.StringVal()]
 				}
 
@@ -186,7 +192,6 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 
 				rule, found := matchRules(config, kind, foundPk, name)
 				if !found {
-					logger.Debugf("no rules found, kind=%v, pk=%v, name=%v", kind, foundPk, name)
 					continue
 				}
 
@@ -210,11 +215,11 @@ func matchRules(config *Config, kind, foundPk, name string) (RuleConfig, bool) {
 	return rule, true
 }
 
-func findMetricsAttributes(pk string, attrMap pcommon.Map) bool {
-	df, s := processor.DecodeDimensionFrom(pk)
-	switch df {
-	case processor.DimensionFromAttribute:
-		v, ok := attrMap.Get(s)
+func findMetricsAttributes(pk string, attrs pcommon.Map) bool {
+	ff, s := fields.DecodeFieldFrom(pk)
+	switch ff {
+	case fields.FieldFromAttributes:
+		v, ok := attrs.Get(s)
 		if ok {
 			return v.AsString() != ""
 		}

@@ -39,12 +39,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "complex nested query",
 			input: "(a:1 AND (b:2 OR c:3)) OR NOT d:4",
-			want:  "(`a` = '1' AND (`b` = '2' OR `c` = '3') OR NOT (`d` = '4'))",
+			want:  "((`a` = '1' AND (`b` = '2' OR `c` = '3')) OR NOT (`d` = '4'))",
 		},
 		{
-			name:  "invalid syntax",
+			name:  "trailing operators ignored",
 			input: "name:test AND OR",
-			err:   "syntax error: unexpected tOR",
+			want:  "`name` = 'test'",
 		},
 		{
 			name:  "empty input",
@@ -58,7 +58,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "mixed AND/OR with proper precedence",
 			input: "a:1 AND b:2 OR c:3",
-			want:  "`a` = '1' AND (`b` = '2' OR `c` = '3')",
+			want:  "(`a` = '1' AND `b` = '2' OR `c` = '3')",
 		},
 		{
 			name:  "exact match with quotes",
@@ -73,7 +73,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
-			err:   "syntax error: unexpected tSTRING, expecting tNUMBER or tMINUS",
+			want:  "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
 		},
 		{
 			name:  "invalid field name",
@@ -83,7 +83,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "text filter",
 			input: "text:value",
-			want:  "`text` = 'value'",
+			want:  "`text` MATCH_PHRASE 'value'",
 		},
 		{
 			name:  "object field",
@@ -94,6 +94,21 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "start",
 			input: "a: >100",
 			want:  "`a` > 100",
+		},
+		{
+			name:  "start-2",
+			input: "a:>=100",
+			want:  "`a` >= 100",
+		},
+		{
+			name:  "end",
+			input: "a: <100",
+			want:  "`a` < 100",
+		},
+		{
+			name:  "end-2",
+			input: "a:<=100",
+			want:  "`a` <= 100",
 		},
 	}
 

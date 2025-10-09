@@ -152,11 +152,6 @@ func parseReportV2Configs(configs []*confengine.Config) map[string][]processor.S
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("report_v2 processor: %+v", item)
-		}
-	}
 	return ps
 }
 
@@ -231,11 +226,6 @@ func parseProcessorSubConfigs(configs []*confengine.Config) map[string][]process
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("subconfig processor: %+v", item)
-		}
-	}
 	return ps
 }
 
@@ -386,8 +376,7 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 	}
 
 	// 清理 Processor
-	for name, p := range newManager.processors {
-		logger.Infof("manager clean %s processor", name)
+	for _, p := range newManager.processors {
 		p.Clean()
 	}
 

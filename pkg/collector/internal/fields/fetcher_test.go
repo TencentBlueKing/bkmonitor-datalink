@@ -7,11 +7,9 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package processor
+package fields
 
 import (
-	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,8 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
-func TestDimensionFetcher(t *testing.T) {
-	fetcher := NewSpanDimensionFetcher()
+func TestSpanFieldFetcher(t *testing.T) {
+	fetcher := NewSpanFieldFetcher()
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
 			Attributes: map[string]string{"a1": "attr1", "a2": "attr2", "a3": "attr3"},
@@ -37,54 +35,20 @@ func TestDimensionFetcher(t *testing.T) {
 	resourceSpans := pdTraces.ResourceSpans().At(0)
 
 	assert.Equal(t, "res1", fetcher.FetchResource(resourceSpans, "r1"))
-	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, fetcher.FetchResources(resourceSpans, "r2", "r3"))
+	dst := make(map[string]string)
+	fetcher.FetchResourcesTo(resourceSpans, []string{"r2", "r3"}, dst)
+	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, dst)
 
 	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))
 		assert.Equal(t, "attr1", fetcher.FetchAttribute(span, "a1"))
 
-		dimensions := make(map[string]string)
-		fetcher.FetchAttributes(span, dimensions, "a2", "a3")
-		assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dimensions)
+		dst := make(map[string]string)
+		fetcher.FetchAttributesTo(span, []string{"a2", "a3"}, dst)
+		assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dst)
 
-		dimensions = make(map[string]string)
-		fetcher.FetchMethods(span, dimensions, "kind", "span_name", "trace_id", "span_id", "status.code", "not_exist")
-		assert.Len(t, dimensions, 6)
+		dst = make(map[string]string)
+		fetcher.FetchMethodsTo(span, []string{"kind", "span_name", "trace_id", "span_id", "status.code", "not_exist"}, dst)
+		assert.Len(t, dst, 6)
 	})
-}
-
-func TestDecodeDimensionFrom(t *testing.T) {
-	typ, s := DecodeDimensionFrom("")
-	assert.Equal(t, DimensionFromUnknown, typ)
-	assert.Equal(t, "", s)
-
-	typ, s = DecodeDimensionFrom("resource.s")
-	assert.Equal(t, DimensionFromResource, typ)
-	assert.Equal(t, "s", s)
-
-	typ, s = DecodeDimensionFrom("attributes.a")
-	assert.Equal(t, DimensionFromAttribute, typ)
-	assert.Equal(t, "a", s)
-
-	typ, s = DecodeDimensionFrom("other")
-	assert.Equal(t, DimensionFromMethod, typ)
-	assert.Equal(t, "other", s)
-}
-
-func BenchmarkFormatItoa(b *testing.B) {
-	span := ptrace.NewSpan()
-	span.SetKind(ptrace.SpanKindClient)
-
-	for i := 0; i < b.N; i++ {
-		_ = strconv.Itoa(int(span.Kind()))
-	}
-}
-
-func BenchmarkFormatSprintf(b *testing.B) {
-	span := ptrace.NewSpan()
-	span.SetKind(ptrace.SpanKindClient)
-
-	for i := 0; i < b.N; i++ {
-		_ = fmt.Sprintf("%d", span.Kind())
-	}
 }

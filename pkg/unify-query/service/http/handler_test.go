@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
@@ -523,7 +524,16 @@ func TestQueryHandler(t *testing.T) {
 			instant:  true,
 			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}],"is_partial":false}`,
 		},
+		"test promql bkdata": {
+			handler:  HandlerQueryPromQL,
+			promql:   `sum(increase({__name__=~"bkdata:.*trace.*:span_name", span_name=~"handler-query-.*"}[3h])) by (span_name)`,
+			step:     "3h",
+			expected: `{"series":[],"is_partial":false}`,
+		},
 	}
+
+	mock.Init()
+	promql.MockEngine()
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {

@@ -274,10 +274,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		SpanCount: 1,
 		GeneratorOptions: define.GeneratorOptions{
-			RandomAttributeKeys: []string{
-				processor.KeyService,
-				processor.KeyInstance,
-			},
+			RandomAttributeKeys: []string{keyService, keyInstance},
 		},
 	})
 	data := g.Generate()

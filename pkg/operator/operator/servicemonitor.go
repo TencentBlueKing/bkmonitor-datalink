@@ -11,13 +11,13 @@ package operator
 
 import (
 	"fmt"
-	"strings"
 
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
@@ -222,7 +222,7 @@ func ifRejectServiceMonitor(monitor *promv1.ServiceMonitor) bool {
 		if !rule.Validate() {
 			continue
 		}
-		if strings.ToUpper(rule.Kind) == strings.ToUpper(monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
+		if utils.LowerEq(rule.Kind, monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
 			return true
 		}
 	}

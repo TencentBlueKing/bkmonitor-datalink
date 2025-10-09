@@ -1,5 +1,5 @@
 # REQUIRE TOOLS
-# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@latest
+# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@0.5.0
 # https://github.com/incu6us/goimports-reviser => $go install github.com/incu6us/goimports-reviser/v3@v3.1.1
 # https://github.com/golangci/golangci-lint => $go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
 # https://sigs.k8s.io/controller-tools => $ go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0

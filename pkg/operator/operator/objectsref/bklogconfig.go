@@ -184,34 +184,34 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		return true
 	}
 
-	if len(e.Obj.Spec.NamespaceSelector.ExcludeNames) != 0 {
-		// 全部不匹配 true，否则为 false
+	// 全部不匹配 true，否则为 false
+	if len(e.Obj.Spec.NamespaceSelector.ExcludeNames) > 0 {
 		for _, ns := range e.Obj.Spec.NamespaceSelector.ExcludeNames {
 			if ns == namespace {
 				return false
 			}
 		}
 		return true
-	} else if len(e.Obj.Spec.NamespaceSelector.MatchNames) != 0 {
-		// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
-		// 有一个匹配上则为 true，否则直接 false
+	}
+
+	// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
+	// 有一个匹配上则为 true，否则直接 false
+	if len(e.Obj.Spec.NamespaceSelector.MatchNames) > 0 {
 		for _, ns := range e.Obj.Spec.NamespaceSelector.MatchNames {
 			if ns == namespace {
 				return true
 			}
 		}
 		return false
-	} else {
-		// 其次，使用 Namespace 配置，直接名字匹配
-		if e.Obj.Spec.Namespace != "" {
-			if e.Obj.Spec.Namespace != namespace {
-				return false
-			}
-			return true
-		}
-		// 未配置则返回 true
-		return true
 	}
+
+	// 其次，使用 Namespace 配置，直接名字匹配
+	if e.Obj.Spec.Namespace != "" {
+		return e.Obj.Spec.Namespace == namespace
+	}
+
+	// 未配置则返回 true
+	return true
 }
 
 type BkLogConfigMap struct {

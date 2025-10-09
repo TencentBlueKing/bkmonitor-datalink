@@ -638,7 +638,7 @@ func TestFormatFactory_Query(t *testing.T) {
 				iof.Parse(nil, mapping)
 			}
 
-			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldMap())
+			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldsMap())
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -679,7 +679,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":""},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "test old es version mapping",
@@ -702,7 +702,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":""},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "analyzer",
@@ -780,7 +780,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
+			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]}}`,
 		},
 	}
 
@@ -791,7 +791,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 				iof.Parse(tc.settings, mapping)
 			}
 
-			actual, _ := json.Marshal(iof.FieldMap())
+			actual, _ := json.Marshal(iof.FieldsMap())
 			assert.JSONEq(t, tc.expected, string(actual))
 		})
 	}
@@ -1455,7 +1455,7 @@ func TestFactory_Agg(t *testing.T) {
 			mock.Init()
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithFieldMap(iof.FieldMap()).
+				WithFieldMap(iof.FieldsMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
@@ -1596,7 +1596,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
-				WithFieldMap(iof.FieldMap()).
+				WithFieldMap(iof.FieldsMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()

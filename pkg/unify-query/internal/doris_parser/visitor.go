@@ -31,7 +31,7 @@ const (
 	AsItem = "AS"
 )
 
-type Encode func(string) (string, bool)
+type Encode func(string) (string, string)
 
 type Node interface {
 	antlr.ParseTreeVisitor
@@ -640,9 +640,9 @@ func (v *FieldNode) String() string {
 	result = nodeToString(v.node)
 
 	if v.isField && v.Encode != nil {
-		originField, ok := v.Encode(result)
-		if v.SetAs && ok && v.as == nil {
-			v.as = &StringNode{Name: result}
+		originField, as := v.Encode(result)
+		if v.SetAs && as != "" && v.as == nil {
+			v.as = &StringNode{Name: as}
 		}
 		result = originField
 	}

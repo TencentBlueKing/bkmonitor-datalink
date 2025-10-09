@@ -10,992 +10,616 @@
 package lucene_parser
 
 import (
-	"strconv"
+	"fmt"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-var (
-	autoFuzz     = "AUTO"
-	defaultBoost = 1.0
+const (
+	DefaultLogField = "log"
+)
+
+const (
+	logicAnd = "AND"
+	logicOR  = "OR"
 )
 
 type Encode func(string) (string, bool)
 
-type FieldSetter interface {
-	setField(string)
-}
-
 type Node interface {
 	antlr.ParseTreeVisitor
+	WithOption(opt Option) Node
+	SetField(Node)
 	Error() error
-	Expr() Expr
+	String() string
+	DSL() ([]elastic.Query, []elastic.Query, []elastic.Query)
 }
 
-type baseNode struct {
-	antlr.BaseParseTreeVisitor
+type ErrorNode struct {
+	BaseNode
+	value string
 }
 
-func (n *baseNode) String() string {
-	return ""
+func (s *ErrorNode) Error() error {
+	return errors.New(s.value)
 }
 
-func (n *baseNode) Error() error {
+type StringNode struct {
+	BaseNode
+	Value string
+
+	Boost string
+}
+
+func (n *StringNode) String() string {
+	return n.Value
+}
+
+type WildCardNode struct {
+	BaseNode
+	Value string
+}
+
+func (n *WildCardNode) String() string {
+	return n.Value
+}
+
+type RegexpNode struct {
+	BaseNode
+	Value string
+}
+
+func (n *RegexpNode) String() string {
+	return n.Value
+}
+
+type RangeNode struct {
+	BaseNode
+
+	Start          Node
+	End            Node
+	IsIncludeStart bool
+	IsIncludeEnd   bool
+}
+
+type LogicNode struct {
+	BaseNode
+
+	boost string
+
+	reverseOp bool
+	mustOp    bool
+
+	Nodes  []*ConditionNode
+	logics []string
+
+	err error
+}
+
+func (n *LogicNode) Error() error {
+	return n.err
+}
+
+func (n *LogicNode) SetField(field Node) {
+	for _, node := range n.Nodes {
+		node.SetField(field)
+	}
+}
+
+func (n *LogicNode) VisitErrorNode(ctx antlr.ErrorNode) any {
+	n.err = errors.Wrapf(n.err, "parse error at: %s", ctx.GetText())
 	return nil
 }
 
-func (n *baseNode) Expr() Expr {
-	return nil
-}
+func (n *LogicNode) String() string {
+	firstGroup := make([]string, 0)
+	shouldGroup := make([]string, 0)
+	mustGroup := make([]string, 0)
 
-type Statement struct {
-	baseNode
-
-	node Node
-	err  error
-}
-
-func NewStatementVisitor() *Statement {
-	return &Statement{}
-}
-
-func (s *Statement) Error() error {
-	return s.err
-}
-
-func (s *Statement) VisitErrorNode(ctx antlr.ErrorNode) any {
-	s.err = errors.Wrapf(s.err, "parse error at: %s", ctx.GetText())
-	return nil
-}
-
-func (s *Statement) Expr() Expr {
-	if s.node == nil {
-		return nil
-	}
-	return s.node.Expr()
-}
-
-func (s *Statement) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = s
-
-	switch ctx.(type) {
-	case *gen.QueryContext:
-		queryNode := &QueryNode{}
-		s.node = queryNode
-		next = queryNode
-	}
-
-	return visitChildren(next, ctx)
-}
-
-type QueryNode struct {
-	baseNode
-	nodes []Node
-}
-
-func (n *QueryNode) Expr() Expr {
-	if len(n.nodes) == 0 {
-		return nil
-	}
-	if len(n.nodes) == 1 {
-		return n.nodes[0].Expr()
-	}
-
-	var mustClauses []Expr
-	var mustNotClauses []Expr
-	var shouldClauses []Expr
-
-	for _, child := range n.nodes {
-		switch node := child.(type) {
-		case *OrNode:
-			childMust, childMustNot, childShould := node.splitClause()
-			mustClauses = append(mustClauses, childMust...)
-			mustNotClauses = append(mustNotClauses, childMustNot...)
-			shouldClauses = append(shouldClauses, childShould...)
-		default:
-			if expr := child.Expr(); expr != nil {
-				shouldClauses = append(shouldClauses, expr)
-			}
+	for i, c := range n.Nodes {
+		// 只有为显性的使用 AND 和 OR 才需要进行拼接
+		logic := ""
+		if i > 0 {
+			logic = n.logics[i-1]
 		}
-	}
 
-	return buildBooleanExpression(mustClauses, mustNotClauses, shouldClauses)
-}
-
-func (n *QueryNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = n
-
-	switch ctx.(type) {
-	case *gen.DisjQueryContext:
-		node := &OrNode{}
-		n.nodes = append(n.nodes, node)
-		next = node
-	}
-
-	return visitChildren(next, ctx)
-}
-
-func buildBooleanExpression(mustClauses, mustNotClauses, shouldClauses []Expr) Expr {
-	var result Expr
-	var mustExpr Expr
-	if len(mustClauses) == 1 {
-		mustExpr = mustClauses[0]
-	} else if len(mustClauses) > 1 {
-		mustExpr = mustClauses[0]
-		// 递归构建 mustExpr 子树
-		for i := 1; i < len(mustClauses); i++ {
-			mustExpr = &AndExpr{Left: mustExpr, Right: mustClauses[i]}
-		}
-	}
-
-	var mustNotExpr Expr
-	if len(mustNotClauses) > 0 {
-		for _, clause := range mustNotClauses {
-			notExpr := &NotExpr{Expr: clause}
-			if mustNotExpr == nil {
-				mustNotExpr = notExpr
-			} else {
-				mustNotExpr = &AndExpr{Left: mustNotExpr, Right: notExpr}
-			}
-		}
-	}
-
-	// 如果 must 和 should 同时存在,需要遍历 should, 构建 (must AND should1) OR (must AND should2) OR ... OR must
-	if len(shouldClauses) > 0 && mustExpr != nil {
-		var combinedExpr Expr
-		for _, shouldClause := range shouldClauses {
-			mustAndShould := &AndExpr{
-				Left:  shouldClause,
-				Right: mustExpr,
-			}
-			if combinedExpr == nil {
-				combinedExpr = mustAndShould
-			} else {
-				combinedExpr = &OrExpr{
-					Left:  combinedExpr,
-					Right: mustAndShould,
-				}
+		if logic == "" {
+			if c.mustOp || c.reverseOp {
+				firstGroup = append(firstGroup, c.String())
+				continue
 			}
 		}
 
-		if combinedExpr != nil {
-			result = &OrExpr{
-				Left:  combinedExpr,
-				Right: mustExpr,
+		if logic == logicAnd {
+			mustGroup = append(mustGroup, c.String())
+		} else {
+			shouldGroup = append(shouldGroup, c.String())
+		}
+	}
+
+	if len(firstGroup) > 0 {
+		mustGroup = append(mustGroup, firstGroup...)
+		mustString := strings.Join(mustGroup, fmt.Sprintf(" %s ", logicAnd))
+
+		orList := make([]string, 0)
+		for _, g := range shouldGroup {
+			g = fmt.Sprintf("%s %s %s", g, logicAnd, mustString)
+			orList = append(orList, g)
+		}
+		orList = append(orList, mustString)
+
+		return strings.Join(orList, fmt.Sprintf(" %s ", logicOR))
+	}
+
+	sql := strings.Builder{}
+	for i, node := range n.Nodes {
+		if i > 0 {
+			logic := n.logics[i-1]
+			if logic == "" {
+				logic = logicOR
+			}
+			sql.WriteString(fmt.Sprintf(" %s ", logic))
+		}
+		sql.WriteString(node.String())
+	}
+
+	return sql.String()
+}
+
+func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
+	allMust := make([]elastic.Query, 0)
+	allShould := make([]elastic.Query, 0)
+	allMustNot := make([]elastic.Query, 0)
+
+	for i, c := range n.Nodes {
+		q := MergeQuery(c.DSL())
+		// 只有为显性的使用 AND 和 OR 才需要进行拼接
+		logic := ""
+		if i == 0 {
+			// 第一个根据后面的来判断
+			if len(n.logics) > 0 {
+				logic = n.logics[i]
 			}
 		} else {
-			result = mustExpr
-		}
-	} else {
-		var shouldExpr Expr
-		if len(shouldClauses) == 1 {
-			shouldExpr = shouldClauses[0]
-		} else if len(shouldClauses) > 1 {
-			shouldExpr = shouldClauses[0]
-			for i := 1; i < len(shouldClauses); i++ {
-				shouldExpr = &OrExpr{Left: shouldExpr, Right: shouldClauses[i]}
-			}
+			logic = n.logics[i-1]
 		}
 
-		if mustExpr != nil {
-			result = mustExpr
+		if logic == logicAnd || (logic == "" && (n.reverseOp || n.mustOp)) {
+			allMust = append(allMust, q)
+			continue
 		}
-		if shouldExpr != nil {
-			if result != nil {
-				result = &AndExpr{Left: result, Right: shouldExpr}
-			} else {
-				result = shouldExpr
-			}
-		}
+
+		allShould = append(allShould, q)
 	}
 
-	// Add must_not constraints
-	if mustNotExpr != nil {
-		if result != nil {
-			result = &AndExpr{Left: result, Right: mustNotExpr}
-		} else {
-			result = mustNotExpr
-		}
-	}
-
-	return result
+	return filterQuery(allMust, allShould, allMustNot)
 }
 
-type OrNode struct {
-	baseNode
-	nodes []Node
-}
-
-func (n *OrNode) Expr() Expr {
-	if len(n.nodes) == 0 {
-		return nil
+func (n *LogicNode) VisitTerminal(ctx antlr.TerminalNode) any {
+	v := strings.ToUpper(ctx.GetText())
+	switch v {
+	case logicOR, logicAnd:
+		n.logics = append(n.logics, v)
+	case "&&":
+		n.logics = append(n.logics, logicAnd)
+	case "||":
+		n.logics = append(n.logics, logicOR)
 	}
 
-	var buildRight func([]Node) Expr
-	buildRight = func(nodes []Node) Expr {
-		if len(nodes) == 1 {
-			return nodes[0].Expr()
-		}
-		if len(nodes) > 1 {
-			return &OrExpr{Left: nodes[0].Expr(), Right: buildRight(nodes[1:])}
-		}
-		return nil
-	}
-	return buildRight(n.nodes)
+	return nil
 }
 
-func (n *OrNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = n
-
-	switch ctx.(type) {
-	case *gen.ConjQueryContext:
-		node := &AndNode{}
-		n.nodes = append(n.nodes, node)
-		next = node
-	}
-
-	return visitChildren(next, ctx)
-}
-
-func (n *OrNode) splitClause() (mustClauses, mustNotClauses, shouldClauses []Expr) {
-	return splitClauseHelper(n.nodes, func(child Node) []Expr {
-		if expr := child.Expr(); expr != nil {
-			return []Expr{expr}
-		}
-		return nil
-	})
-}
-
-type AndNode struct {
-	baseNode
-	nodes []Node
-}
-
-func (n *AndNode) Expr() Expr {
-	if len(n.nodes) == 0 {
-		return nil
-	}
-	if len(n.nodes) == 1 {
-		return n.nodes[0].Expr()
-	}
-
-	result := n.nodes[0].Expr()
-	for i := 1; i < len(n.nodes); i++ {
-		if expr := n.nodes[i].Expr(); expr != nil {
-			result = &AndExpr{Left: result, Right: expr}
-		}
-	}
-	return result
-}
-
-func (n *AndNode) VisitChildren(ctx antlr.RuleNode) any {
+func (n *LogicNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
 	switch ctx.(type) {
 	case *gen.ModClauseContext:
-		node := &ModClauseNode{}
-		n.nodes = append(n.nodes, node)
+		node := n.MakeInitNode(&ConditionNode{})
+		n.Nodes = append(n.Nodes, node.(*ConditionNode))
+		if len(n.logics) < len(n.Nodes)-1 {
+			n.logics = append(n.logics, "")
+		}
 		next = node
+	case *gen.ModifierContext:
+		switch strings.ToUpper(ctx.GetText()) {
+		case "NOT", "-":
+			n.reverseOp = true
+		case "+":
+			n.mustOp = true
+		}
 	}
 
-	return visitChildren(next, ctx)
+	n.Next(next, ctx)
+	return nil
 }
 
-type ModClauseNode struct {
-	baseNode
-	modifier string
-	node     Node
+type ConditionNode struct {
+	BaseNode
+
+	mustOp    bool
+	reverseOp bool
+	isQuoted  bool
+	isGroup   bool
+	fuzziness string
+
+	field Node
+	op    Node
+	value Node
 }
 
-func (n *ModClauseNode) Expr() Expr {
-	if n.node == nil {
-		return nil
+func (n *ConditionNode) likeValue(s string) string {
+	if s == "" {
+		return ""
 	}
 
-	expr := n.node.Expr()
-	if expr != nil && n.isNegative() {
-		return &NotExpr{Expr: expr}
+	charChange := func(cur, last rune) rune {
+		if last == '\\' {
+			return cur
+		}
+
+		if cur == '*' {
+			return '%'
+		}
+
+		if cur == '?' {
+			return '_'
+		}
+
+		return cur
 	}
-	return expr
+
+	var (
+		ns       []rune
+		lastChar rune
+	)
+	for _, char := range s {
+		ns = append(ns, charChange(char, lastChar))
+		lastChar = char
+	}
+
+	return string(ns)
 }
 
-func (n *ModClauseNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	text := ctx.GetText()
-	if text != "" {
-		n.modifier = text
+func (n *ConditionNode) SetField(field Node) {
+	if field != nil {
+		n.field = field
+	}
+}
+
+func (n *ConditionNode) String() string {
+	// 如果是分组则，直接返回 value
+	if n.isGroup {
+		if n.value != nil {
+			if n.field != nil {
+				n.value.SetField(n.field)
+			}
+			sql := n.value.String()
+			return fmt.Sprintf("(%s)", sql)
+		}
+	}
+
+	// 根据类型重写操作符
+	var (
+		field string
+		op    string
+		value string
+	)
+
+	if n.field != nil {
+		field = n.field.String()
+	}
+	if field == "" {
+		field = DefaultLogField
+	}
+
+	var fieldOption metadata.FieldOption
+	if n.Option.FieldsMap != nil {
+		fieldOption = n.Option.FieldsMap.Field(field)
+	}
+
+	if n.op != nil {
+		op = n.op.String()
+	}
+	if op == "" {
+		op = "="
+	}
+
+	// 别名替换
+	if nf, ok := n.Option.reverseFieldAlias[field]; ok {
+		field = nf
+	}
+
+	// 外部注入字段转换函数
+	if n.Option.FieldEncodeFunc != nil {
+		field = n.Option.FieldEncodeFunc(field)
+	}
+
+	switch v := n.value.(type) {
+	case *RangeNode:
+		s := make([]string, 0)
+		if v.Start != nil {
+			o := ">"
+			if v.IsIncludeStart {
+				o += "="
+			}
+
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.String()))
+		}
+		if v.End != nil {
+			o := "<"
+			if v.IsIncludeEnd {
+				o += "="
+			}
+
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.String()))
+		}
+		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
+	case *WildCardNode:
+		op = "LIKE"
+	case *RegexpNode:
+		op = "REGEXP"
+	case *StringNode:
+		if op == "" {
+			op = "="
+		}
+	}
+
+	if n.value != nil {
+		value = n.value.String()
+	}
+	if n.isQuoted {
+		value = strings.ReplaceAll(value, `\`, ``)
+		value = strings.Trim(value, `"`)
+	}
+
+	switch op {
+	case "=":
+		if fieldOption.IsAnalyzed {
+			if n.reverseOp {
+				op = "NOT MATCH_PHRASE"
+			} else {
+				op = "MATCH_PHRASE"
+			}
+		} else {
+			if n.reverseOp {
+				op = "!="
+			}
+		}
+	case "LIKE":
+		if n.reverseOp {
+			op = "NOT LIKE"
+		}
+		value = n.likeValue(value)
+	}
+
+	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
+	var result elastic.Query
+	defer func() {
+		if n.reverseOp {
+			allMustNot = append(allMustNot, result)
+		} else {
+			allMust = append(allMust, result)
+		}
+	}()
+
+	if n.isGroup {
+		if n.value != nil {
+			if n.field != nil {
+				n.value.SetField(n.field)
+			}
+
+			must, should, mustNot := n.value.DSL()
+			if b, ok := n.value.(*LogicNode); ok {
+				if b.boost != "" {
+					result = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...).Boost(cast.ToFloat64(b.boost))
+				} else {
+					result = MergeQuery(must, should, mustNot)
+				}
+			}
+			return allMust, allShould, allMustNot
+		}
+	}
+
+	// 根据类型重写操作符
+	var (
+		field string
+		op    string
+		value string
+	)
+
+	if n.value != nil {
+		value = n.value.String()
+	}
+
+	if n.field != nil {
+		field = n.field.String()
+	}
+
+	if field == "" {
+		var boost string
+		switch v := n.value.(type) {
+		case *RegexpNode:
+			value = fmt.Sprintf(`/%s/`, value)
+		case *StringNode:
+			boost = v.Boost
+		}
+
+		if n.fuzziness != "" {
+			value = fmt.Sprintf("%s~", value)
+			if n.fuzziness != "AUTO" {
+				fuzziness := cast.ToFloat64(n.fuzziness)
+				value = fmt.Sprintf("%s%v", value, fuzziness)
+			}
+		}
+		cq := elastic.NewQueryStringQuery(value).
+			AnalyzeWildcard(true).
+			Field("*").
+			Field("__*").
+			Lenient(true)
+		if boost != "" {
+			cq.Boost(cast.ToFloat64(boost))
+		}
+		result = cq
+		return allMust, allShould, allMustNot
+	}
+
+	if n.isQuoted {
+		value = strings.ReplaceAll(value, `\`, ``)
+		value = strings.Trim(value, `"`)
+	}
+
+	// 别名替换
+	if nf, ok := n.Option.reverseFieldAlias[field]; ok {
+		field = nf
+	}
+
+	var fieldOption metadata.FieldOption
+	if n.Option.FieldsMap != nil {
+		fieldOption = n.Option.FieldsMap.Field(field)
+	}
+
+	if n.op != nil {
+		op = n.op.String()
+	}
+	if op == "" {
+		op = "="
+	}
+	if n.Option.FieldEncodeFunc != nil {
+		field = n.Option.FieldEncodeFunc(field)
+	}
+
+	switch cv := n.value.(type) {
+	case *RangeNode:
+		cq := elastic.NewRangeQuery(field)
+		if cv.Start != nil {
+			cq.From(realValue(cv.Start))
+		}
+		cq.IncludeLower(cv.IsIncludeStart)
+
+		if cv.End != nil {
+			cq.To(realValue(cv.End))
+		}
+		cq.IncludeUpper(cv.IsIncludeEnd)
+		result = cq
+	case *WildCardNode:
+		cq := elastic.NewWildcardQuery(field, value)
+		result = cq
+	case *RegexpNode:
+		cq := elastic.NewRegexpQuery(field, value)
+		result = cq
+	case *StringNode:
+		switch op {
+		case ">":
+			result = elastic.NewRangeQuery(field).Gt(realValue(n.value))
+		case ">=":
+			result = elastic.NewRangeQuery(field).Gte(realValue(n.value))
+		case "<":
+			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
+		case "<=":
+			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+		default:
+			if n.fuzziness != "" {
+				result = elastic.NewFuzzyQuery(field, value).Fuzziness(n.fuzziness)
+				break
+			}
+
+			if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
+		}
+	}
+
+	originField := n.Option.FieldsMap.Field(strings.Split(field, ".")[0])
+	if strings.ToUpper(originField.FieldType) == "NESTED" {
+		result = elastic.NewNestedQuery(fieldOption.OriginField, result)
+	}
+
+	return allMust, allShould, allMustNot
+}
+
+func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {
+	switch ctx.GetText() {
+	case ">", "<", ">=", "<=":
+		n.op = n.MakeInitNode(&StringNode{
+			Value: ctx.GetText(),
+		})
+	default:
+		if n.op != nil {
+			n.value = n.MakeInitNode(&StringNode{
+				Value: ctx.GetText(),
+			})
+		}
 	}
 	return nil
 }
 
-func (n *ModClauseNode) VisitChildren(ctx antlr.RuleNode) any {
+func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = n
 
 	switch ctx.(type) {
-	case *gen.ClauseContext:
-		n.node = &ClauseNode{}
-		next = n.node
-	}
-
-	return visitChildren(next, ctx)
-}
-
-// hasModifier returns true if this node has a modifier (+, -, NOT)
-func (n *ModClauseNode) hasModifier() bool {
-	return n.modifier != ""
-}
-
-// isPositive returns true if this node has a positive modifier (+)
-func (n *ModClauseNode) isPositive() bool {
-	return n.modifier == "+"
-}
-
-// isNegative returns true if this node has a negative modifier (-, NOT)
-func (n *ModClauseNode) isNegative() bool {
-	return n.modifier == "-" || strings.ToUpper(n.modifier) == "NOT"
-}
-
-type ClauseNode struct {
-	baseNode
-	field string // field name from fieldName context
-	node  Node   // the term or grouping expression
-}
-
-func (n *ClauseNode) Expr() Expr {
-	if n.node == nil {
-		return nil
-	}
-
-	if n.field != "" {
-		switch child := n.node.(type) {
-		case *GroupNode:
-			child.field = n.field
-			return child.Expr()
+	case *gen.GroupingExprContext:
+		// checkBoost
+		logicNode := &LogicNode{}
+		termNode := parseTerm(ctx.GetText())
+		if v, ok := termNode.(*StringNode); ok {
+			logicNode.boost = v.Boost
 		}
-	}
-
-	expr := n.node.Expr()
-	if expr != nil && n.field != "" {
-		switch fieldSetter := expr.(type) {
-		case FieldSetter:
-			fieldSetter.setField(n.field)
+		node := n.MakeInitNode(logicNode)
+		n.isGroup = true
+		n.value = node
+		next = node
+	case *gen.QuotedTermContext:
+		n.isQuoted = true
+	case *gen.ModifierContext:
+		switch strings.ToUpper(ctx.GetText()) {
+		case "NOT", "-":
+			n.reverseOp = true
+		case "+":
+			n.mustOp = true
 		}
-	}
-
-	return expr
-}
-
-func (n *ClauseNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = n
-
-	switch ctx.(type) {
-	case *gen.FieldRangeExprContext:
-		n.node = &RangeNode{}
-		next = n.node
 	case *gen.FieldNameContext:
 		// Store the field name for this node
-		n.field = ctx.GetText()
+		n.field = n.MakeInitNode(&StringNode{
+			Value: ctx.GetText(),
+		})
+	case *gen.FuzzyContext:
+		s := ctx.GetText()
+		if s != "" {
+			n.fuzziness = s[1:]
+			if n.fuzziness == "" {
+				n.fuzziness = "AUTO"
+			}
+		}
 	case *gen.TermContext:
-		// Check if this term context contains a range expression
-		termText := ctx.GetText()
-		if strings.Contains(termText, "TO") {
-			// This is a range expression, create a RangeNode instead
-			n.node = &RangeNode{
-				field: n.field,
-			}
-			next = n.node
-		} else {
-			n.node = &TermNode{}
-			next = n.node
+		node := parseTerm(ctx.GetText())
+		n.value = n.MakeInitNode(node)
+		if n.Option.AddLabels != nil {
+			addLabels(n, n.Option.AddLabels)
 		}
-	case *gen.GroupingExprContext:
-		n.node = &GroupNode{}
-		next = n.node
 	}
 
-	return visitChildren(next, ctx)
-}
-
-type TermNode struct {
-	baseNode
-	field      string
-	value      string
-	isQuoted   bool
-	isRegex    bool
-	isWildcard bool
-	boost      float64
-	fuzziness  string
-	slop       int
-	// 因为整个遍历是从左到右的, 所以需要一些状态标记来表示当前是否在期待某个值
-	// 例如: status:200^2.0 先解析到 status:200, 然后遇到 ^, 这时就需要标记 expectingBoost = true 之后遇到数字时就知道这是 boost 的值
-	expectingFuzziness bool
-	expectingSlop      bool
-	expectingBoost     bool
-}
-
-func (n *TermNode) Expr() Expr {
-	var expr *OperatorExpr
-	var opType OpType
-
-	if n.fuzziness != "" {
-		opType = OpFuzzy
-	} else if n.isRegex {
-		opType = OpRegex
-	} else if n.isWildcard {
-		opType = OpWildcard
-	} else {
-		opType = OpMatch
-	}
-
-	var value Expr
-	if opType == OpRegex {
-		regexValue := strings.Trim(n.value, "/")
-		value = &StringExpr{Value: regexValue}
-	} else {
-		value = n.createValueExpr()
-	}
-
-	expr = &OperatorExpr{
-		Op:        opType,
-		Value:     value,
-		IsQuoted:  n.isQuoted,
-		Boost:     n.boost,
-		Fuzziness: n.fuzziness,
-		Slop:      n.slop,
-	}
-
-	if n.field != "" {
-		expr.setField(n.field)
-	}
-
-	return expr
-}
-
-func (n *TermNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = n
-
-	switch c := ctx.(type) {
-	case *gen.QuotedTermContext:
-		if quotedNode := c.QUOTED(); quotedNode != nil {
-			quotedText := quotedNode.GetText()
-			cleanValue, isWildcard, isQuoted := parseAndClassifyString(quotedText)
-			n.value = cleanValue
-			n.isWildcard = isWildcard
-			n.isQuoted = isQuoted
-		}
-		if c.CARAT() != nil && c.NUMBER() != nil {
-			if boostVal, err := strconv.ParseFloat(c.NUMBER().GetText(), 64); err == nil {
-				n.boost = boostVal
-			}
-		}
-		return nil
-	}
-
-	return visitChildren(next, ctx)
-}
-
-func (n *TermNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	text := ctx.GetText()
-	tokenType := ctx.GetSymbol().GetTokenType()
-
-	switch tokenType {
-	case gen.LuceneLexerOP_COLON, gen.LuceneLexerOP_EQUAL:
-		// Skip operators
-		return nil
-	case gen.LuceneLexerTERM:
-		// Apply escape processing
-		unescapedText := unescapeString(text)
-
-		// Check if this is a wildcard term (after unescaping)
-		if strings.Contains(unescapedText, "*") || strings.Contains(unescapedText, "?") {
-			n.isWildcard = true
-		}
-		// Determine if this is field or node based on context
-		if n.field == "" && n.value == "" {
-			n.value = unescapedText
-		} else if n.field == "" && n.value != "" {
-			n.field = n.value
-			n.value = unescapedText
-		} else if n.value == "" {
-			n.value = unescapedText
-		}
-		return nil
-	case gen.LuceneLexerQUOTED:
-		n.isQuoted = true
-		n.value = removeQuotesAndUnescape(text)
-		return nil
-	case gen.LuceneLexerREGEXPTERM:
-		n.isRegex = true
-		n.value = text
-		return nil
-	case gen.LuceneLexerNUMBER:
-		// 检查是否是紧跟在 ~ 或 ^ 后面的数字
-		if n.expectingFuzziness {
-			n.fuzziness = text
-			// 恢复默认值
-			n.expectingFuzziness = false
-		} else if n.expectingSlop {
-			if slopVal, err := strconv.Atoi(text); err == nil {
-				n.slop = slopVal
-			}
-			n.expectingSlop = false
-		} else if n.expectingBoost {
-			if boostVal, err := strconv.ParseFloat(text, 64); err == nil {
-				n.boost = boostVal
-			}
-			n.expectingBoost = false
-		} else {
-			n.value = text
-		}
-		return nil
-	case gen.LuceneLexerTILDE:
-		// Tilde是模糊匹配或邻近搜索的开始标记(~)
-		// Lucene中的 ~ 既可以表示模糊匹配(Fuzzy Search) 也可以表示邻近搜索(Proximity Search)
-		if n.isQuoted {
-			// 例如: "quick fox"~5 表示邻近搜索
-			n.expectingSlop = true
-		} else {
-			// 例如: quick~2 或 roam~ 表示模糊搜索
-			n.expectingFuzziness = true
-			n.fuzziness = autoFuzz
-		}
-		return nil
-	case gen.LuceneLexerCARAT:
-		// Carat是权重提升的开始标记(^)
-		n.expectingBoost = true
-		n.boost = defaultBoost
-		return nil
-	}
+	n.Next(next, ctx)
 	return nil
-}
-
-type RangeNode struct {
-	baseNode
-	field        string
-	start        *string
-	end          *string
-	includeStart bool
-	includeEnd   bool
-	op           string // For comparison operators like >, <, >=, <=
-	value        string // For comparison values
-}
-
-func (n *RangeNode) Expr() Expr {
-	if n.op != "" {
-		// Handle comparison operators
-		var rangeExpr *RangeExpr
-		switch n.op {
-		case ">":
-			rangeExpr = &RangeExpr{
-				Start:        n.createValueExpr(n.value),
-				IncludeStart: &BoolExpr{Value: false},
-			}
-		case "<":
-			rangeExpr = &RangeExpr{
-				End:        n.createValueExpr(n.value),
-				IncludeEnd: &BoolExpr{Value: false},
-			}
-		case ">=":
-			rangeExpr = &RangeExpr{
-				Start:        n.createValueExpr(n.value),
-				IncludeStart: &BoolExpr{Value: true},
-			}
-		case "<=":
-			rangeExpr = &RangeExpr{
-				End:        n.createValueExpr(n.value),
-				IncludeEnd: &BoolExpr{Value: true},
-			}
-		}
-
-		expr := &OperatorExpr{
-			Op:    OpRange,
-			Value: rangeExpr,
-		}
-		if n.field != "" {
-			expr.setField(n.field)
-		}
-		return expr
-	}
-
-	// Handle range expressions
-	startPtr := n.start
-	endPtr := n.end
-
-	if startPtr == nil {
-		wildcard := "*"
-		startPtr = &wildcard
-	}
-	if endPtr == nil {
-		wildcard := "*"
-		endPtr = &wildcard
-	}
-
-	rangeExpr := &RangeExpr{
-		Start:        n.createValueExpr(*startPtr),
-		End:          n.createValueExpr(*endPtr),
-		IncludeStart: &BoolExpr{Value: n.includeStart},
-		IncludeEnd:   &BoolExpr{Value: n.includeEnd},
-	}
-
-	expr := &OperatorExpr{
-		Op:    OpRange,
-		Value: rangeExpr,
-	}
-	if n.field != "" {
-		expr.setField(n.field)
-	}
-	return expr
-}
-
-func (n *RangeNode) VisitChildren(ctx antlr.RuleNode) any {
-	switch c := ctx.(type) {
-	case *gen.FieldNameContext:
-		n.field = c.GetText()
-		return nil
-	}
-
-	return visitChildren(n, ctx)
-}
-
-func (n *RangeNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	text := ctx.GetText()
-	tokenType := ctx.GetSymbol().GetTokenType()
-
-	switch tokenType {
-	case gen.LuceneLexerOP_MORETHAN, gen.LuceneLexerOP_LESSTHAN,
-		gen.LuceneLexerOP_MORETHANEQ, gen.LuceneLexerOP_LESSTHANEQ:
-		n.op = text
-		return nil
-	case gen.LuceneLexerRANGEIN_START:
-		n.includeStart = true
-		return nil
-	case gen.LuceneLexerRANGEEX_START:
-		n.includeStart = false
-		return nil
-	case gen.LuceneLexerRANGEIN_END:
-		n.includeEnd = true
-		return nil
-	case gen.LuceneLexerRANGEEX_END:
-		n.includeEnd = false
-		return nil
-	case gen.LuceneLexerRANGE_GOOP, gen.LuceneLexerRANGE_QUOTED, gen.LuceneLexerTERM, gen.LuceneLexerQUOTED, gen.LuceneLexerNUMBER:
-		cleanValue := n.cleanRangeValue(text, tokenType)
-		n.setRangeValue(cleanValue)
-		return nil
-	}
-	return nil
-}
-
-type GroupNode struct {
-	baseNode
-	node           Node
-	field          string  // Set when this is a field:(grouped expression)
-	boost          float64 // 权重提升
-	expectingBoost bool    // 临时状态标记
-}
-
-func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node
-	next = n
-
-	switch ctx.(type) {
-	case *gen.QueryContext:
-		queryNode := &QueryNode{}
-		n.node = queryNode
-		next = queryNode
-	}
-
-	return visitChildren(next, ctx)
-}
-
-func (n *GroupNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	text := ctx.GetText()
-	tokenType := ctx.GetSymbol().GetTokenType()
-
-	switch tokenType {
-	case gen.LuceneLexerCARAT:
-		// 权重提升的开始标记
-		n.expectingBoost = true
-		n.boost = 1.0 // 默认值
-		return nil
-	case gen.LuceneLexerNUMBER:
-		if n.expectingBoost {
-			if boostVal, err := strconv.ParseFloat(text, 64); err == nil {
-				n.boost = boostVal
-			}
-			n.expectingBoost = false
-		}
-		return nil
-	}
-	return nil
-}
-
-func (n *GroupNode) Expr() Expr {
-	if n.node == nil {
-		return nil
-	}
-
-	// Try the ConditionExpr optimization in one pass
-	if n.field != "" {
-		if conditionExpr, ok := n.buildConditionExpr(n.node); ok {
-			return &ConditionMatchExpr{
-				Field: &StringExpr{Value: n.field},
-				Value: conditionExpr,
-			}
-		}
-	}
-
-	innerExpr := n.node.Expr()
-	if innerExpr == nil {
-		return nil
-	}
-
-	// Always create GroupingExpr to represent parentheses structure
-	expr := &GroupingExpr{
-		Expr:  innerExpr,
-		Boost: n.boost,
-	}
-
-	// Apply field to the inner expression if needed
-	if n.field != "" {
-		if fieldSetter, ok := innerExpr.(FieldSetter); ok {
-			fieldSetter.setField(n.field)
-		}
-	}
-
-	return expr
-}
-
-// buildConditionExpr recursively builds a ConditionExpr and reports success
-func (n *GroupNode) buildConditionExpr(node Node) (*ConditionsExpr, bool) {
-	var result [][]Expr
-	switch v := node.(type) {
-	case *QueryNode:
-		if len(v.nodes) == 1 {
-			return n.buildConditionExpr(v.nodes[0])
-		}
-		// Multiple nodes in QueryNode means OR at top level
-		for _, child := range v.nodes {
-			if childCondition, ok := n.buildConditionExpr(child); ok {
-				if childCondition != nil {
-					result = append(result, childCondition.Values...)
-				}
-			} else {
-				// If any child fails, the whole group fails
-				return nil, false
-			}
-		}
-		return &ConditionsExpr{Values: result}, true
-
-	case *OrNode:
-		// OR node - combine all values as separate arrays
-		for _, child := range v.nodes {
-			if childCondition, ok := n.buildConditionExpr(child); ok {
-				if childCondition != nil {
-					result = append(result, childCondition.Values...)
-				}
-			} else {
-				return nil, false
-			}
-		}
-		return &ConditionsExpr{Values: result}, true
-
-	case *AndNode:
-		// AND node - cartesian product of all node values
-		for _, child := range v.nodes {
-			if childCondition, ok := n.buildConditionExpr(child); ok {
-				if childCondition != nil {
-					if len(result) == 0 {
-						result = childCondition.Values
-					} else {
-						var newResult [][]Expr
-						for _, existing := range result {
-							for _, newValues := range childCondition.Values {
-								combined := make([]Expr, 0, len(existing)+len(newValues))
-								combined = append(combined, existing...)
-								combined = append(combined, newValues...)
-								newResult = append(newResult, combined)
-							}
-						}
-						result = newResult
-					}
-				}
-			} else {
-				return nil, false
-			}
-		}
-		return &ConditionsExpr{Values: result}, true
-
-	case *ModClauseNode:
-		if v.node != nil && v.modifier == "" {
-			return n.buildConditionExpr(v.node)
-		}
-
-	case *ClauseNode:
-		if v.node != nil && v.field == "" {
-			return n.buildConditionExpr(v.node)
-		}
-
-	case *GroupNode:
-		if v.node != nil {
-			return n.buildConditionExpr(v.node)
-		}
-
-	case *TermNode:
-		if v.isQuoted {
-			cleanValue := strings.Trim(v.value, `"'`)
-			return &ConditionsExpr{
-				Values: [][]Expr{{&StringExpr{Value: cleanValue}}},
-			}, true
-		}
-	}
-
-	return nil, false
-}
-
-func splitClauseHelper(nodes []Node, defaultHandler func(Node) []Expr) (mustClauses, mustNotClauses, shouldClauses []Expr) {
-	for _, child := range nodes {
-		switch node := child.(type) {
-		case interface {
-			splitClause() ([]Expr, []Expr, []Expr)
-		}:
-			childMust, childMustNot, childShould := node.splitClause()
-			mustClauses = append(mustClauses, childMust...)
-			mustNotClauses = append(mustNotClauses, childMustNot...)
-			shouldClauses = append(shouldClauses, childShould...)
-		case *ModClauseNode:
-			if node.hasModifier() {
-				if expr := node.node.Expr(); expr != nil {
-					if node.isPositive() {
-						mustClauses = append(mustClauses, expr)
-					} else if node.isNegative() {
-						mustNotClauses = append(mustNotClauses, expr)
-					}
-				}
-			} else if defaultHandler != nil {
-				if exprs := defaultHandler(child); exprs != nil {
-					shouldClauses = append(shouldClauses, exprs...)
-				}
-			}
-		default:
-			if defaultHandler != nil {
-				if exprs := defaultHandler(child); exprs != nil {
-					shouldClauses = append(shouldClauses, exprs...)
-				}
-			}
-		}
-	}
-	return mustClauses, mustNotClauses, shouldClauses
-}
-
-func visitChildren(next Node, node antlr.RuleNode) any {
-	for _, child := range node.GetChildren() {
-		switch tree := child.(type) {
-		case antlr.ParseTree:
-			// log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
-			tree.Accept(next)
-			// log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
-		}
-	}
-	return nil
-}
-
-func looksLikeDate(s string) bool {
-	if s == "*" {
-		return false
-	}
-	return strings.Contains(s, "-") || strings.Contains(s, "T") || strings.Contains(s, ":")
-}
-
-func unescapeString(s string) string {
-	if s == "" {
-		return s
-	}
-
-	result := make([]rune, 0, len(s))
-	runes := []rune(s)
-
-	for i := 0; i < len(runes); i++ {
-		if runes[i] == '\\' && i+1 < len(runes) {
-			i++
-			result = append(result, runes[i])
-		} else {
-			result = append(result, runes[i])
-		}
-	}
-
-	return string(result)
-}
-
-func (n *RangeNode) cleanRangeValue(text string, tokenType int) string {
-	if tokenType == gen.LuceneLexerRANGE_QUOTED || tokenType == gen.LuceneLexerQUOTED {
-		return removeQuotesAndUnescape(text)
-	}
-	return unescapeString(text)
-}
-
-func (n *RangeNode) setRangeValue(cleanValue string) {
-	if n.op != "" {
-		n.value = cleanValue
-	} else {
-		if n.start == nil {
-			n.start = &cleanValue
-		} else if n.end == nil {
-			n.end = &cleanValue
-		}
-	}
-}
-
-func removeQuotesAndUnescape(text string) string {
-	if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
-		return unescapeString(text[1 : len(text)-1])
-	}
-	return unescapeString(text)
-}
-
-func parseAndClassifyString(text string) (value string, isWildcard bool, isQuoted bool) {
-	value = removeQuotesAndUnescape(text)
-
-	if strings.Contains(value, "*") || strings.Contains(value, "?") {
-		isWildcard = true
-	} else {
-		isQuoted = true
-	}
-	return value, isWildcard, isQuoted
-}
-
-// createValueExpr creates a NumberExpr for numeric values, StringExpr otherwise
-func (n *RangeNode) createValueExpr(value string) Expr {
-	if value == "*" {
-		return &StringExpr{Value: value}
-	}
-
-	// Try to parse as number
-	if numValue, err := strconv.ParseFloat(value, 64); err == nil {
-		return &NumberExpr{Value: numValue}
-	}
-
-	// If not a number, treat as string
-	return &StringExpr{Value: value}
-}
-
-// createValueExpr creates appropriate Expr based on value type
-func (n *TermNode) createValueExpr() Expr {
-	// Try to parse as number regardless of whether it's quoted
-	if numValue, err := strconv.ParseFloat(n.value, 64); err == nil {
-		return &NumberExpr{Value: numValue}
-	}
-
-	// If not a number, treat as string
-	return &StringExpr{Value: n.value}
 }

@@ -112,7 +112,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -134,7 +134,7 @@ func (f *QueryFactory) DescribeTableSQL() string {
 	return f.expr.DescribeTableSQL(f.Table())
 }
 
-func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
+func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
 }
 
@@ -148,7 +148,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
@@ -389,13 +389,13 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 	// QueryString to sql
 	if f.query.QueryString != "" && f.query.QueryString != "*" {
-		qs, err := f.expr.ParserQueryString(f.query.QueryString)
+		qs, err := f.expr.ParserQueryString(f.ctx, f.query.QueryString)
 		if err != nil {
 			return "", err
 		}
 
 		if qs != "" {
-			s = append(s, qs)
+			s = append(s, fmt.Sprintf("(%s)", qs))
 		}
 	}
 

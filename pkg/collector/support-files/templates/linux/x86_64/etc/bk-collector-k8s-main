@@ -337,7 +337,7 @@
           tars:
             {{- if .Values.exporter.converter.tars }}
             drop_original_services:
-            {{- range .Values.exporter.converter.tars.drop_original_services }}
+            {{- range .Values.exporter.converter.tars.dropOriginalServices }}
               - {{ . }}
             {{- end }}
             {{- end }}

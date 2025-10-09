@@ -194,9 +194,7 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.Field
 		}
 
 		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
-			if fieldAnalyzed == "true" {
-				opt.IsAnalyzed = true
-			}
+			opt.IsAnalyzed = fieldAnalyzed == "true"
 		}
 
 		fieldsMap[k] = opt

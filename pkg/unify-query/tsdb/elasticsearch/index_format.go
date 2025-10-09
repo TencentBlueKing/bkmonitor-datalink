@@ -141,9 +141,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 		fieldMap.IsAgg = v
 	}
 
-	if fieldMap.FieldType == Text {
-		fieldMap.IsAnalyzed = true
-	}
+	fieldMap.IsAnalyzed = fieldMap.FieldType == Text
 
 	if v, ok := data["normalizer"].(bool); ok {
 		fieldMap.IsCaseSensitive = v

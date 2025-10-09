@@ -590,7 +590,7 @@ func HandlerFieldMap(c *gin.Context) {
 	var (
 		wg      sync.WaitGroup
 		lock    sync.Mutex
-		dataMap = make(map[string]map[string]any)
+		dataMap = make(metadata.FieldsMap)
 		keys    []string
 	)
 
@@ -637,9 +637,9 @@ func HandlerFieldMap(c *gin.Context) {
 
 	span.Set("keys", keys)
 
-	data := make([]map[string]any, 0, len(dataMap))
+	data := make([]metadata.FieldOption, 0, len(dataMap))
 	for _, k := range keys {
-		if v, ok := dataMap[k]; ok && v != nil {
+		if v, ok := dataMap[k]; ok && v.FieldType != "" {
 			data = append(data, dataMap[k])
 		}
 	}

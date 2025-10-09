@@ -161,7 +161,7 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 }
 
 // fieldMap 获取es索引的字段映射
-func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]map[string]any, error) {
+func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, error) {
 	if len(aliases) == 0 {
 		return nil, fmt.Errorf("query indexes is empty")
 	}
@@ -215,7 +215,7 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
-		return iof.FieldMap(), nil
+		return iof.FieldsMap(), nil
 	}
 
 	span.Set("mapping-length", len(mappings))
@@ -235,8 +235,8 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 		}
 	}
 
-	span.Set("field-map-length", len(iof.FieldMap()))
-	return iof.FieldMap(), nil
+	span.Set("field-map-length", len(iof.FieldsMap()))
+	return iof.FieldsMap(), nil
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
@@ -267,12 +267,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		result, err := fact.luceneParser.Parse(qb.QueryString, qb.IsPrefix)
+		q, err := fact.ParserQueryString(ctx, qb.QueryString)
 		if err != nil {
 			return nil, err
 		}
-		if result.ES != nil {
-			filterQueries = append(filterQueries, result.ES)
+		if q != nil {
+			filterQueries = append(filterQueries, q)
 		}
 	}
 
@@ -495,7 +495,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
@@ -583,15 +583,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}
 
-	queryLabelMaps, queryLabelErr := query.LabelMap()
-	if queryLabelErr != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("Elasticsearch").
-			WithOperation("查询标签映射").
-			WithError(queryLabelErr).
-			WithSolution("检查标签字段配置")
-		log.WarnWithCodef(ctx, codedErr)
-	}
+	labelMap := function.LabelMap(ctx, query)
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
@@ -604,7 +596,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s
-			if alias, ok := reverseAlias[ns]; ok {
+			if alias, ok := reverseAlias[s]; ok {
 				ns = alias
 			}
 
@@ -615,13 +607,14 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			return ns
 		}, func(s string) string {
 			ns := s
+
 			// 格式转换
 			if decodeFunc != nil {
 				ns = decodeFunc(ns)
 			}
 
 			// 别名替换
-			if alias, ok := query.FieldAlias[ns]; ok {
+			if alias, ok := query.FieldAlias[s]; ok {
 				ns = alias
 			}
 			return ns
@@ -631,7 +624,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 		WithFieldMap(fieldMap).
 		WithOrders(query.Orders).
-		WithIncludeValues(queryLabelMaps)
+		WithIncludeValues(labelMap)
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
@@ -791,15 +784,7 @@ func (i *Instance) QuerySeriesSet(
 		size = i.maxSize
 	}
 
-	queryLabelMap, queryLabelErr := query.LabelMap()
-	if queryLabelErr != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("Elasticsearch").
-			WithOperation("查询标签映射(标签值)").
-			WithError(queryLabelErr).
-			WithSolution("检查标签字段配置")
-		log.WarnWithCodef(ctx, codedErr)
-	}
+	labelMap := function.LabelMap(ctx, query)
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
@@ -836,7 +821,7 @@ func (i *Instance) QuerySeriesSet(
 			return ns
 		},
 		).
-		WithIncludeValues(queryLabelMap).
+		WithIncludeValues(labelMap).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 		WithFieldMap(fieldMap).

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package query
 
 import (
 	"context"
@@ -16,20 +16,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestVmExpand(t *testing.T) {
-	ctx := InitHashID(context.Background())
+	ctx := metadata.InitHashID(context.Background())
 
 	for name, c := range map[string]struct {
-		queryRef QueryReference
-		vmExpand *VmExpand
+		queryRef metadata.QueryReference
+		VmExpand *metadata.VmExpand
 	}{
 		"default-1": {
-			queryRef: QueryReference{
+			queryRef: metadata.QueryReference{
 				"a": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -47,7 +49,7 @@ func TestVmExpand(t *testing.T) {
 				},
 				"b": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -64,7 +66,7 @@ func TestVmExpand(t *testing.T) {
 					},
 				},
 			},
-			vmExpand: &VmExpand{
+			VmExpand: &metadata.VmExpand{
 				MetricFilterCondition: map[string]string{
 					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table" or __name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_1"`,
 					"b": `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table" or __name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
@@ -76,10 +78,10 @@ func TestVmExpand(t *testing.T) {
 			},
 		},
 		"default-2": {
-			queryRef: QueryReference{
+			queryRef: metadata.QueryReference{
 				"a": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -91,7 +93,7 @@ func TestVmExpand(t *testing.T) {
 				},
 				"b": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -108,7 +110,7 @@ func TestVmExpand(t *testing.T) {
 					},
 				},
 			},
-			vmExpand: &VmExpand{
+			VmExpand: &metadata.VmExpand{
 				MetricFilterCondition: map[string]string{
 					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
 					"b": `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
@@ -119,10 +121,10 @@ func TestVmExpand(t *testing.T) {
 			},
 		},
 		"default-3": {
-			queryRef: QueryReference{
+			queryRef: metadata.QueryReference{
 				"a": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -132,7 +134,7 @@ func TestVmExpand(t *testing.T) {
 						},
 					},
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table_2",
@@ -144,7 +146,7 @@ func TestVmExpand(t *testing.T) {
 				},
 				"b": {
 					{
-						QueryList: []*Query{
+						QueryList: []*metadata.Query{
 							{
 								TableID:     "result_table.vm",
 								VmRt:        "vm_result_table",
@@ -161,7 +163,7 @@ func TestVmExpand(t *testing.T) {
 					},
 				},
 			},
-			vmExpand: &VmExpand{
+			VmExpand: &metadata.VmExpand{
 				MetricFilterCondition: map[string]string{
 					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
 					"b": `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table" or __name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
@@ -174,18 +176,18 @@ func TestVmExpand(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx = InitHashID(ctx)
-			vmExpand := c.queryRef.ToVmExpand(ctx)
+			ctx = metadata.InitHashID(ctx)
+			VmExpand := ToVmExpand(ctx, c.queryRef)
 
 			//
-			for k, v := range vmExpand.MetricFilterCondition {
+			for k, v := range VmExpand.MetricFilterCondition {
 				or := " or "
 				arr := strings.Split(v, or)
 				sort.Strings(arr)
-				vmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
+				VmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
 			}
 
-			assert.Equal(t, c.vmExpand, vmExpand)
+			assert.Equal(t, c.VmExpand, VmExpand)
 		})
 	}
 }

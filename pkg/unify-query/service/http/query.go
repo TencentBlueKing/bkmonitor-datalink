@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -254,7 +255,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-list-num", queryRef.Count())
 		span.Set("result-data-num", len(data))
 
-		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
+		query.SortSliceListWithTime(data, queryTs.OrderBy.Orders(), fieldType)
 
 		span.Set("query-scroll", queryTs.Scroll)
 		span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -348,16 +349,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
 
-			labelMap, err := qry.LabelMap()
-			if err == nil {
-				// 合并 labelMap
-				for k, lm := range labelMap {
-					if _, ok := allLabelMap[k]; !ok {
-						allLabelMap[k] = make([]function.LabelMapValue, 0)
-					}
-
-					allLabelMap[k] = append(allLabelMap[k], lm...)
+			labelMap := function.LabelMap(ctx, qry)
+			// 合并 labelMap
+			for k, lm := range labelMap {
+				if _, ok := allLabelMap[k]; !ok {
+					allLabelMap[k] = make([]function.LabelMapValue, 0)
 				}
+
+				allLabelMap[k] = append(allLabelMap[k], lm...)
 			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
@@ -774,7 +773,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
-		vmExpand := queryRef.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, queryRef)
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试

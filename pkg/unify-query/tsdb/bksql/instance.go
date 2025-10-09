@@ -166,8 +166,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
-	fieldsMap := make(map[string]sql_expr.FieldOption)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.FieldsMap, error) {
+	fieldsMap := make(metadata.FieldsMap)
 
 	if sql == "" {
 		return nil, nil
@@ -196,14 +196,12 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql
 			continue
 		}
 
-		opt := sql_expr.FieldOption{
-			Type: fieldType,
+		opt := metadata.FieldOption{
+			FieldType: fieldType,
 		}
 
 		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
-			if fieldAnalyzed == "true" {
-				opt.Analyzed = true
-			}
+			opt.IsAnalyzed = fieldAnalyzed == "true"
 		}
 
 		fieldsMap[k] = opt
@@ -253,7 +251,7 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
@@ -275,23 +273,18 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		return nil, err
 	}
 
-	res := make(map[string]map[string]any)
+	res := make(metadata.FieldsMap)
 	for k, v := range fieldMap {
-		if k == "" || v.Type == "" {
+		if k == "" || v.FieldType == "" {
 			continue
 		}
 
+		v.AliasName = query.FieldAlias.AliasName(k)
+		v.FieldName = k
 		ks := strings.Split(k, ".")
-		res[k] = map[string]any{
-			"alias_name":        query.FieldAlias.AliasName(k),
-			"field_name":        k,
-			"field_type":        v.Type,
-			"origin_field":      ks[0],
-			"is_agg":            false,
-			"is_analyzed":       v.Analyzed,
-			"is_case_sensitive": false,
-			"tokenize_on_chars": "",
-		}
+		v.OriginField = ks[0]
+
+		res[k] = v
 	}
 
 	return res, nil

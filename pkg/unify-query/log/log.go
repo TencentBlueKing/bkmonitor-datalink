@@ -96,8 +96,7 @@ func Errorf(ctx context.Context, format string, v ...any) {
 }
 
 func Debugf(ctx context.Context, format string, v ...any) {
-	// DefaultLogger.Debugf(ctx, format, v...)
-	fmt.Printf(format+"\n", v...)
+	DefaultLogger.Debugf(ctx, format, v...)
 }
 
 func Panicf(ctx context.Context, format string, v ...any) {

@@ -10,7 +10,7 @@
 package apdexcalculator
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/mapstrings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstrings"
 )
 
 type Config struct {

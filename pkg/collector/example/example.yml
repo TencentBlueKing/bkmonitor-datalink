@@ -475,6 +475,17 @@ bk-collector:
             rule:
               regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
 
+    - name: "field_normalizer/common"
+      config:
+        fields:
+          - kind: "SPAN_KIND_CLIENT"
+            predicate_key: "attributes.http.method"
+            rules:
+              - key: "attributes.http.conn.host"
+                op: or
+                values:
+                  - "attributes.http.host"
+
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
@@ -1029,6 +1040,7 @@ bk-collector:
         #- "forwarder/traces"
         #- "sampler/status_code"
 #        - "resource_filter/default_value"
+        - "field_normalizer/common"
         - "resource_filter/common"
         - "attribute_filter/common"
         - "resource_filter/user_metadata"
@@ -1141,7 +1153,9 @@ bk-collector:
         # 是否关闭指标预聚合。
         disable_aggregate: false
         # 是否丢弃原始数据，默认 false。开启后会丢弃原始数据，仅保留经过预聚合后的数据。
-        is_drop_original: false
+        is_drop_original: true
+        # 需要丢弃原始数据的服务列表，默认（空列表）丢弃全部。
+        drop_original_services: ["TestApp.HelloGo"]
         # 聚合间隔
         aggregate_interval: 200ms
         tag_ignores:

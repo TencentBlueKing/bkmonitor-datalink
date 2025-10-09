@@ -63,7 +63,7 @@ func TestOperator(t *testing.T) {
 		Data:       pdTraces,
 	}
 
-	operator := NewTracesOperator(c)
+	operator := NewOperator(c)
 	derived := operator.Operate(record)
 
 	pdMetrics := derived.Data.(pmetric.Metrics)
@@ -122,8 +122,8 @@ func TestOperatorDuration(t *testing.T) {
 	span2.SetStartTimestamp(300)
 	span2.SetEndTimestamp(200)
 
-	op := NewTracesOperator(c)
-	derived := op.Operate(&define.Record{
+	operator := NewOperator(c)
+	derived := operator.Operate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	})

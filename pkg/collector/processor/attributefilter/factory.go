@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -221,11 +222,11 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 				continue
 			}
 
-			fields := make([]string, 0, len(rule.Keys))
+			keys := make([]string, 0, len(rule.Keys))
 			for _, key := range rule.Keys {
 				// 常量不需要判断是否存在
-				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					fields = append(fields, key[len(define.ConstKeyPrefix):])
+				if strings.HasPrefix(key, fields.PrefixConst) {
+					keys = append(keys, key[len(fields.PrefixConst):])
 					continue
 				}
 
@@ -239,10 +240,10 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 						d = v.AsString()
 					}
 				}
-				fields = append(fields, d)
+				keys = append(keys, d)
 			}
 			// 匹配到直接插入返回，不再进行后续 rule 匹配
-			attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
+			attrs.UpsertString(action.Destination, strings.Join(keys, rule.Separator))
 			return true
 		}
 
@@ -267,8 +268,8 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 
 				key := action.DefaultFrom
 				// 判定常量情况直接插入
-				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					attrs.UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
+				if strings.HasPrefix(key, fields.PrefixConst) {
+					attrs.UpsertString(action.Destination, key[len(fields.PrefixConst):])
 					continue
 				}
 				// 匹配到 span_name 插入 span.Name(), 否则直接跳过

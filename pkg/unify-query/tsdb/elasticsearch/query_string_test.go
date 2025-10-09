@@ -26,34 +26,59 @@ import (
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
-	testMapping := func() map[string]lucene_parser.FieldOption {
-		return map[string]lucene_parser.FieldOption{
-			"log":                              {Type: lucene_parser.FieldTypeText},
-			"level":                            {Type: lucene_parser.FieldTypeKeyword},
-			"loglevel":                         {Type: lucene_parser.FieldTypeKeyword},
-			"word.key":                         {Type: lucene_parser.FieldTypeText},
-			"ms":                               {Type: lucene_parser.FieldTypeLong},
-			"events.attributes.message.detail": {Type: lucene_parser.FieldTypeText},
-			"nested.key":                       {Type: lucene_parser.FieldTypeText},
-			"events":                           {Type: lucene_parser.FieldTypeNested},
-			"nested":                           {Type: lucene_parser.FieldTypeNested},
-			"user":                             {Type: lucene_parser.FieldTypeNested},
-			"event_detail": {
-				Type: "events.attributes.message.detail",
-			},
-			"group": {Type: lucene_parser.FieldTypeText},
-		}
+	testMapping := metadata.FieldsMap{
+		"log": {
+			FieldName:   "log",
+			FieldType:   Text,
+			OriginField: "log",
+			IsAnalyzed:  true,
+		},
+		"level": {
+			FieldName: "level",
+			FieldType: KeyWord,
+		},
+		"loglevel": {
+			FieldName: "loglevel",
+			FieldType: KeyWord,
+		},
+		"word.key": {
+			FieldName:   "word.key",
+			OriginField: "word",
+			FieldType:   Text,
+		},
+		"ms": {
+			FieldName: "ms",
+			FieldType: Long,
+		},
+		"events.attributes.message.detail": {
+			AliasName:   "event_detail",
+			OriginField: "events",
+			FieldType:   Text,
+		},
+		"nested.key": {
+			FieldName:   "nested.key",
+			OriginField: "nested",
+			IsAnalyzed:  true,
+			FieldType:   Text,
+		},
+		"events": {
+			FieldName: "events",
+			FieldType: Nested,
+		},
+		"nested": {
+			FieldType: Nested,
+		},
+		"user": {
+			FieldType: Nested,
+		},
+		"group": {
+			FieldType: Text,
+		},
 	}
 
-	testAlias := func() map[string]string {
-		a := make(map[string]string)
-		a["event_detail"] = "events.attributes.message.detail"
-		return a
-	}
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
-		isPrefix bool
 		expected string
 		err      error
 	}{
@@ -71,39 +96,11 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
-			q: `nested.key: test AND demo`,
-			expected: `{
-  "bool": {
-    "must": [
-      {
-        "nested": {
-          "path": "nested",
-          "query": {
-            "match_phrase": {
-              "nested.key": {
-                "query": "test"
-              }
-            }
-          }
-        }
-      }, 
-		{
-        "query_string": {
-          "analyze_wildcard": true,
-          "fields": [
-            "*",
-            "__*"
-          ],
-          "lenient": true,
-          "query": "demo"
-        }
-      }
-    ]
-  }
-}`,
+			q:        `nested.key: test AND demo`,
+			expected: `{"bool":{"must":[{"nested":{"path":"nested","query":{"match_phrase":{"nested.key":{"query":"test"}}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo"}}]}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
@@ -113,8 +110,7 @@ func TestQsToDsl(t *testing.T) {
 			q: `*`,
 		},
 		{
-			q:        `*`,
-			isPrefix: true,
+			q: `*`,
 		},
 		{
 			q:        `demo*`,
@@ -130,8 +126,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `demo`,
-			isPrefix: true,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo"}}`,
 		},
 		{
 			q: ``,
@@ -155,35 +150,34 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
-			expected: `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
+			expected: `{"bool":{"must":[{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO "}},{"term":{"loglevel":"WARN "}},{"term":{"loglevel":"ERROR"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
 		},
 		{
 			q:        `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
-			expected: `{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}}]}},{"term":{"loglevel":"SIMON"}},{"bool":{"must":[{"term":{"loglevel":"222"}},{"term":{"loglevel":"333"}}]}}]}}`,
+			expected: `{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}},{"term":{"loglevel":"333"}}],"should":[{"term":{"loglevel":"SIMON"}},{"term":{"loglevel":"222"}}]}}`,
 		},
 		{
 			q:        `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			expected: `{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
+			expected: `{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO "}},{"term":{"loglevel":"WARN "}},{"term":{"loglevel":"ERROR"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			parser := lucene_parser.NewParser(
-				lucene_parser.WithMapping(testMapping()),
-				lucene_parser.WithAlias(testAlias()),
-			)
-			result, err := parser.Parse(c.q, c.isPrefix)
+			node := lucene_parser.ParseLuceneWithVisitor(ctx, c.q, lucene_parser.Option{
+				FieldsMap: testMapping,
+			})
 			if c.err != nil {
-				assert.Equal(t, c.err.Error(), err.Error())
+				assert.Equal(t, c.err.Error(), node.Error().Error())
 			} else if c.expected != "" {
-				require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
-				body, err := result.ES.Source()
+				q := lucene_parser.MergeQuery(node.DSL())
+				require.NotNil(t, q, "ES query should not be nil when expected result is provided")
+				body, err := q.Source()
 				assert.Nil(t, err)
 				require.NotNil(t, body)
 				bodyJson, _ := json.Marshal(body)
-				assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
+				assert.Equal(t, c.expected, cast.ToString(bodyJson))
 			} else {
-				t.Logf("Query: %s, ES result: %v", c.q, result.ES != nil)
+				t.Logf("Query: %s, ES result: %v", c.q, node != nil)
 			}
 		})
 	}

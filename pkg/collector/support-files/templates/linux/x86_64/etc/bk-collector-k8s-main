@@ -332,3 +332,12 @@
           proxy_batch_size: 3000
           profiles_batch_size: 50
           flush_interval: 3s
+
+        converter:
+          tars:
+            {{- if .Values.exporter.converter.tars }}
+            drop_original_services:
+            {{- range .Values.exporter.converter.tars.dropOriginalServices }}
+              - {{ . }}
+            {{- end }}
+            {{- end }}

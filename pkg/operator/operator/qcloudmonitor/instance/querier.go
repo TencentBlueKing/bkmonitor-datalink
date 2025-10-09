@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
@@ -64,14 +64,14 @@ func pickEndpoint(ep string) string {
 func toPointerStrings(ss []string) []*string {
 	lst := make([]*string, 0, len(ss))
 	for _, s := range ss {
-		lst = append(lst, pointer.String(s))
+		lst = append(lst, ptr.To(s))
 	}
 	return lst
 }
 
 func toPointerStringsAt(ss []string, idx int) *string {
 	lst := toPointerStrings(ss)
-	if len(lst) <= 0 || idx >= len(lst) {
+	if len(lst) == 0 || idx >= len(lst) {
 		return nil
 	}
 	return lst[idx]
@@ -87,7 +87,7 @@ func toPointerInt64At(ss []string, idx int) *int64 {
 	if err != nil {
 		return nil
 	}
-	return pointer.Int64(int64(i))
+	return ptr.To(int64(i))
 }
 
 // Querier 产品示例查询接口

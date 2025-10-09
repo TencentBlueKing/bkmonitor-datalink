@@ -79,7 +79,7 @@ func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
 }
 
 func (e *bkLogConfigEntity) MatchWorkload(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
-	return e.matchWorkloadType(labels, annotations, ownerRefs) && e.matchWorkloadType(labels, annotations, ownerRefs)
+	return e.matchWorkloadType(labels, annotations, ownerRefs) && e.matchWorkloadName(labels, annotations, ownerRefs)
 }
 
 func (e *bkLogConfigEntity) matchWorkloadName(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {

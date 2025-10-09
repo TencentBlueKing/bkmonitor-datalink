@@ -18,8 +18,7 @@ import (
 )
 
 type Logger struct {
-	prefix string
-	w      log.Logger
+	w log.Logger
 }
 
 func New(prefix string) *Logger {

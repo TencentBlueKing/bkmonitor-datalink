@@ -14,7 +14,7 @@ import (
 	cdn "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cdn/v20180606"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -81,7 +81,7 @@ func (q *cdnQuerier) makeRequest(p *Parameters) (*cdn.DescribeDomainsRequest, er
 	for _, tag := range p.Tags {
 		request.Filters = append(request.Filters,
 			&cdn.DomainFilter{
-				Name:  pointer.String(tag.Key()),
+				Name:  ptr.To(tag.Key()),
 				Value: toPointerStrings(tag.Values),
 			},
 		)
@@ -92,7 +92,7 @@ func (q *cdnQuerier) makeRequest(p *Parameters) (*cdn.DescribeDomainsRequest, er
 		case "Domain", "ResourceId", "ProjectId", "ServiceType", "Status":
 			request.Filters = append(request.Filters,
 				&cdn.DomainFilter{
-					Name:  pointer.String(filter.LowerKey()),
+					Name:  ptr.To(filter.LowerKey()),
 					Value: toPointerStrings(filter.Values),
 				},
 			)

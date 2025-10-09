@@ -14,7 +14,7 @@ import (
 	clb "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/clb/v20180317"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -84,7 +84,7 @@ func (q *clbQuerier) makeRequest(p *Parameters) (*clb.DescribeLoadBalancersReque
 	for _, tag := range p.Tags {
 		request.Filters = append(request.Filters,
 			&clb.Filter{
-				Name:   pointer.String(tag.Key()),
+				Name:   ptr.To(tag.Key()),
 				Values: toPointerStrings(tag.Values),
 			},
 		)

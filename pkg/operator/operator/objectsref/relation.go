@@ -308,7 +308,7 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	// bkm-statefulset-worker-0 => [0]
 	parseIndex := func(s string) int {
 		parts := strings.Split(s, "-")
-		if len(parts) <= 0 {
+		if len(parts) == 0 {
 			return 0
 		}
 		last := parts[len(parts)-1]

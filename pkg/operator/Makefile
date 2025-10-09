@@ -1,5 +1,5 @@
 # REQUIRE TOOLS
-# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@latest
+# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@0.5.0
 # https://github.com/incu6us/goimports-reviser => $go install github.com/incu6us/goimports-reviser/v3@v3.1.1
 # https://github.com/golangci/golangci-lint => $go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
 # https://sigs.k8s.io/controller-tools => $ go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0
@@ -38,7 +38,7 @@ lint:
 
 .PHONY: test
 test:
-	$(GO) test ./... -buildmode=pie -parallel=4 -cover
+	$(GO) test ./... -buildmode=pie -parallel=4 -cover -ldflags "-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore"
 
 .PHONY: build
 build:
@@ -63,3 +63,4 @@ image: build
 codegen:
 	chmod +x ./hack/update-codegen.sh && bash ./hack/update-codegen.sh
 	controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=crd/bases
+	gofmt -r 'interface{} -> any' -w .

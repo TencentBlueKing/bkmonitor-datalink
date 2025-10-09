@@ -24,14 +24,6 @@ import (
 
 const (
 	DefaultLogField = "log"
-
-	opTypeNone = iota
-	opTypeOr
-	opTypeAnd
-)
-
-const (
-	eq = "="
 )
 
 const (

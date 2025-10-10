@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -73,7 +74,14 @@ func (e *endpointSet) getEndPointRef(ctx context.Context, protocol, address stri
 	case GRPC:
 		conn, err := grpc.DialContext(ctx, address, e.dialOpts...)
 		if err != nil {
-			log.Errorf(ctx, "connect endpoint with %s %s error %s", address, protocol, err.Error())
+			codedErr := errno.ErrStorageConnFailed().
+				WithComponent("InfluxDB端点").
+				WithOperation("连接端点").
+				WithError(err).
+				WithContext("地址", address).
+				WithContext("协议", protocol).
+				WithSolution("检查InfluxDB服务器状态和网络连接")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil
 		}
 		er.cc = conn
@@ -194,7 +202,12 @@ func (er *endpointRef) Close() {
 		if errors.Is(err, os.ErrClosed) {
 			return
 		}
-		log.Warnf(er.ctx, "detected close error %s", err.Error())
+		codedWarn := errno.ErrWarningConnectionFail().
+			WithComponent("InfluxDB端点").
+			WithOperation("检测关闭错误").
+			WithError(err).
+			WithSolution("检查网络连接稳定性")
+		log.WarnWithCodef(er.ctx, codedWarn)
 	}
 }
 

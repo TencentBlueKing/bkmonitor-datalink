@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -69,7 +70,12 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("API请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(paramsStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -145,7 +151,12 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("API请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(paramsStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -220,7 +231,12 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("API请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(paramsStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -321,7 +337,12 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("API请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(paramsStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -464,7 +485,12 @@ func HandlerLabelValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, url: %s", c.Request.Header, c.Request.URL.String()))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("URL请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求URL", c.Request.URL.String())
+	log.InfoWithCodef(ctx, codedInfo)
 
 	if len(matches) != 1 {
 		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)
@@ -546,7 +572,12 @@ func HandlerFieldMap(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP API").
+		WithOperation("API请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(paramsStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -559,7 +590,7 @@ func HandlerFieldMap(c *gin.Context) {
 	var (
 		wg      sync.WaitGroup
 		lock    sync.Mutex
-		dataMap = make(map[string]map[string]any)
+		dataMap = make(metadata.FieldsMap)
 		keys    []string
 	)
 
@@ -575,7 +606,13 @@ func HandlerFieldMap(c *gin.Context) {
 
 			res, qErr := instance.QueryFieldMap(ctx, qry, start, end)
 			if qErr != nil {
-				log.Warnf(ctx, "TableUUID:%s queryFieldMap error %s", qry.TableUUID(), qErr)
+				codedErr := errno.ErrDataProcessFailed().
+					WithComponent("HTTP查询API").
+					WithOperation("查询字段映射").
+					WithError(qErr).
+					WithContext("表UUID", qry.TableUUID()).
+					WithSolution("检查表字段映射配置")
+				log.WarnWithCodef(ctx, codedErr)
 				return
 			}
 
@@ -600,9 +637,9 @@ func HandlerFieldMap(c *gin.Context) {
 
 	span.Set("keys", keys)
 
-	data := make([]map[string]any, 0, len(dataMap))
+	data := make([]metadata.FieldOption, 0, len(dataMap))
 	for _, k := range keys {
-		if v, ok := dataMap[k]; ok && v != nil {
+		if v, ok := dataMap[k]; ok && v.FieldType != "" {
 			data = append(data, dataMap[k])
 		}
 	}

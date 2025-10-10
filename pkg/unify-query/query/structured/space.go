@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -55,7 +56,12 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 
 			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
 			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-			log.Warnf(ctx, msg)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("空间过滤器").
+				WithOperation("检查空间存在性").
+				WithContext("空间ID", opt.SpaceUid).
+				WithSolution("检查空间ID是否正确")
+			log.WarnWithCodef(ctx, codedErr)
 		}
 	}
 
@@ -191,7 +197,14 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				log.Infof(s.ctx, "table_id_change: (%s: %s => %s)", mName, defaultTsDB.TableID, sepRt.TableId)
+				codedInfo := errno.ErrInfoServiceStart().
+					WithComponent("StructuredQuery").
+					WithOperation("表ID变更").
+					WithContext("指标名", mName).
+					WithContext("原表ID", defaultTsDB.TableID).
+					WithContext("新表ID", sepRt.TableId).
+					WithSolution("表ID已成功更新")
+				log.InfoWithCodef(s.ctx, codedInfo)
 
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
@@ -216,7 +229,12 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
 	route := strings.Split(tableID, ".")
 	if len(route) != 2 {
-		log.Errorf(s.ctx, "TableID(%s) format is wrong", tableID)
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("空间过滤").
+			WithOperation("解析表ID格式").
+			WithContext("表ID", tableID).
+			WithSolution("检查表ID格式是否符合规范")
+		log.ErrorWithCodef(s.ctx, codedErr)
 		return nil
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
@@ -253,7 +271,12 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
 
 			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
-			log.Warnf(s.ctx, routerMessage)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("空间路由").
+				WithOperation("检查表ID字段存在性").
+				WithContext("路由信息", routerMessage).
+				WithSolution("检查表ID和字段配置")
+			log.WarnWithCodef(s.ctx, codedErr)
 		}
 	}()
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -53,7 +54,12 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	promQL := &structured.QueryPromQL{}
 	err = json.NewDecoder(c.Request.Body).Decode(promQL)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("HTTP处理器").
+			WithOperation("解析PromQL请求参数").
+			WithContext("error", err.Error()).
+			WithSolution("检查请求参数格式是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -102,7 +108,12 @@ func HandlerStructToPromQL(c *gin.Context) {
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithComponent("HTTP处理器").
+			WithOperation("解析QueryTs请求参数").
+			WithContext("error", err.Error()).
+			WithSolution("检查请求参数格式是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -111,7 +122,12 @@ func HandlerStructToPromQL(c *gin.Context) {
 
 	promQL, err := structToPromQL(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithComponent("HTTP处理器").
+			WithOperation("转换查询结构为PromQL").
+			WithContext("error", err.Error()).
+			WithSolution("检查查询结构格式是否正确")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -160,7 +176,12 @@ func HandlerQueryExemplar(c *gin.Context) {
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP处理器").
+			WithOperation("JSON解析请求体").
+			WithError(err).
+			WithSolution("检查请求体JSON格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -172,7 +193,11 @@ func HandlerQueryExemplar(c *gin.Context) {
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	codedInfo := errno.ErrInfoQueryRequest().
+		WithOperation("查询示例数据").
+		WithContext("请求大小", len(queryStr)).
+		WithContext("头部信息", c.Request.Header)
+	log.InfoWithCodef(ctx, codedInfo)
 
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
@@ -209,7 +234,12 @@ func HandlerQueryRaw(c *gin.Context) {
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrBusinessQueryExecution().
+				WithComponent("HTTP处理器").
+				WithOperation("执行原始查询").
+				WithContext("error", err.Error()).
+				WithSolution("检查查询语句和数据源连接")
+			log.ErrorWithCodef(ctx, codedErr)
 			resp.failed(ctx, err)
 		}
 
@@ -285,7 +315,12 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrDataDeserializeFailed().
+				WithComponent("HTTP处理器").
+				WithOperation("JSON解析请求体").
+				WithError(err).
+				WithSolution("检查请求体JSON格式")
+			log.ErrorWithCodef(ctx, codedErr)
 			resp.failed(ctx, err)
 		}
 
@@ -373,7 +408,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
 	listData.Done = session.Done()
-	listData.Cache = session.Cache
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,
@@ -428,7 +462,12 @@ func HandlerQueryTs(c *gin.Context) {
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP处理器").
+			WithOperation("JSON解析请求体").
+			WithError(err).
+			WithSolution("检查请求体JSON格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -441,7 +480,12 @@ func HandlerQueryTs(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 	span.Set("query-body-size", len(queryStr))
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP处理器").
+		WithOperation("查询请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(queryStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
@@ -498,7 +542,12 @@ func HandlerQueryPromQL(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 	span.Set("query-promql", queryPromQL.PromQL)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP处理器").
+		WithOperation("查询请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(queryStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	if queryPromQL.PromQL == "" {
 		resp.failed(ctx, fmt.Errorf("promql is empty"))
@@ -508,14 +557,24 @@ func HandlerQueryPromQL(c *gin.Context) {
 	// promql to struct
 	query, err := promQLToStruct(ctx, queryPromQL)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP处理器").
+			WithOperation("JSON解析请求体").
+			WithError(err).
+			WithSolution("检查请求体JSON格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP处理器").
+			WithOperation("JSON解析请求体").
+			WithError(err).
+			WithSolution("检查请求体JSON格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -559,7 +618,12 @@ func HandlerQueryReference(c *gin.Context) {
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		codedErr := errno.ErrDataDeserializeFailed().
+			WithComponent("HTTP处理器").
+			WithOperation("JSON解析请求体").
+			WithError(err).
+			WithSolution("检查请求体JSON格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		resp.failed(ctx, err)
 		return
 	}
@@ -573,7 +637,12 @@ func HandlerQueryReference(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 	span.Set("query-body-size", len(queryStr))
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP处理器").
+		WithOperation("查询请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(queryStr))
+	log.InfoWithCodef(ctx, codedInfo)
 	res, err := queryReferenceWithPromEngine(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -617,7 +686,12 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	}
 	queryStr, _ := json.Marshal(query)
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	codedInfo := errno.ErrInfoAPICall().
+		WithComponent("HTTP处理器").
+		WithOperation("查询请求处理").
+		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
+		WithContext("请求体大小", len(queryStr))
+	log.InfoWithCodef(ctx, codedInfo)
 
 	span.Set("query-body", string(queryStr))
 	res, err := QueryTsClusterMetrics(ctx, query)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -116,7 +117,12 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 			field = StaticField
 		default:
 			err = fmt.Errorf("%s: %s 类型异常", tsDB.TableID, tsDB.MeasurementType)
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("PromQL查询").
+				WithOperation("获取集群信息").
+				WithError(err).
+				WithSolution("检查集群配置和连接")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 
@@ -165,7 +171,12 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 		log.Debugf(ctx, "tsdb: %s", tsDB.String())
 
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("PromQL查询").
+				WithOperation("获取集群信息").
+				WithError(err).
+				WithSolution("检查集群配置和连接")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 
@@ -244,7 +255,12 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		)
 
 		if db == "" {
-			log.Errorf(ctx, "db is empty, tableInfo: %v", tableInfo)
+			codedErr := errno.ErrQueryParseInvalidSQL().
+				WithComponent("PromQL查询").
+				WithOperation("解析数据库信息").
+				WithContext("表信息", tableInfo).
+				WithSolution("检查表配置中的数据库名称")
+			log.ErrorWithCodef(ctx, codedErr)
 			continue
 		}
 
@@ -269,7 +285,12 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		query.ClusterID = clusterID
 		query.SourceType, err = clusterIDToSourceType(query.ClusterID)
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("PromQL查询").
+				WithOperation("获取集群信息").
+				WithError(err).
+				WithSolution("检查集群配置和连接")
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 

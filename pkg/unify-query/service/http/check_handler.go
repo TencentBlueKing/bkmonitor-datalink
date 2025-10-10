@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -183,7 +184,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	// vm query
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否查询 vm
-		vmExpand := qr.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, qr)
 
 		r.Step("query instance", consul.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)

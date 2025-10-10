@@ -1767,7 +1767,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	s.composeValue(&values, &dorisValues)
 
 	// 追加关联的BKCI相关的ES结果表,不需要filters
-	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
+	esBkciValues, errEsBkci := s.ComposeRelatedBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
 		logger.Warnf("pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEsBkci)
 	}
@@ -2104,23 +2104,23 @@ func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[strin
 	return dataValuesToRedis, nil
 }
 
-// ComposeEsBkciTableIds 组装关联的BKCI类型的ES结果表
-func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
+// ComposeRelatedBkciTableIds 组装关联的BKCI类型的es/doris结果表
+func (s *SpacePusher) ComposeRelatedBkciTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	var bizIdsList []int
 	// 获取关联的BKCI类型的空间ID列表
 	relatedSpaces, err := s.GetRelatedSpaces(spaceType, spaceId, models.SpaceTypeBKCI)
 	if err != nil {
-		logger.Errorf("ComposeEsBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s], err: %s", spaceType, spaceId, err)
+		logger.Errorf("ComposeRelatedBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s], err: %s", spaceType, spaceId, err)
 		return nil, err
 	}
 
-	logger.Infof("ComposeEsBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
+	logger.Infof("ComposeRelatedBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
 	for _, bkciSpaceId := range relatedSpaces {
 		// 获取该BKCI空间对应的业务ID（负数）
 		bizId, err := s.getBizIdBySpace(models.SpaceTypeBKCI, bkciSpaceId)
 		if err != nil {
-			logger.Errorf("ComposeEsBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
+			logger.Errorf("ComposeRelatedBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
 			continue
 		}
 		bizIdsList = append(bizIdsList, bizId)
@@ -2128,7 +2128,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 
 	// 如果关联的BKCI空间没有业务ID，则不进行处理
 	if len(bizIdsList) == 0 {
-		logger.Infof("ComposeEsBkciTableIds, no related bkci spaces, space_type->[%s],space_id->[%s]", spaceType, spaceId)
+		logger.Infof("ComposeRelatedBkciTableIds, no related bkci spaces, space_type->[%s],space_id->[%s]", spaceType, spaceId)
 		return nil, nil
 	}
 
@@ -2138,7 +2138,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	if err := resulttable.NewResultTableQuerySet(db).
 		Select(resulttable.ResultTableDBSchema.TableId).
 		BkBizIdIn(bizIdsList...).
-		DefaultStorageEq(models.StorageTypeES).
+		DefaultStorageIn(models.StorageTypeES, models.StorageTypeDoris).
 		IsDeletedEq(false).
 		IsEnableEq(true).
 		All(&rtList); err != nil {
@@ -2164,7 +2164,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
-	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
+	logger.Infof("ComposeRelatedBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
 	return dataValuesToRedis, nil
 }
 

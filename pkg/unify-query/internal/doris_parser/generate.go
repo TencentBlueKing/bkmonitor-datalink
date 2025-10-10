@@ -9,6 +9,7 @@
 
 package doris_parser
 
+// https://github.com/apache/doris/tree/master/fe/fe-core/src/main/antlr4/org/apache/doris/nereids
 //go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
 //go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
 

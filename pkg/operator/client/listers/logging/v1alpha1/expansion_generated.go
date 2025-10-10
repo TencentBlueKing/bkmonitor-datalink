@@ -13,8 +13,8 @@ package v1alpha1
 
 // BkLogConfigListerExpansion allows custom methods to be added to
 // BkLogConfigLister.
-type BkLogConfigListerExpansion interface{}
+type BkLogConfigListerExpansion any
 
 // BkLogConfigNamespaceListerExpansion allows custom methods to be added to
 // BkLogConfigNamespaceLister.
-type BkLogConfigNamespaceListerExpansion interface{}
+type BkLogConfigNamespaceListerExpansion any

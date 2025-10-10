@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/samber/lo"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -111,7 +113,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -133,7 +135,7 @@ func (f *QueryFactory) DescribeTableSQL() string {
 	return f.expr.DescribeTableSQL(f.Table())
 }
 
-func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
+func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
 }
 
@@ -147,11 +149,18 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
-					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("BkSQL查询工厂").
+						WithOperation("解析JSON对象").
+						WithContext("field_name", k).
+						WithContext("field_data", nd).
+						WithContext("error", err.Error()).
+						WithSolution("检查JSON数据格式是否正确")
+					log.ErrorWithCodef(f.ctx, codedErr)
 					continue
 				}
 				for nk, nd := range objectData {
@@ -232,7 +241,15 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 				// 获取维度信息
 				val, err := getValue(k, nd)
 				if err != nil {
-					log.Errorf(ctx, "get dimension (%s) value error in %+v %s", k, d, err.Error())
+					codedErr := errno.ErrDataDeserializeFailed().
+						WithComponent("BkSQL查询工厂").
+						WithOperation("获取维度值").
+						WithContext("dimension_key", k).
+						WithContext("original_data", fmt.Sprintf("%+v", d)).
+						WithContext("processed_data", fmt.Sprintf("%+v", nd)).
+						WithContext("error", err.Error()).
+						WithSolution("检查维度数据类型和值")
+					log.ErrorWithCodef(ctx, codedErr)
 					continue
 				}
 
@@ -388,13 +405,13 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 	// QueryString to sql
 	if f.query.QueryString != "" && f.query.QueryString != "*" {
-		qs, err := f.expr.ParserQueryString(f.query.QueryString)
+		qs, err := f.expr.ParserQueryString(f.ctx, f.query.QueryString)
 		if err != nil {
 			return "", err
 		}
 
 		if qs != "" {
-			s = append(s, qs)
+			s = append(s, fmt.Sprintf("(%s)", qs))
 		}
 	}
 
@@ -468,14 +485,13 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())
 
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
-
 	if err != nil {
 		return sql, err
 	}

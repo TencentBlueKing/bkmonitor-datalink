@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	AppName          = "bkmonitor-operator"
 	MonitorNamespace = "bkmonitor_operator"
 	UnknownNode      = "unknown"
 

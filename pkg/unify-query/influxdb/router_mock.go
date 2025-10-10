@@ -101,7 +101,7 @@ func MockSpaceRouter(ctx context.Context) {
 	  	}
 	  }`)
 
-		vmFiedls := []string{
+		vmFields := []string{
 			"container_cpu_usage_seconds_total",
 			"kube_pod_info",
 			"node_with_pod_relation",
@@ -212,7 +212,7 @@ func MockSpaceRouter(ctx context.Context) {
 					StorageId:       2,
 					TableId:         "result_table.kubelet_info",
 					VmRt:            "2_bcs_prom_computation_result_table",
-					Fields:          vmFiedls,
+					Fields:          vmFields,
 					DB:              "other",
 					Measurement:     "kubelet_info",
 					BcsClusterID:    "BCS-K8S-00000",
@@ -275,7 +275,7 @@ func MockSpaceRouter(ctx context.Context) {
 					StorageId:       2,
 					TableId:         ResultTableVM,
 					VmRt:            "2_bcs_prom_computation_result_table",
-					Fields:          vmFiedls,
+					Fields:          vmFields,
 					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
 					StorageType:     consul.VictoriaMetricsStorageType,

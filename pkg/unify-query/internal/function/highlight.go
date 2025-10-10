@@ -10,6 +10,7 @@
 package function
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -32,6 +35,63 @@ type HighLightFactory struct {
 type LabelMapValue struct {
 	Value    string `json:"value"`
 	Operator string `json:"operator"`
+}
+
+type LabelMapOption struct {
+	Conditions  metadata.AllConditions
+	QueryString string
+	SQL         string
+}
+
+func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapValue {
+	if qry == nil {
+		return nil
+	}
+
+	labelMap := make(map[string][]LabelMapValue)
+	labelCheck := make(map[string]struct{})
+
+	addLabels := func(key string, operator string, values ...string) {
+		if len(values) == 0 {
+			return
+		}
+
+		for _, value := range values {
+			checkKey := key + ":" + value + ":" + operator
+			if _, ok := labelCheck[checkKey]; !ok {
+				labelCheck[checkKey] = struct{}{}
+				labelMap[key] = append(labelMap[key], LabelMapValue{
+					Value:    value,
+					Operator: operator,
+				})
+			}
+		}
+	}
+
+	for _, condition := range qry.AllConditions {
+		for _, cond := range condition {
+			if cond.Value != nil && len(cond.Value) > 0 {
+				// 处理通配符
+				if cond.IsWildcard {
+					addLabels(cond.DimensionName, metadata.ConditionContains, cond.Value...)
+				} else {
+					switch cond.Operator {
+					// 只保留等于和包含的用法，其他类型不用处理
+					case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
+						addLabels(cond.DimensionName, cond.Operator, cond.Value...)
+					}
+				}
+			}
+		}
+	}
+
+	if qry.QueryString != "" {
+		lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{
+			AddLabels: addLabels,
+		})
+	}
+
+	return labelMap
 }
 
 func NewHighLightFactory(labelMap map[string][]LabelMapValue, maxAnalyzedOffset int) *HighLightFactory {

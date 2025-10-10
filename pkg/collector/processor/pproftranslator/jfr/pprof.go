@@ -58,8 +58,6 @@ func (j *jfrPprofBuilder) addStacktrace(
 	}
 
 	locations := make([]*profile.Location, 0, len(stacktrace.Frames))
-
-	// Step3: 逐个解析堆栈
 	for _, frame := range stacktrace.Frames {
 		locationId, exist := p.FindLocationId(frame.Method)
 		if exist {
@@ -93,6 +91,7 @@ func (j *jfrPprofBuilder) profileBuilderForSampleType(sampleType int64) *Profile
 	if build, ok := j.builders[sampleType]; ok {
 		return build
 	}
+
 	newBuilder := NewProfileBuilder()
 	newBuilder.TimeNanos = j.timeNanos
 	newBuilder.DurationNanos = j.durationNanos

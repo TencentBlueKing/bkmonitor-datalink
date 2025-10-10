@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -544,7 +545,12 @@ func TestInstance_queryReference(t *testing.T) {
 			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				codedErr := errno.ErrBusinessQueryExecution().
+					WithComponent("ElasticSearch实例测试").
+					WithOperation("转换序列集为时间序列").
+					WithContext("error", err.Error()).
+					WithSolution("检查测试数据和序列集转换逻辑")
+				log.ErrorWithCodef(ctx, codedErr)
 				return
 			}
 
@@ -577,7 +583,7 @@ func TestInstance_queryRawData(t *testing.T) {
 
 	mock.Es.Set(map[string]any{
 		// nested query + query string 测试 + highlight
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"match_phrase":{"group":{"query":"fans"}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"term":{"group":"fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
 		// high light from condition
 		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"},"highlight":{"status":["<mark>error</mark>"]}}]}}`,
 
@@ -1262,5 +1268,74 @@ func TestInstance_fieldMap(t *testing.T) {
 	assert.Nil(t, err)
 
 	actual, _ := json.Marshal(res)
-	assert.JSONEq(t, `{"__ext.container_id":{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.container_image":{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.container_name":{"alias_name":"container_name","field_name":"__ext.container_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod":{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_ip":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_namespace":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_uid":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_workload_name":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_workload_type":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"cloudId":{"alias_name":"","field_name":"cloudId","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"cloudId","tokenize_on_chars":""},"container_name":{"alias_name":"","field_name":"container_name","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"container_name","tokenize_on_chars":""},"dtEventTimeStamp":{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"dtEventTimeStamp","tokenize_on_chars":""},"file":{"alias_name":"","field_name":"file","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"file","tokenize_on_chars":""},"gseIndex":{"alias_name":"","field_name":"gseIndex","field_type":"long","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"gseIndex","tokenize_on_chars":""},"iterationIndex":{"alias_name":"","field_name":"iterationIndex","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"iterationIndex","tokenize_on_chars":""},"level":{"alias_name":"","field_name":"level","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"level","tokenize_on_chars":""},"log":{"alias_name":"","field_name":"log","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log","tokenize_on_chars":""},"message":{"alias_name":"","field_name":"message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"message","tokenize_on_chars":""},"path":{"alias_name":"","field_name":"path","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"path","tokenize_on_chars":""},"pod_ip":{"alias_name":"","field_name":"pod_ip","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_ip","tokenize_on_chars":""},"pod_uid":{"alias_name":"","field_name":"pod_uid","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_uid","tokenize_on_chars":""},"report_time":{"alias_name":"","field_name":"report_time","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"report_time","tokenize_on_chars":""},"serverIp":{"alias_name":"","field_name":"serverIp","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"serverIp","tokenize_on_chars":""},"time":{"alias_name":"","field_name":"time","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"time","tokenize_on_chars":""},"trace_id":{"alias_name":"","field_name":"trace_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"trace_id","tokenize_on_chars":""}}`, string(actual))
+	assert.JSONEq(t, `{"__ext.container_id":{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.container_image":{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.container_name":{"alias_name":"container_name","field_name":"__ext.container_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_pod":{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_pod_ip":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_pod_namespace":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_pod_uid":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_workload_name":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"__ext.io_kubernetes_workload_type":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":[]},"cloudId":{"alias_name":"","field_name":"cloudId","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"cloudId","tokenize_on_chars":[]},"container_name":{"alias_name":"","field_name":"container_name","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"container_name","tokenize_on_chars":[]},"dtEventTimeStamp":{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"dtEventTimeStamp","tokenize_on_chars":[]},"file":{"alias_name":"","field_name":"file","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"file","tokenize_on_chars":[]},"gseIndex":{"alias_name":"","field_name":"gseIndex","field_type":"long","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"gseIndex","tokenize_on_chars":[]},"iterationIndex":{"alias_name":"","field_name":"iterationIndex","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"iterationIndex","tokenize_on_chars":[]},"level":{"alias_name":"","field_name":"level","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"level","tokenize_on_chars":[]},"log":{"alias_name":"","field_name":"log","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log","tokenize_on_chars":[]},"message":{"alias_name":"","field_name":"message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"message","tokenize_on_chars":[]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"path","tokenize_on_chars":[]},"pod_ip":{"alias_name":"","field_name":"pod_ip","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_ip","tokenize_on_chars":[]},"pod_uid":{"alias_name":"","field_name":"pod_uid","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_uid","tokenize_on_chars":[]},"report_time":{"alias_name":"","field_name":"report_time","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"report_time","tokenize_on_chars":[]},"serverIp":{"alias_name":"","field_name":"serverIp","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"serverIp","tokenize_on_chars":[]},"time":{"alias_name":"","field_name":"time","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"time","tokenize_on_chars":[]},"trace_id":{"alias_name":"","field_name":"trace_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"trace_id","tokenize_on_chars":[]}}`, string(actual))
+}
+
+func TestInstance_QueryLabelNames(t *testing.T) {
+	mock.Init()
+
+	tests := []struct {
+		name          string
+		query         *metadata.Query
+		expectedError bool
+		expectedNames []string
+	}{
+		{
+			name: "basic_label_names",
+			query: &metadata.Query{
+				DB:      "unify_query",
+				TableID: "test_table",
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+				},
+			},
+			expectedError: false,
+			expectedNames: []string{"cloudId", "file", "gseIndex", "iterationIndex", "level", "log", "message", "path", "report_time", "serverIp", "trace_id"},
+		},
+		{
+			name: "empty_db",
+			query: &metadata.Query{
+				DB:      "",
+				TableID: "test_table",
+			},
+			expectedError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata.InitMetadata()
+			ctx := metadata.InitHashID(context.Background())
+			inst, err := NewInstance(ctx, &InstanceOption{
+				Connect: Connect{
+					Address: mock.EsUrl,
+				},
+				Timeout: time.Minute,
+			})
+			assert.NoError(t, err)
+
+			start := time.Now().Add(-time.Hour)
+			end := time.Now()
+
+			labelNames, err := inst.QueryLabelNames(ctx, tt.query, start, end)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				for _, expectedName := range tt.expectedNames {
+					found := false
+					for _, actualName := range labelNames {
+						if actualName == expectedName {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Logf("Expected field %s not found in %v", expectedName, labelNames)
+					}
+				}
+			}
+		})
+	}
 }

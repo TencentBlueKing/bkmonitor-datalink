@@ -22,8 +22,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -146,7 +148,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	fieldMap map[string]map[string]any
+	fieldsMap metadata.FieldsMap
 
 	data map[string]any
 
@@ -182,8 +184,8 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
-	f.fieldMap = fieldMap
+func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
+	f.fieldsMap = fieldsMap
 	return f
 }
 
@@ -320,16 +322,25 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
-		return v
+	if v, ok := f.fieldsMap[k]; ok {
+		return v.FieldType
 	}
 
 	return ""
 }
 
+func (f *FormatFactory) ParserQueryString(ctx context.Context, q string) (elastic.Query, error) {
+	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
+		FieldsMap:       f.fieldsMap,
+		FieldEncodeFunc: f.encode,
+	})
+
+	return lucene_parser.MergeQuery(node.DSL()), node.Error()
+}
+
 func (f *FormatFactory) FieldType() map[string]string {
 	ft := make(map[string]string)
-	for k := range f.fieldMap {
+	for k := range f.fieldsMap {
 		nv := f.GetFieldType(k)
 		if nv != "" {
 			ft[k] = nv
@@ -436,7 +447,12 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("聚合数据格式化").
+				WithOperation("处理聚合数据").
+				WithContext("恢复信息", r).
+				WithSolution("检查数据格式和聚合配置")
+			log.ErrorWithCodef(f.ctx, codedErr)
 		}
 	}()
 
@@ -567,7 +583,12 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("Elasticsearch映射").
+				WithOperation("获取映射信息").
+				WithContext("恢复信息", r).
+				WithSolution("检查ES映射配置和结构")
+			log.ErrorWithCodef(f.ctx, codedErr)
 		}
 	}()
 

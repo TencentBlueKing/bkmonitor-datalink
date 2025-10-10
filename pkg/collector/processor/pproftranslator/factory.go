@@ -35,7 +35,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		return nil, err
 	}
 
-	configs.SetGlobal(NewPprofTranslator(c))
+	configs.SetGlobal(NewTranslator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -43,7 +43,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofTranslator(cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, NewTranslator(cfg))
 	}
 
 	return &pprofTranslator{
@@ -81,7 +81,7 @@ func (p *pprofTranslator) Reload(config map[string]any, customized []processor.S
 }
 
 func (p *pprofTranslator) Process(record *define.Record) (*define.Record, error) {
-	translator := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
+	translator := p.configs.GetByToken(record.Token.Original).(Translator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {

@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -99,24 +99,24 @@ type RulePath struct {
 }
 
 func (r *Rule) AttributeValue() string {
-	df, key := processor.DecodeDimensionFrom(r.MatchKey)
-	if df == processor.DimensionFromAttribute {
+	ff, key := fields.DecodeFieldFrom(r.MatchKey)
+	if ff == fields.FieldFromAttributes {
 		return key
 	}
 	return ""
 }
 
 func (r *Rule) ResourceValue() string {
-	df, key := processor.DecodeDimensionFrom(r.MatchKey)
-	if df == processor.DimensionFromResource {
+	ff, key := fields.DecodeFieldFrom(r.MatchKey)
+	if ff == fields.FieldFromResource {
 		return key
 	}
 	return ""
 }
 
 func (r *Rule) MethodValue() string {
-	df, key := processor.DecodeDimensionFrom(r.MatchKey)
-	if df == processor.DimensionFromMethod {
+	ff, key := fields.DecodeFieldFrom(r.MatchKey)
+	if ff == fields.FieldFromMethod {
 		return key
 	}
 	return ""

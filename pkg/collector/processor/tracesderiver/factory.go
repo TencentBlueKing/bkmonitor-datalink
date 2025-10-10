@@ -32,7 +32,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
-	operators.SetGlobal(NewTracesOperator(c))
+	operators.SetGlobal(NewOperator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -40,7 +40,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		operators.Set(custom.Token, custom.Type, custom.ID, NewTracesOperator(cfg))
+		operators.Set(custom.Token, custom.Type, custom.ID, NewOperator(cfg))
 	}
 
 	return &tracesDeriver{

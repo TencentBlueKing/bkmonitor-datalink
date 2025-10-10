@@ -12,8 +12,8 @@
 package versioned
 
 import (
-	"fmt"
-	"net/http"
+	fmt "fmt"
+	http "net/http"
 
 	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1"
 	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/monitoring/v1beta1"

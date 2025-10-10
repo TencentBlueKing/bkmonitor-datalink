@@ -32,46 +32,46 @@ import (
 )
 
 const (
-	resourceTagsScopeName     = "scope_name"
-	resourceTagsRPCSystem     = "rpc_system"
-	resourceTagsServiceName   = "service_name"
-	resourceTagsInstance      = "instance"
-	resourceTagsContainerName = "container_name"
-	resourceTagsVersion       = "version"
+	metricNamePrefix      = "origin_rpc"
+	metricAggregatePrefix = "rpc"
 )
 
 const (
-	rpcMetricNamePrefix      = "origin_rpc"
-	rpcMetricAggregatePrefix = "rpc"
+	statTagRoleClient = "client"
+	statTagRoleServer = "server"
 )
 
 const (
-	rpcMetricTagsCallerServer  = "caller_server"
-	rpcMetricTagsCallerService = "caller_service"
-	rpcMetricTagsCallerIp      = "caller_ip"
-	rpcMetricTagsCalleeServer  = "callee_server"
-	rpcMetricTagsCalleeService = "callee_service"
-	rpcMetricTagsCalleeMethod  = "callee_method"
-	rpcMetricTagsCalleeIp      = "callee_ip"
-	rpcMetricTagsCode          = "code"
-	rpcMetricTagsCodeType      = "code_type"
+	resourceTagScopeName     = "scope_name"
+	resourceTagRPCSystem     = "rpc_system"
+	resourceTagServiceName   = "service_name"
+	resourceTagInstance      = "instance"
+	resourceTagContainerName = "container_name"
+	resourceTagVersion       = "version"
 )
 
 const (
-	rpcMetricTagsCodeTypeSuccess   = "success"
-	rpcMetricTagsCodeTypeException = "exception"
-	rpcMetricTagsCodeTypeTimeout   = "timeout"
+	metricTagCallerServer  = "caller_server"
+	metricTagCallerService = "caller_service"
+	metricTagCallerIp      = "caller_ip"
+	metricTagCalleeServer  = "callee_server"
+	metricTagCalleeService = "callee_service"
+	metricTagCalleeMethod  = "callee_method"
+	metricTagCalleeIp      = "callee_ip"
+	metricTagCode          = "code"
+	metricTagCodeType      = "code_type"
 )
 
 const (
-	tarsStatTagsRoleClient = "client"
-	tarsStatTagsRoleServer = "server"
+	propertyTagPropertyName   = "property_name"
+	propertyTagPropertyPolicy = "property_policy"
+	propertyTagIPropertyVer   = "i_property_ver"
 )
 
 const (
-	tarsPropertyTagsPropertyName   = "property_name"
-	tarsPropertyTagsPropertyPolicy = "property_policy"
-	tarsPropertyTagsIPropertyVer   = "i_property_ver"
+	metricTagCodeSuccess   = "success"
+	metricTagCodeException = "exception"
+	metricTagCodeTimeout   = "timeout"
 )
 
 type bucket struct {
@@ -79,9 +79,9 @@ type bucket struct {
 	Cnt int32
 }
 
-// propNameToNormalizeMetricName 将属性转为标准指标名
-func propNameToNormalizeMetricName(propertyName, policy string) string {
-	name := strings.Join([]string{propertyName, strings.ToLower(policy)}, "_")
+// propNameToMetricName 将属性转为标准指标名
+func propNameToMetricName(propertyName, policy string) string {
+	name := propertyName + "_" + strings.ToLower(policy)
 	// 在 NormalizeName 基础上，去掉 :
 	return utils.NormalizeName(strings.ReplaceAll(name, ":", ""))
 }
@@ -125,7 +125,9 @@ func toIntBuckets(bucketMap map[int32]int32) []bucket {
 
 // toSecondBuckets 将分布统计数据转为符合 Prometheus Histogram 格式，且单位为 Seconds 的分桶数据
 func toSecondBuckets(bucketMap map[int32]int32) []bucket {
-	return toBuckets(bucketMap, func(val int) string { return cast.ToString(float64(val) / 1000) })
+	return toBuckets(bucketMap, func(val int) string {
+		return strconv.FormatFloat(float64(val)/1000, 'f', -1, 64)
+	})
 }
 
 // toBucketMap 将分布统计字符串（"0|0,50|1,100|5"）转为结构化数据
@@ -146,29 +148,29 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
-	rpcHistogramBucketMetricName := strings.Join([]string{name, "bucket"}, "_")
 	for _, b := range buckets {
-		dims := utils.CloneMap(dims)
-		dims["le"] = b.Val
-		pm := &promMapper{
-			Metrics:    common.MapStr{rpcHistogramBucketMetricName: b.Cnt},
+		pms = append(pms, &promMapper{
+			Metrics: common.MapStr{
+				name + "_bucket": b.Cnt,
+			},
 			Target:     target,
 			Timestamp:  timestamp,
-			Dimensions: dims,
-		}
-		pms = append(pms, pm)
+			Dimensions: utils.MergeMapWith(dims, "le", b.Val),
+		})
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{strings.Join([]string{name, "count"}, "_"): buckets[len(buckets)-1].Cnt},
+		Metrics: common.MapStr{
+			name + "_count": buckets[len(buckets)-1].Cnt,
+		},
 		Target:     target,
 		Timestamp:  timestamp,
-		Dimensions: utils.CloneMap(dims),
+		Dimensions: dims, // 无需拷贝
 	})
 	return pms
 }
 
-// statHeadToRPCMetricDims 将 Tars Stat 维度转为通用 RPC 模调维度
-func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string) map[string]string {
+// statHeadToDims 将 Tars Stat 维度转为通用 RPC 模调维度
+func statHeadToDims(head *statf.StatMicMsgHead, role, ip string) map[string]string {
 	// 去掉可能存在的 Token，并提取可能存在的 Version 字段。
 	calleeServer, _ := tokenparser.FromString(head.SlaveName)
 	callerServer, _ := tokenparser.FromString(head.MasterName)
@@ -176,7 +178,7 @@ func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string)
 
 	var instance, serviceName string
 	callerIp, calleeIp := head.MasterIp, head.SlaveIp
-	if role == tarsStatTagsRoleClient {
+	if role == statTagRoleClient {
 		// 主调场景上报指标缺少主调 IP 维度，使用上报 IP 填充
 		if callerIp == "" {
 			callerIp = ip
@@ -193,27 +195,27 @@ func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string)
 	}
 
 	return map[string]string{
-		resourceTagsRPCSystem:   define.RequestTars.S(),
-		resourceTagsScopeName:   fmt.Sprintf("%s_metrics", role),
-		resourceTagsVersion:     version,
-		resourceTagsInstance:    instance,
-		resourceTagsServiceName: serviceName,
+		resourceTagRPCSystem:   define.RequestTars.S(),
+		resourceTagScopeName:   fmt.Sprintf("%s_metrics", role),
+		resourceTagVersion:     version,
+		resourceTagInstance:    instance,
+		resourceTagServiceName: serviceName,
 		// 主调
-		rpcMetricTagsCallerServer:  callerServer,
-		rpcMetricTagsCallerService: callerServer,
-		rpcMetricTagsCallerIp:      callerIp,
+		metricTagCallerServer:  callerServer,
+		metricTagCallerService: callerServer,
+		metricTagCallerIp:      callerIp,
 		// 被调
-		rpcMetricTagsCalleeServer:  calleeServer,
-		rpcMetricTagsCalleeService: calleeServer,
-		rpcMetricTagsCalleeIp:      calleeIp,
-		rpcMetricTagsCalleeMethod:  head.InterfaceName,
+		metricTagCalleeServer:  calleeServer,
+		metricTagCalleeService: calleeServer,
+		metricTagCalleeIp:      calleeIp,
+		metricTagCalleeMethod:  head.InterfaceName,
 		// 返回码
-		rpcMetricTagsCode: strconv.Itoa(int(head.ReturnValue)),
+		metricTagCode: strconv.Itoa(int(head.ReturnValue)),
 	}
 }
 
-// propHeadToCustomMetricDims 将 Tars Property 维度转为自定义指标维度
-func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
+// propHeadToDims 将 Tars Property 维度转为自定义指标维度
+func propHeadToDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
 	instance := head.Ip
 	if instance == "" {
 		// 原始数据中可能没有 IP 维度，使用上报 IP 填充。
@@ -222,13 +224,13 @@ func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[
 
 	serviceName, _ := tokenparser.FromString(head.ModuleName)
 	return map[string]string{
-		resourceTagsRPCSystem:        define.RequestTars.S(),
-		resourceTagsScopeName:        fmt.Sprintf("%s_property", define.RequestTars.S()),
-		resourceTagsInstance:         instance,
-		resourceTagsServiceName:      serviceName,
-		resourceTagsContainerName:    head.SContainer,
-		tarsPropertyTagsIPropertyVer: strconv.Itoa(int(head.IPropertyVer)),
-		tarsPropertyTagsPropertyName: head.PropertyName,
+		resourceTagRPCSystem:     define.RequestTars.S(),
+		resourceTagScopeName:     fmt.Sprintf("%s_property", define.RequestTars.S()),
+		resourceTagInstance:      instance,
+		resourceTagServiceName:   serviceName,
+		resourceTagContainerName: head.SContainer,
+		propertyTagIPropertyVer:  strconv.Itoa(int(head.IPropertyVer)),
+		propertyTagPropertyName:  head.PropertyName,
 	}
 }
 
@@ -326,13 +328,13 @@ func (s *stat) UpdateFrom(other *stat) {
 }
 
 // ToEvents 将 stat 转换为 Event 列表
-func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
+func (s *stat) ToEvents(metricPrefix string) []define.Event {
 	var pms []*promMapper
 
 	codeTypeReqCntMap := map[string]int32{
-		rpcMetricTagsCodeTypeException: s.execCount,
-		rpcMetricTagsCodeTypeTimeout:   s.timeoutCount,
-		rpcMetricTagsCodeTypeSuccess:   s.successCount,
+		metricTagCodeException: s.execCount,
+		metricTagCodeTimeout:   s.timeoutCount,
+		metricTagCodeSuccess:   s.successCount,
 	}
 	for codeType, reqCnt := range codeTypeReqCntMap {
 		if reqCnt == 0 {
@@ -341,32 +343,33 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 
 		pms = append(pms, &promMapper{
 			Metrics: common.MapStr{
-				strings.Join([]string{metricNamePrefix, s.role, "handled_total"}, "_"): reqCnt,
+				metricPrefix + "_" + s.role + "_handled_total": reqCnt,
 			},
 			Target:     s.target,
 			Timestamp:  s.timestamp,
-			Dimensions: utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType}),
+			Dimensions: utils.MergeMapWith(s.dimensions, metricTagCodeType, codeType),
 		})
 	}
 
 	// ReturnValue = 0 也可能是超时 or 异常，而协议的分桶数据不区分返回码状态，所以此处只能大致判断，写一个预估的返回码类型。
-	codeType := rpcMetricTagsCodeTypeSuccess
+	codeType := metricTagCodeSuccess
 	switch {
 	case s.execCount > 0:
-		codeType = rpcMetricTagsCodeTypeException
+		codeType = metricTagCodeException
 	case s.timeoutCount > 0:
-		codeType = rpcMetricTagsCodeTypeTimeout
+		codeType = metricTagCodeTimeout
 	}
 
-	rpcHistogramMetricName := strings.Join([]string{metricNamePrefix, s.role, "handled_seconds"}, "_")
-	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
-	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
+	histogramMetric := metricPrefix + "_" + s.role + "_handled_seconds"
+	dims := utils.MergeMapWith(s.dimensions, metricTagCodeType, codeType)
+	rpcHistogramPms := toHistogram(histogramMetric, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
 	pms = append(pms, rpcHistogramPms...)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
-	rpcHistogramSumMetricName := strings.Join([]string{rpcHistogramMetricName, "sum"}, "_")
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{rpcHistogramSumMetricName: cast.ToFloat64(s.totalRspTime) / 1000},
+		Metrics: common.MapStr{
+			histogramMetric + "_sum": float64(s.totalRspTime) / 1000,
+		},
 		Target:     s.target,
 		Timestamp:  s.timestamp,
 		Dimensions: dims,
@@ -446,7 +449,7 @@ func (a *aggregator) Aggregate(s *stat) {
 // aggregate 样本点聚合
 func (a *aggregator) aggregate(s *stat) {
 	stat := s.Copy()
-	pk := stat.DropTags(a.scopeNameToIgnoreTags[s.dimensions[resourceTagsScopeName]]).PK()
+	pk := stat.DropTags(a.scopeNameToIgnoreTags[s.dimensions[resourceTagScopeName]]).PK()
 	if _, ok := a.buffer[pk]; !ok {
 		a.buffer[pk] = stat
 	} else {
@@ -458,7 +461,7 @@ func (a *aggregator) aggregate(s *stat) {
 func (a *aggregator) exportAndClean() {
 	var events []define.Event
 	for pk, s := range a.buffer {
-		events = append(events, s.ToEvents(rpcMetricAggregatePrefix)...)
+		events = append(events, s.ToEvents(metricAggregatePrefix)...)
 		delete(a.buffer, pk)
 	}
 
@@ -531,10 +534,17 @@ func (c tarsConverter) statToEvents(stat *stat) []define.Event {
 	}
 
 	if c.conf.IsDropOriginal {
-		return nil
+		if len(c.conf.dropOriginalServiceMap) == 0 {
+			// 丢弃所有原始指标。
+			return nil
+		}
+		if _, ok := c.conf.dropOriginalServiceMap[stat.dimensions[resourceTagServiceName]]; ok {
+			// 丢弃指定服务的原始指标。
+			return nil
+		}
 	}
 
-	return stat.ToEvents(rpcMetricNamePrefix)
+	return stat.ToEvents(metricNamePrefix)
 }
 
 // handleStat 处理服务统计指标
@@ -542,34 +552,34 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 	var events []define.Event
 	sd := data.Data.(*define.TarsStatData)
 
-	role := tarsStatTagsRoleServer
+	role := statTagRoleServer
 	if sd.FromClient {
-		role = tarsStatTagsRoleClient
+		role = statTagRoleClient
 	}
 
 	for head, body := range sd.Stats {
-		dims := statHeadToRPCMetricDims(&head, role, ip)
+		dims := statHeadToDims(&head, role, ip)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
 		events = append(events, c.statToEvents(stat)...)
 
-		if role == tarsStatTagsRoleClient {
-			calleeServer, ok := dims[rpcMetricTagsCalleeServer]
+		if role == statTagRoleClient {
+			calleeServer, ok := dims[metricTagCalleeServer]
 			if !ok || calleeServer == "" || calleeServer == "." {
 				continue
 			}
 
-			calleeIp, ok := dims[rpcMetricTagsCalleeIp]
+			calleeIp, ok := dims[metricTagCalleeIp]
 			if !ok || calleeIp == "" {
 				continue
 			}
 
-			serverDims := utils.MergeMaps(dims, map[string]string{
-				resourceTagsServiceName: calleeServer,
-				resourceTagsInstance:    calleeIp,
-				resourceTagsScopeName:   "server_metrics",
-			})
+			serverDims := utils.MergeMapWith(dims,
+				resourceTagServiceName, calleeServer,
+				resourceTagInstance, calleeIp,
+				resourceTagScopeName, "server_metrics",
+			)
 			// 从 Client 切换成 Server 视角，target 取值从 ip 调整为 calleeIp，避免 target x calleeIp 不一致导致高基数。
-			serverStatFromClient := newStat(token, tarsStatTagsRoleServer, calleeIp, data.Timestamp, serverDims, body)
+			serverStatFromClient := newStat(token, statTagRoleServer, calleeIp, data.Timestamp, serverDims, body)
 			events = append(events, c.statToEvents(serverStatFromClient)...)
 		}
 	}
@@ -580,30 +590,31 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
 	pms := make([]*promMapper, 0)
 	for head, body := range data.Data.(*define.TarsPropertyData).Props {
-		commonDims := propHeadToCustomMetricDims(&head, ip)
+		commonDims := propHeadToDims(&head, ip)
 		for _, info := range body.VInfo {
-			dims := utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: info.Policy})
+			dims := utils.MergeMapWith(commonDims, propertyTagPropertyPolicy, info.Policy)
 			switch info.Policy {
 			case "Distr":
 				bucketMap := toBucketMap(info.Value)
 				if len(bucketMap) == 0 {
-					logger.Warnf(
-						"[handleProp] empty distrMap, dataID=%d, ip=%v, propertyName=%s, Distr=%s",
-						dataID, ip, head.PropertyName, info.Value)
+					logger.Warnf("skip empty distrMap, dataID=%d, ip=%v, propertyName=%s, Distr=%s", dataID, ip, head.PropertyName, info.Value)
 					continue
 				}
 
 				customMetricHistogramPms := toHistogram(
-					propNameToNormalizeMetricName(head.PropertyName, info.Policy),
+					propNameToMetricName(head.PropertyName, info.Policy),
 					ip,
 					data.Timestamp,
 					toIntBuckets(bucketMap),
 					dims,
 				)
 				pms = append(pms, customMetricHistogramPms...)
+
 			default: // Policy -> Max / Min / Avg / Sum / Count
 				pms = append(pms, &promMapper{
-					Metrics:    common.MapStr{propNameToNormalizeMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value)},
+					Metrics: common.MapStr{
+						propNameToMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value),
+					},
 					Target:     ip,
 					Timestamp:  data.Timestamp,
 					Dimensions: dims,

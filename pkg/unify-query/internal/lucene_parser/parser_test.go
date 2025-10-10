@@ -179,7 +179,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "+level:info AND -iterationIndex:[4 TO 8] NOT iterationIndex:9",
 			input: "+level:info AND -iterationIndex:[4 TO 8] NOT iterationIndex:9",
 			sql:   "`iterationIndex` >= '4' AND `iterationIndex` <= '8' AND `level` = 'info' AND `iterationIndex` != '9'",
-			dsl:   `{"bool":{"must":[{"term":{"level":"info"}},{"bool":{"must_not":{"range":{"iterationIndex":{"from":4,"include_lower":true,"include_upper":true,"to":8}}}}}],"should":{"bool":{"must_not":{"term":{"iterationIndex":"9"}}}}}}`,
+			dsl:   `{"bool":{"must":[{"term":{"level":"info"}},{"bool":{"must_not":{"range":{"iterationIndex":{"from":4,"include_lower":true,"include_upper":true,"to":8}}}}},{"bool":{"must_not":{"term":{"iterationIndex":"9"}}}}]}}`,
 		},
 		{
 			name:  "nested query",
@@ -364,12 +364,12 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"new-1": {
 			q:   `quick brown +fox -news`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}],"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}}]}}`,
 			sql: "`log` MATCH_PHRASE 'quick' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news' OR `log` MATCH_PHRASE 'brown' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news' OR `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news'",
 		},
 		"new-2": {
 			q:   `quick -news`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}]}}`,
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}}}}`,
 			sql: "`log` MATCH_PHRASE 'quick' AND `log` NOT MATCH_PHRASE 'news' OR `log` NOT MATCH_PHRASE 'news'",
 		},
 		"模糊匹配": {
@@ -541,6 +541,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"term":{"status":"Value"}}`,
 			sql: "`status` = 'Value'",
 		},
+		"- and +": {
+			q:   `-sleep +46`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sleep"}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"46"}}]}}`,
+			sql: "`log` NOT MATCH_PHRASE 'sleep' AND `log` MATCH_PHRASE '46'",
+		},
 		// 并不支持 _exists_ 语法糖,不存在于词法文件中
 		//"field_query_exists": {
 		//	q:   `_exists_:author`,
@@ -575,12 +580,12 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"boolean_NOT": {
 			q:   `term1 NOT term2`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term1"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term2"}}}}]}}`,
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term2"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term1"}}}}`,
 			sql: "`log` MATCH_PHRASE 'term1' AND `log` NOT MATCH_PHRASE 'term2' OR `log` NOT MATCH_PHRASE 'term2'",
 		},
 		"boolean_required_prohibited": {
 			q:   `+required -prohibited`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"prohibited"}}}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"prohibited"}}}}]}}`,
 			sql: "`log` MATCH_PHRASE 'required' AND `log` NOT MATCH_PHRASE 'prohibited'",
 		},
 		"boolean_double_ampersand": {
@@ -771,7 +776,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"complex_mixed_operators": {
 			q:   `+required +(optional1 OR optional2) -excluded`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required"}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"optional1"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"optional2"}}]}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"excluded"}}}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required"}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"optional1"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"optional2"}}]}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"excluded"}}}}]}}`,
 			sql: "`log` MATCH_PHRASE 'required' AND (`log` MATCH_PHRASE 'optional1' OR `log` MATCH_PHRASE 'optional2') AND `log` NOT MATCH_PHRASE 'excluded'",
 		},
 		"complex_scoring_nested_boost": {
@@ -797,7 +802,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_extracted_boolean_plus": {
 			q:   `+one +two`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"one"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"two"}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"one"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"two"}}]}}`,
 			sql: "`log` MATCH_PHRASE 'one' AND `log` MATCH_PHRASE 'two'",
 		},
 		"lucene_extracted_boost_fuzzy": {
@@ -883,17 +888,17 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"case_insensitive_not_lowercase": {
 			q:   `log:error not status:active`,
-			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"bool":{"must_not":{"term":{"status":"active"}}}}]}}`,
+			es:  `{"bool":{"must":{"bool":{"must_not":{"term":{"status":"active"}}}},"should":{"match_phrase":{"log":{"query":"error"}}}}}`,
 			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' OR `status` != 'active'",
 		},
 		"case_insensitive_not_mixed": {
 			q:   `log:error Not status:active`,
-			es:  `{"bool":{"should":[{"match_phrase":{"log":{"query":"error"}}},{"bool":{"must_not":{"term":{"status":"active"}}}}]}}`,
+			es:  `{"bool":{"must":{"bool":{"must_not":{"term":{"status":"active"}}}},"should":{"match_phrase":{"log":{"query":"error"}}}}}`,
 			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' OR `status` != 'active'",
 		},
 		"case_insensitive_mixed_complex": {
 			q:   `(log:error AND status:active) or (level:warn Not type:system)`,
-			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}},{"bool":{"should":[{"term":{"level":"warn"}},{"bool":{"must_not":{"term":{"type":"system"}}}}]}}]}}`,
+			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}},{"bool":{"must":{"bool":{"must_not":{"term":{"type":"system"}}}},"should":{"term":{"level":"warn"}}}}]}}`,
 			sql: "(`log` MATCH_PHRASE 'error' AND `status` = 'active') OR (`level` = 'warn' AND `type` != 'system' OR `type` != 'system')",
 		},
 	}

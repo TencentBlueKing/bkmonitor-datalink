@@ -1,15 +1,11 @@
-// Copyright 2021 The Prometheus Authors
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package polarissd
 
@@ -75,7 +71,7 @@ func (c *SDConfig) SetDirectory(dir string) {
 	c.HTTPClientConfig.SetDirectory(dir)
 }
 
-func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *SDConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultSDConfig
 	type plain SDConfig
 	return unmarshal((*plain)(c))
@@ -100,7 +96,6 @@ func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTT
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
-
 	client, err := promconfig.NewClientFromConfig(conf.HTTPClientConfig, "polaris", clientOpts...)
 	if err != nil {
 		return nil, err
@@ -194,7 +189,6 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 
 	rsp, err := d.client.Do(req.WithContext(ctx))
 	if err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 	defer func() {
@@ -203,30 +197,25 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 	}()
 
 	if rsp.StatusCode != http.StatusOK {
-		failuresCount.Inc()
 		return nil, fmt.Errorf("server returned HTTP status %s", rsp.Status)
 	}
 
 	if !matchContentType.MatchString(strings.TrimSpace(rsp.Header.Get("Content-Type"))) {
-		failuresCount.Inc()
 		return nil, fmt.Errorf("unsupported content type %q", rsp.Header.Get("Content-Type"))
 	}
 
 	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 
 	var targetGroups []*targetgroup.Group
 	if err := json.Unmarshal(b, &targetGroups); err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 
 	for i, tg := range targetGroups {
 		if tg == nil {
-			failuresCount.Inc()
 			err = errors.New("nil target group item found")
 			return nil, err
 		}
@@ -251,6 +240,7 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	instances, err := d.resolveInstances()
 	if err != nil {
+		failuresCount.Inc()
 		return nil, err
 	}
 
@@ -263,6 +253,7 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	for _, inst := range instances {
 		tgs, err := d.refresh(ctx, inst)
 		if err != nil {
+			failuresCount.Inc()
 			return nil, err
 		}
 		ret = append(ret, tgs...)

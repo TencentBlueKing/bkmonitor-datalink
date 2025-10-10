@@ -10,6 +10,7 @@
 package utils
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -26,4 +27,33 @@ func MatchSubLabels(subset, set map[string]string) bool {
 
 func NormalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
+}
+
+func MapToSelector(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+
+	var selector []string
+	for k, v := range m {
+		selector = append(selector, k+"="+v)
+	}
+	sort.Strings(selector)
+	return strings.Join(selector, ",")
+}
+
+func SelectorToMap(s string) map[string]string {
+	selector := make(map[string]string)
+	if len(s) == 0 {
+		return selector
+	}
+
+	for _, part := range strings.Split(s, ",") {
+		kv := strings.Split(strings.TrimSpace(part), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		selector[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+	}
+	return selector
 }

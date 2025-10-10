@@ -16,7 +16,7 @@ import (
 )
 
 var pool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make(labels.Labels, 0, 24)
 	},
 }

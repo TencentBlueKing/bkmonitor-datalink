@@ -44,12 +44,13 @@ const (
 	MsgQueryExemplar       = "query_exemplar"
 	MsgQueryClusterMetrics = "query_cluster_metrics"
 
-	MsgHandlerAPI = "handler_api"
-
+	MsgHandlerAPI  = "handler_api"
 	MsgTableFormat = "table_format"
 
 	MsgQueryRouter = "query_router"
 	MsgFeatureFlag = "feature_flag"
+
+	MsgHttpCurl = "http_curl"
 )
 
 type Message struct {

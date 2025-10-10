@@ -91,7 +91,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	span.Set("req-http-method", method)
 	span.Set("req-http-path", opt.UrlPath)
 
-	c.Log.Infof(ctx, "curl request: %s[%s] body:%s", method, opt.UrlPath, opt.Body)
+	metadata.Sprintf(
+		metadata.MsgHttpCurl,
+		"%s [%s] body: %s",
+		method, opt.UrlPath, opt.Body,
+	).Info(ctx)
 
 	for k, v := range opt.Headers {
 		if k != "" && v != "" {
@@ -101,7 +105,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return size, HandleClientError(ctx, metadata.MsgQueryTs, opt.UrlPath, err)
+		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
 	}
 
 	buf := bufPool.Get().(*bytes.Buffer)

@@ -24,7 +24,6 @@ type Option struct {
 
 	FieldsMap       metadata.FieldsMap
 	FieldEncodeFunc func(string) string
-	AddLabels       func(key string, operator string, values ...string)
 }
 
 // ParseLuceneWithVisitor 解析

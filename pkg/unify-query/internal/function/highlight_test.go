@@ -21,9 +21,13 @@ import (
 // TestQuery_LabelMap 测试 Query.LabelMap 函数（包含 QueryString 和 Conditions 的组合）
 func TestQuery_LabelMap(t *testing.T) {
 	testCases := []struct {
-		name     string
-		query    *metadata.Query
+		name  string
+		query *metadata.Query
+
 		expected map[string][]LabelMapValue
+
+		data          map[string]any
+		highLightData map[string]any
 	}{
 		{
 			name: "只有 Conditions",
@@ -49,6 +53,48 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 			expected: map[string][]LabelMapValue{
 				"level": {{Value: "warning", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "querystring - 1",
+			query: &metadata.Query{
+				QueryString: `file: *elasticsearch\/query_string* AND level: ("warn" OR "error") AND trace_id: /[\d]+/ `,
+			},
+			expected: map[string][]LabelMapValue{
+				"file": {
+					{
+						Value: "elasticsearch/query_string", Operator: metadata.ConditionContains,
+					},
+				},
+				"level": {
+					{
+						Value: "warn", Operator: metadata.ConditionEqual,
+					},
+					{
+						Value: "error", Operator: metadata.ConditionEqual,
+					},
+				},
+				"trace_id": {
+					{
+						Value: "[\\d]+", Operator: metadata.ConditionRegEqual,
+					},
+				},
+			},
+			data: map[string]any{
+				"file":     `elasticsearch/query_string.go:76`,
+				"level":    "warn",
+				"trace_id": "my12356bro",
+			},
+			highLightData: map[string]any{
+				"file": []string{
+					`<mark>elasticsearch/query_string</mark>.go:76`,
+				},
+				"level": []string{
+					`<mark>warn</mark>`,
+				},
+				"trace_id": []string{
+					"my<mark>12356</mark>bro",
+				},
 			},
 		},
 		{
@@ -199,6 +245,15 @@ func TestQuery_LabelMap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := LabelMap(context.TODO(), tc.query)
 			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
+
+			if len(tc.data) > 0 {
+				hf := HighLightFactory{
+					labelMap:          result,
+					maxAnalyzedOffset: 200,
+				}
+				resultData := hf.Process(tc.data)
+				assert.Equal(t, tc.highLightData, resultData, "Query.HighLightFactory result should match expected")
+			}
 		})
 	}
 }

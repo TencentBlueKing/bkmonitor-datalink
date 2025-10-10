@@ -53,6 +53,7 @@ var rpcClientMetricDims = map[string]string{
 	metricTagCalleeMethod:  "Add",
 	metricTagCodeType:      metricTagCodeSuccess,
 	metricTagCode:          "0",
+	define.TokenAppName:    "app1",
 }
 
 var rpcServerMetricDims = map[string]string{
@@ -70,6 +71,7 @@ var rpcServerMetricDims = map[string]string{
 	metricTagCalleeMethod:  "Add",
 	metricTagCodeType:      metricTagCodeSuccess,
 	metricTagCode:          "0",
+	define.TokenAppName:    "app1",
 }
 
 func TestSplitAtLastOnce(t *testing.T) {
@@ -160,7 +162,7 @@ func TestTarsProperty(t *testing.T) {
 		RecordType:    define.RecordTars,
 		RequestType:   define.RequestTars,
 		RequestClient: define.RequestClient{IP: "127.0.0.1"},
-		Token:         define.Token{Original: "xxx", MetricsDataId: 123},
+		Token:         define.Token{AppName: "app1", Original: "xxx", MetricsDataId: 123},
 		Data:          data,
 	}
 
@@ -176,6 +178,7 @@ func TestTarsProperty(t *testing.T) {
 			resourceTagContainerName: "container1",
 			propertyTagIPropertyVer:  "2",
 			propertyTagPropertyName:  "TestApp.HelloGo.TestPropertyName",
+			define.TokenAppName:      "app1",
 		}
 		expects := []common.MapStr{
 			{
@@ -267,7 +270,7 @@ func TestTarsStat(t *testing.T) {
 		RecordType:    define.RecordTars,
 		RequestType:   define.RequestTars,
 		RequestClient: define.RequestClient{IP: "127.0.0.1"},
-		Token:         define.Token{Original: "xxx", MetricsDataId: 123},
+		Token:         define.Token{AppName: "app1", Original: "xxx", MetricsDataId: 123},
 		Data:          data,
 	}
 

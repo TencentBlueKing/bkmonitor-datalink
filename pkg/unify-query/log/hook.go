@@ -86,7 +86,7 @@ func initLogConfig() {
 	DefaultLogger = &Logger{
 		logger: zap.New(
 			zapcore.NewCore(encoder, writeSyncer, loggerLevel),
-			zap.AddCaller(), zap.AddCallerSkip(4),
+			zap.AddCaller(), zap.AddCallerSkip(3),
 		),
 	}
 }

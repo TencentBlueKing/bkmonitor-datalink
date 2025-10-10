@@ -170,7 +170,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 }
 
 // statHeadToDims 将 Tars Stat 维度转为通用 RPC 模调维度
-func statHeadToDims(head *statf.StatMicMsgHead, role, ip string) map[string]string {
+func statHeadToDims(head *statf.StatMicMsgHead, role, ip, appName string) map[string]string {
 	// 去掉可能存在的 Token，并提取可能存在的 Version 字段。
 	calleeServer, _ := tokenparser.FromString(head.SlaveName)
 	callerServer, _ := tokenparser.FromString(head.MasterName)
@@ -195,6 +195,7 @@ func statHeadToDims(head *statf.StatMicMsgHead, role, ip string) map[string]stri
 	}
 
 	return map[string]string{
+		define.TokenAppName:    appName,
 		resourceTagRPCSystem:   define.RequestTars.S(),
 		resourceTagScopeName:   fmt.Sprintf("%s_metrics", role),
 		resourceTagVersion:     version,
@@ -215,7 +216,7 @@ func statHeadToDims(head *statf.StatMicMsgHead, role, ip string) map[string]stri
 }
 
 // propHeadToDims 将 Tars Property 维度转为自定义指标维度
-func propHeadToDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
+func propHeadToDims(head *propertyf.StatPropMsgHead, ip, appName string) map[string]string {
 	instance := head.Ip
 	if instance == "" {
 		// 原始数据中可能没有 IP 维度，使用上报 IP 填充。
@@ -224,6 +225,7 @@ func propHeadToDims(head *propertyf.StatPropMsgHead, ip string) map[string]strin
 
 	serviceName, _ := tokenparser.FromString(head.ModuleName)
 	return map[string]string{
+		define.TokenAppName:      appName,
 		resourceTagRPCSystem:     define.RequestTars.S(),
 		resourceTagScopeName:     fmt.Sprintf("%s_property", define.RequestTars.S()),
 		resourceTagInstance:      instance,
@@ -558,7 +560,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 	}
 
 	for head, body := range sd.Stats {
-		dims := statHeadToDims(&head, role, ip)
+		dims := statHeadToDims(&head, role, ip, token.AppName)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
 		events = append(events, c.statToEvents(stat)...)
 
@@ -590,7 +592,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
 	pms := make([]*promMapper, 0)
 	for head, body := range data.Data.(*define.TarsPropertyData).Props {
-		commonDims := propHeadToDims(&head, ip)
+		commonDims := propHeadToDims(&head, ip, token.AppName)
 		for _, info := range body.VInfo {
 			dims := utils.MergeMapWith(commonDims, propertyTagPropertyPolicy, info.Policy)
 			switch info.Policy {

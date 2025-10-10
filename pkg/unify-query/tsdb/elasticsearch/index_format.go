@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/samber/lo"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -130,13 +132,18 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	fieldMap.FieldName = k
 	fieldMap.FieldType, _ = data["type"].(string)
 
-	fieldMap.IsAgg = false
+	// 根据字段类型设置 is_agg 默认值
+	// text、object、nested 类型不支持聚合，其他类型默认支持
+	nonAggTypes := []string{"text", "object", "nested"}
+	fieldMap.IsAgg = !lo.Contains(nonAggTypes, fieldMap.FieldType)
+
 	fieldMap.TokenizeOnChars = make([]string, 0)
 	ks := strings.Split(k, ESStep)
 	fieldMap.OriginField = ks[0]
 	fieldMap.IsAnalyzed = false
 	fieldMap.IsCaseSensitive = false
 
+	// 如果 mapping 中显式设置了 doc_values，以显式设置为准
 	if v, ok := data["doc_values"].(bool); ok {
 		fieldMap.IsAgg = v
 	}

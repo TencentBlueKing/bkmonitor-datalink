@@ -187,6 +187,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "CAST(event['name'] AS STRING) = 'test'",
 			dsl:   `{"nested":{"path":"event","query":{"term":{"event.name":"test"}}}}`,
 		},
+		{
+			name:  "test-1",
+			input: `__ext.io_kubernetes_pod_namespace: "gfp-online-livepy-b" AND is_data_valid: "1" AND born_dist_to_recipient: <400 AND recipient_exists: "1" AND bot_dead_reason: (*killed_by_unknown* OR *bot_without_injury*) AND approach_succ: "0" AND approach_curr_recipient_frame: >200 AND in_fight_aggressive_ratio: "0"`,
+			sql:   "CAST(__ext['io_kubernetes_pod_namespace'] AS STRING) = 'gfp-online-livepy-b' AND `is_data_valid` = '1' AND `born_dist_to_recipient` < '400' AND `recipient_exists` = '1' AND (`bot_dead_reason` LIKE '%killed_by_unknown%' OR `bot_dead_reason` LIKE '%bot_without_injury%') AND `approach_succ` = '0' AND `approach_curr_recipient_frame` > '200' AND `in_fight_aggressive_ratio` = '0'",
+			dsl:   `{"bool":{"must":[{"term":{"__ext.io_kubernetes_pod_namespace":"gfp-online-livepy-b"}},{"term":{"is_data_valid":"1"}},{"range":{"born_dist_to_recipient":{"from":null,"include_lower":true,"include_upper":false,"to":400}}},{"term":{"recipient_exists":"1"}},{"bool":{"should":[{"wildcard":{"bot_dead_reason":{"value":"*killed_by_unknown*"}}},{"wildcard":{"bot_dead_reason":{"value":"*bot_without_injury*"}}}]}},{"term":{"approach_succ":"0"}},{"range":{"approach_curr_recipient_frame":{"from":200,"include_lower":false,"include_upper":true,"to":null}}},{"term":{"in_fight_aggressive_ratio":"0"}}]}}`,
+		},
 	}
 
 	mock.Init()

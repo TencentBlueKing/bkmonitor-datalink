@@ -18,8 +18,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -162,10 +160,10 @@ func TestInstance_queryReference(t *testing.T) {
 
 	mock.Es.Set(map[string]any{
 		// 统计 __ext.io_kubernetes_pod 不为空的文档数量
-		`{"aggregations":{"_value":{"value_count":{"field":"__ext.io_kubernetes_pod"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":92,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":1523302}}}`,
+		`{"aggregations":{"_value":{"value_count":{"field":"__ext.io_kubernetes_pod"}}},"query":{"bool":{"filter":[{"exists":{"field":"__ext.io_kubernetes_pod"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":0,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":92,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":1523302}}}`,
 
 		// 统计 __ext.io_kubernetes_pod 不为空的去重文档数量
-		`{"aggregations":{"_value":{"cardinality":{"field":"__ext.io_kubernetes_pod"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":170,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":4}}}`,
+		`{"aggregations":{"_value":{"cardinality":{"field":"__ext.io_kubernetes_pod"}}},"query":{"bool":{"filter":[{"exists":{"field":"__ext.io_kubernetes_pod"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":0,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":170,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":4}}}`,
 
 		// 使用 promql 计算平均值 sum(count_over_time(field[12h]))
 		`{"aggregations":{"__ext.container_name":{"aggregations":{"__ext.io_kubernetes_pod":{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","interval":"12h","min_doc_count":0}}},"terms":{"field":"__ext.io_kubernetes_pod","missing":" "}}},"terms":{"field":"__ext.container_name","missing":" "}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":185,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"__ext.container_name":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"unify-query","doc_count":1523254,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-64bd4f5df4-599f9","doc_count":767743,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":375064,"_value":{"value":375064}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":392679,"_value":{"value":392679}}]}},{"key":"bkmonitor-unify-query-64bd4f5df4-llp94","doc_count":755511,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":381173,"_value":{"value":381173}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":374338,"_value":{"value":374338}}]}}]}},{"key":"sync-apigw","doc_count":48,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-apigw-sync-1178-cl8k8","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}},{"key":"bkmonitor-unify-query-apigw-sync-1179-9h9xv","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}}]}}]}}}`,
@@ -180,10 +178,10 @@ func TestInstance_queryReference(t *testing.T) {
 		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"percentiles":{"field":"dtEventTimeStamp","percents":[50,90]}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","interval":"6h","min_doc_count":0}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":1338,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":387467,"_value":{"values":{"50.0":1.7236043803502532E12,"50.0_as_string":"1723604380350","90.0":1.7236129561289934E12,"90.0_as_string":"1723612956128"}}},{"key_as_string":"1723615200000","key":1723615200000,"doc_count":368818,"_value":{"values":{"50.0":1.7236258380061033E12,"50.0_as_string":"1723625838006","90.0":1.7236346787215513E12,"90.0_as_string":"1723634678721"}}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":382721,"_value":{"values":{"50.0":1.7236475858829739E12,"50.0_as_string":"1723647585882","90.0":1.723656196499344E12,"90.0_as_string":"1723656196499"}}},{"key_as_string":"1723658400000","key":1723658400000,"doc_count":384296,"_value":{"values":{"50.0":1.7236691776407131E12,"50.0_as_string":"1723669177640","90.0":1.723677836133885E12,"90.0_as_string":"1723677836133"}}}]}}}`,
 
 		// 根据 field 字段聚合计算数量，同时根据值排序
-		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","missing":" ","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0,"sort":[{"dtEventTimeStamp":{"order":"asc"}}]}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
 
 		// 根据 field 字段聚合 min，同时根据值排序
-		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","missing":" ","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0,"sort":[{"dtEventTimeStamp":{"order":"asc"}}]}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
 
 		// test- 1
 		`{"aggregations":{"span_name":{"aggregations":{"end_time":{"aggregations":{"_value":{"value_count":{}}},"date_histogram":{"extended_bounds":{"max":-62135596800000000,"min":-62135596800000000},"field":"end_time","interval":"1000d","min_doc_count":0}}},"terms":{"field":"span_name","missing":" "}}},"query":{"bool":{"filter":{"range":{"end_time":{"from":-62135596800000000,"include_lower":true,"include_upper":true,"to":-62135596800000000}}}}},"size":0}`: `{"took":578,"timed_out":false,"_shards":{"total":6,"successful":6,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"span_name":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"SELECT","doc_count":1657598,"end_time":{"buckets":[{"key":1747630080000000,"doc_count":83221,"_value":{"value":83221}},{"key":1747650240000000,"doc_count":48270,"_value":{"value":48270}},{"key":1747670400000000,"doc_count":11389,"_value":{"value":11389}},{"key":1747690560000000,"doc_count":42125,"_value":{"value":42125}},{"key":1747710720000000,"doc_count":127370,"_value":{"value":127370}},{"key":1747730880000000,"doc_count":140077,"_value":{"value":140077}},{"key":1747751040000000,"doc_count":19016,"_value":{"value":19016}},{"key":1747771200000000,"doc_count":21385,"_value":{"value":21385}},{"key":1747791360000000,"doc_count":165395,"_value":{"value":165395}},{"key":1747811520000000,"doc_count":209679,"_value":{"value":209679}},{"key":1747831680000000,"doc_count":49772,"_value":{"value":49772}},{"key":1747851840000000,"doc_count":19983,"_value":{"value":19983}},{"key":1747872000000000,"doc_count":143679,"_value":{"value":143679}},{"key":1747892160000000,"doc_count":178952,"_value":{"value":178952}},{"key":1747912320000000,"doc_count":60992,"_value":{"value":60992}},{"key":1747932480000000,"doc_count":44126,"_value":{"value":44126}},{"key":1747952640000000,"doc_count":63272,"_value":{"value":63272}},{"key":1747972800000000,"doc_count":79260,"_value":{"value":79260}},{"key":1747992960000000,"doc_count":22578,"_value":{"value":22578}},{"key":1748013120000000,"doc_count":5817,"_value":{"value":5817}},{"key":1748033280000000,"doc_count":5874,"_value":{"value":5874}},{"key":1748053440000000,"doc_count":4371,"_value":{"value":4371}},{"key":1748073600000000,"doc_count":1128,"_value":{"value":1128}},{"key":1748093760000000,"doc_count":1106,"_value":{"value":1106}},{"key":1748113920000000,"doc_count":1099,"_value":{"value":1099}},{"key":1748134080000000,"doc_count":1130,"_value":{"value":1130}},{"key":1748154240000000,"doc_count":1084,"_value":{"value":1084}},{"key":1748174400000000,"doc_count":1073,"_value":{"value":1073}},{"key":1748194560000000,"doc_count":1093,"_value":{"value":1093}},{"key":1748214720000000,"doc_count":36526,"_value":{"value":36526}},{"key":1748234880000000,"doc_count":66756,"_value":{"value":66756}}]}},{"key":"/trpc.example.greeter.Greeter/SayHello","doc_count":883345,"end_time":{"buckets":[{"key":1747630080000000,"doc_count":12124,"_value":{"value":12124}},{"key":1747650240000000,"doc_count":29654,"_value":{"value":29654}},{"key":1747670400000000,"doc_count":29482,"_value":{"value":29482}},{"key":1747690560000000,"doc_count":29672,"_value":{"value":29672}},{"key":1747710720000000,"doc_count":29660,"_value":{"value":29660}},{"key":1747730880000000,"doc_count":29457,"_value":{"value":29457}},{"key":1747751040000000,"doc_count":29506,"_value":{"value":29506}},{"key":1747771200000000,"doc_count":29475,"_value":{"value":29475}},{"key":1747791360000000,"doc_count":29642,"_value":{"value":29642}},{"key":1747811520000000,"doc_count":29639,"_value":{"value":29639}},{"key":1747831680000000,"doc_count":29629,"_value":{"value":29629}},{"key":1747851840000000,"doc_count":29498,"_value":{"value":29498}},{"key":1747872000000000,"doc_count":29492,"_value":{"value":29492}},{"key":1747892160000000,"doc_count":29346,"_value":{"value":29346}},{"key":1747912320000000,"doc_count":29055,"_value":{"value":29055}},{"key":1747932480000000,"doc_count":29116,"_value":{"value":29116}},{"key":1747952640000000,"doc_count":29132,"_value":{"value":29132}},{"key":1747972800000000,"doc_count":29109,"_value":{"value":29109}},{"key":1747992960000000,"doc_count":29576,"_value":{"value":29576}},{"key":1748013120000000,"doc_count":29656,"_value":{"value":29656}},{"key":1748033280000000,"doc_count":29664,"_value":{"value":29664}},{"key":1748053440000000,"doc_count":29467,"_value":{"value":29467}},{"key":1748073600000000,"doc_count":29676,"_value":{"value":29676}},{"key":1748093760000000,"doc_count":29654,"_value":{"value":29654}},{"key":1748113920000000,"doc_count":29494,"_value":{"value":29494}},{"key":1748134080000000,"doc_count":29668,"_value":{"value":29668}},{"key":1748154240000000,"doc_count":29508,"_value":{"value":29508}},{"key":1748174400000000,"doc_count":29668,"_value":{"value":29668}},{"key":1748194560000000,"doc_count":29672,"_value":{"value":29672}},{"key":1748214720000000,"doc_count":29666,"_value":{"value":29666}},{"key":1748234880000000,"doc_count":15288,"_value":{"value":15288}}]}},{"key":"/trpc.example.greeter.Greeter/SayHi","doc_count":865553,"end_time":{"buckets":[{"key":1747630080000000,"doc_count":11860,"_value":{"value":11860}},{"key":1747650240000000,"doc_count":29057,"_value":{"value":29057}},{"key":1747670400000000,"doc_count":28868,"_value":{"value":28868}},{"key":1747690560000000,"doc_count":29050,"_value":{"value":29050}},{"key":1747710720000000,"doc_count":29068,"_value":{"value":29068}},{"key":1747730880000000,"doc_count":28883,"_value":{"value":28883}},{"key":1747751040000000,"doc_count":28914,"_value":{"value":28914}},{"key":1747771200000000,"doc_count":28934,"_value":{"value":28934}},{"key":1747791360000000,"doc_count":29011,"_value":{"value":29011}},{"key":1747811520000000,"doc_count":29063,"_value":{"value":29063}},{"key":1747831680000000,"doc_count":28963,"_value":{"value":28963}},{"key":1747851840000000,"doc_count":28896,"_value":{"value":28896}},{"key":1747872000000000,"doc_count":28934,"_value":{"value":28934}},{"key":1747892160000000,"doc_count":28790,"_value":{"value":28790}},{"key":1747912320000000,"doc_count":28426,"_value":{"value":28426}},{"key":1747932480000000,"doc_count":28512,"_value":{"value":28512}},{"key":1747952640000000,"doc_count":28490,"_value":{"value":28490}},{"key":1747972800000000,"doc_count":28560,"_value":{"value":28560}},{"key":1747992960000000,"doc_count":28992,"_value":{"value":28992}},{"key":1748013120000000,"doc_count":29080,"_value":{"value":29080}},{"key":1748033280000000,"doc_count":29072,"_value":{"value":29072}},{"key":1748053440000000,"doc_count":28908,"_value":{"value":28908}},{"key":1748073600000000,"doc_count":29052,"_value":{"value":29052}},{"key":1748093760000000,"doc_count":29054,"_value":{"value":29054}},{"key":1748113920000000,"doc_count":28890,"_value":{"value":28890}},{"key":1748134080000000,"doc_count":29076,"_value":{"value":29076}},{"key":1748154240000000,"doc_count":28930,"_value":{"value":28930}},{"key":1748174400000000,"doc_count":29058,"_value":{"value":29058}},{"key":1748194560000000,"doc_count":29084,"_value":{"value":29084}},{"key":1748214720000000,"doc_count":29070,"_value":{"value":29070}},{"key":1748234880000000,"doc_count":15008,"_value":{"value":15008}}]}},{"key":"internalSpanDoSomething","doc_count":441681,"end_time":{"buckets":[{"key":1747630080000000,"doc_count":6061,"_value":{"value":6061}},{"key":1747650240000000,"doc_count":14829,"_value":{"value":14829}},{"key":1747670400000000,"doc_count":14741,"_value":{"value":14741}},{"key":1747690560000000,"doc_count":14836,"_value":{"value":14836}},{"key":1747710720000000,"doc_count":14830,"_value":{"value":14830}},{"key":1747730880000000,"doc_count":14725,"_value":{"value":14725}},{"key":1747751040000000,"doc_count":14753,"_value":{"value":14753}},{"key":1747771200000000,"doc_count":14739,"_value":{"value":14739}},{"key":1747791360000000,"doc_count":14817,"_value":{"value":14817}},{"key":1747811520000000,"doc_count":14822,"_value":{"value":14822}},{"key":1747831680000000,"doc_count":14816,"_value":{"value":14816}},{"key":1747851840000000,"doc_count":14748,"_value":{"value":14748}},{"key":1747872000000000,"doc_count":14746,"_value":{"value":14746}},{"key":1747892160000000,"doc_count":14673,"_value":{"value":14673}},{"key":1747912320000000,"doc_count":14533,"_value":{"value":14533}},{"key":1747932480000000,"doc_count":14557,"_value":{"value":14557}},{"key":1747952640000000,"doc_count":14566,"_value":{"value":14566}},{"key":1747972800000000,"doc_count":14556,"_value":{"value":14556}},{"key":1747992960000000,"doc_count":14788,"_value":{"value":14788}},{"key":1748013120000000,"doc_count":14829,"_value":{"value":14829}},{"key":1748033280000000,"doc_count":14832,"_value":{"value":14832}},{"key":1748053440000000,"doc_count":14738,"_value":{"value":14738}},{"key":1748073600000000,"doc_count":14837,"_value":{"value":14837}},{"key":1748093760000000,"doc_count":14827,"_value":{"value":14827}},{"key":1748113920000000,"doc_count":14747,"_value":{"value":14747}},{"key":1748134080000000,"doc_count":14834,"_value":{"value":14834}},{"key":1748154240000000,"doc_count":14754,"_value":{"value":14754}},{"key":1748174400000000,"doc_count":14834,"_value":{"value":14834}},{"key":1748194560000000,"doc_count":14836,"_value":{"value":14836}},{"key":1748214720000000,"doc_count":14833,"_value":{"value":14833}},{"key":1748234880000000,"doc_count":7644,"_value":{"value":7644}}]}},{"key":"test.example.greeter.SayHello/sleep","doc_count":432779,"end_time":{"buckets":[{"key":1747630080000000,"doc_count":5930,"_value":{"value":5930}},{"key":1747650240000000,"doc_count":14529,"_value":{"value":14529}},{"key":1747670400000000,"doc_count":14434,"_value":{"value":14434}},{"key":1747690560000000,"doc_count":14525,"_value":{"value":14525}},{"key":1747710720000000,"doc_count":14534,"_value":{"value":14534}},{"key":1747730880000000,"doc_count":14444,"_value":{"value":14444}},{"key":1747751040000000,"doc_count":14461,"_value":{"value":14461}},{"key":1747771200000000,"doc_count":14466,"_value":{"value":14466}},{"key":1747791360000000,"doc_count":14501,"_value":{"value":14501}},{"key":1747811520000000,"doc_count":14533,"_value":{"value":14533}},{"key":1747831680000000,"doc_count":14482,"_value":{"value":14482}},{"key":1747851840000000,"doc_count":14448,"_value":{"value":14448}},{"key":1747872000000000,"doc_count":14467,"_value":{"value":14467}},{"key":1747892160000000,"doc_count":14395,"_value":{"value":14395}},{"key":1747912320000000,"doc_count":14213,"_value":{"value":14213}},{"key":1747932480000000,"doc_count":14255,"_value":{"value":14255}},{"key":1747952640000000,"doc_count":14245,"_value":{"value":14245}},{"key":1747972800000000,"doc_count":14281,"_value":{"value":14281}},{"key":1747992960000000,"doc_count":14496,"_value":{"value":14496}},{"key":1748013120000000,"doc_count":14539,"_value":{"value":14539}},{"key":1748033280000000,"doc_count":14536,"_value":{"value":14536}},{"key":1748053440000000,"doc_count":14454,"_value":{"value":14454}},{"key":1748073600000000,"doc_count":14526,"_value":{"value":14526}},{"key":1748093760000000,"doc_count":14527,"_value":{"value":14527}},{"key":1748113920000000,"doc_count":14445,"_value":{"value":14445}},{"key":1748134080000000,"doc_count":14538,"_value":{"value":14538}},{"key":1748154240000000,"doc_count":14465,"_value":{"value":14465}},{"key":1748174400000000,"doc_count":14529,"_value":{"value":14529}},{"key":1748194560000000,"doc_count":14542,"_value":{"value":14542}},{"key":1748214720000000,"doc_count":14535,"_value":{"value":14535}},{"key":1748234880000000,"doc_count":7504,"_value":{"value":7504}}]}}]}}}`,
@@ -191,6 +189,9 @@ func TestInstance_queryReference(t *testing.T) {
 		// refrence 聚合使用别名
 		// refrence 聚合不使用别名
 		`{"_source":{"includes":["__ext.io_kubernetes_pod_namespace"]},"aggregations":{"__ext.io_kubernetes_pod_namespace":{"aggregations":{"_value":{"value_count":{"field":"__ext.io_kubernetes_pod_namespace"}}},"terms":{"field":"__ext.io_kubernetes_pod_namespace","missing":" ","order":[{"_key":"desc"}]}}},"collapse":{"field":"__ext.io_kubernetes_pod_namespace"},"query":{"bool":{"filter":[{"exists":{"field":"__ext.io_kubernetes_pod_namespace"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1756987540,"include_lower":true,"include_upper":true,"to":1756991140}}}]}},"size":0}`: `{"took":806,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"__ext.io_kubernetes_pod_namespace":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"blueking","doc_count":356250,"_value":{"value":356250}}]}}}`,
+
+		// "nested aggregate + query 测试
+		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -216,7 +217,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
 				Source:        []string{"group", "user.first", "user.last"},
-				StorageType:   consul.ElasticsearchStorageType,
+				StorageType:   metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{},
 				Aggregates: metadata.Aggregates{
 					{
@@ -242,7 +243,7 @@ func TestInstance_queryReference(t *testing.T) {
 						Ast:  false,
 					},
 				},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -276,7 +277,7 @@ func TestInstance_queryReference(t *testing.T) {
 						Ast:  false,
 					},
 				},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -294,7 +295,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用 promql 计算平均值 sum(count_over_time(field[12h]))": {
 			query: &metadata.Query{
@@ -304,7 +305,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -328,7 +329,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        3,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -347,7 +348,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -369,7 +370,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -395,7 +396,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -413,7 +414,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"根据 field 字段聚合 min，同时根据值排序": {
 			query: &metadata.Query{
@@ -423,7 +424,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Min,
@@ -441,14 +442,14 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"test-1": {
 			query: &metadata.Query{
 				DB:          db,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -472,7 +473,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				Field:       "namespace",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -511,7 +512,7 @@ func TestInstance_queryReference(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				Field:       "__ext.io_kubernetes_pod_namespace",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       Count,
@@ -544,18 +545,12 @@ func TestInstance_queryReference(t *testing.T) {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
-			if err != nil {
-				codedErr := errno.ErrBusinessQueryExecution().
-					WithComponent("ElasticSearch实例测试").
-					WithOperation("转换序列集为时间序列").
-					WithContext("error", err.Error()).
-					WithSolution("检查测试数据和序列集转换逻辑")
-				log.ErrorWithCodef(ctx, codedErr)
-				return
-			}
 
-			actual := timeSeries.String()
-			assert.JSONEq(t, c.expected, actual)
+			assert.Nil(t, err)
+			if err == nil {
+				actual := timeSeries.String()
+				assert.JSONEq(t, c.expected, actual)
+			}
 		})
 	}
 }
@@ -639,7 +634,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
 					{
@@ -698,7 +693,7 @@ func TestInstance_queryRawData(t *testing.T) {
 					"time": "dtEventTimeStamp",
 				},
 				Source:      []string{"id"},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -817,7 +812,7 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				Source:      []string{"__ext.container_id"},
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -920,7 +915,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
 				DataLabel:   "bk_log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",
 					Type: TimeFieldTypeTime,
@@ -1031,7 +1026,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				ResultTableOption: &metadata.ResultTableOption{
 					ScrollID: "scroll_id_1",
 				},
@@ -1104,7 +1099,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				ResultTableOption: &metadata.ResultTableOption{
 					ScrollID: "scroll_id_2",
 				},
@@ -1127,7 +1122,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
-				StorageType: consul.ElasticsearchStorageType,
+				StorageType: metadata.ElasticsearchStorageType,
 				Orders: []metadata.Order{
 					{
 						Name: "timestamp",

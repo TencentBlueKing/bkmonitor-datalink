@@ -7,28 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package es
+package metadata
 
-import (
-	"context"
-	"sync"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+const (
+	BkSqlStorageType           = "bk_sql"
+	VictoriaMetricsStorageType = "victoria_metrics"
+	InfluxDBStorageType        = "influxdb"
+	PrometheusStorageType      = "prometheus"
+	OfflineDataArchive         = "offline_data_archive"
+	RedisStorageType           = "redis"
+	ElasticsearchStorageType   = "elasticsearch"
 )
-
-// key: table_id
-var tableMap map[string]*TableInfo
-
-var tableLock *sync.RWMutex
-
-// ReloadTableInfo
-func ReloadTableInfo(infos map[string]*TableInfo) error {
-	storageLock.Lock()
-	defer storageLock.Unlock()
-
-	tableMap = infos
-	for tableID, info := range infos {
-		log.Debugf(context.TODO(), "reload table id:%s info:%v success", tableID, info)
-	}
-	return nil
-}

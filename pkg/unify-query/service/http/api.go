@@ -23,13 +23,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -59,7 +56,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-filed-keys")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -70,12 +67,11 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("API请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求体大小", len(paramsStr))
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, paramsStr,
+	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -140,7 +136,7 @@ func HandlerTagKeys(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -151,12 +147,11 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("API请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求体大小", len(paramsStr))
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, paramsStr,
+	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -220,7 +215,7 @@ func HandlerTagValues(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-tag-values")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -231,12 +226,11 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("API请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求体大小", len(paramsStr))
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, paramsStr,
+	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -302,6 +296,53 @@ func HandlerTagValues(c *gin.Context) {
 	resp.success(ctx, data)
 }
 
+// HandlerTimeSeries
+// @Summary  info time series
+// @ID       info_time_series
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  SeriesDataList
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/time_series [post]
+func HandlerTimeSeries(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-time-series")
+	defer span.End(&err)
+
+	params := &Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, paramsStr,
+	).Info(ctx)
+
+	data := &InfoData{}
+	data.Tables = make([]*TablesItem, 0)
+
+	resp.success(ctx, data)
+}
+
 // HandlerSeries
 // @Summary  info series
 // @ID       info_series
@@ -326,7 +367,7 @@ func HandlerSeries(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-series")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -337,12 +378,11 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("API请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求体大小", len(paramsStr))
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, paramsStr,
+	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -485,12 +525,11 @@ func HandlerLabelValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("URL请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求URL", c.Request.URL.String())
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v",
+		c.Request.URL.String(), c.Request.Header,
+	).Info(ctx)
 
 	if len(matches) != 1 {
 		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)
@@ -561,7 +600,7 @@ func HandlerFieldMap(c *gin.Context) {
 		}
 	}()
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -572,12 +611,11 @@ func HandlerFieldMap(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	codedInfo := errno.ErrInfoAPICall().
-		WithComponent("HTTP API").
-		WithOperation("API请求处理").
-		WithContext("请求头", fmt.Sprintf("%+v", c.Request.Header)).
-		WithContext("请求体大小", len(paramsStr))
-	log.InfoWithCodef(ctx, codedInfo)
+	metadata.Sprintf(
+		metadata.MsgQueryInfo,
+		"%s, header: %+v, data: %+v",
+		c.Request.URL.String(), c.Request.Header, string(paramsStr),
+	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -606,13 +644,10 @@ func HandlerFieldMap(c *gin.Context) {
 
 			res, qErr := instance.QueryFieldMap(ctx, qry, start, end)
 			if qErr != nil {
-				codedErr := errno.ErrDataProcessFailed().
-					WithComponent("HTTP查询API").
-					WithOperation("查询字段映射").
-					WithError(qErr).
-					WithContext("表UUID", qry.TableUUID()).
-					WithSolution("检查表字段映射配置")
-				log.WarnWithCodef(ctx, codedErr)
+				_ = metadata.Sprintf(
+					metadata.MsgQueryInfo,
+					"查询字段列表接口报错",
+				).Error(ctx, qErr)
 				return
 			}
 
@@ -650,7 +685,7 @@ func HandlerFieldMap(c *gin.Context) {
 	})
 }
 
-func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
+func infoParamsToQueryRefAndTime(ctx context.Context, params *Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
 		unit string

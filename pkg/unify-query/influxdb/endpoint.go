@@ -19,8 +19,8 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -74,14 +74,10 @@ func (e *endpointSet) getEndPointRef(ctx context.Context, protocol, address stri
 	case GRPC:
 		conn, err := grpc.DialContext(ctx, address, e.dialOpts...)
 		if err != nil {
-			codedErr := errno.ErrStorageConnFailed().
-				WithComponent("InfluxDB端点").
-				WithOperation("连接端点").
-				WithError(err).
-				WithContext("地址", address).
-				WithContext("协议", protocol).
-				WithSolution("检查InfluxDB服务器状态和网络连接")
-			log.ErrorWithCodef(ctx, codedErr)
+			_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+				"InfluxDB %s %s 链接异常",
+				address, protocol,
+			).Error(ctx, err)
 			return nil
 		}
 		er.cc = conn
@@ -202,12 +198,10 @@ func (er *endpointRef) Close() {
 		if errors.Is(err, os.ErrClosed) {
 			return
 		}
-		codedWarn := errno.ErrWarningConnectionFail().
-			WithComponent("InfluxDB端点").
-			WithOperation("检测关闭错误").
-			WithError(err).
-			WithSolution("检查网络连接稳定性")
-		log.WarnWithCodef(er.ctx, codedWarn)
+
+		_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+			"InfluxDB 关闭异常",
+		).Error(er.ctx, err)
 	}
 }
 

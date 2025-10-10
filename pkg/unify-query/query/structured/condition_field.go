@@ -17,8 +17,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -70,12 +69,11 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		codedErr := errno.ErrQueryParseInvalidCondition().
-			WithComponent("结构化查询").
-			WithOperation("转换匹配类型到条件操作").
-			WithContext("match_type", matchType.String()).
-			WithSolution("检查标签匹配类型配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"类型 %v 不存在",
+			matchType,
+		).Warn(context.TODO())
 		return ConditionEqual
 	}
 }

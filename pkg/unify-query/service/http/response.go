@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -30,14 +29,7 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
-	codedErr := errno.ErrBusinessLogicError().
-		WithComponent("HTTP响应处理").
-		WithOperation("处理请求失败").
-		WithContext("url", r.c.Request.URL.Path).
-		WithContext("method", r.c.Request.Method).
-		WithContext("error", err.Error()).
-		WithSolution("检查请求参数和服务状态")
-	log.ErrorWithCodef(ctx, codedErr)
+	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 
@@ -84,4 +76,9 @@ type ListData struct {
 type DataResponse struct {
 	Data    any    `json:"data"`
 	TraceID string `json:"trace_id,omitempty"`
+}
+
+type ErrResponse struct {
+	TraceID string `json:"trace_id,omitempty"`
+	Err     string `json:"error"`
 }

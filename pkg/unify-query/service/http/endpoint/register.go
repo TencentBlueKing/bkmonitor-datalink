@@ -15,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -42,12 +41,7 @@ func (r *RegisterHandler) RegisterWithOutHandlerMap(method, handlerPath string, 
 	case http.MethodHead:
 		r.g.HEAD(handlerPath, handlerFunc...)
 	default:
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("端点注册").
-			WithOperation("注册处理器").
-			WithContext("方法类型", method).
-			WithSolution("检查HTTP方法类型是否支持")
-		log.ErrorWithCodef(r.ctx, codedErr)
+		log.Errorf(r.ctx, "不支持的HTTP方法类型: %s", method)
 		return
 	}
 }

@@ -24,10 +24,8 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -79,7 +77,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 }
 
 func (i *Instance) InstanceType() string {
-	return consul.RedisStorageType
+	return metadata.RedisStorageType
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -123,28 +121,21 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
-		// 指标配置不存在，则返回空 DF
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("Redis").
-			WithOperation("获取指标元数据").
-			WithContext("指标名", metricName).
-			WithContext("错误信息", err.Error()).
-			WithSolution("检查指标配置是否存在")
-		log.WarnWithCodef(ctx, codedErr)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryRedis,
+			"查询异常",
+		).Error(ctx, err)
 		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			codedErr := errno.ErrBusinessLogicError().
-				WithComponent("Redis").
-				WithOperation("加载集群指标数据").
-				WithContext("集群名", clusterName).
-				WithContext("指标名", metricName).
-				WithContext("错误信息", err.Error()).
-				WithSolution("检查集群连接状态和数据可用性")
-			log.WarnWithCodef(ctx, codedErr)
+			metadata.Sprintf(
+				metadata.MsgQueryRedis,
+				"查询异常 %+v",
+				err,
+			).Warn(ctx)
 			continue
 		}
 		if dfPointer.Nrow() > 0 {

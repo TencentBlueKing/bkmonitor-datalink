@@ -156,13 +156,17 @@ func realValue(node Node) any {
 	return res
 }
 
-func addLabels(node Node, addFunc func(key string, operator string, values ...string)) {
+func ConditionNodeWalk(node Node, fn func(key string, operator string, values ...string)) {
 	if node == nil {
 		return
 	}
 
 	switch n := node.(type) {
 	case *ConditionNode:
+		if n.value == nil {
+			return
+		}
+
 		var (
 			field string
 			op    string
@@ -174,15 +178,34 @@ func addLabels(node Node, addFunc func(key string, operator string, values ...st
 			op = n.op.String()
 		}
 
-		switch n.value.(type) {
+		value := n.value.String()
+
+		switch v := n.value.(type) {
 		case *WildCardNode:
 			op = metadata.ConditionContains
+			var (
+				ns       []rune
+				lastChar rune
+			)
+			for _, char := range value {
+				if char != '*' && char != '?' && char != '\\' || lastChar == '\\' {
+					ns = append(ns, char)
+				}
+				lastChar = char
+			}
+			value = string(ns)
 		case *RegexpNode:
 			op = metadata.ConditionRegEqual
 		case *StringNode:
 			op = metadata.ConditionEqual
+			// 转义
+			value = strings.ReplaceAll(value, `\`, ``)
+			if n.isQuoted {
+				value = strings.Trim(value, `"`)
+			}
 		case *LogicNode:
-			addLabels(n.value, addFunc)
+			v.SetField(n.field)
+			ConditionNodeWalk(n.value, fn)
 			return
 		default:
 			return
@@ -205,12 +228,10 @@ func addLabels(node Node, addFunc func(key string, operator string, values ...st
 			}
 		}
 
-		if n.value != nil {
-			addFunc(field, op, n.value.String())
-		}
+		fn(field, op, value)
 	case *LogicNode:
 		for _, ln := range n.Nodes {
-			addLabels(ln, addFunc)
+			ConditionNodeWalk(ln, fn)
 		}
 	}
 }

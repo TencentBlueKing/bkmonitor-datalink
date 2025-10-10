@@ -11,12 +11,13 @@ package structured
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // TableIDFilter
@@ -39,22 +40,18 @@ func NewTableIDFilter(
 		dataIDList:       make([]consul.DataID, 0),
 	}
 	// 1. 解析tableID
-	route, err := MakeRouteFromTableID(TableID(tableID))
+	route, err := MakeRouteFromTableID(tableID)
 	if err == nil {
 		tableIDFilter.values = append(tableIDFilter.values, route)
 		tableIDFilter.isAppointTableID = true
 		return tableIDFilter, nil
 	}
-	if err != ErrEmptyTableID {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithComponent("表ID过滤器").
-			WithOperation("解析表ID路由").
-			WithContext("metric_name", metricName).
-			WithContext("table_id", string(tableID)).
-			WithContext("error", err.Error()).
-			WithSolution("检查表ID格式和配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return tableIDFilter, err
+	if !errors.Is(err, ErrEmptyTableID) {
+		return tableIDFilter, metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由解析",
+			tableID, metricName,
+		).Error(context.TODO(), err)
 	}
 
 	// 2. 如果tableID为空，则根据conditions获取bk_biz_id,bcs_cluster_id等，过滤出tableID
@@ -63,14 +60,11 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithComponent("表ID过滤器").
-			WithOperation("获取必需字段").
-			WithContext("conditions", fmt.Sprintf("%+v", conditions)).
-			WithContext("error", err.Error()).
-			WithSolution("检查查询条件中的bk_biz_id等必需字段")
-		log.ErrorWithCodef(context.TODO(), codedErr)
-		return tableIDFilter, err
+		return tableIDFilter, metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由解析",
+			tableID, metricName,
+		).Error(context.TODO(), err)
 	}
 
 	// 必传biz_id
@@ -94,19 +88,15 @@ func NewTableIDFilter(
 			resultDataIDList = influxdb.Intersection(dataIDList, resultDataIDList)
 		}
 	}
-	log.Debugf(context.TODO(),
-		"get bk_biz_id:[%v], data_id_list:[%v], field_name:[%s]", bizIDs, resultDataIDList, metricName,
-	)
-
 	// DataID 查询为空不影响查询后续流程
 	if len(resultDataIDList) == 0 {
-		codedErr := errno.ErrQueryParseInvalidSQL().
-			WithComponent("表ID过滤器").
-			WithOperation("获取表ID和数据IDList").
-			WithError(ErrEmptyTableID).
-			WithContext("条件", conditions).
-			WithSolution("检查查询条件和表配置")
-		log.WarnWithCodef(context.TODO(), codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由获取为空",
+			tableID, metricName,
+		).Warn(context.TODO())
+
+		return tableIDFilter, nil
 	}
 	tableIDFilter.dataIDList = resultDataIDList
 	return tableIDFilter, nil

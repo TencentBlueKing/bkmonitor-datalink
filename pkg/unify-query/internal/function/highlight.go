@@ -86,9 +86,8 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	}
 
 	if qry.QueryString != "" {
-		lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{
-			AddLabels: addLabels,
-		})
+		node := lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{})
+		lucene_parser.ConditionNodeWalk(node, addLabels)
 	}
 
 	return labelMap
@@ -146,11 +145,10 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	sort.SliceStable(keywords, func(i, j int) bool {
 		return len(keywords[i].Value) > len(keywords[j].Value)
 	})
-	var newKeywords []string
-	for _, keyword := range keywords {
-		value := strings.Trim(keyword.Value, "*")
+	var newKeywords []LabelMapValue
+	for _, kw := range keywords {
 		// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
-		value = strings.ToLower(value)
+		value := strings.ToLower(kw.Value)
 		if value == "" {
 			continue
 		}
@@ -158,7 +156,7 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 		check := func() bool {
 			// 检查是否已经叠加
 			for _, newKeyword := range newKeywords {
-				if strings.Contains(newKeyword, value) {
+				if strings.Contains(newKeyword.Value, value) {
 					return true
 				}
 			}
@@ -166,13 +164,19 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 		}()
 
 		if !check {
+			kw.Value = value
 			// 如果为空的情况下不要进行判定
-			newKeywords = append(newKeywords, value)
+			newKeywords = append(newKeywords, kw)
 		}
 	}
 
-	for _, keyword := range newKeywords {
-		re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(keyword))
+	for _, kw := range newKeywords {
+		var re *regexp.Regexp
+		if kw.Operator == metadata.ConditionRegEqual {
+			re = regexp.MustCompile(kw.Value)
+		} else {
+			re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
+		}
 		matchs := re.FindAllString(analyzablePart, -1)
 
 		mset := set.New[string](matchs...)

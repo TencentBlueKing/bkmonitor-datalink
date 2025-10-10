@@ -17,7 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -37,9 +36,5 @@ func registerProfile(ctx context.Context, g *gin.RouterGroup) {
 		pprof.Handler("heap").ServeHTTP(writer, request)
 	}))
 
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("Profile服务").
-		WithOperation("启动服务器").
-		WithContext("状态", "成功")
-	log.InfoWithCodef(ctx, codedInfo)
+	log.Infof(ctx, "Profile服务启动成功")
 }

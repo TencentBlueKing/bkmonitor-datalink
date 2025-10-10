@@ -20,12 +20,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -284,26 +282,19 @@ func (q *QueryTs) ToPromExpr(
 	)
 
 	if q.MetricMerge == "" {
-		err = fmt.Errorf("metric merge is empty")
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("结构化查询").
-			WithOperation("验证指标合并配置").
-			WithContext("metric_merge", q.MetricMerge).
-			WithSolution("配置有效的指标合并表达式")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"表达式配置不能为空",
+		).Error(ctx, err)
 	}
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		codedErr := errno.ErrDataDeserializeFailed().
-			WithComponent("结构化查询").
-			WithOperation("解析MetricMerge").
-			WithError(err).
-			WithContext("MetricMerge", string(q.MetricMerge)).
-			WithSolution("检查MetricMerge格式和语法")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"表达式 %s 解析失败",
+			q.MetricMerge,
+		).Error(ctx, err)
 	}
 
 	// 获取指标查询的表达式
@@ -544,7 +535,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return true
 		}()
 
-		ff := metadata.GetBkDataTableIDCheck(ctx, string(tableID))
+		ff := featureFlag.GetBkDataTableIDCheck(ctx, string(tableID))
 		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
 
 		// 特性开关是否，打开 bkdata tableid 校验
@@ -561,11 +552,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 		if route.DB() == "" {
-			return nil, fmt.Errorf("bkdata 的表名不能为空")
+			return nil, metadata.Sprintf(metadata.MsgQueryBKSQL,
+				"bkdata 的表名不能为空",
+			).Error(ctx, nil)
 		}
 
 		query := &metadata.Query{
-			StorageType:   consul.BkSqlStorageType,
+			StorageType:   metadata.BkSqlStorageType,
 			TableID:       string(tableID),
 			DataSource:    q.DataSource,
 			DB:            route.DB(),
@@ -632,31 +625,19 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	// 时间转换格式
 	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("结构化查询").
-			WithOperation("时间转换格式").
-			WithContext("start", q.Start).
-			WithContext("end", q.End).
-			WithContext("error", err.Error()).
-			WithSolution("检查时间参数格式")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	// 时间对齐
 	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
-		codedErr := errno.ErrBusinessParamInvalid().
-			WithComponent("结构化查询").
-			WithOperation("时间对齐").
-			WithContext("start_time", startTime).
-			WithContext("end_time", endTime).
-			WithContext("step", q.Step).
-			WithContext("timezone", q.Timezone).
-			WithContext("error", err.Error()).
-			WithSolution("检查时间参数和步长设置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	// 注入时区和时区偏移，用于聚合处理
@@ -709,7 +690,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 					if query.CheckDruidQuery(ctx, dims) {
 						return true
 					}
-					if metadata.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
+					if featureFlag.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
 						return true
 					}
 
@@ -717,14 +698,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				}()
 
 				if isVmQuery {
-					query.StorageType = consul.VictoriaMetricsStorageType
+					query.StorageType = metadata.VictoriaMetricsStorageType
 				} else {
-					query.StorageType = consul.InfluxDBStorageType
+					query.StorageType = metadata.InfluxDBStorageType
 				}
 			}
 
 			// 只有 vm 类型才需要进行处理
-			if query.StorageType == consul.VictoriaMetricsStorageType {
+			if query.StorageType == metadata.VictoriaMetricsStorageType {
 				// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
 				for _, a := range q.AggregateMethodList {
 					switch a.Method {
@@ -1032,15 +1013,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
-			err = errors.WithMessagef(err, "step parse error")
-			codedErr := errno.ErrBusinessParamInvalid().
-				WithComponent("结构化查询").
-				WithOperation("解析步长参数").
-				WithContext("step", q.Step).
-				WithContext("error", err.Error()).
-				WithSolution("检查步长参数格式是否正确")
-			log.ErrorWithCodef(ctx, codedErr)
-			return nil, err
+			return nil, metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"step %s 解析失败",
+				q.Step,
+			).Error(ctx, err)
 		}
 		step = time.Duration(dTmp)
 		// 控制偏移，promQL 只支持毫秒级别数据
@@ -1112,13 +1089,10 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			}
 			method := q.AggregateMethodList[methodIdx]
 			if result, err = method.ToProm(result); err != nil {
-				codedErr := errno.ErrBusinessQueryExecution().
-					WithComponent("结构化查询").
-					WithOperation("翻译函数").
-					WithError(err).
-					WithSolution("检查函数语法和参数")
-				log.ErrorWithCodef(ctx, codedErr)
-				return nil, err
+				return nil, metadata.Sprintf(
+					metadata.MsgQueryTs,
+					"查询失败",
+				).Error(ctx, err)
 			}
 		}
 	}

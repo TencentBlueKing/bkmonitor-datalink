@@ -21,14 +21,11 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -180,12 +177,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				codedErr := errno.ErrDataProcessFailed().
-					WithComponent("VictoriaMetrics").
-					WithOperation("解析数据点值").
-					WithContext("错误信息", err.Error()).
-					WithSolution("检查数据点格式是否正确")
-				log.ErrorWithCodef(ctx, codedErr)
+				_ = metadata.Sprintf(
+					metadata.MsgQueryVictoriaMetrics,
+					"查询异常",
+				).Error(ctx, err)
 				continue
 			}
 			point.T = nt
@@ -249,12 +244,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					codedErr := errno.ErrDataProcessFailed().
-						WithComponent("VictoriaMetrics").
-						WithOperation("解析向量数据点值").
-						WithContext("错误信息", err.Error()).
-						WithSolution("检查向量数据点格式是否正确")
-					log.ErrorWithCodef(ctx, codedErr)
+					_ = metadata.Sprintf(
+						metadata.MsgQueryVictoriaMetrics,
+						"查询异常",
+					).Error(ctx, err)
 					continue
 				}
 				points = append(points, promql.Point{
@@ -265,12 +258,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						codedErr := errno.ErrDataProcessFailed().
-							WithComponent("VictoriaMetrics").
-							WithOperation("解析矩阵数据点值").
-							WithContext("错误信息", err.Error()).
-							WithSolution("检查矩阵数据点格式是否正确")
-						log.ErrorWithCodef(ctx, codedErr)
+						_ = metadata.Sprintf(
+							metadata.MsgQueryVictoriaMetrics,
+							"查询异常",
+						).Error(ctx, err)
 						continue
 					}
 					points = append(points, promql.Point{
@@ -303,16 +294,11 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("VictoriaMetrics").
-			WithOperation("API请求响应检查").
-			WithContext("响应码", resp.Code).
-			WithContext("错误信息", resp.Errors.Error).
-			WithSolution("检查API请求参数和后端服务状态")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s, %s, %s",
+			resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		).Error(ctx, nil)
 	}
 
 	prefix := "vm-data"
@@ -365,7 +351,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 
 // GetInstanceType 获取实例类型
 func (i *Instance) InstanceType() string {
-	return consul.VictoriaMetricsStorageType
+	return metadata.VictoriaMetricsStorageType
 }
 
 // nocache 判定

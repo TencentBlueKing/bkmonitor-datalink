@@ -10,6 +10,7 @@
 package promql_parser
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -282,7 +283,7 @@ func TestParseMetricSelector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseMetricSelector(tt.selector)
+			got, err := ParseMetricSelector(context.TODO(), tt.selector)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseMetricSelector() error = %v, wantErr %v", err, tt.wantErr)
 				return

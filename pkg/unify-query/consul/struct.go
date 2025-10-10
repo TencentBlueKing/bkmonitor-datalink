@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -129,32 +128,13 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				codedErr := errno.ErrStorageConnFailed().
-					WithComponent("Consul服务注册").
-					WithOperation("注销健康检查").
-					WithError(err).
-					WithContext("检查ID", i.checkID).
-					WithSolution("检查Consul连接和服务配置")
-				log.ErrorWithCodef(context.TODO(), codedErr)
+				log.Errorf(context.TODO(), "consul check id:%s deregistered", i.checkID)
 			}
 			err = i.CancelService()
 			if err != nil {
-				errCode := errno.ErrStorageConnFailed().
-					WithComponent("Consul").
-					WithOperation("注销服务").
-					WithContexts(map[string]any{
-						"服务ID": i.serviceID,
-						"错误":   err.Error(),
-					})
-				log.ErrorWithCodef(context.TODO(), errCode)
+				log.Errorf(context.TODO(), "consul service id:%s canceled", i.serviceID)
 			}
-			codedErr := errno.ErrConfigReloadFailed().
-				WithComponent("Consul服务注册").
-				WithOperation("取消服务和检查").
-				WithContext("服务ID", i.serviceID).
-				WithContext("检查ID", i.checkID).
-				WithSolution("Consul服务和检查已成功取消")
-			log.WarnWithCodef(context.TODO(), codedErr)
+			log.Warnf(context.TODO(), "consul service id:%s canceled", i.serviceID)
 		}()
 		defer ticker.Stop()
 
@@ -165,15 +145,7 @@ func (i *Instance) LoopAwakeService() error {
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
 				if err := i.CheckPass(); err != nil {
-					errCode := errno.ErrStorageConnFailed().
-						WithComponent("Consul").
-						WithOperation("健康检查通过").
-						WithContexts(map[string]any{
-							"检查ID": i.checkID,
-							"错误":   err.Error(),
-						})
-
-					log.ErrorWithCodef(context.TODO(), errCode)
+					log.Errorf(context.TODO(), "consul check id:%s send failed", i.checkID)
 				}
 			}
 		}

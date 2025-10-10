@@ -18,9 +18,9 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // MetaFieldType :
@@ -167,14 +167,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 		db, has := shipper.StorageConfig[MetadataStorageDataBaseKey]
 		dbStr, ok := db.(string)
 		if !has || !ok {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("InfluxDB").
-				WithOperation("获取数据库").
-				WithErrorf("数据库不存在")
-			log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
-				"数据ID": dataID,
-				"数据库":  db,
-			})
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"获取数据库, id %v 数据库 %s",
+				dataID, db,
+			).Error(context.TODO(), fmt.Errorf("数据库不存在"))
 			continue
 		}
 		tableID.ClusterID = fmt.Sprintf("%d", shipper.ClusterConfig.ClusterID)
@@ -188,14 +184,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 			measurement, has := shipper.StorageConfig[MetadataStorageTableKey]
 			measurementStr, ok := measurement.(string)
 			if !has || !ok {
-				codedErr := errno.ErrDataProcessFailed().
-					WithComponent("InfluxDB").
-					WithOperation("获取测量表").
-					WithErrorf("测量表不存在")
-				log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
-					"数据ID": dataID,
-					"测量表":  measurement,
-				})
+				_ = metadata.Sprintf(metadata.MsgQueryRouter,
+					"获取数据库, id %v 数据库 %s",
+					dataID, db,
+				).Error(context.TODO(), fmt.Errorf("表名不存在"))
 				continue
 			}
 			tableID.Measurement = measurementStr
@@ -277,10 +269,10 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 		var pipeConf *PipelineConfig
 		err = json.Unmarshal(kvPair.Value, &pipeConf)
 		if err != nil {
-			codedErr := errno.ErrDataDeserializeFailed().
-				WithOperation("管道配置反序列化").
-				WithError(err)
-			log.ErrorWithCodef(context.TODO(), codedErr)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kvPair.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		PipelineConfList = append(PipelineConfList, pipeConf)
@@ -408,24 +400,18 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		}
 		dataid, err := strconv.Atoi(items[0])
 		if err != nil {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("Consul").
-				WithOperation("DataID解析").
-				WithError(err)
-			log.ErrorWithCodef(context.TODO(), codedErr, map[string]any{
-				"DataID": items[0],
-			})
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"格式解析异常 %v",
+				items[0],
+			).Error(context.TODO(), err)
 			continue
 		}
 		metrics := make([]string, 0)
 		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
-			codedErr := errno.ErrWarningDataIncomplete().
-				WithComponent("Consul").
-				WithOperation("DataID指标反序列化").
-				WithError(err)
-			log.WarnWithCodef(context.TODO(), codedErr, map[string]any{
-				"指标数据": string(kv.Value),
-			})
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kv.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		result[dataid] = metrics

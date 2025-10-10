@@ -15,8 +15,6 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 )
 
 func withTraceID(ctx context.Context, format string, v ...any) string {
@@ -105,88 +103,4 @@ func Panicf(ctx context.Context, format string, v ...any) {
 
 func Fatalf(ctx context.Context, format string, v ...any) {
 	DefaultLogger.Fatalf(ctx, format, v...)
-}
-
-// ErrorWithCodef 使用 ErrCode 或 CodedError 记录错误日志，支持可选的扩展详情
-func ErrorWithCodef(ctx context.Context, errCodeOrCoded any, details ...map[string]any) {
-	var message string
-	var extraDetails map[string]any
-
-	// 合并所有details
-	if len(details) > 0 {
-		extraDetails = make(map[string]any)
-		for _, detail := range details {
-			for k, v := range detail {
-				extraDetails[k] = v
-			}
-		}
-	}
-
-	switch v := errCodeOrCoded.(type) {
-	case *errno.ErrCode:
-		message = v.FormatLogMessage(extraDetails)
-		if v.Unwrap() != nil {
-			message += fmt.Sprintf(" | 底层错误: %v", v.Unwrap())
-		}
-	default:
-		message = fmt.Sprintf("未知错误类型: %v", errCodeOrCoded)
-	}
-
-	Errorf(ctx, message)
-}
-
-// WarnWithCodef 使用 ErrCode 或 CodedError 记录警告日志，支持可选的扩展详情
-func WarnWithCodef(ctx context.Context, errCodeOrCoded any, details ...map[string]any) {
-	var message string
-	var extraDetails map[string]any
-
-	// 合并所有details
-	if len(details) > 0 {
-		extraDetails = make(map[string]any)
-		for _, detail := range details {
-			for k, v := range detail {
-				extraDetails[k] = v
-			}
-		}
-	}
-
-	switch v := errCodeOrCoded.(type) {
-	case *errno.ErrCode:
-		message = v.FormatLogMessage(extraDetails)
-		if v.Unwrap() != nil {
-			message += fmt.Sprintf(" | 底层错误: %v", v.Unwrap())
-		}
-	default:
-		message = fmt.Sprintf("未知错误类型: %v", errCodeOrCoded)
-	}
-
-	Warnf(ctx, message)
-}
-
-// InfoWithCodef 使用 ErrCode 或 CodedError 记录信息日志，支持可选的扩展详情
-func InfoWithCodef(ctx context.Context, errCodeOrCoded any, details ...map[string]any) {
-	var message string
-	var extraDetails map[string]any
-
-	// 合并所有details
-	if len(details) > 0 {
-		extraDetails = make(map[string]any)
-		for _, detail := range details {
-			for k, v := range detail {
-				extraDetails[k] = v
-			}
-		}
-	}
-
-	switch v := errCodeOrCoded.(type) {
-	case *errno.ErrCode:
-		message = v.FormatLogMessage(extraDetails)
-		if v.Unwrap() != nil {
-			message += fmt.Sprintf(" | 底层错误: %v", v.Unwrap())
-		}
-	default:
-		message = fmt.Sprintf("未知错误类型: %v", errCodeOrCoded)
-	}
-
-	Infof(ctx, message)
 }

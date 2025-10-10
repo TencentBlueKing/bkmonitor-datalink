@@ -19,12 +19,9 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -67,7 +64,7 @@ func (i *Instance) InstanceType() string {
 	if i.instanceType != "" {
 		return i.instanceType
 	} else {
-		return consul.PrometheusStorageType
+		return metadata.PrometheusStorageType
 	}
 }
 
@@ -101,44 +98,32 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("执行查询").
-			WithError(err).
-			WithSolution("检查查询语句和查询引擎配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("查询结果处理").
-			WithError(result.Err).
-			WithSolution("检查查询结果处理逻辑")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, false, result.Err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	for _, err = range result.Warnings {
-		codedErr := errno.ErrWarningQueryOptimization().
-			WithComponent("Prometheus").
-			WithOperation("查询警告").
-			WithError(err).
-			WithSolution("检查查询优化")
-		log.WarnWithCodef(ctx, codedErr)
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("执行查询").
-			WithError(err).
-			WithSolution("检查查询语句和查询引擎配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	return matrix, false, nil
@@ -163,43 +148,31 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("执行查询").
-			WithError(err).
-			WithSolution("检查查询语句和查询引擎配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("查询结果处理").
-			WithError(result.Err).
-			WithSolution("检查查询结果处理逻辑")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, result.Err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, result.Err)
 	}
 	for _, err = range result.Warnings {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("执行查询").
-			WithError(err).
-			WithSolution("检查查询语句和查询引擎配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("Prometheus查询引擎").
-			WithOperation("执行查询").
-			WithError(err).
-			WithSolution("检查查询语句和查询引擎配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	return vector, nil

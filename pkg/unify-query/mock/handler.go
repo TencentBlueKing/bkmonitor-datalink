@@ -19,9 +19,8 @@ import (
 
 	"github.com/jarcoal/httpmock"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type VmRequest struct {
@@ -164,22 +163,9 @@ type elasticSearchResultData struct {
 
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
-
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("MockHandler").
-		WithOperation("启动Mock处理器").
-		WithSolution("Mock处理器开始启动")
-	log.InfoWithCodef(context.Background(), codedInfo)
-
 	mockBKBaseHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockElasticSearchHandler(ctx)
-
-	codedInfo = errno.ErrInfoServiceStart().
-		WithComponent("MockHandler").
-		WithOperation("Mock处理器完成").
-		WithSolution("Mock处理器已成功完成")
-	log.InfoWithCodef(context.Background(), codedInfo)
 }
 
 const (
@@ -225,15 +211,11 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 		d, ok := Es.Get(string(body))
 		if !ok {
-			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
-			codedErr := errno.ErrBusinessLogicError().
-				WithComponent("ElasticSearch Mock处理器").
-				WithOperation("获取Mock数据").
-				WithContext("request_body", string(body)).
-				WithContext("error", err.Error()).
-				WithSolution("检查ElasticSearch Mock数据是否已正确设置")
-			log.ErrorWithCodef(ctx, codedErr)
-			return w, err
+			return w, metadata.Sprintf(
+				metadata.MsgQueryES,
+				"es mock data is empty in %s",
+				body,
+			).Error(ctx, nil)
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
 		return w, err
@@ -280,8 +262,11 @@ func mockInfluxDBHandler(ctx context.Context) {
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			err = fmt.Errorf(`influxdb mock data is empty in "%s"`, key)
-			return w, err
+			return w, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"influxdb mock data is empty in %s",
+				key,
+			).Error(ctx, nil)
 		}
 
 		switch t := d.(type) {
@@ -312,15 +297,11 @@ func mockBKBaseHandler(ctx context.Context) {
 		if request.PreferStorage != "vm" {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
-				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
-				codedErr := errno.ErrBusinessLogicError().
-					WithComponent("BkSQL Mock处理器").
-					WithOperation("获取Mock数据").
-					WithContext("sql", request.Sql).
-					WithContext("error", err.Error()).
-					WithSolution("检查BkSQL Mock数据是否已正确设置")
-				log.ErrorWithCodef(ctx, codedErr)
-				return w, err
+				return w, metadata.Sprintf(
+					metadata.MsgQueryBKSQL,
+					"bk sql mock data is empty in %s",
+					request.Sql,
+				).Error(ctx, nil)
 			}
 			switch t := d.(type) {
 			case string:

@@ -629,8 +629,7 @@ func HandlerQueryReference(c *gin.Context) {
 	if err != nil {
 		resp.failed(ctx, metadata.Sprintf(
 			metadata.MsgQueryReference,
-			"api %s json 格式解析异常",
-			c.Request.URL.String(),
+			"查询异常",
 		).Error(ctx, err))
 		return
 	}

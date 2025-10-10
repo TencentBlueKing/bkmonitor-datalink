@@ -27,6 +27,11 @@ const (
 	FormatPropertiesNormalizer = "normalizer"
 )
 
+var (
+	// text、object、nested 类型不支持聚合，其他类型默认支持
+	nonAggTypes = []string{"text", "object", "nested"}
+)
+
 type IndexOptionFormat struct {
 	analyzer  map[string]map[string]any
 	fieldsMap metadata.FieldsMap
@@ -131,10 +136,6 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	fieldMap.AliasName = f.fieldAlias.AliasName(k)
 	fieldMap.FieldName = k
 	fieldMap.FieldType, _ = data["type"].(string)
-
-	// 根据字段类型设置 is_agg 默认值
-	// text、object、nested 类型不支持聚合，其他类型默认支持
-	nonAggTypes := []string{"text", "object", "nested"}
 	fieldMap.IsAgg = !lo.Contains(nonAggTypes, fieldMap.FieldType)
 
 	fieldMap.TokenizeOnChars = make([]string, 0)

@@ -174,7 +174,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			if err != nil {
 				d.Message = metadata.Sprintf(
 					metadata.MsgQueryRelation,
-					"查询异常",
+					"关联数据查询异常",
 				).Error(ctx, err).Error()
 				d.Code = http.StatusBadRequest
 			}

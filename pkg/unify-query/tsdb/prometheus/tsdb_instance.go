@@ -92,9 +92,8 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		instance, err = influxdb.NewInstance(ctx, opt)
 	case metadata.ElasticsearchStorageType:
 		opt := &elasticsearch.InstanceOption{
-			MaxSize:    tsDBService.EsMaxSize,
-			Timeout:    tsDBService.EsTimeout,
-			MaxRouting: tsDBService.EsMaxRouting,
+			MaxSize: tsDBService.EsMaxSize,
+			Timeout: tsDBService.EsTimeout,
 		}
 
 		if qry.SourceType == structured.BkData {

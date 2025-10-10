@@ -70,7 +70,7 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 		return ConditionNotRegEqual
 	default:
 		metadata.Sprintf(
-			metadata.MsgQueryTs,
+			metadata.MsgParserUnifyQuery,
 			"类型 %v 不存在",
 			matchType,
 		).Warn(context.TODO())

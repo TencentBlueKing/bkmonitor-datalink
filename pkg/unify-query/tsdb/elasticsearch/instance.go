@@ -27,7 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -69,7 +68,6 @@ type InstanceOption struct {
 	Connect Connect
 
 	MaxSize     int
-	MaxRouting  int
 	Timeout     time.Duration
 	Headers     map[string]string
 	HealthCheck bool
@@ -87,12 +85,6 @@ type queryOption struct {
 	query *metadata.Query
 }
 
-var TimeSeriesResultPool = sync.Pool{
-	New: func() any {
-		return &TimeSeriesResult{}
-	},
-}
-
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	ins := &Instance{
 		ctx:     ctx,
@@ -102,13 +94,6 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
-	}
-
-	if opt.MaxRouting > 0 {
-		err := pool.Tune(opt.MaxRouting)
-		if err != nil {
-			return ins, err
-		}
 	}
 
 	return ins, nil

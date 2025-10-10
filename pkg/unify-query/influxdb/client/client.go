@@ -159,7 +159,7 @@ func (c *BasicClient) decodeWithContentType(
 			metadata.MsgQueryInfluxDB,
 			"%s 解码失败",
 			respContentType,
-		).Error(ctx, errors.New(resp.Status))
+		).Error(ctx, err)
 	}
 
 	return result, nil

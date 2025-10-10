@@ -43,7 +43,7 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	data, err := consul.GetFeatureFlags()
 	if err != nil {
-		log.Errorf(ctx, "get feature flags failed: %s", err.Error())
+		log.Errorf(context.TODO(), "get feature flags from consul failed,error:%s", err)
 		return err
 	}
 	err = featureFlag.ReloadFeatureFlags(data)
@@ -54,7 +54,7 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(ctx, "reload feature flags failed: %s", err.Error())
+		log.Errorf(ctx, "realod feature flags failed, error: %s", err)
 		return err
 	}
 	ch, err := consul.WatchFeatureFlags(ctx)
@@ -67,12 +67,13 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
+				log.Warnf(context.TODO(), "feature flags reload loop exit")
 				return
 			case <-ch:
+				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					log.Errorf(ctx, "reload feature flags failed: %s", err.Error())
-					return
+					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
 				}
 			}
 		}
@@ -96,7 +97,7 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
-		log.Errorf(s.ctx, "reload feature flags failed: %s", err.Error())
+		log.Errorf(s.ctx, "start loop feature flags failed,error: %s", err)
 		return
 	}
 
@@ -112,11 +113,11 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Errorf(s.ctx, "init feature flags failed: %s", err.Error())
+		log.Errorf(s.ctx, err.Error())
 		return
 	}
 
-	log.Infof(s.ctx, "reload feature flags success")
+	log.Infof(s.ctx, "feature flag service reloaded or start success.")
 }
 
 // Wait

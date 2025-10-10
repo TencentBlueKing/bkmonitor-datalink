@@ -101,11 +101,12 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 			rowBuffer = []ConditionField{field}
 		} else {
 			return nil, metadata.Sprintf(
-				metadata.MsgParserDoris,
-				"条件解析",
+				metadata.MsgParserUnifyQuery,
+				"不支持的条件: %s",
+				c.ConditionList[index-1],
 			).Error(
 				context.TODO(),
-				fmt.Errorf("不支持的条件: %s", c.ConditionList[index-1]),
+				ErrUnknownConditionOperator,
 			)
 		}
 	}
@@ -136,7 +137,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 	if totalBuffer, err = c.AnalysisConditions(); err != nil {
 		err = metadata.Sprintf(
 			metadata.MsgParserUnifyQuery,
-			"条件分析",
+			"条件分析失败",
 		).Error(context.TODO(), err)
 		return nil, nil, err
 	}
@@ -162,7 +163,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 		if label, err = labels.NewMatcher(c.ToPromOperator(), c.DimensionName, c.Value[0]); err != nil {
 			err = metadata.Sprintf(
 				metadata.MsgParserPromQL,
-				"创建标签匹配器",
+				"创建标签匹配器失败",
 			).Error(context.TODO(), err)
 			return nil, nil, err
 		}

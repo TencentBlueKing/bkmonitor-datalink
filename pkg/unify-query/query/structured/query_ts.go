@@ -552,7 +552,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 		if route.DB() == "" {
-			return nil, fmt.Errorf("bkdata 的表名不能为空")
+			return nil, metadata.Sprintf(metadata.MsgQueryBKSQL,
+				"bkdata 的表名不能为空",
+			).Error(ctx, nil)
 		}
 
 		query := &metadata.Query{

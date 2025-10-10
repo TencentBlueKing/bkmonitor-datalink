@@ -11,7 +11,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -50,7 +49,7 @@ var rootCmd = &cobra.Command{
 
 		// 启动 gops
 		if err := agent.Listen(agent.Options{}); err != nil {
-			log.Warnf(ctx, "启动gops代理失败: %s", err.Error())
+			log.Warnf(ctx, err.Error())
 		}
 
 		// 初始化启动任务
@@ -64,6 +63,8 @@ var rootCmd = &cobra.Command{
 			&http.Service{},
 			&featureFlag.Service{},
 		}
+		log.Infof(ctx, "http service started.")
+
 		// 注册信号（重载配置文件 & 停止）
 		signal.Notify(sc, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
 	LOOP:
@@ -71,7 +72,7 @@ var rootCmd = &cobra.Command{
 			for _, service := range serviceList {
 				service.Reload(ctx)
 			}
-			log.Infof(ctx, fmt.Sprintf("启动服务: %d", len(serviceList)))
+			log.Infof(ctx, "reload done")
 			switch <-sc {
 			case syscall.SIGUSR1:
 				// 触发配置重载动作
@@ -80,18 +81,18 @@ var rootCmd = &cobra.Command{
 			case syscall.SIGTERM, syscall.SIGINT:
 				log.Debugf(ctx, "shutdown signal got, will shutdown server")
 				cancelFunc()
-				log.Warnf(ctx, "收到信号: %v, will shutdown server", sc)
+				log.Warnf(ctx, "shutdown signal process done")
 				break LOOP
 			}
 		}
 		log.Debugf(ctx, "loop break, wait for all service exit.")
 		for _, service := range serviceList {
-			log.Warnf(ctx, "关闭服务: %+v", service.Type())
+			log.Warnf(ctx, "close service:%s", service.Type())
 			service.Close()
-			log.Warnf(ctx, "服务: %+v 已关闭", service.Type())
+			log.Warnf(ctx, "waiting for service:%s", service.Type())
 
 			service.Wait()
-			log.Warnf(ctx, "等待服务: %+v 退出", service.Type())
+			log.Warnf(ctx, "waiting for service:%s done", service.Type())
 		}
 		log.Debugf(ctx, "all service exit, server exit now.")
 		os.Exit(0)

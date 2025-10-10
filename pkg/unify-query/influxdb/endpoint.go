@@ -77,7 +77,7 @@ func (e *endpointSet) getEndPointRef(ctx context.Context, protocol, address stri
 			_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
 				"InfluxDB %s %s 链接异常",
 				address, protocol,
-			).Error(context.TODO(), err)
+			).Error(ctx, err)
 			return nil
 		}
 		er.cc = conn
@@ -201,7 +201,7 @@ func (er *endpointRef) Close() {
 
 		_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
 			"InfluxDB 关闭异常",
-		).Error(context.TODO(), err)
+		).Error(er.ctx, err)
 	}
 }
 

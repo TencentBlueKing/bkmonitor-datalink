@@ -11,7 +11,6 @@ package curl
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pkg/errors"
 
@@ -37,18 +36,15 @@ func HandleClientError(ctx context.Context, url string, err error) error {
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		friendlyMsg := fmt.Sprintf("查询超时: 请求 %s 超时", url)
-		metadata.SetStatus(ctx, metadata.StorageTimeout, friendlyMsg)
-		return &ClientErr{
-			OriginalError: err,
-			Message:       friendlyMsg,
-		}
+		metadata.Sprintf(metadata.MsgQueryTs,
+			"查询 %s 超时",
+			url,
+		).Status(ctx, metadata.StorageTimeout)
+		return nil
 	}
 
-	friendlyMsg := fmt.Sprintf("查询出错: 请求地址: %s", url)
-	metadata.SetStatus(ctx, metadata.StorageError, friendlyMsg)
-	return &ClientErr{
-		OriginalError: err,
-		Message:       friendlyMsg,
-	}
+	return metadata.Sprintf(metadata.MsgQueryTs,
+		"查询 %s 报错",
+		url,
+	).Error(ctx, err)
 }

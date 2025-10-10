@@ -182,7 +182,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
 					_ = metadata.Sprintf(
-						metadata.MsgQueryInfo,
+						metadata.MsgQueryInfluxDB,
 						"集群 %s 获取失败",
 						clusterID,
 					).Error(ctx, err)
@@ -192,7 +192,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 				tables, err := instance.QueryInfos(ctx, metricName, db, sql, precision, limit)
 				if err != nil {
 					_ = metadata.Sprintf(
-						metadata.MsgQueryInfo,
+						metadata.MsgQueryInfluxDB,
 						"%s 查询失败",
 						sql,
 					).Error(ctx, err)

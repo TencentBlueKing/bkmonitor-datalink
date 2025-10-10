@@ -9,18 +9,6 @@
 
 package promql
 
-import (
-	"time"
-)
-
-// OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
-type OffSetInfo struct {
-	OffSet  time.Duration
-	Limit   int
-	SOffSet int
-	SLimit  int
-}
-
 // ConditionField
 type ConditionField struct {
 	DimensionName string   `json:"field_name"`

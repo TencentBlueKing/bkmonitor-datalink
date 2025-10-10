@@ -56,7 +56,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 				metadata.MsgQueryRouter,
 				"空间 %s 不存在",
 				opt.SpaceUid,
-			).Status(context.TODO(), metadata.SpaceIsNotExists)
+			).Status(ctx, metadata.SpaceIsNotExists)
 		}
 	}
 

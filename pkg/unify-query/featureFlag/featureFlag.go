@@ -57,7 +57,7 @@ func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defa
 			metadata.MsgFeatureFlag,
 			"特性开关获取失败 flag_key: %s, user: %s, default_value: %s, error: %s",
 			flagKey, user.GetKey(), defaultValue, err.Error(),
-		).Error(context.TODO(), err)
+		).Error(ctx, err)
 		return defaultValue
 	}
 	return res

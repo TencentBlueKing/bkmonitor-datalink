@@ -113,9 +113,9 @@ func (g *GroupNode) Matchers(ctx context.Context) []*labels.Matcher {
 	if g.metricName != "" {
 		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, g.metricName)
 		if err != nil {
-			err = metadata.Sprintf(
+			_ = metadata.Sprintf(
 				metadata.MsgParserDoris,
-				"promql matcher metric 解析",
+				"promql matcher metric 解析失败",
 			).Error(ctx, err)
 		} else {
 			result = append(result, matcher)

@@ -25,7 +25,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 		if r := recover(); r != nil {
 			_ = metadata.Sprintf(
 				metadata.MsgParserDoris,
-				"Doris 语法解析",
+				"Doris 语法解析异常",
 			).Error(ctx, fmt.Errorf("%v", r))
 		}
 	}()

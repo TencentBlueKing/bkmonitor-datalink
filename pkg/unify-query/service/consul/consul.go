@@ -52,16 +52,16 @@ func (s *Service) Reload(ctx context.Context) {
 		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
 	)
 	if err != nil {
-		log.Errorf(context.TODO(), "consul service start failed: %s", err.Error())
+		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)
 		return
 	}
 	err = consul.LoopAwakeService()
 	if err != nil {
-		log.Errorf(context.TODO(), "consul service start failed: %s", err.Error())
+		log.Errorf(context.TODO(), "consul service loop awake failed for->[%s]", err)
 		return
 	}
 
-	log.Infof(context.TODO(), "consul service start success")
+	log.Warnf(context.TODO(), "consul service reloaded or start success.")
 }
 
 // Wait
@@ -72,5 +72,5 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	log.Infof(context.TODO(), "consul service close success")
+	log.Infof(context.TODO(), "consul service context cancel func called.")
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -57,7 +56,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-filed-keys")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -137,7 +136,7 @@ func HandlerTagKeys(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -216,7 +215,7 @@ func HandlerTagValues(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-tag-values")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -321,7 +320,7 @@ func HandlerTimeSeries(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-time-series")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -368,7 +367,7 @@ func HandlerSeries(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-series")
 	defer span.End(&err)
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -601,7 +600,7 @@ func HandlerFieldMap(c *gin.Context) {
 		}
 	}()
 
-	params := &infos.Params{}
+	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
 		return
@@ -686,7 +685,7 @@ func HandlerFieldMap(c *gin.Context) {
 	})
 }
 
-func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
+func infoParamsToQueryRefAndTime(ctx context.Context, params *Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
 		unit string

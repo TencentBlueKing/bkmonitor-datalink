@@ -4095,6 +4095,15 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			assert.Nil(t, err)
 
 			res, err := QueryTsClusterMetrics(ctx, qts)
+
+			if d, ok := res.(*PromData); ok {
+				sort.SliceStable(d.Tables, func(i, j int) bool {
+					a := d.Tables[i]
+					b := d.Tables[j]
+					return strings.Join(a.GroupValues, "") < strings.Join(b.GroupValues, "")
+				})
+			}
+
 			t.Logf("QueryTsClusterMetrics error: %+v", err)
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)

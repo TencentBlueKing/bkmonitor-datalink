@@ -91,3 +91,37 @@ func CamelToSnake(s string) string {
 	// 将字符串转换为小写并返回
 	return strings.ToLower(snake)
 }
+
+
+// SnakeToCamel 转换下划线格式为驼峰格式
+func SnakeToCamel(s string) string {
+	if s == "" {
+		return s
+	}
+
+	// 如果已经是 camelCase 或 PascalCase，直接返回
+	if !strings.Contains(s, "_") && s[0] >= 'a' && s[0] <= 'z' {
+		return s
+	}
+
+	// 分割字符串并处理每个部分
+	parts := strings.Split(s, "_")
+	if len(parts) == 0 {
+		return s
+	}
+
+	// 第一个部分保持小写
+	result := strings.ToLower(parts[0])
+
+	// 后续部分首字母大写
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "" {
+			part := strings.ToLower(parts[i])
+			if len(part) > 0 {
+				result += strings.ToUpper(part[:1]) + part[1:]
+			}
+		}
+	}
+
+	return result
+}

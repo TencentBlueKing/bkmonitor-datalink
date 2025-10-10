@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/reflectx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -59,8 +60,9 @@ var (
 )
 
 type StartInfo struct {
-	DataId string `json:"data_id"`
-	Qps    *int   `json:"qps"`
+	DataId string                 `json:"data_id"`
+	Qps    *int                   `json:"qps"`
+	Extra  map[string]interface{} `json:"extra"`
 }
 
 type Precalculate struct {
@@ -176,7 +178,46 @@ func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan ch
 		return
 	}
 
-	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan)
+	precalculateOption := PrecalculateOption{
+		processorConfig:          make([]window.ProcessorOption, 0),
+		profileReportConfig:      make([]MetricOption, 0),
+		notifierConfig:           make([]notifier.Option, 0),
+		storageConfig:            make([]storage.ProxyOption, 0),
+		distributiveWindowConfig: make([]window.DistributiveWindowOption, 0),
+		runtimeConfig:            make([]window.RuntimeConfigOption, 0),
+	}
+	if processorOptions, ok := startInfo.Extra["processor_options"].(map[string]interface{}); ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, func(options *window.ProcessorOptions) {
+			reflectx.CopyFromMap(options, processorOptions)
+		})
+	}
+	if metricOptions, ok := startInfo.Extra["metric_options"].(map[string]interface{}); ok {
+		precalculateOption.profileReportConfig = append(precalculateOption.profileReportConfig, func(options *MetricOptions) {
+			reflectx.CopyFromMap(options, metricOptions)
+		})
+	}
+	if notifierOptions, ok := startInfo.Extra["notifier_options"].(map[string]interface{}); ok {
+		precalculateOption.notifierConfig = append(precalculateOption.notifierConfig, func(options *notifier.Options) {
+			reflectx.CopyFromMap(options, notifierOptions)
+		})
+	}
+	if storageOptions, ok := startInfo.Extra["storage_options"].(map[string]interface{}); ok {
+		precalculateOption.storageConfig = append(precalculateOption.storageConfig, func(options *storage.ProxyOptions) {
+			reflectx.CopyFromMap(options, storageOptions)
+		})
+	}
+	if distributiveWindowOptions, ok := startInfo.Extra["distributive_window_options"].(map[string]interface{}); ok {
+		precalculateOption.distributiveWindowConfig = append(precalculateOption.distributiveWindowConfig, func(options *window.DistributiveWindowOptions) {
+			reflectx.CopyFromMap(options, distributiveWindowOptions)
+		})
+	}
+	if runtimeOptions, ok := startInfo.Extra["runtime_options"].(map[string]interface{}); ok {
+		precalculateOption.runtimeConfig = append(precalculateOption.runtimeConfig, func(options *window.RuntimeConfig) {
+			// 直接映射所有字段，包括子结构体字段
+			reflectx.CopyFromMap(options, runtimeOptions)
+		})
+	}
+	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan, precalculateOption)
 }
 
 func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption) {

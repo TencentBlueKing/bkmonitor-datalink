@@ -329,8 +329,7 @@ func (f *FormatFactory) GetFieldType(k string) string {
 
 func (f *FormatFactory) ParserQueryString(ctx context.Context, q string) (elastic.Query, error) {
 	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
-		FieldsMap:       f.fieldsMap,
-		FieldEncodeFunc: f.encode,
+		FieldsMap: f.fieldsMap,
 	})
 
 	return lucene_parser.MergeQuery(node.DSL()), node.Error()

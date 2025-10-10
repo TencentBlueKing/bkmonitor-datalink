@@ -570,9 +570,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	labelMap := function.LabelMap(ctx, query)
-
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 	reverseAlias := make(map[string]string, len(query.FieldAlias))
 	for k, v := range query.FieldAlias {
 		reverseAlias[v] = k
@@ -580,24 +577,21 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	fact := NewFormatFactory(ctx).
 		WithTransform(func(s string) string {
+			if s == "" {
+				return ""
+			}
 			// 别名替换
 			ns := s
 			if alias, ok := reverseAlias[s]; ok {
 				ns = alias
 			}
 
-			// 格式转换
-			if encodeFunc != nil {
-				ns = encodeFunc(ns)
-			}
 			return ns
 		}, func(s string) string {
-			ns := s
-
-			// 格式转换
-			if decodeFunc != nil {
-				ns = decodeFunc(ns)
+			if s == "" {
+				return ""
 			}
+			ns := s
 
 			// 别名替换
 			if alias, ok := query.FieldAlias[s]; ok {

@@ -1411,6 +1411,10 @@ func TestQueryRawWithInstance(t *testing.T) {
 		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1723595000000000,"include_lower":true,"include_upper":true,"to":1723595000000000}}}}},"size":100,"sort":[{"time":{"order":"desc"}}]}`:                     `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00001","_source":{"time":"00001"}},{"_type":"_doc","_id":"10001","_source":{"time":"10001"}},{"_type":"_doc","_id":"20001","_source":{"time":"20001"}}]}}`,
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723595000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":100,"sort":[{"time":{"order":"desc"}}]}`: `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
 
+		// query raw with object field
+		`{"from":0,"query":{"bool":{"filter":[{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723595000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"bool":{"must":[{"term":{"__ext.io_kubernetes_pod_namespace":"ieg-blueking-monitor-prod"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"error\""}}]}}]}},"size":4,"sort":[{"time":{"order":"desc"}}]}`: `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
+		`{"from":0,"query":{"bool":{"filter":[{"range":{"end_time":{"from":1723595000000000,"include_lower":true,"include_upper":true,"to":1723595000000000}}},{"bool":{"must":[{"term":{"__ext.io_kubernetes_pod_namespace":"ieg-blueking-monitor-prod"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"error\""}}]}}]}},"size":4,"sort":[{"time":{"order":"desc"}}]}`:                     `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
+
 		// query raw multi query from + size
 		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1723595000000000,"include_lower":true,"include_upper":true,"to":1723595000000000}}}}},"size":4,"sort":[{"time":{"order":"desc"}}]}`:                     `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00001","_source":{"time":"00001"}},{"_type":"_doc","_id":"10001","_source":{"time":"10001"}},{"_type":"_doc","_id":"20001","_source":{"time":"20001"}}]}}`,
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723595000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":4,"sort":[{"time":{"order":"desc"}}]}`: `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
@@ -2193,6 +2197,29 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[]`,
+			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
+		},
+		"query raw with object field": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     "multi_es",
+						QueryString: `__ext.io_kubernetes_pod_namespace:"ieg-blueking-monitor-prod" AND "error" AND`,
+					},
+				},
+				From:  2,
+				Limit: 2,
+				Step:  start,
+				End:   end,
+				OrderBy: structured.OrderBy{
+					"-time",
+					"__result_table",
+				},
+			},
+			total:    20,
+			expected: `[{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es","time":"10002"},{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es_with_time_filed","time":"10002"}]`,
 			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
 		},
 		"query raw multi query from + size": {
@@ -4068,6 +4095,15 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			assert.Nil(t, err)
 
 			res, err := QueryTsClusterMetrics(ctx, qts)
+
+			if d, ok := res.(*PromData); ok {
+				sort.SliceStable(d.Tables, func(i, j int) bool {
+					a := d.Tables[i]
+					b := d.Tables[j]
+					return strings.Join(a.GroupValues, "") < strings.Join(b.GroupValues, "")
+				})
+			}
+
 			t.Logf("QueryTsClusterMetrics error: %+v", err)
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)

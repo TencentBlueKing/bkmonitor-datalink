@@ -885,7 +885,7 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	if err != nil {
 		return nil, metadata.Sprintf(
 			metadata.MsgParserUnifyQuery,
-			"转换查询结构为PromQL",
+			"转换结构体异常",
 		).Error(ctx, err)
 	}
 

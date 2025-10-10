@@ -151,14 +151,12 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 					return
 				}
 
-				err = metadata.Sprintf(
-					metadata.MsgHandlerAPI,
-					"jwt auth unauthorized: %s, app_code: %s, space_uid: %s",
-					err, appCode, spaceUID,
-				).Error(ctx, err)
-
 				res := gin.H{
-					"error": err.Error(),
+					"error": metadata.Sprintf(
+						metadata.MsgHandlerAPI,
+						"jwt auth unauthorized (app_code: %s, space_uid: %s)",
+						appCode, spaceUID,
+					).Error(ctx, err).Error(),
 				}
 				if span.TraceID() != "" {
 					res["trace_id"] = span.TraceID()

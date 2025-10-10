@@ -2485,7 +2485,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		queryStruct bool
 		query       *structured.QueryTs
 		promql      *structured.QueryPromQL
-		err         error
+		message     string
 	}{
 		"query struct with or": {
 			queryStruct: true,
@@ -2537,7 +2537,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				End:         "1691136305",
 				Step:        "1m",
 			},
-			err: fmt.Errorf("or 过滤条件无法直接转换为 promql 语句，请使用结构化查询"),
+			message: "转换结构体异常: or 过滤条件无法直接转换为 promql 语句，请使用结构化查询",
 		},
 		"query struct with and": {
 			queryStruct: true,
@@ -3875,20 +3875,20 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			defer cancel()
 			if c.queryStruct {
 				pl, err := structToPromQL(ctx, c.query)
-				if c.err != nil {
-					assert.Equal(t, c.err, err)
+				if err != nil {
+					assert.Equal(t, c.message, err.Error())
 				} else {
-					assert.Nil(t, err)
+					assert.Empty(t, c.message)
 					if err == nil {
 						equalWithJson(t, c.promql, pl)
 					}
 				}
 			} else {
 				qts, err := promQLToStruct(ctx, c.promql)
-				if c.err != nil {
-					assert.Equal(t, c.err, err)
+				if err != nil {
+					assert.Equal(t, c.message, err.Error())
 				} else {
-					assert.Nil(t, err)
+					assert.Empty(t, c.message)
 					if err == nil {
 						equalWithJson(t, c.query, qts)
 					}

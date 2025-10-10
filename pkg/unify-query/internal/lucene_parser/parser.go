@@ -16,7 +16,6 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -32,8 +31,10 @@ type Option struct {
 func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	defer func() {
 		if r := recover(); r != nil {
-			// 处理异常
-			log.Errorf(ctx, "parse lucene error: %v", r)
+			_ = metadata.Sprintf(
+				metadata.MsgParserLucene,
+				"Lucene 语法解析异常",
+			).Error(ctx, fmt.Errorf("%v", r))
 		}
 	}()
 

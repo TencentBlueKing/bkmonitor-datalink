@@ -12,7 +12,6 @@ package metadata
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/pkg/errors"
 
@@ -57,37 +56,38 @@ func Sprintf(id, format string, args ...any) *Message {
 	}
 }
 
+func (m *Message) Text() string {
+	s := fmt.Sprintf("[%s] %s", m.ID, m.Content)
+	return s
+}
+
 func (m *Message) String() string {
-	var s strings.Builder
-	s.WriteString(m.ID)
-	s.WriteString(": ")
-	s.WriteString(m.Content)
-	return s.String()
+	return m.Content
 }
 
 func (m *Message) Error(ctx context.Context, err error) error {
 	s := m.String()
 	if s == "" {
-		return nil
+		return errors.New("")
 	}
 
-	newErr := errors.New(m.String())
+	newErr := errors.New(s)
 	if err != nil {
-		newErr = errors.Wrap(newErr, err.Error())
+		newErr = errors.Wrap(err, newErr.Error())
 	}
 	log.Errorf(ctx, newErr.Error())
 	return newErr
 }
 
 func (m *Message) Warn(ctx context.Context) {
-	log.Warnf(ctx, m.String())
+	log.Warnf(ctx, m.Text())
 }
 
 func (m *Message) Info(ctx context.Context) {
-	log.Infof(ctx, m.String())
+	log.Infof(ctx, m.Text())
 }
 
 func (m *Message) Status(ctx context.Context, code string) {
-	log.Warnf(ctx, m.String())
 	SetStatus(ctx, code, m.String())
+	m.Warn(ctx)
 }

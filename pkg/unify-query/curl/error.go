@@ -17,33 +17,19 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-type ClientErr struct {
-	OriginalError error
-	Message       string
-}
-
-func (e *ClientErr) Error() string {
-	return e.Message
-}
-
-func (e *ClientErr) Unwrap() error {
-	return e.OriginalError
-}
-
-func HandleClientError(ctx context.Context, url string, err error) error {
+func HandleClientError(ctx context.Context, id, url string, err error) error {
 	if err == nil {
 		return nil
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		metadata.Sprintf(metadata.MsgQueryTs,
+		return metadata.Sprintf(id,
 			"查询 %s 超时",
 			url,
-		).Status(ctx, metadata.StorageTimeout)
-		return nil
+		).Error(ctx, err)
 	}
 
-	return metadata.Sprintf(metadata.MsgQueryTs,
+	return metadata.Sprintf(id,
 		"查询 %s 报错",
 		url,
 	).Error(ctx, err)

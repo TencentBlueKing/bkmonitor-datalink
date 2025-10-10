@@ -135,20 +135,10 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 			addr := fmt.Sprintf("%s://%s:%d/ping", HTTP, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
-				metadata.Sprintf(
-					metadata.MsgQueryInfluxDB,
-					"创建请求失败 %s %v",
-					addr, err,
-				).Warn(ctx)
 				continue
 			}
 			resp, err := clint.Do(req)
 			if err != nil {
-				metadata.Sprintf(
-					metadata.MsgQueryInfluxDB,
-					"Ping 检测 %s %v",
-					addr, err,
-				).Warn(ctx)
 				continue
 			}
 			// 状态码 204 变更 read 跳出循环

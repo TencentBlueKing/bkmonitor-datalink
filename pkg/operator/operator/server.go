@@ -589,7 +589,10 @@ func (c *Operator) QCloudMonitorInstancesRoute(w http.ResponseWriter, r *http.Re
 	q, ok := instance.Get(params.Namespace)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
 		return
 	}
 
@@ -642,7 +645,10 @@ func (c *Operator) QCloudMonitorParametersRoute(w http.ResponseWriter, r *http.R
 	q, ok := instance.Get(params.Namespace)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
 		return
 	}
 
@@ -678,7 +684,10 @@ func (c *Operator) QCloudMonitorInstancesFiltersRoute(w http.ResponseWriter, r *
 	q, ok := instance.Get(params.Namespace)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
 		return
 	}
 

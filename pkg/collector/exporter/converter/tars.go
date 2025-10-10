@@ -216,7 +216,7 @@ func statHeadToDims(head *statf.StatMicMsgHead, role, ip, appName string) map[st
 }
 
 // propHeadToDims 将 Tars Property 维度转为自定义指标维度
-func propHeadToDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
+func propHeadToDims(head *propertyf.StatPropMsgHead, ip, appName string) map[string]string {
 	instance := head.Ip
 	if instance == "" {
 		// 原始数据中可能没有 IP 维度，使用上报 IP 填充。
@@ -225,6 +225,7 @@ func propHeadToDims(head *propertyf.StatPropMsgHead, ip string) map[string]strin
 
 	serviceName, _ := tokenparser.FromString(head.ModuleName)
 	return map[string]string{
+		define.TokenAppName:      appName,
 		resourceTagRPCSystem:     define.RequestTars.S(),
 		resourceTagScopeName:     fmt.Sprintf("%s_property", define.RequestTars.S()),
 		resourceTagInstance:      instance,
@@ -591,9 +592,9 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
 	pms := make([]*promMapper, 0)
 	for head, body := range data.Data.(*define.TarsPropertyData).Props {
-		commonDims := propHeadToDims(&head, ip)
+		commonDims := propHeadToDims(&head, ip, token.AppName)
 		for _, info := range body.VInfo {
-			dims := utils.MergeMapWith(commonDims, propertyTagPropertyPolicy, info.Policy, define.TokenAppName, token.AppName)
+			dims := utils.MergeMapWith(commonDims, propertyTagPropertyPolicy, info.Policy)
 			switch info.Policy {
 			case "Distr":
 				bucketMap := toBucketMap(info.Value)

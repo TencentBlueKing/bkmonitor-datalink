@@ -19,6 +19,7 @@ import (
 	elastic "github.com/olivere/elastic/v7"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func handleESSpecificError(elasticErr *elastic.Error) error {
@@ -52,7 +53,7 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return curl.HandleClientError(ctx, url, err)
+		return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
 	}
 
 	var elasticErr *elastic.Error
@@ -64,5 +65,5 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 		return nil
 	}
 
-	return curl.HandleClientError(ctx, url, err)
+	return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
 }

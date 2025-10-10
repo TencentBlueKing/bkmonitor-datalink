@@ -126,19 +126,19 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		"空间如果为空": {
 			appCode:  "my_code",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code, space_uid: "}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: ): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问无权限的空间授权 - 1": {
 			appCode:  "my_code",
 			spaceUID: "other_space_uid",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code, space_uid: other_space_uid"}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: other_space_uid): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问无权限的空间授权 - 2": {
 			appCode:  "my_code_1",
 			spaceUID: "my_space_uid",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code_1, space_uid: my_space_uid"}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code_1, space_uid: my_space_uid): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问有权限的空间授权": {
 			appCode:  "my_code",

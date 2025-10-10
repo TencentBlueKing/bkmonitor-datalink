@@ -12,8 +12,6 @@ package promql
 import (
 	"context"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -50,9 +48,4 @@ func (s *Service) Wait() {
 
 // Close
 func (s *Service) Close() {
-	codedInfo := errno.ErrInfoServiceShutdown().
-		WithComponent("PromQL服务").
-		WithOperation("服务关闭").
-		WithContext("状态", "上下文已取消")
-	log.InfoWithCodef(context.TODO(), codedInfo)
 }

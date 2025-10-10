@@ -10,6 +10,7 @@
 package promql_parser
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -19,16 +20,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser/gen"
 )
 
-func ParseMetricSelector(selector string) ([]*labels.Matcher, error) {
+func ParseMetricSelector(ctx context.Context, selector string) ([]*labels.Matcher, error) {
 	if selector == "" {
 		return nil, nil
 	}
 
 	selector = strings.TrimSpace(selector)
-	return parseWithANTLR(selector)
+	return parseWithANTLR(ctx, selector)
 }
 
-func parseWithANTLR(selector string) ([]*labels.Matcher, error) {
+func parseWithANTLR(ctx context.Context, selector string) ([]*labels.Matcher, error) {
 	inputStream := antlr.NewInputStream(selector)
 	lexer := gen.NewPromQLLexer(inputStream)
 
@@ -48,13 +49,13 @@ func parseWithANTLR(selector string) ([]*labels.Matcher, error) {
 		return nil, fmt.Errorf("unexpected tokens after selector: %s", selector)
 	}
 
-	statement := NewStatement()
+	statement := NewStatement(ctx)
 	tree.Accept(statement)
 	if statement.Error() != nil {
 		return nil, statement.Error()
 	}
 
-	return statement.Matchers(), nil
+	return statement.Matchers(ctx), nil
 }
 
 type promqlErrorListener struct {

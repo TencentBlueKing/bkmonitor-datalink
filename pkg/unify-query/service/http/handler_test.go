@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
@@ -297,7 +296,7 @@ func TestAPIHandler(t *testing.T) {
 		url     string
 		params  gin.Params
 
-		infoParams *infos.Params
+		infoParams *Params
 		expected   string
 	}{
 		"test label values in vm 1": {
@@ -327,7 +326,7 @@ func TestAPIHandler(t *testing.T) {
 		"test field keys in prometheus": {
 			handler: HandlerFieldKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -338,7 +337,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -350,7 +349,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus with regex": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -363,7 +362,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -376,7 +375,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex below 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -390,7 +389,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex above 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end2d.Unix()),
@@ -404,7 +403,7 @@ func TestAPIHandler(t *testing.T) {
 		"test series in prometheus": {
 			handler: HandlerSeries,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -417,7 +416,7 @@ func TestAPIHandler(t *testing.T) {
 		"test field map in es": {
 			handler: HandlerFieldMap,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				DataSource: "bklog",
 				TableID:    "result_table.unify_query",
 			},

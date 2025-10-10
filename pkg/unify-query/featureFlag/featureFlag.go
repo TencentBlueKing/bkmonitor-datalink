@@ -17,9 +17,9 @@ import (
 	"github.com/thomaspoignant/go-feature-flag/exporter"
 	"github.com/thomaspoignant/go-feature-flag/ffuser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var (
@@ -53,15 +53,11 @@ func Print() string {
 func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue string) string {
 	res, err := ffclient.StringVariation(flagKey, user, defaultValue)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("特性开关服务").
-			WithOperation("获取字符串特性标志").
-			WithContext("flag_key", flagKey).
-			WithContext("user", user.GetKey()).
-			WithContext("default_value", defaultValue).
-			WithContext("error", err.Error()).
-			WithSolution("检查特性标志配置")
-		log.ErrorWithCodef(ctx, codedErr)
+		_ = metadata.Sprintf(
+			metadata.MsgFeatureFlag,
+			"特性开关获取失败 flag_key: %s, user: %s, default_value: %s, error: %s",
+			flagKey, user.GetKey(), defaultValue, err.Error(),
+		).Error(ctx, err)
 		return defaultValue
 	}
 	return res

@@ -25,8 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -253,12 +251,7 @@ func TestQueryTsWithEs(t *testing.T) {
 
 			res, err := queryTsWithPromEngine(ctx, c.queryTs)
 			if err != nil {
-				codedErr := errno.ErrBusinessQueryExecution().
-					WithComponent("HTTP查询测试").
-					WithOperation("执行查询测试").
-					WithContext("error", err.Error()).
-					WithSolution("检查测试查询配置和数据")
-				log.ErrorWithCodef(ctx, codedErr)
+				log.Errorf(ctx, err.Error())
 				return
 			}
 			data := res.(*PromData)
@@ -1326,11 +1319,11 @@ func TestQueryTs(t *testing.T) {
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
 
 			body := []byte(c.query)
-			query := &structured.QueryTs{}
-			err := json.Unmarshal(body, query)
+			qts := &structured.QueryTs{}
+			err := json.Unmarshal(body, qts)
 			assert.Nil(t, err)
 
-			res, err := queryTsWithPromEngine(ctx, query)
+			res, err := queryTsWithPromEngine(ctx, qts)
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
@@ -1414,7 +1407,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 		// highlight with gseIndex 8019256
 		`{"from":0,"query":{"bool":{"filter":[{"wildcard":{"gseIndex":{"value":"8019256"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":1}`: `{"took":1043,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":16,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250710_0","_type":"_doc","_id":"3440427488472403621","_score":null,"_source":{"report_time":"2025-07-10T02:46:19.443Z","trace_id":"af754e7bbf629abaee3499638974dda9","level":"info","iterationIndex":15,"cloudId":0,"gseIndex":8019256,"time":"1752115579000","file":"victoriaMetrics/instance.go:397","dtEventTimeStamp":"1752115579000"}}]}}`,
 
-		// query raw multi query from + size over size
+		// query raw multi query from + size oversize
 		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1723595000000000,"include_lower":true,"include_upper":true,"to":1723595000000000}}}}},"size":100,"sort":[{"time":{"order":"desc"}}]}`:                     `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00001","_source":{"time":"00001"}},{"_type":"_doc","_id":"10001","_source":{"time":"10001"}},{"_type":"_doc","_id":"20001","_source":{"time":"20001"}}]}}`,
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723595000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":100,"sort":[{"time":{"order":"desc"}}]}`: `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
 
@@ -2319,8 +2312,8 @@ func TestQueryExemplar(t *testing.T) {
 
 	body := []byte(`{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":["bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"function":null,"time_aggregation":{"function":"","window":"","position":0,"vargs_list":null},"reference_name":"","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"bk_obj_id","value":["module"],"op":"contains"},{"field_name":"ip","value":["127.0.0.2"],"op":"contains"},{"field_name":"bk_inst_id","value":["14261"],"op":"contains"},{"field_name":"bk_biz_id","value":["7"],"op":"contains"}],"condition_list":["and","and","and"]},"keep_columns":null}],"metric_merge":"","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"","down_sample_range":"1m"}`)
 
-	query := &structured.QueryTs{}
-	err := json.Unmarshal(body, query)
+	qts := &structured.QueryTs{}
+	err := json.Unmarshal(body, qts)
 	assert.Nil(t, err)
 
 	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
@@ -2374,7 +2367,7 @@ func TestQueryExemplar(t *testing.T) {
 		},
 	})
 
-	res, err := queryExemplar(ctx, query)
+	res, err := queryExemplar(ctx, qts)
 	assert.Nil(t, err)
 	out, err := json.Marshal(res)
 	assert.Nil(t, err)
@@ -2401,7 +2394,7 @@ func TestVmQueryParams(t *testing.T) {
 	}{
 		{
 			username: "vm-query",
-			spaceUid: consul.VictoriaMetricsStorageType,
+			spaceUid: metadata.VictoriaMetricsStorageType,
 			query:    `{"query_list":[{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"increase","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and", "and"]}},{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"delta","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
 			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (increase(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (delta(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["victoria_metrics"],"metric_filter_condition":{"a":"filter=\"bk_split_measurement\", bcs_cluster_id=~\"cls-2\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\"","b":"filter=\"bk_split_measurement\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\""}}`,
 		},
@@ -2452,8 +2445,8 @@ func TestVmQueryParams(t *testing.T) {
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			var (
-				query *structured.QueryTs
-				err   error
+				qts *structured.QueryTs
+				err error
 			)
 			ctx := metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{Key: fmt.Sprintf("username:%s", c.username), SpaceUID: c.spaceUid})
@@ -2462,14 +2455,14 @@ func TestVmQueryParams(t *testing.T) {
 				var queryPromQL *structured.QueryPromQL
 				err = json.Unmarshal([]byte(c.promql), &queryPromQL)
 				assert.Nil(t, err)
-				query, err = promQLToStruct(ctx, queryPromQL)
+				qts, err = promQLToStruct(ctx, queryPromQL)
 			} else {
-				err = json.Unmarshal([]byte(c.query), &query)
+				err = json.Unmarshal([]byte(c.query), &qts)
 			}
 
-			query.SpaceUid = c.spaceUid
+			qts.SpaceUid = c.spaceUid
 			assert.Nil(t, err)
-			_, err = queryTsWithPromEngine(ctx, query)
+			_, err = queryTsWithPromEngine(ctx, qts)
 			if c.error != nil {
 				assert.Contains(t, err.Error(), c.error.Error())
 			} else {
@@ -2492,7 +2485,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		queryStruct bool
 		query       *structured.QueryTs
 		promql      *structured.QueryPromQL
-		err         error
+		message     string
 	}{
 		"query struct with or": {
 			queryStruct: true,
@@ -2544,7 +2537,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				End:         "1691136305",
 				Step:        "1m",
 			},
-			err: fmt.Errorf("or 过滤条件无法直接转换为 promql 语句，请使用结构化查询"),
+			message: "转换结构体异常: or 过滤条件无法直接转换为 promql 语句，请使用结构化查询",
 		},
 		"query struct with and": {
 			queryStruct: true,
@@ -3878,25 +3871,26 @@ func TestStructAndPromQLConvert(t *testing.T) {
 
 	for n, c := range testCase {
 		t.Run(n, func(t *testing.T) {
-			ctx, _ = context.WithCancel(ctx)
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
 			if c.queryStruct {
-				promql, err := structToPromQL(ctx, c.query)
-				if c.err != nil {
-					assert.Equal(t, c.err, err)
+				pl, err := structToPromQL(ctx, c.query)
+				if err != nil {
+					assert.Equal(t, c.message, err.Error())
 				} else {
-					assert.Nil(t, err)
+					assert.Empty(t, c.message)
 					if err == nil {
-						equalWithJson(t, c.promql, promql)
+						equalWithJson(t, c.promql, pl)
 					}
 				}
 			} else {
-				query, err := promQLToStruct(ctx, c.promql)
-				if c.err != nil {
-					assert.Equal(t, c.err, err)
+				qts, err := promQLToStruct(ctx, c.promql)
+				if err != nil {
+					assert.Equal(t, c.message, err.Error())
 				} else {
-					assert.Nil(t, err)
+					assert.Empty(t, c.message)
 					if err == nil {
-						equalWithJson(t, c.query, query)
+						equalWithJson(t, c.query, qts)
 					}
 				}
 			}
@@ -4069,11 +4063,11 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			body := []byte(c.query)
-			query := &structured.QueryTs{}
-			err := json.Unmarshal(body, query)
+			qts := &structured.QueryTs{}
+			err := json.Unmarshal(body, qts)
 			assert.Nil(t, err)
 
-			res, err := QueryTsClusterMetrics(ctx, query)
+			res, err := QueryTsClusterMetrics(ctx, qts)
 			t.Logf("QueryTsClusterMetrics error: %+v", err)
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)
@@ -4102,22 +4096,22 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 		"test_matcher_with_vm": {
 			promql:       `datasource:result_table:vm:container_cpu_usage_seconds_total{}`,
 			stmt:         `a`,
-			instanceType: consul.VictoriaMetricsStorageType,
+			instanceType: metadata.VictoriaMetricsStorageType,
 		},
 		"test_matcher_with_influxdb": {
 			promql:       `datasource:result_table:influxdb:cpu_summary{}`,
 			stmt:         `a`,
-			instanceType: consul.PrometheusStorageType,
+			instanceType: metadata.PrometheusStorageType,
 		},
 		"test_group_with_vm": {
 			promql:       `sum(count_over_time(datasource:result_table:vm:container_cpu_usage_seconds_total{}[1m]))`,
 			stmt:         `sum(count_over_time(a[1m] offset -59s999ms))`,
-			instanceType: consul.VictoriaMetricsStorageType,
+			instanceType: metadata.VictoriaMetricsStorageType,
 		},
 		"test_group_with_influxdb": {
 			promql:       `sum(count_over_time(datasource:result_table:influxdb:cpu_summary{}[1m]))`,
 			stmt:         `sum(last_over_time(a[1m] offset -59s999ms))`,
-			instanceType: consul.PrometheusStorageType,
+			instanceType: metadata.PrometheusStorageType,
 		},
 	}
 
@@ -4146,11 +4140,11 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			if c.promql != "" {
-				query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: c.promql})
+				qts, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: c.promql})
 				if err != nil {
 					log.Fatalf(ctx, err.Error())
 				}
-				c.query = query
+				c.query = qts
 			}
 			c.query.SpaceUid = spaceUid
 
@@ -4309,7 +4303,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 			i+1, dtEventTimeStamp, gseIndex, iterationIndex, dataLabel)
 	}
 
-	sortingErrors := []string{}
+	sortingErrors := make([]string, 0)
 	for i := 0; i < len(list)-1; i++ {
 		current := list[i]
 		next := list[i+1]

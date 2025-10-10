@@ -29,9 +29,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -67,7 +65,7 @@ var (
 // NewInstance 初始化引擎
 func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Host == "" {
-		return nil, fmt.Errorf("host is empty %+v", opt)
+		return nil, fmt.Errorf("host is empty")
 	}
 
 	inst := &Instance{
@@ -106,7 +104,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 // GetInstanceType 获取引擎类型
 func (i *Instance) InstanceType() string {
-	return consul.InfluxDBStorageType
+	return metadata.InfluxDBStorageType
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
@@ -184,13 +182,6 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("获取解码器").
-			WithError(err).
-			WithContext("内容类型", i.contentType).
-			WithSolution("检查内容类型和解码器配置")
-		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -279,15 +270,6 @@ func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64,
 		}
 
 		t = time.Unix(0, int64(tf))
-	default:
-		codedErr := errno.ErrDataDeserializeFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("获取时间类型").
-			WithContext("data_type", fmt.Sprintf("%T", data[timeColumnIndex])).
-			WithContext("data", data).
-			WithContext("time_column_index", timeColumnIndex).
-			WithSolution("检查时间数据类型格式")
-		log.ErrorWithCodef(context.TODO(), codedErr)
 	}
 
 	switch value := data[valueColumnIndex].(type) {
@@ -313,15 +295,6 @@ func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64,
 		v = result
 	case nil:
 		return t, 0, errors.New("invalid value")
-	default:
-		codedErr := errno.ErrDataDeserializeFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("获取数值类型").
-			WithContext("data_type", fmt.Sprintf("%T", data[valueColumnIndex])).
-			WithContext("data", data).
-			WithContext("value_column_index", valueColumnIndex).
-			WithSolution("检查数值数据类型格式")
-		log.ErrorWithCodef(context.TODO(), codedErr)
 	}
 
 	return t, v, nil
@@ -458,13 +431,6 @@ func (i *Instance) query(
 		return nil, err
 	}
 
-	codedInfo := errno.ErrInfoQueryExecution().
-		WithComponent("InfluxDB").
-		WithOperation("SQL查询执行").
-		WithContext("数据库", query.DB).
-		WithContext("SQL语句", sql)
-	log.InfoWithCodef(ctx, codedInfo)
-
 	values := &url.Values{}
 	values.Set("db", query.DB)
 	values.Set("q", sql)
@@ -499,14 +465,11 @@ func (i *Instance) query(
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("获取解码器").
-			WithError(err).
-			WithContext("内容类型", i.contentType).
-			WithSolution("检查内容类型和解码器配置")
-		log.ErrorWithCodef(ctx, codedErr)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"解析器 %s 解析异常",
+			i.contentType,
+		).Error(ctx, err)
 	}
 
 	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
@@ -666,12 +629,11 @@ func (i *Instance) grpcStream(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("执行GRPC原始查询").
-			WithContext("error", err.Error()).
-			WithSolution("检查InfluxDB GRPC服务连接")
-		log.ErrorWithCodef(ctx, codedErr)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"查询异常 %+v",
+			req,
+		).Error(ctx, err)
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
@@ -775,13 +737,11 @@ func (i *Instance) QuerySeriesSet(
 				}
 				res, err := i.query(ctx, mq, metricName, start, end, multiFieldsFlag)
 				if err != nil {
-					codedErr := errno.ErrBusinessQueryExecution().
-						WithComponent("InfluxDB实例").
-						WithOperation("执行查询").
-						WithContext("metric_name", metricName).
-						WithContext("error", err.Error()).
-						WithSolution("检查查询语句和InfluxDB连接")
-					log.ErrorWithCodef(ctx, codedErr)
+					_ = metadata.Sprintf(
+						metadata.MsgQueryInfluxDB,
+						"查询异常 %+v",
+						mq,
+					).Error(ctx, err)
 					continue
 				}
 				set = promRemote.FromQueryResult(true, res)
@@ -876,13 +836,11 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("InfluxDB实例").
-				WithOperation("获取解码器").
-				WithError(err).
-				WithContext("内容类型", i.contentType).
-				WithSolution("检查内容类型和解码器配置")
-			log.ErrorWithCodef(ctx, codedErr)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"解析器 %s 解析异常",
+				i.contentType,
+			).Error(ctx, err)
 			return nil, err
 		}
 
@@ -993,13 +951,11 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	)
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		codedErr := errno.ErrDataProcessFailed().
-			WithComponent("InfluxDB实例").
-			WithOperation("获取解码器").
-			WithError(err).
-			WithContext("内容类型", i.contentType).
-			WithSolution("检查内容类型和解码器配置")
-		log.ErrorWithCodef(ctx, codedErr)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"解析器 %s 解析异常",
+			i.contentType,
+		).Error(ctx, err)
 		return nil, err
 	}
 
@@ -1141,13 +1097,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("InfluxDB实例").
-				WithOperation("获取解码器").
-				WithError(err).
-				WithContext("内容类型", i.contentType).
-				WithSolution("检查内容类型和解码器配置")
-			log.ErrorWithCodef(ctx, codedErr)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"解析器 %s 解析异常",
+				i.contentType,
+			).Error(ctx, err)
 			return nil, err
 		}
 

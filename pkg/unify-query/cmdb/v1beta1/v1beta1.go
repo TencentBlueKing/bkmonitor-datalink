@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,11 +22,8 @@ import (
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -294,12 +290,10 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	if len(ts) == 0 {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("CMDB").
-			WithOperation("时间序列数据获取").
-			WithContext("错误信息", strings.Join(errorMessage, "\n")).
-			WithSolution("检查CMDB查询条件和数据源状态")
-		log.WarnWithCodef(ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
 	}
 
 	span.Set("hit_path", hitPath)
@@ -438,10 +432,10 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			StorageType: consul.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
+			err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
 			return nil, err
 		}
 	} else {
@@ -476,12 +470,10 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	}
 
 	if len(matrix) == 0 {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("CMDB").
-			WithOperation("实例数据查询").
-			WithContext("PromQL", realPromQL).
-			WithSolution("检查查询条件和数据源是否有效")
-		log.WarnWithCodef(ctx, codedErr)
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
 		return nil, nil
 	}
 

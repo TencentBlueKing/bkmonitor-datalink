@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -186,7 +185,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 		// 判断是否查询 vm
 		vmExpand := query.ToVmExpand(ctx, qr)
 
-		r.Step("query instance", consul.VictoriaMetricsStorageType)
+		r.Step("query instance", metadata.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {
 		qr.Range("", func(qry *metadata.Query) {

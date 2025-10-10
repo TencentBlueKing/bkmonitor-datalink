@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -80,7 +79,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		return err
 	}
 
-	metric.TsDBRequestBytes(ctx, size, consul.BkSqlStorageType)
+	metric.TsDBRequestBytes(ctx, size, metadata.BkSqlStorageType)
 
 	queryCost := time.Since(startAnaylize)
 	if span != nil {
@@ -88,7 +87,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	}
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, consul.BkSqlStorageType, c.url,
+		ctx, queryCost, metadata.BkSqlStorageType, c.url,
 	)
 	return nil
 }

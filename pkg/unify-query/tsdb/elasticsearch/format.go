@@ -22,12 +22,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -447,12 +445,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("聚合数据格式化").
-				WithOperation("处理聚合数据").
-				WithContext("恢复信息", r).
-				WithSolution("检查数据格式和聚合配置")
-			log.ErrorWithCodef(f.ctx, codedErr)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 
@@ -583,12 +579,10 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			codedErr := errno.ErrDataProcessFailed().
-				WithComponent("Elasticsearch映射").
-				WithOperation("获取映射信息").
-				WithContext("恢复信息", r).
-				WithSolution("检查ES映射配置和结构")
-			log.ErrorWithCodef(f.ctx, codedErr)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 

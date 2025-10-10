@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -58,20 +57,11 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("TSDB存储").
-			WithOperation("启动重载循环").
-			WithError(err).
-			WithSolution("检查TSDB存储配置和连接")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "prometheus service close success")
 		return
 	}
 
-	codedInfo := errno.ErrInfoServiceReady().
-		WithComponent("Prometheus服务").
-		WithOperation("服务重载或启动").
-		WithContext("状态", "成功")
-	log.InfoWithCodef(context.TODO(), codedInfo)
+	log.Infof(ctx, "prometheus service start success.")
 }
 
 // Wait
@@ -82,23 +72,14 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	codedInfo := errno.ErrInfoServiceShutdown().
-		WithComponent("Prometheus服务").
-		WithOperation("服务关闭").
-		WithContext("状态", "上下文取消函数已调用")
-	log.InfoWithCodef(context.TODO(), codedInfo)
+	log.Infof(context.TODO(), "prometheus service close success")
 }
 
 // loopReloadStorage
 func (s *Service) loopReloadStorage(ctx context.Context) error {
 	err := s.reloadStorage()
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("TSDB存储").
-			WithOperation("初始化重载").
-			WithError(err).
-			WithSolution("检查存储初始化配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "reload storage failed")
 		return err
 	}
 	ch, err := consul.WatchStorageInfo(ctx)
@@ -111,22 +92,13 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				codedWarn := errno.ErrWarningServiceLoop().
-					WithComponent("TSDB存储").
-					WithOperation("重载循环退出").
-					WithSolution("检查上下文取消原因")
-				log.WarnWithCodef(context.TODO(), codedWarn)
+				log.Warnf(context.TODO(), "prometheus service close success")
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get storage info changed notify")
 				err = s.reloadStorage()
 				if err != nil {
-					codedErr := errno.ErrConfigReloadFailed().
-						WithComponent("TSDB存储").
-						WithOperation("动态重载").
-						WithError(err).
-						WithSolution("检查Consul通知和存储连接")
-					log.ErrorWithCodef(context.TODO(), codedErr)
+					log.Errorf(context.TODO(), "reload storage failed %v", err)
 				}
 			}
 		}
@@ -138,12 +110,7 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 func (s *Service) reloadStorage() error {
 	consulData, err := consul.GetTsDBStorageInfo()
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Consul").
-			WithOperation("获取存储信息").
-			WithError(err).
-			WithSolution("检查Consul存储信息配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "get storage info failed %v", err)
 		return err
 	}
 	hash := consul.HashIt(consulData)
@@ -174,12 +141,7 @@ func (s *Service) reloadStorage() error {
 	}
 	err = inner.ReloadTsDBStorage(s.ctx, consulData, options)
 	if err != nil {
-		codedErr := errno.ErrConfigReloadFailed().
-			WithComponent("TSDB存储").
-			WithOperation("重载存储实例").
-			WithError(err).
-			WithSolution("检查存储实例配置和连接")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "reload storage failed %v", err)
 		return err
 	}
 

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package featureFlag
 
 import (
 	"context"
@@ -16,15 +16,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestGetBkDataTableIDCheck(t *testing.T) {
-	ctx := InitHashID(context.Background())
-	InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.InitMetadata()
 
-	featureFlag.MockFeatureFlag(ctx, `{
+	MockFeatureFlag(ctx, `{
     "bk-data-table-id-auth": {
         "variations": {
             "Default": true,
@@ -55,23 +55,23 @@ func TestGetBkDataTableIDCheck(t *testing.T) {
 
 	var actual bool
 
-	SetUser(ctx, &User{SpaceUID: "bkdata_1"})
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkdata_1"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 
-	SetUser(ctx, &User{SpaceUID: "bkmonitor"})
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkmonitor"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
-	SetUser(ctx, &User{SpaceUID: "bkmonitor"})
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkmonitor"})
 	actual = GetBkDataTableIDCheck(ctx, "10000_demo")
 	assert.Equal(t, false, actual)
 
-	SetUser(ctx, &User{SpaceUID: "bkdata_1_1"})
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkdata_1_1"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
-	SetUser(ctx, &User{SpaceUID: "bkdata"})
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkdata"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 }
@@ -80,9 +80,9 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 	ctx := context.Background()
 
 	log.InitTestLogger()
-	InitMetadata()
+	metadata.InitMetadata()
 
-	featureFlag.MockFeatureFlag(ctx, `{
+	MockFeatureFlag(ctx, `{
 	  	"must-vm-query": {
 	  		"variations": {
 	  			"Default": false,
@@ -174,7 +174,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 			defer cancel()
 
 			start, end := time.Unix(c.Start, 0), time.Unix(c.End, 0)
-			GetQueryParams(ctx).SetTime(start, end, "")
+			metadata.GetQueryParams(ctx).SetTime(start, end, "")
 
 			actual := GetMustVmQueryFeatureFlag(ctx, c.TableID)
 			assert.Equal(t, c.Expected, actual)

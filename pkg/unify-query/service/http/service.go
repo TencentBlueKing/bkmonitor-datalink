@@ -19,7 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/middleware"
@@ -53,27 +52,11 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 先关闭当前的服务
 	if s.server != nil {
-		codedWarn := errno.ErrWarningServiceDegraded().
-			WithComponent("HTTP服务器").
-			WithOperation("重启前关闭").
-			WithContext("超时时间", WriteTimeout.String()).
-			WithSolution("等待现有请求完成")
-		log.WarnWithCodef(ctx, codedWarn)
 		tempCtx, cancelFunc := context.WithTimeout(ctx, WriteTimeout)
 		defer cancelFunc()
 		if err = s.server.Shutdown(tempCtx); err != nil {
-			codedErr := errno.ErrBusinessLogicError().
-				WithComponent("HTTP服务器").
-				WithOperation("服务器关闭").
-				WithError(err).
-				WithSolution("检查请求处理和网络连接")
-			log.ErrorWithCodef(ctx, codedErr)
+			log.Errorf(ctx, "failed to shutdown http server for->[%s]", err)
 		}
-		codedWarn = errno.ErrWarningServiceDegraded().
-			WithComponent("HTTP服务器").
-			WithOperation("服务器关闭完成").
-			WithSolution("服务器正常重启")
-		log.WarnWithCodef(ctx, codedWarn)
 	}
 
 	if s.cancelFunc != nil {
@@ -119,11 +102,6 @@ func (s *Service) Reload(ctx context.Context) {
 			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}
-		codedWarn := errno.ErrWarningServiceDegraded().
-			WithComponent("HTTP服务器").
-			WithOperation("服务器停止").
-			WithContext("说明", "服务器正常停止监听")
-		log.WarnWithCodef(ctx, codedWarn)
 	}(s.server)
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
@@ -135,19 +113,9 @@ func (s *Service) Reload(ctx context.Context) {
 		<-s.ctx.Done()
 		err = s.server.Close()
 		if err != nil {
-			codedErr := errno.ErrBusinessLogicError().
-				WithComponent("HTTP服务器").
-				WithOperation("服务器关闭").
-				WithError(err).
-				WithSolution("检查服务器状态和连接")
-			log.ErrorWithCodef(ctx, codedErr)
+			log.Errorf(ctx, "failed to close http server for->[%s]", err)
 		}
 	}()
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("HTTP").
-		WithOperation("服务启动").
-		WithContext("状态", "成功")
-	log.InfoWithCodef(ctx, codedInfo)
 }
 
 // Wait
@@ -158,8 +126,4 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	codedInfo := errno.ErrInfoServiceShutdown().
-		WithComponent("HTTP").
-		WithOperation("服务关闭")
-	log.InfoWithCodef(s.ctx, codedInfo)
 }

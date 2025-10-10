@@ -17,9 +17,8 @@ import (
 
 	"github.com/influxdata/influxdb/models"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -121,13 +120,11 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					}
 					value, ok := values[index].(string)
 					if !ok {
-						codedWarn := errno.ErrWarningDataMissing().
-							WithComponent("InfluxDB").
-							WithOperation("数据类型错误").
-							WithContext("维度", dimension).
-							WithContext("值", value).
-							WithSolution("检查数据类型")
-						log.WarnWithCodef(ctx, codedWarn)
+						metadata.Sprintf(
+							metadata.MsgTableFormat,
+							"数据类型 %v 错误",
+							values[index],
+						).Warn(ctx)
 						continue
 					}
 					tags[dimension] = value
@@ -138,13 +135,10 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					keyBuilder.WriteString(comma)
 				} else {
 					// 跳过获取不到的dimension，并打印日志
-					codedWarn := errno.ErrWarningDataMissing().
-						WithComponent("InfluxDB").
-						WithOperation("维度缺失").
-						WithContext("维度", dimension).
-						WithContext("数据", values).
-						WithSolution("检查数据结构")
-					log.WarnWithCodef(ctx, codedWarn)
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(ctx)
 				}
 			}
 
@@ -157,14 +151,10 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 				if index, ok := columnIndex[resultColumn]; ok {
 					resultValues = append(resultValues, values[index])
 				} else {
-					// 找不到固定的value和time则跳过该行
-					codedWarn := errno.ErrWarningDataMissing().
-						WithComponent("InfluxDB").
-						WithOperation("列缺失").
-						WithContext("列名", resultColumn).
-						WithContext("数据", values).
-						WithSolution("检查数据完整性")
-					log.WarnWithCodef(ctx, codedWarn)
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(ctx)
 					continue valuesLoop
 				}
 			}
@@ -218,14 +208,10 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 				if _, ok := series.Tags[k]; !ok {
 					series.Tags[k] = v
 				} else {
-					codedErr := errno.ErrDataFormatInvalid().
-						WithComponent("InfluxDB表处理").
-						WithOperation("扩展标签").
-						WithContext("tag_key", k).
-						WithContext("existing_value", series.Tags[k]).
-						WithContext("new_value", v).
-						WithSolution("检查标签配置，避免重复标签键")
-					log.ErrorWithCodef(context.TODO(), codedErr)
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(context.TODO())
 				}
 			}
 		} else {

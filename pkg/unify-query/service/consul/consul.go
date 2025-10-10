@@ -13,7 +13,6 @@ import (
 	"context"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -53,34 +52,16 @@ func (s *Service) Reload(ctx context.Context) {
 		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
 	)
 	if err != nil {
-		codedErr := errno.ErrStorageConnFailed().
-			WithComponent("Consul服务").
-			WithOperation("初始化Consul实例").
-			WithContext("service_name", ServiceName).
-			WithContext("address", Address).
-			WithContext("http_address", HTTPAddress).
-			WithContext("error", err.Error()).
-			WithSolution("检查Consul服务器连接配置")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)
 		return
 	}
 	err = consul.LoopAwakeService()
 	if err != nil {
-		codedErr := errno.ErrBusinessLogicError().
-			WithComponent("Consul服务").
-			WithOperation("启动服务保活循环").
-			WithContext("service_name", ServiceName).
-			WithContext("error", err.Error()).
-			WithSolution("检查Consul服务注册和保活机制")
-		log.ErrorWithCodef(context.TODO(), codedErr)
+		log.Errorf(context.TODO(), "consul service loop awake failed for->[%s]", err)
 		return
 	}
 
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("Consul").
-		WithOperation("服务启动").
-		WithContext("状态", "成功")
-	log.InfoWithCodef(context.TODO(), codedInfo)
+	log.Warnf(context.TODO(), "consul service reloaded or start success.")
 }
 
 // Wait
@@ -91,9 +72,5 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("ConsulService").
-		WithOperation("服务关闭").
-		WithSolution("Consul服务已成功关闭")
-	log.InfoWithCodef(context.TODO(), codedInfo)
+	log.Infof(context.TODO(), "consul service context cancel func called.")
 }

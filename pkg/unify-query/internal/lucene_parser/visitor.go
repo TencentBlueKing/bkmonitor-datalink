@@ -615,9 +615,6 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.TermContext:
 		node := parseTerm(ctx.GetText())
 		n.value = n.MakeInitNode(node)
-		if n.Option.AddLabels != nil {
-			addLabels(n, n.Option.AddLabels)
-		}
 	}
 
 	n.Next(next, ctx)

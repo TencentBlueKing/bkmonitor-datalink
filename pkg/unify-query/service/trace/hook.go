@@ -15,7 +15,6 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -44,27 +43,8 @@ func InitConfig() {
 	otlpHost = viper.GetString(OtlpHostConfigPath)
 	otlpPort = viper.GetString(OtlpPortConfigPath)
 	otlpToken = viper.GetString(OtlpTokenConfigPath)
-	codedInfo := errno.ErrInfoConfigReload().
-		WithComponent("Trace配置").
-		WithOperation("OTLP连接配置").
-		WithContext("主机", otlpHost).
-		WithContext("端口", otlpPort).
-		WithContext("Token长度", len(otlpToken))
-	log.InfoWithCodef(context.TODO(), codedInfo)
-
 	OtlpType = viper.GetString(OtlpTypeConfigPath)
-	codedInfo = errno.ErrInfoConfigReload().
-		WithComponent("Trace配置").
-		WithOperation("OTLP类型配置").
-		WithContext("类型", OtlpType)
-	log.InfoWithCodef(context.TODO(), codedInfo)
-
 	ServiceName = viper.GetString(ServiceNameConfigPath)
-	codedInfo = errno.ErrInfoConfigReload().
-		WithComponent("Trace配置").
-		WithOperation("服务名配置").
-		WithContext("服务名", ServiceName)
-	log.InfoWithCodef(context.TODO(), codedInfo)
 }
 
 // init

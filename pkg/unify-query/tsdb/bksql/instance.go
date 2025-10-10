@@ -21,11 +21,8 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -130,13 +127,6 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 		return data, nil
 	}
 
-	codedInfo := errno.ErrInfoServiceStart().
-		WithComponent("BkSQL").
-		WithOperation("执行查询").
-		WithContext("实例类型", i.InstanceType()).
-		WithContext("查询语句", sql).
-		WithSolution("正在执行BkSQL查询")
-	log.InfoWithCodef(ctx, codedInfo)
 	span.Set("query-sql", sql)
 
 	user := metadata.GetUser(ctx)
@@ -440,32 +430,14 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
-	codedErr := errno.ErrDataProcessFailed().
-		WithComponent("BkSQL查询引擎").
-		WithOperation("直接查询范围").
-		WithContext("实例类型", i.InstanceType()).
-		WithSolution("使用适合的查询接口")
-	log.WarnWithCodef(ctx, codedErr)
 	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	codedErr := errno.ErrDataProcessFailed().
-		WithComponent("BkSQL查询引擎").
-		WithOperation("直接查询").
-		WithContext("实例类型", i.InstanceType()).
-		WithSolution("使用适合的查询接口")
-	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	codedErr := errno.ErrDataProcessFailed().
-		WithComponent("BkSQL查询引擎").
-		WithOperation("查询exemplar").
-		WithContext("实例类型", i.InstanceType()).
-		WithSolution("使用适合的查询接口")
-	log.WarnWithCodef(ctx, codedErr)
 	return nil, nil
 }
 
@@ -568,7 +540,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) InstanceType() string {
-	return consul.BkSqlStorageType
+	return metadata.BkSqlStorageType
 }
 
 func getValue(k string, d map[string]any) (string, error) {

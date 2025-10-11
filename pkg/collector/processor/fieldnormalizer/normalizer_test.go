@@ -71,7 +71,8 @@ func TestNormalizer(t *testing.T) {
 			GeneratorOptions: define.GeneratorOptions{
 				Attributes: map[string]string{
 					"network.peer.address": "localhost",
-					"http.method":          "GET",
+					"http.methodx":         "GET",
+					"http.request.method":  "GET",
 				},
 			},
 			SpanCount: 2,
@@ -83,7 +84,7 @@ func TestNormalizer(t *testing.T) {
 			Fields: []FieldConfig{
 				{
 					Kind:         "SPAN_KIND_CLIENT",
-					PredicateKey: "attributes.http.method",
+					PredicateKey: "attributes.http.method,attributes.http.request.method",
 					Rules: []FieldRule{
 						{
 							Key: "attributes.net.peer.ip",

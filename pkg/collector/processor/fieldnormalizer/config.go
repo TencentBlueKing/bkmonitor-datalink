@@ -10,6 +10,8 @@
 package fieldnormalizer
 
 import (
+	"strings"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstrings"
 )
@@ -22,6 +24,10 @@ type FieldConfig struct {
 	Kind         string      `config:"kind" mapstructure:"kind"`
 	PredicateKey string      `config:"predicate_key" mapstructure:"predicate_key"`
 	Rules        []FieldRule `config:"rules" mapstructure:"rules"`
+}
+
+func (fc FieldConfig) PredicateKeys() []string {
+	return strings.Split(fc.PredicateKey, ",")
 }
 
 type FieldRule struct {
@@ -41,15 +47,17 @@ func NewConfigHandler(config Config) *ConfigHandler {
 
 	for i := 0; i < len(config.Fields); i++ {
 		field := config.Fields[i]
-		predicateKeys.Set(field.Kind, field.PredicateKey)
-		for j := 0; j < len(field.Rules); j++ {
-			rule := field.Rules[j]
-			id := field.Kind + "/" + field.PredicateKey
-			ff, v := fields.DecodeFieldFrom(rule.Key)
-			switch ff {
-			case fields.FieldFromAttributes:
-				attributeKeys.Set(id, v)
-			default:
+		for _, pk := range field.PredicateKeys() {
+			predicateKeys.Set(field.Kind, pk)
+			for j := 0; j < len(field.Rules); j++ {
+				rule := field.Rules[j]
+				id := field.Kind + "/" + pk
+				ff, v := fields.DecodeFieldFrom(rule.Key)
+				switch ff {
+				case fields.FieldFromAttributes:
+					attributeKeys.Set(id, v)
+				default:
+				}
 			}
 		}
 	}

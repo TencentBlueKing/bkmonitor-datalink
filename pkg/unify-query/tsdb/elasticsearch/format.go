@@ -87,6 +87,11 @@ const (
 	ShouldNot = "should_not"
 )
 
+var (
+	//text、object、nested 类型不支持聚合，其他类型默认支持
+	nonAggTypes = []string{Text, Text, Nested}
+)
+
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
 	Error         error

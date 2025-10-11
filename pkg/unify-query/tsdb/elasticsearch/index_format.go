@@ -27,11 +27,6 @@ const (
 	FormatPropertiesNormalizer = "normalizer"
 )
 
-var (
-	// text、object、nested 类型不支持聚合，其他类型默认支持
-	nonAggTypes = []string{"text", "object", "nested"}
-)
-
 type IndexOptionFormat struct {
 	analyzer  map[string]map[string]any
 	fieldsMap metadata.FieldsMap

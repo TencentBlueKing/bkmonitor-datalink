@@ -104,9 +104,11 @@ func (f *IndexOptionFormat) mapMappings(prefix string, data map[string]any) {
 
 		fm := f.esToFieldMap(prefix, data)
 		// 忽略为空的类型和 alias 类型，因为别名已经在 unifyquery 实现过了
-		if fm.FieldType != "" || fm.FieldType != "alias" {
-			f.fieldsMap[prefix] = fm
+		if fm.FieldType == "" || fm.FieldType == "alias" {
+			return
 		}
+
+		f.fieldsMap[prefix] = fm
 	}
 }
 

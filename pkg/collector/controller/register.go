@@ -16,6 +16,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/dbfilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/fieldnormalizer"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/methodfilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/metricsfilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/probefilter"

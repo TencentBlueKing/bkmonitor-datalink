@@ -26,4 +26,5 @@ const (
 	ProcessorPprofTranslator = "pprof_translator"
 	ProcessorTextSpliter     = "text_spliter"
 	ProcessorFieldNormalizer = "field_normalizer"
+	ProcessorMethodFilter    = "method_filter"
 )

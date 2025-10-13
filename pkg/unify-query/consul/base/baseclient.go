@@ -321,6 +321,14 @@ func (bc *Client) Watch(path string, separator string) (<-chan interface{}, erro
 	if err != nil {
 		return nil, err
 	}
+	conf := api.DefaultConfig()
+	conf.Address = bc.address
+	if bc.tlsConfig != nil {
+		conf.TLSConfig.InsecureSkipVerify = bc.tlsConfig.SkipVerify
+		conf.TLSConfig.CAFile = bc.tlsConfig.CAFile
+		conf.TLSConfig.CertFile = bc.tlsConfig.CertFile
+		conf.TLSConfig.KeyFile = bc.tlsConfig.KeyFile
+	}
 	// 若监听到消息则向外输出
 	outChan := make(chan interface{})
 	// consulAPI提供的监听方案
@@ -332,7 +340,7 @@ func (bc *Client) Watch(path string, separator string) (<-chan interface{}, erro
 		defer func() {
 			close(outChan)
 		}()
-		err1 := plan.Run(bc.address)
+		err1 := plan.RunWithConfig(bc.address, conf)
 		if err1 != nil {
 			if !plan.IsStopped() {
 				plan.Stop()

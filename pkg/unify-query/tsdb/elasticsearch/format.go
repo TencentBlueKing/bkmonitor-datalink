@@ -327,12 +327,34 @@ func (f *FormatFactory) GetFieldType(k string) string {
 	return ""
 }
 
-func (f *FormatFactory) ParserQueryString(ctx context.Context, q string) (elastic.Query, error) {
+func (s *FormatFactory) queryString(str string, isPrefix bool) elastic.Query {
+	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	if isPrefix {
+		q.Type("phrase_prefix")
+	}
+	return q
+}
+
+func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefix bool) elastic.Query {
 	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
 		FieldsMap: f.fieldsMap,
 	})
 
-	return lucene_parser.MergeQuery(node.DSL()), node.Error()
+	if node != nil && node.Error() == nil {
+		return lucene_parser.MergeQuery(node.DSL())
+	}
+
+	var reason string
+	if node != nil && node.Error() != nil {
+		reason = fmt.Sprintf(" 失败原因：%s", node.Error())
+	}
+
+	metadata.Sprintf(
+		metadata.MsgParserLucene, "%s 解析失败%s",
+		q, reason,
+	).Warn(ctx)
+
+	return f.queryString(q, isPrefix)
 }
 
 func (f *FormatFactory) FieldType() map[string]string {

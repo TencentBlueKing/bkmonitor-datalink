@@ -254,10 +254,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		q, err := fact.ParserQueryString(ctx, qb.QueryString)
-		if err != nil {
-			return nil, err
-		}
+		q := fact.ParserQueryString(ctx, qb.QueryString, qb.IsPrefix)
 		if q != nil {
 			filterQueries = append(filterQueries, q)
 		}

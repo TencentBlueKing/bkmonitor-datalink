@@ -53,6 +53,7 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+	Object = "object"
 
 	ESStep = "."
 
@@ -89,7 +90,7 @@ const (
 
 var (
 	//text、object、nested 类型不支持聚合，其他类型默认支持
-	nonAggTypes = []string{Text, Text, Nested}
+	nonAggTypes = []string{Text, Object, Nested}
 )
 
 type TimeSeriesResult struct {

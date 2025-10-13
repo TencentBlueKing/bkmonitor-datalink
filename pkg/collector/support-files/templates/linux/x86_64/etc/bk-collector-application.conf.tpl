@@ -296,8 +296,13 @@ default:
 {%- if item.match_groups is defined %}
               match_groups:
 {%- for group in item.match_groups %}
-                - source: '{{ group.source }}'
-                  destination: '{{ group.destination }}'
+                - destination: '{{ group.destination }}'
+{%- if group.source is defined %}
+                  source: '{{ group.source }}'
+{%- endif %}
+{%- if group.const_val is defined %}
+                  const_val: '{{ group.const_val }}'
+{%- endif %}
 {%- endfor %}
 {%- endif %}
               rule:
@@ -323,6 +328,20 @@ default:
                 regex: '{{ item.rule.regex }}'
 {%- endif %}
 {%- endfor %}
+{%- endif %}
+
+{% if method_filter_config is defined %}
+      - name: '{{ method_filter_config.name }}'
+        config:
+          drop_span:
+            rules:
+              {%- for item in method_filter_config.get("drop_span", {}).get("rules", []) %}
+              - match_type: '{{ item.match_type }}'
+                predicate_key: '{{ item.predicate_key }}'
+                kind: '{{ item.span_kind }}'
+                rule:
+                  regex: '{{ item.rule.regex }}'
+              {%- endfor %}
 {%- endif %}
 
 {% if service_configs is defined %}

@@ -12,6 +12,8 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
@@ -238,6 +240,19 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+}
+
+// Signature 生成条件的唯一签名，用于条件比较和去重
+// 例如：host|eq|server1 或 status|eq|1,2,3
+func (c ConditionField) Signature() string {
+	sortedValues := make([]string, len(c.Value))
+	copy(sortedValues, c.Value)
+	sort.Strings(sortedValues)
+
+	return fmt.Sprintf("%s|%s|%s",
+		c.DimensionName,
+		c.Operator,
+		strings.Join(sortedValues, ","))
 }
 
 // TimeAggregation 时间聚合字段

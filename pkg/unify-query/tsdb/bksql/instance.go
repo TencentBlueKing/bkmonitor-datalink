@@ -210,9 +210,9 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sql_expr.Doris {
-		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
-			return f, err
+			return nil, err
 		}
 
 		// 只能使用在表结构的字段才能使用
@@ -243,6 +243,11 @@ func (i *Instance) Table(query *metadata.Query) string {
 // QueryFieldMap 查询字段映射
 func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
+
+	if query == nil {
+		return nil, nil
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("es query error: %s", r)
@@ -252,32 +257,84 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-field-map")
 	defer span.End(&err)
 
-	if query.DB == "" {
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{query.DB}
+	}
+
+	if len(dbs) == 0 {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
 		return nil, err
 	}
 
-	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-	fieldMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
-	if err != nil {
-		return nil, err
-	}
+	fieldsMap := make(metadata.FieldsMap)
 
-	res := make(metadata.FieldsMap)
-	for k, v := range fieldMap {
-		if k == "" || v.FieldType == "" {
+	// 多表的字段进行合并查询，进行倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
 			continue
 		}
 
-		v.AliasName = query.FieldAlias.AliasName(k)
-		v.FieldName = k
-		ks := strings.Split(k, ".")
-		v.OriginField = ks[0]
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
 
-		res[k] = v
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+			v.TokenizeOnChars = make([]string, 0)
+
+			fieldsMap[k] = v
+		}
 	}
 
-	return res, nil
+	for _, db := range dbs {
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
+			continue
+		}
+
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
+
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+
+			fieldsMap[k] = v
+		}
+	}
+
+	return fieldsMap, nil
 }
 
 // QueryRawData 直接查询原始返回

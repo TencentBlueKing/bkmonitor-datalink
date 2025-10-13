@@ -345,7 +345,7 @@ func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefi
 	}
 
 	var reason string
-	if node.Error() != nil {
+	if node != nil && node.Error() != nil {
 		reason = fmt.Sprintf(" 失败原因：%s", node.Error())
 	}
 

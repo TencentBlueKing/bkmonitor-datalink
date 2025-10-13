@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/opmatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -145,13 +147,13 @@ func (r *Rule) ManualMatched(val string) (map[string]string, bool) {
 	logger.Debugf("parsed url host=%+v, path=%+v, query=%+v", u.Host, u.Path, u.Query())
 
 	if r.MatchConfig.Host.Value != "" {
-		if !OperatorMatch(u.Host, r.MatchConfig.Host.Value, r.MatchConfig.Host.Operator) {
+		if !opmatch.Match(u.Host, r.MatchConfig.Host.Value, r.MatchConfig.Host.Operator) {
 			return nil, false
 		}
 	}
 
 	if r.MatchConfig.Path.Value != "" {
-		if !OperatorMatch(u.Path, r.MatchConfig.Path.Value, r.MatchConfig.Path.Operator) {
+		if !opmatch.Match(u.Path, r.MatchConfig.Path.Value, r.MatchConfig.Path.Operator) {
 			return nil, false
 		}
 	}
@@ -161,7 +163,7 @@ func (r *Rule) ManualMatched(val string) (map[string]string, bool) {
 		if val == "" {
 			return nil, false
 		}
-		if !OperatorMatch(val, param.Value, param.Operator) {
+		if !opmatch.Match(val, param.Value, param.Operator) {
 			return nil, false
 		}
 	}
@@ -245,7 +247,10 @@ func NewConfigHandler(c *Config) *ConfigHandler {
 	rules := make(map[string][]*Rule)
 	for i := 0; i < len(c.Rules); i++ {
 		r := c.Rules[i]
-		rules[r.Kind] = append(rules[r.Kind], r)
+		kinds := strings.Split(r.Kind, ",")
+		for _, kind := range kinds {
+			rules[kind] = append(rules[kind], r)
+		}
 	}
 
 	return &ConfigHandler{rules: rules}

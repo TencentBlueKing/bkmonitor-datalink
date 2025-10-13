@@ -30,18 +30,27 @@ const (
 	MsgQueryVictoriaMetrics = "victoria_metrics_query"
 	MsgQueryBKSQL           = "bk_sql_query"
 	MsgQueryInfluxDB        = "influxdb_query"
-	MsgQueryPromQL          = "promql_query"
-	MsgQueryRelation        = "relation_query"
 
-	MsgQueryInfo = "query_info"
-	MsgQueryTs   = "query_ts"
+	MsgTransformTs     = "transform_ts"
+	MsgTransformPromQL = "transform_promql"
 
-	MsgHandlerAPI = "handler_api"
+	MsgQueryPromQL         = "query_promql"
+	MsgQueryRelation       = "query_relation"
+	MsgQueryInfo           = "query_info"
+	MsgQueryTs             = "query_ts"
+	MsgQueryReference      = "query_reference"
+	MsgQueryRaw            = "query_raw"
+	MsgQueryRawScroll      = "query_raw_scroll"
+	MsgQueryExemplar       = "query_exemplar"
+	MsgQueryClusterMetrics = "query_cluster_metrics"
 
+	MsgHandlerAPI  = "handler_api"
 	MsgTableFormat = "table_format"
 
 	MsgQueryRouter = "query_router"
 	MsgFeatureFlag = "feature_flag"
+
+	MsgHttpCurl = "http_curl"
 )
 
 type Message struct {
@@ -89,5 +98,5 @@ func (m *Message) Info(ctx context.Context) {
 
 func (m *Message) Status(ctx context.Context, code string) {
 	SetStatus(ctx, code, m.String())
-	m.Warn(ctx)
+	log.Warnf(ctx, m.Text())
 }

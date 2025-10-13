@@ -2134,7 +2134,7 @@ func createTestInstance(ctx context.Context) *bksql.Instance {
 		Timeout:   time.Minute,
 		MaxLimit:  1e4,
 		Tolerance: 5,
-		Curl:      &curl.HttpCurl{Log: log.DefaultLogger},
+		Curl:      &curl.HttpCurl{},
 	})
 	if err != nil {
 		log.Fatalf(ctx, err.Error())

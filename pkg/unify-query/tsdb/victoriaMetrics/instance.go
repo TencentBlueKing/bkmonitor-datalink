@@ -414,7 +414,10 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return err
+		return metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常",
+		).Error(ctx, err)
 	}
 
 	queryCost := time.Since(startAnaylize)

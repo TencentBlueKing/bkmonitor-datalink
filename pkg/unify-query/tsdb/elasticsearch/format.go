@@ -53,6 +53,7 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+	Object = "object"
 
 	ESStep = "."
 
@@ -86,6 +87,9 @@ const (
 	Should    = "should"
 	ShouldNot = "should_not"
 )
+
+// text、object、nested 类型不支持聚合，其他类型默认支持
+var nonAggTypes = []string{Text, Object, Nested}
 
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries

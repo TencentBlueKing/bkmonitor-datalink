@@ -129,6 +129,7 @@ type Query struct {
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
 	DB              string     `json:"db,omitempty"`               // 存储 DB
+	DBs             []string   `json:"dbs,omitempty"`              // 多个 DB 用于用户合并查询
 	Measurement     string     `json:"measurement,omitempty"`      // 存储 Measurement
 	MeasurementType string     `json:"measurement_type,omitempty"` // 存储类型
 	Field           string     `json:"field,omitempty"`            // 存储 Field

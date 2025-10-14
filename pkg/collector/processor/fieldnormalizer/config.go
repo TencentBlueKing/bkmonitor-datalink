@@ -70,20 +70,20 @@ func NewConfigHandler(config Config) *ConfigHandler {
 
 func (ch *ConfigHandler) GetPredicateKeys(kind string) []string {
 	keys := ch.predicateKeys.Get(kind)
+	if len(keys) > 0 {
+		return keys
+	}
 
 	// 使用兜底配置
-	if len(keys) == 0 {
-		keys = ch.predicateKeys.Get("")
-	}
-	return keys
+	return ch.predicateKeys.Get("")
 }
 
 func (ch *ConfigHandler) GetAttributes(kind, predicateKey string) []string {
 	keys := ch.attributeKeys.Get(kind + "/" + predicateKey)
+	if len(keys) > 0 {
+		return keys
+	}
 
 	// 使用兜底配置
-	if len(keys) == 0 && predicateKey == "" {
-		return ch.attributeKeys.Get("/" + predicateKey)
-	}
-	return keys
+	return ch.attributeKeys.Get("/" + predicateKey)
 }

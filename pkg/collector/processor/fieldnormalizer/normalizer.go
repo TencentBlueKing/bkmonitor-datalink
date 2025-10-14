@@ -133,10 +133,20 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 					Key:          key,
 				}
 
-				if fn, ok := sfn.funcs[fk]; ok {
+				if fn, ok := sfn.lookupFunc(fk); ok {
 					fn(span, key)
 				}
 			}
 		}
 	}
+}
+
+func (sfn SpanFieldNormalizer) lookupFunc(fk funcKey) (NormalizeFunc, bool) {
+	if fn, ok := sfn.funcs[fk]; ok {
+		return fn, true
+	}
+
+	fk.Kind = ""
+	fn, ok := sfn.funcs[fk]
+	return fn, ok
 }

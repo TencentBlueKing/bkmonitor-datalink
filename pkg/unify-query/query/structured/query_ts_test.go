@@ -1247,6 +1247,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								MetricNames:    []string{"bklog:result_table:es:usage"},
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1318,6 +1319,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1516,7 +1518,110 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+		},
+		"判断是否进行合并 vm": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkMonitor,
+						TableID:       "",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: true,
+			promql:        `count(a)`,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"2_bcs_prom_computation_result_table"},
+				MetricFilterCondition: map[string]string{
+					"a": `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
+				},
+			},
+			refString: `{"a":[{"QueryList":[{"storage_type":"influxdb","storage_id":"2","cluster_name":"default","data_source":"bkmonitor","data_label":"influxdb","table_id":"result_table.influxdb","db":"result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"victoria_metrics","storage_id":"2","data_source":"bkmonitor","data_label":"vm","table_id":"result_table.vm","vm_rt":"2_bcs_prom_computation_result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"result_table_id=\"2_bcs_prom_computation_result_table\", __name__=\"kube_pod_info_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"合并 es 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "merge_es",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index","es_index_1"],"field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es_with_time_filed","db":"es_index","dbs":["es_index"],"field":"kube_pod_info","time_field":{"name":"end_time","type":"long","unit":"microsecond"},"timezone":"UTC","fields":["kube_pod_info"],"metric_names":["bklog:result_table:es_with_time_filed:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"手动开启合并 doris 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "multi_doris",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+				IsMergeDB:   true,
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","dbs":["100915_bklog_pub_svrlog_pangusvr_lobby_analysis","100915_bklog_pub_svrlog_pangusvr_other_9_analysis"],"measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":true}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"默认不合并 doris 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "multi_doris",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_2","db":"100915_bklog_pub_svrlog_pangusvr_other_9_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_2:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1528,6 +1633,16 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			md.SetUser(ctx, &md.User{SpaceUID: influxdb.SpaceUid})
 			ref, err := tc.ts.ToQueryReference(ctx)
+
+			for _, r := range ref {
+				for _, q := range r {
+					sort.SliceStable(q.QueryList, func(i, j int) bool {
+						a := q.QueryList[i]
+						b := q.QueryList[j]
+						return a.TableID < b.TableID
+					})
+				}
+			}
 
 			assert.Nil(t, err)
 			refJson, _ := json.Marshal(ref)

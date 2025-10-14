@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -90,6 +91,9 @@ type QueryTs struct {
 
 	// DryRun 是否启用 DryRun
 	DryRun bool `json:"dry_run,omitempty"`
+
+	// IsMergeDB 是否启用合并 db 特性
+	IsMergeDB bool `json:"is_merge_db,omitempty"`
 }
 
 // StepParse 解析step
@@ -131,6 +135,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// dry-run 复用
 		if q.DryRun {
 			query.DryRun = q.DryRun
+		}
+
+		// is_merge_db 复用
+		if q.IsMergeDB {
+			query.IsMergeDB = q.IsMergeDB
 		}
 
 		// 如果 query.Step 不存在去外部统一的 step
@@ -404,7 +413,8 @@ type Query struct {
 	Scroll   string `json:"-"`
 	SliceMax int    `json:"-"`
 	// DryRun
-	DryRun bool `json:"-"`
+	DryRun    bool `json:"-"`
+	IsMergeDB bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -654,13 +664,17 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 	}
 
+	// 构建 query map 使得相同的 storage 可以进行合并查询
+	queryMap := make(map[string]*metadata.Query)
+
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
 		storageIDs := tsDB.GetStorageIDs(start, end)
 
 		for _, storageID := range storageIDs {
-			query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions)
-			if err != nil {
+			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			if query == nil {
+				continue
 			}
 
 			query.Aggregates = aggregates.Copy()
@@ -735,9 +749,31 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-			queryMetric.QueryList = append(queryMetric.QueryList, query)
+			// 判断是否跳过合并操作
+			if !query.GetMergeDBStatus() {
+				queryMetric.QueryList = append(queryMetric.QueryList, query)
+				continue
+			}
+
+			storageUUID := query.StorageUUID()
+			if oq, ok := queryMap[storageUUID]; ok {
+				span.Set(fmt.Sprintf("query_merge_%s", oq.TableID), query.TableID)
+				oq.DBs = append(oq.DBs, query.DB)
+			} else {
+				query.DBs = []string{query.DB}
+				queryMap[storageUUID] = query
+			}
 		}
 	}
+
+	span.Set("query_map_length", len(queryMap))
+
+	for _, qry := range queryMap {
+		sort.Strings(qry.DBs)
+		queryMetric.QueryList = append(queryMetric.QueryList, qry)
+	}
+
+	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
 }
@@ -746,7 +782,7 @@ func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
 	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
-) (*metadata.Query, error) {
+) *metadata.Query {
 	var (
 		field        string
 		fields       []string
@@ -781,7 +817,12 @@ func (q *Query) BuildMetadataQuery(
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
 		if err != nil {
-			return nil, err
+			metadata.Sprintf(
+				metadata.MsgParserUnifyQuery,
+				"offset %s 格式异常 %s",
+				q.Offset, err.Error(),
+			).Warn(ctx)
+			return nil
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
 	}
@@ -924,6 +965,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Scroll = q.Scroll
 	query.DryRun = q.DryRun
+	query.IsMergeDB = q.IsMergeDB
 
 	query.Size = q.Limit
 	query.From = q.From
@@ -935,7 +977,7 @@ func (q *Query) BuildMetadataQuery(
 	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
-	return query, nil
+	return query
 }
 
 func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {

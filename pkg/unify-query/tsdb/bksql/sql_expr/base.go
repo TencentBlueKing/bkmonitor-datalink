@@ -495,7 +495,7 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 	for _, branch := range allConditions {
 		var newBranch []metadata.ConditionField
 		for _, cond := range branch {
-			if hitCount[cond.Signature()] == allCount {
+			if hitCount[cond.Signature()] != allCount {
 				newBranch = append(newBranch, cond)
 			}
 		}

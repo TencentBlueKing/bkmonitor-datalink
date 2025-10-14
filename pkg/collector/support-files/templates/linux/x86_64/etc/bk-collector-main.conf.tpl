@@ -237,6 +237,9 @@ bk-collector:
     # MetricsFilter: 指标过滤处理器
     - name: "metrics_filter/relabel"
 
+    # MethodFilter: method 过滤处理器（做 span 丢弃处理）
+    - name: "method_filter/drop_span
+
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
       config:
@@ -321,6 +324,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "method_filter/drop_span"
         - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
         - "db_filter/common"

@@ -98,5 +98,5 @@ func (m *Message) Info(ctx context.Context) {
 
 func (m *Message) Status(ctx context.Context, code string) {
 	SetStatus(ctx, code, m.String())
-	m.Warn(ctx)
+	log.Warnf(ctx, m.Text())
 }

@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/samber/lo"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -103,9 +105,12 @@ func (f *IndexOptionFormat) mapMappings(prefix string, data map[string]any) {
 		}
 
 		fm := f.esToFieldMap(prefix, data)
-		if fm.FieldType != "" {
-			f.fieldsMap[prefix] = fm
+		// 忽略为空的类型和 alias 类型，因为别名已经在 unifyquery 实现过了
+		if fm.FieldType == "" || fm.FieldType == "alias" {
+			return
 		}
+
+		f.fieldsMap[prefix] = fm
 	}
 }
 
@@ -129,14 +134,15 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	fieldMap.AliasName = f.fieldAlias.AliasName(k)
 	fieldMap.FieldName = k
 	fieldMap.FieldType, _ = data["type"].(string)
+	fieldMap.IsAgg = !lo.Contains(nonAggTypes, fieldMap.FieldType)
 
-	fieldMap.IsAgg = false
 	fieldMap.TokenizeOnChars = make([]string, 0)
 	ks := strings.Split(k, ESStep)
 	fieldMap.OriginField = ks[0]
 	fieldMap.IsAnalyzed = false
 	fieldMap.IsCaseSensitive = false
 
+	// 如果 mapping 中显式设置了 doc_values，以显式设置为准
 	if v, ok := data["doc_values"].(bool); ok {
 		fieldMap.IsAgg = v
 	}

@@ -473,7 +473,6 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 	signatureToCondition := make(map[string]metadata.ConditionField)
 
 	for _, branch := range allConditions {
-		// 使用map避免同一分支内重复计数
 		seenInBranch := make(map[string]bool)
 		for _, cond := range branch {
 			sig := cond.Signature()
@@ -485,12 +484,14 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 		}
 	}
 
-	// 2. 找出在所有分支中都出现的条件（全局公共条件）
+	// 2. 识别公共条件并构建剩余条件
 	branchCount := len(allConditions)
 	commonSigs := make(map[string]bool)
-	for sig, count := range signatureCount {
-		if count == branchCount {
-			common = append(common, signatureToCondition[sig])
+
+	for sig, cond := range signatureToCondition {
+		if signatureCount[sig] == branchCount {
+			// 计数相等：提取公共条件
+			common = append(common, cond)
 			commonSigs[sig] = true
 		}
 	}
@@ -500,7 +501,7 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 		return nil, allConditions
 	}
 
-	// 3. 从每个分支中移除公共条件
+	// 构建剩余条件：从每个分支中移除公共条件
 	for _, branch := range allConditions {
 		var newBranch []metadata.ConditionField
 		for _, cond := range branch {
@@ -508,7 +509,6 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 				newBranch = append(newBranch, cond)
 			}
 		}
-		// 保留非空分支（即使移除公共条件后为空，也要记录）
 		remaining = append(remaining, newBranch)
 	}
 
@@ -539,46 +539,35 @@ func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadat
 	}
 
 	// 3. 构建剩余条件SQL（不进行递归优化）
-	// 检查是否有剩余条件
-	hasRemainingConditions := false
-	for _, branch := range remaining {
-		if len(branch) > 0 {
-			hasRemainingConditions = true
-			break
+	// 直接构建OR逻辑，不进行递归优化
+	var orConditions []string
+	for _, conditions := range remaining {
+		var andConditions []string
+		for _, cond := range conditions {
+			buildCondition, err := bc(cond)
+			if err != nil {
+				return "", err
+			}
+			if buildCondition != "" {
+				andConditions = append(andConditions, buildCondition)
+			}
+		}
+		// 合并AND条件
+		if len(andConditions) > 0 {
+			orConditions = append(orConditions, strings.Join(andConditions, " AND "))
 		}
 	}
 
-	if hasRemainingConditions {
-		// 直接构建OR逻辑，不进行递归优化
-		var orConditions []string
-		for _, conditions := range remaining {
-			var andConditions []string
-			for _, cond := range conditions {
-				buildCondition, err := bc(cond)
-				if err != nil {
-					return "", err
-				}
-				if buildCondition != "" {
-					andConditions = append(andConditions, buildCondition)
-				}
-			}
-			// 合并AND条件
-			if len(andConditions) > 0 {
-				orConditions = append(orConditions, strings.Join(andConditions, " AND "))
-			}
+	// 处理OR条件组合
+	if len(orConditions) > 0 {
+		var remainingSQL string
+		if len(orConditions) == 1 {
+			remainingSQL = orConditions[0]
+		} else {
+			remainingSQL = fmt.Sprintf("(%s)", strings.Join(orConditions, " OR "))
 		}
-
-		// 处理OR条件组合
-		if len(orConditions) > 0 {
-			var remainingSQL string
-			if len(orConditions) == 1 {
-				remainingSQL = orConditions[0]
-			} else {
-				remainingSQL = fmt.Sprintf("(%s)", strings.Join(orConditions, " OR "))
-			}
-			if remainingSQL != "" {
-				parts = append(parts, remainingSQL)
-			}
+		if remainingSQL != "" {
+			parts = append(parts, remainingSQL)
 		}
 	}
 

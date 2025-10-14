@@ -808,6 +808,11 @@ func (q *Query) BuildMetadataQuery(
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
 		if err != nil {
+			metadata.Sprintf(
+				metadata.MsgParserUnifyQuery,
+				"offset %s 格式异常 %s",
+				q.Offset, err.Error(),
+			).Warn(ctx)
 			return nil
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)

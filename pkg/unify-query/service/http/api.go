@@ -229,7 +229,7 @@ func HandlerTagValues(c *gin.Context) {
 	metadata.Sprintf(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), c.Request.Header, string(paramsStr),
 	).Info(ctx)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)

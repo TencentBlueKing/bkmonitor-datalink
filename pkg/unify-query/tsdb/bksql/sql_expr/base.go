@@ -468,44 +468,34 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 		return nil, allConditions
 	}
 
-	// 1. 统计每个条件签名在多少个分支中出现
-	signatureCount := make(map[string]int)
-	signatureToCondition := make(map[string]metadata.ConditionField)
+	// 1. 统计每个条件签名在多少个分支中，并提取公共部分
+	// 使用字符串连接的方式标记每个 or 里面都命中该下标
+	hitCount := make(map[string]string)
+	allCount := ""
+	for i := range allConditions {
+		allCount += fmt.Sprintf("|%d", i)
+	}
 
-	for _, branch := range allConditions {
-		seenInBranch := make(map[string]bool)
+	for i, branch := range allConditions {
 		for _, cond := range branch {
 			sig := cond.Signature()
-			if !seenInBranch[sig] {
-				signatureCount[sig]++
-				signatureToCondition[sig] = cond
-				seenInBranch[sig] = true
+			hitCount[sig] += fmt.Sprintf("|%d", i)
+			if hitCount[sig] == allCount {
+				common = append(common, cond)
 			}
 		}
 	}
 
-	// 2. 识别公共条件并构建剩余条件
-	branchCount := len(allConditions)
-	commonSigs := make(map[string]bool)
-
-	for sig, cond := range signatureToCondition {
-		if signatureCount[sig] == branchCount {
-			// 计数相等：提取公共条件
-			common = append(common, cond)
-			commonSigs[sig] = true
-		}
-	}
-
-	// 如果没有公共条件，直接返回原始数据
+	// 没有公共条件，直接返回原始数据
 	if len(common) == 0 {
 		return nil, allConditions
 	}
 
-	// 构建剩余条件：从每个分支中移除公共条件
+	// 构建剩余非公共条件
 	for _, branch := range allConditions {
 		var newBranch []metadata.ConditionField
 		for _, cond := range branch {
-			if !commonSigs[cond.Signature()] {
+			if hitCount[cond.Signature()] == allCount {
 				newBranch = append(newBranch, cond)
 			}
 		}

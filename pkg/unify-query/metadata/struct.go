@@ -273,7 +273,10 @@ func (c ConditionField) Signature() string {
 	copy(sortedValues, c.Value)
 	sort.Strings(sortedValues)
 
-	return fmt.Sprintf("%s|%s|%s",
+	return fmt.Sprintf("%v|%v|%v|%s|%s|%s|",
+		c.IsWildcard,
+		c.IsSuffix,
+		c.IsPrefix,
 		c.DimensionName,
 		c.Operator,
 		strings.Join(sortedValues, ","))

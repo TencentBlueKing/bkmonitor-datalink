@@ -181,6 +181,29 @@ type Query struct {
 
 	// sql 使用SELECT DISTINCT 语法
 	IsDistinct bool `json:"is_distinct,omitempty"`
+
+	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
+	IsMergeDB bool `json:"is_merge_db"`
+}
+
+// GetMergeDBStatus 判断是否进行 db 合并处理
+func (q *Query) GetMergeDBStatus() bool {
+	// 如果 db 为空，则不需要合并
+	if q.DB == "" {
+		return false
+	}
+
+	// 如果是 es 可以使用合并，优化查询速度
+	if q.StorageType == ElasticsearchStorageType {
+		return true
+	}
+
+	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
+		return true
+	}
+
+	return false
 }
 
 func (q *Query) VMExpand() *VmExpand {

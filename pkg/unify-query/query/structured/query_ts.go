@@ -91,6 +91,9 @@ type QueryTs struct {
 
 	// DryRun 是否启用 DryRun
 	DryRun bool `json:"dry_run,omitempty"`
+
+	// IsMergeDB 是否启用合并 db 特性
+	IsMergeDB bool `json:"is_merge_db,omitempty"`
 }
 
 // StepParse 解析step
@@ -132,6 +135,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// dry-run 复用
 		if q.DryRun {
 			query.DryRun = q.DryRun
+		}
+
+		// is_merge_db 复用
+		if q.IsMergeDB {
+			query.IsMergeDB = q.IsMergeDB
 		}
 
 		// 如果 query.Step 不存在去外部统一的 step
@@ -405,7 +413,8 @@ type Query struct {
 	Scroll   string `json:"-"`
 	SliceMax int    `json:"-"`
 	// DryRun
-	DryRun bool `json:"-"`
+	DryRun    bool `json:"-"`
+	IsMergeDB bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -740,8 +749,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-			// query.DB 不存在则无需进行合并
-			if query.DB == "" {
+			// 判断是否跳过合并操作
+			if !query.GetMergeDBStatus() {
 				queryMetric.QueryList = append(queryMetric.QueryList, query)
 				continue
 			}
@@ -956,6 +965,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Scroll = q.Scroll
 	query.DryRun = q.DryRun
+	query.IsMergeDB = q.IsMergeDB
 
 	query.Size = q.Limit
 	query.From = q.From

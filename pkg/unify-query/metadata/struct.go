@@ -199,7 +199,7 @@ func (q *Query) GetMergeDBStatus() bool {
 	}
 
 	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
-	if q.IsMergeDB && q.StorageID == BkSqlStorageType && q.Measurement == DorisStorageType {
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
 		return true
 	}
 

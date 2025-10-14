@@ -146,7 +146,7 @@ func (sfn SpanFieldNormalizer) lookupFunc(fk funcKey) (NormalizeFunc, bool) {
 		return fn, true
 	}
 
-	fk.Kind = ""
+	fk.Kind = "" // 兜底
 	fn, ok := sfn.funcs[fk]
 	return fn, ok
 }

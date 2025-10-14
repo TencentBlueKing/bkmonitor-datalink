@@ -321,6 +321,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "field_normalizer/otel_mapping"
         - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
         - "db_filter/common"

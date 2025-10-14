@@ -109,7 +109,7 @@ processor:
             - key: "{{ rule.key }}"
               op: "{{ rule.op }}"
               values:
-                {%- for value in rule.get("values", []) %}
+                {%- for value in rule.values %}
                 - "{{ value }}"
                 {%- endfor %}
             {%- endfor %}

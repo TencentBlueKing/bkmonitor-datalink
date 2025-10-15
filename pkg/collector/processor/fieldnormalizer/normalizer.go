@@ -125,26 +125,21 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 				continue
 			}
 
-			attrKeys := sfn.ch.GetAttributes(spanKind, pk)
-			for _, key := range attrKeys {
-				fk := funcKey{
-					PredicateKey: pk,
-					Kind:         spanKind,
-					Key:          key,
-				}
-				sfn.lookupFunc(fk, span, key)
-			}
+			sfn.doNormalize(sfn.ch.GetAttributes(spanKind, pk), pk, spanKind, span)
+			sfn.doNormalize(sfn.ch.GetAttributes("", pk), pk, "", span)
 		}
 	}
 }
 
-func (sfn SpanFieldNormalizer) lookupFunc(fk funcKey, span ptrace.Span, key string) {
-	if fn, ok := sfn.funcs[fk]; ok {
-		fn(span, key)
-	}
-
-	fk.Kind = "" // 兜底
-	if fn, ok := sfn.funcs[fk]; ok {
-		fn(span, key)
+func (sfn SpanFieldNormalizer) doNormalize(attrKeys []string, pk, spanKind string, span ptrace.Span) {
+	for _, key := range attrKeys {
+		fk := funcKey{
+			PredicateKey: pk,
+			Kind:         spanKind,
+			Key:          key,
+		}
+		if fn, ok := sfn.funcs[fk]; ok {
+			fn(span, key)
+		}
 	}
 }

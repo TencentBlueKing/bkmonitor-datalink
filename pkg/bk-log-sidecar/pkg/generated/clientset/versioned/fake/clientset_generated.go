@@ -18,9 +18,9 @@ limitations under the License.
 package fake
 
 import (
-	clientset "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned"
-	bkv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1"
-	fakebkv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1/fake"
+	clientset "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned"
+	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1"
+	fakebkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"

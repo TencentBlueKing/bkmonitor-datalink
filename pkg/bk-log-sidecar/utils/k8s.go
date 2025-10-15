@@ -17,7 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 )
 
 // IsNetworkPod is network pod

@@ -20,8 +20,8 @@ CODEGEN_PKG=$(go list -m -f '{{.Dir}}' k8s.io/code-generator)
 
 bash "${CODEGEN_PKG}"/generate-groups.sh \
   "client,lister,informer" \
-  github.com/TencentBlueKing/bk-log-sidecar/pkg/generated \
-  github.com/TencentBlueKing/bk-log-sidecar/api \
+  github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated \
+  github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api \
   bk.tencent.com:v1alpha1 \
   --output-base "${SCRIPT_ROOT}" \
   --go-header-file ./boilerplate.go.txt \

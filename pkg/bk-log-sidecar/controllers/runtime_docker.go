@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bk-log-sidecar/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"

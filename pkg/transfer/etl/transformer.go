@@ -316,18 +316,16 @@ func ParseDbmSlowQuery(url, content string, retry int) (*DbmResponse, error) {
 	return nil, err
 }
 
-var (
-	httpClient = &http.Client{
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout: time.Minute,
-			}).DialContext,
-			MaxIdleConns:        200,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     2 * time.Minute,
-		},
-	}
-)
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: time.Minute,
+		}).DialContext,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     2 * time.Minute,
+	},
+}
 
 func parseDbmSlowQuery(url, content string) (*DbmResponse, error) {
 	req := DbmRequest{Content: content}

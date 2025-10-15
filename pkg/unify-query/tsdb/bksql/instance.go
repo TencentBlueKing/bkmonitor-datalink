@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
@@ -91,26 +92,6 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
-func (i *Instance) checkResult(res *Result) error {
-	if !res.Result {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Code != StatusOK {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Data == nil {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-
-	return nil
-}
-
 func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
@@ -139,8 +120,16 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, sql, span)
-	if err = i.checkResult(res); err != nil {
-		return data, err
+	if res == nil {
+		return nil, nil
+	}
+
+	if !res.Result || res.Code != StatusOK || res.Data == nil {
+		return data, metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"查询异常 %s",
+			res.Message,
+		).Error(ctx, errors.New(res.Errors.Error))
 	}
 
 	span.Set("query-timeout", i.timeout.String())
@@ -465,6 +454,11 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"%s 查询失败",
+			sql,
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -480,6 +474,10 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"数据解析失败",
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 

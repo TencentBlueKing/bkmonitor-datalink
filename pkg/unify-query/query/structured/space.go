@@ -37,7 +37,7 @@ type SpaceFilter struct {
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
 func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) {
 	if opt == nil {
-		return nil, fmt.Errorf("%s", ErrMetricMissing)
+		return nil, ErrMetricMissing
 	}
 
 	router, err := influxdb.GetSpaceTsDbRouter()

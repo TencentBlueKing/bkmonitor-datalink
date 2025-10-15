@@ -471,10 +471,7 @@ func HandlerQueryTs(c *gin.Context) {
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
-		resp.failed(ctx, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询异常",
-		).Error(ctx, err))
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -556,11 +553,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
-		resp.failed(ctx, metadata.Sprintf(
-			metadata.MsgQueryPromQL,
-			"PromQL %s 查询异常",
-			queryPromQL.PromQL,
-		).Error(ctx, err))
+		resp.failed(ctx, err)
 		return
 	}
 	resp.success(ctx, res)

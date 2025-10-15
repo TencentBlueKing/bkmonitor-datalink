@@ -132,21 +132,19 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 					Kind:         spanKind,
 					Key:          key,
 				}
-
-				if fn, ok := sfn.lookupFunc(fk); ok {
-					fn(span, key)
-				}
+				sfn.lookupFunc(fk, span, key)
 			}
 		}
 	}
 }
 
-func (sfn SpanFieldNormalizer) lookupFunc(fk funcKey) (NormalizeFunc, bool) {
+func (sfn SpanFieldNormalizer) lookupFunc(fk funcKey, span ptrace.Span, key string) {
 	if fn, ok := sfn.funcs[fk]; ok {
-		return fn, true
+		fn(span, key)
 	}
 
 	fk.Kind = "" // 兜底
-	fn, ok := sfn.funcs[fk]
-	return fn, ok
+	if fn, ok := sfn.funcs[fk]; ok {
+		fn(span, key)
+	}
 }

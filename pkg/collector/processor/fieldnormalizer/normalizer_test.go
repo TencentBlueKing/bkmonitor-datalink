@@ -114,6 +114,36 @@ func TestNormalizer(t *testing.T) {
 					},
 				},
 			},
+			{
+				Fields: []FieldConfig{
+					{
+						Kind:         "",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.method",
+								Values: []string{
+									"attributes.http.request.method",
+								},
+								Op: funcOr,
+							},
+						},
+					},
+					{
+						Kind:         "SPAN_KIND_SERVER",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.status_code",
+								Values: []string{
+									"attributes.http.response.status_code",
+								},
+								Op: funcOr,
+							},
+						},
+					},
+				},
+			},
 		}
 
 		for _, conf := range confs {

@@ -854,7 +854,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 			pointsNum++
 		}
 	default:
-		err = fmt.Errorf("data type wrong: %T", v)
+		err = metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"data type wrong: %T", v,
+		).Error(ctx, nil)
 		return nil, err
 	}
 

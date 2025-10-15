@@ -199,7 +199,7 @@ func TransformInterfaceByJSONString(from string) (to interface{}, err error) {
 
 // TransformJSON : return value as json
 func TransformJSON(value interface{}) (interface{}, error) {
-	j, err := json.Marshal(value)
+	j, err := json.MarshalFast(value)
 	if err != nil {
 		return nil, err
 	}

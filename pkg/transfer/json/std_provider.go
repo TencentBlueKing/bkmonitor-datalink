@@ -45,3 +45,7 @@ func Unmarshal(data []byte, v interface{}) error {
 func NewEncoder(writer io.Writer) Encoder {
 	return json.NewEncoder(writer)
 }
+
+func MarshalFast(v interface{}) ([]byte, error) {
+	return json.Marshal(v)
+}

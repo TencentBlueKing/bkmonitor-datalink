@@ -163,7 +163,7 @@ func (p *JSONPayload) From(v interface{}) error {
 	case []byte:
 		js = value
 	default:
-		js, err = json.Marshal(v)
+		js, err = json.MarshalFast(v)
 	}
 	p.Data = js
 	return err

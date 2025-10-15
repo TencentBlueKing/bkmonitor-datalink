@@ -51,3 +51,11 @@ func Unmarshal(data []byte, v interface{}) error {
 func NewEncoder(writer io.Writer) Encoder {
 	return sonicAPI.NewEncoder(writer)
 }
+
+var sonicFastAPI = sonic.Config{
+	CompactMarshaler: true, // 兼容需求
+}.Froze()
+
+func MarshalFast(v interface{}) ([]byte, error) {
+	return sonicFastAPI.Marshal(v)
+}

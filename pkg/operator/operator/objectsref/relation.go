@@ -23,6 +23,10 @@ import (
 )
 
 const (
+	relationContainerInfoPath = "monitoring.bk.tencent.com/relation/info/container/"
+)
+
+const (
 	relationNodeSystem           = "node_with_system_relation"
 	relationNodePod              = "node_with_pod_relation"
 	relationJobPod               = "job_with_pod_relation"
@@ -40,7 +44,45 @@ const (
 	relationDataSourceWithPod         = "datasource_with_pod_relation"
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
+
+	relationContainerInfo = "container_info_relation"
 )
+
+func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
+	for _, pod := range oc.podObjs.GetAll() {
+		var customLabels []promfmt.Label
+		for k, v := range pod.Annotations {
+			if strings.HasPrefix(k, relationContainerInfoPath) {
+				name := strings.TrimPrefix(k, relationContainerInfoPath)
+				if name == "" || v == "" {
+					continue
+				}
+				customLabels = append(customLabels, promfmt.Label{
+					Name:  name,
+					Value: v,
+				})
+			}
+		}
+
+		for _, container := range pod.Containers {
+			if container.Tag == "" || container.Name == "" {
+				continue
+			}
+
+			labels := append([]promfmt.Label{
+				{Name: "pod", Value: pod.ID.Name},
+				{Name: "namespace", Value: pod.ID.Namespace},
+				{Name: "container", Value: container.Name},
+				{Name: "version", Value: container.Tag},
+			}, customLabels...)
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name:   relationContainerInfo,
+				Labels: labels,
+			})
+		}
+	}
+}
 
 func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 	for node, ip := range oc.nodeObjs.Addrs() {
@@ -253,22 +295,8 @@ type StatefulSetWorker struct {
 	Index int
 }
 
-type PodInfo struct {
-	Name      string
-	Namespace string
-	IP        string
-}
-
-func (oc *ObjectsController) AllPods() []PodInfo {
-	var pods []PodInfo
-	for _, pod := range oc.podObjs.GetAll() {
-		pods = append(pods, PodInfo{
-			Name:      pod.ID.Name,
-			Namespace: pod.ID.Namespace,
-			IP:        pod.PodIP,
-		})
-	}
-	return pods
+func (oc *ObjectsController) FetchPodEvents(rv int) ([]PodEvent, int) {
+	return oc.podObjs.FetchEvents(rv)
 }
 
 func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
@@ -280,7 +308,7 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	// bkm-statefulset-worker-0 => [0]
 	parseIndex := func(s string) int {
 		parts := strings.Split(s, "-")
-		if len(parts) <= 0 {
+		if len(parts) == 0 {
 			return 0
 		}
 		last := parts[len(parts)-1]

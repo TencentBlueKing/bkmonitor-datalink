@@ -11,23 +11,22 @@ package victoriaMetrics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -62,10 +61,13 @@ type Options struct {
 
 	InfluxCompatible bool
 	UseNativeOr      bool
+	ForceStorageName string
 }
 
 // Instance vm 查询实例
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	maxConditionNum int
@@ -78,6 +80,17 @@ type Instance struct {
 
 	timeout time.Duration
 	curl    curl.Curl
+
+	forceStorageName string
+}
+
+func (i *Instance) getVMClusterName(clusterName string) string {
+	// 如果配置了强制查询的 vm 集群，则取该集群
+	if i.forceStorageName != "" {
+		return i.forceStorageName
+	}
+
+	return clusterName
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -95,6 +108,7 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		useNativeOr:      opt.UseNativeOr,
 		timeout:          opt.Timeout,
 		curl:             opt.Curl,
+		forceStorageName: opt.ForceStorageName,
 	}
 	return instance, nil
 }
@@ -112,11 +126,6 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 
 	output.WriteString(fmt.Sprintf("vm_expand: %+v", vmExpand))
 	return output.String()
-}
-
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
-	return 0, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -144,6 +153,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
@@ -168,7 +178,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				_ = metadata.Sprintf(
+					metadata.MsgQueryVictoriaMetrics,
+					"查询异常",
+				).Error(ctx, err)
 				continue
 			}
 			point.T = nt
@@ -188,16 +201,13 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, error) {
-	if !resp.Result {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
+	if !resp.Result || resp.Code != OK {
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "vm-data"
@@ -208,11 +218,13 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
 		seriesNum := 0
 		pointNum := 0
+		isPartial := resp.Data.List[0].IsPartial
 
 		matrix := make(promql.Matrix, 0, len(data.Result))
 		for _, series := range data.Result {
@@ -230,7 +242,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryVictoriaMetrics,
+						"值格式解析异常",
+					).Error(ctx, err)
 					continue
 				}
 				points = append(points, promql.Point{
@@ -241,7 +256,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						log.Errorf(ctx, err.Error())
+						_ = metadata.Sprintf(
+							metadata.MsgQueryVictoriaMetrics,
+							"值格式解析异常",
+						).Error(ctx, err)
 						continue
 					}
 					points = append(points, promql.Point{
@@ -261,10 +279,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 
 		span.Set("resp-series-num", seriesNum)
 		span.Set("resp-point-num", pointNum)
-		return matrix, nil
+		return matrix, isPartial, nil
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {
@@ -274,10 +292,11 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		log.Errorf(ctx, resp.Errors.Error)
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s, %s, %s",
+			resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		).Error(ctx, nil)
 	}
 
 	prefix := "vm-data"
@@ -288,6 +307,7 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	lbsMap := set.New[string]()
 	for _, d := range resp.Data.List {
@@ -317,6 +337,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {
@@ -328,7 +349,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 
 // GetInstanceType 获取实例类型
 func (i *Instance) InstanceType() string {
-	return consul.VictoriaMetricsStorageType
+	return metadata.VictoriaMetricsStorageType
 }
 
 // nocache 判定
@@ -344,7 +365,7 @@ func (i *Instance) noCache(ctx context.Context, start, step int64) int {
 
 // vmQuery
 func (i *Instance) vmQuery(
-	ctx context.Context, sql string, data interface{}, span *trace.Span,
+	ctx context.Context, sql string, data any, span *trace.Span,
 ) error {
 	var (
 		cancel        context.CancelFunc
@@ -374,15 +395,12 @@ func (i *Instance) vmQuery(
 	startAnaylize = time.Now()
 
 	span.Set("query-source", user.Source)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-username", user.Name)
 
 	span.Set("query-address", i.url)
 
 	headers := metadata.Headers(ctx, i.headers)
-
-	headersString, _ := json.Marshal(headers)
-	span.Set("query-headers", headersString)
 
 	size, err := i.curl.Request(
 		ctx, curl.Post,
@@ -394,7 +412,10 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return err
+		return metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常",
+		).Error(ctx, err)
 	}
 
 	queryCost := time.Since(startAnaylize)
@@ -413,7 +434,7 @@ func (i *Instance) vmQuery(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+) (promql.Matrix, bool, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -438,11 +459,13 @@ func (i *Instance) DirectQueryRange(
 	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return promql.Matrix{}, nil
+		return promql.Matrix{}, false, nil
 	}
 
-	ves, _ := json.Marshal(vmExpand)
-	log.Infof(ctx, "vm-expand: %s", ves)
+	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
+
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
@@ -463,20 +486,19 @@ func (i *Instance) DirectQueryRange(
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+		ClusterName:           i.getVMClusterName(vmExpand.ClusterName),
 	}
 
-	if vmExpand.ClusterName != "" {
-		paramsQueryRange.ClusterName = vmExpand.ClusterName
-	}
+	span.Set("query-cluster-name", paramsQueryRange.ClusterName)
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), vmResp, span)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	return i.matrixFormat(ctx, vmResp, span)
@@ -499,15 +521,15 @@ func (i *Instance) DirectQuery(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-match", promqlStr)
 	span.Set("query-end", end)
+	span.Set("query-end-unix", end.Unix())
+	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
 	}
 
-	ves, _ := json.Marshal(vmExpand)
-	span.Set("vm-expand", string(ves))
+	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
 
 	paramsQuery := &ParamsQuery{
 		InfluxCompatible: i.influxCompatible,
@@ -524,11 +546,10 @@ func (i *Instance) DirectQuery(
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+		ClusterName:           i.getVMClusterName(vmExpand.ClusterName),
 	}
 
-	if vmExpand.ClusterName != "" {
-		paramsQuery.ClusterName = vmExpand.ClusterName
-	}
+	span.Set("query-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -544,9 +565,7 @@ func (i *Instance) DirectQuery(
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
-	var (
-		resp = &VmSeriesResponse{}
-	)
+	resp := &VmSeriesResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
@@ -555,8 +574,10 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	span.Set("query-start", start)
 	span.Set("query-end", end)
 
+	span.Set("query-storage-name", query.StorageName)
+
 	if query.VmRt == "" {
-		return
+		return series, err
 	}
 
 	paramsQuery := &ParamsSeries{
@@ -575,21 +596,23 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		},
 		UseNativeOr:     i.useNativeOr,
 		ResultTableList: []string{query.VmRt},
-		ClusterName:     query.StorageName,
+		ClusterName:     i.getVMClusterName(query.StorageName),
 	}
+
+	span.Set("params-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	series, err = i.seriesFormat(ctx, resp, span)
-	return
+	return series, err
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -604,6 +627,8 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	span.Set("query-info", query)
 	span.Set("query-start", start)
 	span.Set("query-end", end)
+
+	span.Set("query-storage-name", query.StorageName)
 
 	if query.VmRt == "" {
 		return nil, nil
@@ -624,8 +649,10 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			Limit: query.Size,
 		},
 		ResultTableList: []string{query.VmRt},
-		ClusterName:     query.StorageName,
+		ClusterName:     i.getVMClusterName(query.StorageName),
 	}
+
+	span.Set("params-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -641,9 +668,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 }
 
 func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) (res []string, err error) {
-	var (
-		resp = &VmResponse{}
-	)
+	resp := &VmResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
@@ -658,71 +683,78 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	}
 
 	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
-	step := (end.Unix() - start.Unix()) / 10
-	if step < 60 {
-		step = 60
-	}
+	left := end.Sub(start)
 
-	span.Set("query-step", step)
+	span.Set("query-left", left.String())
 
-	queryString := query.VmCondition.ToMatch()
-	queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
-	if query.Size > 0 {
-		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
-	}
-	log.Infof(ctx, "query: %s", queryString)
-	log.Infof(ctx, "start: %s", start.String())
-	log.Infof(ctx, "end: %s", end.String())
-	log.Infof(ctx, "step: %d", step)
+	if left.Hours() < 24 {
+		step := int64(left.Seconds()) / 10
+		if step < 60 {
+			step = 60
+		}
+		span.Set("query-step", step)
 
-	paramsQueryRange := &ParamsQueryRange{
-		InfluxCompatible: i.influxCompatible,
-		APIType:          APIQueryRange,
-		APIParams: struct {
-			Query   string `json:"query"`
-			Start   int64  `json:"start"`
-			End     int64  `json:"end"`
-			Step    int64  `json:"step"`
-			NoCache int    `json:"nocache"`
-		}{
-			Query: queryString,
-			Start: start.Unix(),
-			End:   end.Unix(),
-			Step:  step,
-		},
-		ResultTableList: []string{query.VmRt},
-		ClusterName:     query.StorageName,
-	}
+		queryString := query.VmCondition.ToMatch()
+		queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
+		if query.Size > 0 {
+			queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
+		}
 
-	sql, err := json.Marshal(paramsQueryRange)
-	if err != nil {
-		return nil, err
-	}
+		span.Set("query-storage-name", query.StorageName)
 
-	err = i.vmQuery(ctx, string(sql), resp, span)
-	if err != nil {
-		return nil, err
-	}
+		paramsQueryRange := &ParamsQueryRange{
+			InfluxCompatible: i.influxCompatible,
+			APIType:          APIQueryRange,
+			APIParams: struct {
+				Query   string `json:"query"`
+				Start   int64  `json:"start"`
+				End     int64  `json:"end"`
+				Step    int64  `json:"step"`
+				NoCache int    `json:"nocache"`
+			}{
+				Query: queryString,
+				Start: start.Unix(),
+				End:   end.Unix(),
+				Step:  step,
+			},
+			ResultTableList: []string{query.VmRt},
+			ClusterName:     i.getVMClusterName(query.StorageName),
+		}
 
-	series, err := i.matrixFormat(ctx, resp, span)
-	if err != nil {
-		return nil, err
-	}
+		span.Set("params-cluster-name", paramsQueryRange.ClusterName)
 
-	lbsMap := set.New[string]()
-	for _, s := range series {
-		for _, l := range s.Metric {
-			if l.Name == name {
-				lbsMap.Add(l.Value)
+		sql, err := json.Marshal(paramsQueryRange)
+		if err != nil {
+			return nil, err
+		}
+
+		err = i.vmQuery(ctx, string(sql), resp, span)
+		if err == nil {
+			series, _, err := i.matrixFormat(ctx, resp, span)
+			if err == nil {
+				lbsMap := set.New[string]()
+				for _, s := range series {
+					for _, l := range s.Metric {
+						if l.Name == name {
+							lbsMap.Add(l.Value)
+						}
+					}
+				}
+
+				return lbsMap.ToArray(), nil
 			}
 		}
 	}
 
-	return lbsMap.ToArray(), nil
+	// 如果 tag values 超过 24h 或者报错的话，则跳转到 DirectLabelValues 查询
+	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, metadata.DefaultReferenceName)
+	metadata.SetExpand(ctx, query.VMExpand())
+
+	return i.DirectLabelValues(ctx, name, start, end, query.Size, matcher)
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -737,12 +769,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {
-		return
+		return list, err
 	}
 
 	metricName := function.MatcherToMetricName(matchers...)
 	if metricName == "" {
-		return
+		return list, err
 	}
 
 	var match strings.Builder
@@ -753,7 +785,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	}
 
 	if match.Len() == 0 {
-		return
+		return list, err
 	}
 
 	paramsQuery := &ParamsLabelValues{
@@ -771,6 +803,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 			Limit: limit,
 		},
 		ResultTableList: vmExpand.ResultTableList,
+		ClusterName:     i.getVMClusterName(vmExpand.ClusterName),
 	}
 
 	span.Set("query-label", name)
@@ -779,7 +812,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	span.Set("query-rt-list", vmExpand.ResultTableList)
 	span.Set("query-start", start)
 	span.Set("query-end", end)
-	span.Set("query-cluster-name", vmExpand.ClusterName)
+	span.Set("query-cluster-name", paramsQuery.ClusterName)
 
 	if start.Unix() > 0 {
 		paramsQuery.APIParams.Start = start.Unix()
@@ -788,18 +821,14 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		paramsQuery.APIParams.End = end.Unix()
 	}
 
-	if vmExpand.ClusterName != "" {
-		paramsQuery.ClusterName = vmExpand.ClusterName
-	}
-
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	return i.labelFormat(ctx, resp, span)

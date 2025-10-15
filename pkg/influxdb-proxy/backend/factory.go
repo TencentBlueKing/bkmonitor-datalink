@@ -24,8 +24,8 @@ func init() {
 }
 
 // RegisterBackend 注册指定类型的backend
-func RegisterBackend(name string, BackendFunc NewBackendFunc) {
-	backendFactory[name] = BackendFunc
+func RegisterBackend(name string, backendFunc NewBackendFunc) {
+	backendFactory[name] = backendFunc
 }
 
 // GetBackendFunc 获取指定类型的backend

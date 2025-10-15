@@ -20,7 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type pushGatewayEvent struct {
@@ -31,9 +30,9 @@ func (e pushGatewayEvent) RecordType() define.RecordType {
 	return define.RecordPushGateway
 }
 
-var PushGatewayConverter EventConverter = pushGatewayConverter{}
-
 type pushGatewayConverter struct{}
+
+func (c pushGatewayConverter) Clean() {}
 
 func (c pushGatewayConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return pushGatewayEvent{define.NewCommonEvent(token, dataId, data)}
@@ -81,7 +80,6 @@ func (p promMapper) wrapExemplar() common.MapStr {
 		return nil
 	}
 
-	logger.Debugf("metrics [%+v] with exemplar %+v", p.Metrics, p.Exemplar)
 	if p.Exemplar != nil && p.Exemplar.Timestamp != nil && p.Exemplar.Value != nil {
 		exemplarLbs := make(map[string]string)
 		for _, pair := range p.Exemplar.Label {
@@ -130,167 +128,138 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 	metrics := pd.MetricFamilies.Metric
 	pms := make([]*promMapper, 0)
 	for _, metric := range metrics {
-		lbs := map[string]string{}
-		if len(metric.Label) != 0 {
-			for _, label := range metric.Label {
-				if label.GetName() != "" && label.GetValue() != "" {
-					lbs[label.GetName()] = label.GetValue()
-				}
+		ts := getTimestamp(now, metric.TimestampMs)
+		lbs := make(map[string]string)
+		for k, v := range pd.Labels {
+			lbs[k] = v
+		}
+		for _, label := range metric.Label {
+			if label.GetName() != "" && label.GetValue() != "" {
+				lbs[label.GetName()] = label.GetValue()
 			}
+		}
+
+		// 处理未知类型数据
+		untyped := metric.GetUntyped()
+		if untyped != nil && utils.IsValidFloat64(untyped.GetValue()) {
+			pms = append(pms, &promMapper{
+				Metrics: common.MapStr{
+					name: untyped.GetValue(),
+				},
+				Target:     target,
+				Timestamp:  ts,
+				Dimensions: lbs,
+			})
 		}
 
 		// 处理 Counter 类型数据
 		counter := metric.GetCounter()
-		if counter != nil {
-			if !utils.IsValidFloat64(counter.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
+		if counter != nil && utils.IsValidFloat64(counter.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: counter.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 				Exemplar:   counter.Exemplar,
 			})
 		}
 
 		// 处理 Gauge 类型数据
 		gauge := metric.GetGauge()
-		if gauge != nil {
-			if !utils.IsValidFloat64(gauge.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if gauge != nil && utils.IsValidFloat64(gauge.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: gauge.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 		}
 
 		// 处理 Summary 类型数据
 		summary := metric.GetSummary()
-		if summary != nil {
-			if !utils.IsValidFloat64(summary.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if summary != nil && utils.IsValidFloat64(summary.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   summary.GetSampleSum(),
 					name + "_count": summary.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 
-				quantileLabels := utils.CloneMap(lbs)
-				quantileLabels["quantile"] = strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name: quantile.GetValue(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "quantile", fv),
 				})
 			}
 		}
 
 		// 处理 Histogram 类型数据
 		histogram := metric.GetHistogram()
-		if histogram != nil {
-			if !utils.IsValidFloat64(histogram.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if histogram != nil && utils.IsValidFloat64(histogram.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   histogram.GetSampleSum(),
 					name + "_count": histogram.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Timestamp:  ts,
+				Dimensions: lbs,
 			})
 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
 				if !utils.IsValidUint64(bucket.GetCumulativeCount()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 				if math.IsInf(bucket.GetUpperBound(), +1) {
 					infSeen = true
 				}
 
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": bucket.GetCumulativeCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 					Exemplar:   bucket.Exemplar,
 				})
 			}
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
 			if !infSeen {
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
+				fv := strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": histogram.GetSampleCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Timestamp:  ts,
+					Dimensions: utils.MergeMapWith(lbs, "le", fv),
 				})
 			}
-		}
-
-		// 处理未知类型数据
-		untyped := metric.GetUntyped()
-		if untyped != nil {
-			if !utils.IsValidFloat64(untyped.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
-			pms = append(pms, &promMapper{
-				Metrics: common.MapStr{
-					name: untyped.GetValue(),
-				},
-				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
-			})
 		}
 	}
 
 	pms = c.compactTrpcOTFilter(pms)
-	if len(pms) <= 0 {
+	if len(pms) == 0 {
 		return
 	}
 

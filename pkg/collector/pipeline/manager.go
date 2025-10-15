@@ -152,11 +152,6 @@ func parseReportV2Configs(configs []*confengine.Config) map[string][]processor.S
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("report_v2 processor: %+v", item)
-		}
-	}
 	return ps
 }
 
@@ -231,11 +226,6 @@ func parseProcessorSubConfigs(configs []*confengine.Config) map[string][]process
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("subconfig processor: %+v", item)
-		}
-	}
 	return ps
 }
 
@@ -331,8 +321,8 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 		return nil, err
 	}
 
-	// 解析合并：配置 = 主配置+子配置+平台配置（如果有的话）
-	platformConfig := confengine.LoadConfigFromType(apmConf.Patterns, define.ConfigTypePlatform)
+	// 解析合并配置 = 主配置+子配置+平台配置（如果有的话）
+	platformConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 	if platformConfig != nil {
 		if platformConfig.Has(define.ConfigFieldProcessor) {
 			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs)
@@ -350,8 +340,9 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 			finalPipelines = mergePipelines(finalPipelines, platformPipelines)
 		}
 	}
-	// 解析合并：配置 = 主配置+子配置+平台配置+高优配置（如果有的话）
-	privilegedConfig := confengine.LoadConfigFromType(apmConf.Patterns, define.ConfigTypePrivileged)
+
+	// 解析合并配置 = 主配置+子配置+平台配置+高优配置（如果有的话）
+	privilegedConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePrivileged)
 	if privilegedConfig != nil {
 		if privilegedConfig.Has(define.ConfigFieldProcessor) {
 			privilegedProcessors, err := parseProcessors(PrivilegedType, privilegedConfig, processorSubConfigs)
@@ -385,8 +376,7 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 	}
 
 	// 清理 Processor
-	for name, p := range newManager.processors {
-		logger.Infof("manager clean %s processor", name)
+	for _, p := range newManager.processors {
 		p.Clean()
 	}
 

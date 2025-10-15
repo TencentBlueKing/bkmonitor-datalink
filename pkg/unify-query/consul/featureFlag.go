@@ -19,7 +19,7 @@ const (
 )
 
 // WatchFeatureFlags : 监听特性开关变更
-func WatchFeatureFlags(ctx context.Context) (<-chan interface{}, error) {
+func WatchFeatureFlags(ctx context.Context) (<-chan any, error) {
 	return WatchChange(ctx, GetFeatureFlagsPath())
 }
 

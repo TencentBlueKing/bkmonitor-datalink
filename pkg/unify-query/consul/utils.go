@@ -17,7 +17,7 @@ import (
 )
 
 // HashIt : hash an object
-func HashIt(object interface{}) string {
+func HashIt(object any) string {
 	var (
 		buf     bytes.Buffer
 		encoder = gob.NewEncoder(&buf)
@@ -33,6 +33,6 @@ func HashIt(object interface{}) string {
 // init
 func init() {
 	// 类型在gob中未注册，显示注册
-	gob.Register([]interface{}{})
-	gob.Register(map[string]interface{}{})
+	gob.Register([]any{})
+	gob.Register(map[string]any{})
 }

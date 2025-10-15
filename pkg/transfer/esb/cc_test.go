@@ -40,6 +40,18 @@ func (s *CCApiClientSuite) TestAgent() {
 
 	s.NoError(err)
 	s.Equal("http://paas.service.consul/api/c/compapi/v2/cc/", req.URL.String())
+
+	// test apigw
+	s.conf.Set(esb.ConfESBUseAPIGateway, true)
+
+	req, err = s.apiClient.Agent().Request()
+	s.NoError(err)
+	s.Equal("http://paas.service.consul/api/bk-cmdb/prod/", req.URL.String())
+
+	s.conf.Set(esb.ConfESBCmdbApiAddress, "http://bk-cmdb.api.com/")
+	req, err = s.apiClient.Agent().Request()
+	s.NoError(err)
+	s.Equal("http://bk-cmdb.api.com/", req.URL.String())
 }
 
 // TestGetHostsByRange :
@@ -154,38 +166,6 @@ func (s *CCApiClientSuite) TestMergeTopoHost() {
 	esb.MergeTopoHost(res, cases)
 	s.Equal(res.Info[0].Topo[0]["test"], "1")
 	s.Equal(res.Info[0].Topo[0]["test2"], "2")
-}
-
-// TestGetBizLocation
-func (s *CCApiClientSuite) TestGetBizLocation() {
-	s.doer.EXPECT().Do(gomock.Any()).Return(
-		newJSONResponse(200, `{"code": 0, "permission": null, "result": true, "request_id": "aacbf2ee90244259a8aa7af19b99df53", "message": "success", "data": [{"bk_biz_id": 123, "bk_location": "v1.0"}, {"bk_biz_id": 120, "bk_location": "v1.0"}, {"bk_biz_id": 100605, "bk_location": "v3.0"}, {"bk_biz_id": 100606, "bk_location": "v3.0"}]}`),
-		nil,
-	).AnyTimes()
-
-	testResponse := []esb.CCSearchBusinessResponseInfo{
-		{
-			BKBizID:   120,
-			BKBizName: "穿越火线",
-		},
-		{
-			BKBizID:   132,
-			BKBizName: "英雄联盟",
-		},
-		{
-			BKBizID:   100605,
-			BKBizName: "牛逼业务",
-		},
-		{
-			BKBizID:   100606,
-			BKBizName: "更牛逼业务",
-		},
-	}
-	filterResult, err := s.apiClient.FilterCMDBV3Biz(testResponse)
-	s.NoError(err)
-
-	s.Equal(2, len(filterResult))
-	s.Equal(100605, filterResult[0].BKBizID)
 }
 
 // TestCCApiClientSuite :

@@ -1162,6 +1162,7 @@ func (f SpaceDBSchemaField) String() string {
 
 // SpaceDBSchema stores db field names of Space
 var SpaceDBSchema = struct {
+	BkTenantId  SpaceDBSchemaField
 	Id          SpaceDBSchemaField
 	SpaceTypeId SpaceDBSchemaField
 	SpaceId     SpaceDBSchemaField
@@ -1176,7 +1177,7 @@ var SpaceDBSchema = struct {
 	Updater     SpaceDBSchemaField
 	UpdateTime  SpaceDBSchemaField
 }{
-
+	BkTenantId:  SpaceDBSchemaField("bk_tenant_id"),
 	Id:          SpaceDBSchemaField("id"),
 	SpaceTypeId: SpaceDBSchemaField("space_type_id"),
 	SpaceId:     SpaceDBSchemaField("space_id"),
@@ -1195,7 +1196,8 @@ var SpaceDBSchema = struct {
 // Update updates Space fields by primary key
 // nolint: dupl
 func (o *Space) Update(db *gorm.DB, fields ...SpaceDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
+		"bk_tenant_id":  o.BkTenantId,
 		"id":            o.Id,
 		"space_type_id": o.SpaceTypeId,
 		"space_id":      o.SpaceId,
@@ -1210,7 +1212,7 @@ func (o *Space) Update(db *gorm.DB, fields ...SpaceDBSchemaField) error {
 		"updater":       o.Updater,
 		"update_time":   o.UpdateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1229,7 +1231,7 @@ func (o *Space) Update(db *gorm.DB, fields ...SpaceDBSchemaField) error {
 
 // SpaceUpdater is an Space updates manager
 type SpaceUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1237,7 +1239,7 @@ type SpaceUpdater struct {
 // nolint: dupl
 func NewSpaceUpdater(db *gorm.DB) SpaceUpdater {
 	return SpaceUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&Space{}),
 	}
 }

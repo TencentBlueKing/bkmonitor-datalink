@@ -41,59 +41,73 @@ type Paths []Path
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
 	QueryList []struct {
-		Timestamp     int64      `json:"timestamp"`
-		SourceType    Resource   `json:"source_type"`
-		TargetType    Resource   `json:"target_type"`
-		SourceInfo    Matcher    `json:"source_info"`
-		PathResource  []Resource `json:"path_resource"`
-		LookBackDelta string     `json:"look_back_delta"`
+		Timestamp int64 `json:"timestamp"`
+
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+
+		TargetType     Resource `json:"target_type,omitempty"`
+		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
-	Code       int      `json:"code"`
-	SourceType Resource `json:"source_type,omitempty"`
-	SourceInfo Matcher  `json:"source_info,omitempty"`
-	TargetType Resource `json:"target_type,omitempty"`
-	TargetList Matchers `json:"target_list,omitempty"`
-	Path       []string `json:"path,omitempty"`
-	Message    string   `json:"message,omitempty"`
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList Matchers `json:"target_list"`
+	Path       []string `json:"path"`
+	Message    string   `json:"message"`
 }
 
 // RelationMultiResourceResponse 请求返回
 type RelationMultiResourceResponse struct {
-	TraceID string                              `json:"trace_id,omitempty"`
+	TraceID string                              `json:"trace_id"`
 	Data    []RelationMultiResourceResponseData `json:"data"`
 }
 
 // RelationMultiResourceRangeRequest 请求参数
 type RelationMultiResourceRangeRequest struct {
 	QueryList []struct {
-		StartTs       int64      `json:"start_time"`
-		EndTs         int64      `json:"end_time"`
-		Step          string     `json:"step"`
-		SourceType    Resource   `json:"source_type"`
-		TargetType    Resource   `json:"target_type"`
-		SourceInfo    Matcher    `json:"source_info"`
-		PathResource  []Resource `json:"path_resource"`
-		LookBackDelta string     `json:"look_back_delta"`
+		StartTs int64  `json:"start_time"`
+		EndTs   int64  `json:"end_time"`
+		Step    string `json:"step"`
+
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+
+		TargetType     Resource `json:"target_type,omitempty"`
+		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
-	Code       int                     `json:"code"`
-	SourceType Resource                `json:"source_type,omitempty"`
-	SourceInfo Matcher                 `json:"source_info,omitempty"`
-	TargetType Resource                `json:"target_type,omitempty"`
-	TargetList []MatchersWithTimestamp `json:"target_list,omitempty"`
-	Path       []string                `json:"path,omitempty"`
-	Message    string                  `json:"message,omitempty"`
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+	Path       []string                `json:"path"`
+	Message    string                  `json:"message"`
 }
 
 // RelationMultiResourceRangeResponse 请求返回
 type RelationMultiResourceRangeResponse struct {
-	TraceID string                                   `json:"trace_id,omitempty"`
+	TraceID string                                   `json:"trace_id"`
 	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }

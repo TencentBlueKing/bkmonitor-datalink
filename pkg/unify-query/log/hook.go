@@ -21,9 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 )
 
-var (
-	once sync.Once
-)
+var once sync.Once
 
 // setDefaultConfig
 func setDefaultConfig() {
@@ -88,7 +86,7 @@ func initLogConfig() {
 	DefaultLogger = &Logger{
 		logger: zap.New(
 			zapcore.NewCore(encoder, writeSyncer, loggerLevel),
-			zap.AddCaller(), zap.AddCallerSkip(2),
+			zap.AddCaller(), zap.AddCallerSkip(3),
 		),
 	}
 }
@@ -113,6 +111,6 @@ func init() {
 // InitTestLogger 加载单元测试日志配置
 func InitTestLogger() {
 	// 加载配置
-	viper.Set(LevelConfigPath, "warn")
+	viper.Set(LevelConfigPath, "debug")
 	initLogConfig()
 }

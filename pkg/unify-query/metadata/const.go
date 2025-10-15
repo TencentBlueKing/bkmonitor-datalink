@@ -13,6 +13,7 @@ const (
 	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
+	TenantIDHeader      = "X-Bk-Tenant-Id"
 
 	UserKey               = "user"
 	StatusKey             = "message"
@@ -23,7 +24,7 @@ const (
 	QueryClusterMetricKey = "query_cluster_metric"
 	JwtPayLoadKey         = "jwt_payload"
 
-	PromDataFormatKey = "prom_data_format"
+	FieldFormatKey = "field_format"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
@@ -33,4 +34,15 @@ const (
 	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
 
 	QueryRawError = "QUERY_RAW_ERROR"
+
+	StorageTimeout = "STORAGE_TIMEOUT"
+	StorageError   = "STORAGE_ERROR"
+
+	KeyDocID     = "__doc_id"
+	KeyTableUUID = "__table_uuid"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+	KeyIndex     = "__index"
+
+	HandlerMapKey = "handler_map_key"
 )

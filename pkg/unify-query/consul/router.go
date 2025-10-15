@@ -11,7 +11,6 @@ package consul
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,7 +18,9 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // MetaFieldType :
@@ -80,7 +81,7 @@ const (
 
 // PipelineConfig
 type PipelineConfig struct {
-	Option          map[string]interface{}   `mapstructure:"option" json:"option"`
+	Option          map[string]any           `mapstructure:"option" json:"option"`
 	ETLConfig       string                   `mapstructure:"etl_config" json:"etl_config"`
 	ResultTableList []*MetaResultTableConfig `mapstructure:"result_table_list" json:"result_table_list"`
 	MQConfig        *MetaClusterInfo         `mapstructure:"mq_config" json:"mq_config"`
@@ -99,7 +100,7 @@ type MetaResultTableConfig struct {
 	SchemaType  ResultTableSchemaType       `mapstructure:"schema_type" json:"schema_type"`
 	ShipperList []*MetaClusterInfo          `mapstructure:"shipper_list" json:"shipper_list"`
 	ResultTable string                      `mapstructure:"result_table" json:"result_table"`
-	FieldList   interface{}                 `mapstructure:"field_list" json:"field_list"`
+	FieldList   any                         `mapstructure:"field_list" json:"field_list"`
 }
 
 // ResultTableSchemaType :
@@ -107,21 +108,21 @@ type ResultTableSchemaType string
 
 // MetaClusterInfo :
 type MetaClusterInfo struct {
-	ClusterConfig *ClusterConfig         `mapstructure:"cluster_config" json:"cluster_config"`
-	StorageConfig map[string]interface{} `mapstructure:"storage_config" json:"storage_config"`
-	AuthInfo      *Auth                  `mapstructure:"auth_info" json:"auth_info"`
-	ClusterType   string                 `mapstructure:"cluster_type" json:"cluster_type"`
+	ClusterConfig *ClusterConfig `mapstructure:"cluster_config" json:"cluster_config"`
+	StorageConfig map[string]any `mapstructure:"storage_config" json:"storage_config"`
+	AuthInfo      *Auth          `mapstructure:"auth_info" json:"auth_info"`
+	ClusterType   string         `mapstructure:"cluster_type" json:"cluster_type"`
 }
 
 // MetaFieldConfig :
 type MetaFieldConfig struct {
-	Option         map[string]interface{} `mapstructure:"option" json:"option"`
-	Type           MetaFieldType          `mapstructure:"type" json:"type"`
-	IsConfigByUser bool                   `mapstructure:"is_config_by_user" json:"is_config_by_user"`
-	Tag            MetaFieldTagType       `mapstructure:"tag" json:"tag"`
-	FieldName      string                 `mapstructure:"field_name" json:"field_name"`
-	AliasName      string                 `mapstructure:"alias_name" json:"alias_name"`
-	DefaultValue   interface{}            `mapstructure:"default_value" json:"default_value"`
+	Option         map[string]any   `mapstructure:"option" json:"option"`
+	Type           MetaFieldType    `mapstructure:"type" json:"type"`
+	IsConfigByUser bool             `mapstructure:"is_config_by_user" json:"is_config_by_user"`
+	Tag            MetaFieldTagType `mapstructure:"tag" json:"tag"`
+	FieldName      string           `mapstructure:"field_name" json:"field_name"`
+	AliasName      string           `mapstructure:"alias_name" json:"alias_name"`
+	DefaultValue   any              `mapstructure:"default_value" json:"default_value"`
 }
 
 // ClusterConfig :
@@ -157,7 +158,6 @@ const (
 // GetTSInfo: 从配置中获取influxdb所需要的db，measurement等信息
 // db必定不为空，如果为空，则最好忽略此TableID
 func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error {
-
 	// 有值代表为分表
 
 	for _, shipper := range m.ShipperList {
@@ -167,7 +167,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 		db, has := shipper.StorageConfig[MetadataStorageDataBaseKey]
 		dbStr, ok := db.(string)
 		if !has || !ok {
-			log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], database:[%v]", dataID, db)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"获取数据库, id %v 数据库 %s",
+				dataID, db,
+			).Error(context.TODO(), fmt.Errorf("数据库不存在"))
 			continue
 		}
 		tableID.ClusterID = fmt.Sprintf("%d", shipper.ClusterConfig.ClusterID)
@@ -181,7 +184,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 			measurement, has := shipper.StorageConfig[MetadataStorageTableKey]
 			measurementStr, ok := measurement.(string)
 			if !has || !ok {
-				log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], measurement:[%v]", dataID, measurement)
+				_ = metadata.Sprintf(metadata.MsgQueryRouter,
+					"获取数据库, id %v 数据库 %s",
+					dataID, db,
+				).Error(context.TODO(), fmt.Errorf("表名不存在"))
 				continue
 			}
 			tableID.Measurement = measurementStr
@@ -224,7 +230,6 @@ const (
 // ReloadRouterInfo: 从consul获取router信息
 // 这里的path和transfer watch的路径一致
 func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
-
 	// 获取metadata路径下的transfer全部实例，并遍历获取所有path路径下的dataID
 	// 根据consul路径版本获取到所有transfer集群的data_id的路径
 	paths, err := GetPathDataIDPath(MetadataPath, MetadataPathVersion)
@@ -255,7 +260,6 @@ func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
 
 // FormatQueryRouter : 对pipelineConf序列化
 func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
-
 	var (
 		PipelineConfList []*PipelineConfig
 		err              error
@@ -265,7 +269,10 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 		var pipeConf *PipelineConfig
 		err = json.Unmarshal(kvPair.Value, &pipeConf)
 		if err != nil {
-			log.Errorf(context.TODO(), "marshal pipelineConfig error: %s", err)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kvPair.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		PipelineConfList = append(PipelineConfList, pipeConf)
@@ -281,7 +288,6 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 // GetPathDataIDPath: 根据version信息，获取不同的metadata元数据信息
 // 这里路径版本与transfer对齐
 var GetPathDataIDPath = func(metadataPath, version string) ([]string, error) {
-
 	switch version {
 	case "":
 		return []string{metadataPath}, nil
@@ -306,7 +312,7 @@ var GetPathDataIDPath = func(metadataPath, version string) ([]string, error) {
 
 // WatchQueryRouter: 监听consul路径，拿到es和influxdb等对应的查询信息
 // 由于metadata的data_id元信息数据量比较大，采用延迟更新
-var WatchQueryRouter = func(ctx context.Context) (<-chan interface{}, error) {
+var WatchQueryRouter = func(ctx context.Context) (<-chan any, error) {
 	// 多个查询服务都需要此监听开启，但只运行一次就可以
 	// 延迟更新consul，启动一个循环，周期性的查看当前事件是否触发了要更新，以及是否有更新内容
 	path := fmt.Sprintf("%s/%s/", MetadataPath, MetadataPathVersion)
@@ -316,15 +322,16 @@ var WatchQueryRouter = func(ctx context.Context) (<-chan interface{}, error) {
 // DelayWatchPath
 func DelayWatchPath(
 	ctx context.Context, path, separator string, fn func(ctx context.Context, path, separator string,
-	) (<-chan interface{}, error)) (<-chan interface{}, error) {
+	) (<-chan any, error),
+) (<-chan any, error) {
 	var (
 		ticker     = time.NewTicker(checkUpdatePeriod)
 		delayT     = delayUpdateTime
 		ch, err    = fn(ctx, path, separator)
 		needUpdate bool
 		updateAt   = time.Now()
-		wrapCh     = make(chan interface{})
-		cache      = make([]interface{}, 0)
+		wrapCh     = make(chan any)
+		cache      = make([]any, 0)
 	)
 	if err != nil {
 		return nil, err
@@ -364,7 +371,7 @@ func DelayWatchPath(
 // === metric router ===
 
 // WatchMetricRouter: 监听 influxdb_metrics 路径
-var WatchMetricRouter = func(ctx context.Context) (<-chan interface{}, error) {
+var WatchMetricRouter = func(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/", MetricRouterPath)
 	return DelayWatchPath(ctx, path, "/", WatchChangeOnce)
 }
@@ -393,12 +400,18 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		}
 		dataid, err := strconv.Atoi(items[0])
 		if err != nil {
-			log.Errorf(context.TODO(), "get dataid metrics, Atoi err: %v, dataid: %s", err, items[0])
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"格式解析异常 %v",
+				items[0],
+			).Error(context.TODO(), err)
 			continue
 		}
 		metrics := make([]string, 0)
 		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
-			log.Warnf(context.TODO(), "get dataid metrics, Unmarshar err: %v, metrics: %s", err, kv.Value)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kv.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		result[dataid] = metrics

@@ -20,6 +20,7 @@ import (
 // DataSourceResultTable data source result table model
 // gen:qs
 type DataSourceResultTable struct {
+	BkTenantId string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	BkDataId   uint      `gorm:"column:bk_data_id;" json:"bk_data_id"`
 	TableId    string    `gorm:"size:128" json:"table_id"`
 	Creator    string    `gorm:"size:32" json:"creator"`

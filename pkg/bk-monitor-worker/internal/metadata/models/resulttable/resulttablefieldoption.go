@@ -24,9 +24,10 @@ import (
 // gen:qs
 type ResultTableFieldOption struct {
 	models.OptionBase
-	TableID   string `json:"table_id" gorm:"size:128;unique"`
-	FieldName string `json:"field_name" gorm:"size:255"`
-	Name      string `json:"name" gorm:"size:128"`
+	BkTenantId string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
+	TableID    string `json:"table_id" gorm:"size:128;unique"`
+	FieldName  string `json:"field_name" gorm:"size:255"`
+	Name       string `json:"name" gorm:"size:128"`
 }
 
 // TableName table alias name
@@ -39,8 +40,8 @@ func (r *ResultTableFieldOption) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-func (r *ResultTableFieldOption) InterfaceValue() (interface{}, error) {
-	var value interface{}
+func (r *ResultTableFieldOption) InterfaceValue() (any, error) {
+	var value any
 	switch r.ValueType {
 	case "string":
 		value = r.Value
@@ -55,5 +56,4 @@ func (r *ResultTableFieldOption) InterfaceValue() (interface{}, error) {
 		}
 		return value, nil
 	}
-
 }

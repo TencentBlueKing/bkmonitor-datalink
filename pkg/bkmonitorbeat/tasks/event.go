@@ -341,12 +341,11 @@ func (e *CustomMetricEvent) AsMapStr() common.MapStr {
 				dimension[key] = value.(string)
 			}
 			for key, value := range labelGroup {
-				newKey := "exported_" + key
-
 				// 1）采集到 prometheus 数据中已经包含了 key
 				// 2) 采集到的 prometheus 数据中不包含 newKey
 				// 3) 配置中额外追加的 labels 中没有这个 newKey
 				if mapStrKeyExists(dimensions, key) {
+					newKey := "exported_" + key
 					if !mapStrKeyExists(dimensions, newKey) && !mapKeyExists(labelGroup, newKey) {
 						dimension[newKey] = value
 					}

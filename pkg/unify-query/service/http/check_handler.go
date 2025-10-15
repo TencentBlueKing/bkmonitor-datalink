@@ -11,14 +11,15 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -45,7 +46,7 @@ type CheckResponse struct {
 	List []*CheckItem `json:"list"`
 }
 
-func (c *CheckResponse) Step(name string, data interface{}) {
+func (c *CheckResponse) Step(name string, data any) {
 	var jsonData string
 	s, err := json.Marshal(data)
 	if err != nil {
@@ -157,14 +158,20 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	}
 	r.Step("query-reference", qr)
 
-	start, end, _, _, err := structured.ToTime(q.Start, q.End, q.Step, q.Timezone)
+	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
-		r.Error("structured.ToTime", err)
+		r.Error("function.QueryTimestamp", err)
+		return
+	}
+
+	start, end, _, _, err := structured.AlignTime(startTime, endTime, q.Step, q.Timezone)
+	if err != nil {
+		r.Error("structured.AlignTime", err)
 		return
 	}
 
 	// 写入查询缓存
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	promQL, err := q.ToPromQL(ctx)
 	if err != nil {
@@ -176,24 +183,22 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	// vm query
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否查询 vm
-		vmExpand := qr.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, qr)
 
-		r.Step("query instance", consul.VictoriaMetricsStorageType)
+		r.Step("query instance", metadata.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {
-		for _, qm := range qr {
-			for _, qry := range qm.QueryList {
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
-					continue
-				}
-
-				r.Step("instance id", qry.StorageID)
-				r.Step("instance type", instance.InstanceType())
-				r.Step("query struct", qry)
+		qr.Range("", func(qry *metadata.Query) {
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
+				return
 			}
-		}
+
+			r.Step("instance id", qry.StorageID)
+			r.Step("instance type", instance.InstanceType())
+			r.Step("query struct", qry)
+		})
 	}
 
 	status := metadata.GetStatus(ctx)

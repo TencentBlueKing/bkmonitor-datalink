@@ -43,7 +43,7 @@ type Options struct {
 type Client interface {
 	Request(ctx context.Context, method string, opt Options) (*http.Response, error)
 	Get(ctx context.Context, baseUrl string, params url.Values, baseOpt Options) (*http.Response, error)
-	Post(ctx context.Context, baseUrl string, body []byte, contentType string, BaseOpt Options) (*http.Response, error)
+	Post(ctx context.Context, baseUrl string, body []byte, contentType string, baseOpt Options) (*http.Response, error)
 }
 
 func NewClient() Client {

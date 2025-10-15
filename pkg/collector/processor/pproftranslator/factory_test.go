@@ -90,12 +90,10 @@ processor:
 			Data:          "invalid data",
 			Token:         define.Token{Original: "token"},
 		}
-		copyRecord := *record
 
 		r, err := factory.Process(record)
 		assert.Nil(t, r)
 		assert.Error(t, err)
-		assert.Equal(t, *record, copyRecord)
 	})
 
 	t.Run("invalid profile data", func(t *testing.T) {
@@ -106,12 +104,10 @@ processor:
 			Data:          define.ProfilesRawData{Data: "any"},
 			Token:         define.Token{Original: "token"},
 		}
-		copyRecord := *record
 
 		r, err := factory.Process(record)
 		assert.Nil(t, r)
 		assert.Error(t, err)
-		assert.Equal(t, *record, copyRecord)
 	})
 
 	t.Run("valid data", func(t *testing.T) {
@@ -143,11 +139,9 @@ processor:
 			},
 			Token: define.Token{Original: "token"},
 		}
-		copyRecord := *record
-		r, err := factory.Process(record)
 
+		r, err := factory.Process(record)
 		assert.Nil(t, r)
 		assert.NoError(t, err)
-		assert.NotEqual(t, *record, copyRecord)
 	})
 }

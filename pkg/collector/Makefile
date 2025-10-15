@@ -21,7 +21,8 @@ help:
 	@echo " install: Install dev tools"
 
 .PHONY: lint
-lint: mod
+lint:
+	gofmt -r 'interface{} -> any' -w .
 	diff -u <(echo -n) <(gofumpt -w .)
 	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
 
@@ -61,6 +62,6 @@ dev:
 
 .PHONY: install
 install:
-	$(GO) install mvdan.cc/gofumpt@latest
+	$(GO) install mvdan.cc/gofumpt@v0.5.0
 	$(GO) install github.com/incu6us/goimports-reviser/v3@v3.1.1
 	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1

@@ -78,8 +78,8 @@ func (h *CCHostInfo) GetStoreKey() string {
 }
 
 // 格式化key
-func SetHostKey(IP string, CloudID int) string {
-	return fmt.Sprintf("%s-%d-%s", HostInfoStorePrefix, CloudID, IP)
+func SetHostKey(ip string, cloudID int) string {
+	return fmt.Sprintf("%s-%d-%s", HostInfoStorePrefix, cloudID, ip)
 }
 
 func (h *CCHostInfo) LoadByBytes(data []byte) error {

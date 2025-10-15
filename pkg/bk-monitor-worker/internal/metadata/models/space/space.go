@@ -22,6 +22,7 @@ import (
 // Space space model
 // gen:qs
 type Space struct {
+	BkTenantId  string `gorm:"size:256" json:"bk_tenant_id"`
 	Id          int    `gorm:"primary_key" json:"id"`
 	SpaceTypeId string `gorm:"size:64" json:"spaceTypeId"`
 	SpaceId     string `gorm:"size:128" json:"space_id"`

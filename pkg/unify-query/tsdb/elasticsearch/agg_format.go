@@ -11,13 +11,14 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	elastic "github.com/olivere/elastic/v7"
 	"golang.org/x/exp/slices"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 var itemsPool = sync.Pool{
@@ -126,6 +127,12 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 							return err
 						}
 					}
+				}
+			}
+		case ReverNested:
+			if singleBucket, ok := data.ReverseNested(info.Name); ok {
+				if err := a.ts(idx, singleBucket.Aggregations); err != nil {
+					return err
 				}
 			}
 		case NestedAgg:

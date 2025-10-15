@@ -9,4 +9,33 @@
 
 package structured
 
+import (
+	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+)
+
 type OrderBy []string
+
+// OrderBy 转换为 metadata orders 格式
+func (ob OrderBy) Orders() metadata.Orders {
+	orders := make(metadata.Orders, 0, len(ob))
+	for _, o := range ob {
+		if len(o) == 0 {
+			continue
+		}
+
+		asc := true
+		name := o
+
+		if strings.HasPrefix(o, "-") {
+			asc = false
+			name = name[1:]
+		}
+		orders = append(orders, metadata.Order{
+			Name: name,
+			Ast:  asc,
+		})
+	}
+	return orders
+}

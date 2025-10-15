@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -42,34 +43,38 @@ type Args map[string]string
 // 聚合方法列表
 type AggregateMethodList []AggregateMethod
 
-func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
+func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error) {
 	aggs := make(metadata.Aggregates, 0, len(a))
 	for _, aggr := range a {
 		agg := metadata.Aggregate{
 			Name:       aggr.Method,
-			Dimensions: aggr.Dimensions,
+			Dimensions: append([]string{}, aggr.Dimensions...),
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
-			TimeZone:   timezone,
 		}
 
 		if aggr.Window != "" {
-			window, err := time.ParseDuration(string(aggr.Window))
-			if err == nil {
-				agg.Window = window
+			window, err := model.ParseDuration(string(aggr.Window))
+			if err != nil {
+				return nil, err
 			}
+
+			agg.Window = time.Duration(window)
+			agg.TimeZone = timezone
 		}
 		aggs = append(aggs, agg)
 	}
-	return aggs
+	return aggs, nil
 }
 
 // 聚合方法
 type AggregateMethod struct {
 	// Method 聚合方法
 	Method string `json:"method,omitempty" example:"mean"`
+	// Field 聚合字段，默认为指标字段，指定则会进行覆盖
+	Field string `json:"field,omitempty" example:"field"`
 	// Without
-	Without bool `json:"without" example:false`
+	Without bool `json:"without,omitempty"`
 	// Dimensions 聚合维度
 	Dimensions Dimensions `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到
@@ -77,7 +82,7 @@ type AggregateMethod struct {
 	// ArgsList 弃用参数
 	ArgsList Args `json:"args_list,omitempty" swaggerignore:"true"`
 	// VArgsList 函数参数，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
-	VArgsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
+	VArgsList []any `json:"vargs_list,omitempty" swaggerignore:"true"`
 
 	// Window 聚合周期
 	Window Window `json:"window,omitempty" example:"60s"`
@@ -105,7 +110,7 @@ func (m *AggregateMethod) ToProm(expr parser.Expr) (parser.Expr, error) {
 	// 参数在聚合集合里，就用聚合方法
 	if method, ok := AggregateMap[strings.ToLower(m.Method)]; ok {
 		log.Debugf(context.TODO(), "method->[%s] is aggregate method, will make to AggregateExpr", m.Method)
-		var result = new(parser.AggregateExpr)
+		result := new(parser.AggregateExpr)
 		result.Expr = expr
 		result.Op = method
 		if len(m.VArgsList) > 0 {
@@ -123,7 +128,7 @@ func (m *AggregateMethod) ToProm(expr parser.Expr) (parser.Expr, error) {
 	}
 
 	// 否则视为普通函数调用
-	var result = new(parser.Call)
+	result := new(parser.Call)
 	log.Debugf(context.TODO(), "method->[%s] is call method, will make to call expr.", m.Method)
 	result.Func = &parser.Function{
 		Name:       m.Method,

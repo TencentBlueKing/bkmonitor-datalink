@@ -48,10 +48,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourcePushGateway, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.PushGateway.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourcePushGateway, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -109,7 +106,7 @@ var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePushGatewa
 
 func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, jobBase64Encoded bool) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 	contentLength := utils.GetContentLength(req.Header)
 
 	start := time.Now()

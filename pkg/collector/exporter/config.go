@@ -14,20 +14,25 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/converter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
 )
 
 // 不同类型的数据大小不同 所以队列大小要单独调整
 const (
-	defaultMetricsBatchSize = 2000
-	defaultTracesBatchSize  = 200
-	defaultLogsBatchSize    = 100
-	defaultProxyBatchSize   = 2000
-	defaultFlushInterval    = 3 * time.Second
+	defaultMetricsBatchSize  = 2000
+	defaultTracesBatchSize   = 200
+	defaultLogsBatchSize     = 100
+	defaultProxyBatchSize    = 2000
+	defaultProfilesBatchSize = 50
+	defaultFlushInterval     = 3 * time.Second
+	defaultMaxMessageBytes   = 10 * 1024 * 1024 // 10MB
 )
 
 type Config struct {
-	Queue queue.Config `config:"queue"`
+	MaxMessageBytes int              `config:"max_message_bytes"`
+	Queue           queue.Config     `config:"queue"`
+	Converter       converter.Config `config:"converter"`
 }
 
 func (c *Config) Validate() {
@@ -43,8 +48,14 @@ func (c *Config) Validate() {
 	if c.Queue.ProxyBatchSize <= 0 {
 		c.Queue.ProxyBatchSize = defaultProxyBatchSize
 	}
+	if c.Queue.ProfilesBatchSize <= 0 {
+		c.Queue.ProfilesBatchSize = defaultProfilesBatchSize
+	}
 	if c.Queue.FlushInterval <= 0 {
 		c.Queue.FlushInterval = defaultFlushInterval
+	}
+	if c.MaxMessageBytes <= 0 {
+		c.MaxMessageBytes = defaultMaxMessageBytes
 	}
 }
 

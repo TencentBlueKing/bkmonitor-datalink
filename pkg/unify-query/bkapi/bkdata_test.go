@@ -25,11 +25,9 @@ func TestGetDataAuth(t *testing.T) {
 		"Content-Type": "application/json",
 	})
 
-	assert.Equal(t, map[string]string{
-		"Content-Type":           "application/json",
-		"X-Bkapi-Authorization":  `{"bk_app_code":"bk_code","bk_app_secret":"bk_secret","bk_username":"admin"}`,
-		"X-Bkbase-Authorization": `{"bk_app_code":"bk_code","bk_username":"admin","bkdata_authentication_method":"token","bkdata_data_token":"123456"}`,
-	}, headers)
+	assert.Equal(t, "application/json", headers["Content-Type"])
+	assert.JSONEq(t, `{"bk_app_code":"bk_code","bk_app_secret":"bk_secret","bk_username":"admin"}`, headers["X-Bkapi-Authorization"])
+	assert.JSONEq(t, `{"bk_username":"admin","bkdata_data_token":"123456","bkdata_authentication_method":"token","bk_app_code":"bk_code"}`, headers["X-Bkbase-Authorization"])
 }
 
 func TestGetDataUrl(t *testing.T) {
@@ -63,5 +61,4 @@ func TestGetDataUrl(t *testing.T) {
 			assert.Equal(t, c.url, url)
 		})
 	}
-
 }

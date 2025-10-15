@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -32,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var DemoServiceInstances = []*AlarmServiceInstanceInfo{
@@ -46,7 +34,7 @@ var DemoServiceInstances = []*AlarmServiceInstanceInfo{
 		ProcessInstances:  []byte(`[{"bk_host_id": 3, "bk_cloud_id": 0, "bk_host_innerip": "127.0.0.1"}]`),
 		IP:                "127.0.0.3",
 		BkCloudId:         0,
-		TopoLinks: map[string][]map[string]interface{}{
+		TopoLinks: map[string][]map[string]any{
 			"module|6": {
 				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
 				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
@@ -59,12 +47,12 @@ var DemoServiceInstances = []*AlarmServiceInstanceInfo{
 
 func TestServiceInstanceCacheManager(t *testing.T) {
 	// mock cmdb api
-	cmdbPatches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	cmdbPatches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bkTenantId string, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer cmdbPatches.Reset()
 
-	patches := gomonkey.ApplyFunc(getServiceInstances, func(ctx context.Context, bizID int) ([]*AlarmServiceInstanceInfo, error) {
+	patches := gomonkey.ApplyFunc(getServiceInstances, func(ctx context.Context, bkTenantId string, bizID int) ([]*AlarmServiceInstanceInfo, error) {
 		return DemoServiceInstances, nil
 	})
 	defer patches.Reset()
@@ -79,7 +67,7 @@ func TestServiceInstanceCacheManager(t *testing.T) {
 
 	t.Run("TestServiceInstanceCacheManager", func(t *testing.T) {
 		// 先准备主机缓存数据，用于测试服务实例缓存
-		hostCacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
+		hostCacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -90,7 +78,7 @@ func TestServiceInstanceCacheManager(t *testing.T) {
 			return
 		}
 
-		cacheManager, err := NewServiceInstanceCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewServiceInstanceCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

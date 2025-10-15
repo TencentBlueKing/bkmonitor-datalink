@@ -27,6 +27,7 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        2,
+		ClusterName:      "cluster_name2",
 		ClusterType:      models.StorageTypeInfluxdb,
 		CreateTime:       time.Now(),
 		LastModifyTime:   time.Now(),
@@ -35,7 +36,7 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
-	db.Delete(&clusterInfo, "cluster_id = ?", 2)
+	db.Delete(&storage.ClusterInfo{})
 	err := clusterInfo.Create(db)
 	assert.NoError(t, err)
 

@@ -37,6 +37,8 @@ const (
 
 	GrpcMaxCallRecvMsgSizeConfigPath = "influxdb.grpc_max_call_recv_msg_size"
 	GrpcMaxCallSendMsgSizeConfigPath = "influxdb.grpc_max_call_send_msg_size"
+
+	IsCacheConfigPath = "influxdb.is_cache"
 )
 
 var (
@@ -60,6 +62,8 @@ var (
 	SpaceRouterBboltPath           string
 	SpaceRouterBboltBucketName     string
 	SpaceRouterBboltWriteBatchSize int
+
+	IsCache bool
 
 	GrpcMaxCallRecvMsgSize int
 	GrpcMaxCallSendMsgSize int

@@ -29,11 +29,6 @@ var (
 	// EnvKeyPrefix env prefix
 	EnvKeyPrefix = "bmw"
 
-	// BypassSuffixPath 旁路路径后缀，用于consul/redis等数据写入测试
-	BypassSuffixPath string
-	// SkipBypassTasks 跳过旁路配置的任务
-	SkipBypassTasks []string
-
 	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
 	// LoggerLevel level of logger
@@ -97,7 +92,7 @@ var (
 	StorageDependentRedisSentinelMasterName string
 	// StorageDependentRedisSentinelAddress dependent redis address
 	StorageDependentRedisSentinelAddress []string
-	//StorageDependentRedisSentinelPassword dependent redis password
+	// StorageDependentRedisSentinelPassword dependent redis password
 	StorageDependentRedisSentinelPassword string
 	// StorageDependentRedisStandaloneHost dependent redis host
 	StorageDependentRedisStandaloneHost string
@@ -202,6 +197,8 @@ var (
 	// BkdataAESKey bkdata AES Key
 	BkdataAESKey string
 
+	// enable multi-tenant mode
+	EnableMultiTenantMode bool
 	// BkApiEnabled enabled bk-apigw
 	BkApiEnabled bool
 	// BkApiUrl bk-apigw host
@@ -212,24 +209,12 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
-	// BkApiBcsApiMicroGwUrl bk-apigw bcs micro gateway url
-	BkApiBcsApiMicroGwUrl string
-	// BkApiBcsApiGatewayToken bk-apigw bcs token
-	BkApiBcsApiGatewayToken string
-	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
-	BkApiBcsApiGatewayBaseUrl string
-	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
-	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
 	BkApiBkdataApiBaseUrl string
-	// BkApiBkssmUrl bk-api bkssm url
-	BkApiBkssmUrl string
-	// BkApiBcsCcApiUrl bk-api bcs cc url
-	BkApiBcsCcApiUrl string
 	// BkApiGseApiGwUrl bk-apigw bkgse base url
 	BkApiGseApiGwUrl string
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled bool
+	// BkApiCmdbApiGatewayUrl bk-apigw cmdb base url
+	BkApiCmdbApiGatewayUrl string
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
 	BkMonitorApiGatewayBaseUrl string
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
@@ -249,10 +234,6 @@ var (
 )
 
 func initVariables() {
-	// 旁路路径后缀，用于consul/redis等数据写入测试
-	BypassSuffixPath = GetValue("bypassSuffixPath", "")
-	SkipBypassTasks = GetValue("skipBypassTasks", []string{})
-
 	// LoggerEnabledStdout 是否开启日志文件输出
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)
 	// LoggerLevel 日志等级
@@ -384,26 +365,20 @@ func initVariables() {
 	BkdataAESIv = GetValue("aes.bkdataAESIv", "bkbkbkbkbkbkbkbk")
 	BkdataAESKey = GetValue("aes.bkdataAESKey", "")
 
+	EnableMultiTenantMode = GetValue("taskConfig.common.enableMultiTenantMode", false)
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
 	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
-	BkApiBcsApiMicroGwUrl = GetValue("taskConfig.common.bkapi.bcsApiMicroGwUrl", "")
-	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
-	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
-	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
-	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
-	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
+	BkApiCmdbApiGatewayUrl = GetValue("taskConfig.common.bkapi.cmdbApiGatewayUrl", "")
 
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayEnabled", false)
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
-	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", BkApiUrl)
+	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", "")
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
-	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "stag")
+	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "prod")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 
@@ -415,9 +390,7 @@ func initVariables() {
 	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
-var (
-	keys []string
-)
+var keys []string
 
 // GetValue get value from config file
 func GetValue[T any](key string, def T, getter ...func(string) T) T {

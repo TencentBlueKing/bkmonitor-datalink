@@ -175,8 +175,7 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 		logger.Errorf("HSetWithCompareAndPublish: key or field or value or channelName or channelKey is empty")
 		return false, fmt.Errorf("key or field or value or channelName or channelKey is empty")
 	}
-
-	//var isNeedUpdate bool
+	// var isNeedUpdate bool
 	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)
 	if oldValue == value {
@@ -233,7 +232,7 @@ func (r *Instance) HGetAll(key string) map[string]string {
 }
 
 // Publish message
-func (r *Instance) Publish(channelName string, msg interface{}) error {
+func (r *Instance) Publish(channelName string, msg any) error {
 	if err := r.Client.Publish(r.ctx, channelName, msg).Err(); err != nil {
 		return err
 	}
@@ -255,12 +254,12 @@ func (r *Instance) ZRangeByScoreWithScores(key string, opt *goRedis.ZRangeBy) ([
 	return r.Client.ZRangeByScoreWithScores(r.ctx, key, opt).Result()
 }
 
-func (r *Instance) HMGet(key string, fields ...string) ([]interface{}, error) {
+func (r *Instance) HMGet(key string, fields ...string) ([]any, error) {
 	return r.Client.HMGet(r.ctx, key, fields...).Result()
 }
 
 // SAdd set add
-func (r *Instance) SAdd(key string, field ...interface{}) error {
+func (r *Instance) SAdd(key string, field ...any) error {
 	err := r.Client.SAdd(r.ctx, key, field...).Err()
 	if err != nil {
 		logger.Debugf("sadd fields error, key: %s, fields: %v", key, field)

@@ -30,25 +30,6 @@ var (
 		},
 	)
 
-	beatSentBytesSize = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "beat_sent_bytes_size",
-			Help:      "beat sent body bytes size",
-			Buckets:   define.DefSizeDistribution,
-		},
-		[]string{"id"},
-	)
-
-	beatSentBytesTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "beat_sent_bytes_total",
-			Help:      "beat sent body bytes total",
-		},
-		[]string{"id"},
-	)
-
 	appBuildInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
@@ -132,7 +113,7 @@ var (
 )
 
 func init() {
-	maxprocs.Logger(func(s string, i ...interface{}) {
+	maxprocs.Logger(func(s string, i ...any) {
 		logger.Infof(s, i...)
 	})
 }
@@ -155,11 +136,6 @@ func (m *metricMonitor) IncReloadFailedCounter() {
 
 func (m *metricMonitor) ObserveReloadDuration(t time.Time) {
 	reloadDuration.Observe(time.Since(t).Seconds())
-}
-
-func (m *metricMonitor) ObserveBeatSentBytes(dataId int32, f float64) {
-	beatSentBytesSize.WithLabelValues(strconv.Itoa(int(dataId))).Observe(f)
-	beatSentBytesTotal.WithLabelValues(strconv.Itoa(int(dataId))).Add(f)
 }
 
 func (m *metricMonitor) SetAppBuildInfo(info define.BuildInfo) {

@@ -32,6 +32,7 @@ import (
 )
 
 type ProcessResult struct {
+	BkTenantId            string                        `json:"bk_tenant_id"`
 	BizId                 string                        `json:"biz_id"`
 	BizName               string                        `json:"biz_name"`
 	AppId                 string                        `json:"app_id"`
@@ -204,7 +205,6 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 }
 
 func (p *Processor) getQueryIndexName() string {
-
 	obtainLastlyIndexName := func() (string, error) {
 		client := p.proxy.GetClient(storage.TraceEs).(*elasticsearch.Client)
 		response, err := client.Cat.Indices(
@@ -292,7 +292,6 @@ func (p *Processor) recoverSpans(originSpans []map[string]any) ([]*StandardSpan,
 }
 
 func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event) {
-
 	nodeDegrees := event.Graph.NodeDepths()
 
 	services := mapset.NewSet[string]()
@@ -336,7 +335,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 
 	// Root Service Span
 	var calledKindSpans []NodeDegree
-	linq.From(nodeDegrees).Where(func(i interface{}) bool {
+	linq.From(nodeDegrees).Where(func(i any) bool {
 		item := i.(NodeDegree)
 		return core.SpanKind(item.Node.Kind).IsCalledKind()
 	}).ToSlice(&calledKindSpans)
@@ -366,6 +365,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 	}
 
 	res := ProcessResult{
+		BkTenantId:          p.baseInfo.BkTenantId,
 		BizId:               p.baseInfo.BkBizId,
 		BizName:             p.baseInfo.BkBizName,
 		AppId:               p.baseInfo.AppId,
@@ -466,7 +466,7 @@ func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 		match := true
 
 		if len(predicate.OptionFields) != 0 {
-			match = linq.From(predicate.OptionFields).Where(func(i interface{}) bool {
+			match = linq.From(predicate.OptionFields).Where(func(i any) bool {
 				v := i.(core.CommonField)
 				_, exist := collections[v.DisplayKey()]
 				return exist
@@ -476,7 +476,7 @@ func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 			}
 		}
 
-		match = linq.From(predicate.AnyFields).Where(func(i interface{}) bool {
+		match = linq.From(predicate.AnyFields).Where(func(i any) bool {
 			v := i.(core.CommonField)
 			_, exist := collections[v.DisplayKey()]
 			return exist
@@ -493,7 +493,6 @@ func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 }
 
 func processCategoryStatistics(collections map[string]string, s map[core.SpanCategory]int) {
-
 	category, match := inferCategory(collections)
 	if match {
 		s[category]++
@@ -517,14 +516,12 @@ func processKindCategoryStatistics(kind int, s map[core.SpanKindCategory]int) {
 }
 
 func collectCollections(collections map[string][]string, spanCollections map[string]string) {
-
 	for k, v := range spanCollections {
 		items, exist := collections[k]
 		if exist {
 			if !slices.Contains(items, v) {
 				items = append(items, v)
 			}
-
 		} else {
 			items = []string{v}
 		}

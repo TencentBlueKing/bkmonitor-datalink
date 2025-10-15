@@ -9,25 +9,12 @@
 
 package storage
 
-import (
-	"context"
-	"fmt"
-	"strconv"
-	"strings"
-	"sync"
-
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
 //go:generate goqueryset -in accessvmrecord.go -out qs_accessvmrecord_gen.go
 
 // AccessVMRecord access vm record model
 // gen:qs
 type AccessVMRecord struct {
+	BkTenantId       string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	DataType         string `json:"data_type" gorm:"size:32"`
 	ResultTableId    string `gorm:"result_table_id;size:64" json:"result_table_id"`
 	BcsClusterId     string `gorm:"bcs_cluster_id;size:32" json:"bcs_cluster_id"`
@@ -42,68 +29,4 @@ type AccessVMRecord struct {
 // TableName 用于设置表的别名
 func (AccessVMRecord) TableName() string {
 	return "metadata_accessvmrecord"
-}
-
-// RefreshVmRouter 更新 vm router
-func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
-	var db, measurement string
-	splits := strings.SplitN(a.ResultTableId, ".", 2)
-	if len(splits) != 2 {
-		logger.Errorf("table_id: %s not split by '.'", a.ResultTableId)
-	} else {
-		db = splits[0]
-		measurement = splits[1]
-	}
-	varMap := map[string]interface{}{
-		"storageID":   strconv.Itoa(int(a.StorageClusterID)),
-		"table_id":    a.ResultTableId,
-		"clusterName": "",
-		"tagsKey":     []string{},
-		"db":          db,
-		"vm_rt":       a.VmResultTableId,
-		"measurement": measurement,
-		"retention_policies": map[string]interface{}{
-			"autogen": map[string]interface{}{
-				"is_default": true,
-				"resolution": 0,
-			},
-		},
-	}
-	val, err := jsonx.MarshalString(varMap)
-	if err != nil {
-		return err
-	}
-	models.PushToRedis(ctx, models.QueryVmStorageRouterKey, a.ResultTableId, val)
-	return nil
-}
-
-// RefreshVmRouter 更新 vm router
-func RefreshVmRouter(ctx context.Context, objs *[]AccessVMRecord, goroutineLimit int) {
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
-	wg.Add(len(*objs))
-	for _, record := range *objs {
-		ch <- true
-		go func(record AccessVMRecord, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			err := record.RefreshVmRouter(ctx)
-			if err != nil {
-				logger.Errorf("vm_result_table: [%s] try to refresh vm router failed, %v", record.VmResultTableId, err)
-			} else {
-				logger.Infof("vm_result_table: [%s] refresh vm router success", record.VmResultTableId)
-			}
-		}(record, wg, ch)
-	}
-	wg.Wait()
-	client := redis.GetStorageRedisInstance()
-	channel := fmt.Sprintf("%s%s", models.InfluxdbKeyPrefix, cfg.BypassSuffixPath)
-	err := client.Publish(channel, models.QueryVmStorageRouterKey)
-	if err != nil {
-		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", channel, models.QueryVmStorageRouterKey, err)
-	} else {
-		logger.Infof("publish redis successfully, channel: %s, msg: %v", channel, models.QueryVmStorageRouterKey)
-	}
 }

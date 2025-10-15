@@ -18,12 +18,19 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 const (
+	selectAll = "*"
+
 	dtEventTimeStamp = "dtEventTimeStamp"
 	dtEventTime      = "dtEventTime"
 	localTime        = "localTime"
@@ -31,25 +38,28 @@ const (
 	endTime          = "_endTime_"
 	theDate          = "thedate"
 
-	timeStamp = "_timestamp_"
-	value     = "_value_"
-
-	FieldValue = "_value"
-	FieldTime  = "_time"
+	dtEventTimeFormat = "2006-01-02 15:04:05"
 )
 
-var (
-	internalDimension = map[string]struct{}{
-		value:            {},
-		timeStamp:        {},
-		dtEventTimeStamp: {},
-		dtEventTime:      {},
-		localTime:        {},
-		startTime:        {},
-		endTime:          {},
-		theDate:          {},
+var internalDimensionSet = func() *set.Set[string] {
+	s := set.New[string]()
+	for _, k := range []string{
+		dtEventTimeStamp,
+		dtEventTime,
+		localTime,
+		startTime,
+		endTime,
+		theDate,
+		sql_expr.ShardKey,
+	} {
+		s.Add(strings.ToLower(k))
 	}
-)
+	return s
+}()
+
+func checkInternalDimension(key string) bool {
+	return internalDimensionSet.Existed(strings.ToLower(key))
+}
 
 type QueryFactory struct {
 	ctx  context.Context
@@ -59,29 +69,26 @@ type QueryFactory struct {
 
 	start time.Time
 	end   time.Time
-	step  time.Duration
 
-	selects []string
-	groups  []string
-	orders  metadata.Orders
+	timeAggregate sql_expr.TimeAggregate
+	dimensionSet  *set.Set[string]
 
-	sql strings.Builder
+	orders metadata.Orders
 
 	timeField string
+
+	expr sql_expr.SQLExpr
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:     ctx,
-		query:   query,
-		selects: make([]string, 0),
-		groups:  make([]string, 0),
-		orders:  make(metadata.Orders),
+		ctx:          ctx,
+		query:        query,
+		dimensionSet: set.New[string](),
 	}
+
 	if query.Orders != nil {
-		for k, v := range query.Orders {
-			f.orders[k] = v
-		}
+		f.orders = query.Orders
 	}
 
 	if query.TimeField.Name != "" {
@@ -89,11 +96,13 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	} else {
 		f.timeField = dtEventTimeStamp
 	}
-	return f
-}
 
-func (f *QueryFactory) write(s string) {
-	f.sql.WriteString(s + " ")
+	f.expr = sql_expr.NewSQLExpr(query.Measurement).
+		WithInternalFields(f.timeField, query.Field).
+		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
+		WithFieldAlias(query.FieldAlias)
+
+	return f
 }
 
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
@@ -102,176 +111,79 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) ParserQuery() (err error) {
-	f.lock.Lock()
-	defer f.lock.Unlock()
-
-	if len(f.query.Aggregates) > 0 {
-		for _, agg := range f.query.Aggregates {
-			for _, dim := range agg.Dimensions {
-				dim = fmt.Sprintf("`%s`", dim)
-				f.groups = append(f.groups, dim)
-				f.selects = append(f.selects, dim)
-			}
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
-			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
-				f.groups = append(f.groups, timeField)
-				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				f.orders[FieldTime] = true
-			}
-		}
-	}
-
-	if len(f.selects) == 0 {
-		f.selects = append(f.selects, "*")
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.query.Field, value))
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.timeField, timeStamp))
-	}
-
-	return
+func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
+	f.expr.WithFieldsMap(m)
+	return f
 }
 
-func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
-	// bkbase 使用 时区东八区 转换为 thedate
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		return
-	}
-
-	start := f.start.In(loc)
-	end := f.end.In(loc)
-
-	dates := function.RangeDateWithUnit("day", start, end, 1)
-
-	if len(dates) == 0 {
-		return
-	}
-
-	if len(dates) == 1 {
-		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
-		return
-	}
-
-	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
-	return
+func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
+	f.expr.WithKeepColumns(cols)
+	return f
 }
 
-func (f *QueryFactory) SQL() (sql string, err error) {
-	f.sql.Reset()
-	err = f.ParserQuery()
-	if err != nil {
-		return
-	}
-
-	f.lock.RLock()
-	defer f.lock.RUnlock()
-
-	f.write("SELECT")
-	f.write(strings.Join(f.selects, ", "))
-	f.write("FROM")
-	db := fmt.Sprintf("`%s`", f.query.DB)
-	if f.query.Measurement != "" {
-		db += "." + f.query.Measurement
-	}
-	f.write(db)
-	f.write("WHERE")
-	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
-
-	theDateFilter, err := f.getTheDateFilters()
-	if err != nil {
-		return
-	}
-	if theDateFilter != "" {
-		f.write("AND")
-		f.write(theDateFilter)
-	}
-
-	if f.query.BkSqlCondition != "" {
-		f.write("AND")
-		f.write("(" + f.query.BkSqlCondition + ")")
-	}
-	if len(f.groups) > 0 {
-		f.write("GROUP BY")
-		f.write(strings.Join(f.groups, ", "))
-	}
-
-	orders := make([]string, 0)
-	for key, asc := range f.orders {
-		var orderField string
-		switch key {
-		case FieldValue:
-			orderField = f.query.Field
-		case FieldTime:
-			orderField = timeStamp
-		default:
-			orderField = key
-		}
-		ascName := "ASC"
-		if !asc {
-			ascName = "DESC"
-		}
-		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
-	}
-	if len(orders) > 0 {
-		sort.Strings(orders)
-		f.write("ORDER BY")
-		f.write(strings.Join(orders, ", "))
-	}
-	if f.query.From > 0 {
-		f.write("OFFSET")
-		f.write(fmt.Sprintf("%d", f.query.From))
-	}
-	if f.query.Size > 0 {
-		f.write("LIMIT")
-		f.write(fmt.Sprintf("%d", f.query.Size))
-	}
-
-	sql = strings.Trim(f.sql.String(), " ")
-	return
+func (f *QueryFactory) FieldMap() metadata.FieldsMap {
+	return f.expr.FieldMap()
 }
 
-func (f *QueryFactory) dims(dims []string, field string) []string {
-	dimensions := make([]string, 0)
-	for _, dim := range dims {
-		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[dim]; ok {
-			continue
-		}
-		// 如果是字段值也需要跳过
-		if dim == field {
+func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
+	newData = make(map[string]any)
+	fieldMap := f.FieldMap()
+
+	for k, d := range data {
+		// 忽略内置字段
+		if ignoreInternalDimension && checkInternalDimension(k) {
 			continue
 		}
 
-		dimensions = append(dimensions, dim)
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
+			if nd, ok := d.(string); ok {
+				objectData, err := json.ParseObject(k, nd)
+				if err != nil {
+					_ = metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"构建数据格式异常",
+					).Error(f.ctx, err)
+					continue
+				}
+				for nk, nd := range objectData {
+					newData[nk] = nd
+				}
+				continue
+			}
+		}
+
+		newData[k] = d
 	}
-	return dimensions
+	return newData
 }
 
-func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
 		return res, nil
 	}
-	// 维度结构体为空则任务异常
-	if len(keys) == 0 {
-		return res, fmt.Errorf("SelectFieldsOrder is empty")
-	}
 
-	// 获取该指标的维度 key
-	field := f.query.Field
-	dimensions := f.dims(keys, field)
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	// 获取 metricLabel
+	metricLabel := f.query.MetricLabels(ctx)
 
-	tsMap := make(map[string]*prompb.TimeSeries, 0)
+	tsMap := map[string]*prompb.TimeSeries{}
+	tsTimeMap := make(map[string]map[int64]float64)
+
+	// 判断是否补零
+	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
+
+	// 先获取维度的 key 保证顺序一致
+	var keys []string
 	for _, d := range list {
 		// 优先获取时间和值
 		var (
 			vt int64
 			vv float64
 
-			vtLong   interface{}
-			vvDouble interface{}
+			vtLong   any
+			vvDouble any
 
 			ok bool
 		)
@@ -280,26 +192,67 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 			continue
 		}
 
-		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[timeStamp]; !ok {
-			vtLong = 0
+		nd := f.ReloadListData(d, true)
+		if len(keys) == 0 {
+			for k := range nd {
+				// 如果维度使用了该字段，则无需跳过
+				if !f.dimensionSet.Existed(f.query.Field) && k == f.query.Field {
+					continue
+				}
+				if !f.dimensionSet.Existed(f.timeField) && k == f.timeField {
+					continue
+				}
+
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+		}
+
+		lbl := make([]prompb.Label, 0)
+		for _, k := range keys {
+			switch k {
+			case sql_expr.TimeStamp:
+				if _, ok = nd[k]; ok {
+					vtLong = nd[k]
+				}
+			case sql_expr.Value:
+				if _, ok = nd[k]; ok {
+					vvDouble = nd[k]
+				}
+			default:
+				// 获取维度信息
+				val, err := getValue(k, nd)
+				if err != nil {
+					_ = metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"获取维度信息异常",
+					).Error(f.ctx, err)
+					continue
+				}
+
+				if encodeFunc != nil {
+					k = encodeFunc(k)
+				}
+
+				lbl = append(lbl, prompb.Label{
+					Name:  k,
+					Value: val,
+				})
+
+			}
 		}
 
 		if vtLong == nil {
-			continue
+			vtLong = f.start.UnixMilli()
 		}
+
 		switch vtLong.(type) {
 		case int64:
 			vt = vtLong.(int64)
 		case float64:
 			vt = int64(vtLong.(float64))
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", f.timeField, vtLong, vtLong)
-		}
-
-		// 获取值
-		if vvDouble, ok = d[field]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", field)
+			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
 		}
 
 		if vvDouble == nil {
@@ -311,23 +264,17 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 		case float64:
 			vv = vvDouble.(float64)
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
+			return res, fmt.Errorf("%s type is error %T, %v", sql_expr.Value, vvDouble, vvDouble)
+		}
+
+		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+		if metricLabel != nil {
+			lbl = append(lbl, *metricLabel)
 		}
 
 		var buf strings.Builder
-		lbl := make([]prompb.Label, 0, len(dimensions))
-		// 获取维度信息
-		for _, dimName := range dimensions {
-			val, err := getValue(dimName, d)
-			if err != nil {
-				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
-			}
-
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
-			lbl = append(lbl, prompb.Label{
-				Name:  dimName,
-				Value: val,
-			})
+		for _, l := range lbl {
+			buf.WriteString(l.String())
 		}
 
 		// 同一个 series 进行合并分组
@@ -339,17 +286,255 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 			}
 		}
 
-		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-			Value:     vv,
-			Timestamp: vt,
-		})
+		// 如果是时间聚合需要进行补零，否则直接返回
+		if isAddZero {
+			if _, ok := tsTimeMap[key]; !ok {
+				tsTimeMap[key] = make(map[int64]float64)
+			}
+
+			tsTimeMap[key][vt] = vv
+		} else {
+			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+				Value:     vv,
+				Timestamp: vt,
+			})
+		}
 	}
 
 	// 转换结构体
 	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
-	for _, ts := range tsMap {
-		res.Timeseries = append(res.Timeseries, ts)
+
+	// 如果是时间聚合需要进行补零，否则直接返回
+	if isAddZero {
+		var (
+			start time.Time
+			end   time.Time
+		)
+
+		ms := f.timeAggregate.Window.Milliseconds()
+
+		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/ms*ms - f.timeAggregate.OffsetMillis
+		start = time.UnixMilli(startMilli)
+		end = f.end
+
+		for key, ts := range tsMap {
+			for i := start; end.Sub(i) > 0; i = i.Add(f.timeAggregate.Window) {
+				sample := prompb.Sample{
+					Timestamp: i.UnixMilli(),
+					Value:     0,
+				}
+				if v, ok := tsTimeMap[key][i.UnixMilli()]; ok {
+					sample.Value = v
+				}
+				ts.Samples = append(ts.Samples, sample)
+			}
+			res.Timeseries = append(res.Timeseries, ts)
+		}
+	} else {
+		for _, ts := range tsMap {
+			res.Timeseries = append(res.Timeseries, ts)
+		}
 	}
 
 	return res, nil
+}
+
+func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
+	var conditions []string
+
+	// bkbase 使用 时区东八区 转换为 thedate
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return "", err
+	}
+
+	start := f.start.In(loc)
+	end := f.end.In(loc)
+
+	conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", dtEventTime, start.Format(dtEventTimeFormat)))
+	// 为了兼容毫秒纳秒等单位，需要+1s
+	conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", dtEventTime, end.Add(time.Second).Format(dtEventTimeFormat)))
+
+	dates := function.RangeDateWithUnit("day", start, end, 1)
+
+	if len(dates) == 1 {
+		conditions = append(conditions, fmt.Sprintf("`%s` = '%s'", theDate, dates[0]))
+	} else if len(dates) > 1 {
+		conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", theDate, dates[0]))
+		conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", theDate, dates[len(dates)-1]))
+	}
+
+	return strings.Join(conditions, " AND "), nil
+}
+
+func (f *QueryFactory) BuildWhere() (string, error) {
+	var s []string
+
+	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
+
+	theDateFilter, err := f.getTheDateIndexFilters()
+	if err != nil {
+		return "", err
+	}
+	if theDateFilter != "" {
+		s = append(s, theDateFilter)
+	}
+
+	// QueryString to sql
+	if f.query.QueryString != "" && f.query.QueryString != "*" {
+		qs, err := f.expr.ParserQueryString(f.ctx, f.query.QueryString)
+		if err != nil {
+			return "", err
+		}
+
+		if qs != "" {
+			s = append(s, fmt.Sprintf("(%s)", qs))
+		}
+	}
+
+	// AllConditions to sql
+	if len(f.query.AllConditions) > 0 {
+		qs, err := f.expr.ParserAllConditions(f.query.AllConditions)
+		if err != nil {
+			return "", err
+		}
+
+		if qs != "" {
+			s = append(s, qs)
+		}
+	}
+
+	return strings.Join(s, " AND "), nil
+}
+
+func (f *QueryFactory) Tables() []string {
+	dbs := f.query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{f.query.DB}
+	}
+
+	tables := make([]string, 0, len(dbs))
+	// 改成倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+		tables = append(tables, table)
+	}
+
+	return tables
+}
+
+func (f *QueryFactory) parserSQL() (sql string, err error) {
+	var span *trace.Span
+	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
+	defer span.End(&err)
+
+	tables := f.Tables()
+
+	span.Set("tables", tables)
+
+	where, err := f.BuildWhere()
+	if err != nil {
+		return sql, err
+	}
+	span.Set("where", where)
+	if where != "" {
+		where = fmt.Sprintf("(%s)", where)
+	}
+
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where)
+	span.Set("query-sql", f.query.SQL)
+
+	span.Set("sql", sql)
+	return sql, err
+}
+
+func (f *QueryFactory) SQL() (sql string, err error) {
+	// sql 解析语法不一样需要重新拼写
+	if f.query.SQL != "" {
+		return f.parserSQL()
+	}
+
+	var (
+		span       *trace.Span
+		sqlBuilder strings.Builder
+	)
+
+	_, span = trace.NewSpan(f.ctx, "make-sql")
+	defer span.End(&err)
+
+	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
+	if err != nil {
+		return sql, err
+	}
+
+	// 用于判定字段是否需要删除
+	f.dimensionSet = dimensionSet
+
+	// 用于补零判定
+	f.timeAggregate = timeAggregate
+
+	span.Set("select-fields", selectFields)
+	span.Set("group-fields", groupFields)
+	span.Set("order-fields", orderFields)
+	span.Set("timeAggregate", timeAggregate)
+
+	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
+	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
+
+	whereString, err := f.BuildWhere()
+	span.Set("where-string", whereString)
+	if err != nil {
+		return sql, err
+	}
+	if len(f.Tables()) > 0 {
+		var table string
+		if len(f.Tables()) == 1 {
+			table = f.Tables()[0]
+		} else {
+			stmts := make([]string, 0, len(f.Tables()))
+			for _, t := range f.Tables() {
+				s := fmt.Sprintf("SELECT * FROM %s", t)
+				if whereString != "" {
+					s = fmt.Sprintf("%s WHERE %s", s, whereString)
+				}
+				stmts = append(stmts, s)
+			}
+
+			table = fmt.Sprintf("(%s) AS combined_data", strings.Join(stmts, " UNION ALL "))
+			whereString = ""
+		}
+		sqlBuilder.WriteString(" FROM ")
+		sqlBuilder.WriteString(table)
+	}
+
+	if whereString != "" {
+		sqlBuilder.WriteString(" WHERE ")
+		sqlBuilder.WriteString(whereString)
+	}
+
+	if len(groupFields) > 0 {
+		sqlBuilder.WriteString(" GROUP BY ")
+		sqlBuilder.WriteString(strings.Join(groupFields, ", "))
+	}
+
+	if len(orderFields) > 0 {
+		sort.Strings(orderFields)
+		sqlBuilder.WriteString(" ORDER BY ")
+		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
+	}
+	if f.query.Size > 0 {
+		sqlBuilder.WriteString(" LIMIT ")
+		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.Size))
+	}
+	if f.query.From > 0 {
+		sqlBuilder.WriteString(" OFFSET ")
+		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.From))
+	}
+	sql = sqlBuilder.String()
+	span.Set("sql", sql)
+	return sql, err
 }

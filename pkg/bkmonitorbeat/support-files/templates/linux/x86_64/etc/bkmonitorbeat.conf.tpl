@@ -28,14 +28,29 @@ logging.backups: 5
 
 
 # ============================= Resource ==================================
+{% if cmdb_instance.host.bk_cpu and cmdb_instance.host.bk_mem %}
+{%- set resource_limit = resource_limit | default({}) -%}
 resource_limit:
-{%- if extra_vars is defined and extra_vars.disable_resource_limit is defined and extra_vars.disable_resource_limit == "true" %}
-  enabled: false
-{%- else %}
   enabled: true
-  cpu: 1    # CPU 资源限制 单位 core(float64)
-  mem: -1 # 内存资源限制 单位 MB(int)，-1 代表无限制
-{%- endif %}
+  cpu: {{
+    [
+      [
+        cmdb_instance.host.bk_cpu * resource_limit.get('cpu', {}).get('percentage', 0.1),
+        resource_limit.get('cpu', {}).get('min', 0.1)
+      ] | max,
+      resource_limit.get('cpu', {}).get('max', 1)
+    ] | min
+  }}
+  mem: {{
+    [
+      [
+        cmdb_instance.host.bk_mem * resource_limit.get('mem', {}).get('percentage', 0.1),
+        resource_limit.get('mem', {}).get('min', 100)
+      ] | max,
+        resource_limit.get('mem', {}).get('max', 1000)
+    ] | min | int
+  }}
+{% endif %}
 
 # ================================= Tasks =======================================
 bkmonitorbeat:
@@ -55,6 +70,9 @@ bkmonitorbeat:
   # 启动模式：daemon（正常模式）,check（执行一次，测试用）
   mode: daemon
   disable_netlink: false
+  {%- if extra_vars is defined and extra_vars.metricbeat_align_ts is defined and extra_vars.metricbeat_align_ts == "true" %}
+  metricbeat_align_ts: true
+  {%- endif %}
   metrics_batch_size: 1024
   # 管理服务，包含指标和调试接口, 可动态reload开关或变更监听地址（unix使用SIGUSR2,windows发送bkreload2）
   # admin_addr: localhost:56060
@@ -85,6 +103,12 @@ bkmonitorbeat:
   gather_up_beat:
     dataid: 1100017
 
+  # 自监控指标采集
+  selfstats_task:
+    dataid: 1100030
+    task_id: 88
+    period: 1m
+
   # 静态资源采集配置
   static_task:
     dataid: 1100010
@@ -106,7 +130,11 @@ bkmonitorbeat:
       info_timeout: 30s
     disk:
       stat_times: 1
+{%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) }}
+{%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+{%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
       fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
 {%- else %}
@@ -168,6 +196,22 @@ bkmonitorbeat:
 #    task_id: 104
 #    period: 1m
 #    dst_dir: '{{ plugin_path.subconfig_path }}'
+
+  # 时间同步服务采集
+  timesync_task:
+    dataid: 1100030
+    task_id: 98
+    period: 1m
+    env: host
+    query_timeout: 10s
+    ntpd_path: /etc/ntp.conf
+    chrony_address: "[::1]:323"
+
+  # dmesg 事件采集
+  dmesg_task:
+    dataid: 1100031
+    task_id: 99
+    period: 1m
 
 {%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}
   # 登录日志采集

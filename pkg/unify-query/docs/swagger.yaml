@@ -27,12 +27,22 @@ definitions:
               type: integer
             look_back_delta:
               type: string
+            path_resource:
+              items:
+                type: string
+              type: array
+            source_expand_info:
+              $ref: '#/definitions/cmdb.Matcher'
             source_info:
               $ref: '#/definitions/cmdb.Matcher'
+            source_type:
+              type: string
             start_time:
               type: integer
             step:
               type: string
+            target_info_show:
+              type: boolean
             target_type:
               type: string
           type: object
@@ -44,6 +54,8 @@ definitions:
         items:
           $ref: '#/definitions/cmdb.RelationMultiResourceRangeResponseData'
         type: array
+      trace_id:
+        type: string
     type: object
   cmdb.RelationMultiResourceRangeResponseData:
     properties:
@@ -51,6 +63,10 @@ definitions:
         type: integer
       message:
         type: string
+      path:
+        items:
+          type: string
+        type: array
       source_info:
         $ref: '#/definitions/cmdb.Matcher'
       source_type:
@@ -69,8 +85,18 @@ definitions:
           properties:
             look_back_delta:
               type: string
+            path_resource:
+              items:
+                type: string
+              type: array
+            source_expand_info:
+              $ref: '#/definitions/cmdb.Matcher'
             source_info:
               $ref: '#/definitions/cmdb.Matcher'
+            source_type:
+              type: string
+            target_info_show:
+              type: boolean
             target_type:
               type: string
             timestamp:
@@ -84,6 +110,8 @@ definitions:
         items:
           $ref: '#/definitions/cmdb.RelationMultiResourceResponseData'
         type: array
+      trace_id:
+        type: string
     type: object
   cmdb.RelationMultiResourceResponseData:
     properties:
@@ -91,6 +119,10 @@ definitions:
         type: integer
       message:
         type: string
+      path:
+        items:
+          type: string
+        type: array
       source_info:
         $ref: '#/definitions/cmdb.Matcher'
       source_type:
@@ -100,13 +132,6 @@ definitions:
           $ref: '#/definitions/cmdb.Matcher'
         type: array
       target_type:
-        type: string
-    type: object
-  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status:
-    properties:
-      code:
-        type: string
-      message:
         type: string
     type: object
   http.CheckItem:
@@ -128,15 +153,21 @@ definitions:
     properties:
       error:
         type: string
+      trace_id:
+        type: string
     type: object
   http.PromData:
     properties:
+      is_partial:
+        type: boolean
       series:
         items:
           $ref: '#/definitions/http.TablesItem'
         type: array
       status:
-        $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status'
+        $ref: '#/definitions/metadata.Status'
+      trace_id:
+        type: string
     type: object
   http.SeriesData:
     properties:
@@ -152,6 +183,8 @@ definitions:
             type: string
           type: array
         type: array
+      trace_id:
+        type: string
     type: object
   http.TablesItem:
     properties:
@@ -183,6 +216,8 @@ definitions:
     type: object
   http.TagValuesData:
     properties:
+      trace_id:
+        type: string
       values:
         additionalProperties:
           items:
@@ -198,6 +233,10 @@ definitions:
         type: string
       end_time:
         type: string
+      is_regexp:
+        description: IsRegexp 指标是否使用正则查询
+        example: false
+        type: boolean
       keys:
         items:
           type: string
@@ -212,6 +251,16 @@ definitions:
         type: string
       table_id:
         type: string
+      timezone:
+        example: Asia/Shanghai
+        type: string
+    type: object
+  metadata.Status:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
     type: object
   structured.AggregateMethod:
     properties:
@@ -223,6 +272,10 @@ definitions:
         items:
           type: string
         type: array
+      field:
+        description: Field 聚合字段，默认为指标字段，指定则会进行覆盖
+        example: field
+        type: string
       is_sub_query:
         description: IsSubQuery 判断是否为子查询
         type: boolean
@@ -244,6 +297,15 @@ definitions:
         description: DimensionName 过滤字段
         example: bk_biz_id
         type: string
+      is_prefix:
+        description: IsPrefix 是否是前缀
+        type: boolean
+      is_suffix:
+        description: IsSuffix 是否是后缀
+        type: boolean
+      is_wildcard:
+        description: IsWildcard 是否是通配符
+        type: boolean
       op:
         description: Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
         example: contains
@@ -271,72 +333,6 @@ definitions:
           $ref: '#/definitions/structured.ConditionField'
         type: array
     type: object
-  structured.Query:
-    properties:
-      conditions:
-        allOf:
-        - $ref: '#/definitions/structured.Conditions'
-        description: Conditions 过滤条件
-      dimensions:
-        description: Dimensions promQL 使用维度
-        example:
-        - bk_target_ip
-        - bk_target_cloud_id
-        items:
-          type: string
-        type: array
-      field_name:
-        description: FieldName 查询指标
-        example: usage
-        type: string
-      function:
-        description: AggregateMethodList 维度聚合函数
-        items:
-          $ref: '#/definitions/structured.AggregateMethod'
-        type: array
-      is_regexp:
-        description: IsRegexp 指标是否使用正则查询
-        example: false
-        type: boolean
-      limit:
-        description: Limit 点数限制数量
-        example: 0
-        type: integer
-      offset:
-        description: Offset 偏移量
-        example: ""
-        type: string
-      offset_forward:
-        description: OffsetForward 偏移方向，默认 false 为向前偏移
-        example: false
-        type: boolean
-      reference_name:
-        description: ReferenceName 别名，用于表达式计算
-        example: a
-        type: string
-      slimit:
-        description: Slimit 维度限制数量
-        example: 0
-        type: integer
-      start_or_end:
-        description: StartOrEnd @-modifier 标记，start or end
-        type: integer
-      table_id:
-        description: TableID 数据实体ID，容器指标可以为空
-        example: system.cpu_summary
-        type: string
-      time_aggregation:
-        allOf:
-        - $ref: '#/definitions/structured.TimeAggregation'
-        description: TimeAggregation 时间聚合方法
-      timestamp:
-        description: Timestamp @-modifier 标记
-        type: integer
-      vector_offset:
-        allOf:
-        - $ref: '#/definitions/time.Duration'
-        description: VectorOffset
-    type: object
   structured.QueryPromQL:
     properties:
       bk_biz_ids:
@@ -352,6 +348,8 @@ definitions:
       instant:
         description: 瞬时数据
         type: boolean
+      is_verify_dimensions:
+        type: boolean
       limit:
         type: integer
       look_back_delta:
@@ -366,6 +364,8 @@ definitions:
         type: boolean
       promql:
         type: string
+      reference:
+        type: boolean
       slimit:
         type: integer
       start:
@@ -378,45 +378,6 @@ definitions:
         type: string
     type: object
   structured.QueryTs:
-    properties:
-      down_sample_range:
-        description: DownSampleRange 降采样：大于Step才能生效，可以为空
-        example: 5m
-        type: string
-      end_time:
-        description: End 结束时间：单位为毫秒的时间戳
-        example: "1657851600"
-        type: string
-      instant:
-        description: Instant 瞬时数据
-        type: boolean
-      look_back_delta:
-        description: LookBackDelta 偏移量
-        type: string
-      metric_merge:
-        description: MetricMerge 表达式：支持所有PromQL语法
-        example: a
-        type: string
-      query_list:
-        description: QueryList 查询实例
-        items:
-          $ref: '#/definitions/structured.Query'
-        type: array
-      space_uid:
-        description: SpaceUid 空间ID
-        type: string
-      start_time:
-        description: Start 开始时间：单位为毫秒的时间戳
-        example: "1657848000"
-        type: string
-      step:
-        description: Step 步长：最终返回的点数的时间间隔
-        example: 1m
-        type: string
-      timezone:
-        description: Timezone 时区
-        example: Asia/Shanghai
-        type: string
     type: object
   structured.TimeAggregation:
     properties:
@@ -435,42 +396,6 @@ definitions:
         example: 60s
         type: string
     type: object
-  time.Duration:
-    enum:
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    type: integer
-    x-enum-varnames:
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
 info:
   contact: {}
   description: bk unify-query swagger api
@@ -543,7 +468,7 @@ paths:
       summary: query relation multi resource
   /check/query/ts:
     post:
-      operationId: check-query-promql
+      operationId: check_query_promql
       parameters:
       - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
         description: TraceID
@@ -620,6 +545,132 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrResponse'
       summary: query monitor by promql
+  /query/raw:
+    post:
+      operationId: query_raw
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by raw data
+  /query/raw_with_scroll:
+    post:
+      operationId: query_raw_with_scroll
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by raw data with scroll
+  /query/reference:
+    post:
+      operationId: query_reference
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by reference
   /query/ts:
     post:
       operationId: query_ts
@@ -750,6 +801,50 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrResponse'
       summary: info field keys
+  /query/ts/info/field_map:
+    post:
+      operationId: info_field_map
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/infos.Params'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.SeriesData'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: info field map
   /query/ts/info/series:
     post:
       operationId: info_series

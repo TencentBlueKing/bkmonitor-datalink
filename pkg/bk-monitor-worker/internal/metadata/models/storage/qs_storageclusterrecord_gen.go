@@ -775,7 +775,7 @@ var ClusterRecordDBSchema = struct {
 // Update updates ClusterRecord fields by primary key
 // nolint: dupl
 func (o *ClusterRecord) Update(db *gorm.DB, fields ...ClusterRecordDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":     o.TableID,
 		"cluster_id":   o.ClusterID,
 		"is_deleted":   o.IsDeleted,
@@ -786,7 +786,7 @@ func (o *ClusterRecord) Update(db *gorm.DB, fields ...ClusterRecordDBSchemaField
 		"disable_time": o.DisableTime,
 		"delete_time":  o.DeleteTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -805,7 +805,7 @@ func (o *ClusterRecord) Update(db *gorm.DB, fields ...ClusterRecordDBSchemaField
 
 // ClusterRecordUpdater is an ClusterRecord updates manager
 type ClusterRecordUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -813,7 +813,7 @@ type ClusterRecordUpdater struct {
 // nolint: dupl
 func NewClusterRecordUpdater(db *gorm.DB) ClusterRecordUpdater {
 	return ClusterRecordUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ClusterRecord{}),
 	}
 }

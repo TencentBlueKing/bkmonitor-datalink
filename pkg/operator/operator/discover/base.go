@@ -74,7 +74,7 @@ type CommonOptions struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
-	NodeNameExistsFunc     func(string) (string, bool)
+	CheckNodeNameFunc      func(string) (string, bool)
 	NodeLabelsFunc         func(string) map[string]string
 }
 
@@ -197,8 +197,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.NodeName = d.helper.MatchNodeName(origLabels)
 	}
 
-	if d.opts.NodeNameExistsFunc != nil {
-		nodeName, exist := d.opts.NodeNameExistsFunc(metricTarget.NodeName)
+	if d.opts.CheckNodeNameFunc != nil {
+		nodeName, exist := d.opts.CheckNodeNameFunc(metricTarget.NodeName)
 		if exist {
 			taskType = tasks.TaskTypeDaemonSet
 		}

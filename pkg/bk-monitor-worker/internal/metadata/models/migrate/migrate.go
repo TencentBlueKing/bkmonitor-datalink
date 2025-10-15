@@ -15,7 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
-func Migrate(_ context.Context, tables ...interface{}) {
+func Migrate(_ context.Context, tables ...any) {
 	myDb := mysql.GetDBSession().DB
 	myDb.AutoMigrate(tables...)
 }

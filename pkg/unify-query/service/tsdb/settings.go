@@ -50,6 +50,9 @@ const (
 	EsTimeoutConfigPath    = "elasticsearch.timeout"
 	EsMaxRoutingConfigPath = "elasticsearch.max_routing"
 	EsMaxSizeConfigPath    = "elasticsearch.max_size"
+
+	// query router 配置
+	QueryRouterForceVmClusterNameConfigPath = "query_router.force_vm_cluster_name"
 )
 
 var (
@@ -87,4 +90,6 @@ var (
 	EsTimeout    time.Duration
 	EsMaxRouting int
 	EsMaxSize    int
+
+	QueryRouterForceVmClusterName string
 )

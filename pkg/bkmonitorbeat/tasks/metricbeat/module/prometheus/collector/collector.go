@@ -11,6 +11,7 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -237,7 +238,7 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 }
 
 // getEventsFromFile 从文件获取指标
-func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, error) {
+func (m *MetricSet) getEventsFromFile(fileName string) (<-chan []common.MapStr, error) {
 	f, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
@@ -256,7 +257,7 @@ func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, er
 }
 
 // getEventsFromReader 从 reader 获取指标
-func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup func(), up bool) <-chan common.MapStr {
+func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup func(), up bool) <-chan []common.MapStr {
 	if m.MetricRelabelRemote != "" {
 		remoteRelabelConfigs, err := m.getRemoteRelabelConfigs()
 		if err != nil {
@@ -266,21 +267,51 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 	}
 
+	// 保留换行符 避免 parser 需要重新 append
 	scanner := bufio.NewScanner(metricsReader)
-	linesCh := make(chan string, 1)
-	go func() {
-		for scanner.Scan() {
-			linesCh <- scanner.Text()
+	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		if atEOF && len(data) == 0 {
+			return 0, nil, nil
 		}
-		close(linesCh)
-	}()
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			return i + 1, data[0 : i+1], nil
+		}
+		if atEOF {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
 
 	worker := m.workers
 	if worker <= 0 {
 		worker = 1
 	}
+
+	const maxBatchSize = 32
+	linesCh := make(chan []string, worker)
+
+	go func() {
+		batch := make([]string, 0, maxBatchSize)
+		for scanner.Scan() {
+			s := scanner.Text()
+			// 忽略注释行或者空行
+			if strings.HasPrefix(s, "#") || len(s) <= 1 {
+				continue
+			}
+			batch = append(batch, s)
+			if len(batch) >= maxBatchSize {
+				linesCh <- batch
+				batch = make([]string, 0, maxBatchSize)
+			}
+		}
+		if len(batch) > 0 {
+			linesCh <- batch
+		}
+		close(linesCh)
+	}()
+
 	milliTs := time.Now().UnixMilli()
-	eventChan := make(chan common.MapStr)
+	eventChan := make(chan []common.MapStr)
 
 	// 补充 up 指标文本
 	var total atomic.Int64
@@ -293,25 +324,37 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 			events = append(events, m.asEvents(CodeUp(define.CodeOK, m.logkvs()), milliTs)...)
 		}
 		events = append(events, m.asEvents(CodeHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
-		for i := 0; i < len(events); i++ {
-			eventChan <- events[i]
-		}
+		eventChan <- events
 	}
 
 	// 消费指标文本并生成事件
 	var produceErr atomic.Bool
 	consume := func() {
-		for line := range linesCh {
-			events, err := m.produceEvents(line, milliTs)
-			if err != nil {
-				logger.Warnf("failed to produce events: %v", err)
-				produceErr.Store(true)
-				continue
+		batch := make([]common.MapStr, 0, maxBatchSize)
+		for lines := range linesCh {
+			for i := 0; i < len(lines); i++ {
+				line := lines[i]
+				events, err := m.produceEvents(line, milliTs)
+				if err != nil {
+					logger.Warnf("failed to produce events: %v", err)
+					produceErr.Store(true)
+					continue
+				}
+
+				for j := 0; j < len(events); j++ {
+					batch = append(batch, events[j])
+					if len(batch) >= maxBatchSize {
+						total.Add(int64(len(batch)))
+						eventChan <- batch
+						batch = make([]common.MapStr, 0, maxBatchSize)
+					}
+				}
 			}
-			for j := 0; j < len(events); j++ {
-				eventChan <- events[j]
-				total.Add(1)
-			}
+		}
+
+		if len(batch) > 0 {
+			total.Add(int64(len(batch)))
+			eventChan <- batch
 		}
 	}
 
@@ -484,7 +527,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 
 	// 解析 prometheus 数据
 	if m.useTempFile {
-		summary["metrics_reader"] = define.MetricsReaderFunc(func() (<-chan common.MapStr, error) {
+		summary["metrics_reader"] = define.MetricsReaderFunc(func() (<-chan []common.MapStr, error) {
 			return m.getEventsFromFile(metricsFile.Name())
 		})
 	} else {
@@ -495,9 +538,9 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 }
 
 func (m *MetricSet) fillMetrics(summary common.MapStr, rc io.ReadCloser, up bool) {
-	events := make([]common.MapStr, 0)
-	for event := range m.getEventsFromReader(rc, func() {}, up) {
-		events = append(events, event)
+	ret := make([]common.MapStr, 0)
+	for events := range m.getEventsFromReader(rc, func() {}, up) {
+		ret = append(ret, events...)
 	}
-	summary["metrics"] = events
+	summary["metrics"] = ret
 }

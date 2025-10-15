@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/etcdsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/polarissd"
@@ -32,8 +33,9 @@ import (
 )
 
 type resourceScrapConfig struct {
-	Resource string
-	Config   config.ScrapeConfig
+	Namespace string
+	Resource  string
+	Config    config.ScrapeConfig
 }
 
 func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) {
@@ -42,7 +44,7 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 	}
 
 	var rscs []resourceScrapConfig
-	newRound := make(map[string][]byte) // 本轮获取到的数据
+	newRound := make(map[SecretKey][]byte) // 本轮获取到的数据
 	for _, secret := range configs.G().PromSDSecrets {
 		secData, err := c.getPromSDSecretData(secret)
 		if err != nil {
@@ -53,15 +55,16 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 		for resource, data := range secData {
 			sdc, err := unmarshalPromSdConfigs(data)
 			if err != nil {
-				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%s): %v", resource, err)
+				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%+v): %v", resource, err)
 				continue
 			}
 
 			newRound[resource] = data
 			for i := 0; i < len(sdc); i++ {
 				rscs = append(rscs, resourceScrapConfig{
-					Resource: resource,
-					Config:   sdc[i],
+					Namespace: resource.Namespace,
+					Resource:  resource.Key(),
+					Config:    sdc[i],
 				})
 			}
 		}
@@ -72,21 +75,25 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 	return rscs, !eq // changed
 }
 
-func (c *Operator) getPromSDSecretDataByName(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretDataByName(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
 	obj, err := secretClient.Get(c.ctx, sdSecret.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	secData := make(map[string][]byte)
+	secData := make(map[SecretKey][]byte)
 	for file, data := range obj.Data {
-		secData[secretKeyFunc(sdSecret.Namespace, sdSecret.Name, file)] = data
+		secData[SecretKey{
+			Namespace: sdSecret.Namespace,
+			Name:      sdSecret.Name,
+			File:      file,
+		}] = data
 	}
 	return secData, nil
 }
 
-func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
 	objList, err := secretClient.List(c.ctx, metav1.ListOptions{
 		LabelSelector: sdSecret.Selector,
@@ -95,16 +102,20 @@ func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) 
 		return nil, err
 	}
 
-	secData := make(map[string][]byte)
+	secData := make(map[SecretKey][]byte)
 	for _, obj := range objList.Items {
 		for file, data := range obj.Data {
-			secData[secretKeyFunc(obj.Namespace, obj.Name, file)] = data
+			secData[SecretKey{
+				Namespace: obj.Namespace,
+				Name:      obj.Name,
+				File:      file,
+			}] = data
 		}
 	}
 	return secData, nil
 }
 
-func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	if !sdSecret.Validate() {
 		return nil, fmt.Errorf("invalid sdconfig (%#v)", sdSecret)
 	}
@@ -115,12 +126,18 @@ func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[strin
 	return c.getPromSDSecretDataBySelector(sdSecret)
 }
 
-func secretKeyFunc(namespace, name, file string) string {
-	return fmt.Sprintf("%s/%s/%s", namespace, name, file)
+type SecretKey struct {
+	Namespace string
+	Name      string
+	File      string
+}
+
+func (sk SecretKey) Key() string {
+	return fmt.Sprintf("%s/%s", sk.Name, sk.File)
 }
 
 func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {
-	var objs []interface{}
+	var objs []any
 	if err := yaml.Unmarshal(b, &objs); err != nil {
 		return nil, err
 	}
@@ -150,7 +167,7 @@ func castDuration(d model.Duration) string {
 	return d.String()
 }
 
-func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
+func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig any, kind string, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
 	if len(rsc.Config.MetricRelabelConfigs) != 0 {
 		for _, cfg := range rsc.Config.MetricRelabelConfigs {
@@ -162,7 +179,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 	monitorMeta := define.MonitorMeta{
 		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      kind,
-		Namespace: "-", // 不标记 namespace
+		Namespace: rsc.Namespace,
 		Index:     index,
 	}
 	// 默认使用 custommetric dataid
@@ -200,7 +217,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
-		NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+		CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 		NodeLabelsFunc:         c.objectsController.NodeLabels,
 	}
 
@@ -216,6 +233,16 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		dis = polarissd.New(c.ctx, &polarissd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*polarissd.SDConfig),
+			HTTPClientConfig: httpClientConfig,
+		})
+	case monitorKindEtcdSd:
+		sdc := sdConfig.(*etcdsd.SDConfig)
+		sdc.IPFilter = func(s string) bool {
+			return c.objectsController.CheckPodIP(s) || c.objectsController.CheckNodeIP(s)
+		}
+		dis = etcdsd.New(c.ctx, &etcdsd.Options{
+			CommonOptions:    commonOpts,
+			SDConfig:         sdc,
 			HTTPClientConfig: httpClientConfig,
 		})
 	default:
@@ -284,7 +311,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
-			NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+			CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 			NodeLabelsFunc:         c.objectsController.NodeLabels,
 		},
 		KubeConfig: configs.G().KubeConfig,
@@ -373,7 +400,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindHttpSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindHttpSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
@@ -385,10 +411,20 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindPolarisSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindPolarisSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create polaris_sd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, sd)
+
+			case *etcdsd.SDConfig:
+				if !kinds.Allow(monitorKindEtcdSd) {
+					continue
+				}
+				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindEtcdSd, idx)
+				if err != nil {
+					logger.Errorf("failed to create etcd_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, sd)
@@ -397,7 +433,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindKubernetesSd) {
 					continue
 				}
-
 				sd, err := c.createKubernetesSdDiscover(rsc, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create kubernetes_sd discover: %v", err)

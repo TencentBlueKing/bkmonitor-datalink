@@ -45,6 +45,25 @@ var (
 		},
 		[]string{"record_type", "id"},
 	)
+
+	beatSentBytesSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: define.MonitoringNamespace,
+			Name:      "beat_sent_bytes_size",
+			Help:      "beat sent body bytes size",
+			Buckets:   define.DefSizeDistribution,
+		},
+		[]string{"id"},
+	)
+
+	beatSentBytesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitoringNamespace,
+			Name:      "beat_sent_bytes_total",
+			Help:      "beat sent body bytes total",
+		},
+		[]string{"id"},
+	)
 )
 
 var DefaultMetricMonitor = &metricMonitor{}
@@ -61,4 +80,9 @@ func (m *metricMonitor) ObserveSentDuration(t time.Time) {
 
 func (m *metricMonitor) AddHandledEventCounter(n int, rtype define.RecordType, dataId int32) {
 	handleEventTotal.WithLabelValues(rtype.S(), strconv.Itoa(int(dataId))).Add(float64(n))
+}
+
+func (m *metricMonitor) ObserveBeatSentBytes(dataId int32, n float64) {
+	beatSentBytesSize.WithLabelValues(strconv.Itoa(int(dataId))).Observe(n)
+	beatSentBytesTotal.WithLabelValues(strconv.Itoa(int(dataId))).Add(n)
 }

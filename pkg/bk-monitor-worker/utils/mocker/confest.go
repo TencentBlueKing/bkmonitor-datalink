@@ -27,7 +27,7 @@ func InitTestDBConfig(filePath string) {
 func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 	redisClient := &RedisClientMocker{
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
-		HMGetValue:                   []interface{}{},
+		HMGetValue:                   []any{},
 		SetMap:                       map[string]mapset.Set[string]{},
 		HKeysValue:                   []string{},
 	}
@@ -42,7 +42,7 @@ func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 func DependenceRedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 	redisClient := &RedisClientMocker{
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
-		HMGetValue:                   []interface{}{},
+		HMGetValue:                   []any{},
 		SetMap:                       map[string]mapset.Set[string]{},
 		HKeysValue:                   []string{},
 	}

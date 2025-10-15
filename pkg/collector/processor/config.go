@@ -12,20 +12,14 @@ package processor
 type Configs []Config
 
 type Config struct {
-	Name   string                 `config:"name"`
-	Config map[string]interface{} `config:"config"`
+	Name   string         `config:"name"`
+	Config map[string]any `config:"config"`
 }
 
 type IDConfig struct {
 	ID        string   `config:"id"`
 	Processor []Config `config:"processor"`
 }
-
-const (
-	KeyInstance = "bk.instance.id"
-	KeyService  = "service.name"
-	KeyKind     = "kind"
-)
 
 type SubConfig struct {
 	Type     string           `config:"type"`

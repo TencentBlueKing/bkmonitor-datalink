@@ -133,6 +133,12 @@ processor:
           {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
           - "{{ drop_key }}"
           {%- endfor %}
+      default_value:
+        {%- for default_value_config in  resource_filter_config.default_value %}
+        - type: "{{ default_value_config.type }}"
+          key: "{{ default_value_config.key }}"
+          value: "{{ default_value_config.value }}"
+        {%- endfor %}
 {%- endif %}
 
 {% if resource_fill_dimensions_config is defined %}
@@ -145,12 +151,7 @@ processor:
         {%- endfor %}
       from_cache:
         key: "{{ resource_fill_dimensions_config.from_cache.key }}"
-        dimensions:
-          {%- for dimension_key in resource_fill_dimensions_config.from_cache.dimensions %}
-          - "{{ dimension_key }}"
-          {%- endfor %}
         cache:
-          key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
           url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
           timeout: "{{ resource_fill_dimensions_config.from_cache.cache.timeout }}"
           interval: "{{ resource_fill_dimensions_config.from_cache.cache.interval }}"

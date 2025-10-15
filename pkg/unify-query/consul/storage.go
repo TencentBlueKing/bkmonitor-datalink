@@ -11,16 +11,15 @@ package consul
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
-var (
-	storagePath = "storage"
-)
+var storagePath = "storage"
 
 // Storage
 type Storage struct {
@@ -57,7 +56,7 @@ func GetStorageInfo() (map[string]*Storage, error) {
 }
 
 // WatchStorageInfo
-func WatchStorageInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchStorageInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, storagePath)
 	return WatchChange(ctx, path)
 }

@@ -14,6 +14,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 type ResourceConf struct {
 	Name  cmdb.Resource `json:"name"`
 	Index cmdb.Index    `json:"index"`
+	Info  cmdb.Index    `json:"info"`
 }
 
 type RelationConf struct {

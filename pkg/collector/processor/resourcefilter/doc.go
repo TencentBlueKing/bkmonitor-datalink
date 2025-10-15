@@ -53,9 +53,7 @@ processor:
       config:
         from_cache:
           key: "resource.net.host.ip|resource.client.ip"
-          dimensions: ["k8s.namespace.name","k8s.pod.name","k8s.pod.ip","k8s.bcs.cluster.id"]
           cache:
-            key: "k8s.pod.ip"
             url: http://localhost:8080/pods
             interval: "1m"
             timeout: "1m"
@@ -66,6 +64,26 @@ processor:
         from_record:
           - source: "request.client.ip"
             destination: "resource.client.ip"
+
+    # FromMetadata Action
+    - name: "resource_filter/from_metadata"
+      config:
+        from_metadata:
+          keys: ["*"]
+
+	# FromToken Action
+	- name: "resource_filter/from_token"
+	  config:
+		from_token:
+		  keys: "app_name"
+
+    # DefaultValue Action
+    - name: "resource_filter/default_value"
+      config:
+        default_value:
+          - type: string
+            key: resource.service.name
+            value: "unknown_service"
 */
 
 package resourcefilter

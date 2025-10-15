@@ -136,7 +136,6 @@ type recorder struct {
 
 	metricName          string
 	dataID              int32
-	storID              string
 	gcInterval          time.Duration
 	maxSeries           int
 	buckets             []float64
@@ -233,7 +232,6 @@ func (r *recorder) Set(dims map[string]string, value float64) bool {
 	defer r.mut.Unlock()
 
 	if len(r.statsMap) >= r.maxSeries {
-		logger.Debugf("got exceeded series labels: %v", dims)
 		DefaultMetricMonitor.IncSeriesExceededCounter(r.dataID)
 		r.exceeded++
 		return false
@@ -244,7 +242,6 @@ func (r *recorder) Set(dims map[string]string, value float64) bool {
 		if r.enableLimitGrowRate() {
 			r.seriesGrowthRate += 1
 			if r.seriesGrowthRate > r.maxSeriesGrowthRate {
-				logger.Debugf("growth rate exceeded, series labels: %v", dims)
 				DefaultMetricMonitor.IncSeriesExceededCounter(r.dataID)
 				r.exceeded++
 				return false

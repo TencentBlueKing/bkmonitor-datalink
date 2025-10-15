@@ -63,18 +63,16 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err := redis.SetInstance(s.ctx, ServiceName, options)
 	if err != nil {
-		log.Errorf(context.TODO(), "redis service init failed for->[%s]", err)
+		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
 		return
 	}
 
 	// redis 是关键依赖路径，如果没有则直接报错
-	out, err := redis.Ping(s.ctx)
+	_, err = redis.Ping(s.ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "redis ping errors: %s", err.Error())
-		panic(err)
+		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
+		return
 	}
-
-	log.Warnf(context.TODO(), "redis service reloaded or start success, with %s", out)
 }
 
 func (s *Service) Wait() {
@@ -86,5 +84,4 @@ func (s *Service) Close() {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
-	log.Infof(context.TODO(), "redis service context cancel func called.")
 }

@@ -27,7 +27,7 @@ type Row struct {
 	Name    string            `json:"name,omitempty" msg:"name"`
 	Tags    map[string]string `json:"tags,omitempty" msg:"tags"`
 	Columns []string          `json:"columns,omitempty" msg:"columns"`
-	Values  [][]interface{}   `json:"values,omitempty" msg:"values"`
+	Values  [][]any           `json:"values,omitempty" msg:"values"`
 	Partial bool              `json:"partial,omitempty" msg:"partial"`
 }
 

@@ -11,10 +11,11 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	redis "github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 const (

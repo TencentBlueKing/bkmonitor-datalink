@@ -81,6 +81,7 @@ type Config struct {
 	AdminAddr        string `config:"admin_addr"`
 	// 并发限制配置
 	ConcurrencyLimit ConcurrencyLimitConfig `config:"concurrency_limit"`
+	JsonLib          string                 `config:"jsonlib"`
 
 	MetricbeatWorkers        int  `config:"metricbeat_workers"`
 	MetricbeatSpreadWorkload bool `config:"metricbeat_spread_workload"`
@@ -121,6 +122,9 @@ type Config struct {
 	SocketSnapshotTask *SocketSnapshotConfig  `config:"socketsnapshot_task"`
 	ShellHistoryTask   *ShellHistoryConfig    `config:"shellhistory_task"`
 	RpmPackageTask     *RpmPackageConfig      `config:"rpmpackage_task"`
+	TimeSyncTask       *TimeSyncConfig        `config:"timesync_task"`
+	DmesgTask          *DmesgConfig           `config:"dmesg_task"`
+	SelfStatsTask      *SelfStatsConfig       `config:"selfstats_task"`
 }
 
 // NewConfig : new config struct
@@ -158,6 +162,9 @@ func NewConfig() *Config {
 	config.SocketSnapshotTask = NewSocketSnapshotConfig(config)
 	config.ShellHistoryTask = NewShellHistoryConfig(config)
 	config.RpmPackageTask = NewRpmPackageConfig(config)
+	config.TimeSyncTask = NewTimeSyncConfig(config)
+	config.DmesgTask = NewDmesgConfig(config)
+	config.SelfStatsTask = NewSelfStatsConfig(config)
 
 	return config
 }

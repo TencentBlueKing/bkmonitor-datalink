@@ -68,6 +68,7 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 			r.Token = define.Token{Original: tk}
 		}
 	}
+	r.Metadata = tokenparser.FromGrpcUserMetadata(md)
 	prettyprint.Traces(traces)
 
 	code, processorName, err := s.Validate(r)

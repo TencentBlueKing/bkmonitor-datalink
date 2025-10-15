@@ -59,6 +59,12 @@ config_templates:
               items:
                 title: interface
                 type: string
+            mountpoint_black_list:
+              title: mountpoint_black_list
+              type: array
+              items:
+                title: interface
+                type: string
             corefile_pattern:
               title: corefile_pattern
               type: string
@@ -70,6 +76,9 @@ config_templates:
               type: string
             enable_audit_tasks:
               title: enable_audit_tasks
+              type: string
+            metricbeat_align_ts:
+              title: metricbeat_align_ts
               type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf

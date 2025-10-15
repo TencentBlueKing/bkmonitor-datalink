@@ -17,6 +17,7 @@ output.bkpipe:
   endpoint: {{ plugin_path.endpoint }}
   synccfg: true
   fastmode: true
+  concurrency: 6
 
 seccomp.enabled: false
 
@@ -95,11 +96,6 @@ bk-collector:
     batch_size: 1024
     labels: []
     metric_relabel_configs:
-
-
-  # ================================ Cluster =================================
-  cluster:
-    disabled: true
 
 
   # ================================= Proxy ==================================
@@ -185,28 +181,6 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      remotewrite:
-        enabled: true
-      zipkin:
-        enabled: true
-      skywalking:
-        enabled: false
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: false
-
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"
@@ -241,7 +215,7 @@ bk-collector:
             - "resource.bk.data.token"
 
     # ResourceFilter: 资源过滤处理器
-    - name: "resource_filter/drop_token"
+    - name: "resource_filter/logs"
       config:
         assemble:
         drop:
@@ -256,6 +230,15 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
             - "resource.process.pid"
+        from_token:
+          keys:
+            - "app_name"
+
+    # MetricsFilter: 指标过滤处理器
+    - name: "metrics_filter/relabel"
+
+    # MethodFilter: method 过滤处理器（做 span 丢弃处理）
+    - name: "method_filter/drop_span
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
@@ -301,6 +284,9 @@ bk-collector:
     # Attribute_filter 应用层级的配置
     - name: "attribute_filter/app"
 
+    # Attribute_filter 日志数据源的 tag 配置
+    - name: "attribute_filter/logs"
+
     # PprofTranslator: pprof 协议转换器
     - name: "pprof_translator/common"
       config:
@@ -308,6 +294,11 @@ bk-collector:
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
+
+    # TextSpliter: 文本分割器
+    - name: "text_spliter/common"
+      config:
+        separator: "\n"
 
     # RateLimiter: 流控处理器
     - name: "rate_limiter/token_bucket"
@@ -333,6 +324,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "method_filter/drop_span"
         - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
         - "db_filter/common"
@@ -356,6 +348,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "resource_filter/metrics"
+        - "metrics_filter/relabel"
 
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
@@ -365,7 +358,9 @@ bk-collector:
       type: "logs"
       processors:
         - "token_checker/aes256"
-        - "resource_filter/drop_token"
+        - "rate_limiter/token_bucket"
+        - "resource_filter/logs"
+        - "attribute_filter/logs"
 
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"
@@ -378,6 +373,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "metrics_filter/relabel"
 
     - name: "proxy_pipeline/common"
       type: "proxy"
@@ -415,6 +411,13 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
 
+    - name: "logpush_pipeline/common"
+      type: "logpush"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+        - "text_spliter/common"
+
   # =============================== Exporter =================================
   exporter:
     queue:
@@ -422,4 +425,5 @@ bk-collector:
       traces_batch_size: 600
       logs_batch_size: 100
       proxy_batch_size: 3000
+      profiles_batch_size: 50
       flush_interval: 3s

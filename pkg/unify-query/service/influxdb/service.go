@@ -47,9 +47,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var (
-		err error
-	)
+	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}
@@ -69,19 +67,16 @@ func (s *Service) Reload(ctx context.Context) {
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload es storage failed for->[%s]", err)
-		return
 	}
 
 	err = s.loopReloadTableInfo(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload table info failed,error:%s", err)
-		return
 	}
 
 	err = s.loopReloadRouter(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload query router failed,error:%s", err)
-		return
 	}
 
 	err = s.loopReloadBCSInfo(s.ctx)
@@ -249,16 +244,14 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 InfluxDBRouter
 func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
-	var (
-		dialOpts = []grpc.DialOption{
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(),
-			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize),
-				grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize),
-			),
-		}
-	)
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize),
+			grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize),
+		),
+	}
 
 	ir := inner.GetInfluxDBRouter()
 	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts)
@@ -313,7 +306,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 SpaceTsDbRouter
 func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
-	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize, true)
+	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize, IsCache)
 	if err != nil {
 		return err
 	}
@@ -338,15 +331,11 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 				err = ir.ReloadAllKey(ctx, true)
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] TimeTicker reload with error, %v", err)
-				} else {
-					log.Infof(ctx, "[SpaceTSDB Router] TimeTicker reload")
 				}
 			case msg := <-ch:
 				err = ir.ReloadByChannel(ctx, msg.Channel, msg.Payload)
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
-				} else {
-					log.Infof(ctx, "[SpaceTSDB Router] Subscribe msg: %s, key: %s", msg.String(), msg.Payload)
 				}
 			}
 		}

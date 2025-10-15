@@ -26,6 +26,7 @@ import (
 type portEvent struct {
 	conns    []process.FileSocket
 	procName string
+	username string
 	pid      int32
 	dims     map[string]string
 	tags     map[string]string
@@ -55,6 +56,7 @@ func (e portEvent) AsMapStr() []common.MapStr {
 			}
 			dimensions["pid"] = fmt.Sprintf("%d", e.pid)
 			dimensions["process_name"] = e.procName
+			dimensions["process_username"] = e.username
 			dimensions["listen_address"] = conn.Address
 			dimensions["listen_port"] = conn.Port
 

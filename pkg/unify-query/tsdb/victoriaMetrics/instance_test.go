@@ -11,7 +11,6 @@ package victoriaMetrics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"testing"
@@ -21,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -31,7 +31,7 @@ var (
 	vmRt        string               = "2_bcs_prom_computation_result_table_00000"
 
 	instance = &Instance{
-		url:     mock.VmUrl,
+		url:     mock.BkBaseUrl,
 		timeout: time.Minute * 5,
 		curl:    &curl.HttpCurl{},
 	}
@@ -99,11 +99,11 @@ func TestInstance_DirectQueryRange(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	mock.Vm.Set(map[string]any{
-		`query_range:17301804581730184058300sum(increase({__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}[1m])) by (pod)`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":10,"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-5vsjr"},"values":[[1730181358,"0.044650242"],[1730181658,"9.545676339999996"],[1730181958,"10.425697591999999"],[1730182258,"3.0199220649999887"],[1730182558,"6.747614702000007"],[1730182858,"6.133533471000021"],[1730183158,"8.81771028990002"],[1730183458,"10.132931282100003"],[1730183758,"3.5652613130999953"],[1730184058,"7.727230415000008"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-m9w6t"},"values":[[1730181658,"12.404203941999995"],[1730181958,"5.875412668000003"],[1730182258,"5.044704286999988"],[1730182558,"8.997354142000006"],[1730182858,"7.50822000010001"],[1730183158,"5.585088850900007"],[1730183458,"9.202267196999998"],[1730183758,"5.616763429000031"],[1730184058,"6.6475119441000174"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-nmx72"},"values":[[1730181358,"0.064899209"],[1730181658,"10.086907809000003"],[1730181958,"3.9349868299999997"],[1730182258,"7.714302543999992"],[1730182558,"5.458358707999992"],[1730182858,"9.634142672100012"],[1730183158,"6.135633479999996"],[1730183458,"8.975162369999993"],[1730183758,"5.904537907999952"],[1730184058,"6.029346786000019"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-qq8nq"},"values":[[1730181658,"7.466532553"],[1730181958,"5.734228741999999"],[1730182258,"5.188748330999999"],[1730182558,"6.4631616860000065"],[1730182858,"6.180980588000011"],[1730183158,"5.984101682000016"],[1730183458,"6.966740698999985"],[1730183758,"5.611999492999985"],[1730184058,"4.7183045600000355"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-x2wfd"},"values":[[1730180458,"10.2905197900036"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-6lfvd"},"values":[[1730180758,"7.1915653179999985"],[1730181058,"4.9068547820000035"],[1730181358,"6.607650964000001"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-dz9t7"},"values":[[1730180758,"5.833707484999998"],[1730181058,"4.507901762000003"],[1730181358,"4.412351498000007"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-nlzmc"},"values":[[1730180758,"7.477196797999998"],[1730181058,"7.134382289999998"],[1730181358,"4.839466496"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-qzqfz"},"values":[[1730180758,"6.606840334000001"],[1730181058,"5.034415747000004"],[1730181358,"4.916271132000006"]]},{"metric":{"pod":"bk-datalink-unify-query-test-66f7ccb78d-jf4m2"},"values":[[1730180458,"3.661851597"],[1730180758,"0.3898651899999992"],[1730181058,"0.41139455499999933"]]}]},"stats":{"seriesFetched":"14"}}],"select_fields_order":[],"sql":"sum (increase({__name__=\"container_cpu_usage_seconds_total_value\", result_table_id=\"2_bcs_prom_computation_result_table_00000\", container=\"unify-query\"}[1m])) by(pod)","total_record_size":13832,"timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","result_table_ids":["2_bcs_prom_computation_result_table_00000"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		`query_range:17301804581730184058300sum(increase({__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}[1m])) by (pod)`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":10,"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-5vsjr"},"values":[[1730181358,"0.044650242"],[1730181658,"9.545676339999996"],[1730181958,"10.425697591999999"],[1730182258,"3.0199220649999887"],[1730182558,"6.747614702000007"],[1730182858,"6.133533471000021"],[1730183158,"8.81771028990002"],[1730183458,"10.132931282100003"],[1730183758,"3.5652613130999953"],[1730184058,"7.727230415000008"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-m9w6t"},"values":[[1730181658,"12.404203941999995"],[1730181958,"5.875412668000003"],[1730182258,"5.044704286999988"],[1730182558,"8.997354142000006"],[1730182858,"7.50822000010001"],[1730183158,"5.585088850900007"],[1730183458,"9.202267196999998"],[1730183758,"5.616763429000031"],[1730184058,"6.6475119441000174"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-nmx72"},"values":[[1730181358,"0.064899209"],[1730181658,"10.086907809000003"],[1730181958,"3.9349868299999997"],[1730182258,"7.714302543999992"],[1730182558,"5.458358707999992"],[1730182858,"9.634142672100012"],[1730183158,"6.135633479999996"],[1730183458,"8.975162369999993"],[1730183758,"5.904537907999952"],[1730184058,"6.029346786000019"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-qq8nq"},"values":[[1730181658,"7.466532553"],[1730181958,"5.734228741999999"],[1730182258,"5.188748330999999"],[1730182558,"6.4631616860000065"],[1730182858,"6.180980588000011"],[1730183158,"5.984101682000016"],[1730183458,"6.966740698999985"],[1730183758,"5.611999492999985"],[1730184058,"4.7183045600000355"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-x2wfd"},"values":[[1730180458,"10.2905197900036"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-6lfvd"},"values":[[1730180758,"7.1915653179999985"],[1730181058,"4.9068547820000035"],[1730181358,"6.607650964000001"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-dz9t7"},"values":[[1730180758,"5.833707484999998"],[1730181058,"4.507901762000003"],[1730181358,"4.412351498000007"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-nlzmc"},"values":[[1730180758,"7.477196797999998"],[1730181058,"7.134382289999998"],[1730181358,"4.839466496"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-qzqfz"},"values":[[1730180758,"6.606840334000001"],[1730181058,"5.034415747000004"],[1730181358,"4.916271132000006"]]},{"metric":{"pod":"bk-datalink-unify-query-test-66f7ccb78d-jf4m2"},"values":[[1730180458,"3.661851597"],[1730180758,"0.3898651899999992"],[1730181058,"0.41139455499999933"]]}]},"stats":{"seriesFetched":"14"}}],"select_fields_order":[],"sql":"sum (increase({__name__=\"container_cpu_usage_seconds_total_value\", result_table_id=\"2_bcs_prom_computation_result_table_00000\", container=\"unify-query\"}[1m])) by(pod)","total_record_size":13832,"timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","bk_biz_ids":["100801",555],"result_table_ids":["2_bcs_prom_computation_result_table_00000"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 	})
 
 	instance := &Instance{
-		url:     mock.VmUrl,
+		url:     mock.BkBaseUrl,
 		timeout: time.Minute * 5,
 		curl:    &curl.HttpCurl{},
 	}
@@ -120,7 +120,7 @@ func TestInstance_DirectQueryRange(t *testing.T) {
 			}
 			metadata.SetExpand(ctx, expand)
 
-			res, err := instance.DirectQueryRange(ctx, c.promql, start, end, step)
+			res, _, err := instance.DirectQueryRange(ctx, c.promql, start, end, step)
 			if err != nil {
 				log.Fatalf(ctx, err.Error())
 				return

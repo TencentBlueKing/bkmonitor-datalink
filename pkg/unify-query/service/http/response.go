@@ -11,15 +11,13 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"unsafe"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -28,9 +26,13 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
-	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
-	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUid, user.Source)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
+
+	if _, ok := r.c.Get(proxy.ContextConfigUnifyResponseProcess); ok {
+		r.c.Set(proxy.ContextKeyResponseError, err)
+		return
+	}
 
 	_, span := trace.NewSpan(ctx, "response-failed")
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
@@ -39,17 +41,39 @@ func (r *response) failed(ctx context.Context, err error) {
 	})
 }
 
-func (r *response) success(ctx context.Context, data interface{}) {
-	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
+func (r *response) success(ctx context.Context, data any) {
 	user := metadata.GetUser(ctx)
-	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid, user.Source)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
+	isUnifyRespProcess := r.isConfigUnifyRespProcess(r.c)
+	if isUnifyRespProcess {
+		r.c.Set(proxy.ContextKeyResponseData, data)
+		return
+	}
 	r.c.JSON(http.StatusOK, data)
+}
+
+func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
+	_, isUnifyRespProcess := c.Get(proxy.ContextConfigUnifyResponseProcess)
+	return isUnifyRespProcess
 }
 
 // ListData 数据返回格式
 type ListData struct {
-	Total   int64            `json:"total,omitempty"`
-	List    []map[string]any `json:"list" json:"list,omitempty"`
-	TraceID string           `json:"trace_id,omitempty"`
-	Status  *metadata.Status `json:"status,omitempty" json:"status,omitempty"`
+	Total              int64                       `json:"total"`
+	List               []map[string]any            `json:"list"`
+	Done               bool                        `json:"done"`
+	TraceID            string                      `json:"trace_id,omitempty"`
+	Status             *metadata.Status            `json:"status"`
+	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+}
+
+// DataResponse 返回数据结构体
+type DataResponse struct {
+	Data    any    `json:"data"`
+	TraceID string `json:"trace_id,omitempty"`
+}
+
+type ErrResponse struct {
+	TraceID string `json:"trace_id,omitempty"`
+	Err     string `json:"error"`
 }

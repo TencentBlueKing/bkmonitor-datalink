@@ -26,7 +26,7 @@ import (
 
 func (p *Proxy) V2PushRoute(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}
@@ -74,20 +74,21 @@ func (p *Proxy) V2PushRoute(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		writeResponse(w, err.Error(), int(code))
 		logger.Warnf("failed to run pre-check processors, code=%d, dataid=%v, ip=%v, error %s", code, pd.DataId, ip, err)
-		DefaultMetricMonitor.IncPreCheckFailedCounter(processorName, r.Token.Original, code)
+		DefaultMetricMonitor.IncPreCheckFailedCounter(processorName, r.Token.Original, pd.DataId, code)
 		return
 	}
 
 	globalRecords.Push(r)
-	recordMetrics(pd.DataId, start, bufLen)
+	recordMetrics(r.Token, start, bufLen)
 	writeResponse(w, "", http.StatusOK)
 }
 
-func recordMetrics(id int64, t time.Time, n int) {
-	DefaultMetricMonitor.AddReceivedBytesCounter(float64(n), id)
-	DefaultMetricMonitor.ObserveBytesDistribution(float64(n), id)
-	DefaultMetricMonitor.ObserveHandledDuration(t, id)
-	DefaultMetricMonitor.IncHandledCounter(id)
+func recordMetrics(token define.Token, t time.Time, n int) {
+	DefaultMetricMonitor.AddReceivedBytesCounter(float64(n), int64(token.ProxyDataId))
+	DefaultMetricMonitor.ObserveBytesDistribution(float64(n), int64(token.ProxyDataId))
+	DefaultMetricMonitor.ObserveHandledDuration(t, int64(token.ProxyDataId))
+	DefaultMetricMonitor.IncHandledCounter(int64(token.ProxyDataId))
+	define.SetTokenInfo(token)
 }
 
 type responseData struct {

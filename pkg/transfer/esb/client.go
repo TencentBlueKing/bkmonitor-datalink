@@ -19,6 +19,7 @@ import (
 type Client struct {
 	commonArgs *CommonArgs
 	agent      *sling.Sling
+	conf       define.Configuration
 }
 
 // CommonArgs :
@@ -60,7 +61,7 @@ func NewClientWithDoer(conf define.Configuration, doer sling.Doer) *Client {
 			UserName:          conf.GetString(ConfESBUserNameKey),
 			BkSupplierAccount: conf.GetString(ConfESBBkSupplierAccount),
 		},
-		agent: sling.New().Base(conf.GetString(ConfESBAddress)).Path("/api/c/compapi/v2/").Doer(doer),
-		// agent: sling.New().Base(conf.GetString(cmdb)).Path("/api/c/compapi/v3/").Doer(doer),
+		agent: sling.New().Base(conf.GetString(ConfESBAddress)).Doer(doer),
+		conf:  conf,
 	}
 }

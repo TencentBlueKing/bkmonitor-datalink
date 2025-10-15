@@ -82,11 +82,12 @@ type BatchQueue struct {
 
 // Config 不同类型的数据大小不同 因此要允许为每种类型单独设置队列批次
 type Config struct {
-	MetricsBatchSize int           `config:"metrics_batch_size" mapstructure:"metrics_batch_size"`
-	LogsBatchSize    int           `config:"logs_batch_size" mapstructure:"logs_batch_size"`
-	TracesBatchSize  int           `config:"traces_batch_size" mapstructure:"traces_batch_size"`
-	ProxyBatchSize   int           `config:"proxy_batch_size" mapstructure:"proxy_batch_size"`
-	FlushInterval    time.Duration `config:"flush_interval" mapstructure:"flush_interval"`
+	MetricsBatchSize  int           `config:"metrics_batch_size" mapstructure:"metrics_batch_size"`
+	LogsBatchSize     int           `config:"logs_batch_size" mapstructure:"logs_batch_size"`
+	TracesBatchSize   int           `config:"traces_batch_size" mapstructure:"traces_batch_size"`
+	ProxyBatchSize    int           `config:"proxy_batch_size" mapstructure:"proxy_batch_size"`
+	ProfilesBatchSize int           `config:"profiles_batch_size" mapstructure:"profiles_batch_size"`
+	FlushInterval     time.Duration `config:"flush_interval" mapstructure:"flush_interval"`
 }
 
 func NewBatchQueue(conf Config, fn func(string) Config) Queue {
@@ -124,6 +125,16 @@ func (bq *BatchQueue) resize(rtype define.RecordType, token string, backup int) 
 		if v.TracesBatchSize > 0 && batchSize != v.TracesBatchSize {
 			batchSize = v.TracesBatchSize
 			logger.Infof("resize traces batch, token=%s, prev.size=%d, curr.size=%d", token, backup, batchSize)
+		}
+	case define.RecordProxy:
+		if v.ProxyBatchSize > 0 && batchSize != v.ProxyBatchSize {
+			batchSize = v.ProxyBatchSize
+			logger.Infof("resize proxy batch, token=%s, prev.size=%d, curr.size=%d", token, backup, batchSize)
+		}
+	case define.RecordProfiles:
+		if v.ProfilesBatchSize > 0 && batchSize != v.ProfilesBatchSize {
+			batchSize = v.ProfilesBatchSize
+			logger.Infof("resize profiles batch, token=%s, prev.size=%d, curr.size=%d", token, backup, batchSize)
 		}
 	default: // Metrics
 		if v.MetricsBatchSize > 0 && batchSize != v.MetricsBatchSize {
@@ -187,7 +198,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			}
 
 		case <-ticker.C:
-			if len(data) <= 0 {
+			if len(data) == 0 {
 				continue
 			}
 			sentOut()
@@ -209,7 +220,7 @@ func (bq *BatchQueue) Close() {
 }
 
 func (bq *BatchQueue) Put(events ...define.Event) {
-	if len(events) <= 0 {
+	if len(events) == 0 {
 		return
 	}
 
@@ -230,6 +241,8 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 			batchSize = bq.conf.TracesBatchSize
 		case define.RecordProxy:
 			batchSize = bq.conf.ProxyBatchSize
+		case define.RecordProfiles:
+			batchSize = bq.conf.ProfilesBatchSize
 		default:
 			batchSize = 100
 		}

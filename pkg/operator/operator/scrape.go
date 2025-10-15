@@ -65,17 +65,19 @@ func parseMetricName(s string) string {
 	return ""
 }
 
-func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, endpoint string, workers int, topn int) []scrapeAnalyze {
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, endpoint string, workers, topn int) []scrapeAnalyze {
 	ch := c.scrapeLines(ctx, namespace, monitor, endpoint, workers)
 
 	stats := make(map[string]int)
 	sample := make(map[string]string)
+
 	for line := range ch {
 		s := parseMetricName(line)
-		if s != "" {
-			stats[s]++
-			sample[s] = line
+		if s == "" {
+			continue
 		}
+		stats[s]++
+		sample[s] = line
 	}
 
 	ret := make([]scrapeAnalyze, 0, len(stats))

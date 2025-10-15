@@ -180,7 +180,7 @@ func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName 
 	return configs
 }
 
-func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName string) []RelabelConfig {
+func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []PodObject, podName string) []RelabelConfig {
 	workloadRefs := make(WorkloadRefs, 0, len(pods))
 
 	for _, pod := range pods {
@@ -210,7 +210,7 @@ func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []
 	return oc.getPodRelabelConfigs(pods, "", annotations, labels)
 }
 
-func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string, annotations, labels []string) []RelabelConfig {
+func (oc *ObjectsController) getPodRelabelConfigs(pods []PodObject, podName string, annotations, labels []string) []RelabelConfig {
 	podInfoRefs := make(PodInfoRefs, 0)
 
 	parseFunc := func(s string) func(string) string {
@@ -224,7 +224,7 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string,
 
 		// 出错原路返回
 		return func(input string) string {
-			var obj interface{}
+			var obj any
 			err := json.Unmarshal([]byte(input), &obj)
 			if err != nil {
 				return input
@@ -310,7 +310,7 @@ func (oc *ObjectsController) getContainerRelabelConfigs(nodeName string) []Relab
 			containerRefs = append(containerRefs, ContainerInfoRef{
 				ContainerID:     container.ID,
 				ContainerName:   container.Name,
-				ContainerImage:  container.Image,
+				ContainerImage:  container.ImageID,
 				RefPodName:      pod.ID.Name,
 				RefPodNamespace: pod.ID.Namespace,
 			})

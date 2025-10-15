@@ -21,9 +21,9 @@ import (
 )
 
 func TestAddStacktrace(t *testing.T) {
-	methodIdMap := types.NewIDMap[types.MethodRef](0)
-	methodIdMap.Set(types.MethodRef(1), 1)
-	methodIdMap.Set(types.MethodRef(2), 2)
+	methodIdMap := make(map[types.MethodRef]uint32)
+	methodIdMap[types.MethodRef(1)] = 1
+	methodIdMap[types.MethodRef(2)] = 2
 
 	// 构造一个堆栈
 	mockParser := &parser.Parser{
@@ -48,12 +48,12 @@ func TestAddStacktrace(t *testing.T) {
 	builder := newJfrPprofBuilders(mockParser, mockLabelsSnapshot, mockProfileMetadata)
 
 	t.Run("add stacktrace", func(t *testing.T) {
-		builder.addStacktrace(0, 0, 0, []int64{1, 2, 3})
-		assert.NotEqual(t, len(builder.buildersMapping.Map), 0)
+		builder.addStacktrace(0, StacktraceCorrelation{}, 0, []int64{1, 2, 3})
+		assert.NotEqual(t, len(builder.builders), 0)
 	})
 
 	t.Run("stacktrace found", func(t *testing.T) {
-		builder.addStacktrace(0, 0, 0, []int64{1, 2, 3})
+		builder.addStacktrace(0, StacktraceCorrelation{}, 0, []int64{1, 2, 3})
 		trace := mockParser.GetStacktrace(0)
 		assert.Len(t, trace.Frames, 1)
 		assert.Equal(t, trace.Frames[0].Method, types.MethodRef(1))
@@ -80,14 +80,14 @@ func TestGetLabelsFromSnapshot(t *testing.T) {
 	builder := newJfrPprofBuilders(mockParser, mockLabelsSnapshot, mockProfileMetadata)
 
 	t.Run("contextId not found", func(t *testing.T) {
-		labels, success := builder.getLabelsFromSnapshot(0)
+		c, success := builder.jfrLabels.Contexts[0]
 		assert.False(t, success)
-		assert.Empty(t, labels)
+		assert.Empty(t, c)
 	})
 
 	t.Run("contextId found", func(t *testing.T) {
-		labels, success := builder.getLabelsFromSnapshot(1)
+		c, success := builder.jfrLabels.Contexts[1]
 		assert.True(t, success)
-		assert.Len(t, labels.Items, 2)
+		assert.Len(t, c.Labels, 2)
 	})
 }

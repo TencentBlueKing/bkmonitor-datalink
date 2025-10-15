@@ -12,8 +12,6 @@ package mock
 import (
 	"time"
 
-	"github.com/facebookgo/inject"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
@@ -105,26 +103,4 @@ func (c *Config) GetTaskConfigListByType(_ string) []define.TaskConfig {
 // Clean :
 func (c *Config) Clean() error {
 	return c.Task.Clean()
-}
-
-// NewConfig :
-func NewConfig() define.Config {
-	var (
-		g    inject.Graph
-		conf Config
-		err  error
-	)
-	err = g.Provide(
-		&inject.Object{Value: &conf},
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	err = g.Populate()
-	if err != nil {
-		panic(err)
-	}
-
-	return &conf
 }

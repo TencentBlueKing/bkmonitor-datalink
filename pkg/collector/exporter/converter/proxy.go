@@ -24,9 +24,9 @@ func (e proxyEvent) RecordType() define.RecordType {
 	return define.RecordProxy
 }
 
-var ProxyConverter EventConverter = proxyConverter{}
-
 type proxyConverter struct{}
+
+func (c proxyConverter) Clean() {}
 
 func (c proxyConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return proxyEvent{define.NewCommonEvent(token, dataId, data)}
@@ -58,12 +58,10 @@ func (c proxyConverter) toMetrics(token define.Token, pd *define.ProxyData) []de
 	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
 	b, err := json.Marshal(pd.Data)
 	if err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
 		return nil
 	}
 	err = json.Unmarshal(b, &items)
 	if err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
 		return nil
 	}
 
@@ -86,12 +84,10 @@ func (c proxyConverter) toEvents(token define.Token, pd *define.ProxyData) []def
 	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
 	b, err := json.Marshal(pd.Data)
 	if err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
 		return nil
 	}
 	err = json.Unmarshal(b, &items)
 	if err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
 		return nil
 	}
 

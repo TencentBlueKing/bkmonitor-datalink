@@ -27,7 +27,7 @@ import (
 func TestConditionListFieldAnalysis(t *testing.T) {
 	mock.Init()
 
-	var testCases = []struct {
+	testCases := []struct {
 		condition Conditions
 		result    []int
 		vm        metadata.VmCondition
@@ -80,16 +80,18 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 		// 简单的一个and拼接
 		{
 			condition: Conditions{
-				FieldList: []ConditionField{{
-					DimensionName: "test1",
-					Operator:      ConditionContains,
-					Value:         []string{"abc"},
-				},
+				FieldList: []ConditionField{
+					{
+						DimensionName: "test1",
+						Operator:      ConditionContains,
+						Value:         []string{"abc"},
+					},
 					{
 						DimensionName: "test1",
 						Operator:      ConditionNotContains,
 						Value:         []string{"abc"},
-					}},
+					},
+				},
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
@@ -114,7 +116,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 						DimensionName: "test1",
 						Operator:      ConditionNotRegEqual,
 						Value:         []string{"b", "c", "d"},
-					}},
+					},
+				},
 				ConditionList: []string{"or", "or"},
 			},
 			result: []int{1, 1},
@@ -214,6 +217,20 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			sql:    "`p1` = '{\"moduleType\":3}'",
 			vm:     `p1="{\"moduleType\":3}", result_table_id="table_id"`,
 		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "say",
+						Operator:      ConditionContains,
+						Value:         []string{`What's this?`},
+					},
+				},
+			},
+			result: []int{1},
+			sql:    "`say` = 'What''s this?'",
+			vm:     `say="What's this?", result_table_id="table_id"`,
+		},
 	}
 
 	for idx, testCase := range testCases {
@@ -235,7 +252,6 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 
 			sqlCondtion := testResult.BkSql()
 			assert.Equal(t, testCase.sql, sqlCondtion)
-
 		})
 	}
 }
@@ -458,7 +474,6 @@ func TestConditionCompare(t *testing.T) {
 			assert.Equal(t, c.expected, res)
 		})
 	}
-
 }
 
 // TestConditionFieldOperatorToProm
@@ -501,7 +516,6 @@ func TestConditionFieldOperatorToProm(t *testing.T) {
 
 // TestConditionFieldToProm
 func TestConditionFieldToProm(t *testing.T) {
-
 	log.InitTestLogger()
 
 	testData := []struct {
@@ -730,7 +744,6 @@ func TestConditions_GetRequiredField(t *testing.T) {
 			assert.Equal(t, testCase.err, err, name)
 		})
 	}
-
 }
 
 // TestConditionField_LabelMatcherConvert

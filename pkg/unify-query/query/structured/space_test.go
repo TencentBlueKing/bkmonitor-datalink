@@ -11,13 +11,13 @@ package structured
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -43,17 +43,22 @@ func TestSpaceFilter_NewTsDBs(t *testing.T) {
 		"test_1": {
 			fieldName: "kube_node_info",
 			tableID:   "",
-			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total"],"measurement_type":"bk_split_measurement","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kube_node_info","expand_metric_names":["kube_node_info"],"time_field":{"Name":"","Type":"","Unit":"","UnitRate":0},"need_add_time":false}]`,
+			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kube_node_info","expand_metric_names":["kube_node_info"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"}]`,
 		},
 		"test_2_regex": {
 			fieldName: "kubelet_.+",
 			isRegexp:  true,
-			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total"],"measurement_type":"bk_split_measurement","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kubelet_.+","expand_metric_names":["kubelet_cluster_request_total"],"time_field":{"Name":"","Type":"","Unit":"","UnitRate":0},"need_add_time":false},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","kubelet_info"],"measurement_type":"bk_split_measurement","storage_id":"2","db":"other","measurement":"kubelet_info","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kubelet_.+","expand_metric_names":["kubelet_info"],"time_field":{"Name":"","Type":"","Unit":"","UnitRate":0},"need_add_time":false}]`,
+			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kubelet_.+","expand_metric_names":["kubelet_cluster_request_total"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"kubelet_info","storage_id":"2","db":"other","measurement":"kubelet_info","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kubelet_.+","expand_metric_names":["kubelet_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
 		},
 		"test_3_regex": {
 			fieldName: "container_.+",
 			isRegexp:  true,
-			expected:  `[{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","kubelet_info"],"measurement_type":"bk_split_measurement","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"container_.+","expand_metric_names":["container_cpu_usage_seconds_total"],"time_field":{"Name":"","Type":"","Unit":"","UnitRate":0},"need_add_time":false}]`,
+			expected:  `[{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"vm","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"container_.+","expand_metric_names":["container_cpu_usage_seconds_total","container_info_relation"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
+		},
+		"test_4_incomplete_tableid_from_datalabel": {
+			fieldName: "kube_pod_info",
+			tableID:   "influxdb",
+			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kube_pod_info","expand_metric_names":["kube_pod_info"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"vm","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kube_pod_info","expand_metric_names":["kube_pod_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
 		},
 	}
 
@@ -84,8 +89,8 @@ func TestSpaceFilter_NewTsDBs(t *testing.T) {
 }
 
 func toJson(q []*query.TsDBV2) string {
-	sort.SliceIsSorted(q, func(i, j int) bool {
-		return q[i].TableID < q[i].TableID
+	sort.SliceStable(q, func(i, j int) bool {
+		return q[i].TableID < q[j].TableID
 	})
 
 	s, _ := json.Marshal(q)

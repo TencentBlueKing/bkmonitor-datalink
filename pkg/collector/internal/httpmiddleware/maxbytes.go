@@ -12,7 +12,7 @@ package httpmiddleware
 import (
 	"net/http"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/optmap"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -26,7 +26,7 @@ func init() {
 }
 
 func MaxBytes(opt string) MiddlewareFunc {
-	om := utils.NewOptMap(opt)
+	om := optmap.New(opt)
 	n := om.GetIntDefault(optMaxRequestBytes, defaultMaxRequestBytes)
 	logger.Infof("maxbytes middleware opts: %s(%d)", optMaxRequestBytes, n)
 

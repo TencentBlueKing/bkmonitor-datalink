@@ -90,12 +90,13 @@ func (r *Report) AsMapStr() common.MapStr {
 
 	if r.System != nil {
 		result["system"] = common.MapStr{
-			"hostname": r.System.HostName,
-			"os":       r.System.OS,
-			"arch":     arch,
-			"platform": r.System.Platform,
-			"platVer":  r.System.PlatVer,
-			"sysType":  r.System.SysType,
+			"hostname":      r.System.HostName,
+			"os":            r.System.OS,
+			"arch":          arch,
+			"platform":      r.System.Platform,
+			"platVer":       r.System.PlatVer,
+			"sysType":       r.System.SysType,
+			"kernelVersion": r.System.KernelVersion,
 		}
 	}
 	return result
@@ -131,13 +132,14 @@ type Interface struct {
 
 // System :
 type System struct {
-	HostName  string
-	OS        string
-	Platform  string
-	PlatVer   string
-	SysType   string
-	BKAgentID string
-	Arch      string
+	HostName      string
+	OS            string
+	Platform      string
+	PlatVer       string
+	SysType       string
+	BKAgentID     string
+	Arch          string
+	KernelVersion string
 }
 
 // GetData 采集全部静态数据
@@ -267,13 +269,14 @@ var GetSystemStatus = func(ctx context.Context) (*System, error) {
 
 	bkAgentID := GetBKAgentID()
 	return &System{
-		HostName:  info.Hostname,
-		SysType:   osSystemType,
-		OS:        info.OS,
-		Platform:  info.Platform,
-		PlatVer:   info.PlatformVersion,
-		BKAgentID: bkAgentID,
-		Arch:      info.KernelArch,
+		HostName:      info.Hostname,
+		SysType:       osSystemType,
+		OS:            info.OS,
+		Platform:      info.Platform,
+		PlatVer:       info.PlatformVersion,
+		BKAgentID:     bkAgentID,
+		Arch:          info.KernelArch,
+		KernelVersion: info.KernelVersion,
 	}, nil
 }
 

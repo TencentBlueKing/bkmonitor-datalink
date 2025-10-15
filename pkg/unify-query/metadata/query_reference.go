@@ -11,12 +11,12 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -35,13 +35,55 @@ func GetQueryReference(ctx context.Context) QueryReference {
 	return nil
 }
 
-// UUID 获取唯一性
-func (q *Query) UUID(prefix string) string {
-	str := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s",
-		prefix, q.SourceType, q.ClusterID, q.ClusterName, q.TagsKey,
-		q.RetentionPolicy, q.DB, q.Measurement, q.Field, q.Condition,
-	)
-	return str
+func (q *Query) DataReload(data map[string]any) {
+	if data == nil {
+		return
+	}
+
+	data[KeyTableID] = q.TableID
+	data[KeyDataLabel] = q.DataLabel
+	data[KeyTableUUID] = q.TableUUID()
+}
+
+// TableUUID 查询主体 tableID + storageID + sliceID 作为查询主体的唯一标识
+func (q *Query) TableUUID() string {
+	var l []string
+	for _, s := range []string{
+		q.TableID, q.StorageID, q.SliceID,
+	} {
+		if s != "" {
+			l = append(l, s)
+		}
+	}
+
+	return strings.Join(l, "|")
+}
+
+// StorageUUID 获取存储唯一标识
+// storageType 存储类型
+// storageID 存储唯一标识
+// storageName 集群名称
+// measurementType 表类型
+// timeField 内置时间配置
+func (q *Query) StorageUUID() string {
+	var l []string
+	for _, s := range []any{
+		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
+	} {
+		switch ns := s.(type) {
+		case string:
+			if ns != "" {
+				l = append(l, ns)
+			}
+		default:
+			nt, _ := json.Marshal(ns)
+			if len(nt) > 0 {
+				l = append(l, string(nt))
+			}
+		}
+	}
+
+	return strings.Join(l, "|")
 }
 
 // MetricLabels 获取真实指标名称
@@ -52,14 +94,17 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 
 	var (
 		metrics    []string
-		encodeFunc = GetPromDataFormat(ctx).EncodeFunc()
+		encodeFunc = GetFieldFormat(ctx).EncodeFunc()
 	)
 
-	metrics = append(metrics, q.DataSource)
+	if q.DataSource != "" {
+		metrics = append(metrics, q.DataSource)
+	}
+
 	for _, n := range strings.Split(q.TableID, ".") {
 		metrics = append(metrics, n)
 	}
-	metrics = append(metrics, q.MetricName)
+	metrics = append(metrics, q.Field)
 
 	metricName := strings.Join(metrics, ":")
 	if encodeFunc != nil {
@@ -95,11 +140,17 @@ func (q *Query) CheckDruidQuery(ctx context.Context, dims *set.Set[string]) bool
 
 	// 如果是查询 druid 的数据，vt 名称需要进行替换
 	if isDruid {
+
 		replaceLabels := make(ReplaceLabels)
 
 		// 替换 vmrt 的值
 		oldVmRT := q.VmRt
-		newVmRT := strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
+		var newVmRT string
+		if q.CmdbLevelVmRt != "" {
+			newVmRT = q.CmdbLevelVmRt
+		} else {
+			newVmRT = strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
+		}
 
 		if newVmRT != oldVmRT {
 			q.VmRt = newVmRT

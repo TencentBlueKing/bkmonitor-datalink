@@ -9,15 +9,19 @@
 
 package objectsref
 
-func Lookup(oid ObjectID, objs *Objects, objsMap map[string]*Objects) *OwnerRef {
+type Refer interface {
+	GetRefs(oid ObjectID) ([]OwnerRef, bool)
+}
+
+func Lookup(oid ObjectID, objs Refer, objsMap map[string]*Objects) *OwnerRef {
 	return doLookup(oid, objs, objsMap, false)
 }
 
-func LookupOnce(oid ObjectID, objs *Objects, objsMap map[string]*Objects) *OwnerRef {
+func LookupOnce(oid ObjectID, objs Refer, objsMap map[string]*Objects) *OwnerRef {
 	return doLookup(oid, objs, objsMap, true)
 }
 
-func doLookup(oid ObjectID, objs *Objects, objsMap map[string]*Objects, once bool) *OwnerRef {
+func doLookup(oid ObjectID, objs Refer, objsMap map[string]*Objects, once bool) *OwnerRef {
 	refs, ok := objs.GetRefs(oid)
 	if !ok {
 		return nil

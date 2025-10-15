@@ -16,3 +16,12 @@ go.work.sum
 .vscode
 /.gtm.yaml
 .python-version
+bkcodeai.json
+
+.env.access
+.env.leave
+
+.venv
+.codebuddy
+
+.claude

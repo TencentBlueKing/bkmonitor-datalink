@@ -11,11 +11,12 @@ package consul
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 const (
@@ -52,7 +53,7 @@ func FormatInfluxdbTableInfo(kvPairs api.KVPairs) (map[string]*InfluxdbTableInfo
 }
 
 // WatchInfluxdbTableInfo
-func WatchInfluxdbTableInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchInfluxdbTableInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, influxdbInfoPath)
 	return WatchChange(ctx, path)
 }

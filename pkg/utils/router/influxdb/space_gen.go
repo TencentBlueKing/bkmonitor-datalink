@@ -746,6 +746,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "VmRt")
 				return
 			}
+		case "CmdbLevelVmRt":
+			z.CmdbLevelVmRt, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "CmdbLevelVmRt")
+				return
+			}
 		case "Fields":
 			var zb0004 uint32
 			zb0004, err = dc.ReadArrayHeader()
@@ -764,6 +770,36 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 					err = msgp.WrapError(err, "Fields", za0002)
 					return
 				}
+			}
+		case "FieldAlias":
+			var zb0005 uint32
+			zb0005, err = dc.ReadMapHeader()
+			if err != nil {
+				err = msgp.WrapError(err, "FieldAlias")
+				return
+			}
+			if z.FieldAlias == nil {
+				z.FieldAlias = make(map[string]string, zb0005)
+			} else if len(z.FieldAlias) > 0 {
+				for key := range z.FieldAlias {
+					delete(z.FieldAlias, key)
+				}
+			}
+			for zb0005 > 0 {
+				zb0005--
+				var za0003 string
+				var za0004 string
+				za0003, err = dc.ReadString()
+				if err != nil {
+					err = msgp.WrapError(err, "FieldAlias")
+					return
+				}
+				za0004, err = dc.ReadString()
+				if err != nil {
+					err = msgp.WrapError(err, "FieldAlias", za0003)
+					return
+				}
+				z.FieldAlias[za0003] = za0004
 			}
 		case "MeasurementType":
 			z.MeasurementType, err = dc.ReadString()
@@ -784,21 +820,21 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				return
 			}
 		case "TagsKey":
-			var zb0005 uint32
-			zb0005, err = dc.ReadArrayHeader()
+			var zb0006 uint32
+			zb0006, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "TagsKey")
 				return
 			}
-			if cap(z.TagsKey) >= int(zb0005) {
-				z.TagsKey = (z.TagsKey)[:zb0005]
+			if cap(z.TagsKey) >= int(zb0006) {
+				z.TagsKey = (z.TagsKey)[:zb0006]
 			} else {
-				z.TagsKey = make([]string, zb0005)
+				z.TagsKey = make([]string, zb0006)
 			}
-			for za0003 := range z.TagsKey {
-				z.TagsKey[za0003], err = dc.ReadString()
+			for za0005 := range z.TagsKey {
+				z.TagsKey[za0005], err = dc.ReadString()
 				if err != nil {
-					err = msgp.WrapError(err, "TagsKey", za0003)
+					err = msgp.WrapError(err, "TagsKey", za0005)
 					return
 				}
 			}
@@ -815,14 +851,14 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				return
 			}
 		case "Options":
-			var zb0006 uint32
-			zb0006, err = dc.ReadMapHeader()
+			var zb0007 uint32
+			zb0007, err = dc.ReadMapHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Options")
 				return
 			}
-			for zb0006 > 0 {
-				zb0006--
+			for zb0007 > 0 {
+				zb0007--
 				field, err = dc.ReadMapKeyPtr()
 				if err != nil {
 					err = msgp.WrapError(err, "Options")
@@ -830,14 +866,14 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				}
 				switch msgp.UnsafeString(field) {
 				case "TimeField":
-					var zb0007 uint32
-					zb0007, err = dc.ReadMapHeader()
+					var zb0008 uint32
+					zb0008, err = dc.ReadMapHeader()
 					if err != nil {
 						err = msgp.WrapError(err, "Options", "TimeField")
 						return
 					}
-					for zb0007 > 0 {
-						zb0007--
+					for zb0008 > 0 {
+						zb0008--
 						field, err = dc.ReadMapKeyPtr()
 						if err != nil {
 							err = msgp.WrapError(err, "Options", "TimeField")
@@ -897,9 +933,9 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 17
+	// map header, size 19
 	// write "StorageId"
-	err = en.Append(0xde, 0x0, 0x11, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	err = en.Append(0xde, 0x0, 0x13, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	if err != nil {
 		return
 	}
@@ -1011,6 +1047,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "VmRt")
 		return
 	}
+	// write "CmdbLevelVmRt"
+	err = en.Append(0xad, 0x43, 0x6d, 0x64, 0x62, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x56, 0x6d, 0x52, 0x74)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.CmdbLevelVmRt)
+	if err != nil {
+		err = msgp.WrapError(err, "CmdbLevelVmRt")
+		return
+	}
 	// write "Fields"
 	err = en.Append(0xa6, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x73)
 	if err != nil {
@@ -1025,6 +1071,28 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = en.WriteString(z.Fields[za0002])
 		if err != nil {
 			err = msgp.WrapError(err, "Fields", za0002)
+			return
+		}
+	}
+	// write "FieldAlias"
+	err = en.Append(0xaa, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x41, 0x6c, 0x69, 0x61, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteMapHeader(uint32(len(z.FieldAlias)))
+	if err != nil {
+		err = msgp.WrapError(err, "FieldAlias")
+		return
+	}
+	for za0003, za0004 := range z.FieldAlias {
+		err = en.WriteString(za0003)
+		if err != nil {
+			err = msgp.WrapError(err, "FieldAlias")
+			return
+		}
+		err = en.WriteString(za0004)
+		if err != nil {
+			err = msgp.WrapError(err, "FieldAlias", za0003)
 			return
 		}
 	}
@@ -1068,10 +1136,10 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "TagsKey")
 		return
 	}
-	for za0003 := range z.TagsKey {
-		err = en.WriteString(z.TagsKey[za0003])
+	for za0005 := range z.TagsKey {
+		err = en.WriteString(z.TagsKey[za0005])
 		if err != nil {
-			err = msgp.WrapError(err, "TagsKey", za0003)
+			err = msgp.WrapError(err, "TagsKey", za0005)
 			return
 		}
 	}
@@ -1153,9 +1221,9 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 17
+	// map header, size 19
 	// string "StorageId"
-	o = append(o, 0xde, 0x0, 0x11, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	o = append(o, 0xde, 0x0, 0x13, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.StorageId)
 	// string "StorageName"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x4e, 0x61, 0x6d, 0x65)
@@ -1190,11 +1258,21 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "VmRt"
 	o = append(o, 0xa4, 0x56, 0x6d, 0x52, 0x74)
 	o = msgp.AppendString(o, z.VmRt)
+	// string "CmdbLevelVmRt"
+	o = append(o, 0xad, 0x43, 0x6d, 0x64, 0x62, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x56, 0x6d, 0x52, 0x74)
+	o = msgp.AppendString(o, z.CmdbLevelVmRt)
 	// string "Fields"
 	o = append(o, 0xa6, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x73)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.Fields)))
 	for za0002 := range z.Fields {
 		o = msgp.AppendString(o, z.Fields[za0002])
+	}
+	// string "FieldAlias"
+	o = append(o, 0xaa, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x41, 0x6c, 0x69, 0x61, 0x73)
+	o = msgp.AppendMapHeader(o, uint32(len(z.FieldAlias)))
+	for za0003, za0004 := range z.FieldAlias {
+		o = msgp.AppendString(o, za0003)
+		o = msgp.AppendString(o, za0004)
 	}
 	// string "MeasurementType"
 	o = append(o, 0xaf, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x54, 0x79, 0x70, 0x65)
@@ -1208,8 +1286,8 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "TagsKey"
 	o = append(o, 0xa7, 0x54, 0x61, 0x67, 0x73, 0x4b, 0x65, 0x79)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.TagsKey)))
-	for za0003 := range z.TagsKey {
-		o = msgp.AppendString(o, z.TagsKey[za0003])
+	for za0005 := range z.TagsKey {
+		o = msgp.AppendString(o, z.TagsKey[za0005])
 	}
 	// string "DataId"
 	o = append(o, 0xa6, 0x44, 0x61, 0x74, 0x61, 0x49, 0x64)
@@ -1352,6 +1430,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "VmRt")
 				return
 			}
+		case "CmdbLevelVmRt":
+			z.CmdbLevelVmRt, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "CmdbLevelVmRt")
+				return
+			}
 		case "Fields":
 			var zb0004 uint32
 			zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
@@ -1370,6 +1454,36 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					err = msgp.WrapError(err, "Fields", za0002)
 					return
 				}
+			}
+		case "FieldAlias":
+			var zb0005 uint32
+			zb0005, bts, err = msgp.ReadMapHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "FieldAlias")
+				return
+			}
+			if z.FieldAlias == nil {
+				z.FieldAlias = make(map[string]string, zb0005)
+			} else if len(z.FieldAlias) > 0 {
+				for key := range z.FieldAlias {
+					delete(z.FieldAlias, key)
+				}
+			}
+			for zb0005 > 0 {
+				var za0003 string
+				var za0004 string
+				zb0005--
+				za0003, bts, err = msgp.ReadStringBytes(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "FieldAlias")
+					return
+				}
+				za0004, bts, err = msgp.ReadStringBytes(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "FieldAlias", za0003)
+					return
+				}
+				z.FieldAlias[za0003] = za0004
 			}
 		case "MeasurementType":
 			z.MeasurementType, bts, err = msgp.ReadStringBytes(bts)
@@ -1390,21 +1504,21 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				return
 			}
 		case "TagsKey":
-			var zb0005 uint32
-			zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			var zb0006 uint32
+			zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "TagsKey")
 				return
 			}
-			if cap(z.TagsKey) >= int(zb0005) {
-				z.TagsKey = (z.TagsKey)[:zb0005]
+			if cap(z.TagsKey) >= int(zb0006) {
+				z.TagsKey = (z.TagsKey)[:zb0006]
 			} else {
-				z.TagsKey = make([]string, zb0005)
+				z.TagsKey = make([]string, zb0006)
 			}
-			for za0003 := range z.TagsKey {
-				z.TagsKey[za0003], bts, err = msgp.ReadStringBytes(bts)
+			for za0005 := range z.TagsKey {
+				z.TagsKey[za0005], bts, err = msgp.ReadStringBytes(bts)
 				if err != nil {
-					err = msgp.WrapError(err, "TagsKey", za0003)
+					err = msgp.WrapError(err, "TagsKey", za0005)
 					return
 				}
 			}
@@ -1421,14 +1535,14 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				return
 			}
 		case "Options":
-			var zb0006 uint32
-			zb0006, bts, err = msgp.ReadMapHeaderBytes(bts)
+			var zb0007 uint32
+			zb0007, bts, err = msgp.ReadMapHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Options")
 				return
 			}
-			for zb0006 > 0 {
-				zb0006--
+			for zb0007 > 0 {
+				zb0007--
 				field, bts, err = msgp.ReadMapKeyZC(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Options")
@@ -1436,14 +1550,14 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				}
 				switch msgp.UnsafeString(field) {
 				case "TimeField":
-					var zb0007 uint32
-					zb0007, bts, err = msgp.ReadMapHeaderBytes(bts)
+					var zb0008 uint32
+					zb0008, bts, err = msgp.ReadMapHeaderBytes(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Options", "TimeField")
 						return
 					}
-					for zb0007 > 0 {
-						zb0007--
+					for zb0008 > 0 {
+						zb0008--
 						field, bts, err = msgp.ReadMapKeyZC(bts)
 						if err != nil {
 							err = msgp.WrapError(err, "Options", "TimeField")
@@ -1504,13 +1618,20 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ResultTableDetail) Msgsize() (s int) {
-	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize + (len(z.StorageClusterRecords) * (22 + msgp.Int64Size + msgp.Int64Size)) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 7 + msgp.ArrayHeaderSize
+	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize + (len(z.StorageClusterRecords) * (22 + msgp.Int64Size + msgp.Int64Size)) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 14 + msgp.StringPrefixSize + len(z.CmdbLevelVmRt) + 7 + msgp.ArrayHeaderSize
 	for za0002 := range z.Fields {
 		s += msgp.StringPrefixSize + len(z.Fields[za0002])
 	}
+	s += 11 + msgp.MapHeaderSize
+	if z.FieldAlias != nil {
+		for za0003, za0004 := range z.FieldAlias {
+			_ = za0004
+			s += msgp.StringPrefixSize + len(za0003) + msgp.StringPrefixSize + len(za0004)
+		}
+	}
 	s += 16 + msgp.StringPrefixSize + len(z.MeasurementType) + 13 + msgp.StringPrefixSize + len(z.BcsClusterID) + 10 + msgp.StringPrefixSize + len(z.DataLabel) + 8 + msgp.ArrayHeaderSize
-	for za0003 := range z.TagsKey {
-		s += msgp.StringPrefixSize + len(z.TagsKey[za0003])
+	for za0005 := range z.TagsKey {
+		s += msgp.StringPrefixSize + len(z.TagsKey[za0005])
 	}
 	s += 7 + msgp.Int64Size + 11 + msgp.StringPrefixSize + len(z.SourceType) + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit) + 12 + msgp.BoolSize
 	return

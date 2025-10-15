@@ -54,7 +54,7 @@ func getTokenFromMetadata(md metadata.MD) (string, error) {
 	}
 
 	authentication, ok := md[authKey]
-	if !ok || len(authentication) <= 0 {
+	if !ok || len(authentication) == 0 {
 		return "", errors.New("no authentication found in metadata")
 	}
 	return authentication[0], nil

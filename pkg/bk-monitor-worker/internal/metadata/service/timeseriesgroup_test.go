@@ -30,9 +30,10 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	tsm := customreport.TimeSeriesGroup{
 		CustomGroupBase: customreport.CustomGroupBase{
-			BkDataID: 22112,
-			TableID:  "test_for_metric_update.base",
-			IsEnable: true,
+			BkDataID:            22112,
+			TableID:             "test_for_metric_update.base",
+			IsEnable:            true,
+			MaxFutureTimeOffset: -1,
 		},
 		TimeSeriesGroupID:   3343,
 		TimeSeriesGroupName: "test_for_metric_update_group",
@@ -44,17 +45,30 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
 
+	// 创建RTOption
+	opVal1 := models.OptionBase{Value: "[\"metric_a\", \"metric:invalid\"]", ValueType: "list", Creator: "system"}
+	rtf := resulttable.ResultTableOption{
+		OptionBase: opVal1,
+		TableID:    tsm.TableID,
+		Name:       "metric_field_whitelist",
+	}
+	db.Delete(&rtf, "table_id = ?", tsm.TableID)
+	err = rtf.Create(db)
+	assert.NoError(t, err)
+
 	mockerClient, redisPatch := mocker.DependenceRedisMocker()
 	defer redisPatch.Reset()
 	mockerClient.ZcountValue = 2
 	mockerClient.ZRangeByScoreWithScoresValue = append(mockerClient.ZRangeByScoreWithScoresValue, []goRedis.Z{
 		{Score: score, Member: "metric_a"},
 		{Score: score, Member: "metric_b"},
+		{Score: score, Member: "metric_invalid"},
 		{Score: score - 100000, Member: "metric_expired"},
 	}...)
-	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []interface{}{
+	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []any{
 		"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
+		"{\"dimensions\":{\"d5\":{\"last_update_time\":1685503141,\"values\":[]},\"d6\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 	}...)
 
 	svc := NewTimeSeriesGroupSvc(&tsm)
@@ -63,8 +77,8 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, updated)
 	// metric
-	var metricA, metricB, metricExpired customreport.TimeSeriesMetric
-	var tagListA, tagListB []string
+	var metricA, metricB, metricInvalid, metricExpired customreport.TimeSeriesMetric
+	var tagListA []string
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_a").One(&metricA)
 	assert.NoError(t, err)
 	err = jsonx.UnmarshalString(metricA.TagList, &tagListA)
@@ -73,13 +87,13 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.Equal(t, "test_for_metric_update.metric_a", metricA.TableID)
 
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_b").One(&metricB)
-	assert.NoError(t, err)
-	err = jsonx.UnmarshalString(metricB.TagList, &tagListB)
-	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{"d3", "d4", "target"}, tagListB)
-	assert.Equal(t, "test_for_metric_update.metric_b", metricB.TableID)
+	// 不存在metric_b
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_expired").One(&metricExpired)
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
+
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_invalid").One(&metricInvalid)
 	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 
 	// rtf
@@ -87,7 +101,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagMetric).FieldTypeEq(models.ResultTableFieldTypeFloat).IsDisabledEq(false).FieldNameEq("metric_a").One(&m1)
 	assert.NoError(t, err)
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagMetric).FieldTypeEq(models.ResultTableFieldTypeFloat).IsDisabledEq(false).FieldNameEq("metric_b").One(&m2)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagMetric).FieldTypeEq(models.ResultTableFieldTypeFloat).IsDisabledEq(false).FieldNameEq("metric_expired").One(&mExpired)
 	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagDimension).FieldTypeEq(models.ResultTableFieldTypeString).FieldNameEq("d1").One(&d1)
@@ -95,9 +109,9 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagDimension).FieldTypeEq(models.ResultTableFieldTypeString).FieldNameEq("d2").One(&d2)
 	assert.NoError(t, err)
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagDimension).FieldTypeEq(models.ResultTableFieldTypeString).FieldNameEq("d3").One(&d3)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagDimension).FieldTypeEq(models.ResultTableFieldTypeString).FieldNameEq("d4").One(&d4)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 
 	// tag 不一致需要更新
 	metricA.TagList = `["aaa","bbb"]`
@@ -111,7 +125,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	// 测试修改
 	updated, err = svc.UpdateTimeSeriesMetrics("", false)
 	assert.NoError(t, err)
-	assert.True(t, updated)
+	assert.False(t, updated)
 
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagMetric).FieldTypeEq(models.ResultTableFieldTypeFloat).IsDisabledEq(false).FieldNameEq("metric_a").One(&m1)
 	assert.NoError(t, err)

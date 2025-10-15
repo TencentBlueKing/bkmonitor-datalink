@@ -24,6 +24,7 @@ var DefaultServiceMonitorDimensionTerm = []string{"bk_monitor_name", "bk_monitor
 // BCSClusterInfo BCS cluster info model
 // gen:qs
 type BCSClusterInfo struct {
+	BkTenantId         string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	ID                 uint      `gorm:"primary_key" json:"id"`
 	ClusterID          string    `gorm:"size:128;index" json:"cluster_id"`
 	BCSApiClusterId    string    `gorm:"column:bcs_api_cluster_id;index" json:"bcs_api_cluster_id"`

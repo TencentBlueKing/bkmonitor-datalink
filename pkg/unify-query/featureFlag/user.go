@@ -14,7 +14,7 @@ import (
 )
 
 // FFUser
-func FFUser(key string, params map[string]interface{}) ffuser.User {
+func FFUser(key string, params map[string]any) ffuser.User {
 	builder := ffuser.NewUserBuilder(key)
 	for k, v := range params {
 		builder.AddCustom(k, v)

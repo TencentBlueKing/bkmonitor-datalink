@@ -27,11 +27,18 @@ import (
 	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/tools/cache"
 
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+type Action string
+
+const (
+	ActionCreateOrUpdate Action = "CreateOrUpdate"
+	ActionDelete         Action = "Delete"
 )
 
 // OwnerRef 代表 Owner 对象引用信息
@@ -40,27 +47,14 @@ type OwnerRef struct {
 	Name string `json:"name"`
 }
 
-type ContainerKey struct {
-	Name  string
-	ID    string
-	Image string
-}
-
 // Object 代表 workload 对象
 type Object struct {
 	ID        ObjectID
 	OwnerRefs []OwnerRef
 
-	// Pod 属性
-	NodeName string
-	PodIP    string
-
 	// Metadata 属性
 	Labels      map[string]string
 	Annotations map[string]string
-
-	// Containers
-	Containers []ContainerKey
 }
 
 // ObjectID 代表 workload 对象标识
@@ -106,32 +100,6 @@ func (o *Objects) Del(oid ObjectID) {
 	defer o.mut.Unlock()
 
 	delete(o.objs, oid.String())
-}
-
-func (o *Objects) GetByNodeName(nodeName string) []Object {
-	o.mut.Lock()
-	defer o.mut.Unlock()
-
-	var ret []Object
-	for _, obj := range o.objs {
-		if obj.NodeName == nodeName {
-			ret = append(ret, obj)
-		}
-	}
-	return ret
-}
-
-func (o *Objects) GetByNamespace(namespace string) []Object {
-	o.mut.Lock()
-	defer o.mut.Unlock()
-
-	var ret []Object
-	for _, obj := range o.objs {
-		if obj.ID.Namespace == namespace {
-			ret = append(ret, obj)
-		}
-	}
-	return ret
 }
 
 func (o *Objects) GetAll() []Object {
@@ -207,7 +175,7 @@ const (
 	resourceBkLogConfigs = "bklogconfigs"
 )
 
-func partialObjectMetadataStrip(obj interface{}) (interface{}, error) {
+func partialObjectMetadataStrip(obj any) (any, error) {
 	partialMeta, ok := obj.(*metav1.PartialObjectMetadata)
 	if !ok {
 		// Don't do anything if the cast isn't successful.
@@ -230,7 +198,6 @@ type ObjectsController struct {
 
 	client kubernetes.Interface
 
-	podObjs             *Objects
 	replicaSetObjs      *Objects
 	deploymentObjs      *Objects
 	daemonSetObjs       *Objects
@@ -240,14 +207,16 @@ type ObjectsController struct {
 	gameStatefulSetObjs *Objects
 	gameDeploymentsObjs *Objects
 	secretObjs          *Objects
-	nodeObjs            *NodeMap
-	serviceObjs         *ServiceMap
-	endpointsObjs       *EndpointsMap
-	ingressObjs         *IngressMap
-	bkLogConfigObjs     *BkLogConfigMap
+
+	podObjs         *PodMap
+	nodeObjs        *NodeMap
+	serviceObjs     *ServiceMap
+	endpointsObjs   *EndpointsMap
+	ingressObjs     *IngressMap
+	bkLogConfigObjs *BkLogConfigMap
 }
 
-func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, bkClient bkversioned.Interface) (*ObjectsController, error) {
+func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, bkClient bkcli.Interface) (*ObjectsController, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	controller := &ObjectsController{
 		client: client,
@@ -354,16 +323,24 @@ func (oc *ObjectsController) NodeCount() int {
 	return oc.nodeObjs.Count()
 }
 
-func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
-	return oc.nodeObjs.NameExists(s)
-}
-
 func (oc *ObjectsController) NodeLabels(s string) map[string]string {
 	return oc.nodeObjs.NodeLabels(s)
 }
 
 func (oc *ObjectsController) SecretObjs() []Object {
 	return oc.secretObjs.GetAll()
+}
+
+func (oc *ObjectsController) CheckPodIP(ip string) bool {
+	return oc.podObjs.CheckIP(ip)
+}
+
+func (oc *ObjectsController) CheckNodeIP(ip string) bool {
+	return oc.nodeObjs.CheckIP(ip)
+}
+
+func (oc *ObjectsController) CheckNodeName(s string) (string, bool) {
+	return oc.nodeObjs.CheckName(s)
 }
 
 func (oc *ObjectsController) NodeObjs() []*corev1.Node {
@@ -403,15 +380,15 @@ func (oc *ObjectsController) recordMetrics() {
 	}
 }
 
-func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
+func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*PodMap, error) {
 	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourcePods))
 	if err != nil {
 		return nil, err
 	}
-	objs := NewObjects(kindPod)
+	objs := NewPodMap()
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
 			logger.Errorf("excepted Pod type, got %T", obj)
@@ -435,14 +412,14 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				logger.Errorf("excepted Pod type, got %T", obj)
 				return
 			}
 
-			objs.Set(Object{
+			objs.Set(PodObject{
 				ID: ObjectID{
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
@@ -455,13 +432,14 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				Containers:  toContainerKey(pod),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			pod, ok := newObj.(*corev1.Pod)
 			if !ok {
 				logger.Errorf("excepted Pod type, got %T", newObj)
 				return
 			}
-			objs.Set(Object{
+
+			objs.Set(PodObject{
 				ID: ObjectID{
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
@@ -474,7 +452,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				Containers:  toContainerKey(pod),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				logger.Errorf("excepted Pod type, got %T", obj)
@@ -505,7 +483,7 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 
 	informer := genericInformer.Informer()
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			secret, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", obj)
@@ -519,7 +497,7 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 				Labels: secret.Labels,
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			secret, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", newObj)
@@ -533,7 +511,7 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 				Labels: secret.Labels,
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			secret, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", obj)
@@ -568,7 +546,7 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.S
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			replicaSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted ReplicaSet/PartialObjectMetadata type, got %T", obj)
@@ -582,7 +560,7 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.S
 				OwnerRefs: toRefs(replicaSet.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			replicaSet, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted ReplicaSet/PartialObjectMetadata type, got %T", newObj)
@@ -596,7 +574,7 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.S
 				OwnerRefs: toRefs(replicaSet.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			replicaSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted ReplicaSet/PartialObjectMetadata type, got %T", obj)
@@ -631,7 +609,7 @@ func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.S
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			deployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Deployment/PartialObjectMetadata type, got %T", obj)
@@ -645,7 +623,7 @@ func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.S
 				OwnerRefs: toRefs(deployment.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			deployment, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Deployment/PartialObjectMetadata type, got %T", newObj)
@@ -659,7 +637,7 @@ func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.S
 				OwnerRefs: toRefs(deployment.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			deployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Deployment/PartialObjectMetadata type, got %T", obj)
@@ -694,7 +672,7 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.Sh
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			daemonSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted DaemonSet/PartialObjectMetadata type, got %T", obj)
@@ -708,7 +686,7 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.Sh
 				OwnerRefs: toRefs(daemonSet.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			daemonSet, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted DaemonSet/PartialObjectMetadata type, got %T", newObj)
@@ -722,7 +700,7 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.Sh
 				OwnerRefs: toRefs(daemonSet.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			daemonSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted DaemonSet/PartialObjectMetadata type, got %T", obj)
@@ -757,7 +735,7 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			statefulSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted StatefulSet/PartialObjectMetadata type, got %T", obj)
@@ -771,7 +749,7 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.
 				OwnerRefs: toRefs(statefulSet.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			statefulSet, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted StatefulSet/PartialObjectMetadata type, got %T", newObj)
@@ -785,7 +763,7 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.
 				OwnerRefs: toRefs(statefulSet.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			statefulSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted StatefulSet/PartialObjectMetadata type, got %T", obj)
@@ -820,7 +798,7 @@ func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedIn
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			job, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Job/PartialObjectMetadata type, got %T", obj)
@@ -834,7 +812,7 @@ func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedIn
 				OwnerRefs: toRefs(job.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			job, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Job/PartialObjectMetadata type, got %T", newObj)
@@ -848,7 +826,7 @@ func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedIn
 				OwnerRefs: toRefs(job.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			job, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted Job/PartialObjectMetadata type, got %T", obj)
@@ -899,7 +877,7 @@ func newCronJobV1BetaObjects(ctx context.Context, sharedInformer metadatainforme
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", obj)
@@ -913,7 +891,7 @@ func newCronJobV1BetaObjects(ctx context.Context, sharedInformer metadatainforme
 				OwnerRefs: toRefs(cronJob.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			cronJob, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", newObj)
@@ -927,7 +905,7 @@ func newCronJobV1BetaObjects(ctx context.Context, sharedInformer metadatainforme
 				OwnerRefs: toRefs(cronJob.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", obj)
@@ -962,7 +940,7 @@ func newCronJobV1Objects(ctx context.Context, sharedInformer metadatainformer.Sh
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", obj)
@@ -976,7 +954,7 @@ func newCronJobV1Objects(ctx context.Context, sharedInformer metadatainformer.Sh
 				OwnerRefs: toRefs(cronJob.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			cronJob, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", newObj)
@@ -990,7 +968,7 @@ func newCronJobV1Objects(ctx context.Context, sharedInformer metadatainformer.Sh
 				OwnerRefs: toRefs(cronJob.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted CronJob/PartialObjectMetadata type, got %T", obj)
@@ -1024,16 +1002,4 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 		})
 	}
 	return ret
-}
-
-func toContainerKey(pod *corev1.Pod) []ContainerKey {
-	var containers []ContainerKey
-	for _, sc := range pod.Status.ContainerStatuses {
-		containers = append(containers, ContainerKey{
-			Name:  sc.Name,
-			ID:    sc.ContainerID,
-			Image: sc.ImageID,
-		})
-	}
-	return containers
 }

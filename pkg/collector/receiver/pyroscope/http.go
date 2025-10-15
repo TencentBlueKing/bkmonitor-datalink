@@ -73,10 +73,7 @@ func init() {
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePyroscope)
 
 // Ready 注册 pyroscope 的 http 路由
-func Ready(config receiver.ComponentConfig) {
-	if !config.Pyroscope.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourcePyroscope, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -91,7 +88,7 @@ func Ready(config receiver.ComponentConfig) {
 
 func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushRequest]) (*connect.Response[pushv1.PushResponse], error) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.Peer().Addr)
+	ip := utils.ParseRequestIP(req.Peer().Addr, req.Header())
 	start := time.Now()
 
 	originToken := req.Header().Get(define.KeyToken)
@@ -154,7 +151,7 @@ func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushReq
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
 func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 	start := time.Now()
 
 	buf := &bytes.Buffer{}
@@ -165,6 +162,14 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer req.Body.Close()
+
+	token := tokenparser.FromHttpRequest(req)
+	if token == "" {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, errNoTokenFound)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, errNoTokenFound)
+		return
+	}
 
 	query := req.URL.Query()
 	startTime, endTime, err := parseTimeFromQuery(query)
@@ -178,43 +183,41 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	aggregationType := query.Get("aggregationType")
 	units := query.Get("units")
 	spyName := query.Get("spyName")
-
-	format := query.Get("format")
-	if format == "" {
-		format = castFormatBySpy(spyName)
+	sampleRate, err := strconv.ParseUint(query.Get("sampleRate"), 10, 64)
+	if err != nil {
+		sampleRate = 0
 	}
-	if format == "" {
+
+	var origin any
+	format := query.Get("format")
+	contentType := req.Header.Get("Content-Type")
+	switch {
+	case format == define.FormatPprof:
+		origin = define.ProfilePprofFormatOrigin(buf.Bytes())
+	case format == define.FormatJFR || strings.Contains(contentType, "multipart/form-data"):
+		f, err := parseForm(req, buf.Bytes())
+		if err != nil {
+			metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
+			logger.Warnf("failed to parse boundary, token=%s, err: %v", token, err)
+			receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
+			return
+		}
+		defer func() {
+			_ = f.RemoveAll()
+		}()
+
+		// TODO 处理 prev_profile 字段
+		origin, err = parseField(spyName, f)
+		if err != nil {
+			metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+			logger.Warnf("read profile failed, ip=%s, token=%s, err: %v", ip, token, err)
+			receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
+			return
+		}
+	default:
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		err = errors.Errorf("spyName '%s' is not supported", spyName)
 		logger.Warn(err)
-		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
-		return
-	}
-
-	token := tokenparser.FromHttpRequest(req)
-	if token == "" {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, errNoTokenFound)
-		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, errNoTokenFound)
-		return
-	}
-
-	f, err := parseForm(req, buf.Bytes())
-	if err != nil {
-		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Warnf("failed to parse boundary, token=%s, err: %v", token, err)
-		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
-		return
-	}
-	defer func() {
-		_ = f.RemoveAll()
-	}()
-
-	// TODO 处理 prev_profile 字段
-	origin, err := parseField(spyName, f)
-	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Warnf("read profile failed, ip=%s, token=%s, err: %v", ip, token, err)
 		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
@@ -230,6 +233,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 			Format:          format,
 			AggregationType: aggregationType,
 			Units:           units,
+			SampleRate:      uint32(sampleRate),
 			Tags:            tags,
 			AppName:         appName,
 		},
@@ -295,22 +299,6 @@ func parseTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
 	}
 
 	return parseTime(startTs), parseTime(endTs), nil
-}
-
-func castFormatBySpy(spyName string) string {
-	switch spyName {
-	case GoSpy:
-		return define.FormatPprof
-	case DDTraceSpy:
-		return define.FormatPprof
-	case JavaSpy:
-		return define.FormatJFR
-	// TODO 暂不支持 PerfScript
-	// case PerfSpy:
-	//	return define.FormatPerfScript
-	default:
-		return ""
-	}
 }
 
 // parseField 将 Http.Body 转换为 translator 所需的数据格式

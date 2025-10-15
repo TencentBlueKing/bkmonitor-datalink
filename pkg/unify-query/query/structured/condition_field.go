@@ -17,7 +17,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -69,7 +69,11 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to condition op.Will return default op", matchType)
+		metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"类型 %v 不存在",
+			matchType,
+		).Warn(context.TODO())
 		return ConditionEqual
 	}
 }
@@ -84,6 +88,10 @@ type ConditionField struct {
 	Operator string `json:"op" example:"contains"`
 	// IsWildcard 是否是通配符
 	IsWildcard bool `json:"is_wildcard,omitempty"`
+	// IsPrefix 是否是前缀
+	IsPrefix bool `json:"is_prefix,omitempty"`
+	// IsSuffix 是否是后缀
+	IsSuffix bool `json:"is_suffix,omitempty"`
 }
 
 // String
@@ -115,6 +123,14 @@ func (c *ConditionField) ToPromOperator() labels.MatchType {
 func (c *ConditionField) BkSql() *ConditionField {
 	if len(c.Value) == 0 {
 		return nil
+	}
+
+	// bksql 查询遇到单引号需要转义
+	for k, v := range c.Value {
+		if strings.Contains(v, "'") {
+			v = strings.ReplaceAll(v, "'", "''")
+			c.Value[k] = v
+		}
 	}
 
 	switch c.Operator {
@@ -175,7 +191,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	}
 
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下
-	var resultValues = make([]string, 0, len(c.Value))
+	resultValues := make([]string, 0, len(c.Value))
 	for _, v := range c.Value {
 		var nv string
 		if isRegx {

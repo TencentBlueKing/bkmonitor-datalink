@@ -36,6 +36,7 @@ type ResultTable struct {
 	DataLabel      *string   `gorm:"data_label;size:128" json:"data_label"`
 	IsBuiltin      bool      `gorm:"column:is_builtin" json:"is_builtin"`
 	BkBizIdAlias   string    `gorm:"bk_biz_id_alias;size:128" json:"bk_biz_id_alias"`
+	BkTenantId     string    `gorm:"bk_tenant_id;size:256" json:"bk_tenant_id"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

@@ -30,10 +30,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceBeat, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Beat.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceBeat, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -54,7 +51,7 @@ var httpSvc HttpService
 
 func (s HttpService) Export(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}

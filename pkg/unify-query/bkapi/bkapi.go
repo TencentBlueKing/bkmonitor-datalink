@@ -10,11 +10,12 @@
 package bkapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/spf13/viper"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 const (

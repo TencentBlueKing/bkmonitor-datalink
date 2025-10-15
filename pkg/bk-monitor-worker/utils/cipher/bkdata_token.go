@@ -16,14 +16,14 @@ import (
 )
 
 // TransformDataidToToken 将dataid 加密为bk.data.token, 不存在的id填-1
-func TransformDataidToToken(metricDataId, traceDataId, logDataId, BkBizId int, appName string) string {
+func TransformDataidToToken(metricDataId, traceDataId, logDataId, bkBizId int, appName string) string {
 	// bk.data.token=${metric_data_id}${salt}${trace_data_id}${salt}${log_data_id}${salt}${bk_biz_id}
 	bkDataTokenRaw := fmt.Sprintf(
 		"%v%s%v%s%v%s%v%s%s",
 		metricDataId, config.BkdataTokenSalt,
 		traceDataId, config.BkdataTokenSalt,
 		logDataId, config.BkdataTokenSalt,
-		BkBizId, config.BkdataTokenSalt,
+		bkBizId, config.BkdataTokenSalt,
 		appName,
 	)
 	var xKey string

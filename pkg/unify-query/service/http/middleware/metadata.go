@@ -10,12 +10,10 @@
 package middleware
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -32,10 +30,11 @@ func MetaData(p *Params) gin.HandlerFunc {
 		var (
 			start     = time.Now()
 			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
-			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			tenantID  = c.Request.Header.Get(metadata.TenantIDHeader)
+			spaceUID  = c.Request.Header.Get(metadata.SpaceUIDHeader)
 			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
 
-			ip, hostName = metadata.GetLocalHost()
+			hostName, ip = metadata.GetLocalHost()
 
 			ctx = c.Request.Context()
 			err error
@@ -47,28 +46,31 @@ func MetaData(p *Params) gin.HandlerFunc {
 		ctx, span := trace.NewSpan(ctx, "http-api-metadata")
 
 		// 把用户名注入到 metadata 中
-		metadata.SetUser(ctx, source, spaceUid, skipSpace)
+		metadata.SetUser(ctx, &metadata.User{
+			Key:       source,
+			TenantID:  tenantID,
+			SpaceUID:  spaceUID,
+			SkipSpace: skipSpace,
+		})
 		user := metadata.GetUser(ctx)
-		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid, user.Source)
+		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUID, user.Source)
 
 		if span != nil {
 			defer func() {
-
 				span.Set("local-ip", ip)
 				span.Set("local-host-name", hostName)
 
 				sub := time.Since(start)
-				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
+				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUID)
 
 				// 记录慢查询
 				if p != nil {
 					if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-						log.Warnf(ctx,
-							fmt.Sprintf(
-								"slow query log request: %s, duration: %s",
-								c.Request.URL.Path, sub.String(),
-							),
-						)
+						metadata.Sprintf(
+							metadata.MsgQueryTs,
+							"慢查询 %+v",
+							sub.String(),
+						).Warn(ctx)
 					}
 				}
 

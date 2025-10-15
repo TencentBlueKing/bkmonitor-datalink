@@ -46,7 +46,6 @@ type Receiver struct {
 
 var (
 	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
-	globalConfig           Config
 	globalSkywalkingConfig map[string]SkywalkingConfig
 )
 
@@ -70,11 +69,6 @@ func (p Publisher) Publish(r *define.Record) {
 		return
 	}
 	publishRecord(r)
-}
-
-// GetComponentConfig 获取组件全局配置项
-func GetComponentConfig() ComponentConfig {
-	return globalConfig.Components
 }
 
 type SkywalkingConfigFetcher struct {
@@ -107,7 +101,6 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	}
 
 	// 全局状态记录
-	globalConfig = c
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 
 	return &Receiver{
@@ -127,10 +120,9 @@ func New(conf *confengine.Config) (*Receiver, error) {
 }
 
 func (r *Receiver) ready() {
-	config := GetComponentConfig()
-	for k, f := range componentsReady {
-		f(config)
-		logger.Infof("register '%s' component", k)
+	for name, f := range componentsReady {
+		f()
+		logger.Infof("register '%s' component", name)
 	}
 }
 

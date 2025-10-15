@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -158,6 +159,8 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 	configs.SetContainerMode(beat.IsContainerMode())
 	state.heartBeatTicker = time.NewTicker(bt.config.HeartBeat.Period)
 
+	registerGseMarshalFunc(bt.config.JsonLib)
+
 	exe, err := os.Executable()
 	if err == nil {
 		bt.executable = exe
@@ -274,6 +277,7 @@ func (bt *MonitorBeater) PreRun() error {
 	bt.ListenScheduler = schedulerfactory.New(bt, bt.config, schedulerfactory.SchedulerTypeListen)
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 
 	for _, task := range tasks {
@@ -284,7 +288,7 @@ func (bt *MonitorBeater) PreRun() error {
 		switch t {
 		case configs.ConfigTypeKeyword:
 			bt.KeywordScheduler.Add(task)
-		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent:
+		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent, configs.ConfigTypeDmesg:
 			bt.ListenScheduler.Add(task)
 		default:
 			bt.Scheduler.Add(task)
@@ -559,9 +563,21 @@ func (bt *MonitorBeater) Stop() {
 	logger.Info("shutting down")
 }
 
+func updateRunningTasks(tasks []define.Task) {
+	count := make(map[string]int)
+	for i := 0; i < len(tasks); i++ {
+		task := tasks[i]
+		if task != nil && task.GetConfig() != nil {
+			count[task.GetConfig().GetType()]++
+		}
+	}
+	stats.SetRunningTasks(count)
+}
+
 // Reload : reload conf
 func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	logger.Info("MonitorBeater reload")
+	stats.IncReload()
 
 	oldState := bt.beaterState
 	oldConfig := bt.config
@@ -585,6 +601,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	}
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 	beatTasks := make([]define.Task, 0)
 	keywordTasks := make([]define.Task, 0)
@@ -597,7 +614,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 		switch t {
 		case configs.ConfigTypeKeyword:
 			keywordTasks = append(keywordTasks, task)
-		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent:
+		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent, configs.ConfigTypeDmesg:
 			listenTasks = append(listenTasks, task)
 		default:
 			beatTasks = append(beatTasks, task)

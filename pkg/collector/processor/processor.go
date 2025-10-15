@@ -40,10 +40,10 @@ type Processor interface {
 	// Reload 重载 processor 配置
 	// 对于无状态的 processor 可支持替换实例所有变量
 	// 对于有状态的 processor 需要`谨慎地`处理所有变量 避免内存/goroutines 泄漏
-	Reload(config map[string]interface{}, customized []SubConfigProcessor)
+	Reload(config map[string]any, customized []SubConfigProcessor)
 
 	// MainConfig 获取主配置信息
-	MainConfig() map[string]interface{}
+	MainConfig() map[string]any
 
 	// SubConfigs 获取子配置信息
 	SubConfigs() []SubConfigProcessor
@@ -63,7 +63,7 @@ func MustLoadConfigs(content string) Configs {
 	if err != nil {
 		panic(err)
 	}
-	if len(psc) <= 0 {
+	if len(psc) == 0 {
 		panic("no processor configs found")
 	}
 
@@ -79,7 +79,7 @@ func MustCreateFactory(content string, createFunc CreateFunc) Processor {
 	return factory
 }
 
-func DiffMainConfig(src, dst map[string]interface{}) bool {
+func DiffMainConfig(src, dst map[string]any) bool {
 	return reflect.DeepEqual(src, dst)
 }
 
@@ -177,7 +177,7 @@ func register(name string, createFunc CreateFunc) error {
 	return nil
 }
 
-type CreateFunc func(config map[string]interface{}, customized []SubConfigProcessor) (Processor, error)
+type CreateFunc func(config map[string]any, customized []SubConfigProcessor) (Processor, error)
 
 // Register 注册 Processor
 func Register(name string, createFunc CreateFunc) {
@@ -193,18 +193,18 @@ func GetProcessorCreator(name string) CreateFunc {
 }
 
 type CommonProcessor struct {
-	mainConfig map[string]interface{}
+	mainConfig map[string]any
 	subConfigs []SubConfigProcessor
 }
 
-func NewCommonProcessor(mainConfig map[string]interface{}, subConfigs []SubConfigProcessor) CommonProcessor {
+func NewCommonProcessor(mainConfig map[string]any, subConfigs []SubConfigProcessor) CommonProcessor {
 	return CommonProcessor{
 		mainConfig: mainConfig,
 		subConfigs: subConfigs,
 	}
 }
 
-func (p CommonProcessor) MainConfig() map[string]interface{} {
+func (p CommonProcessor) MainConfig() map[string]any {
 	return p.mainConfig
 }
 

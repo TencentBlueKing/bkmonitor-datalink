@@ -24,14 +24,18 @@ const (
 	Avg   = "avg"
 	Sum   = "sum"
 	Count = "count"
+
+	MinOT   = "min_over_time"
+	MaxOT   = "max_over_time"
+	AvgOT   = "avg_over_time"
+	SumOT   = "sum_over_time"
+	CountOT = "count_over_time"
 )
 
 // MergeSamplesWithFuncAndSort 合并 samples 数据，如果相同时间的进行函数处理，并且按照时间排序
 func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sample) []prompb.Sample {
 	return func(samplesList ...[]prompb.Sample) []prompb.Sample {
-		var (
-			aggFunc func(i, j float64) float64
-		)
+		var aggFunc func(i, j float64) float64
 		switch strings.ToLower(name) {
 		case Min:
 			aggFunc = func(i, j float64) float64 {

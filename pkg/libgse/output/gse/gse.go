@@ -24,6 +24,7 @@ import (
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
 
+	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
@@ -61,6 +62,7 @@ var MarshalFunc = json.Marshal
 type Output struct {
 	cli         *gse.GseClient
 	aif         *AgentInfoFetcher
+	fl          *bkcommon.FlowLimiter
 	fastMode    bool
 	concurrency int
 }
@@ -114,6 +116,11 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 		aif:         fetcher,
 		fastMode:    c.FastMode,
 		concurrency: c.Concurrency,
+	}
+
+	if c.FlowLimit > 0 {
+		output.fl = bkcommon.NewFlowLimiter(c.FlowLimit)
+		logp.Info("enable flowlimit, rate: %d", c.FlowLimit)
 	}
 
 	// start gse client
@@ -412,9 +419,10 @@ func (c *Output) ReportRaw(dataid int32, data interface{}) error {
 	return nil
 }
 
-var sendHook func(int32, float64)
+// 返回 false 则表示此 msg 不会被投递到 gse 管道
+var sendHook func(int32, float64) bool
 
-func RegisterSendHook(f func(int32, float64)) { sendHook = f }
+func RegisterSendHook(f func(int32, float64) bool) { sendHook = f }
 
 // ReportCommonData send common data
 // fastMode 使得调度器有机会并发执行 Marshal 函数（CPU 热点）
@@ -428,7 +436,13 @@ func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
 		return err
 	}
 	if sendHook != nil {
-		sendHook(dataid, float64(len(buf)))
+		if !sendHook(dataid, float64(len(buf))) {
+			return nil
+		}
+	}
+
+	if c.fl != nil {
+		c.fl.Consume(len(buf))
 	}
 
 	// new dynamic msg

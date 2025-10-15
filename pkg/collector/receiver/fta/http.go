@@ -37,10 +37,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceFta, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Fta.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceFta, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -76,7 +73,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	// 优先尝试从请求头中获取 token，取不到则中参数中获取
 	token := req.Header.Get(define.KeyToken)
@@ -101,7 +98,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// 将数据转换为 map
-	var data map[string]interface{}
+	var data map[string]any
 	err = json.Unmarshal(buf, &data)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
@@ -135,7 +132,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	event := &define.FtaData{
 		PluginId:   "",
 		IngestTime: time.Now().Unix(),
-		Data:       []map[string]interface{}{data},
+		Data:       []map[string]any{data},
 		EventId:    uuid.New().String(),
 	}
 

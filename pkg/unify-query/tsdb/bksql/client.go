@@ -11,13 +11,12 @@ package bksql
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -80,7 +79,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		return err
 	}
 
-	metric.TsDBRequestBytes(ctx, size, consul.BkSqlStorageType)
+	metric.TsDBRequestBytes(ctx, size, metadata.BkSqlStorageType)
 
 	queryCost := time.Since(startAnaylize)
 	if span != nil {
@@ -88,7 +87,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	}
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, consul.BkSqlStorageType, c.url,
+		ctx, queryCost, metadata.BkSqlStorageType, c.url,
 	)
 	return nil
 }
@@ -105,7 +104,7 @@ func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *R
 	return res
 }
 
-func (c *Client) response(data interface{}) *Result {
+func (c *Client) response(data any) *Result {
 	return &Result{Data: data}
 }
 

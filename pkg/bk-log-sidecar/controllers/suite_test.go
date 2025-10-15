@@ -24,7 +24,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	bluekingv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 )
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to

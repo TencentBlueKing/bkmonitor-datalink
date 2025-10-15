@@ -27,9 +27,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	bluekingv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bk-log-sidecar/controllers"
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/controllers"
 )
 
 var (

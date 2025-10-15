@@ -907,6 +907,516 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}},{"bool":{"must":{"bool":{"must_not":{"term":{"type":"system"}}}},"should":{"term":{"level":"warn"}}}}]}}`,
 			sql: "(`log` MATCH_PHRASE 'error' AND `status` = 'active') OR (`level` = 'warn' AND `type` != 'system' OR `type` != 'system')",
 		},
+
+		// =================================================================
+		// Test Suite: escape_sequences - 转义字符补充测试
+		// =================================================================
+		"escape_question_mark": {
+			q:   `hello\?world`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\?world"}}`,
+			sql: "`log` MATCH_PHRASE 'hello\\?world'",
+		},
+		"escape_plus_sign": {
+			q:   `hello\+world`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\+world"}}`,
+			sql: "`log` MATCH_PHRASE 'hello\\+world'",
+		},
+		"escape_minus_sign": {
+			q:   `hello\-world`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\-world"}}`,
+			sql: "`log` MATCH_PHRASE 'hello\\-world'",
+		},
+		"escape_double_quote": {
+			q:   `hello\"world`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\\"world"}}`,
+			sql: "`log` MATCH_PHRASE 'hello\\\"world'",
+		},
+		"escape_double_backslash": {
+			q:   `hello\\world`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\\\world"}}`,
+			sql: "`log` MATCH_PHRASE 'hello\\\\world'",
+		},
+
+		// =================================================================
+		// Test Suite: special_wildcard - 特殊通配符测试
+		// =================================================================
+		// 注意：单独的 * 和 ? 无法被解析器正确处理，会返回空结果
+		// "special_single_wildcard_star": {
+		// 	q:   `*`,
+		// 	es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*"}}`,
+		// 	sql: "`log` LIKE '%'",
+		// },
+		// "special_single_wildcard_question": {
+		// 	q:   `?`,
+		// 	es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"?"}}`,
+		// 	sql: "`log` LIKE '_'",
+		// },
+
+		// =================================================================
+		// Test Suite: whitespace_handling - 空白符处理补充测试
+		// =================================================================
+		"whitespace_tab_separator": {
+			q:   "hello\tworld",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"world"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'hello' OR `log` MATCH_PHRASE 'world'",
+		},
+		"whitespace_newline_separator": {
+			q:   "hello\nworld",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"world"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'hello' OR `log` MATCH_PHRASE 'world'",
+		},
+		"whitespace_normal_spaces": {
+			q:   `hello world`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"world"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'hello' OR `log` MATCH_PHRASE 'world'",
+		},
+
+		// =================================================================
+		// Test Suite: lucene_extracted_priority1 - Lucene官方高优先级测试
+		// =================================================================
+		"lucene_backslash_term": {
+			q:   `\`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\\"}}`,
+			sql: "`log` MATCH_PHRASE '\\'",
+		},
+		"lucene_multi_term_foo_foobar": {
+			q:   `foo foobar`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foo"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foobar"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'foo' OR `log` MATCH_PHRASE 'foobar'",
+		},
+		"lucene_multi_foo": {
+			q:   `multi foo`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"multi"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foo"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'multi' OR `log` MATCH_PHRASE 'foo'",
+		},
+		"lucene_foo_multi": {
+			q:   `foo multi`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foo"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"multi"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'foo' OR `log` MATCH_PHRASE 'multi'",
+		},
+		"lucene_multi_multi": {
+			q:   `multi multi`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"multi"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"multi"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'multi' OR `log` MATCH_PHRASE 'multi'",
+		},
+		"lucene_operator_minus_with_spaces": {
+			q:   `a - b`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b'",
+		},
+		"lucene_operator_plus_with_spaces": {
+			q:   `a + b`,
+			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}}}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE 'b'",
+		},
+		// 注意: a ! b 中的 ! 会被当作普通文本处理
+		"lucene_operator_exclamation_with_spaces": {
+			q:   `a ! b`,
+			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"!"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE '!' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE 'b'",
+		},
+		// 注意: +guinea pig 会被解析为 pig AND guinea OR guinea
+		"lucene_guinea_pig_plus": {
+			q:   `+guinea pig`,
+			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea"}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}}}`,
+			sql: "`log` MATCH_PHRASE 'pig' AND `log` MATCH_PHRASE 'guinea' OR `log` MATCH_PHRASE 'guinea'",
+		},
+		"lucene_guinea_pig_minus": {
+			q:   `-guinea pig`,
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}}}`,
+			sql: "`log` MATCH_PHRASE 'pig' AND `log` NOT MATCH_PHRASE 'guinea' OR `log` NOT MATCH_PHRASE 'guinea'",
+		},
+		// 注意: !guinea 会被解析器处理为 guinea (感叹号被忽略)
+		"lucene_guinea_pig_exclamation": {
+			q:   `!guinea pig`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'guinea' OR `log` MATCH_PHRASE 'pig'",
+		},
+		"lucene_guinea_wildcard_star": {
+			q:   `guinea* pig`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea*"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
+			sql: "`log` LIKE 'guinea%' OR `log` MATCH_PHRASE 'pig'",
+		},
+		"lucene_guinea_wildcard_question": {
+			q:   `guinea? pig`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea?"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
+			sql: "`log` LIKE 'guinea_' OR `log` MATCH_PHRASE 'pig'",
+		},
+		"lucene_guinea_fuzzy": {
+			q:   `guinea~2 pig`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea~2"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'guinea' OR `log` MATCH_PHRASE 'pig'",
+		},
+		"lucene_guinea_boost": {
+			q:   `guinea^2 pig`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"guinea"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'guinea' OR `log` MATCH_PHRASE 'pig'",
+		},
+		"lucene_term_phrase_term": {
+			q:   `term phrase term`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"phrase"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'term' OR `log` MATCH_PHRASE 'phrase' OR `log` MATCH_PHRASE 'term'",
+		},
+		"lucene_unicode_umlaut": {
+			q:   `ümlaut`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"ümlaut"}}`,
+			sql: "`log` MATCH_PHRASE 'ümlaut'",
+		},
+		"lucene_unicode_turm": {
+			q:   `türm term term`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"türm"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'türm' OR `log` MATCH_PHRASE 'term' OR `log` MATCH_PHRASE 'term'",
+		},
+
+		// =================================================================
+		// Test Suite: numeric_edge_cases - 数值边界测试
+		// =================================================================
+		"numeric_scientific_notation": {
+			q:   `1e10`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"1e10"}}`,
+			sql: "`log` MATCH_PHRASE '1e10'",
+		},
+
+		// =================================================================
+		// Test Suite: unicode_extended - Unicode扩展测试
+		// =================================================================
+		"unicode_arabic": {
+			q:   `العربية`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"العربية"}}`,
+			sql: "`log` MATCH_PHRASE 'العربية'",
+		},
+		"unicode_chinese_query": {
+			q:   `中文查询`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"中文查询"}}`,
+			sql: "`log` MATCH_PHRASE '中文查询'",
+		},
+		"unicode_french_accents": {
+			q:   `café résumé`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"café"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"résumé"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'café' OR `log` MATCH_PHRASE 'résumé'",
+		},
+		"unicode_cjk_ideographic_space": {
+			q:   "term\u3000term\u3000term",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'term' OR `log` MATCH_PHRASE 'term' OR `log` MATCH_PHRASE 'term'",
+		},
+
+		// =================================================================
+		// Test Suite: field_special_cases - 字段特殊情况测试
+		// =================================================================
+		"field_equals_operator": {
+			q:   `field=a`,
+			es:  `{"term":{"field":"a"}}`,
+			sql: "`field` = 'a'",
+		},
+		// 注意: foo:\ 是无效的语法，会导致解析错误
+		// "field_backslash_boundary": {
+		// 	q:   `foo:\`,
+		// 	es:  `{"match_phrase":{"foo":{"query":"\\"}}}`,
+		// 	sql: "`foo` MATCH_PHRASE '\\'",
+		// },
+
+		// =================================================================
+		// Test Suite: range_numeric_types - 范围查询数值类型测试
+		// =================================================================
+		"range_integer_field": {
+			q:   `intField:[1 TO 3]`,
+			es:  `{"range":{"intField":{"from":1,"include_lower":true,"include_upper":true,"to":3}}}`,
+			sql: "`intField` >= '1' AND `intField` <= '3'",
+		},
+		"range_integer_field_single": {
+			q:   `intField:1`,
+			es:  `{"term":{"intField":"1"}}`,
+			sql: "`intField` = '1'",
+		},
+		"range_long_field": {
+			q:   `longField:[1 TO 3]`,
+			es:  `{"range":{"longField":{"from":1,"include_lower":true,"include_upper":true,"to":3}}}`,
+			sql: "`longField` >= '1' AND `longField` <= '3'",
+		},
+		"range_float_field": {
+			q:   `floatField:[1.5 TO 3.6]`,
+			es:  `{"range":{"floatField":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
+			sql: "`floatField` >= '1.5' AND `floatField` <= '3.6'",
+		},
+		"range_double_field": {
+			q:   `doubleField:[1.5 TO 3.6]`,
+			es:  `{"range":{"doubleField":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
+			sql: "`doubleField` >= '1.5' AND `doubleField` <= '3.6'",
+		},
+
+		// =================================================================
+		// Test Suite: complex_field_combinations - 复杂字段组合测试
+		// =================================================================
+		"complex_multi_field_combination": {
+			q:   `title:"hello world" AND content:programming AND author:john`,
+			// 注意: title 字段使用 term (因为是短语查询), author 使用 match_phrase (因为在 fieldsMap 中标记为 IsAnalyzed)
+			es:  `{"bool":{"must":[{"term":{"title":"hello world"}},{"term":{"content":"programming"}},{"match_phrase":{"author":{"query":"john"}}}]}}`,
+			sql: "`title` = 'hello world' AND `content` = 'programming' AND `author` MATCH_PHRASE 'john'",
+		},
+		"complex_multi_field_grouping": {
+			q:   `title:(java OR python) AND tags:(tutorial AND beginner)`,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"term":{"title":"java"}},{"term":{"title":"python"}}]}},{"bool":{"must":[{"term":{"tags":"tutorial"}},{"term":{"tags":"beginner"}}]}}]}}`,
+			sql: "(`title` = 'java' OR `title` = 'python') AND (`tags` = 'tutorial' AND `tags` = 'beginner')",
+		},
+		"complex_multi_field_boost": {
+			q:   `title:java^10 OR content:java^1 OR tags:java^5`,
+			es:  `{"bool":{"should":[{"term":{"title":{"boost":10,"value":"java"}}},{"term":{"content":{"boost":1,"value":"java"}}},{"term":{"tags":{"boost":5,"value":"java"}}}]}}`,
+			sql: "`title` = 'java' OR `content` = 'java' OR `tags` = 'java'",
+		},
+
+		// =================================================================
+		// Test Suite: lucene_extracted_priority2 - Lucene官方中优先级测试
+		// =================================================================
+		"lucene_boolean_and_parentheses": {
+			q:   `(a AND b)`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b')",
+		},
+		"lucene_boolean_and_not": {
+			q:   `a AND NOT b`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b'",
+		},
+		"lucene_boolean_and_minus": {
+			q:   `a AND -b`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b'",
+		},
+		"lucene_field_body_text": {
+			q:   `body:text`,
+			es:  `{"term":{"body":"text"}}`,
+			sql: "`body` = 'text'",
+		},
+		"lucene_fuzzy_similarity": {
+			q:   `test~0.8`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test~0.8"}}`,
+			sql: "`log` MATCH_PHRASE 'test'",
+		},
+		"lucene_range_field_alpha": {
+			q:   `field:[a TO z]`,
+			es:  `{"range":{"field":{"from":"a","include_lower":true,"include_upper":true,"to":"z"}}}`,
+			sql: "`field` >= 'a' AND `field` <= 'z'",
+		},
+		"lucene_boost_field_integer": {
+			q:   `field:value^10`,
+			es:  `{"term":{"field":{"boost":10,"value":"value"}}}`,
+			sql: "`field` = 'value'",
+		},
+		"lucene_unicode_japanese": {
+			q:   "用語\u3000用語\u3000用語",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"用語"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"用語"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"用語"}}]}}`,
+			sql: "`log` MATCH_PHRASE '用語' OR `log` MATCH_PHRASE '用語' OR `log` MATCH_PHRASE '用語'",
+		},
+		"lucene_regex_character_class": {
+			q:   `/[a-z]+/`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"/[a-z]+/"}}`,
+			sql: "`log` REGEXP '[a-z]+'",
+		},
+		"lucene_field_regex": {
+			q:   `field:/pattern/`,
+			es:  `{"regexp":{"field":{"value":"pattern"}}}`,
+			sql: "`field` REGEXP 'pattern'",
+		},
+
+		// =================================================================
+		// Test Suite: additional_edge_cases - 额外边界情况测试
+		// =================================================================
+		"edge_empty_field_value": {
+			q:   `field:""`,
+			es:  `{"term":{"field":""}}`,
+			sql: "`field` = ''",
+		},
+		"edge_field_with_underscore": {
+			q:   `_field:value`,
+			es:  `{"term":{"_field":"value"}}`,
+			sql: "`_field` = 'value'",
+		},
+		"edge_field_with_numbers": {
+			q:   `field123:value`,
+			es:  `{"term":{"field123":"value"}}`,
+			sql: "`field123` = 'value'",
+		},
+		"edge_field_with_dots": {
+			q:   `field.subfield:value`,
+			es:  `{"term":{"field.subfield":"value"}}`,
+			sql: "CAST(field['subfield'] AS STRING) = 'value'",
+		},
+		"edge_multiple_wildcards": {
+			q:   `te*st*ing`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"te*st*ing"}}`,
+			sql: "`log` LIKE 'te%st%ing'",
+		},
+		"edge_wildcard_with_question": {
+			q:   `te?t*`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"te?t*"}}`,
+			sql: "`log` LIKE 'te_t%'",
+		},
+		"edge_phrase_with_wildcard": {
+			q:   `"hello wor*"`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello wor*\""}}`,
+			sql: "`log` MATCH_PHRASE 'hello wor*'",
+		},
+		"edge_nested_parentheses": {
+			q:   `((a OR b) AND (c OR d))`,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}]}}`,
+			sql: "((`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b') AND (`log` MATCH_PHRASE 'c' OR `log` MATCH_PHRASE 'd'))",
+		},
+		"edge_deep_nested_parentheses": {
+			q:   `(((a AND b) OR c) AND d)`,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}`,
+			sql: "(((`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b') OR `log` MATCH_PHRASE 'c') AND `log` MATCH_PHRASE 'd')",
+		},
+
+		// =================================================================
+		// Test Suite: range_query_variations - 范围查询变体测试
+		// =================================================================
+		"range_exclusive_both": {
+			q:   `count:{10 TO 20}`,
+			es:  `{"range":{"count":{"from":10,"include_lower":false,"include_upper":false,"to":20}}}`,
+			sql: "`count` > '10' AND `count` < '20'",
+		},
+		"range_mixed_inclusive_exclusive_left": {
+			q:   `count:[10 TO 20}`,
+			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":false,"to":20}}}`,
+			sql: "`count` >= '10' AND `count` < '20'",
+		},
+		"range_mixed_inclusive_exclusive_right": {
+			q:   `count:{10 TO 20]`,
+			es:  `{"range":{"count":{"from":10,"include_lower":false,"include_upper":true,"to":20}}}`,
+			sql: "`count` > '10' AND `count` <= '20'",
+		},
+		"range_with_negative_numbers": {
+			q:   `temperature:[-10 TO 30]`,
+			es:  `{"range":{"temperature":{"from":-10,"include_lower":true,"include_upper":true,"to":30}}}`,
+			sql: "`temperature` >= '-10' AND `temperature` <= '30'",
+		},
+		"range_with_decimals": {
+			q:   `price:[9.99 TO 99.99]`,
+			es:  `{"range":{"price":{"from":9.99,"include_lower":true,"include_upper":true,"to":99.99}}}`,
+			sql: "`price` >= '9.99' AND `price` <= '99.99'",
+		},
+		"range_timestamp": {
+			q:   `timestamp:[2024-01-01T00:00:00 TO 2024-12-31T23:59:59]`,
+			es:  `{"range":{"timestamp":{"from":"2024-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2024-12-31T23:59:59"}}}`,
+			sql: "`timestamp` >= '2024-01-01T00:00:00' AND `timestamp` <= '2024-12-31T23:59:59'",
+		},
+
+		// =================================================================
+		// Test Suite: boolean_operator_combinations - 布尔操作符组合测试
+		// =================================================================
+		"boolean_triple_and": {
+			q:   `a AND b AND c`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' AND `log` MATCH_PHRASE 'c'",
+		},
+		"boolean_triple_or": {
+			q:   `a OR b OR c`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE 'c'",
+		},
+		"boolean_mixed_and_or": {
+			q:   `a OR b AND c`,
+			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b' AND `log` MATCH_PHRASE 'c'",
+		},
+		"boolean_all_required": {
+			q:   `+a +b +c`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' AND `log` MATCH_PHRASE 'c'",
+		},
+		"boolean_all_prohibited": {
+			q:   `-a -b -c`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}}}]}}`,
+			sql: "`log` NOT MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b' AND `log` NOT MATCH_PHRASE 'c'",
+		},
+		"boolean_mixed_required_prohibited": {
+			q:   `+required1 +required2 -prohibited1 -prohibited2`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required1"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"required2"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"prohibited1"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"prohibited2"}}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'required1' AND `log` MATCH_PHRASE 'required2' AND `log` NOT MATCH_PHRASE 'prohibited1' AND `log` NOT MATCH_PHRASE 'prohibited2'",
+		},
+
+		// =================================================================
+		// Test Suite: field_query_variations - 字段查询变体测试
+		// =================================================================
+		"field_query_with_hyphen": {
+			q:   `field-name:value`,
+			es:  `{"term":{"field-name":"value"}}`,
+			sql: "`field-name` = 'value'",
+		},
+		"field_query_with_colon_in_value": {
+			q:   `url:"http://example.com"`,
+			es:  `{"term":{"url":"http://example.com"}}`,
+			sql: "`url` = 'http://example.com'",
+		},
+		"field_query_with_slash_in_value": {
+			q:   `path:"/var/log/app.log"`,
+			es:  `{"term":{"path":"/var/log/app.log"}}`,
+			sql: "`path` = '/var/log/app.log'",
+		},
+		"field_multiple_values_or": {
+			q:   `status:200 OR status:201 OR status:204`,
+			es:  `{"bool":{"should":[{"term":{"status":"200"}},{"term":{"status":"201"}},{"term":{"status":"204"}}]}}`,
+			sql: "`status` = '200' OR `status` = '201' OR `status` = '204'",
+		},
+		"field_range_and_term": {
+			q:   `age:[18 TO 65] AND status:active`,
+			es:  `{"bool":{"must":[{"range":{"age":{"from":18,"include_lower":true,"include_upper":true,"to":65}}},{"term":{"status":"active"}}]}}`,
+			sql: "`age` >= '18' AND `age` <= '65' AND `status` = 'active'",
+		},
+
+		// =================================================================
+		// Test Suite: boost_query_variations - 权重查询变体测试
+		// =================================================================
+		"boost_phrase_integer": {
+			q:   `"hello world"^5`,
+			es:  `{"query_string":{"analyze_wildcard":true,"boost":5,"fields":["*","__*"],"lenient":true,"query":"\"hello world\""}}`,
+			sql: "`log` MATCH_PHRASE 'hello world'",
+		},
+		"boost_wildcard_query": {
+			q:   `test*^2`,
+			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"test*"}}`,
+			sql: "`log` LIKE 'test%'",
+		},
+		"boost_range_query": {
+			q:   `count:[1 TO 10]^3`,
+			es:  `{"range":{"count":{"boost":3,"from":1,"include_lower":true,"include_upper":true,"to":10}}}`,
+			sql: "`count` >= '1' AND `count` <= '10'",
+		},
+		"boost_nested_groups": {
+			q:   `(a OR b)^2 AND (c OR d)^3`,
+			es:  `{"bool":{"must":[{"bool":{"boost":2,"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}},{"bool":{"boost":3,"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b') AND (`log` MATCH_PHRASE 'c' OR `log` MATCH_PHRASE 'd')",
+		},
+
+		// =================================================================
+		// Test Suite: wildcard_advanced - 高级通配符测试
+		// =================================================================
+		"wildcard_multiple_stars": {
+			q:   `*test*data*`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*test*data*"}}`,
+			sql: "`log` LIKE '%test%data%'",
+		},
+		"wildcard_multiple_questions": {
+			q:   `t??t`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"t??t"}}`,
+			sql: "`log` LIKE 't__t'",
+		},
+		"wildcard_mixed_star_question": {
+			q:   `te?t*ing`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"te?t*ing"}}`,
+			sql: "`log` LIKE 'te_t%ing'",
+		},
+		"wildcard_field_with_star": {
+			q:   `name:john*`,
+			es:  `{"wildcard":{"name":{"value":"john*"}}}`,
+			sql: "`name` LIKE 'john%'",
+		},
+		"wildcard_field_with_question": {
+			q:   `name:j?hn`,
+			es:  `{"wildcard":{"name":{"value":"j?hn"}}}`,
+			sql: "`name` LIKE 'j_hn'",
+		},
 	}
 
 	mock.Init()

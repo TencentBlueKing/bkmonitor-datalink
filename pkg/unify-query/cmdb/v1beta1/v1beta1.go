@@ -473,7 +473,7 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 		metadata.Sprintf(
 			metadata.MsgQueryRelation,
 			"查询不到数据",
-		).Warn(ctx)
+		).Text()
 		return nil, nil
 	}
 

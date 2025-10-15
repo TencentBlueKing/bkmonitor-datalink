@@ -433,7 +433,8 @@ func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, e
 
 	if len(allAlias) == 0 {
 		return nil, metadata.Sprintf(
-			metadata.MsgQueryES, "%s 构建索引异常",
+			metadata.MsgQueryES,
+			"%s 构建索引异常",
 			query.TableID,
 		).Error(ctx, fmt.Errorf("es 查询没有匹配到索引"))
 	}

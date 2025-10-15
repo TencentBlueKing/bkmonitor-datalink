@@ -20,7 +20,7 @@ package versioned
 import (
 	"fmt"
 
-	bkv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1"
+	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned/typed/bk.tencent.com/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

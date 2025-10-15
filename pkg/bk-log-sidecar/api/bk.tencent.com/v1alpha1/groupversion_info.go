@@ -14,7 +14,7 @@
 // +groupName=bk.tencent.com
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:Optional
-// +module=github.com/TencentBlueKing/bk-log-sidecar
+// +module=github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar
 package v1alpha1
 
 import (

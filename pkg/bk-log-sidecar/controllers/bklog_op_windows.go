@@ -13,7 +13,7 @@ package controllers
 import (
 	"os"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 

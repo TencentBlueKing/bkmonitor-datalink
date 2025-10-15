@@ -198,6 +198,9 @@ bk-collector:
     # ResourceFilter: 维度补充
     - name: "resource_filter/fill_dimensions"
 
+    # FieldNormalizer: 协议字段替换
+    - name: "field_normalizer/otel_mapping"
+
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
       config:

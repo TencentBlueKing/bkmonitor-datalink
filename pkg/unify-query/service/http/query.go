@@ -432,9 +432,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef.Range("", func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
+			sliceIndex := i
 			wg.Add(1)
 
-			err = p.Submit(func() {
+			if submitErr := p.Submit(func() {
 				defer func() {
 					wg.Done()
 				}()
@@ -450,7 +451,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 
 				// 使用 slice 配置查询
-				newQry.SliceID = cast.ToString(i)
+				newQry.SliceID = cast.ToString(sliceIndex)
 
 				// slice info
 				slice := session.Slice(newQry.TableUUID())
@@ -462,10 +463,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				from := slice.Offset + i*slice.Limit
+				from := slice.Offset + sliceIndex*slice.Limit
 				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
-					SliceIndex: i,
+					SliceIndex: sliceIndex,
 					ScrollID:   slice.ScrollID,
 					SliceMax:   slice.SliceMax,
 					From:       &from,
@@ -500,6 +501,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					}
 					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
 					lock.Lock()
+					total += size
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
 					lock.Unlock()
 				}
@@ -507,8 +509,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted
 				}
-				total += size
-			})
+			}); submitErr != nil {
+				errCh <- metadata.Sprintf(
+					metadata.MsgQueryTs,
+					"提交查询任务失败",
+				).Error(ctx, submitErr)
+				wg.Done()
+			}
 		}
 	})
 

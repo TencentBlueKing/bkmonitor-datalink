@@ -22,6 +22,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+const (
+	Name = "k8s_cache"
+)
+
 type Config struct {
 	URL      string        `config:"url" mapstructure:"url"`
 	Timeout  time.Duration `config:"timeout" mapstructure:"timeout"`
@@ -48,16 +52,6 @@ type Cache interface {
 	Get(k string) (map[string]string, bool)
 }
 
-type noneCache struct{}
-
-func (noneCache) Sync() {}
-
-func (noneCache) Clean() {}
-
-func (noneCache) Get(_ string) (map[string]string, bool) {
-	return nil, false
-}
-
 type innerCache struct {
 	mut    sync.RWMutex
 	cache  map[string]map[string]string
@@ -68,9 +62,12 @@ type innerCache struct {
 	synced atomic.Bool
 }
 
+// New 创建一个缓存对象
+//
+// 检验失败时返回 nil 调用方需要自行判断
 func New(conf *Config) Cache {
 	if conf == nil || !conf.Validate() {
-		return noneCache{} // 如果配置不合法返回一个空实现
+		return nil
 	}
 
 	tr := &http.Transport{
@@ -192,4 +189,31 @@ func (c *innerCache) sync() error {
 		}
 	}
 	return nil
+}
+
+var defaultCache Cache
+
+// Default 获取默认缓存 可能会 nil 调用方需要先判断
+func Default() Cache {
+	return defaultCache
+}
+
+// LoadDefault 加载默认缓存 仅支持加载一次
+func LoadDefault(conf *Config) {
+	if defaultCache != nil {
+		return
+	}
+
+	defaultCache = New(conf)
+	if defaultCache != nil {
+		defaultCache.Sync()
+	}
+}
+
+// UnloadDefault 清理默认缓存
+func UnloadDefault() {
+	if defaultCache == nil {
+		return
+	}
+	defaultCache.Clean()
 }

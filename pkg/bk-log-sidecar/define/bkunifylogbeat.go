@@ -13,10 +13,9 @@ package define
 import (
 	"encoding/json"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/runtime"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 )
 
 // BkunifylogbeatConfig config of Bkunifylogbeat

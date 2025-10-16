@@ -13,11 +13,11 @@ package controllers
 import (
 	"fmt"
 	"io/ioutil"
+	"k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	"os"
 	"path/filepath"
 	"syscall"
-
-	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
@@ -64,6 +64,23 @@ func (s *BkLogSidecar) reloadBkunifylogbeat() error {
 }
 
 func resolveContainerdPath(containerStatus *v1alpha2.ContainerStatusResponse, pid int) (string, string, error) {
+	rootPath := fmt.Sprintf("/proc/%d/root", pid)
+	if pid == 0 {
+		rootPath = filepath.Join(config.ContainerdStatePath, ContainerdTaskDirName, config.ContainerdNamespace, containerStatus.Status.Id, ContainerdRootFsDirName)
+	}
+
+	logPath := containerStatus.Status.LogPath
+
+	// 如果logPath是软链，需要转换为真实路径
+	realLogPath, err := define.EvalSymlinks(logPath)
+	if err == nil {
+		logPath = realLogPath
+	}
+
+	return rootPath, logPath, err
+}
+
+func resolveContainerdV2Path(containerStatus *v1.ContainerStatusResponse, pid int) (string, string, error) {
 	rootPath := fmt.Sprintf("/proc/%d/root", pid)
 	if pid == 0 {
 		rootPath = filepath.Join(config.ContainerdStatePath, ContainerdTaskDirName, config.ContainerdNamespace, containerStatus.Status.Id, ContainerdRootFsDirName)

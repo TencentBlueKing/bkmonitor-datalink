@@ -109,8 +109,7 @@ func (sfn SpanFieldNormalizer) Keys() int {
 	return len(sfn.funcs)
 }
 
-func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
-	spanKind := span.Kind().String()
+func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span, spanKind string) {
 	predicateKeys := sfn.ch.GetPredicateKeys(spanKind)
 	if len(predicateKeys) == 0 {
 		return
@@ -126,7 +125,6 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 			}
 
 			sfn.doNormalize(pk, spanKind, span)
-			sfn.doNormalize(pk, "", span)
 		}
 	}
 }

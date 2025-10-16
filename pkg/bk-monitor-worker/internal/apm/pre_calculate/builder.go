@@ -59,9 +59,12 @@ var (
 )
 
 type StartInfo struct {
-	DataId string `json:"data_id"`
-	Qps    *int   `json:"qps"`
+	DataId       string             `json:"data_id"`
+	Qps          *int               `json:"qps"`
+	ExtraOptions map[string]options `json:"extra_options"`
 }
+
+type options map[string]any
 
 type Precalculate struct {
 	// ctx Root context
@@ -86,6 +89,48 @@ type PrecalculateOption struct {
 	storageConfig            []storage.ProxyOption
 
 	profileReportConfig []MetricOption
+}
+
+func newPrecalculateOptionWithStartInfo(startInfo *StartInfo) PrecalculateOption {
+	precalculateOption := PrecalculateOption{}
+	if startInfo == nil || len(startInfo.ExtraOptions) == 0 {
+		return precalculateOption
+	}
+
+	if extraProcessorOptions, ok := startInfo.ExtraOptions["processor_options"]; ok {
+		applyProcessorOptions(&precalculateOption, extraProcessorOptions)
+	}
+	if extraMetricOptions, ok := startInfo.ExtraOptions["metric_options"]; ok {
+		applyMetricOptions(&precalculateOption, extraMetricOptions)
+	}
+	if extraNotifierOptions, ok := startInfo.ExtraOptions["notifier_options"]; ok {
+		applyNotifierOptions(&precalculateOption, extraNotifierOptions)
+	}
+	return precalculateOption
+}
+
+func applyProcessorOptions(precalculateOption *PrecalculateOption, extraProcessorOptions options) {
+	if metricReportEnabled, ok := extraProcessorOptions["metric_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsReportEnabled(metricReportEnabled.(bool)))
+	}
+	if infoReportEnabled, ok := extraProcessorOptions["info_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceInfoReportEnabled(infoReportEnabled.(bool)))
+	}
+	if metricLayer4ReportEnabled, ok := extraProcessorOptions["metric_layer4_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsLayer4ReportEnabled(metricLayer4ReportEnabled.(bool)))
+	}
+}
+
+func applyMetricOptions(precalculateOption *PrecalculateOption, extraMetricOptions options) {
+	if enabledProfile, ok := extraMetricOptions["enabled_profile"]; ok {
+		precalculateOption.profileReportConfig = append(precalculateOption.profileReportConfig, EnabledProfileReport(enabledProfile.(bool)))
+	}
+}
+
+func applyNotifierOptions(precalculateOption *PrecalculateOption, extraNotifierOptions options) {
+	if qps, ok := extraNotifierOptions["qps"]; ok {
+		precalculateOption.notifierConfig = append(precalculateOption.notifierConfig, notifier.Qps(qps.(int)))
+	}
 }
 
 type readySignal struct {
@@ -176,7 +221,7 @@ func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan ch
 		return
 	}
 
-	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan)
+	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan, newPrecalculateOptionWithStartInfo(&startInfo))
 }
 
 func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption) {

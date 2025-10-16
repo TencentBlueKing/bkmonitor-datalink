@@ -483,11 +483,17 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
 				if err != nil {
 					slice.FailedNum++
-					errCh <- err
+
+					if slice.FailedNum >= session.SliceMaxFailedNum {
+						errCh <- metadata.Sprintf(
+							metadata.MsgQueryRawScroll,
+							"多次滚动查询失败，终止本次查询",
+						).Error(ctx, err)
+					}
 					return
 				}
 
-				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				// 查询成功，更新 scroll 状态
 				if option != nil {
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
@@ -503,10 +509,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 				total += size
 			})
-			if err != nil {
-				errCh <- err
-				wg.Done()
-			}
 		}
 	})
 

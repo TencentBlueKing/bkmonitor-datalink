@@ -299,10 +299,21 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		err      error
 		span     *trace.Span
 		listData ListData
+		session  *redis.ScrollSession
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
 	defer func() {
+		if session != nil {
+			if unLockErr := session.UnLock(ctx); unLockErr != nil {
+				if err == nil {
+					err = unLockErr
+				} else {
+					err = fmt.Errorf("unlock error: %w; previous error: %w", unLockErr, err)
+				}
+			}
+		}
+
 		if err != nil {
 			resp.failed(ctx, metadata.Sprintf(
 				metadata.MsgQueryRawScroll,
@@ -343,7 +354,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
-	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
+	session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
 		return
 	}
@@ -370,25 +381,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if err = session.Lock(ctx); err != nil {
 		return
 	}
-	defer func() {
-		if listData.Done {
-			err = session.Clear(ctx)
-			span.Set("clear-cache", "true")
-			if err != nil {
-				return
-			}
-		} else {
-			err = session.Update(ctx)
-			if err != nil {
-				return
-			}
-		}
-
-		err = session.UnLock(ctx)
-		if err != nil {
-			return
-		}
-	}()
 
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
@@ -400,6 +392,20 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 			Message: err.Error(),
 		}
 		return
+	}
+
+	// 根据 Done 状态处理 session
+	if listData.Done {
+		span.Set("clear-cache", "true")
+		err = session.Clear(ctx)
+		if err != nil {
+			return
+		}
+	} else {
+		err = session.Update(ctx)
+		if err != nil {
+			return
+		}
 	}
 
 	// 避免空切片被解析成 null 的问题

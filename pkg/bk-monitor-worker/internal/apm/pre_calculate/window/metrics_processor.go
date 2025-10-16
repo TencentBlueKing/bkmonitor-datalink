@@ -828,7 +828,7 @@ func newMetricProcessor(ctx context.Context, dataId string, processorOpts Proces
 		bkBizId:                           baseInfo.BkBizId,
 		appName:                           baseInfo.AppName,
 		appId:                             baseInfo.AppId,
-		enabledLayer4Report:               processorOpts.enabledInfoCache,
+		enabledLayer4Report:               processorOpts.metricLayer4ReportEnabled,
 		podInstanceErrorFlowReportEnabled: processorOpts.podInstanceErrorFlowReportEnabled,
 		podApmErrorFlowReportEnabled:      processorOpts.podApmErrorFlowReportEnabled,
 		podSystemErrorFlowReportEnabled:   processorOpts.podSystemErrorFlowReportEnabled,

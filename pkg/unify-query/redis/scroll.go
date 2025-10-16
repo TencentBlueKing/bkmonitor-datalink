@@ -146,9 +146,9 @@ func (s *ScrollSession) Stop(ctx context.Context) error {
 
 	if s.Done() {
 		return s.Clear(ctx)
+	} else {
+		return s.Update(ctx)
 	}
-
-	return s.Update(ctx)
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {

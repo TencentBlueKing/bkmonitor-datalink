@@ -105,7 +105,7 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	case define.RecordLogs:
 		err = p.processLogs(decoder, config, record)
 	case define.RecordProfiles:
-		err = p.processProfiles(decoder, config, record)
+		err = p.processProfiles(decoder, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
 	case define.RecordFta:
@@ -312,7 +312,7 @@ func (p *tokenChecker) processProxy(decoder TokenDecoder, record *define.Record)
 	return err
 }
 
-func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, record *define.Record) error {
+func (p *tokenChecker) processProfiles(decoder TokenDecoder, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
 		record.Token, err = decoder.Decode("")
@@ -320,9 +320,6 @@ func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, reco
 	}
 
 	record.Token, err = decoder.Decode(record.Token.Original)
-	if config.ProfilesDataId > 0 {
-		record.Token.ProfilesDataId = config.ProfilesDataId
-	}
 	return err
 }
 

@@ -72,27 +72,29 @@ func NewSpanFieldNormalizer(conf Config) *SpanFieldNormalizer {
 	ch := NewConfigHandler(conf)
 	funcs := make(map[funcKey]NormalizeFunc)
 	for _, field := range conf.Fields {
-		for _, rule := range field.Rules {
-			// TODO(mando): 目前仅支持 Attributes 类型的字段
-			ff, v := fields.DecodeFieldFrom(rule.Key)
-			if ff != fields.FieldFromAttributes {
-				continue
-			}
-
-			fk := funcKey{
-				PredicateKey: field.PredicateKey,
-				Kind:         field.Kind,
-				Key:          v,
-			}
-			switch rule.Op {
-			case funcOr:
-				funcs[fk] = FuncOr(fields.TrimAttributesPrefix(rule.Values...)...)
-			case funcConcat:
-				if len(rule.Values) != 2 {
+		for _, pk := range field.PredicateKeys() {
+			for _, rule := range field.Rules {
+				// TODO(mando): 目前仅支持 Attributes 类型的字段
+				ff, v := fields.DecodeFieldFrom(rule.Key)
+				if ff != fields.FieldFromAttributes {
 					continue
 				}
-				vs := fields.TrimAttributesPrefix(rule.Values...)
-				funcs[fk] = FuncConcat(vs[0], vs[1], ":") // TODO(mando): 后续可考虑连接符配置化
+
+				fk := funcKey{
+					PredicateKey: pk,
+					Kind:         field.Kind,
+					Key:          v,
+				}
+				switch rule.Op {
+				case funcOr:
+					funcs[fk] = FuncOr(fields.TrimAttributesPrefix(rule.Values...)...)
+				case funcConcat:
+					if len(rule.Values) != 2 {
+						continue
+					}
+					vs := fields.TrimAttributesPrefix(rule.Values...)
+					funcs[fk] = FuncConcat(vs[0], vs[1], ":") // TODO(mando): 后续可考虑连接符配置化
+				}
 			}
 		}
 	}
@@ -115,21 +117,30 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span) {
 	}
 
 	for _, pk := range predicateKeys {
-		ff, _ := fields.DecodeFieldFrom(pk)
+		ff, v := fields.DecodeFieldFrom(pk)
 		switch ff {
 		case fields.FieldFromAttributes:
-			attrKeys := sfn.ch.GetAttributes(spanKind, pk)
-			for _, key := range attrKeys {
-				fk := funcKey{
-					PredicateKey: pk,
-					Kind:         spanKind,
-					Key:          key,
-				}
-				// 如果 key 空值则跳过
-				if fn, ok := sfn.funcs[fk]; ok {
-					fn(span, key)
-				}
+			// 如果 key 空值则跳过
+			if val, ok := span.Attributes().Get(v); !ok || val.StringVal() == "" {
+				continue
 			}
+
+			sfn.doNormalize(pk, spanKind, span)
+			sfn.doNormalize(pk, "", span)
+		}
+	}
+}
+
+func (sfn SpanFieldNormalizer) doNormalize(pk, spanKind string, span ptrace.Span) {
+	attrKeys := sfn.ch.GetAttributes(spanKind, pk)
+	for _, key := range attrKeys {
+		fk := funcKey{
+			PredicateKey: pk,
+			Kind:         spanKind,
+			Key:          key,
+		}
+		if fn, ok := sfn.funcs[fk]; ok {
+			fn(span, key)
 		}
 	}
 }

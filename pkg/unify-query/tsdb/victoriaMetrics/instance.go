@@ -16,18 +16,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -129,26 +128,18 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 	return output.String()
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return storage.EmptySeriesSet()
 }
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
-	if !resp.Result {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+	if !resp.Result || resp.Code != OK {
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "response-"
@@ -184,7 +175,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				_ = metadata.Sprintf(
+					metadata.MsgQueryVictoriaMetrics,
+					"查询异常",
+				).Error(ctx, err)
 				continue
 			}
 			point.T = nt
@@ -204,16 +198,13 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, error) {
-	if !resp.Result {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
+	if !resp.Result || resp.Code != OK {
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "vm-data"
@@ -230,6 +221,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 		data := resp.Data.List[0].Data
 		seriesNum := 0
 		pointNum := 0
+		isPartial := resp.Data.List[0].IsPartial
 
 		matrix := make(promql.Matrix, 0, len(data.Result))
 		for _, series := range data.Result {
@@ -247,7 +239,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryVictoriaMetrics,
+						"值格式解析异常",
+					).Error(ctx, err)
 					continue
 				}
 				points = append(points, promql.Point{
@@ -258,7 +253,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						log.Errorf(ctx, err.Error())
+						_ = metadata.Sprintf(
+							metadata.MsgQueryVictoriaMetrics,
+							"值格式解析异常",
+						).Error(ctx, err)
 						continue
 					}
 					points = append(points, promql.Point{
@@ -278,10 +276,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 
 		span.Set("resp-series-num", seriesNum)
 		span.Set("resp-point-num", pointNum)
-		return matrix, nil
+		return matrix, isPartial, nil
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {
@@ -291,10 +289,11 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		log.Errorf(ctx, resp.Errors.Error)
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s, %s, %s",
+			resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		).Error(ctx, nil)
 	}
 
 	prefix := "vm-data"
@@ -347,7 +346,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 
 // GetInstanceType 获取实例类型
 func (i *Instance) InstanceType() string {
-	return consul.VictoriaMetricsStorageType
+	return metadata.VictoriaMetricsStorageType
 }
 
 // nocache 判定
@@ -363,7 +362,7 @@ func (i *Instance) noCache(ctx context.Context, start, step int64) int {
 
 // vmQuery
 func (i *Instance) vmQuery(
-	ctx context.Context, sql string, data interface{}, span *trace.Span,
+	ctx context.Context, sql string, data any, span *trace.Span,
 ) error {
 	var (
 		cancel        context.CancelFunc
@@ -410,7 +409,10 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return err
+		return metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常",
+		).Error(ctx, err)
 	}
 
 	queryCost := time.Since(startAnaylize)
@@ -429,7 +431,7 @@ func (i *Instance) vmQuery(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+) (promql.Matrix, bool, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -454,7 +456,7 @@ func (i *Instance) DirectQueryRange(
 	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return promql.Matrix{}, nil
+		return promql.Matrix{}, false, nil
 	}
 
 	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
@@ -488,12 +490,12 @@ func (i *Instance) DirectQueryRange(
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), vmResp, span)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	return i.matrixFormat(ctx, vmResp, span)
@@ -560,9 +562,7 @@ func (i *Instance) DirectQuery(
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
-	var (
-		resp = &VmSeriesResponse{}
-	)
+	resp := &VmSeriesResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
@@ -574,7 +574,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	span.Set("query-storage-name", query.StorageName)
 
 	if query.VmRt == "" {
-		return
+		return series, err
 	}
 
 	paramsQuery := &ParamsSeries{
@@ -600,16 +600,16 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	series, err = i.seriesFormat(ctx, resp, span)
-	return
+	return series, err
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -665,9 +665,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 }
 
 func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) (res []string, err error) {
-	var (
-		resp = &VmResponse{}
-	)
+	resp := &VmResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
@@ -729,7 +727,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 		err = i.vmQuery(ctx, string(sql), resp, span)
 		if err == nil {
-			series, err := i.matrixFormat(ctx, resp, span)
+			series, _, err := i.matrixFormat(ctx, resp, span)
 			if err == nil {
 				lbsMap := set.New[string]()
 				for _, s := range series {
@@ -753,7 +751,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -768,12 +766,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {
-		return
+		return list, err
 	}
 
 	metricName := function.MatcherToMetricName(matchers...)
 	if metricName == "" {
-		return
+		return list, err
 	}
 
 	var match strings.Builder
@@ -784,7 +782,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	}
 
 	if match.Len() == 0 {
-		return
+		return list, err
 	}
 
 	paramsQuery := &ParamsLabelValues{
@@ -822,12 +820,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	return i.labelFormat(ctx, resp, span)

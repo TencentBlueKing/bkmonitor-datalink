@@ -29,7 +29,6 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -66,7 +65,7 @@ var (
 // NewInstance 初始化引擎
 func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Host == "" {
-		return nil, fmt.Errorf("host is empty %+v", opt)
+		return nil, fmt.Errorf("host is empty")
 	}
 
 	inst := &Instance{
@@ -105,7 +104,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 // GetInstanceType 获取引擎类型
 func (i *Instance) InstanceType() string {
-	return consul.InfluxDBStorageType
+	return metadata.InfluxDBStorageType
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
@@ -183,11 +182,10 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -209,7 +207,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	return res, nil
 }
 
-func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, float64, error) {
+func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64, error) {
 	var (
 		t        time.Time
 		err      error
@@ -272,11 +270,6 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 		}
 
 		t = time.Unix(0, int64(tf))
-	default:
-		log.Errorf(context.TODO(),
-			"get time type failed, type: %T, data: %+v, timeColumnIndex: %d",
-			data[timeColumnIndex], data, timeColumnIndex,
-		)
 	}
 
 	switch value := data[valueColumnIndex].(type) {
@@ -302,11 +295,6 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 		v = result
 	case nil:
 		return t, 0, errors.New("invalid value")
-	default:
-		log.Errorf(context.TODO(),
-			"get value type failed, type: %T, data: %+v, resultColumnIndex: %d",
-			data[valueColumnIndex], data, valueColumnIndex,
-		)
 	}
 
 	return t, v, nil
@@ -314,9 +302,7 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
-	var (
-		resultLimit, resultSLimit int
-	)
+	var resultLimit, resultSLimit int
 
 	if limit > 0 {
 		resultLimit = limit
@@ -445,8 +431,6 @@ func (i *Instance) query(
 		return nil, err
 	}
 
-	log.Infof(ctx, "influxdb query sql:%s", sql)
-
 	values := &url.Values{}
 	values.Set("db", query.DB)
 	values.Set("q", sql)
@@ -481,11 +465,14 @@ func (i *Instance) query(
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"解析器 %s 解析异常",
+			i.contentType,
+		).Error(ctx, err)
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -642,7 +629,11 @@ func (i *Instance) grpcStream(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"查询异常 %+v",
+			req,
+		).Error(ctx, err)
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
@@ -664,11 +655,6 @@ func (i *Instance) grpcStream(
 	return seriesSet
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
@@ -676,9 +662,7 @@ func (i *Instance) QuerySeriesSet(
 	start time.Time,
 	end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
@@ -753,7 +737,11 @@ func (i *Instance) QuerySeriesSet(
 				}
 				res, err := i.query(ctx, mq, metricName, start, end, multiFieldsFlag)
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryInfluxDB,
+						"查询异常 %+v",
+						mq,
+					).Error(ctx, err)
 					continue
 				}
 				set = promRemote.FromQueryResult(true, res)
@@ -772,8 +760,8 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promql string,
 	start, end time.Time, step time.Duration,
-) (promPromql.Matrix, error) {
-	return nil, nil
+) (promPromql.Matrix, bool, error) {
+	return nil, false, nil
 }
 
 // Query instant 查询
@@ -848,11 +836,15 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"解析器 %s 解析异常",
+				i.contentType,
+			).Error(ctx, err)
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})
@@ -959,11 +951,15 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	)
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"解析器 %s 解析异常",
+			i.contentType,
+		).Error(ctx, err)
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -1101,11 +1097,15 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"解析器 %s 解析异常",
+				i.contentType,
+			).Error(ctx, err)
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})
@@ -1159,7 +1159,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	if ss.Err() != nil {
 		err = ss.Err()
-		return
+		return series, err
 	}
 
 	series = make([]map[string]string, 0)
@@ -1175,11 +1175,11 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }

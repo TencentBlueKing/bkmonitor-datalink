@@ -50,7 +50,7 @@ func (r *RateLimitResultProvider) ApplyToOperation(op define.Operation) error {
 }
 
 // ProvideResult method provides the result from response.
-func (r *RateLimitResultProvider) ProvideResult(response *http.Response, result interface{}) error {
+func (r *RateLimitResultProvider) ProvideResult(response *http.Response, result any) error {
 	if r.limiter == nil {
 		return nil
 	}

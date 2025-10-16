@@ -13,7 +13,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -42,7 +41,7 @@ func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
 }
 
 func (q *QueryParams) IsDirectQuery() bool {
-	return q.StorageType.Existed(consul.VictoriaMetricsStorageType)
+	return q.StorageType.Existed(VictoriaMetricsStorageType)
 }
 
 func (q *QueryParams) SetStorageType(ds string) *QueryParams {

@@ -31,10 +31,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceRemoteWrite, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.RemoteWrite.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceRemoteWrite, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,9 +22,8 @@ import (
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -166,7 +164,7 @@ func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool
 		return false
 	}
 
-	var startIndex = -1
+	startIndex := -1
 	for idx, sp := range graphPath {
 		if sp == string(pathResource[0]) {
 			startIndex = idx
@@ -214,9 +212,7 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 }
 
 func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, sourceInfo cmdb.Matcher, hitPath []string, target cmdb.Resource, ts []cmdb.MatchersWithTimestamp, err error) {
-	var (
-		user = metadata.GetUser(ctx)
-	)
+	user := metadata.GetUser(ctx)
 
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
@@ -239,7 +235,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
 		if err != nil {
 			err = errors.WithMessage(err, "get resource error")
-			return
+			return source, sourceInfo, hitPath, target, ts, err
 		}
 	}
 
@@ -250,12 +246,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	if opt.SpaceUid == "" {
 		err = errors.New("space uid is empty")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	if opt.Start.Unix() == 0 || opt.End.Unix() == 0 {
 		err = errors.New("timestamp is empty")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	span.Set("query-source", opt.Source)
@@ -265,21 +261,19 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	sourceInfo, _, err = r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
 	if err != nil {
 		err = errors.WithMessagef(err, "get index matcher error")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
 		err = errors.WithMessagef(err, "get path error")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	span.Set("paths", paths)
 	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Unit).SetIsSkipK8s(true)
 
-	var (
-		errorMessage []string
-	)
+	var errorMessage []string
 
 	for _, path := range paths {
 		reqTs, reqErr := r.doRequest(ctx, path, opt)
@@ -296,11 +290,14 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	if len(ts) == 0 {
-		log.Warnf(ctx, strings.Join(errorMessage, "\n"))
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
 	}
 
 	span.Set("hit_path", hitPath)
-	return
+	return source, sourceInfo, hitPath, target, ts, err
 }
 
 type QueryResourceOptions struct {
@@ -423,7 +420,6 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	}
 
 	queryReference, err := queryTs.ToQueryReference(ctx)
-
 	if err != nil {
 		return nil, err
 	}
@@ -432,14 +428,14 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	var instance tsdb.Instance
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
-		vmExpand := queryReference.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, queryReference)
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			StorageType: consul.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
+			err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
 			return nil, err
 		}
 	} else {
@@ -467,14 +463,17 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 		vector, err = instance.DirectQuery(ctx, statement, opt.End)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
+		matrix, _, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)
 	}
 
 	if len(matrix) == 0 {
-		log.Warnf(ctx, "instance data empty, promql: %s", realPromQL)
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
 		return nil, nil
 	}
 

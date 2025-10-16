@@ -428,7 +428,8 @@ func TestFormatFactory_Query(t *testing.T) {
 						Operator:      structured.ConditionNotEqual,
 						Value:         []string{""},
 					},
-				}},
+				},
+			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}]}}}`,
 		},
 		"nested_must_not_query_type_mix_2": {
@@ -449,7 +450,8 @@ func TestFormatFactory_Query(t *testing.T) {
 						Operator:      structured.ConditionNotEqual,
 						Value:         []string{""},
 					},
-				}},
+				},
+			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"22"}}}}}]}}}`,
 		},
 		"nested_must_not_query_key_is_not_keyword_or_text": {
@@ -630,7 +632,13 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			}
-			fact := NewFormatFactory(ctx).WithMappings(mappings...)
+
+			iof := NewIndexOptionFormat(nil)
+			for _, mapping := range mappings {
+				iof.Parse(nil, mapping)
+			}
+
+			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldsMap())
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -641,16 +649,16 @@ func TestFormatFactory_Query(t *testing.T) {
 			bodyString := string(bodyJson)
 			assert.NotEmpty(t, c.expected)
 			assert.JSONEq(t, c.expected, bodyString)
-
 		})
 	}
 }
 
-func TestFOrmatFactory_WithMapping(t *testing.T) {
+func TestFormatFactory_WithMapping(t *testing.T) {
 	testCases := []struct {
 		name     string
+		settings map[string]any
 		mappings []map[string]any
-		expected map[string]string
+		expected string
 	}{
 		{
 			name: "test normal mappings",
@@ -671,11 +679,7 @@ func TestFOrmatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string]string{
-				"nested1":     "nested",
-				"nested1.key": "keyword",
-				"keyword":     "keyword",
-			},
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "test old es version mapping",
@@ -698,26 +702,105 @@ func TestFOrmatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string]string{
-				"nested1":     "nested",
-				"nested1.key": "keyword",
-				"keyword":     "keyword",
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
+		},
+		{
+			name: "analyzer",
+			settings: map[string]any{
+				"analysis": map[string]any{
+					"analyzer": map[string]any{
+						"my_custom_analyzer": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer",
+							"filter":    []string{"lowercase"},
+						},
+						"my_custom_analyzer_1": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer_1",
+							"filter":    []string{"lowercase"},
+						},
+					},
+					"tokenizer": map[string]any{
+						"my_char_group_tokenizer": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-", "\n", " "},
+							"max_token_length":  512,
+						},
+						"my_char_group_tokenizer_1": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-"},
+							"max_token_length":  512,
+						},
+					},
+				},
 			},
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"log_message": map[string]any{
+							"type":     "text",
+							"analyzer": "my_custom_analyzer",
+							"fields": map[string]any{
+								"raw": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"value": map[string]any{
+							"type": "double",
+						},
+						"event": map[string]any{
+							"type": "nested",
+						},
+					},
+				},
+				{
+					"properties": map[string]any{
+						"log_message": map[string]any{
+							"type":     "text",
+							"analyzer": "my_custom_analyzer",
+							"fields": map[string]any{
+								"raw": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"value": map[string]any{
+							"type": "text",
+						},
+						"event": map[string]any{
+							"type": "nested",
+						},
+						"event.name": map[string]any{
+							"type":       "text",
+							"doc_values": true,
+							"normalizer": true,
+							"analyzer":   "my_custom_analyzer_1",
+						},
+					},
+				},
+			},
+			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]}}`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fact := NewFormatFactory(context.Background()).WithMappings(tc.mappings...)
-			assert.Equal(t, tc.expected, fact.mapping)
+			iof := NewIndexOptionFormat(nil)
+			for _, mapping := range tc.mappings {
+				iof.Parse(tc.settings, mapping)
+			}
+
+			actual, _ := json.Marshal(iof.FieldsMap())
+			assert.JSONEq(t, tc.expected, string(actual))
 		})
 	}
 }
 
 func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
-	var start = time.Unix(1721024820, 0)
-	var end = time.Unix(1721046420, 0)
-	var timeFormat = function.Second
+	start := time.Unix(1721024820, 0)
+	end := time.Unix(1721046420, 0)
+	timeFormat := function.Second
 
 	for name, c := range map[string]struct {
 		timeField  metadata.TimeField
@@ -778,7 +861,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h2m": {
 			timeField: metadata.TimeField{
@@ -794,7 +877,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h12s": {
 			timeField: metadata.TimeField{
@@ -810,7 +893,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate second time field": {
 			timeField: metadata.TimeField{
@@ -826,7 +909,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate second int field": {
 			timeField: metadata.TimeField{
@@ -874,7 +957,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1023,9 +1106,9 @@ func TestToFixInterval(t *testing.T) {
 }
 
 func TestBuildQuery(t *testing.T) {
-	var start = time.Unix(1721024820, 0)
-	var end = time.Unix(1721046420, 0)
-	var timeFormat = function.Second
+	start := time.Unix(1721024820, 0)
+	end := time.Unix(1721046420, 0)
+	timeFormat := function.Second
 
 	for name, c := range map[string]struct {
 		query     *metadata.Query
@@ -1072,7 +1155,8 @@ func TestBuildQuery(t *testing.T) {
 						},
 						"field": "time",
 						"interval": "1h",
-						"min_doc_count": 0
+						"min_doc_count": 0,
+						"time_zone": "Asia/Shanghai"
 					}
 				}
 			},
@@ -1215,7 +1299,6 @@ func TestBuildQuery(t *testing.T) {
 }
 
 func TestFactory_Agg(t *testing.T) {
-
 	testCases := map[string]struct {
 		aggInfoList []any
 		expected    string
@@ -1361,12 +1444,18 @@ func TestFactory_Agg(t *testing.T) {
 			},
 		},
 	}
+
+	iof := NewIndexOptionFormat(nil)
+	for _, mapping := range commonMapping {
+		iof.Parse(nil, mapping)
+	}
+
 	for idx, c := range testCases {
 		t.Run(idx, func(t *testing.T) {
 			mock.Init()
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithMappings(commonMapping...).
+				WithFieldMap(iof.FieldsMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
@@ -1405,6 +1494,11 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	iof := NewIndexOptionFormat(nil)
+	for _, mapping := range commonMapping {
+		iof.Parse(nil, mapping)
 	}
 
 	for name, c := range map[string]struct {
@@ -1494,7 +1588,6 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"size":0}`,
 		},
 	} {
-
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
@@ -1503,7 +1596,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
-				WithMappings(commonMapping...).
+				WithFieldMap(iof.FieldsMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()

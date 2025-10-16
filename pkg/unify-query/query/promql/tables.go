@@ -26,19 +26,19 @@ type Table struct {
 	Types       []string
 	GroupKeys   []string
 	GroupValues []string
-	Data        [][]interface{}
+	Data        [][]any
 }
 
 // NewTableWithSample
 func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(string) string) *Table {
-	var t = new(Table)
+	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
-	t.Data = make([][]interface{}, 0)
-	t.Data = append(t.Data, []interface{}{sample.Point.T, sample.Point.V})
+	t.Data = make([][]any, 0)
+	t.Data = append(t.Data, []any{sample.Point.T, sample.Point.V})
 	// group信息与tags对应
 	t.GroupKeys = make([]string, 0, len(sample.Metric))
 	t.GroupValues = make([]string, 0, len(sample.Metric))
@@ -64,21 +64,19 @@ func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(strin
 
 // NewTable
 func NewTable(index int, series prom.Series, queryRawFormat func(string) string) *Table {
-	var (
-		t = new(Table)
-	)
+	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
-	t.Data = make([][]interface{}, 0)
+	t.Data = make([][]any, 0)
 	for _, point := range series.Points {
 		// 跳过Inf和NAN数据，这种数据无法通过json序列化
 		if math.IsInf(point.V, 0) || math.IsNaN(point.V) {
 			continue
 		}
-		t.Data = append(t.Data, []interface{}{point.T, point.V})
+		t.Data = append(t.Data, []any{point.T, point.V})
 	}
 
 	// group信息与tags对应

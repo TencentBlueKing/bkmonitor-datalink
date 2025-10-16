@@ -27,8 +27,7 @@ type Expr interface {
 	WithAliasEncode(Encode) Expr
 }
 
-type defaultExpr struct {
-}
+type defaultExpr struct{}
 
 func (d *defaultExpr) Log() bool {
 	return false
@@ -294,7 +293,6 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 	default:
 		if e.cur != nil && e.cur.Field != nil {
 			e.cur.Field.Exit(ctx)
-
 		}
 	}
 }
@@ -547,13 +545,13 @@ func (e *Field) Exit(ctx antlr.ParserRuleContext) {
 func (e *Field) String() string {
 	var (
 		originName string
-		ok         bool
+		as         string
 	)
 	aliasName := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
 	if e.encode != nil {
-		originName, ok = e.encode(aliasName)
-		if e.setAs && ok && e.As == "" {
-			e.As = aliasName
+		originName, as = e.encode(aliasName)
+		if e.setAs && as != "" && e.As == "" {
+			e.As = as
 		}
 	} else {
 		originName = aliasName

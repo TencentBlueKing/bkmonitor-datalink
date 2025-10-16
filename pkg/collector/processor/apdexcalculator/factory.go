@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -27,11 +28,11 @@ func init() {
 	processor.Register(define.ProcessorApdexCalculator, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
 	configs := confengine.NewTierConfig()
 	calculators := confengine.NewTierConfig()
 
@@ -79,7 +80,7 @@ func (p *apdexCalculator) IsPreCheck() bool {
 	return false
 }
 
-func (p *apdexCalculator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *apdexCalculator) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -103,14 +104,20 @@ func (p *apdexCalculator) Process(record *define.Record) (*define.Record, error)
 	return nil, nil
 }
 
+const (
+	keyInstance = "bk.instance.id"
+	keyService  = "service.name"
+	keyKind     = "kind"
+)
+
 func (p *apdexCalculator) processTraces(record *define.Record) {
 	pdTraces := record.Data.(ptrace.Traces)
-	foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+	foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 		var service, instance string
-		if v, ok := rsAttrs.Get(processor.KeyInstance); ok {
+		if v, ok := rs.Get(keyInstance); ok {
 			instance = v.AsString()
 		}
-		if v, ok := rsAttrs.Get(processor.KeyService); ok {
+		if v, ok := rs.Get(keyService); ok {
 			service = v.AsString()
 		}
 
@@ -130,7 +137,6 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		rule, found := config.Rule(kind, foundPk)
 		if !found {
-			logger.Debugf("no rules found, kind=%v, pk=%v", kind, foundPk)
 			return
 		}
 
@@ -151,7 +157,7 @@ var spanKindMap = map[string]string{
 
 func (p *apdexCalculator) processMetrics(record *define.Record) {
 	pdMetrics := record.Data.(pmetric.Metrics)
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		name := metric.Name()
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
@@ -161,16 +167,16 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 				attrs := dp.Attributes()
 
 				var service, instance string
-				if v, ok := attrs.Get(processor.KeyService); ok {
+				if v, ok := attrs.Get(keyService); ok {
 					service = v.AsString()
 				}
-				if v, ok := attrs.Get(processor.KeyInstance); ok {
+				if v, ok := attrs.Get(keyInstance); ok {
 					instance = v.AsString()
 				}
 
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
-				if v, ok := attrs.Get(processor.KeyKind); ok {
+				if v, ok := attrs.Get(keyKind); ok {
 					kind = spanKindMap[v.StringVal()]
 				}
 
@@ -186,7 +192,6 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 
 				rule, found := matchRules(config, kind, foundPk, name)
 				if !found {
-					logger.Debugf("no rules found, kind=%v, pk=%v, name=%v", kind, foundPk, name)
 					continue
 				}
 
@@ -210,11 +215,11 @@ func matchRules(config *Config, kind, foundPk, name string) (RuleConfig, bool) {
 	return rule, true
 }
 
-func findMetricsAttributes(pk string, attrMap pcommon.Map) bool {
-	df, s := processor.DecodeDimensionFrom(pk)
-	switch df {
-	case processor.DimensionFromAttribute:
-		v, ok := attrMap.Get(s)
+func findMetricsAttributes(pk string, attrs pcommon.Map) bool {
+	ff, s := fields.DecodeFieldFrom(pk)
+	switch ff {
+	case fields.FieldFromAttributes:
+		v, ok := attrs.Get(s)
 		if ok {
 			return v.AsString() != ""
 		}

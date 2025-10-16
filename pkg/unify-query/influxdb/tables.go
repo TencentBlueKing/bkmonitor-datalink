@@ -18,7 +18,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -34,7 +34,7 @@ type Table struct {
 	Types       []string
 	GroupKeys   []string
 	GroupValues []string
-	Data        [][]interface{}
+	Data        [][]any
 }
 
 // Length
@@ -120,7 +120,11 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					}
 					value, ok := values[index].(string)
 					if !ok {
-						log.Warnf(ctx, "dimension:%s has wrong type value:%v skip", dimension, value)
+						metadata.Sprintf(
+							metadata.MsgTableFormat,
+							"数据类型 %v 错误",
+							values[index],
+						).Warn(ctx)
 						continue
 					}
 					tags[dimension] = value
@@ -131,7 +135,10 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					keyBuilder.WriteString(comma)
 				} else {
 					// 跳过获取不到的dimension，并打印日志
-					log.Warnf(ctx, "cannot get dimension:%s,in data:%v", dimension, values)
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(ctx)
 				}
 			}
 
@@ -139,13 +146,15 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 			resultColumns := []string{ResultColumnName, TimeColumnName}
 
 			// 获取value的值
-			resultValues := make([]interface{}, 0)
+			resultValues := make([]any, 0)
 			for _, resultColumn := range resultColumns {
 				if index, ok := columnIndex[resultColumn]; ok {
 					resultValues = append(resultValues, values[index])
 				} else {
-					// 找不到固定的value和time则跳过该行
-					log.Warnf(ctx, "missing %s in valse:%v", resultColumn, values)
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(ctx)
 					continue valuesLoop
 				}
 			}
@@ -159,7 +168,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					Name:    fmt.Sprintf("result_%d", seriesCount),
 					Tags:    tags,
 					Columns: resultColumns,
-					Values:  make([][]interface{}, 0),
+					Values:  make([][]any, 0),
 				}
 				seriesMap[key] = row
 				seriesLimit[key] = 1
@@ -199,7 +208,10 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 				if _, ok := series.Tags[k]; !ok {
 					series.Tags[k] = v
 				} else {
-					log.Errorf(context.TODO(), fmt.Sprintf("expandTag: [%s] is conflict", k))
+					metadata.Sprintf(
+						metadata.MsgTableFormat,
+						"维度缺失",
+					).Warn(context.TODO())
 				}
 			}
 		} else {
@@ -247,7 +259,6 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 	}
 
 	return t
-
 }
 
 // String
@@ -308,7 +319,7 @@ func (t *Tables) Clear() error {
 // MergeTables : 直接合并相同维度的数据
 func MergeTables(tableList []*Tables, ignoreMetric bool) *Tables {
 	resultTab := NewTables()
-	var mapTag = make(map[uint64]*Table, 0)
+	mapTag := make(map[uint64]*Table, 0)
 
 	// 增加排序逻辑
 	sort.SliceStable(tableList, func(i, j int) bool {

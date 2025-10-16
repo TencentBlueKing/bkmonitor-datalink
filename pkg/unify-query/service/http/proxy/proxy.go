@@ -39,7 +39,7 @@ const (
 type apiGwResponse struct {
 	c       *gin.Context `json:"-"`
 	Result  bool         `json:"result"`
-	Data    interface{}  `json:"data"`
+	Data    any          `json:"data"`
 	Message string       `json:"message"`
 }
 
@@ -51,7 +51,7 @@ func (a *apiGwResponse) failed(msg error) {
 	})
 }
 
-func (a *apiGwResponse) success(data interface{}) {
+func (a *apiGwResponse) success(data any) {
 	a.c.JSON(http.StatusOK, &apiGwResponse{
 		Result:  true,
 		Data:    data,
@@ -70,7 +70,10 @@ func HandleProxy(c *gin.Context) {
 
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			_ = metadata.Sprintf(
+				metadata.MsgHandlerAPI,
+				"代理接口查询异常",
+			).Error(ctx, err)
 			resp.failed(err)
 		}
 

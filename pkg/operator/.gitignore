@@ -26,3 +26,4 @@ dist/
 build/
 dockerfile/operator/bkmonitor-operator
 dockerfile/reloader/bkmonitorbeat-reloadr
+crd

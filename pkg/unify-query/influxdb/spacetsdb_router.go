@@ -44,7 +44,7 @@ var (
 func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 	newKey = key
 	if !MultiTenantMode {
-		return
+		return newKey
 	}
 
 	user := metadata.GetUser(ctx)
@@ -52,7 +52,7 @@ func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 
 	newKey = key + "|" + tenantID
 
-	return
+	return newKey
 }
 
 type SpaceTsDbRouter struct {
@@ -119,14 +119,15 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	createdCount := 0
 	updatedCount := 0
 	for _, entity := range entities {
-		var (
-			keyNotFound bool
-		)
+		var keyNotFound bool
 		k := fmt.Sprintf("%s:%s", stoPrefix, entity.Key)
 		v, err := entity.Val.Marshal(nil)
 		if err != nil {
-			log.Errorf(
-				ctx, "Fail to parse value for MarshalMsg, %+v, error: %v", entity, err)
+			err = metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"序列化实体数据 %v",
+				entity.Val,
+			).Error(ctx, err)
 			if once {
 				return err
 			}
@@ -190,12 +191,41 @@ func (r *SpaceTsDbRouter) Add(ctx context.Context, stoPrefix string, stoKey stri
 	return r.BatchAdd(ctx, stoPrefix, entities, true, true)
 }
 
+// Delete a space data from db
+func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey string) error {
+	fullKey := fmt.Sprintf("%s:%s", stoPrefix, stoKey)
+
+	err := r.kvClient.Delete(kvstore.String2byte(fullKey))
+	if err != nil {
+		return metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"删除失败 %v",
+			fullKey,
+		).Error(ctx, err)
+	}
+
+	if r.isCache {
+		r.cache.Del(fullKey)
+	}
+
+	metadata.Sprintf(
+		metadata.MsgQueryRouter,
+		"删除存储和缓存键 %v",
+		fullKey,
+	).Info(ctx)
+	return nil
+}
+
 // Get a space data from db
 func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey string, cached bool, ignoreKeyNotFound bool) influxdb.GenericValue {
 	stoKey = fmt.Sprintf("%s:%s", stoPrefix, stoKey)
 	stoVal, err := influxdb.NewGenericValue(stoPrefix)
 	if err != nil {
-		log.Warnf(ctx, "Fail to new generic value, %s", err)
+		metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"获取 %s 数据失败 %v",
+			stoPrefix, err,
+		).Warn(ctx)
 		return nil
 	}
 	if cached && r.isCache {
@@ -209,7 +239,11 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 			if ok {
 				return value
 			}
-			log.Warnf(ctx, "Fail to unSerialize cached data, %s, %v", stoKey, data)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"序列化实体数据 %v 失败",
+				data,
+			).Warn(ctx)
 		}
 	}
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
@@ -219,12 +253,20 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 				log.Debugf(ctx, "Key(%s) not found in KVBolt", stoKey)
 			}
 		} else {
-			log.Warnf(ctx, "Fail to get value in KVBolt, key: %s, error: %v", stoKey, err)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"KVBolt %s 获取值失败",
+				stoKey,
+			).Warn(ctx)
 		}
 		stoVal = nil
 	} else {
 		if _, err := stoVal.Unmarshal(v); err != nil {
-			log.Errorf(ctx, "Fail to parse value in KVBolt, key: %s, data: %+v, error: %v", stoKey, v, err)
+			_ = metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"序列化实体数据失败 %v",
+				v,
+			).Error(ctx, err)
 			stoVal = nil
 		}
 	}
@@ -325,6 +367,11 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 		if err != nil {
 			return err
 		}
+	case influxdb.ResultTableDetailChannelDeleteKey:
+		err := r.Delete(ctx, influxdb.ResultTableDetailKey, hashKey)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("Invalid channel key(%s) from subscribe process ", channelKey)
 	}
@@ -356,7 +403,11 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		case val, ok = <-genericCh:
 			if ok {
 				if val.Err != nil {
-					log.Errorf(ctx, "Record error when loading, %v", val.Err)
+					metadata.Sprintf(
+						metadata.MsgQueryRouter,
+						"空间TSDB路由加载异常 %v",
+						err,
+					).Warn(ctx)
 					continue
 				}
 				entities = append(entities, val)
@@ -366,7 +417,11 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false, printBytes)
 				if err != nil {
-					log.Errorf(ctx, "Fail to add batch from key(%s), %v", key, err)
+					metadata.Sprintf(
+						metadata.MsgQueryRouter,
+						"空间TSDB路由 %s 添加异常 %v",
+						key, err,
+					).Warn(ctx)
 				}
 				// 清空缓存
 				count = 0
@@ -412,7 +467,6 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 	genericRet := r.Get(ctx, influxdb.BkAppToSpaceKey, bkAppCode, true, true)
 	if genericRet != nil {
 		return genericRet.(*influxdb.SpaceUIDList)
-
 	}
 	return nil
 }
@@ -475,11 +529,19 @@ func (r *SpaceTsDbRouter) Print(ctx context.Context, typeKey string, includeCont
 			// 遍历并解析存储值
 			stoVal, err := influxdb.NewGenericValue(parts[0])
 			if err != nil {
-				log.Errorf(ctx, "Fail to new generic value, %v", err)
+				metadata.Sprintf(
+					metadata.MsgQueryRouter,
+					"获取 %s 数据失败 %v",
+					parts[0], err,
+				).Warn(ctx)
 				continue
 			}
 			if _, err := stoVal.Unmarshal(v); err != nil {
-				log.Errorf(ctx, "Fail to parse value in KVBolt, key: %s, data: %+v, error: %v", ks, v, err)
+				metadata.Sprintf(
+					metadata.MsgQueryRouter,
+					"序列化实体数据 %v 失败",
+					v,
+				).Warn(ctx)
 				continue
 			}
 			ret = append(ret, fmt.Sprintf("$%-80s : %+v", ks, stoVal.Print()))

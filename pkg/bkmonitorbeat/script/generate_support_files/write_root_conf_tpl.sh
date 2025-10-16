@@ -197,7 +197,11 @@ EOF
       info_timeout: 30s
     disk:
       stat_times: 1
+{%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) }}
+{%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+{%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
       fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
 {%- else %}

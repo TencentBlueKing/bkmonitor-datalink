@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -31,11 +32,11 @@ func init() {
 	processor.Register(define.ProcessorAttributeFilter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*attributeFilter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*attributeFilter, error) {
 	configs := confengine.NewTierConfig()
 
 	c := &Config{}
@@ -78,7 +79,7 @@ func (p *attributeFilter) IsPreCheck() bool {
 	return false
 }
 
-func (p *attributeFilter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *attributeFilter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -114,72 +115,59 @@ func (p *attributeFilter) Process(record *define.Record) (*define.Record, error)
 }
 
 func (p *attributeFilter) fromTokenAction(record *define.Record, config Config) {
+	handle := func(attrs pcommon.Map, action FromTokenAction) {
+		if action.BizId != "" {
+			attrs.UpsertInt(action.BizId, int64(record.Token.BizId))
+		}
+		if action.AppName != "" {
+			attrs.UpsertString(action.AppName, record.Token.AppName)
+		}
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
-			attrs := span.Attributes()
-			if config.FromToken.BizId != "" {
-				attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
-			}
-			if config.FromToken.AppName != "" {
-				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
-			}
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
+			handle(span.Attributes(), config.FromToken)
 		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
-			attrs := logRecord.Attributes()
-			if config.FromToken.BizId != "" {
-				attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
-			}
-			if config.FromToken.AppName != "" {
-				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
-			}
+		foreach.Logs(pdLogs, func(logRecord plog.LogRecord) {
+			handle(logRecord.Attributes(), config.FromToken)
 		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
-			switch metric.DataType() {
-			case pmetric.MetricDataTypeGauge:
-				dps := metric.Gauge().DataPoints()
-				for n := 0; n < dps.Len(); n++ {
-					attrs := dps.At(n).Attributes()
-					if config.FromToken.BizId != "" {
-						attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
-					}
-					if config.FromToken.AppName != "" {
-						attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
-					}
-				}
-			}
+		foreach.MetricsDataPointWithResource(pdMetrics, func(metric pmetric.Metric, _, attrs pcommon.Map) {
+			handle(attrs, config.FromToken)
 		})
 	}
 }
 
 func (p *attributeFilter) asStringAction(record *define.Record, config Config) {
+	handle := func(attrs pcommon.Map, key string) {
+		v, ok := attrs.Get(key)
+		if !ok {
+			return
+		}
+		attrs.UpsertString(key, v.AsString())
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			for _, key := range config.AsString.Keys {
-				attrs := span.Attributes()
-				if v, ok := attrs.Get(key); ok {
-					attrs.UpsertString(key, v.AsString())
-				}
+				handle(span.Attributes(), key)
 			}
 		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+		foreach.Logs(pdLogs, func(logRecord plog.LogRecord) {
 			for _, key := range config.AsString.Keys {
-				attrs := logRecord.Attributes()
-				if v, ok := attrs.Get(key); ok {
-					attrs.UpsertString(key, v.AsString())
-				}
+				handle(logRecord.Attributes(), key)
 			}
 		})
 	}
@@ -203,7 +191,7 @@ func (p *attributeFilter) asIntAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			for _, key := range config.AsInt.Keys {
 				handle(span.Attributes(), key)
 			}
@@ -211,7 +199,7 @@ func (p *attributeFilter) asIntAction(record *define.Record, config Config) {
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+		foreach.Logs(pdLogs, func(logRecord plog.LogRecord) {
 			for _, key := range config.AsInt.Keys {
 				handle(logRecord.Attributes(), key)
 			}
@@ -234,11 +222,11 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 				continue
 			}
 
-			fields := make([]string, 0, len(rule.Keys))
+			keys := make([]string, 0, len(rule.Keys))
 			for _, key := range rule.Keys {
 				// 常量不需要判断是否存在
-				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					fields = append(fields, key[len(define.ConstKeyPrefix):])
+				if strings.HasPrefix(key, fields.PrefixConst) {
+					keys = append(keys, key[len(fields.PrefixConst):])
 					continue
 				}
 
@@ -252,10 +240,10 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 						d = v.AsString()
 					}
 				}
-				fields = append(fields, d)
+				keys = append(keys, d)
 			}
 			// 匹配到直接插入返回，不再进行后续 rule 匹配
-			attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
+			attrs.UpsertString(action.Destination, strings.Join(keys, rule.Separator))
 			return true
 		}
 
@@ -266,8 +254,7 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			for _, action := range config.Assemble {
 				if handle(span, action) {
 					continue
@@ -281,8 +268,8 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 
 				key := action.DefaultFrom
 				// 判定常量情况直接插入
-				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					attrs.UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
+				if strings.HasPrefix(key, fields.PrefixConst) {
+					attrs.UpsertString(action.Destination, key[len(fields.PrefixConst):])
 					continue
 				}
 				// 匹配到 span_name 插入 span.Name(), 否则直接跳过
@@ -315,7 +302,7 @@ func (p *attributeFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			for _, action := range config.Drop {
 				handle(span.Attributes(), action)
 			}
@@ -323,7 +310,7 @@ func (p *attributeFilter) dropAction(record *define.Record, config Config) {
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+		foreach.Logs(pdLogs, func(logRecord plog.LogRecord) {
 			for _, action := range config.Drop {
 				handle(logRecord.Attributes(), action)
 			}
@@ -361,7 +348,7 @@ func (p *attributeFilter) cutAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			for _, action := range config.Cut {
 				handle(span.Attributes(), action)
 			}
@@ -369,7 +356,7 @@ func (p *attributeFilter) cutAction(record *define.Record, config Config) {
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+		foreach.Logs(pdLogs, func(logRecord plog.LogRecord) {
 			for _, action := range config.Cut {
 				handle(logRecord.Attributes(), action)
 			}

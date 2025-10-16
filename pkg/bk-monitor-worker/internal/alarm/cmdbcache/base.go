@@ -114,9 +114,9 @@ type Manager interface {
 	GetConcurrentLimit() int
 
 	// CleanByEvents 根据事件清理缓存
-	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
+	CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error
 	// UpdateByEvents 根据事件更新缓存
-	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
+	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error
 }
 
 // BaseCacheManager 基础缓存管理器

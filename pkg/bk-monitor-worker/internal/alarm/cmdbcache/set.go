@@ -50,9 +50,9 @@ func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	}
 
 	// 2. 解析JSON数据并按业务ID分组
-	bizDataMap := make(map[int][]map[string]interface{})
+	bizDataMap := make(map[int][]map[string]any)
 	for _, jsonStr := range cacheData {
-		var item map[string]interface{}
+		var item map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &item); err != nil {
 			logger.Warnf("unmarshal set cache failed: %v", err)
 			continue
@@ -72,7 +72,7 @@ func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	return nil
 }
 
-func (m *SetCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]interface{}, bizID int) {
+func (m *SetCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]any, bizID int) {
 	infos := m.SetToRelationInfos(data)
 	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos); err != nil {
 		logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
@@ -93,13 +93,13 @@ func NewSetCacheManager(bkTenantId string, prefix string, opt *redis.Options, co
 }
 
 // getSetListByBizID 通过业务ID获取集群列表
-func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
+func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.SearchSetResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -113,17 +113,16 @@ func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map
 		},
 		// 生成分页请求
 		func(page int) define.Operation {
-			return cmdbApi.SearchSet().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchSet().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to request cmdb api")
 	}
 
 	// 准备缓存数据
-	setList := make([]map[string]interface{}, 0)
+	setList := make([]map[string]any, 0)
 	for _, item := range result {
 		var res cmdb.SearchSetResp
 		err = mapstructure.Decode(item, &res)
@@ -223,7 +222,7 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 		}
 
 		var expands map[string]map[string]any
-		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok && expandString != "" {
 			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
 				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s, %s", expandString, err)
@@ -280,7 +279,7 @@ func (m *SetCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 根据事件清理缓存
-func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "set" || len(events) == 0 {
 		return nil
 	}
@@ -348,7 +347,7 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 				continue
 			}
 
-			var set map[string]interface{}
+			var set map[string]any
 			err := json.Unmarshal([]byte(cast.ToString(value)), &set)
 			if err != nil {
 				continue
@@ -378,7 +377,7 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 }
 
 // UpdateByEvents 根据事件更新缓存
-func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "set" || len(events) == 0 {
 		return nil
 	}

@@ -26,14 +26,14 @@ func NewResultTableFieldOptionSvc(obj *resulttable.ResultTableFieldOption) Resul
 }
 
 // BathFieldOption 返回批量的result table field option
-func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[string]map[string]map[string]interface{}, error) {
+func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[string]map[string]map[string]any, error) {
 	var resultTableFieldOption []resulttable.ResultTableFieldOption
 
 	if err := resulttable.NewResultTableFieldOptionQuerySet(mysql.GetDBSession().DB).
 		TableIDIn(tableIdList...).All(&resultTableFieldOption); err != nil {
 		return nil, err
 	}
-	optionData := make(map[string]map[string]map[string]interface{})
+	optionData := make(map[string]map[string]map[string]any)
 	for _, option := range resultTableFieldOption {
 		value, err := option.InterfaceValue()
 		if err != nil {
@@ -43,11 +43,10 @@ func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[stri
 			if opt, ok := tableOption[option.FieldName]; ok {
 				opt[option.Name] = value
 			} else {
-				tableOption[option.FieldName] = map[string]interface{}{option.Name: value}
+				tableOption[option.FieldName] = map[string]any{option.Name: value}
 			}
-
 		} else {
-			optionData[option.TableID] = map[string]map[string]interface{}{option.FieldName: {option.Name: value}}
+			optionData[option.TableID] = map[string]map[string]any{option.FieldName: {option.Name: value}}
 		}
 	}
 	return optionData, nil

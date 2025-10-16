@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) {
@@ -37,64 +35,55 @@ func GetQueryReference(ctx context.Context) QueryReference {
 	return nil
 }
 
-// ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
-func (q *Query) ConfigureAlias(ctx context.Context) {
-	if len(q.FieldAlias) == 0 {
+func (q *Query) DataReload(data map[string]any) {
+	if data == nil {
 		return
 	}
 
-	var (
-		err error
-	)
-	ctx, span := trace.NewSpan(ctx, "configure-alias")
-	defer span.End(&err)
-
-	span.Set("field-alias", q.FieldAlias)
-
-	// 替换 Field
-	q.Field = q.FieldAlias.Alias(q.Field)
-
-	// 替换维度
-	for aggIdx, agg := range q.Aggregates {
-		q.Aggregates[aggIdx].Field = q.FieldAlias.Alias(agg.Field)
-		for dimIdx, dim := range agg.Dimensions {
-			q.Aggregates[aggIdx].Dimensions[dimIdx] = q.FieldAlias.Alias(dim)
-		}
-	}
-
-	// 替换过滤条件
-	for conIdx, con := range q.AllConditions {
-		for dimIdx, dim := range con {
-			q.AllConditions[conIdx][dimIdx].DimensionName = q.FieldAlias.Alias(dim.DimensionName)
-		}
-	}
-
-	// 替换保留字段
-	for idx, s := range q.Source {
-		q.Source[idx] = q.FieldAlias.Alias(s)
-	}
-
-	// 替换排序字段
-	for idx, o := range q.Orders {
-		q.Orders[idx].Name = q.FieldAlias.Alias(o.Name)
-	}
-
-	// 替换折叠字段
-	if q.Collapse != nil {
-		q.Collapse.Field = q.FieldAlias.Alias(q.Collapse.Field)
-	}
-
-	qStr, _ := json.Marshal(q)
-	span.Set("query-json", string(qStr))
+	data[KeyTableID] = q.TableID
+	data[KeyDataLabel] = q.DataLabel
+	data[KeyTableUUID] = q.TableUUID()
 }
 
-// UUID 获取唯一性
-func (q *Query) UUID(prefix string) string {
-	str := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s",
-		prefix, q.SourceType, q.ClusterID, q.ClusterName, q.TagsKey,
-		q.RetentionPolicy, q.DB, q.Measurement, q.Field, q.Condition,
-	)
-	return str
+// TableUUID 查询主体 tableID + storageID + sliceID 作为查询主体的唯一标识
+func (q *Query) TableUUID() string {
+	var l []string
+	for _, s := range []string{
+		q.TableID, q.StorageID, q.SliceID,
+	} {
+		if s != "" {
+			l = append(l, s)
+		}
+	}
+
+	return strings.Join(l, "|")
+}
+
+// StorageUUID 获取存储唯一标识
+// storageType 存储类型
+// storageID 存储唯一标识
+// storageName 集群名称
+// measurementType 表类型
+// timeField 内置时间配置
+func (q *Query) StorageUUID() string {
+	var l []string
+	for _, s := range []any{
+		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
+	} {
+		switch ns := s.(type) {
+		case string:
+			if ns != "" {
+				l = append(l, ns)
+			}
+		default:
+			nt, _ := json.Marshal(ns)
+			if len(nt) > 0 {
+				l = append(l, string(nt))
+			}
+		}
+	}
+
+	return strings.Join(l, "|")
 }
 
 // MetricLabels 获取真实指标名称

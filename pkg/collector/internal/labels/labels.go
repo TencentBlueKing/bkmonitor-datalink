@@ -10,37 +10,29 @@
 package labels
 
 import (
-	"sort"
+	"strings"
 	"sync"
 
 	"github.com/cespare/xxhash/v2"
+	"golang.org/x/exp/slices"
 )
 
 var seps = []byte{'\xff'}
 
-// Label is a key/value pairs of strings.
-//
-//go:generate msgp
 type Label struct {
-	Name  string `msg:"n"`
-	Value string `msg:"v"`
+	Name  string
+	Value string
 }
 
-// Labels is a sorted set of labels. Order has to be guaranteed upon
-// instantiation.
 type Labels []Label
 
-func (ls Labels) Len() int           { return len(ls) }
-func (ls Labels) Swap(i, j int)      { ls[i], ls[j] = ls[j], ls[i] }
-func (ls Labels) Less(i, j int) bool { return ls[i].Name < ls[j].Name }
-
 var bytesPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 0, 1024)
 	},
 }
 
-// Hash returns a hash value for the label set.
+// Hash 计算 Labels hash 不做排序保证 需要在调用前自行排序
 func (ls Labels) Hash() uint64 {
 	b := bytesPool.Get().([]byte)
 	b = b[:0]
@@ -56,39 +48,24 @@ func (ls Labels) Hash() uint64 {
 	return h
 }
 
-// Map returns a string map of the labels.
-func (ls Labels) Map() map[string]string {
-	m := make(map[string]string, len(ls))
-	for _, l := range ls {
-		m[l.Name] = l.Value
-	}
-	return m
-}
-
-// FromMap returns new sorted Labels from the given map.
-func FromMap(m map[string]string) Labels {
-	lbs := make(Labels, 0, len(m))
-	for k, v := range m {
-		lbs = append(lbs, Label{Name: k, Value: v})
-	}
-	sort.Sort(lbs)
-	return lbs
-}
-
 var labelsPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make(Labels, 0)
 	},
 }
 
-// HashFromMap returns has id for the given dimensions
+// HashFromMap 返回 m hash 值
 func HashFromMap(m map[string]string) uint64 {
 	lbs := labelsPool.Get().(Labels)
 	lbs = lbs[:0]
 	for k, v := range m {
 		lbs = append(lbs, Label{Name: k, Value: v})
 	}
-	sort.Sort(lbs)
+
+	// slices.SortFunc 经测试要快于 sort.Sort
+	slices.SortFunc(lbs, func(a, b Label) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 	h := lbs.Hash()
 	lbs = lbs[:0]
 	labelsPool.Put(lbs) // nolint:staticcheck

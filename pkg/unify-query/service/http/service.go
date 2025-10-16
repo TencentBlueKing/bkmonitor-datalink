@@ -52,13 +52,11 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 先关闭当前的服务
 	if s.server != nil {
-		log.Warnf(ctx, "http server is running, will stop it first, max waiting time->[%s].", WriteTimeout)
 		tempCtx, cancelFunc := context.WithTimeout(ctx, WriteTimeout)
 		defer cancelFunc()
 		if err = s.server.Shutdown(tempCtx); err != nil {
-			log.Errorf(ctx, "shutdown server with err->[%s]", err)
+			log.Errorf(ctx, "failed to shutdown http server for->[%s]", err)
 		}
-		log.Warnf(ctx, "http server shutdown done.")
 	}
 
 	if s.cancelFunc != nil {
@@ -104,7 +102,6 @@ func (s *Service) Reload(ctx context.Context) {
 			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}
-		log.Warnf(ctx, "last http server is closed now")
 	}(s.server)
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
@@ -116,10 +113,9 @@ func (s *Service) Reload(ctx context.Context) {
 		<-s.ctx.Done()
 		err = s.server.Close()
 		if err != nil {
-			log.Errorf(ctx, "get error when closing http server:%s", err)
+			log.Errorf(ctx, "failed to close http server for->[%s]", err)
 		}
 	}()
-	log.Infof(ctx, "http service reloaded or start success.")
 }
 
 // Wait
@@ -130,5 +126,4 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	log.Infof(s.ctx, "http service context cancel func called.")
 }

@@ -18,8 +18,7 @@ import (
 )
 
 type Logger struct {
-	prefix string
-	w      log.Logger
+	w log.Logger
 }
 
 func New(prefix string) *Logger {
@@ -31,7 +30,7 @@ func New(prefix string) *Logger {
 	return l
 }
 
-func (l *Logger) Log(keyvals ...interface{}) error {
+func (l *Logger) Log(keyvals ...any) error {
 	return l.w.Log(keyvals...)
 }
 

@@ -32,7 +32,7 @@ import (
 
 // generateToken 生成 bk token
 func generateToken(data map[string]any, privateKey []byte) (string, error) {
-	//设置token有效时间
+	// 设置token有效时间
 	nowTime := time.Now().Add(-1 * time.Hour)
 	expireTime := nowTime.Add(2 * time.Hour)
 
@@ -45,7 +45,7 @@ func generateToken(data map[string]any, privateKey []byte) (string, error) {
 	}
 
 	tokenClaims := jwt.NewWithClaims(jwt.SigningMethodRS512, claims)
-	//该方法内部生成签名字符串，再用于获取完整、已签名的token
+	// 该方法内部生成签名字符串，再用于获取完整、已签名的token
 
 	priKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKey)
 	if err != nil {
@@ -126,19 +126,19 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		"空间如果为空": {
 			appCode:  "my_code",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code, space_uid: "}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: ): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问无权限的空间授权 - 1": {
 			appCode:  "my_code",
 			spaceUID: "other_space_uid",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code, space_uid: other_space_uid"}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: other_space_uid): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问无权限的空间授权 - 2": {
 			appCode:  "my_code_1",
 			spaceUID: "my_space_uid",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code_1, space_uid: my_space_uid"}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code_1, space_uid: my_space_uid): bk_app_code is unauthorized in this space_uid"}`,
 		},
 		"访问有权限的空间授权": {
 			appCode:  "my_code",

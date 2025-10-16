@@ -110,7 +110,7 @@
                     "application/json"
                 ],
                 "summary": "query promql monitor check by ts",
-                "operationId": "check-query-promql",
+                "operationId": "check_query_promql",
                 "parameters": [
                     {
                         "type": "string",
@@ -202,6 +202,192 @@
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/structured.QueryPromQL"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.PromData"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/query/raw": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query monitor by raw data",
+                "operationId": "query_raw",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "username:goodman",
+                        "description": "来源",
+                        "name": "Bk-Query-Source",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/structured.QueryTs"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.PromData"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/query/raw_with_scroll": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query monitor by raw data with scroll",
+                "operationId": "query_raw_with_scroll",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "username:goodman",
+                        "description": "来源",
+                        "name": "Bk-Query-Source",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/structured.QueryTs"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.PromData"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/query/reference": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query monitor by reference",
+                "operationId": "query_reference",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "username:goodman",
+                        "description": "来源",
+                        "name": "Bk-Query-Source",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/structured.QueryTs"
                         }
                     }
                 ],
@@ -401,6 +587,71 @@
                                 "items": {
                                     "type": "string"
                                 }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/query/ts/info/field_map": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "info field map",
+                "operationId": "info_field_map",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "username:goodman",
+                        "description": "来源",
+                        "name": "Bk-Query-Source",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/infos.Params"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.SeriesData"
                             }
                         }
                     },
@@ -830,14 +1081,29 @@
                             "look_back_delta": {
                                 "type": "string"
                             },
+                            "path_resource": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "source_expand_info": {
+                                "$ref": "#/definitions/cmdb.Matcher"
+                            },
                             "source_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
+                            },
+                            "source_type": {
+                                "type": "string"
                             },
                             "start_time": {
                                 "type": "integer"
                             },
                             "step": {
                                 "type": "string"
+                            },
+                            "target_info_show": {
+                                "type": "boolean"
                             },
                             "target_type": {
                                 "type": "string"
@@ -855,6 +1121,9 @@
                     "items": {
                         "$ref": "#/definitions/cmdb.RelationMultiResourceRangeResponseData"
                     }
+                },
+                "trace_id": {
+                    "type": "string"
                 }
             }
         },
@@ -866,6 +1135,12 @@
                 },
                 "message": {
                     "type": "string"
+                },
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
@@ -895,8 +1170,23 @@
                             "look_back_delta": {
                                 "type": "string"
                             },
+                            "path_resource": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "source_expand_info": {
+                                "$ref": "#/definitions/cmdb.Matcher"
+                            },
                             "source_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
+                            },
+                            "source_type": {
+                                "type": "string"
+                            },
+                            "target_info_show": {
+                                "type": "boolean"
                             },
                             "target_type": {
                                 "type": "string"
@@ -917,6 +1207,9 @@
                     "items": {
                         "$ref": "#/definitions/cmdb.RelationMultiResourceResponseData"
                     }
+                },
+                "trace_id": {
+                    "type": "string"
                 }
             }
         },
@@ -928,6 +1221,12 @@
                 },
                 "message": {
                     "type": "string"
+                },
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
@@ -942,17 +1241,6 @@
                     }
                 },
                 "target_type": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "message": {
                     "type": "string"
                 }
             }
@@ -985,12 +1273,18 @@
             "properties": {
                 "error": {
                     "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
                 }
             }
         },
         "http.PromData": {
             "type": "object",
             "properties": {
+                "is_partial": {
+                    "type": "boolean"
+                },
                 "series": {
                     "type": "array",
                     "items": {
@@ -998,7 +1292,10 @@
                     }
                 },
                 "status": {
-                    "$ref": "#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status"
+                    "$ref": "#/definitions/metadata.Status"
+                },
+                "trace_id": {
+                    "type": "string"
                 }
             }
         },
@@ -1022,6 +1319,9 @@
                             "type": "string"
                         }
                     }
+                },
+                "trace_id": {
+                    "type": "string"
                 }
             }
         },
@@ -1070,6 +1370,9 @@
         "http.TagValuesData": {
             "type": "object",
             "properties": {
+                "trace_id": {
+                    "type": "string"
+                },
                 "values": {
                     "type": "object",
                     "additionalProperties": {
@@ -1093,6 +1396,11 @@
                 "end_time": {
                     "type": "string"
                 },
+                "is_regexp": {
+                    "description": "IsRegexp 指标是否使用正则查询",
+                    "type": "boolean",
+                    "example": false
+                },
                 "keys": {
                     "type": "array",
                     "items": {
@@ -1113,6 +1421,21 @@
                 },
                 "table_id": {
                     "type": "string"
+                },
+                "timezone": {
+                    "type": "string",
+                    "example": "Asia/Shanghai"
+                }
+            }
+        },
+        "metadata.Status": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
                 }
             }
         },
@@ -1129,6 +1452,11 @@
                         "bk_target_ip",
                         "bk_target_cloud_id"
                     ]
+                },
+                "field": {
+                    "description": "Field 聚合字段，默认为指标字段，指定则会进行覆盖",
+                    "type": "string",
+                    "example": "field"
                 },
                 "is_sub_query": {
                     "description": "IsSubQuery 判断是否为子查询",
@@ -1157,6 +1485,18 @@
                     "description": "DimensionName 过滤字段",
                     "type": "string",
                     "example": "bk_biz_id"
+                },
+                "is_prefix": {
+                    "description": "IsPrefix 是否是前缀",
+                    "type": "boolean"
+                },
+                "is_suffix": {
+                    "description": "IsSuffix 是否是后缀",
+                    "type": "boolean"
+                },
+                "is_wildcard": {
+                    "description": "IsWildcard 是否是通配符",
+                    "type": "boolean"
                 },
                 "op": {
                     "description": "Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains",
@@ -1197,101 +1537,6 @@
                 }
             }
         },
-        "structured.Query": {
-            "type": "object",
-            "properties": {
-                "conditions": {
-                    "description": "Conditions 过滤条件",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/structured.Conditions"
-                        }
-                    ]
-                },
-                "dimensions": {
-                    "description": "Dimensions promQL 使用维度",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "example": [
-                        "bk_target_ip",
-                        "bk_target_cloud_id"
-                    ]
-                },
-                "field_name": {
-                    "description": "FieldName 查询指标",
-                    "type": "string",
-                    "example": "usage"
-                },
-                "function": {
-                    "description": "AggregateMethodList 维度聚合函数",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/structured.AggregateMethod"
-                    }
-                },
-                "is_regexp": {
-                    "description": "IsRegexp 指标是否使用正则查询",
-                    "type": "boolean",
-                    "example": false
-                },
-                "limit": {
-                    "description": "Limit 点数限制数量",
-                    "type": "integer",
-                    "example": 0
-                },
-                "offset": {
-                    "description": "Offset 偏移量",
-                    "type": "string",
-                    "example": ""
-                },
-                "offset_forward": {
-                    "description": "OffsetForward 偏移方向，默认 false 为向前偏移",
-                    "type": "boolean",
-                    "example": false
-                },
-                "reference_name": {
-                    "description": "ReferenceName 别名，用于表达式计算",
-                    "type": "string",
-                    "example": "a"
-                },
-                "slimit": {
-                    "description": "Slimit 维度限制数量",
-                    "type": "integer",
-                    "example": 0
-                },
-                "start_or_end": {
-                    "description": "StartOrEnd @-modifier 标记，start or end",
-                    "type": "integer"
-                },
-                "table_id": {
-                    "description": "TableID 数据实体ID，容器指标可以为空",
-                    "type": "string",
-                    "example": "system.cpu_summary"
-                },
-                "time_aggregation": {
-                    "description": "TimeAggregation 时间聚合方法",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/structured.TimeAggregation"
-                        }
-                    ]
-                },
-                "timestamp": {
-                    "description": "Timestamp @-modifier 标记",
-                    "type": "integer"
-                },
-                "vector_offset": {
-                    "description": "VectorOffset",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/time.Duration"
-                        }
-                    ]
-                }
-            }
-        },
         "structured.QueryPromQL": {
             "type": "object",
             "properties": {
@@ -1311,6 +1556,9 @@
                 },
                 "instant": {
                     "description": "瞬时数据",
+                    "type": "boolean"
+                },
+                "is_verify_dimensions": {
                     "type": "boolean"
                 },
                 "limit": {
@@ -1333,6 +1581,9 @@
                 "promql": {
                     "type": "string"
                 },
+                "reference": {
+                    "type": "boolean"
+                },
                 "slimit": {
                     "type": "integer"
                 },
@@ -1350,58 +1601,7 @@
             }
         },
         "structured.QueryTs": {
-            "type": "object",
-            "properties": {
-                "down_sample_range": {
-                    "description": "DownSampleRange 降采样：大于Step才能生效，可以为空",
-                    "type": "string",
-                    "example": "5m"
-                },
-                "end_time": {
-                    "description": "End 结束时间：单位为毫秒的时间戳",
-                    "type": "string",
-                    "example": "1657851600"
-                },
-                "instant": {
-                    "description": "Instant 瞬时数据",
-                    "type": "boolean"
-                },
-                "look_back_delta": {
-                    "description": "LookBackDelta 偏移量",
-                    "type": "string"
-                },
-                "metric_merge": {
-                    "description": "MetricMerge 表达式：支持所有PromQL语法",
-                    "type": "string",
-                    "example": "a"
-                },
-                "query_list": {
-                    "description": "QueryList 查询实例",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/structured.Query"
-                    }
-                },
-                "space_uid": {
-                    "description": "SpaceUid 空间ID",
-                    "type": "string"
-                },
-                "start_time": {
-                    "description": "Start 开始时间：单位为毫秒的时间戳",
-                    "type": "string",
-                    "example": "1657848000"
-                },
-                "step": {
-                    "description": "Step 步长：最终返回的点数的时间间隔",
-                    "type": "string",
-                    "example": "1m"
-                },
-                "timezone": {
-                    "description": "Timezone 时区",
-                    "type": "string",
-                    "example": "Asia/Shanghai"
-                }
-            }
+            "type": "object"
         },
         "structured.TimeAggregation": {
             "type": "object",
@@ -1425,45 +1625,6 @@
                     "example": "60s"
                 }
             }
-        },
-        "time.Duration": {
-            "type": "integer",
-            "enum": [
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000,
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000
-            ],
-            "x-enum-varnames": [
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour",
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour"
-            ]
         }
     },
     "securityDefinitions": {

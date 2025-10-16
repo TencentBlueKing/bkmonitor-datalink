@@ -1357,7 +1357,7 @@ var ResultTableFieldDBSchema = struct {
 // Update updates ResultTableField fields by primary key
 // nolint: dupl
 func (o *ResultTableField) Update(db *gorm.DB, fields ...ResultTableFieldDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id":      o.BkTenantId,
 		"id":                o.Id,
 		"table_id":          o.TableID,
@@ -1375,7 +1375,7 @@ func (o *ResultTableField) Update(db *gorm.DB, fields ...ResultTableFieldDBSchem
 		"alias_name":        o.AliasName,
 		"is_disabled":       o.IsDisabled,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1394,7 +1394,7 @@ func (o *ResultTableField) Update(db *gorm.DB, fields ...ResultTableFieldDBSchem
 
 // ResultTableFieldUpdater is an ResultTableField updates manager
 type ResultTableFieldUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1402,7 +1402,7 @@ type ResultTableFieldUpdater struct {
 // nolint: dupl
 func NewResultTableFieldUpdater(db *gorm.DB) ResultTableFieldUpdater {
 	return ResultTableFieldUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ResultTableField{}),
 	}
 }

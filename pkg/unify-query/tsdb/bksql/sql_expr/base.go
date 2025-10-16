@@ -38,6 +38,11 @@ var (
 	ErrorMatchAll = "不支持全字段检索"
 )
 
+type FieldOption struct {
+	Type     string
+	Analyzed bool
+}
+
 type TimeAggregate struct {
 	Window       time.Duration
 	OffsetMillis int64
@@ -51,7 +56,7 @@ type SQLExpr interface {
 	// WithFieldAlias 设置字段别名
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
-	WithFieldsMap(fieldsMap map[string]string) SQLExpr
+	WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -59,17 +64,17 @@ type SQLExpr interface {
 	// ParserRangeTime 解析开始结束时间
 	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
-	ParserQueryString(qs string) (string, error)
+	ParserQueryString(ctx context.Context, qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
-	// ParserSQL 解析 SQL 语句
-	ParserSQL(ctx context.Context, q, table, where string) (string, error)
+	// ParserSQL 解析 String 语句
+	ParserSQL(ctx context.Context, q string, tables []string, where string) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
-	FieldMap() map[string]string
+	FieldMap() metadata.FieldsMap
 	// Type 返回表达式类型
 	Type() string
 }
@@ -101,7 +106,7 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    map[string]string
+	fieldMap    metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
 
 	timeField  string
@@ -130,12 +135,12 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap metadata.FieldsMap) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
 }
 
-func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (string, error) {
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string) (string, error) {
 	return "", nil
 }
 
@@ -148,12 +153,12 @@ func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
 	return nil
 }
 
-func (d *DefaultSQLExpr) FieldMap() map[string]string {
+func (d *DefaultSQLExpr) FieldMap() metadata.FieldsMap {
 	return d.fieldMap
 }
 
 // ParserQueryString 解析查询字符串（当前实现返回空）
-func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
+func (d *DefaultSQLExpr) ParserQueryString(ctx context.Context, _ string) (string, error) {
 	return "", nil
 }
 
@@ -161,7 +166,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
-		return
+		return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 	}
 
 	var (
@@ -174,14 +179,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	dimensionSet = set.New[string]([]string{FieldValue}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			var (
-				newDim string
-			)
+			var newDim string
 
 			dimensionSet.Add(dim)
 			newDim, err = d.dimTransform(dim)
 			if err != nil {
-				return
+				return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 			}
 
 			selectFields = append(selectFields, newDim)
@@ -259,7 +262,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		orderField, err = d.dimTransform(orderField)
 		if err != nil {
-			return
+			return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 		}
 
 		// 移除重复的排序字段
@@ -281,7 +284,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		OffsetMillis: offsetMillis,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -290,8 +293,9 @@ func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time)
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式
 // 实现逻辑：
-//  1. 将多个AND条件组合成OR条件
-//  2. 当有多个OR条件时用括号包裹
+//  1. 提取所有OR分支中的公共条件
+//  2. 将公共条件和剩余条件用AND连接
+//  3. 剩余条件按原有逻辑用OR连接
 func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
 	return parserAllConditions(allConditions, d.buildCondition)
 }
@@ -453,15 +457,82 @@ func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
 	return fmt.Sprintf("`%s`", s), nil
 }
 
-func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
-	var (
-		orConditions []string
-	)
+// extractCommonConditions 提取所有OR分支中的公共条件
+// 返回：公共条件列表和移除公共条件后的剩余分支
+func extractCommonConditions(allConditions metadata.AllConditions) (
+	common []metadata.ConditionField,
+	remaining metadata.AllConditions,
+) {
+	// 少于2个分支，无需优化
+	if len(allConditions) <= 1 {
+		return nil, allConditions
+	}
 
-	// 遍历所有OR条件组
-	for _, conditions := range allConditions {
+	// 1. 统计每个条件签名在多少个分支中，并提取公共部分
+	// 使用字符串连接的方式标记每个 or 里面都命中该下标
+	hitCount := make(map[string]string)
+	allCount := ""
+	for i := range allConditions {
+		allCount += fmt.Sprintf("|%d", i)
+	}
+
+	for i, branch := range allConditions {
+		for _, cond := range branch {
+			sig := cond.Signature()
+			hitCount[sig] += fmt.Sprintf("|%d", i)
+			if hitCount[sig] == allCount {
+				common = append(common, cond)
+			}
+		}
+	}
+
+	// 没有公共条件，直接返回原始数据
+	if len(common) == 0 {
+		return nil, allConditions
+	}
+
+	// 构建剩余非公共条件
+	for _, branch := range allConditions {
+		var newBranch []metadata.ConditionField
+		for _, cond := range branch {
+			if hitCount[cond.Signature()] != allCount {
+				newBranch = append(newBranch, cond)
+			}
+		}
+		remaining = append(remaining, newBranch)
+	}
+
+	return common, remaining
+}
+
+// parserAllConditions 解析全量条件并进行优化，提取公共条件
+// 算法流程：
+// 1. 提取所有OR分支中的公共条件
+// 2. 构建公共条件的SQL
+// 3. 构建剩余条件的OR表达式（不进行递归优化，避免无限递归）
+// 4. 用AND连接公共条件和剩余条件
+func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
+	// 1. 提取公共条件
+	common, remaining := extractCommonConditions(allConditions)
+
+	var parts []string
+
+	// 2. 构建公共条件SQL
+	for _, cond := range common {
+		condSQL, err := bc(cond)
+		if err != nil {
+			return "", err
+		}
+		if condSQL != "" {
+			parts = append(parts, condSQL)
+		}
+	}
+
+	// 3. 构建剩余条件SQL（不进行递归优化）
+	// 直接构建OR逻辑，不进行递归优化
+	var orConditions []string
+	for _, conditions := range remaining {
 		var andConditions []string
-		// 处理每个AND条件组
 		for _, cond := range conditions {
 			buildCondition, err := bc(cond)
 			if err != nil {
@@ -477,13 +548,25 @@ func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadat
 		}
 	}
 
-	// 处理最终OR条件组合
+	// 处理OR条件组合
 	if len(orConditions) > 0 {
+		var remainingSQL string
 		if len(orConditions) == 1 {
-			return orConditions[0], nil
+			remainingSQL = orConditions[0]
+		} else {
+			remainingSQL = fmt.Sprintf("(%s)", strings.Join(orConditions, " OR "))
 		}
-		return fmt.Sprintf("(%s)", strings.Join(orConditions, " OR ")), nil
+		if remainingSQL != "" {
+			parts = append(parts, remainingSQL)
+		}
 	}
 
-	return "", nil
+	// 4. 组合最终SQL
+	if len(parts) == 0 {
+		return "", nil
+	}
+	if len(parts) == 1 {
+		return parts[0], nil
+	}
+	return strings.Join(parts, " AND "), nil
 }

@@ -21,7 +21,7 @@ var metadataTaskNamespace = "bmw_metadata"
 
 // metadata metrics
 var (
-	//consul数据操作统计
+	// consul数据操作统计
 	consulCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metadataTaskNamespace,
@@ -31,7 +31,7 @@ var (
 		[]string{"key", "operation"},
 	)
 
-	//GSE变动统计
+	// GSE变动统计
 	gseCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metadataTaskNamespace,
@@ -41,7 +41,7 @@ var (
 		[]string{"dataid", "operation"},
 	)
 
-	//ES变动统计
+	// ES变动统计
 	esCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metadataTaskNamespace,

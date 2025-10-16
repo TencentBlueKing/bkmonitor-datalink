@@ -41,7 +41,9 @@ test:
 tidy:
 	go mod tidy
 
-imports:
+lint:
+	gofmt -r 'interface{} -> any' -w .
+	gofumpt -w .
 	goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...
 
 .PHONY: gen

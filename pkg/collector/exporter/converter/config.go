@@ -20,10 +20,14 @@ type Config struct {
 }
 
 type TarsConfig struct {
-	DisableAggregate  bool          `config:"disable_aggregate" mapstructure:"disable_aggregate"`
-	IsDropOriginal    bool          `config:"is_drop_original" mapstructure:"is_drop_original"`
-	AggregateInterval time.Duration `config:"aggregate_interval" mapstructure:"aggregate_interval"`
-	TagIgnores        []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
+	DisableAggregate     bool          `config:"disable_aggregate" mapstructure:"disable_aggregate"`
+	IsDropOriginal       bool          `config:"is_drop_original" mapstructure:"is_drop_original"`
+	DropOriginalServices []string      `config:"drop_original_services" mapstructure:"drop_original_services"`
+	AggregateInterval    time.Duration `config:"aggregate_interval" mapstructure:"aggregate_interval"`
+	TagIgnores           []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
+
+	// 来自 配置文件的 DropOriginalServices 转为 map，提高查询效率。
+	dropOriginalServiceMap map[string]bool
 }
 
 func (c *TarsConfig) Validate() {
@@ -35,6 +39,11 @@ func (c *TarsConfig) Validate() {
 			{ScopeName: "server_metrics", Tags: []string{"caller_ip"}},
 			{ScopeName: "client_metrics", Tags: []string{"callee_ip"}},
 		}
+	}
+
+	c.dropOriginalServiceMap = make(map[string]bool, len(c.DropOriginalServices))
+	for _, svc := range c.DropOriginalServices {
+		c.dropOriginalServiceMap[svc] = true
 	}
 }
 

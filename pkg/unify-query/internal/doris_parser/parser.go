@@ -17,13 +17,16 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			// 处理异常
-			log.Errorf(ctx, "parse doris sql error: %v", r)
+			_ = metadata.Sprintf(
+				metadata.MsgParserDoris,
+				"Doris 语法解析异常",
+			).Error(ctx, fmt.Errorf("%v", r))
 		}
 	}()
 
@@ -38,12 +41,12 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	parser := gen.NewDorisParserParser(tokens)
 
 	// 创建解析树
-	//visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
+	// visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
 
 	stmt := &Statement{}
 	if opt != nil {
 		stmt.WithEncode(opt.DimensionTransform)
-		stmt.Table = opt.Table
+		stmt.Tables = opt.Tables
 		stmt.Where = opt.Where
 	}
 
@@ -63,8 +66,10 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
 	defer func() {
 		if r := recover(); r != nil {
-			// 处理异常
-			log.Errorf(ctx, "parse doris sql error: %v", r)
+			_ = metadata.Sprintf(
+				metadata.MsgParserDoris,
+				"Doris 语法解析",
+			).Error(ctx, fmt.Errorf("%v", r))
 		}
 	}()
 

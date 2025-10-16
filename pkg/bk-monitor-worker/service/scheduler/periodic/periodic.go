@@ -48,12 +48,12 @@ func getPeriodicTasks() map[string]PeriodicTask {
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/5 * * * *",
+			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
 			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
 		refreshDatasource: {
-			Cron:    "*/10 * * * *",
+			Cron:    "*/20 * * * *",
 			Handler: metadataTask.RefreshDatasource,
 		},
 		RefreshKafkaTopicInfo: {
@@ -89,9 +89,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	}
 }
 
-var (
-	initPeriodicTaskOnce sync.Once
-)
+var initPeriodicTaskOnce sync.Once
 
 func GetPeriodicTaskMapping() map[string]PeriodicTask {
 	initPeriodicTaskOnce.Do(func() {

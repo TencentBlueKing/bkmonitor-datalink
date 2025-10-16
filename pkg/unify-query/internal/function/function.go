@@ -49,7 +49,7 @@ func StringToTime(s string) (t time.Time, ok bool) {
 
 	if !t.IsZero() {
 		ok = true
-		return
+		return t, ok
 	}
 
 	timeFormat := []string{
@@ -90,11 +90,11 @@ func StringToTime(s string) (t time.Time, ok bool) {
 		if err == nil {
 			// 命中规则提前退出
 			ok = true
-			return
+			return t, ok
 		}
 	}
 
-	return
+	return t, ok
 }
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
@@ -151,7 +151,7 @@ func ParseTimestamp(s string) (f string, t time.Time, err error) {
 	// 将字符串转换为int64
 	val, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return
+		return f, t, err
 	}
 
 	// 根据字符串长度判断单位
@@ -176,7 +176,7 @@ func ParseTimestamp(s string) (f string, t time.Time, err error) {
 		err = fmt.Errorf("unsupported timestamp length: %d", len(s))
 	}
 
-	return
+	return f, t, err
 }
 
 func IntPoint(d int) *int {
@@ -199,7 +199,7 @@ func QueryTimestamp(startTime, endTime string) (format string, start time.Time, 
 		startUnit, start, err = ParseTimestamp(startTime)
 		if err != nil {
 			err = fmt.Errorf("invalid start time: %v", err)
-			return
+			return format, start, end, err
 		}
 	} else {
 		// 默认查询1小时内的数据
@@ -211,7 +211,7 @@ func QueryTimestamp(startTime, endTime string) (format string, start time.Time, 
 		endUnit, end, err = ParseTimestamp(endTime)
 		if err != nil {
 			err = fmt.Errorf("invalid end time: %v", err)
-			return
+			return format, start, end, err
 		}
 	} else {
 		// 默认查询1小时内的数据
@@ -221,11 +221,11 @@ func QueryTimestamp(startTime, endTime string) (format string, start time.Time, 
 
 	if startUnit != endUnit {
 		err = fmt.Errorf("start time and end time must have the same format")
-		return
+		return format, start, end, err
 	}
 	format = startUnit
 
-	return
+	return format, start, end, err
 }
 
 // MsIntMergeNs 将毫秒时间和纳秒时间戳合并为新的时间
@@ -234,9 +234,14 @@ func MsIntMergeNs(ms int64, ns time.Time) time.Time {
 }
 
 // IsAlignTime 判断该聚合是否需要进行对齐
+// 如果是按天聚合，则增加时区偏移量（修改该逻辑为只要有聚合就进行偏移量处理）
 func IsAlignTime(t time.Duration) bool {
 	if t == 0 {
 		return false
+	}
+
+	if t.Seconds() > 0 {
+		return true
 	}
 
 	// 只有按天的聚合才需要对齐时间

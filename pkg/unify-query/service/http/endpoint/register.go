@@ -19,9 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-var (
-	registerHandler *RegisterHandler
-)
+var registerHandler *RegisterHandler
 
 type RegisterHandler struct {
 	ctx context.Context
@@ -43,7 +41,7 @@ func (r *RegisterHandler) RegisterWithOutHandlerMap(method, handlerPath string, 
 	case http.MethodHead:
 		r.g.HEAD(handlerPath, handlerFunc...)
 	default:
-		log.Errorf(r.ctx, "registerHandlers error type is error %s", method)
+		log.Errorf(r.ctx, "不支持的HTTP方法类型: %s", method)
 		return
 	}
 }

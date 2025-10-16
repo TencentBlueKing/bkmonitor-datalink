@@ -10,14 +10,11 @@
 package http
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
 // setDefaultConfig
@@ -45,6 +42,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryPromQLHandlePathConfigPath, "/query/ts/promql")
 	viper.SetDefault(TSQueryReferenceQueryHandlePathConfigPath, "/query/ts/reference")
 	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
+	viper.SetDefault(TSQueryRawQueryWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
 	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")
@@ -72,15 +70,19 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMaxRoutines, 1)
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
-	viper.SetDefault(QueryMaxRoutingConfigPath, 2)
+	viper.SetDefault(QueryMaxRoutingConfigPath, 4)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
+
+	// scroll
+	viper.SetDefault(ScrollSliceLimitConfigPath, 10000)
+	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
+	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
 }
 
 // LoadConfig
 func LoadConfig() {
-
 	TestV = viper.GetBool(AlignInfluxdbResultConfigPath)
 
 	AlignInfluxdbResult = viper.GetBool(AlignInfluxdbResultConfigPath)
@@ -94,6 +96,10 @@ func LoadConfig() {
 	SlowQueryThreshold = viper.GetDuration(SlowQueryThresholdConfigPath)
 	DefaultQueryListLimit = viper.GetInt(DefaultQueryListLimitPath)
 
+	ScrollSliceLimit = viper.GetInt(ScrollSliceLimitConfigPath)
+	ScrollWindowTimeout = viper.GetString(ScrollWindowTimeoutConfigPath)
+	ScrollSessionLockTimeout = viper.GetString(ScrollSessionLockTimeoutConfigPath)
+
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 
 	ClusterMetricQueryPrefix = viper.GetString(ClusterMetricQueryPrefixConfigPath)
@@ -101,16 +107,6 @@ func LoadConfig() {
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
-
-	promql.SetSegmented(&promql.Segmented{
-		Enable:      viper.GetBool(SegmentedEnable),
-		MaxRoutines: viper.GetInt(SegmentedMaxRoutines),
-		MinInterval: viper.GetString(SegmentedMinInterval),
-	})
-
-	log.Debugf(context.TODO(), "reload success new config address->[%s] port->[%d] username->[%s] password->[%s]"+
-		"going to reload the service.",
-		IPAddress, Port, Username, Password)
 }
 
 // init

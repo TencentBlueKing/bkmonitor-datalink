@@ -57,8 +57,8 @@ var demoSetStr = `
 `
 
 func TestSetCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
-		demoSets := make([]map[string]interface{}, 0)
+	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
+		demoSets := make([]map[string]any, 0)
 		err := json.Unmarshal([]byte(demoSetStr), &demoSets)
 		if err != nil {
 			return nil, err
@@ -109,7 +109,7 @@ func TestSetCacheManager(t *testing.T) {
 			return
 		}
 
-		events := []map[string]interface{}{
+		events := []map[string]any{
 			{
 				"bk_biz_id": float64(2),
 				"bk_set_id": float64(1),
@@ -125,7 +125,7 @@ func TestSetCacheManager(t *testing.T) {
 		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
 		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
 
-		events = []map[string]interface{}{
+		events = []map[string]any{
 			{
 				"bk_biz_id":       float64(2),
 				"bk_set_id":       float64(1),

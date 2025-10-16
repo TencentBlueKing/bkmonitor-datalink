@@ -75,7 +75,8 @@ var configData = &Config{
 				"namespace",
 				"deployment",
 			},
-		}, {
+		},
+		{
 			Name: "deamonset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -289,9 +290,7 @@ var configData = &Config{
 	},
 }
 
-var (
-	resourceConfig = make(map[cmdb.Resource]ResourceConf)
-)
+var resourceConfig = make(map[cmdb.Resource]ResourceConf)
 
 func init() {
 	for _, c := range configData.Resource {

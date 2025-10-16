@@ -83,6 +83,28 @@ default:
           enabled: {{ profiles_drop_sampler_config.enabled }}
 {%- endif %}
 
+{% if metrics_filter_config is defined %}
+      - name: "{{ metrics_filter_config.name }}"
+        config:
+          code_relabel:
+            {%- for item in metrics_filter_config.code_relabel %}
+            - metrics: {{ item.metrics | tojson }}
+              source: "{{ item.source }}"
+              services:
+              {%- for svc in item.services %}
+              - name: "{{ svc.name }}"
+                codes:
+                {%- for c in svc.codes %}
+                - rule: "{{ c.rule }}"
+                  target:
+                    action: "{{ c.target.action }}"
+                    label: "{{ c.target.label }}"
+                    value: "{{ c.target.value }}"
+                {%- endfor %}
+              {%- endfor %}
+            {%- endfor %}
+{%- endif %}
+
 {% if db_slow_command_config is defined %}
       - name: "{{ db_slow_command_config.name }}"
         config:
@@ -274,8 +296,13 @@ default:
 {%- if item.match_groups is defined %}
               match_groups:
 {%- for group in item.match_groups %}
-                - source: '{{ group.source }}'
-                  destination: '{{ group.destination }}'
+                - destination: '{{ group.destination }}'
+{%- if group.source is defined %}
+                  source: '{{ group.source }}'
+{%- endif %}
+{%- if group.const_val is defined %}
+                  const_val: '{{ group.const_val }}'
+{%- endif %}
 {%- endfor %}
 {%- endif %}
               rule:
@@ -301,6 +328,20 @@ default:
                 regex: '{{ item.rule.regex }}'
 {%- endif %}
 {%- endfor %}
+{%- endif %}
+
+{% if method_filter_config is defined %}
+      - name: '{{ method_filter_config.name }}'
+        config:
+          drop_span:
+            rules:
+              {%- for item in method_filter_config.get("drop_span", {}).get("rules", []) %}
+              - match_type: '{{ item.match_type }}'
+                predicate_key: '{{ item.predicate_key }}'
+                kind: '{{ item.span_kind }}'
+                rule:
+                  regex: '{{ item.rule.regex }}'
+              {%- endfor %}
 {%- endif %}
 
 {% if service_configs is defined %}

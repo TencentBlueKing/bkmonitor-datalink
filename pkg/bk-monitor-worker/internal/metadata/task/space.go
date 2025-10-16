@@ -17,6 +17,7 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -83,7 +84,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		_ = p.Submit(func() {
 			defer wg.Done()
 			t1 := time.Now()
-			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table [%s] ", sp.SpaceUid())
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
 			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
@@ -99,7 +100,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		_ = p.Submit(func() {
 			defer wg.Done()
 			t1 := time.Now()
-			name := "[task] PushAndPublishSpaceRouterInfo data_label_to_result_table"
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo data_label_to_result_table tenant[%s]", bkTenantId)
 			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, true); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
@@ -115,10 +116,10 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 
-			name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail tenant[%s]", bkTenantId)
 			var tableIdList []string
 			var rtList []resulttable.ResultTable
-			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageIn(models.StorageTypeInfluxdb, models.StorageTypeVM).IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
 				logger.Errorf("%s error, %s", name, err)
 				return
 			}
@@ -148,7 +149,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
 		if err = resulttable.NewResultTableQuerySet(db).
 			Select(resulttable.ResultTableDBSchema.TableId).
-			DefaultStorageEq("elasticsearch").
+			DefaultStorageEq(models.StorageTypeES).
 			IsEnableEq(true).IsDeletedEq(false).
 			All(&rtList); err != nil {
 			logger.Errorf("%s error, %s", name, err)
@@ -181,7 +182,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
 		if err = resulttable.NewResultTableQuerySet(db).
 			Select(resulttable.ResultTableDBSchema.TableId).
-			DefaultStorageEq("doris").
+			DefaultStorageEq(models.StorageTypeDoris).
 			IsEnableEq(true).IsDeletedEq(false).
 			All(&rtList); err != nil {
 			logger.Errorf("%s error, %s", name, err)

@@ -127,7 +127,6 @@ func RecordSloMonitor(bk_biz_id string, scene string, name string, flag string) 
 // RecordSloErrorTimeInfo updates the sloErrorTimeInfo metric with the provided values
 func RecordSloErrorTimeInfo(value float64, bk_biz_id string, range_time string, strategy_id string, strategy_name string, velat string, scene string) {
 	metric, err := sloErrorTimeInfo.GetMetricWithLabelValues(bk_biz_id, range_time, strategy_id, strategy_name, velat, scene)
-
 	if err != nil {
 		logger.Errorf("prom get [sloErrorTimeInfo] metric failed: %s", err)
 		RecordSloMonitor(bk_biz_id, scene, "SloErrorTimeInfo", "0")

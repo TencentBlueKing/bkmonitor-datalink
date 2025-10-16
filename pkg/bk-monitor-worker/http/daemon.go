@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type DaemonTaskReloadParam struct {
@@ -92,6 +93,10 @@ func getDaemonTask(taskUniId string) ([]byte, error) {
 			return nil, err
 		}
 		itemTaskUniId := daemon.ComputeTaskUniId(item)
+		if itemTaskUniId == "" {
+			logger.Errorf("failed to compute taskUniId, value: %v", item)
+			continue
+		}
 		if itemTaskUniId == taskUniId {
 			return []byte(i), nil
 		}

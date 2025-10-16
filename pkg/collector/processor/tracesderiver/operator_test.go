@@ -63,20 +63,22 @@ func TestOperator(t *testing.T) {
 		Data:       pdTraces,
 	}
 
-	operator := NewTracesOperator(c)
+	operator := NewOperator(c)
 	derived := operator.Operate(record)
 
 	pdMetrics := derived.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		assert.Equal(t, "test_bk_apm_duration", metric.Name())
 		dataPoints := metric.Gauge().DataPoints()
 		for n := 0; n < dataPoints.Len(); n++ {
 			dp := dataPoints.At(n)
 			attrs := dp.Attributes()
-			testkits.AssertAttrsFoundStringVal(t, attrs, "http.uri", "/api/v1/healthz")
-			testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "echo")
-			testkits.AssertAttrsFoundStringVal(t, attrs, "kind", "3")
+			testkits.AssertAttrsStringKeyVal(t, attrs,
+				"http.uri", "/api/v1/healthz",
+				"service.name", "echo",
+				"kind", "3",
+			)
 		}
 	})
 }
@@ -120,8 +122,8 @@ func TestOperatorDuration(t *testing.T) {
 	span2.SetStartTimestamp(300)
 	span2.SetEndTimestamp(200)
 
-	op := NewTracesOperator(c)
-	derived := op.Operate(&define.Record{
+	operator := NewOperator(c)
+	derived := operator.Operate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	})
@@ -130,7 +132,7 @@ func TestOperatorDuration(t *testing.T) {
 	metrics := derived.Data.(pmetric.Metrics)
 	assert.Equal(t, 2, metrics.DataPointCount())
 
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(metrics, func(metric pmetric.Metric) {
 		assert.Equal(t, "test_bk_apm_duration", metric.Name())
 		assert.Equal(t, float64(100), metric.Gauge().DataPoints().At(0).DoubleVal())
 		assert.Equal(t, float64(0), metric.Gauge().DataPoints().At(1).DoubleVal())

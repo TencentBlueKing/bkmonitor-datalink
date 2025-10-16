@@ -78,14 +78,14 @@ func (d DataSourceSvc) MqCluster() (*storage.ClusterInfo, error) {
 }
 
 // ToJson 获取当前data_id的配置
-func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]interface{}, error) {
+func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, error) {
 	// 集群配置信息
 	kafkaTopicInfo, err := d.MqConfigObj()
 	if err != nil {
 		return nil, err
 	}
-	mqConfig := map[string]interface{}{
-		"storage_config": map[string]interface{}{
+	mqConfig := map[string]any{
+		"storage_config": map[string]any{
 			"topic":     kafkaTopicInfo.Topic,
 			"partition": kafkaTopicInfo.Partition,
 		},
@@ -111,7 +111,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 	if err != nil {
 		return nil, err
 	}
-	resultConfig := map[string]interface{}{
+	resultConfig := map[string]any{
 		"bk_data_id":          d.BkDataId,
 		"data_id":             d.BkDataId,
 		"mq_config":           mqConfig,
@@ -129,7 +129,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 	db := mysql.GetDBSession().DB
 	// 获取ResultTable的配置
 	if withRtInfo {
-		resultTableInfoList := make([]interface{}, 0)
+		resultTableInfoList := make([]any, 0)
 		resultConfig["result_table_list"] = resultTableInfoList
 		var resultTableIdList []string
 		var dataSourceRtList []resulttable.DataSourceResultTable
@@ -184,21 +184,21 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				}
 				shipperList = append(shipperList, consulConfig)
 			}
-			var fieldList = make([]interface{}, 0)
+			fieldList := make([]any, 0)
 			// 如果是自定义上报的情况，不需要将字段信息写入到consul上
 			if !d.isCustomTimeSeriesReport() {
 				if fields, ok := tableFields[rt.TableId]; ok {
 					fieldList = fields
 				}
 			}
-			var options = make(map[string]interface{})
+			options := make(map[string]any)
 			if ops, ok := rtOptions[rt.TableId]; ok {
 				options = ops
 			}
 			if len(shipperList) == 0 {
 				shipperList = make([]*StorageConsulConfig, 0)
 			}
-			resultTableInfoList = append(resultTableInfoList, map[string]interface{}{
+			resultTableInfoList = append(resultTableInfoList, map[string]any{
 				"bk_biz_id":    rt.BkBizId,
 				"result_table": rt.TableId,
 				"shipper_list": shipperList,
@@ -242,7 +242,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	params.Condition.ChannelId = d.BkDataId
 	params.Condition.PlatName = "bkmonitor"
 	params.Operation.OperatorName = "admin"
-	data, err := apiservice.Gse.QueryRoute(params)
+	data, err := apiservice.Gse.QueryRoute(d.BkTenantId, params)
 	if err != nil {
 		return errors.Wrapf(err, "data_id [%v] query gse route failed", d.BkDataId)
 	}
@@ -285,8 +285,8 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 			oldRoute = &bkgse.GSERoute{
 				Name:          route.Name,
 				StreamTo:      route.StreamTo,
-				FilterNameAnd: make([]interface{}, 0),
-				FilterNameOr:  make([]interface{}, 0),
+				FilterNameAnd: make([]any, 0),
+				FilterNameOr:  make([]any, 0),
 			}
 			break
 		}
@@ -312,11 +312,11 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 			ChannelId: d.BkDataId,
 			PlatName:  common.AccessGseApiPlatName,
 		},
-		Specification: map[string]interface{}{"route": []interface{}{config}},
+		Specification: map[string]any{"route": []any{config}},
 		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
 
-	if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
+	if _, err = apiservice.Gse.UpdateRoute(d.BkTenantId, updateParam); err != nil {
 		return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
 	}
 	logger.Infof("data_id [%d] success to push route info to gse", d.BkDataId)
@@ -341,11 +341,11 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 			ChannelId: d.BkDataId,
 			PlatName:  "bkmonitor",
 		},
-		Route:     []interface{}{route},
+		Route:     []any{route},
 		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
 
-	data, err := apiservice.Gse.AddRoute(params)
+	data, err := apiservice.Gse.AddRoute(d.BkTenantId, params)
 	if err != nil {
 		return err
 	}
@@ -366,16 +366,15 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 
 	return &bkgse.GSERoute{
 		Name: routeName,
-		StreamTo: map[string]interface{}{
+		StreamTo: map[string]any{
 			"stream_to_id": mqCluster.GseStreamToId,
-			"kafka": map[string]interface{}{
+			"kafka": map[string]any{
 				"topic_name": mqConfig.Topic,
 			},
 		},
-		FilterNameAnd: make([]interface{}, 0),
-		FilterNameOr:  make([]interface{}, 0),
+		FilterNameAnd: make([]any, 0),
+		FilterNameOr:  make([]any, 0),
 	}, nil
-
 }
 
 // RefreshConsulConfig 更新consul配置，告知ETL等其他依赖模块配置有所更新

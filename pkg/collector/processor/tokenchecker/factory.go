@@ -28,11 +28,11 @@ func init() {
 	processor.Register(define.ProcessorTokenChecker, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
 	decoders := confengine.NewTierConfig()
 	configs := confengine.NewTierConfig()
 
@@ -80,7 +80,7 @@ func (p *tokenChecker) IsPreCheck() bool {
 	return true
 }
 
-func (p *tokenChecker) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *tokenChecker) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -104,13 +104,10 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 		err = p.processMetrics(decoder, config, record)
 	case define.RecordLogs:
 		err = p.processLogs(decoder, config, record)
-	case define.RecordProfiles:
-		err = p.processProfiles(decoder, config, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
 	case define.RecordFta:
 		err = p.processFta(decoder, record)
-
 	default:
 		err = p.processCommon(decoder, record)
 	}
@@ -309,20 +306,6 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 func (p *tokenChecker) processProxy(decoder TokenDecoder, record *define.Record) error {
 	var err error
 	record.Token, err = decoder.Decode(tokenparser.WrapProxyToken(record.Token))
-	return err
-}
-
-func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, record *define.Record) error {
-	var err error
-	if decoder.Skip() {
-		record.Token, err = decoder.Decode("")
-		return err
-	}
-
-	record.Token, err = decoder.Decode(record.Token.Original)
-	if config.ProfilesDataId > 0 {
-		record.Token.ProfilesDataId = config.ProfilesDataId
-	}
 	return err
 }
 

@@ -13,17 +13,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -32,12 +32,9 @@ import (
 )
 
 const (
-	KeyIndex     = "__index"
-	KeyTableID   = "__result_table"
-	KeyDataLabel = "__data_label"
-
-	TableFieldName = "Field"
-	TableFieldType = "Type"
+	TableFieldName     = "Field"
+	TableFieldType     = "Type"
+	TableFieldAnalyzed = "Analyzed"
 
 	TableTypeVariant = "variant"
 )
@@ -55,8 +52,9 @@ type Instance struct {
 	timeout      time.Duration
 	intervalTime time.Duration
 
-	maxLimit  int
-	tolerance int
+	maxLimit   int
+	tolerance  int
+	sliceLimit int
 
 	client *Client
 }
@@ -67,9 +65,10 @@ type Options struct {
 	Address string
 	Headers map[string]string
 
-	Timeout   time.Duration
-	MaxLimit  int
-	Tolerance int
+	Timeout    time.Duration
+	MaxLimit   int
+	SliceLimit int
+	Tolerance  int
 
 	Curl curl.Curl
 }
@@ -79,37 +78,18 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
-		ctx:       ctx,
-		timeout:   opt.Timeout,
-		maxLimit:  opt.MaxLimit,
-		tolerance: opt.Tolerance,
-		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		ctx:        ctx,
+		timeout:    opt.Timeout,
+		maxLimit:   opt.MaxLimit,
+		tolerance:  opt.Tolerance,
+		sliceLimit: opt.SliceLimit,
+		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
 	}
 	return instance, nil
 }
 
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
-}
-
-func (i *Instance) checkResult(res *Result) error {
-	if !res.Result {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Code != StatusOK {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Data == nil {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-
-	return nil
 }
 
 func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
@@ -128,16 +108,28 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 		return data, nil
 	}
 
-	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
+
+	user := metadata.GetUser(ctx)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-username", user.Name)
 
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, sql, span)
-	if err = i.checkResult(res); err != nil {
-		return data, err
+	if res == nil {
+		return nil, nil
+	}
+
+	if !res.Result || res.Code != StatusOK || res.Data == nil {
+		return data, metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"查询异常 %s",
+			res.Message,
+		).Error(ctx, errors.New(res.Errors.Error))
 	}
 
 	span.Set("query-timeout", i.timeout.String())
@@ -153,8 +145,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
-	fieldsMap := make(map[string]string)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.FieldsMap, error) {
+	fieldsMap := make(metadata.FieldsMap)
 
 	if sql == "" {
 		return nil, nil
@@ -167,8 +159,10 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 
 	for _, list := range data.List {
 		var (
-			k  string
-			v  string
+			k             string
+			fieldType     string
+			fieldAnalyzed string
+
 			ok bool
 		)
 		k, ok = list[TableFieldName].(string)
@@ -176,12 +170,20 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 			continue
 		}
 
-		v, ok = list[TableFieldType].(string)
-		if !ok {
+		fieldType, ok = list[TableFieldType].(string)
+		if !ok || fieldType == "" {
 			continue
 		}
 
-		fieldsMap[k] = v
+		opt := metadata.FieldOption{
+			FieldType: fieldType,
+		}
+
+		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
+			opt.IsAnalyzed = fieldAnalyzed == "true"
+		}
+
+		fieldsMap[k] = opt
 	}
 
 	return fieldsMap, nil
@@ -197,9 +199,9 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sql_expr.Doris {
-		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
-			return f, err
+			return nil, err
 		}
 
 		// 只能使用在表结构的字段才能使用
@@ -227,22 +229,115 @@ func (i *Instance) Table(query *metadata.Query) string {
 	return table
 }
 
+// QueryFieldMap 查询字段映射
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
+	var err error
+
+	if query == nil {
+		return nil, nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-field-map")
+	defer span.End(&err)
+
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{query.DB}
+	}
+
+	if len(dbs) == 0 {
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return nil, err
+	}
+
+	fieldsMap := make(metadata.FieldsMap)
+
+	// 多表的字段进行合并查询，进行倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
+			continue
+		}
+
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
+
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+			v.TokenizeOnChars = make([]string, 0)
+
+			fieldsMap[k] = v
+		}
+	}
+
+	for _, db := range dbs {
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
+			continue
+		}
+
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
+
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+
+			fieldsMap[k] = v
+		}
+	}
+
+	return fieldsMap, nil
+}
+
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()
 
-	resultTableOptions = make(metadata.ResultTableOptions)
-	option := query.ResultTableOptions.GetOption(query.TableID, "")
+	option = query.ResultTableOption
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
-	defer func() {
-		resultTableOptions.SetOption(query.TableID, "", option)
-	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)
@@ -252,7 +347,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
 		err = fmt.Errorf("start time must less than end time")
-		return
+		return size, total, option, err
 	}
 
 	rangeLeftTime := end.Sub(start)
@@ -272,27 +367,27 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 
 	// 如果是 dry run 则直接返回 sql 查询语句
 	if query.DryRun {
 		option.SQL = sql
-		return
+		return size, total, option, err
 	}
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
-		return
+		return size, total, option, err
 	}
 
 	if data == nil {
-		return
+		return size, total, option, err
 	}
 
 	if data.ResultSchema != nil {
@@ -304,20 +399,21 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
-		newData[KeyIndex] = query.DB
-		newData[KeyTableID] = query.TableID
-		newData[KeyDataLabel] = query.DataLabel
+		newData[metadata.KeyIndex] = query.DB
+		// 注入原始数据需要的字段
+		query.DataReload(newData)
+
 		dataCh <- newData
 	}
 
-	total = int64(data.TotalRecordSize)
-	return
+	size = int64(len(data.List))
+	total = int64(data.TotalRecords)
+
+	return size, total, option, err
 }
 
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series-set")
 	defer span.End(&err)
 
@@ -358,6 +454,11 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"%s 查询失败",
+			sql,
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -373,31 +474,30 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"数据解析失败",
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
-	return nil, nil
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
+	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	log.Warnf(ctx, "%s not support direct query", i.InstanceType())
 	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	log.Warnf(ctx, "%s not support query exemplar", i.InstanceType())
 	return nil, nil
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)
@@ -452,18 +552,14 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	// 使用聚合的方式统计维度组合
-	query.Aggregates = metadata.Aggregates{
-		{
-			Dimensions: []string{name},
-			Name:       "count",
-		},
-	}
-
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
+
+	queryFactory.WithKeepColumns([]string{name})
+	query.IsDistinct = true
+
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err
@@ -472,6 +568,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
+	}
+
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc != nil {
+		name = encodeFunc(name)
 	}
 
 	for _, d := range data.List {
@@ -493,23 +594,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	return lbs, err
 }
 
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	return nil, nil
-}
-
-func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
-}
-
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
-}
-
 func (i *Instance) InstanceType() string {
-	return consul.BkSqlStorageType
+	return metadata.BkSqlStorageType
 }
 
-func getValue(k string, d map[string]interface{}) (string, error) {
+func getValue(k string, d map[string]any) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
 		// 增加 nil 判断，避免回传的数值为空

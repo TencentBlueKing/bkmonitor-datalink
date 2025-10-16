@@ -63,19 +63,13 @@ func (p *procPerfMgr) GetOneMetaData(pid int32) (define.ProcStat, error) {
 	return stat, nil
 }
 
-func (p *procPerfMgr) GetOnePerfStat(pid int32) (define.ProcStat, error) {
+func (p *procPerfMgr) GetOnePerfStat(pid int32) define.ProcStat {
 	var stat define.ProcStat
-	// 确定 pid 是否存在
-	_, err := shiroups.NewProcess(pid)
-	if err != nil {
-		return stat, err
-	}
-
 	stat.Mem, _ = p.getMem(pid)
 	stat.CPU, _ = p.getCPU(pid)
 	stat.IO, _ = p.getIO(pid)
 	stat.Fd, _ = p.getFd(pid)
-	return stat, nil
+	return stat
 }
 
 func (p *procPerfMgr) MergeMetaDataPerfStat(meta, perf define.ProcStat) define.ProcStat {

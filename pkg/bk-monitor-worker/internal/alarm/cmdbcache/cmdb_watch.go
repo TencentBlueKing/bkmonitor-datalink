@@ -131,7 +131,7 @@ func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType Cmdb
 
 // Watch 监听资源变更事件并记录
 func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_fields":           CmdbResourceTypeFields[resourceType],
 		"bk_resource":         resourceType,
 		"bk_supplier_account": "0",
@@ -419,8 +419,8 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 			continue
 		}
 
-		updateEvents := make([]map[string]interface{}, 0)
-		cleanEvents := make([]map[string]interface{}, 0)
+		updateEvents := make([]map[string]any, 0)
+		cleanEvents := make([]map[string]any, 0)
 
 		for _, event := range events {
 			switch event.BkEventType {
@@ -538,38 +538,40 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// 推送自定义上报数据
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// 启动指标上报
-		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
-		if err != nil {
-			logger.Errorf("[cmdb_relation] new space reporter: %v", err)
-			return
-		}
-		defer func() {
-			err = reporter.Close(ctx)
-		}()
-		spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
-
-		for {
-			ticker := time.NewTicker(time.Minute)
-
-			// 事件处理间隔时间
-			select {
-			case <-cancelCtx.Done():
-				relation.GetRelationMetricsBuilder().ClearAllMetrics()
-				ticker.Stop()
+	// 推送自定义上报数据，如果没有配置则不启动
+	if config.PromRemoteWriteUrl != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// 启动指标上报
+			reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+			if err != nil {
+				logger.Errorf("[cmdb_relation] new space reporter: %v", err)
 				return
-			case <-ticker.C:
-				// 上报指标
-				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
-					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+			}
+			defer func() {
+				err = reporter.Close(ctx)
+			}()
+			spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
+
+			for {
+				ticker := time.NewTicker(time.Minute)
+
+				// 事件处理间隔时间
+				select {
+				case <-cancelCtx.Done():
+					relation.GetRelationMetricsBuilder().ClearAllMetrics()
+					ticker.Stop()
+					return
+				case <-ticker.C:
+					// 上报指标
+					if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+						logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)

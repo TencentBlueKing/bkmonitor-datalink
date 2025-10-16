@@ -25,13 +25,6 @@ type Params struct {
 	EnableAtModifier     bool
 }
 
-// 指标对应关系结构
-type MetricInfo struct {
-	Metric      string
-	Database    string
-	Measurement string
-}
-
 var GlobalEngine *prom.Engine
 
 // NewEngine

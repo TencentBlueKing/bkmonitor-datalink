@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
@@ -53,7 +52,6 @@ type Controller struct {
 	exporterMgr   *exporter.Exporter
 	proxyMgr      *proxy.Proxy
 	pingserverMgr *pingserver.Pingserver
-	clusterSvr    *cluster.Server
 
 	originalTasks *define.TaskQueue
 	derivedTasks  *define.TaskQueue
@@ -145,14 +143,6 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		}
 	}
 
-	var clusterSvr *cluster.Server
-	if !conf.Disabled(define.ConfigFieldCluster) {
-		clusterSvr, err = cluster.NewServer(conf)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	var receiverMgr *receiver.Receiver
 	if !conf.Disabled(define.ConfigFieldReceiver) {
 		receiverMgr, err = receiver.New(conf)
@@ -181,7 +171,6 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		receiverMgr:   receiverMgr,
 		proxyMgr:      proxyMgr,
 		pingserverMgr: pingserverMgr,
-		clusterSvr:    clusterSvr,
 		exporterMgr:   exporterMgr,
 		pipelineMgr:   pipelineMgr,
 		originalTasks: define.NewTaskQueue(define.PushModeGuarantee),
@@ -298,12 +287,6 @@ func (c *Controller) Start() error {
 		}
 	}
 
-	if c.clusterSvr != nil {
-		if err := c.clusterSvr.Start(); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -334,10 +317,6 @@ func (c *Controller) Stop() error {
 
 	if c.pusherMgr != nil {
 		c.pusherMgr.Stop()
-	}
-
-	if c.clusterSvr != nil {
-		c.clusterSvr.Stop()
 	}
 
 	c.cancel()
@@ -433,14 +412,6 @@ func (c *Controller) consumeRecords() {
 			pl := c.pipelineMgr.GetPipeline(record.RecordType)
 			c.submitTasks(c.originalTasks, record, pl)
 
-		case record, ok := <-cluster.Records():
-			if !ok {
-				return
-			}
-			pl := c.pipelineMgr.GetPipeline(record.RecordType)
-			record.Unwrap()
-			c.submitTasks(c.originalTasks, record, pl)
-
 		case <-c.ctx.Done():
 			return
 		}
@@ -466,7 +437,6 @@ loop:
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				stage := task.StageAt(i)
-				logger.Debugf("process original stage: %s, recordType: %s", stage, rtype)
 				derivedRecord, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
 				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
@@ -494,7 +464,6 @@ loop:
 
 			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
-			logger.Debugf("original handle recordType: %s, token: %+v", rtype, token)
 
 			// no processors
 			if task.StageCount() == 0 {
@@ -529,7 +498,6 @@ loop:
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				// 无需再关注是否为 derived 类型
 				stage := task.StageAt(i)
-				logger.Debugf("process derived stage: %s, recordType: %+v", stage, rtype)
 				_, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
 				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
@@ -551,7 +519,6 @@ loop:
 
 			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
-			logger.Debugf("derived handle recordType: %s, token: %+v", rtype, token)
 
 			// no processors
 			if task.StageCount() == 0 {

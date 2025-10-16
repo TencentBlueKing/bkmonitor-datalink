@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -83,7 +82,10 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
-			log.Warnf(ctx, "not instance in %s", qry.StorageID)
+			metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询实例为空",
+			).Warn(ctx)
 			return
 		}
 
@@ -115,6 +117,8 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-select-fn")
 	defer span.End(&err)
 
+	qp := metadata.GetQueryParams(ctx)
+
 	go func() {
 		defer func() {
 			recvDone <- struct{}{}
@@ -141,46 +145,40 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	queryList := q.getQueryList(referenceName)
 
-	p, _ := ants.NewPoolWithFunc(q.maxRouting, func(i interface{}) {
-		defer wg.Done()
-		index, ok := i.(int)
-		if ok {
-			if index < len(queryList) {
-				query := queryList[index]
-
-				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.InstanceType())
-				span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
-				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
-				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
-
-				var (
-					startTime time.Time
-					endTime   time.Time
-				)
-				qp := metadata.GetQueryParams(ctx)
-				if qp.IsReference {
-					startTime = qp.Start
-					endTime = qp.End
-				} else {
-					// 获取因转毫秒丢失的时间精度
-					startTime = function.MsIntMergeNs(hints.Start, qp.Start)
-					endTime = function.MsIntMergeNs(hints.End, qp.End)
-				}
-
-				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
-				return
-			} else {
-				log.Errorf(ctx, "sql index error: %+v", index)
-			}
-		} else {
-			log.Errorf(ctx, "sql index error: %+v", index)
-		}
-	})
+	p, _ := ants.NewPool(q.maxRouting)
 	defer p.Release()
 
-	for i := range queryList {
+	for i, query := range queryList {
 		wg.Add(1)
-		p.Invoke(i)
+		err = p.Submit(func() {
+			defer func() {
+				wg.Done()
+			}()
+
+			span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.InstanceType())
+			span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
+			span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
+			span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
+
+			var (
+				startTime time.Time
+				endTime   time.Time
+			)
+			if qp.IsReference {
+				startTime = qp.Start
+				endTime = qp.End
+			} else {
+				// 获取因转毫秒丢失的时间精度
+				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
+				endTime = function.MsIntMergeNs(hints.End, qp.End)
+			}
+
+			setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
+		})
+		if err != nil {
+			setCh <- storage.ErrSeriesSet(err)
+			wg.Done()
+		}
 	}
 	wg.Wait()
 
@@ -206,8 +204,11 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		create: func() (s storage.SeriesSet, ok bool) {
 			set, ok := <-promise
 			if set.Err() != nil {
-				log.Errorf(q.ctx, set.Err().Error())
-				return storage.ErrSeriesSet(set.Err()), false
+				err := metadata.Sprintf(
+					metadata.MsgQueryTs,
+					"查询异常",
+				).Error(q.ctx, set.Err())
+				return storage.ErrSeriesSet(err), false
 			}
 			if !ok {
 				return storage.ErrSeriesSet(ErrChannelReceived), false
@@ -242,7 +243,10 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			_ = metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询异常",
+			).Error(q.ctx, err)
 			continue
 		}
 		for _, l := range lbl {

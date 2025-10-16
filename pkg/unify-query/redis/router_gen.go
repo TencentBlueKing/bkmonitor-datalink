@@ -12,7 +12,7 @@ func (z *Filter) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0003, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	if (*z) == nil {
 		(*z) = make(Filter, zb0003)
@@ -28,16 +28,16 @@ func (z *Filter) DecodeMsg(dc *msgp.Reader) (err error) {
 		zb0001, err = dc.ReadString()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		zb0002, err = dc.ReadString()
 		if err != nil {
 			err = msgp.WrapError(err, zb0001)
-			return
+			return err
 		}
 		(*z)[zb0001] = zb0002
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -45,21 +45,21 @@ func (z Filter) EncodeMsg(en *msgp.Writer) (err error) {
 	err = en.WriteMapHeader(uint32(len(z)))
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0004, zb0005 := range z {
 		err = en.WriteString(zb0004)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		err = en.WriteString(zb0005)
 		if err != nil {
 			err = msgp.WrapError(err, zb0004)
-			return
+			return err
 		}
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -70,7 +70,7 @@ func (z Filter) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendString(o, zb0004)
 		o = msgp.AppendString(o, zb0005)
 	}
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -79,7 +79,7 @@ func (z *Filter) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	if (*z) == nil {
 		(*z) = make(Filter, zb0003)
@@ -95,17 +95,17 @@ func (z *Filter) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		zb0001, bts, err = msgp.ReadStringBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		zb0002, bts, err = msgp.ReadStringBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, zb0001)
-			return
+			return o, err
 		}
 		(*z)[zb0001] = zb0002
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -117,7 +117,7 @@ func (z Filter) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(zb0004) + msgp.StringPrefixSize + len(zb0005)
 		}
 	}
-	return
+	return s
 }
 
 // DecodeMsg implements msgp.Decodable
@@ -126,7 +126,7 @@ func (z *Space) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0003, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	if (*z) == nil {
 		(*z) = make(Space, zb0003)
@@ -142,13 +142,13 @@ func (z *Space) DecodeMsg(dc *msgp.Reader) (err error) {
 		zb0001, err = dc.ReadString()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		if dc.IsNil() {
 			err = dc.ReadNil()
 			if err != nil {
 				err = msgp.WrapError(err, zb0001)
-				return
+				return err
 			}
 			zb0002 = nil
 		} else {
@@ -158,12 +158,12 @@ func (z *Space) DecodeMsg(dc *msgp.Reader) (err error) {
 			err = zb0002.DecodeMsg(dc)
 			if err != nil {
 				err = msgp.WrapError(err, zb0001)
-				return
+				return err
 			}
 		}
 		(*z)[zb0001] = zb0002
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -171,28 +171,28 @@ func (z Space) EncodeMsg(en *msgp.Writer) (err error) {
 	err = en.WriteMapHeader(uint32(len(z)))
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0004, zb0005 := range z {
 		err = en.WriteString(zb0004)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		if zb0005 == nil {
 			err = en.WriteNil()
 			if err != nil {
-				return
+				return err
 			}
 		} else {
 			err = zb0005.EncodeMsg(en)
 			if err != nil {
 				err = msgp.WrapError(err, zb0004)
-				return
+				return err
 			}
 		}
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -207,11 +207,11 @@ func (z Space) MarshalMsg(b []byte) (o []byte, err error) {
 			o, err = zb0005.MarshalMsg(o)
 			if err != nil {
 				err = msgp.WrapError(err, zb0004)
-				return
+				return o, err
 			}
 		}
 	}
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -220,7 +220,7 @@ func (z *Space) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	if (*z) == nil {
 		(*z) = make(Space, zb0003)
@@ -236,12 +236,12 @@ func (z *Space) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		zb0001, bts, err = msgp.ReadStringBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		if msgp.IsNil(bts) {
 			bts, err = msgp.ReadNilBytes(bts)
 			if err != nil {
-				return
+				return o, err
 			}
 			zb0002 = nil
 		} else {
@@ -251,13 +251,13 @@ func (z *Space) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			bts, err = zb0002.UnmarshalMsg(bts)
 			if err != nil {
 				err = msgp.WrapError(err, zb0001)
-				return
+				return o, err
 			}
 		}
 		(*z)[zb0001] = zb0002
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -274,7 +274,7 @@ func (z Space) Msgsize() (s int) {
 			}
 		}
 	}
-	return
+	return s
 }
 
 // DecodeMsg implements msgp.Decodable
@@ -285,34 +285,34 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0001, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, err = dc.ReadMapKeyPtr()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		switch msgp.UnsafeString(field) {
 		case "Type":
 			z.Type, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "Type")
-				return
+				return err
 			}
 		case "TableID":
 			z.TableID, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "TableID")
-				return
+				return err
 			}
 		case "Field":
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Field")
-				return
+				return err
 			}
 			if cap(z.Field) >= int(zb0002) {
 				z.Field = (z.Field)[:zb0002]
@@ -323,27 +323,27 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 				z.Field[za0001], err = dc.ReadString()
 				if err != nil {
 					err = msgp.WrapError(err, "Field", za0001)
-					return
+					return err
 				}
 			}
 		case "MeasurementType":
 			z.MeasurementType, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "MeasurementType")
-				return
+				return err
 			}
 		case "BkDataID":
 			z.BkDataID, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "BkDataID")
-				return
+				return err
 			}
 		case "Filters":
 			var zb0003 uint32
 			zb0003, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Filters")
-				return
+				return err
 			}
 			if cap(z.Filters) >= int(zb0003) {
 				z.Filters = (z.Filters)[:zb0003]
@@ -355,7 +355,7 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 				zb0004, err = dc.ReadMapHeader()
 				if err != nil {
 					err = msgp.WrapError(err, "Filters", za0002)
-					return
+					return err
 				}
 				if z.Filters[za0002] == nil {
 					z.Filters[za0002] = make(Filter, zb0004)
@@ -371,12 +371,12 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 					za0003, err = dc.ReadString()
 					if err != nil {
 						err = msgp.WrapError(err, "Filters", za0002)
-						return
+						return err
 					}
 					za0004, err = dc.ReadString()
 					if err != nil {
 						err = msgp.WrapError(err, "Filters", za0002, za0003)
-						return
+						return err
 					}
 					z.Filters[za0002][za0003] = za0004
 				}
@@ -385,23 +385,23 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 			z.SegmentedEnable, err = dc.ReadBool()
 			if err != nil {
 				err = msgp.WrapError(err, "SegmentedEnable")
-				return
+				return err
 			}
 		case "DataLabel":
 			z.DataLabel, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "DataLabel")
-				return
+				return err
 			}
 		default:
 			err = dc.Skip()
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 		}
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -410,110 +410,110 @@ func (z *TsDB) EncodeMsg(en *msgp.Writer) (err error) {
 	// write "Type"
 	err = en.Append(0x88, 0xa4, 0x54, 0x79, 0x70, 0x65)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.Type)
 	if err != nil {
 		err = msgp.WrapError(err, "Type")
-		return
+		return err
 	}
 	// write "TableID"
 	err = en.Append(0xa7, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.TableID)
 	if err != nil {
 		err = msgp.WrapError(err, "TableID")
-		return
+		return err
 	}
 	// write "Field"
 	err = en.Append(0xa5, 0x46, 0x69, 0x65, 0x6c, 0x64)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Field)))
 	if err != nil {
 		err = msgp.WrapError(err, "Field")
-		return
+		return err
 	}
 	for za0001 := range z.Field {
 		err = en.WriteString(z.Field[za0001])
 		if err != nil {
 			err = msgp.WrapError(err, "Field", za0001)
-			return
+			return err
 		}
 	}
 	// write "MeasurementType"
 	err = en.Append(0xaf, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x54, 0x79, 0x70, 0x65)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.MeasurementType)
 	if err != nil {
 		err = msgp.WrapError(err, "MeasurementType")
-		return
+		return err
 	}
 	// write "BkDataID"
 	err = en.Append(0xa8, 0x42, 0x6b, 0x44, 0x61, 0x74, 0x61, 0x49, 0x44)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.BkDataID)
 	if err != nil {
 		err = msgp.WrapError(err, "BkDataID")
-		return
+		return err
 	}
 	// write "Filters"
 	err = en.Append(0xa7, 0x46, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Filters)))
 	if err != nil {
 		err = msgp.WrapError(err, "Filters")
-		return
+		return err
 	}
 	for za0002 := range z.Filters {
 		err = en.WriteMapHeader(uint32(len(z.Filters[za0002])))
 		if err != nil {
 			err = msgp.WrapError(err, "Filters", za0002)
-			return
+			return err
 		}
 		for za0003, za0004 := range z.Filters[za0002] {
 			err = en.WriteString(za0003)
 			if err != nil {
 				err = msgp.WrapError(err, "Filters", za0002)
-				return
+				return err
 			}
 			err = en.WriteString(za0004)
 			if err != nil {
 				err = msgp.WrapError(err, "Filters", za0002, za0003)
-				return
+				return err
 			}
 		}
 	}
 	// write "SegmentedEnable"
 	err = en.Append(0xaf, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x65, 0x64, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteBool(z.SegmentedEnable)
 	if err != nil {
 		err = msgp.WrapError(err, "SegmentedEnable")
-		return
+		return err
 	}
 	// write "DataLabel"
 	err = en.Append(0xa9, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x61, 0x62, 0x65, 0x6c)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.DataLabel)
 	if err != nil {
 		err = msgp.WrapError(err, "DataLabel")
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -554,7 +554,7 @@ func (z *TsDB) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "DataLabel"
 	o = append(o, 0xa9, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x61, 0x62, 0x65, 0x6c)
 	o = msgp.AppendString(o, z.DataLabel)
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -565,34 +565,34 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		switch msgp.UnsafeString(field) {
 		case "Type":
 			z.Type, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Type")
-				return
+				return o, err
 			}
 		case "TableID":
 			z.TableID, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "TableID")
-				return
+				return o, err
 			}
 		case "Field":
 			var zb0002 uint32
 			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Field")
-				return
+				return o, err
 			}
 			if cap(z.Field) >= int(zb0002) {
 				z.Field = (z.Field)[:zb0002]
@@ -603,27 +603,27 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				z.Field[za0001], bts, err = msgp.ReadStringBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Field", za0001)
-					return
+					return o, err
 				}
 			}
 		case "MeasurementType":
 			z.MeasurementType, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "MeasurementType")
-				return
+				return o, err
 			}
 		case "BkDataID":
 			z.BkDataID, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "BkDataID")
-				return
+				return o, err
 			}
 		case "Filters":
 			var zb0003 uint32
 			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Filters")
-				return
+				return o, err
 			}
 			if cap(z.Filters) >= int(zb0003) {
 				z.Filters = (z.Filters)[:zb0003]
@@ -635,7 +635,7 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				zb0004, bts, err = msgp.ReadMapHeaderBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Filters", za0002)
-					return
+					return o, err
 				}
 				if z.Filters[za0002] == nil {
 					z.Filters[za0002] = make(Filter, zb0004)
@@ -651,12 +651,12 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					za0003, bts, err = msgp.ReadStringBytes(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Filters", za0002)
-						return
+						return o, err
 					}
 					za0004, bts, err = msgp.ReadStringBytes(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Filters", za0002, za0003)
-						return
+						return o, err
 					}
 					z.Filters[za0002][za0003] = za0004
 				}
@@ -665,24 +665,24 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.SegmentedEnable, bts, err = msgp.ReadBoolBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "SegmentedEnable")
-				return
+				return o, err
 			}
 		case "DataLabel":
 			z.DataLabel, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "DataLabel")
-				return
+				return o, err
 			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return o, err
 			}
 		}
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -702,5 +702,5 @@ func (z *TsDB) Msgsize() (s int) {
 		}
 	}
 	s += 16 + msgp.BoolSize + 10 + msgp.StringPrefixSize + len(z.DataLabel)
-	return
+	return s
 }

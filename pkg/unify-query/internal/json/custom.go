@@ -26,9 +26,9 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		if prefix != "" {
 			k = prefix + StepString + k
 		}
-		switch v.(type) {
+		switch nv := v.(type) {
 		case map[string]any:
-			mapData(k, v.(map[string]any), res)
+			mapData(k, nv, res)
 		default:
 			res[k] = v
 		}
@@ -49,7 +49,7 @@ func ParseObject(prefix, intput string) (map[string]any, error) {
 	return newData, nil
 }
 
-func MarshalListMap(data []map[string]interface{}) string {
+func MarshalListMap(data []map[string]any) string {
 	if len(data) == 0 {
 		return "[]"
 	}
@@ -75,7 +75,7 @@ func MarshalListMap(data []map[string]interface{}) string {
 			switch v := value.(type) {
 			case string:
 				valueStr = fmt.Sprintf(`"%s"`, v)
-			case map[string]interface{}, []interface{}:
+			case map[string]any, []any:
 				// 对于复杂类型，使用 JSON 序列化，不转义 HTML
 				var buf bytes.Buffer
 				encoder := json.NewEncoder(&buf)

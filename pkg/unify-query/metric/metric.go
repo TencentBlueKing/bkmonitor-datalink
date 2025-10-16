@@ -18,7 +18,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const (
@@ -165,8 +164,8 @@ func ResultTableInfoSet(ctx context.Context, value float64, rtTableID, rtDataID,
 
 func JWTRequestInc(ctx context.Context, userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status string) {
 	return
-	//metric, _ := jwtRequestTotal.GetMetricWithLabelValues(userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status)
-	//counterInc(ctx, metric)
+	// metric, _ := jwtRequestTotal.GetMetricWithLabelValues(userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status)
+	// counterInc(ctx, metric)
 }
 
 func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {
@@ -204,8 +203,6 @@ func counterAdd(
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
-		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
 		metric.Add(val)
@@ -228,11 +225,8 @@ func observe(
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
-		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
 		metric.Observe(value)
 	}
-
 }

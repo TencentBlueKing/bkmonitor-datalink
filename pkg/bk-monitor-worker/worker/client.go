@@ -28,9 +28,7 @@ type Client struct {
 	broker broker.Broker
 }
 
-var (
-	clientInstance *Client
-)
+var clientInstance *Client
 
 // GetClient new a client
 func GetClient() (*Client, error) {

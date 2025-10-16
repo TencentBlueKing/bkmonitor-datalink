@@ -19,7 +19,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
@@ -44,6 +43,10 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRaw)
 
+	// query/raw/with_scroll
+	handlerPath = viper.GetString(TSQueryRawQueryWithScrollHandlePathConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRawWithScroll)
+
 	// query/ts/exemplar
 	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryExemplar)
@@ -52,37 +55,36 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	infoPath := viper.GetString(TSQueryInfoHandlePathConfigPath)
 
 	// query/ts/info/field_keys
-	handlerPath = path.Join(infoPath, string(infos.FieldKeys))
+	handlerPath = path.Join(infoPath, string(FieldKeys))
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerFieldKeys)
 
 	// query/ts/info/tag_keys
-	handlerPath = path.Join(infoPath, string(infos.TagKeys))
+	handlerPath = path.Join(infoPath, string(TagKeys))
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerTagKeys)
 
 	// query/ts/info/tag_values
-	handlerPath = path.Join(infoPath, string(infos.TagValues))
+	handlerPath = path.Join(infoPath, string(TagValues))
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerTagValues)
 
 	// query/ts/info/series
-	handlerPath = path.Join(infoPath, string(infos.Series))
+	handlerPath = path.Join(infoPath, string(Series))
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerSeries)
 
 	// query/ts/info/time_series
-	handlerPath = path.Join(infoPath, string(infos.TimeSeries))
-	registerHandler.Register(http.MethodPost, handlerPath, HandleTimeSeries)
+	handlerPath = path.Join(infoPath, string(TimeSeries))
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerTimeSeries)
 
 	// query/ts/label/:label_name/values
 	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
 	registerHandler.Register(http.MethodGet, handlerPath, HandlerLabelValues)
 
+	// query/ts/info/field_map
+	handlerPath = path.Join(infoPath, string(FieldMap))
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerFieldMap)
+
 	// query/ts/cluster_metrics/
 	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
-
-	// query/es/
-	handlerPath = viper.GetString(ESHandlePathConfigPath)
-	registerHandler.Register(http.MethodPost, handlerPath, HandleESQueryRequest)
-
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

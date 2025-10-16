@@ -27,16 +27,16 @@ var panicTotal = promauto.NewCounter(
 	},
 )
 
-var PanicHandlers = []func(interface{}){
+var PanicHandlers = []func(any){
 	incPanicCounter,
 	logPanic,
 }
 
-func incPanicCounter(_ interface{}) {
+func incPanicCounter(_ any) {
 	panicTotal.Inc()
 }
 
-func logPanic(r interface{}) {
+func logPanic(r any) {
 	const size = 64 << 10
 	stacktrace := make([]byte, size)
 	stacktrace = stacktrace[:runtime.Stack(stacktrace, false)]

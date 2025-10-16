@@ -34,5 +34,15 @@ const (
 	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
 
 	QueryRawError = "QUERY_RAW_ERROR"
+
+	StorageTimeout = "STORAGE_TIMEOUT"
+	StorageError   = "STORAGE_ERROR"
+
+	KeyDocID     = "__doc_id"
+	KeyTableUUID = "__table_uuid"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+	KeyIndex     = "__index"
+
 	HandlerMapKey = "handler_map_key"
 )

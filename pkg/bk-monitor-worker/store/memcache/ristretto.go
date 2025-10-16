@@ -59,17 +59,17 @@ func NewRistretto() (*Ristretto, error) {
 }
 
 // Get get key
-func (c *Ristretto) Get(key string) (interface{}, bool) {
+func (c *Ristretto) Get(key string) (any, bool) {
 	return c.cache.Get(key)
 }
 
 // Put set a new key-val
-func (c *Ristretto) Put(key string, val interface{}, cost int64) bool {
+func (c *Ristretto) Put(key string, val any, cost int64) bool {
 	return c.cache.Set(key, val, cost)
 }
 
 // PutWithTTL set a new key-val with ttl
-func (c *Ristretto) PutWithTTL(key string, val interface{}, cost int64, t time.Duration) bool {
+func (c *Ristretto) PutWithTTL(key string, val any, cost int64, t time.Duration) bool {
 	return c.cache.SetWithTTL(key, val, cost, t)
 }
 

@@ -21,8 +21,8 @@ import (
 	"context"
 	"time"
 
-	v1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
-	scheme "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned/scheme"
+	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	scheme "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"

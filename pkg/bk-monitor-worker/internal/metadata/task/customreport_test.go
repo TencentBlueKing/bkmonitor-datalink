@@ -75,11 +75,11 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 		{Score: float64(time.Now().Add(-600 * time.Second).Unix()), Member: "metric_b"},
 		{Score: float64(time.Now().Add(-100000 * time.Second).Unix()), Member: "metric_expired"},
 	}...)
-	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []interface{}{
+	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []any{
 		"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 	}...)
-	//mockerClient.GetValue = []byte(`["test_for_metric_update.base"]`)
+	// mockerClient.GetValue = []byte(`["test_for_metric_update.base"]`)
 
 	// 直接调用方法
 	ctx := context.TODO()

@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -106,11 +107,11 @@ func (s *ScrollSession) UpdateSliceStatus(key string, value *SliceStatus) {
 	s.LastAccessAt = time.Now()
 }
 
-func (s *ScrollSession) Lock(ctx context.Context) error {
+func (s *ScrollSession) lock(ctx context.Context) error {
 	return Client().SetNX(ctx, s.LockKey, "locked", s.ScrollLockTimeout).Err()
 }
 
-func (s *ScrollSession) UnLock(ctx context.Context) error {
+func (s *ScrollSession) unLock(ctx context.Context) error {
 	return Client().Del(ctx, s.LockKey).Err()
 }
 
@@ -120,6 +121,34 @@ func (s *ScrollSession) Update(ctx context.Context) error {
 
 func (s *ScrollSession) Clear(ctx context.Context) error {
 	return Client().Del(ctx, s.SessionKey).Err()
+}
+
+func (s *ScrollSession) Start(ctx context.Context) error {
+	err := s.lock(ctx)
+	if err != nil {
+		return metadata.Sprintf(metadata.MsgRedisLock,
+			"redis lock failed",
+		).Error(ctx, err)
+	}
+
+	return nil
+}
+
+func (s *ScrollSession) Stop(ctx context.Context) error {
+	defer func() {
+		err := s.unLock(ctx)
+		if err != nil {
+			_ = metadata.Sprintf(metadata.MsgRedisLock,
+				"redis unlock failed",
+			).Error(ctx, err)
+		}
+	}()
+
+	if s.Done() {
+		return s.Clear(ctx)
+	}
+
+	return s.Update(ctx)
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {

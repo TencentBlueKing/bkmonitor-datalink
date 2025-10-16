@@ -119,6 +119,15 @@ func applyProcessorOptions(precalculateOption *PrecalculateOption, extraProcesso
 	if metricLayer4ReportEnabled, ok := extraProcessorOptions["metric_layer4_report_enabled"]; ok {
 		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsLayer4ReportEnabled(metricLayer4ReportEnabled.(bool)))
 	}
+	if podToPodErrorFlowEnabled, ok := extraProcessorOptions["pod_instance_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodInstanceErrorFlowReportEnabled(podToPodErrorFlowEnabled.(bool)))
+	}
+	if podToApmErrorFlowEnabled, ok := extraProcessorOptions["pod_apm_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodApmErrorFlowReportEnabled(podToApmErrorFlowEnabled.(bool)))
+	}
+	if podToSystemErrorFlowEnabled, ok := extraProcessorOptions["pod_system_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodSystemErrorFlowReportEnabled(podToSystemErrorFlowEnabled.(bool)))
+	}
 }
 
 func applyMetricOptions(precalculateOption *PrecalculateOption, extraMetricOptions options) {

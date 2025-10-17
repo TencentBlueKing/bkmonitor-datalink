@@ -52,6 +52,13 @@
             - "logging"
             - "maxconns;maxConnectionsRatio=256"
 
+      cache:
+        - name: "k8s_cache"
+          config:
+            url: http://{{ .Release.Name }}-operator:8080/pods
+            interval: 5s
+            timeout: 5s
+
       pingserver:
         disabled: true
 

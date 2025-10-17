@@ -69,8 +69,8 @@ type AssembleAction struct {
 }
 
 type FromCacheAction struct {
-	Key   string `config:"key" mapstructure:"key"`
-	Cache string `config:"cache" mapstructure:"cache"`
+	Key       string `config:"key" mapstructure:"key"`
+	CacheName string `config:"cache_name" mapstructure:"cache_name"`
 
 	keys []string
 }

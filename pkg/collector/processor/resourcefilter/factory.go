@@ -114,7 +114,7 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.DefaultValue) > 0 {
 		p.defaultValueAction(record, config)
 	}
-	if len(config.FromCache.Cache) > 0 {
+	if len(config.FromCache.CacheName) > 0 {
 		p.fromCacheAction(record, config)
 	}
 	return nil, nil
@@ -250,7 +250,7 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 // fromCacheAction 从缓存中补充数据
 func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	// 目前仅支持 k8scache
-	if config.FromCache.Cache != k8scache.Name {
+	if config.FromCache.CacheName != k8scache.Name {
 		return
 	}
 

@@ -153,7 +153,14 @@ func (n *LogicNode) String() string {
 			g = fmt.Sprintf("%s %s %s", g, logicAnd, mustString)
 			orList = append(orList, g)
 		}
-		orList = append(orList, mustString)
+
+		// 只有在没有 should 条件时，才添加纯 must 条件
+		// 例如：+fox -news → fox AND NOT news
+		// 但对于：quick brown +fox -news → (quick AND fox AND NOT news) OR (brown AND fox AND NOT news)
+		// 不应该添加第三个分支 (fox AND NOT news)
+		if len(shouldGroup) == 0 {
+			orList = append(orList, mustString)
+		}
 
 		return strings.Join(orList, fmt.Sprintf(" %s ", logicOR))
 	}

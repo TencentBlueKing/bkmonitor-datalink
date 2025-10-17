@@ -371,12 +371,12 @@ func TestLuceneParser(t *testing.T) {
 		"new-1": {
 			q:   `quick brown +fox -news`,
 			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}],"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}}]}}`,
-			sql: "`log` MATCH_PHRASE 'quick' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news' OR `log` MATCH_PHRASE 'brown' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news' OR `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news'",
+			sql: "`log` MATCH_PHRASE 'quick' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news' OR `log` MATCH_PHRASE 'brown' AND `log` MATCH_PHRASE 'fox' AND `log` NOT MATCH_PHRASE 'news'",
 		},
 		"new-2": {
 			q:   `quick -news`,
 			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}}}}`,
-			sql: "`log` MATCH_PHRASE 'quick' AND `log` NOT MATCH_PHRASE 'news' OR `log` NOT MATCH_PHRASE 'news'",
+			sql: "`log` MATCH_PHRASE 'quick' AND `log` NOT MATCH_PHRASE 'news'",
 		},
 		"模糊匹配": {
 			q: `quick brown fox`,
@@ -587,7 +587,7 @@ func TestLuceneParser(t *testing.T) {
 		"boolean_NOT": {
 			q:   `term1 NOT term2`,
 			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term2"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term1"}}}}`,
-			sql: "`log` MATCH_PHRASE 'term1' AND `log` NOT MATCH_PHRASE 'term2' OR `log` NOT MATCH_PHRASE 'term2'",
+			sql: "`log` MATCH_PHRASE 'term1' AND `log` NOT MATCH_PHRASE 'term2'",
 		},
 		"boolean_required_prohibited": {
 			q:   `+required -prohibited`,
@@ -895,17 +895,17 @@ func TestLuceneParser(t *testing.T) {
 		"case_insensitive_not_lowercase": {
 			q:   `log:error not status:active`,
 			es:  `{"bool":{"must":{"bool":{"must_not":{"term":{"status":"active"}}}},"should":{"match_phrase":{"log":{"query":"error"}}}}}`,
-			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' OR `status` != 'active'",
+			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active'",
 		},
 		"case_insensitive_not_mixed": {
 			q:   `log:error Not status:active`,
 			es:  `{"bool":{"must":{"bool":{"must_not":{"term":{"status":"active"}}}},"should":{"match_phrase":{"log":{"query":"error"}}}}}`,
-			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' OR `status` != 'active'",
+			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active'",
 		},
 		"case_insensitive_mixed_complex": {
 			q:   `(log:error AND status:active) or (level:warn Not type:system)`,
 			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"term":{"status":"active"}}]}},{"bool":{"must":{"bool":{"must_not":{"term":{"type":"system"}}}},"should":{"term":{"level":"warn"}}}}]}}`,
-			sql: "(`log` MATCH_PHRASE 'error' AND `status` = 'active') OR (`level` = 'warn' AND `type` != 'system' OR `type` != 'system')",
+			sql: "(`log` MATCH_PHRASE 'error' AND `status` = 'active') OR (`level` = 'warn' AND `type` != 'system')",
 		},
 	}
 

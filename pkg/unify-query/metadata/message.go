@@ -44,6 +44,8 @@ const (
 	MsgQueryExemplar       = "query_exemplar"
 	MsgQueryClusterMetrics = "query_cluster_metrics"
 
+	MsgRedisLock = "redis_lock"
+
 	MsgHandlerAPI  = "handler_api"
 	MsgTableFormat = "table_format"
 

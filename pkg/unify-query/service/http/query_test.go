@@ -4501,9 +4501,9 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 		name    string
 		queryTs *structured.QueryTs
 
-		list   []string
-		total  []int64
-		option []string
+		list  []string
+		total []int64
+		done  []bool
 	}
 
 	mockSet := []func(){
@@ -4574,10 +4574,10 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 				`[{"__data_label":"es","__doc_id":"10623991376064743108","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"10623991376064743108","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"14800640324679701284","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"14800640324679701284","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"17835216159845548629","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"17835216159845548629","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"18273955038741147447","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"18273955038741147447","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"5453114629550017335","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"5453114629550017335","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"8864386387027044153","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"8864386387027044153","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"}]`, `[{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"}]`,
 				`[]`,
 			},
-			option: []string{
-				`{"result_table.es_with_time_filed|3|0":{"from":0,"scroll_id":"10","search_after":[16598543],"slice_max":3},"result_table.es_with_time_filed|3|1":{"from":2,"scroll_id":"11","search_after":[16598544],"slice_index":1,"slice_max":3},"result_table.es_with_time_filed|3|2":{"from":4,"scroll_id":"12","search_after":[16598548],"slice_index":2,"slice_max":3},"result_table.es|3|0":{"from":0,"scroll_id":"00","search_after":[16598543],"slice_max":3},"result_table.es|3|1":{"from":2,"scroll_id":"01","search_after":[16598544],"slice_index":1,"slice_max":3},"result_table.es|3|2":{"from":4,"scroll_id":"02","search_after":[16598548],"slice_index":2,"slice_max":3}}`,
-				`{"result_table.es_with_time_filed|3|0":{"from":6,"scroll_id":"10","search_after":[16163978],"slice_max":3},"result_table.es_with_time_filed|3|1":{"from":8,"scroll_id":"11","search_after":[16163978],"slice_index":1,"slice_max":3},"result_table.es_with_time_filed|3|2":{"from":10,"scroll_id":"12","search_after":[16163978],"slice_index":2,"slice_max":3},"result_table.es|3|0":{"from":6,"scroll_id":"00","search_after":[16163978],"slice_max":3},"result_table.es|3|1":{"from":8,"scroll_id":"01","search_after":[16163978],"slice_index":1,"slice_max":3},"result_table.es|3|2":{"from":10,"scroll_id":"02","search_after":[16163978],"slice_index":2,"slice_max":3}}`,
-				`{"result_table.es_with_time_filed|3|0":{"from":12},"result_table.es_with_time_filed|3|1":{"from":14},"result_table.es_with_time_filed|3|2":{"from":16},"result_table.es|3|0":{"from":12},"result_table.es|3|1":{"from":14},"result_table.es|3|2":{"from":16}}`,
+			done: []bool{
+				false,
+				false,
+				true,
 			},
 		},
 	} {
@@ -4590,8 +4590,10 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 			if err != nil {
 				return
 			}
+
+			session.Start(ctx)
 			defer func() {
-				_ = session.Clear(ctx)
+				_ = session.Stop(ctx)
 			}()
 
 			loop := 0
@@ -4609,11 +4611,7 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 					break
 				}
 
-				if session.Done() {
-					break
-				}
-
-				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -4624,11 +4622,14 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 				})
 
 				actual, _ := json.Marshal(list)
-				opt, _ := json.Marshal(option)
 
 				assert.JSONEq(t, c.list[loop], string(actual))
 				assert.Equal(t, c.total[loop], total)
-				assert.JSONEq(t, c.option[loop], string(opt))
+				assert.Equal(t, c.done[loop], done)
+
+				if done {
+					break
+				}
 
 				loop++
 			}
@@ -4641,9 +4642,9 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 		name    string
 		queryTs *structured.QueryTs
 
-		list   []string
-		total  []int64
-		option []string
+		list  []string
+		total []int64
+		done  []bool
 	}
 
 	mock.BkSQL.Set(map[string]any{
@@ -4723,10 +4724,10 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 				`[{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"bksql","__ext.container_id":"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2","__ext.container_image":"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bk-datalink-unify-query-6df8bcc4c9-rk4sc","__ext.io_kubernetes_pod_ip":"127.0.0.1","__ext.io_kubernetes_pod_namespace":"blueking","__ext.io_kubernetes_pod_uid":"558c5b17-b221-47e1-aa66-036cc9b43e2a","__ext.io_kubernetes_workload_name":"bk-datalink-unify-query-6df8bcc4c9","__ext.io_kubernetes_workload_type":"ReplicaSet","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":29077703953,"__table_uuid":"result_table.doris|4|0","_timestamp_":1744662180000,"_value_":2450131,"cloudid":0,"dteventtime":null,"dteventtimestamp":1744662180000,"file":"http/handler.go:320","gseindex":2450131,"iterationindex":19,"level":"info","localtime":null,"log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","thedate":20250415,"time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e"}]`,
 				`[]`,
 			},
-			option: []string{
-				`[{"from":0,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":2,"slice_index":1,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":4,"slice_index":2,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":0,"scroll_id":"00","search_after":[16598543],"slice_max":3},{"from":2,"scroll_id":"01","search_after":[16598544],"slice_index":1,"slice_max":3},{"from":4,"scroll_id":"02","search_after":[16598548],"slice_index":2,"slice_max":3}]`,
-				`[{"from":6,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":8,"slice_index":1,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":10,"slice_index":2,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":6,"scroll_id":"00","search_after":[16163978],"slice_max":3},{"from":8,"scroll_id":"01","search_after":[16163978],"slice_index":1,"slice_max":3},{"from":10,"scroll_id":"02","search_after":[16163978],"slice_index":2,"slice_max":3}]`,
-				`[{"from":12,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":12},{"from":14},{"from":16}]`,
+			done: []bool{
+				false,
+				false,
+				true,
 			},
 		},
 	} {
@@ -4739,8 +4740,9 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 			if err != nil {
 				return
 			}
+			_ = session.Start(ctx)
 			defer func() {
-				_ = session.Clear(ctx)
+				_ = session.Stop(ctx)
 			}()
 
 			loop := 0
@@ -4756,14 +4758,8 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 				if loop > 10 {
 					break
 				}
-
-				if session.Done() {
-					break
-				}
-
-				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
-
 				sort.SliceStable(list, func(i, j int) bool {
 					var (
 						f1 strings.Builder
@@ -4781,21 +4777,12 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 
 				assert.JSONEq(t, c.list[loop], string(actual))
 				assert.Equal(t, c.total[loop], total)
+				assert.Equal(t, c.done[loop], done)
 
-				var ks []string
-				for k := range option {
-					ks = append(ks, k)
-				}
-				sort.Strings(ks)
-				os := make([]*metadata.ResultTableOption, 0, len(option))
-				for _, k := range ks {
-					os = append(os, option[k])
-				}
-
-				optActual, _ := json.Marshal(os)
-
-				assert.JSONEq(t, c.option[loop], string(optActual))
 				loop++
+				if done {
+					break
+				}
 			}
 		})
 	}

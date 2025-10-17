@@ -225,13 +225,6 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
 	defer func() {
-		if err != nil {
-			resp.failed(ctx, metadata.Sprintf(
-				metadata.MsgQueryRaw,
-				"原始数据查询异常",
-			).Error(ctx, err))
-		}
-
 		span.End(&err)
 	}()
 
@@ -246,6 +239,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	queryTs := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -261,10 +255,7 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
-		listData.Status = &metadata.Status{
-			Code:    metadata.QueryRawError,
-			Message: err.Error(),
-		}
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -303,13 +294,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
 	defer func() {
-		if err != nil {
-			resp.failed(ctx, metadata.Sprintf(
-				metadata.MsgQueryRawScroll,
-				"下载接口异常",
-			).Error(ctx, err))
-		}
-
 		span.End(&err)
 	}()
 
@@ -345,6 +329,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
 	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -354,51 +339,28 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		span.Set("clear-cache", "true")
 		err = session.Clear(ctx)
 		if err != nil {
+			resp.failed(ctx, err)
 			return
 		}
 		// 清理后需要重新初始化 session，确保从头开始查询
 		// 重新创建一个新的 session 来替换被清理的 session
 		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 		if err != nil {
+			resp.failed(ctx, err)
 			return
 		}
 	}
 
 	sessionStr, _ := json.Marshal(session)
 	span.Set("session-object", sessionStr)
-
-	if err = session.Lock(ctx); err != nil {
-		return
-	}
-	defer func() {
-		if listData.Done {
-			err = session.Clear(ctx)
-			span.Set("clear-cache", "true")
-			if err != nil {
-				return
-			}
-		} else {
-			err = session.Update(ctx)
-			if err != nil {
-				return
-			}
-		}
-
-		err = session.UnLock(ctx)
-		if err != nil {
-			return
-		}
-	}()
-
 	span.Set("session-lock-key", queryStrWithUserName)
+
+	listData.Total, listData.List, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
-	listData.Done = session.Done()
+	listData.Status = metadata.GetStatus(ctx)
+
 	if err != nil {
-		listData.Status = &metadata.Status{
-			Code:    metadata.QueryRawError,
-			Message: err.Error(),
-		}
+		resp.failed(ctx, err)
 		return
 	}
 

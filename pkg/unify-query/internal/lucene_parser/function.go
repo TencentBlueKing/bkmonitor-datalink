@@ -81,12 +81,24 @@ func getErrorNode(s string) Node {
 }
 
 func parseTerm(s string) Node {
+	// 先提取boost后缀
+	var boost string
+	baseValue := s
+	boostParent := regexp.MustCompile(`^(.+)\^([\d\.]+)$`)
+	boostMatches := boostParent.FindStringSubmatch(s)
+	if len(boostMatches) == 3 {
+		baseValue = boostMatches[1]
+		boost = boostMatches[2]
+	}
+
+	// 再判断baseValue是否是range
 	rangeParent := regexp.MustCompile(`^([\[{])(.+)TO(.+)([\]}])$`)
-	all := rangeParent.FindStringSubmatch(s)
+	all := rangeParent.FindStringSubmatch(baseValue)
 	if len(all) == 5 {
 		node := &RangeNode{
 			IsIncludeStart: all[1] == "[",
 			IsIncludeEnd:   all[4] == "]",
+			Boost:          boost,
 		}
 
 		all[2] = strings.Trim(all[2], `"`)
@@ -104,12 +116,11 @@ func parseTerm(s string) Node {
 		return node
 	}
 
-	boostParent := regexp.MustCompile(`^(.+)\^([\d\.]+)$`)
-	all = boostParent.FindStringSubmatch(s)
-	if len(all) == 3 {
+	// 如果有boost但不是range，返回带boost的StringNode
+	if boost != "" {
 		return &StringNode{
-			Value: all[1],
-			Boost: all[2],
+			Value: baseValue,
+			Boost: boost,
 		}
 	}
 

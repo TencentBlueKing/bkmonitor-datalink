@@ -87,6 +87,7 @@ type RangeNode struct {
 	End            Node
 	IsIncludeStart bool
 	IsIncludeEnd   bool
+	Boost          string
 }
 
 type LogicNode struct {
@@ -222,11 +223,16 @@ func (n *LogicNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.ModClauseContext:
-		node := n.MakeInitNode(&ConditionNode{})
+		node := n.MakeInitNode(&ConditionNode{
+			reverseOp: n.reverseOp,
+			mustOp:    n.mustOp,
+		})
 		n.Nodes = append(n.Nodes, node.(*ConditionNode))
 		if len(n.logics) < len(n.Nodes)-1 {
 			n.logics = append(n.logics, "")
 		}
+		n.reverseOp = false
+		n.mustOp = false
 		next = node
 	case *gen.ModifierContext:
 		switch strings.ToUpper(ctx.GetText()) {
@@ -511,6 +517,9 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			cq.To(realValue(cv.End))
 		}
 		cq.IncludeUpper(cv.IsIncludeEnd)
+		if cv.Boost != "" {
+			cq.Boost(cast.ToFloat64(cv.Boost))
+		}
 		result = cq
 	case *WildCardNode:
 		cq := elastic.NewWildcardQuery(field, value)

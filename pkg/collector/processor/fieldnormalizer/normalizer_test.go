@@ -57,7 +57,7 @@ func TestNormalizer(t *testing.T) {
 		var n int
 		normalizer := NewSpanFieldNormalizer(conf)
 		foreach.Spans(data, func(span ptrace.Span) {
-			normalizer.Normalize(span)
+			normalizer.Normalize(span, span.Kind().String())
 			v, ok := span.Attributes().Get("net.peer.name")
 			assert.True(t, ok)
 			assert.Equal(t, "localhost:8080", v.AsString())
@@ -73,6 +73,8 @@ func TestNormalizer(t *testing.T) {
 					"network.peer.address": "localhost",
 					"http.methodx":         "GET",
 					"http.request.method":  "GET",
+					"db.namespace":         "test",
+					"db.system":            "my.db.system",
 				},
 			},
 			SpanCount: 2,
@@ -130,7 +132,7 @@ func TestNormalizer(t *testing.T) {
 						},
 					},
 					{
-						Kind:         "SPAN_KIND_SERVER",
+						Kind:         "SPAN_KIND_CLIENT",
 						PredicateKey: "attributes.http.method,attributes.http.request.method",
 						Rules: []FieldRule{
 							{
@@ -150,7 +152,8 @@ func TestNormalizer(t *testing.T) {
 			var n int
 			normalizer := NewSpanFieldNormalizer(conf)
 			foreach.Spans(g.Generate(), func(span ptrace.Span) {
-				normalizer.Normalize(span)
+				normalizer.Normalize(span, span.Kind().String())
+				normalizer.Normalize(span, "")
 				v, ok := span.Attributes().Get("http.method")
 				assert.True(t, ok)
 				assert.Equal(t, "GET", v.AsString())

@@ -90,7 +90,8 @@ func (p *fieldNormalizer) Process(record *define.Record) (derivedRecord *define.
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.Spans(pdTraces, func(span ptrace.Span) {
-			normalizer.Normalize(span)
+			normalizer.Normalize(span, span.Kind().String())
+			normalizer.Normalize(span, "")
 		})
 	}
 

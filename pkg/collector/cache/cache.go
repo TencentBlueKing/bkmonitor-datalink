@@ -37,6 +37,7 @@ func Install(conf *confengine.Config) error {
 			if err := mapstructure.Decode(entity.Config, cc); err != nil {
 				return err
 			}
+			cc.Validate()
 			if err := k8scache.Install(cc); err != nil {
 				return err
 			}

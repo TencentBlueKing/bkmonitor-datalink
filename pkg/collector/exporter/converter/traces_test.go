@@ -70,6 +70,31 @@ func TestTracesRandom(t *testing.T) {
 	assert.NotEqual(t, events[0].Data()["span_id"], events[1].Data()["span_id"])
 }
 
+func TestSameTraceId(t *testing.T) {
+	g := makeTracesGenerator(2)
+	traces := g.GenerateSameTraceId()
+
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       traces,
+	}
+
+	events := make([]define.Event, 0)
+	gather := func(evts ...define.Event) {
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordTraces, evt.RecordType())
+			events = append(events, evt)
+		}
+	}
+
+	var conv tracesConverter
+	conv.Convert(&record, gather)
+	assert.Equal(t, len(events), 2)
+	assert.Equal(t, events[0].Data()["trace_id"], events[1].Data()["trace_id"])
+	assert.NotEqual(t, events[0].Data()["span_id"], events[1].Data()["span_id"])
+}
+
 func BenchmarkTracesConvert_10_Span(b *testing.B) {
 	g := makeTracesGenerator(10)
 	data := g.Generate()

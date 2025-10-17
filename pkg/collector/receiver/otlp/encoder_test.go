@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 func makeTracesGenerator(n int) *generator.TracesGenerator {
@@ -304,4 +305,43 @@ func BenchmarkMetricsUnmarshal_1000x100KB_Logs(b *testing.B) {
 			panic(err)
 		}
 	}
+}
+
+func TestKeepOriginTrace(t *testing.T) {
+	originalKeep := receiver.FetchGlobalComponentConfig().KeepOriginTrace
+	receiver.FetchGlobalComponentConfig().KeepOriginTrace = true
+
+	g := makeTracesGenerator(2) // 生成包含 2 个 span 的数据
+	traces := g.GenerateSameTraceId()
+	traceID := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID()
+
+	pbReq := ptraceotlp.NewRequestFromTraces(traces)
+	pbBytes, err := pbReq.MarshalProto()
+	assert.NoError(t, err)
+
+	jsonBytes, err := pbReq.MarshalJSON()
+	assert.NoError(t, err)
+
+	testCases := []struct {
+		name    string
+		encoder Encoder
+		data    []byte
+	}{
+		{"pb", PbEncoder(), pbBytes},
+		{"json", JsonEncoder(), jsonBytes},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			decodedTraces, err := tc.encoder.UnmarshalTraces(tc.data)
+			assert.NoError(t, err)
+
+			rs := decodedTraces.ResourceSpans().At(0)
+			attrs := rs.Resource().Attributes()
+			val, ok := attrs.Get(receiver.OriginTraceID)
+			assert.True(t, ok)
+			assert.Equal(t, traceID.HexString(), val.AsString())
+		})
+	}
+	receiver.FetchGlobalComponentConfig().KeepOriginTrace = originalKeep
 }

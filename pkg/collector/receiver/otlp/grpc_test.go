@@ -15,11 +15,14 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -159,4 +162,37 @@ func TestGrpcLogsTokenAfterPreCheck(t *testing.T) {
 	_, err := svc.Export(context.Background(), req)
 	assert.NoError(t, err)
 	assert.Equal(t, testToken, token)
+}
+
+func TestGrpcTracesKeepOriginTrace(t *testing.T) {
+	g := generator.NewTracesGenerator(define.TracesOptions{
+		SpanCount: 10,
+		SpanKind:  1,
+	})
+
+	traces := g.GenerateSameTraceId()
+
+	svc := tracesService{
+		receiver.Publisher{Func: func(r *define.Record) {
+			pdTraces := r.Data.(ptrace.Traces)
+			foreach.SpansWithResource(pdTraces, func(rsAttrs pcommon.Map, span ptrace.Span) {
+				v, ok := rsAttrs.Get(receiver.OriginTraceID)
+				assert.True(t, ok)
+				assert.Equal(t, span.TraceID().HexString(), v.AsString())
+			})
+		}},
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+			return define.StatusCodeOK, "", nil
+		}},
+	}
+
+	config := receiver.FetchGlobalComponentConfig()
+	config.KeepOriginTrace = true
+	defer func() {
+		config.KeepOriginTrace = false
+	}()
+
+	req := ptraceotlp.NewRequestFromTraces(traces)
+	_, err := svc.Export(context.Background(), req)
+	assert.NoError(t, err)
 }

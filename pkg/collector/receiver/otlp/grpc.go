@@ -14,12 +14,15 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -69,6 +72,13 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 		}
 	}
 	r.Metadata = tokenparser.FromGrpcUserMetadata(md)
+
+	globalConfig := receiver.FetchGlobalComponentConfig()
+	if globalConfig.KeepOriginTrace {
+		foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
+			rs.InsertString(receiver.OriginTraceID, span.TraceID().HexString())
+		})
+	}
 	prettyprint.Traces(traces)
 
 	code, processorName, err := s.Validate(r)

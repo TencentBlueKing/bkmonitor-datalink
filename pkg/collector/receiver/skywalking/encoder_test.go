@@ -35,6 +35,7 @@ import (
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 func TestSetInternalSpanStatus(t *testing.T) {
@@ -527,5 +528,48 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 
 		testkits.AssertAttrsStringKeyVal(t, dest, semconv.AttributeNetHostIP, "127.0.0.1,127.0.0.2")
 		testkits.AssertAttrsIntVal(t, dest, semconv.AttributeNetHostPort, 3306)
+	})
+}
+
+func TestEncodeTracesKeepOriginTrace(t *testing.T) {
+	const (
+		traceID   = "trace-id-1"
+		token     = "token-1"
+		service   = "service-1"
+		instance  = "instance-1"
+		segmentID = "segment-id-1"
+	)
+
+	segment := &agentv3.SegmentObject{
+		TraceId:         traceID,
+		TraceSegmentId:  segmentID,
+		Service:         service,
+		ServiceInstance: instance,
+		Spans:           []*agentv3.SpanObject{{}},
+	}
+
+	cfg := receiver.FetchGlobalComponentConfig()
+	originalKeep := cfg.KeepOriginTrace
+	t.Cleanup(func() {
+		cfg.KeepOriginTrace = originalKeep
+	})
+
+	t.Run("keep origin trace", func(t *testing.T) {
+		cfg.KeepOriginTrace = true
+		traces := EncodeTraces(segment, token, nil)
+		rs := traces.ResourceSpans().At(0)
+		attrs := rs.Resource().Attributes()
+		val, ok := attrs.Get(receiver.OriginTraceID)
+		assert.True(t, ok)
+		assert.Equal(t, traceID, val.AsString())
+	})
+
+	t.Run("don't keep origin trace", func(t *testing.T) {
+		cfg.KeepOriginTrace = false
+		traces := EncodeTraces(segment, token, nil)
+		rs := traces.ResourceSpans().At(0)
+		attrs := rs.Resource().Attributes()
+		_, ok := attrs.Get(receiver.OriginTraceID)
+		assert.False(t, ok)
 	})
 }

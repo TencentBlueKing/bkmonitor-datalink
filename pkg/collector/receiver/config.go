@@ -18,10 +18,11 @@ import (
 )
 
 type Config struct {
-	RecvServer  HttpServerConfig `config:"http_server"`
-	AdminServer HttpServerConfig `config:"admin_server"`
-	GrpcServer  GrpcServerConfig `config:"grpc_server"`
-	TarsServer  TarsServerConfig `config:"tars_server"`
+	RecvServer      HttpServerConfig      `config:"http_server"`
+	AdminServer     HttpServerConfig      `config:"admin_server"`
+	GrpcServer      GrpcServerConfig      `config:"grpc_server"`
+	TarsServer      TarsServerConfig      `config:"tars_server"`
+	GlobalComponent GlobalComponentConfig `config:"global_component"`
 }
 
 type HttpServerConfig struct {
@@ -42,6 +43,10 @@ type TarsServerConfig struct {
 	Enabled   bool   `config:"enabled"`
 	Endpoint  string `config:"endpoint"`
 	Transport string `config:"transport"`
+}
+
+type GlobalComponentConfig struct {
+	KeepOriginTrace bool `config:"keep_origin_trace"`
 }
 
 type SkywalkingConfig struct {

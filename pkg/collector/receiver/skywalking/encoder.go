@@ -43,6 +43,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 const (
@@ -104,6 +105,10 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 	rs.InsertString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
 	rs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
 	rs.InsertString(attributeDataToken, token)
+	globalConfig := receiver.FetchGlobalComponentConfig()
+	if globalConfig.KeepOriginTrace {
+		rs.InsertString(receiver.OriginTraceID, segment.GetTraceId())
+	}
 
 	// 补充数据字段内容 agentLanguage agentType agentVersion
 	for k, v := range extraAttrs {

@@ -157,6 +157,12 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
+    # Global Component Config
+    global_component:
+      # 是否保留原始trace_id
+      # default: false
+      keep_origin_trace: false
+
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项
   # config: 配置内容

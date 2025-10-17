@@ -225,13 +225,6 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
 	defer func() {
-		if err != nil {
-			resp.failed(ctx, metadata.Sprintf(
-				metadata.MsgQueryRaw,
-				"原始数据查询异常",
-			).Error(ctx, err))
-		}
-
 		span.End(&err)
 	}()
 
@@ -246,6 +239,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	queryTs := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -261,10 +255,7 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
-		listData.Status = &metadata.Status{
-			Code:    metadata.QueryRawError,
-			Message: err.Error(),
-		}
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -304,16 +295,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
 	defer func() {
-		if session != nil {
-			if unLockErr := session.UnLock(ctx); unLockErr != nil {
-				if err == nil {
-					err = unLockErr
-				} else {
-					err = fmt.Errorf("unlock error: %w; previous error: %w", unLockErr, err)
-				}
-			}
-		}
-
 		if err != nil {
 			resp.failed(ctx, metadata.Sprintf(
 				metadata.MsgQueryRawScroll,
@@ -378,34 +359,11 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	sessionStr, _ := json.Marshal(session)
 	span.Set("session-object", sessionStr)
 
-	if err = session.Lock(ctx); err != nil {
-		return
-	}
-
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
-	listData.Done = session.Done()
+	listData.Total, listData.List, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	if err != nil {
-		listData.Status = &metadata.Status{
-			Code:    metadata.QueryRawError,
-			Message: err.Error(),
-		}
 		return
-	}
-
-	// 根据 Done 状态处理 session
-	if listData.Done {
-		span.Set("clear-cache", "true")
-		err = session.Clear(ctx)
-		if err != nil {
-			return
-		}
-	} else {
-		err = session.Update(ctx)
-		if err != nil {
-			return
-		}
 	}
 
 	// 避免空切片被解析成 null 的问题

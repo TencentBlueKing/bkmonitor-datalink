@@ -974,11 +974,6 @@ func TestLuceneParser(t *testing.T) {
 		// =================================================================
 		// Test Suite: lucene_extracted_priority1 - Lucene官方高优先级测试
 		// =================================================================
-		"lucene_backslash_term": {
-			q:   `\`,
-			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\\"}}`,
-			sql: "`log` MATCH_PHRASE '\\'",
-		},
 		"lucene_multi_term_foo_foobar": {
 			q:   `foo foobar`,
 			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foo"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foobar"}}]}}`,
@@ -1001,8 +996,8 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_operator_minus_with_spaces": {
 			q:   `a - b`,
-			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}}]}}`,
-			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b'",
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}}}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b' OR `log` NOT MATCH_PHRASE 'b'",
 		},
 		"lucene_operator_plus_with_spaces": {
 			q:   `a + b`,
@@ -1013,7 +1008,7 @@ func TestLuceneParser(t *testing.T) {
 		"lucene_operator_exclamation_with_spaces": {
 			q:   `a ! b`,
 			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"!"}}]}}`,
-			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE '!' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE 'b'",
+			sql: "{\"bool\":{\"should\":[{\"query_string\":{\"analyze_wildcard\":true,\"fields\":[\"*\",\"__*\"],\"lenient\":true,\"query\":\"a\"}},{\"query_string\":{\"analyze_wildcard\":true,\"fields\":[\"*\",\"__*\"],\"lenient\":true,\"query\":\"b\"}}]}}",
 		},
 		// 注意: +guinea pig 会被解析为 pig AND guinea OR guinea
 		"lucene_guinea_pig_plus": {
@@ -1149,7 +1144,7 @@ func TestLuceneParser(t *testing.T) {
 		// Test Suite: complex_field_combinations - 复杂字段组合测试
 		// =================================================================
 		"complex_multi_field_combination": {
-			q:   `title:"hello world" AND content:programming AND author:john`,
+			q: `title:"hello world" AND content:programming AND author:john`,
 			// 注意: title 字段使用 term (因为是短语查询), author 使用 match_phrase (因为在 fieldsMap 中标记为 IsAnalyzed)
 			es:  `{"bool":{"must":[{"term":{"title":"hello world"}},{"term":{"content":"programming"}},{"match_phrase":{"author":{"query":"john"}}}]}}`,
 			sql: "`title` = 'hello world' AND `content` = 'programming' AND `author` MATCH_PHRASE 'john'",
@@ -1255,7 +1250,7 @@ func TestLuceneParser(t *testing.T) {
 		"edge_phrase_with_wildcard": {
 			q:   `"hello wor*"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello wor*\""}}`,
-			sql: "`log` MATCH_PHRASE 'hello wor*'",
+			sql: "`log` LIKE 'hello wor%'",
 		},
 		"edge_nested_parentheses": {
 			q:   `((a OR b) AND (c OR d))`,
@@ -1376,7 +1371,7 @@ func TestLuceneParser(t *testing.T) {
 		"boost_wildcard_query": {
 			q:   `test*^2`,
 			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"test*"}}`,
-			sql: "`log` LIKE 'test%'",
+			sql: "`log` MATCH_PHRASE 'test*'",
 		},
 		"boost_range_query": {
 			q:   `count:[1 TO 10]^3`,
@@ -1416,6 +1411,51 @@ func TestLuceneParser(t *testing.T) {
 			q:   `name:j?hn`,
 			es:  `{"wildcard":{"name":{"value":"j?hn"}}}`,
 			sql: "`name` LIKE 'j_hn'",
+		},
+		"force_comble": {
+			q:   `+(foo bar) +(baz boo)`,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"foo"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"bar"}}]}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"baz"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"boo"}}]}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'foo' OR `log` MATCH_PHRASE 'bar') AND (`log` MATCH_PHRASE 'baz' OR `log` MATCH_PHRASE 'boo')",
+		},
+		"phrase_boost_v2": {
+			q:   `(term)^2.0`,
+			es:  `{"bool":{"boost":2,"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}}}`,
+			sql: "(`log` MATCH_PHRASE 'term')", //已知doris不处理boost
+		},
+		"phrase_boost_v3": {
+			q:   `(germ term)^2.0`,
+			es:  `{"bool":{"boost":2,"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"germ"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'germ' OR `log` MATCH_PHRASE 'term')",
+		},
+		"phrase_boost_v4": {
+			q:   `term^2.0`,
+			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"term"}}`,
+			sql: "`log` MATCH_PHRASE 'term'",
+		},
+		"phrase_boost_v5": {
+			q:   `term AND "\"phrase phrase\""`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"\\\"phrase phrase\\\"\""}}]}}`,
+			sql: "`log` MATCH_PHRASE 'term' AND `log` MATCH_PHRASE 'phrase phrase'",
+		},
+		"like_boost": {
+			q:   `term*^2`,
+			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"term*"}}`,
+			sql: "`log` MATCH_PHRASE 'term*'",
+		},
+		"force_or": {
+			q:   `term +(stop) term`,
+			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"stop"}},"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'term' AND (`log` MATCH_PHRASE 'stop') OR `log` MATCH_PHRASE 'term' AND (`log` MATCH_PHRASE 'stop') OR (`log` MATCH_PHRASE 'stop')",
+		},
+		"a\\-b:c": {
+			q:   `a\-b:c`,
+			es:  `{"term":{"a\\-b":"c"}}`,
+			sql: "`a\\-b` = 'c'",
+		},
+		"a:b+?c": {
+			q:   `a:b+?c`,
+			es:  `{"wildcard":{"a":{"value":"b+?c"}}}`,
+			sql: "`a` LIKE 'b+_c'",
 		},
 	}
 

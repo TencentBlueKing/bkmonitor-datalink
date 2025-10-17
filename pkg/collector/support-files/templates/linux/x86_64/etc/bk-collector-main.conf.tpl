@@ -181,6 +181,12 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
+    # Global Component Config
+    global_component:
+      # 是否保留原始trace_id
+      # default: false
+      keep_origin_trace: false
+
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"
@@ -241,7 +247,7 @@ bk-collector:
     - name: "metrics_filter/relabel"
 
     # MethodFilter: method 过滤处理器（做 span 丢弃处理）
-    - name: "method_filter/drop_span
+    - name: "method_filter/drop_span"
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"

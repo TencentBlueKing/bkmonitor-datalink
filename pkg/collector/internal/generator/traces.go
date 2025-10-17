@@ -103,6 +103,42 @@ func (g *TracesGenerator) Generate() ptrace.Traces {
 	return pdTraces
 }
 
+func (g *TracesGenerator) GenerateSameTraceId() ptrace.Traces {
+	pdTraces := ptrace.NewTraces()
+	rs := pdTraces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
+	g.resources.CopyTo(rs.Resource().Attributes())
+	for k, v := range g.opts.Resources {
+		rs.Resource().Attributes().UpsertString(k, v)
+	}
+
+	now := time.Now()
+	traceID := random.TraceID()
+	for i := 0; i < g.opts.SpanCount; i++ {
+		span := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+		span.SetName(random.String(12))
+		span.SetSpanID(random.SpanID())
+		span.SetTraceID(traceID)
+		span.SetStartTimestamp(pcommon.NewTimestampFromTime(now))
+		span.SetEndTimestamp(pcommon.NewTimestampFromTime(now.Add(time.Second)))
+		span.SetKind(ptrace.SpanKind(g.opts.SpanKind))
+		g.attributes.CopyTo(span.Attributes())
+		for k, v := range g.opts.Attributes {
+			span.Attributes().UpsertString(k, v)
+		}
+
+		for j := 0; j < g.opts.EventCount; j++ {
+			event := span.Events().AppendEmpty()
+			event.SetName(random.String(8))
+		}
+		for j := 0; j < g.opts.LinkCount; j++ {
+			link := span.Links().AppendEmpty()
+			link.SetTraceID(random.TraceID())
+		}
+	}
+	return pdTraces
+}
+
 func FromJsonToTraces(b []byte) (ptrace.Traces, error) {
 	return ptrace.NewJSONUnmarshaler().UnmarshalTraces(b)
 }

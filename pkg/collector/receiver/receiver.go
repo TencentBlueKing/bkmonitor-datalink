@@ -47,7 +47,17 @@ type Receiver struct {
 var (
 	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
 	globalSkywalkingConfig map[string]SkywalkingConfig
+	globalComponentConfig  GlobalComponentConfig
 )
+
+const (
+	OriginTraceID = "origin.trace_id"
+)
+
+// FetchGlobalComponentConfig 返回 Receiver 全局组件配置
+func FetchGlobalComponentConfig() *GlobalComponentConfig {
+	return &globalComponentConfig
+}
 
 // Records 返回 Receiver 全局消息管道
 func Records() <-chan *define.Record {
@@ -102,6 +112,7 @@ func New(conf *confengine.Config) (*Receiver, error) {
 
 	// 全局状态记录
 	globalSkywalkingConfig = LoadConfigFrom(conf)
+	globalComponentConfig = c.GlobalComponent
 
 	return &Receiver{
 		config:  c,
@@ -127,6 +138,10 @@ func (r *Receiver) ready() {
 }
 
 func (r *Receiver) Reload(conf *confengine.Config) {
+	var c Config
+	if err := conf.UnpackChild(define.ConfigFieldReceiver, &c); err == nil {
+		globalComponentConfig = c.GlobalComponent
+	}
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 }
 

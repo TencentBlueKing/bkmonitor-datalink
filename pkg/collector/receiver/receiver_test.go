@@ -63,6 +63,12 @@ func TestReceiver(t *testing.T) {
       # 服务监听端点
       # default: ""
       endpoint: ":4319"
+
+    # Component Global Config
+    global_component:
+      # 是否保留原始trace_id
+      # default: false
+      keep_origin_trace: false
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
@@ -144,4 +150,30 @@ func TestWriteResponse(t *testing.T) {
 	r := httptest.NewRecorder()
 	WriteResponse(r, "application/json", 200, nil)
 	assert.Equal(t, 200, r.Result().StatusCode)
+}
+
+func TestComponentGlobalConfig(t *testing.T) {
+	t.Run("KeepOriginTrace=true", func(t *testing.T) {
+		configContent := `
+  receiver:
+    global_component:
+      keep_origin_trace: true
+`
+		config := confengine.MustLoadConfigContent(configContent)
+		_, err := New(config)
+		assert.NoError(t, err)
+		assert.True(t, FetchGlobalComponentConfig().KeepOriginTrace)
+	})
+
+	t.Run("KeepOriginTrace=false", func(t *testing.T) {
+		configContent := `
+  receiver:
+    global_component:
+      keep_origin_trace: false
+`
+		config := confengine.MustLoadConfigContent(configContent)
+		_, err := New(config)
+		assert.NoError(t, err)
+		assert.False(t, FetchGlobalComponentConfig().KeepOriginTrace)
+	})
 }

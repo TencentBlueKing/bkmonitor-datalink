@@ -10,6 +10,7 @@
 package otlp
 
 import (
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -18,6 +19,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 // Encoder 负责解析 Traces/Metrics/Logs 数据至 OT 标准数据模型
@@ -56,6 +59,13 @@ func (jsonEncoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	if err := req.UnmarshalJSON(buf); err != nil {
 		return ptrace.Traces{}, err
 	}
+	globalConfig := receiver.FetchGlobalComponentConfig()
+	if globalConfig.KeepOriginTrace {
+		traces := req.Traces()
+		foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
+			rs.InsertString(receiver.OriginTraceID, span.TraceID().HexString())
+		})
+	}
 	return req.Traces(), nil
 }
 
@@ -90,6 +100,13 @@ func (pbEncoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	req := ptraceotlp.NewRequest()
 	if err := req.UnmarshalProto(buf); err != nil {
 		return ptrace.Traces{}, err
+	}
+	globalConfig := receiver.FetchGlobalComponentConfig()
+	if globalConfig.KeepOriginTrace {
+		traces := req.Traces()
+		foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
+			rs.InsertString(receiver.OriginTraceID, span.TraceID().HexString())
+		})
 	}
 	return req.Traces(), nil
 }

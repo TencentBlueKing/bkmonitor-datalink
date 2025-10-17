@@ -101,6 +101,12 @@ bk-collector:
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
 
+  cache:
+    - name: k8s_cache
+      config:
+        url: http://localhost:7090/pods
+        interval: 10s
+
   # =============================== Receiver =================================
   receiver:
     disabled: false

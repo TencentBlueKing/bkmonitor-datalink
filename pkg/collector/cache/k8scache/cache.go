@@ -14,12 +14,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	Name = "k8s_cache"
 )
 
 type Config struct {
@@ -28,9 +35,10 @@ type Config struct {
 	Interval time.Duration `config:"interval" mapstructure:"interval"`
 }
 
-func (c *Config) Validate() bool {
-	if c.URL == "" {
-		return false
+func (c *Config) Validate() error {
+	_, err := url.Parse(c.URL)
+	if err != nil {
+		return err
 	}
 
 	if c.Timeout <= 0 {
@@ -39,26 +47,11 @@ func (c *Config) Validate() bool {
 	if c.Interval <= 0 {
 		c.Interval = time.Minute
 	}
-	return true
+
+	return nil
 }
 
-type Cache interface {
-	Sync()
-	Clean()
-	Get(k string) (map[string]string, bool)
-}
-
-type noneCache struct{}
-
-func (noneCache) Sync() {}
-
-func (noneCache) Clean() {}
-
-func (noneCache) Get(_ string) (map[string]string, bool) {
-	return nil, false
-}
-
-type innerCache struct {
+type Cache struct {
 	mut    sync.RWMutex
 	cache  map[string]map[string]string
 	conf   *Config
@@ -68,18 +61,14 @@ type innerCache struct {
 	synced atomic.Bool
 }
 
-func New(conf *Config) Cache {
-	if conf == nil || !conf.Validate() {
-		return noneCache{} // 如果配置不合法返回一个空实现
-	}
-
+func New(conf *Config) *Cache {
 	tr := &http.Transport{
 		MaxIdleConns:        10,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     time.Minute * 5,
 	}
 
-	return &innerCache{
+	return &Cache{
 		cache: make(map[string]map[string]string),
 		conf:  conf,
 		done:  make(chan struct{}),
@@ -90,17 +79,17 @@ func New(conf *Config) Cache {
 	}
 }
 
-func (c *innerCache) loopSync() {
+func (c *Cache) loopSync() {
 	ticker := time.NewTicker(c.conf.Interval)
 	defer ticker.Stop()
 
 	fn := func() {
 		start := time.Now()
 		if err := c.sync(); err != nil {
-			logger.Errorf("failed to sync (%s) innerCache: %v", c.conf.URL, err)
+			logger.Errorf("failed to sync (%s) Cache: %v", c.conf.URL, err)
 			return
 		}
-		logger.Debugf("sync (%s) innerCache take %v", c.conf.URL, time.Since(start))
+		logger.Debugf("sync (%s) Cache take %v", c.conf.URL, time.Since(start))
 	}
 
 	fn() // 启动即同步
@@ -116,17 +105,17 @@ func (c *innerCache) loopSync() {
 	}
 }
 
-func (c *innerCache) Clean() {
+func (c *Cache) Clean() {
 	close(c.done)
 }
 
-func (c *innerCache) Sync() {
+func (c *Cache) Sync() {
 	if c.synced.CompareAndSwap(false, true) {
 		go c.loopSync()
 	}
 }
 
-func (c *innerCache) Get(k string) (map[string]string, bool) {
+func (c *Cache) Get(k string) (map[string]string, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
@@ -147,11 +136,9 @@ type response struct {
 	Pods            []podObject `json:"pods"`
 }
 
-func (c *innerCache) sync() error {
-	url := c.conf.URL + fmt.Sprintf("?resourceVersion=%d", c.lastRv)
-	logger.Debugf("innercache request url: %s", url)
-
-	req, err := http.NewRequest(http.MethodGet, url, &bytes.Buffer{})
+func (c *Cache) sync() error {
+	u := c.conf.URL + fmt.Sprintf("?resourceVersion=%d", c.lastRv)
+	req, err := http.NewRequest(http.MethodGet, u, &bytes.Buffer{})
 	if err != nil {
 		return err
 	}
@@ -192,4 +179,36 @@ func (c *innerCache) sync() error {
 		}
 	}
 	return nil
+}
+
+var defaultCache *Cache
+
+// Default 获取默认缓存
+//
+// 可能会返回 nil 调用方需要先判断
+func Default() *Cache {
+	return defaultCache
+}
+
+func Install(conf *Config) error {
+	if conf == nil {
+		return errors.New("Nil Config")
+	}
+	if err := conf.Validate(); err != nil {
+		return err
+	}
+
+	if defaultCache != nil {
+		return nil
+	}
+
+	defaultCache = New(conf)
+	defaultCache.Sync()
+	return nil
+}
+
+func Uninstall() {
+	if defaultCache != nil {
+		defaultCache.Clean()
+	}
 }

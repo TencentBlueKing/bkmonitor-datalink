@@ -121,6 +121,12 @@ func (aif *AgentInfoFetcher) Fetch() (gse.AgentInfo, error) {
 			// 如果 agent 中没有 IP 信息，则从主机身份文件中获取
 			info.IP = w.GetHostInnerIp()
 		}
+		if w.GetTenantID() != "" {
+			info.BKTenantID = w.GetTenantID()
+		}
+		if w.GetStaticDataID() != 0 {
+			info.StaticDataID = w.GetStaticDataID()
+		}
 		logger.Debugf("fetch agent info from host watcher: %+v", info)
 	}
 	logger.Debugf("fetch agent info: %+v", info)

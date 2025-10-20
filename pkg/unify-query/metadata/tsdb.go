@@ -17,4 +17,5 @@ const (
 	OfflineDataArchive         = "offline_data_archive"
 	RedisStorageType           = "redis"
 	ElasticsearchStorageType   = "elasticsearch"
+	DorisStorageType           = "doris"
 )

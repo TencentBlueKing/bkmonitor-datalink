@@ -14,10 +14,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/runtime"
-
-	"github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
 )
 
 func TestBkunifylogbeatConfig(t *testing.T) {

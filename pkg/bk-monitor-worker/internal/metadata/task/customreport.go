@@ -90,9 +90,8 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			bkTenantId := tableId[0]
 			if _, ok := updatedTableIds[bkTenantId]; !ok {
 				updatedTableIds[bkTenantId] = make([]string, 0)
-			} else {
-				updatedTableIds[bkTenantId] = append(updatedTableIds[bkTenantId], tableId[1])
 			}
+			updatedTableIds[bkTenantId] = append(updatedTableIds[bkTenantId], tableId[1])
 		}
 	}(&wgReceive)
 	ch := make(chan struct{}, GetGoroutineLimit("refresh_time_series_metric"))

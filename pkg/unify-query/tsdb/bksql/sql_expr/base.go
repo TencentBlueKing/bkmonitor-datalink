@@ -293,8 +293,9 @@ func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time)
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式
 // 实现逻辑：
-//  1. 将多个AND条件组合成OR条件
-//  2. 当有多个OR条件时用括号包裹
+//  1. 提取所有OR分支中的公共条件
+//  2. 将公共条件和剩余条件用AND连接
+//  3. 剩余条件按原有逻辑用OR连接
 func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
 	return parserAllConditions(allConditions, d.buildCondition)
 }
@@ -456,13 +457,82 @@ func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
 	return fmt.Sprintf("`%s`", s), nil
 }
 
-func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
-	var orConditions []string
+// extractCommonConditions 提取所有OR分支中的公共条件
+// 返回：公共条件列表和移除公共条件后的剩余分支
+func extractCommonConditions(allConditions metadata.AllConditions) (
+	common []metadata.ConditionField,
+	remaining metadata.AllConditions,
+) {
+	// 少于2个分支，无需优化
+	if len(allConditions) <= 1 {
+		return nil, allConditions
+	}
 
-	// 遍历所有OR条件组
-	for _, conditions := range allConditions {
+	// 1. 统计每个条件签名在多少个分支中，并提取公共部分
+	// 使用字符串连接的方式标记每个 or 里面都命中该下标
+	hitCount := make(map[string]string)
+	allCount := ""
+	for i := range allConditions {
+		allCount += fmt.Sprintf("|%d", i)
+	}
+
+	for i, branch := range allConditions {
+		for _, cond := range branch {
+			sig := cond.Signature()
+			hitCount[sig] += fmt.Sprintf("|%d", i)
+			if hitCount[sig] == allCount {
+				common = append(common, cond)
+			}
+		}
+	}
+
+	// 没有公共条件，直接返回原始数据
+	if len(common) == 0 {
+		return nil, allConditions
+	}
+
+	// 构建剩余非公共条件
+	for _, branch := range allConditions {
+		var newBranch []metadata.ConditionField
+		for _, cond := range branch {
+			if hitCount[cond.Signature()] != allCount {
+				newBranch = append(newBranch, cond)
+			}
+		}
+		remaining = append(remaining, newBranch)
+	}
+
+	return common, remaining
+}
+
+// parserAllConditions 解析全量条件并进行优化，提取公共条件
+// 算法流程：
+// 1. 提取所有OR分支中的公共条件
+// 2. 构建公共条件的SQL
+// 3. 构建剩余条件的OR表达式（不进行递归优化，避免无限递归）
+// 4. 用AND连接公共条件和剩余条件
+func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
+	// 1. 提取公共条件
+	common, remaining := extractCommonConditions(allConditions)
+
+	var parts []string
+
+	// 2. 构建公共条件SQL
+	for _, cond := range common {
+		condSQL, err := bc(cond)
+		if err != nil {
+			return "", err
+		}
+		if condSQL != "" {
+			parts = append(parts, condSQL)
+		}
+	}
+
+	// 3. 构建剩余条件SQL（不进行递归优化）
+	// 直接构建OR逻辑，不进行递归优化
+	var orConditions []string
+	for _, conditions := range remaining {
 		var andConditions []string
-		// 处理每个AND条件组
 		for _, cond := range conditions {
 			buildCondition, err := bc(cond)
 			if err != nil {
@@ -478,13 +548,25 @@ func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadat
 		}
 	}
 
-	// 处理最终OR条件组合
+	// 处理OR条件组合
 	if len(orConditions) > 0 {
+		var remainingSQL string
 		if len(orConditions) == 1 {
-			return orConditions[0], nil
+			remainingSQL = orConditions[0]
+		} else {
+			remainingSQL = fmt.Sprintf("(%s)", strings.Join(orConditions, " OR "))
 		}
-		return fmt.Sprintf("(%s)", strings.Join(orConditions, " OR ")), nil
+		if remainingSQL != "" {
+			parts = append(parts, remainingSQL)
+		}
 	}
 
-	return "", nil
+	// 4. 组合最终SQL
+	if len(parts) == 0 {
+		return "", nil
+	}
+	if len(parts) == 1 {
+		return parts[0], nil
+	}
+	return strings.Join(parts, " AND "), nil
 }

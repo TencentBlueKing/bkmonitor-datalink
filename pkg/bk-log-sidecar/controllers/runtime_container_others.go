@@ -20,12 +20,13 @@ import (
 
 	"github.com/containerd/containerd"
 	"google.golang.org/grpc"
+	"k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bk-log-sidecar/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 // NewContainerdRuntime new container Runtime
@@ -38,8 +39,27 @@ func NewContainerdRuntime() define.Runtime {
 	utils.CheckError(err)
 
 	return &ContainerdRuntime{
-		containerdClient: client,
-		log:              ctrl.Log.WithName("containerd"),
-		criClient:        v1alpha2.NewRuntimeServiceClient(conn),
+		ContainerdBase: ContainerdBase{
+			containerdClient: client,
+			log:              ctrl.Log.WithName("containerd"),
+		},
+		criClient: &CRIClientV1Alpha2{client: v1alpha2.NewRuntimeServiceClient(conn)},
+	}
+}
+
+func NewContainerdV2Runtime() define.Runtime {
+	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
+	utils.CheckError(err)
+
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	conn, err := grpc.DialContext(ctx, fmt.Sprintf("unix://%s", config.ContainerdAddress), grpc.WithInsecure())
+	utils.CheckError(err)
+
+	return &ContainerdV2Runtime{
+		ContainerdBase: ContainerdBase{
+			containerdClient: client,
+			log:              ctrl.Log.WithName("containerd"),
+		},
+		criClient: &CRIClientV1{client: v1.NewRuntimeServiceClient(conn)},
 	}
 }

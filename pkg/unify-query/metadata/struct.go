@@ -12,6 +12,8 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
@@ -181,6 +183,29 @@ type Query struct {
 
 	// sql 使用SELECT DISTINCT 语法
 	IsDistinct bool `json:"is_distinct,omitempty"`
+
+	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
+	IsMergeDB bool `json:"is_merge_db"`
+}
+
+// GetMergeDBStatus 判断是否进行 db 合并处理
+func (q *Query) GetMergeDBStatus() bool {
+	// 如果 db 为空，则不需要合并
+	if q.DB == "" {
+		return false
+	}
+
+	// 如果是 es 可以使用合并，优化查询速度
+	if q.StorageType == ElasticsearchStorageType {
+		return true
+	}
+
+	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
+		return true
+	}
+
+	return false
 }
 
 func (q *Query) VMExpand() *VmExpand {
@@ -239,6 +264,22 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+}
+
+// Signature 生成条件的唯一签名，用于条件比较和去重
+// 例如：host|eq|server1 或 status|eq|1,2,3
+func (c ConditionField) Signature() string {
+	sortedValues := make([]string, len(c.Value))
+	copy(sortedValues, c.Value)
+	sort.Strings(sortedValues)
+
+	return fmt.Sprintf("%v|%v|%v|%s|%s|%s|",
+		c.IsWildcard,
+		c.IsSuffix,
+		c.IsPrefix,
+		c.DimensionName,
+		c.Operator,
+		strings.Join(sortedValues, ","))
 }
 
 // TimeAggregation 时间聚合字段

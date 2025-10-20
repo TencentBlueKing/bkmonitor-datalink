@@ -19,6 +19,7 @@ import (
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/samber/lo"
@@ -309,7 +310,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	span.Set("query-body", bodyString)
 
 	metadata.Sprintf(
-		metadata.MsgQueryInfo,
+		metadata.MsgQueryES,
 		"es 查询 index: %+v, body: %s",
 		qo.indexes, bodyString,
 	).Info(ctx)
@@ -360,7 +361,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
 	if res.Error != nil {
-		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
+		err = metadata.Sprintf(
+			metadata.MsgQueryES,
+			"es 查询失败 index: %+v",
+			qo.indexes,
+		).Error(ctx, errors.New(res.Error.Reason))
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)
@@ -428,7 +433,8 @@ func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, e
 
 	if len(allAlias) == 0 {
 		return nil, metadata.Sprintf(
-			metadata.MsgQueryES, "%s 构建索引异常",
+			metadata.MsgQueryES,
+			"%s 构建索引异常",
 			query.TableID,
 		).Error(ctx, fmt.Errorf("es 查询没有匹配到索引"))
 	}

@@ -111,7 +111,9 @@ func (c *meterConverter) filterMetrics(name string, dims map[string]string) bool
 		if !ok {
 			continue
 		}
+
 		dims[dim] = newVal
+		return true
 	}
 	return false
 }

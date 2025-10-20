@@ -22,10 +22,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -135,19 +133,16 @@ func (i Instance) QuerySeriesSet(
 	// 配置 client
 	err = i.setClient()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return storage.ErrSeriesSet(err)
 	}
 
 	if client == nil {
 		err = fmt.Errorf("offline data archive client is null, %s", i.Address)
-		log.Errorf(ctx, err.Error())
 		return storage.ErrSeriesSet(err)
 	}
 
 	tagRouter, err := influxdbRouter.GetTagRouter(ctx, query.TagsKey, query.Condition)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -170,7 +165,6 @@ func (i Instance) QuerySeriesSet(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.ReadRateLimit), int(i.ReadRateLimit))
@@ -187,5 +181,5 @@ func (i Instance) QuerySeriesSet(
 }
 
 func (i Instance) InstanceType() string {
-	return consul.OfflineDataArchive
+	return metadata.OfflineDataArchive
 }

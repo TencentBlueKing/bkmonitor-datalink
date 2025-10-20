@@ -23,14 +23,13 @@ import (
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/spf13/cast"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -58,23 +57,20 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
 
-	// 验证 queryList 限制长度
-	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
-		err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
-		log.Errorf(ctx, err.Error())
-		return nil, err
-	}
-
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	go func() {
@@ -111,7 +107,10 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
 				if err != nil {
-					log.Errorf(ctx, "query exemplar: %s", err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询失败",
+					).Error(ctx, err)
 					continue
 				}
 				if res.Err != "" {
@@ -226,7 +225,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-list-num", queryRef.Count())
 		span.Set("result-data-num", len(data))
 
-		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
+		query.SortSliceListWithTime(data, queryTs.OrderBy.Orders(), fieldType)
 
 		span.Set("query-scroll", queryTs.Scroll)
 		span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -320,16 +319,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
 
-			labelMap, err := qry.LabelMap()
-			if err == nil {
-				// 合并 labelMap
-				for k, lm := range labelMap {
-					if _, ok := allLabelMap[k]; !ok {
-						allLabelMap[k] = make([]function.LabelMapValue, 0)
-					}
-
-					allLabelMap[k] = append(allLabelMap[k], lm...)
+			labelMap := function.LabelMap(ctx, qry)
+			// 合并 labelMap
+			for k, lm := range labelMap {
+				if _, ok := allLabelMap[k]; !ok {
+					allLabelMap[k] = make([]function.LabelMapValue, 0)
 				}
+
+				allLabelMap[k] = append(allLabelMap[k], lm...)
 			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
@@ -347,7 +344,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", qry.StorageID)
+					err = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询实例为空",
+					).Error(ctx, nil)
 					return
 				}
 
@@ -442,8 +442,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				newQry := &metadata.Query{}
 				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
 				if err != nil {
-					log.Errorf(ctx, "copy query ts error: %s", err.Error())
-					errCh <- err
+					errCh <- metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询失败",
+					).Error(ctx, err)
 					return
 				}
 
@@ -471,7 +473,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", newQry.StorageID)
+					err = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询实例为空",
+					).Error(ctx, nil)
 					return
 				}
 
@@ -731,12 +736,12 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
-		vmExpand := queryRef.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, queryRef)
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试
-			StorageID:   consul.VictoriaMetricsStorageType,
-			StorageType: consul.VictoriaMetricsStorageType,
+			StorageID:   metadata.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 	} else {
 		// 非直查开启忽略时间聚合函数判断
@@ -791,8 +796,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
@@ -847,7 +854,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 			pointsNum++
 		}
 	default:
-		err = fmt.Errorf("data type wrong: %T", v)
+		err = metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"data type wrong: %T", v,
+		).Error(ctx, nil)
 		return nil, err
 	}
 
@@ -876,8 +886,10 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 
 	promQL, err := query.ToPromQL(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"转换结构体异常",
+		).Error(ctx, err)
 	}
 
 	return &structured.QueryPromQL{
@@ -911,7 +923,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Reference = queryPromQL.Reference
 
 	if queryPromQL.Match != "" {
-		matchers, err = promql_parser.ParseMetricSelector(queryPromQL.Match)
+		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)
 		if err != nil {
 			return query, err
 		}
@@ -995,8 +1007,10 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)

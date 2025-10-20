@@ -10,10 +10,6 @@
 package define
 
 const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
-	ConstKeyPrefix     = "const."
-
 	ProcessorApdexCalculator = "apdex_calculator"
 	ProcessorAttributeFilter = "attribute_filter"
 	ProcessorMetricsFilter   = "metrics_filter"
@@ -25,9 +21,10 @@ const (
 	ProcessorTokenChecker    = "token_checker"
 	ProcessorTracesDeriver   = "traces_deriver"
 	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
 	ProcessorDbFilter        = "db_filter"
 	ProcessorProbeFilter     = "probe_filter"
 	ProcessorPprofTranslator = "pprof_translator"
 	ProcessorTextSpliter     = "text_spliter"
+	ProcessorFieldNormalizer = "field_normalizer"
+	ProcessorMethodFilter    = "method_filter"
 )

@@ -26,7 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
@@ -296,7 +296,7 @@ func TestAPIHandler(t *testing.T) {
 		url     string
 		params  gin.Params
 
-		infoParams *infos.Params
+		infoParams *Params
 		expected   string
 	}{
 		"test label values in vm 1": {
@@ -326,7 +326,7 @@ func TestAPIHandler(t *testing.T) {
 		"test field keys in prometheus": {
 			handler: HandlerFieldKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -337,7 +337,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -349,7 +349,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus with regex": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -362,7 +362,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -375,7 +375,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex below 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -389,7 +389,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex above 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end2d.Unix()),
@@ -403,7 +403,7 @@ func TestAPIHandler(t *testing.T) {
 		"test series in prometheus": {
 			handler: HandlerSeries,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -416,11 +416,11 @@ func TestAPIHandler(t *testing.T) {
 		"test field map in es": {
 			handler: HandlerFieldMap,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				DataSource: "bklog",
 				TableID:    "result_table.unify_query",
 			},
-			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},{"alias_name":"","field_name":"cloudId","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"cloudId","tokenize_on_chars":""},{"alias_name":"","field_name":"container_name","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"container_name","tokenize_on_chars":""},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"dtEventTimeStamp","tokenize_on_chars":""},{"alias_name":"","field_name":"file","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"file","tokenize_on_chars":""},{"alias_name":"","field_name":"gseIndex","field_type":"long","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"gseIndex","tokenize_on_chars":""},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"iterationIndex","tokenize_on_chars":""},{"alias_name":"","field_name":"level","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"level","tokenize_on_chars":""},{"alias_name":"","field_name":"log","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log","tokenize_on_chars":""},{"alias_name":"","field_name":"message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"message","tokenize_on_chars":""},{"alias_name":"","field_name":"path","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"path","tokenize_on_chars":""},{"alias_name":"","field_name":"pod_ip","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_ip","tokenize_on_chars":""},{"alias_name":"","field_name":"pod_uid","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_uid","tokenize_on_chars":""},{"alias_name":"","field_name":"report_time","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"report_time","tokenize_on_chars":""},{"alias_name":"","field_name":"serverIp","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"serverIp","tokenize_on_chars":""},{"alias_name":"","field_name":"time","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"time","tokenize_on_chars":""},{"alias_name":"","field_name":"trace_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"trace_id","tokenize_on_chars":""}]}`,
+			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
 		},
 	}
 
@@ -523,7 +523,16 @@ func TestQueryHandler(t *testing.T) {
 			instant:  true,
 			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}],"is_partial":false}`,
 		},
+		"test promql bkdata": {
+			handler:  HandlerQueryPromQL,
+			promql:   `sum(increase({__name__=~"bkdata:.*trace.*:span_name", span_name=~"handler-query-.*"}[3h])) by (span_name)`,
+			step:     "3h",
+			expected: `{"series":[],"is_partial":false}`,
+		},
 	}
+
+	mock.Init()
+	promql.MockEngine()
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {

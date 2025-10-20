@@ -11,11 +11,13 @@ package structured
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // TableIDFilter
@@ -38,15 +40,18 @@ func NewTableIDFilter(
 		dataIDList:       make([]consul.DataID, 0),
 	}
 	// 1. 解析tableID
-	route, err := MakeRouteFromTableID(TableID(tableID))
+	route, err := MakeRouteFromTableID(tableID)
 	if err == nil {
 		tableIDFilter.values = append(tableIDFilter.values, route)
 		tableIDFilter.isAppointTableID = true
 		return tableIDFilter, nil
 	}
-	if err != ErrEmptyTableID {
-		log.Errorf(context.TODO(), "search metric:[%s] ,format tableid:[%s], err:[%s]", metricName, tableID, err)
-		return tableIDFilter, err
+	if !errors.Is(err, ErrEmptyTableID) {
+		return tableIDFilter, metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由解析",
+			tableID, metricName,
+		).Error(context.TODO(), err)
 	}
 
 	// 2. 如果tableID为空，则根据conditions获取bk_biz_id,bcs_cluster_id等，过滤出tableID
@@ -55,8 +60,11 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		log.Errorf(context.TODO(), "get required field error:%s", err)
-		return tableIDFilter, err
+		return tableIDFilter, metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由解析",
+			tableID, metricName,
+		).Error(context.TODO(), err)
 	}
 
 	// 必传biz_id
@@ -80,15 +88,15 @@ func NewTableIDFilter(
 			resultDataIDList = influxdb.Intersection(dataIDList, resultDataIDList)
 		}
 	}
-	log.Debugf(context.TODO(),
-		"get bk_biz_id:[%v], data_id_list:[%v], field_name:[%s]", bizIDs, resultDataIDList, metricName,
-	)
-
 	// DataID 查询为空不影响查询后续流程
 	if len(resultDataIDList) == 0 {
-		log.Warnf(context.TODO(),
-			"can not get tableID and dataIDList, condition:[%v] , err:[%s]", conditions, ErrEmptyTableID,
-		)
+		metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"table_id %s metric %s 路由获取为空",
+			tableID, metricName,
+		).Warn(context.TODO())
+
+		return tableIDFilter, nil
 	}
 	tableIDFilter.dataIDList = resultDataIDList
 	return tableIDFilter, nil

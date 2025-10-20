@@ -19,7 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -173,9 +172,10 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
-
-				d.Message = err.Error()
+				d.Message = metadata.Sprintf(
+					metadata.MsgQueryRelation,
+					"关联数据查询异常",
+				).Error(ctx, err).Error()
 				d.Code = http.StatusBadRequest
 			}
 

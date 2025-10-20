@@ -24,7 +24,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -80,8 +80,11 @@ func (c *BasicClient) Query(
 	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
 	if err != nil {
-		log.Errorf(ctx, "client new request error:%s", err)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"创建HTTP %s 请求失败",
+			urlPath,
+		).Error(ctx, err)
 	}
 	req.SetBasicAuth(c.username, c.password)
 	usingContentType := contentType
@@ -96,20 +99,28 @@ func (c *BasicClient) Query(
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Errorf(ctx, "client do request:%s error:%s", sql, err)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 请求失败",
+			urlPath,
+		).Error(ctx, err)
 	}
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			log.Errorf(ctx, "resp body close (%s) error:%s", sql, err)
+			metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"%s 请求失败 %v",
+				urlPath, err,
+			).Warn(ctx)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		err = errors.New(resp.Status)
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"查询失败",
+		).Error(ctx, errors.New(resp.Status))
 	}
 
 	respContentType := resp.Header.Get("Content-type")
@@ -129,17 +140,26 @@ func (c *BasicClient) decodeWithContentType(
 	if err != nil {
 		data, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-			return nil, err
+			return nil, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"%s 解码失败",
+				respContentType,
+			).Error(ctx, errors.New(resp.Status))
 		}
-		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 解码失败 %v",
+			respContentType, string(data),
+		).Error(ctx, err)
 	}
 	result := new(decoder.Response)
 	_, err = dec.Decode(ctx, resp.Body, result)
 	if err != nil {
-		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryInfluxDB,
+			"%s 解码失败",
+			respContentType,
+		).Error(ctx, err)
 	}
 
 	return result, nil

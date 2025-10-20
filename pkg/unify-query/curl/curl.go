@@ -12,7 +12,6 @@ package curl
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -21,7 +20,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -55,7 +54,6 @@ type Curl interface {
 
 // HttpCurl http 请求方法
 type HttpCurl struct {
-	Log     *log.Logger
 	decoder func(ctx context.Context, reader io.Reader, res any) (int, error)
 }
 
@@ -73,14 +71,18 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	if opt.UrlPath == "" {
-		err = fmt.Errorf("url is emtpy")
-		return size, err
+		return size, metadata.Sprintf(
+			metadata.MsgHttpCurl,
+			"url path is empty",
+		).Error(ctx, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
-		c.Log.Errorf(ctx, "client new request error:%v", err)
-		return size, err
+		return size, metadata.Sprintf(
+			metadata.MsgHttpCurl,
+			"client new request error",
+		).Error(ctx, err)
 	}
 
 	if opt.UserName != "" {
@@ -90,7 +92,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	span.Set("req-http-method", method)
 	span.Set("req-http-path", opt.UrlPath)
 
-	c.Log.Infof(ctx, "curl request: %s[%s] body:%s", method, opt.UrlPath, opt.Body)
+	metadata.Sprintf(
+		metadata.MsgHttpCurl,
+		"%s [%s] body: %s",
+		method, opt.UrlPath, opt.Body,
+	).Info(ctx)
 
 	for k, v := range opt.Headers {
 		if k != "" && v != "" {
@@ -100,7 +106,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return size, HandleClientError(ctx, opt.UrlPath, err)
+		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
 	}
 
 	buf := bufPool.Get().(*bytes.Buffer)
@@ -111,8 +117,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("http code error: %s", resp.Status)
-		return size, err
+		return size, metadata.Sprintf(
+			metadata.MsgHttpCurl,
+			"http code error: %s",
+			resp.Status,
+		).Error(ctx, err)
 	}
 
 	if c.decoder != nil {

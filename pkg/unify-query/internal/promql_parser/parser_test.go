@@ -10,6 +10,7 @@
 package promql_parser
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -268,13 +269,21 @@ func TestParseMetricSelector(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:     "metric name with special characters",
+			selector: `{caller_name='raid-704-dev.party',inst_id='94351729'}`,
+			want: []*labels.Matcher{
+				{Type: labels.MatchEqual, Name: "caller_name", Value: "raid-704-dev.party"},
+				{Type: labels.MatchEqual, Name: "inst_id", Value: "94351729"},
+			},
+		},
 	}
 
 	mock.Init()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseMetricSelector(tt.selector)
+			got, err := ParseMetricSelector(context.TODO(), tt.selector)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseMetricSelector() error = %v, wantErr %v", err, tt.wantErr)
 				return

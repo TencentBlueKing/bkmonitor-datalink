@@ -21,12 +21,6 @@ type IDConfig struct {
 	Processor []Config `config:"processor"`
 }
 
-const (
-	KeyInstance = "bk.instance.id"
-	KeyService  = "service.name"
-	KeyKind     = "kind"
-)
-
 type SubConfig struct {
 	Type     string           `config:"type"`
 	Token    string           `config:"token"`

@@ -10,12 +10,11 @@
 package tracesderiver
 
 import (
-	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstrings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/mapstrings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -122,13 +121,16 @@ func NewConfigHandler(config Config) *ConfigHandler {
 			for k := 0; k < len(kind.Dimensions); k++ {
 				dim := kind.Dimensions[k]
 				id := conf.Type + "/" + kind.Kind + "/" + kind.PredicateKey
-				switch {
-				case strings.HasPrefix(dim, define.ResourceKeyPrefix):
-					resourceKeys.Set(conf.Type, dim[len(define.ResourceKeyPrefix):])
-				case strings.HasPrefix(dim, define.AttributeKeyPrefix):
-					attributeKeys.Set(id, dim[len(define.AttributeKeyPrefix):])
+
+				ff, v := fields.DecodeFieldFrom(dim)
+				switch ff {
+				case fields.FieldFromResource:
+					resourceKeys.Set(conf.Type, v)
+				case fields.FieldFromAttributes:
+					attributeKeys.Set(id, v)
+				case fields.FieldFromMethod:
+					methodKeys.Set(id, v)
 				default:
-					methodKeys.Set(id, dim)
 				}
 			}
 		}

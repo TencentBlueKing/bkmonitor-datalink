@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -78,7 +77,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 }
 
 func (i *Instance) InstanceType() string {
-	return consul.RedisStorageType
+	return metadata.RedisStorageType
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -122,15 +121,21 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
-		// 指标配置不存在，则返回空 DF
-		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", metricName, err)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryRedis,
+			"查询异常",
+		).Error(ctx, err)
 		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, metricName, err)
+			metadata.Sprintf(
+				metadata.MsgQueryRedis,
+				"查询异常 %+v",
+				err,
+			).Warn(ctx)
 			continue
 		}
 		if dfPointer.Nrow() > 0 {

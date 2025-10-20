@@ -79,7 +79,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
+			fieldMap: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
 		},
 	}
 
@@ -88,7 +88,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			iof := NewIndexOptionFormat(nil)
 			iof.Parse(c.settings, c.mappings)
 
-			fieldMap := iof.FieldMap()
+			fieldMap := iof.FieldsMap()
 
 			actual, _ := json.Marshal(fieldMap)
 

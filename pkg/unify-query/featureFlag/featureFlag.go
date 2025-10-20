@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var (
@@ -52,7 +53,11 @@ func Print() string {
 func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue string) string {
 	res, err := ffclient.StringVariation(flagKey, user, defaultValue)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		_ = metadata.Sprintf(
+			metadata.MsgFeatureFlag,
+			"特性开关获取失败 flag_key: %s, user: %s, default_value: %s, error: %s",
+			flagKey, user.GetKey(), defaultValue, err.Error(),
+		).Error(ctx, err)
 		return defaultValue
 	}
 	return res

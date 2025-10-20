@@ -10,9 +10,6 @@
 package servicediscover
 
 import (
-	"regexp"
-	"strings"
-
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -45,47 +42,4 @@ func (Matcher) Match(span ptrace.Span, mappings map[string]string, replaceType s
 			}
 		}
 	}
-}
-
-type Op string
-
-// match_op 支持：reg/eq/nq/startswith/nstartswith/endswith/nendswith/contains/ncontains
-const (
-	OpReg         Op = "reg"
-	OpEq          Op = "eq"
-	OpNq          Op = "nq"
-	OpStartsWith  Op = "startswith"
-	OpNStartsWith Op = "nstartswith"
-	OpEndsWith    Op = "endswith"
-	OpNEndsWith   Op = "nendswith"
-	OpContains    Op = "contains"
-	OpNContains   Op = "ncontains"
-)
-
-func OperatorMatch(input, expected string, op string) bool {
-	switch Op(op) {
-	case OpReg:
-		matched, err := regexp.MatchString(expected, input)
-		if err != nil {
-			return false
-		}
-		return matched
-	case OpEq:
-		return input == expected
-	case OpNq:
-		return input != expected
-	case OpStartsWith:
-		return strings.HasPrefix(input, expected)
-	case OpNStartsWith:
-		return !strings.HasPrefix(input, expected)
-	case OpEndsWith:
-		return strings.HasSuffix(input, expected)
-	case OpNEndsWith:
-		return !strings.HasSuffix(input, expected)
-	case OpContains:
-		return strings.Contains(input, expected)
-	case OpNContains:
-		return !strings.Contains(input, expected)
-	}
-	return false
 }

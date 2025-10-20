@@ -12,9 +12,43 @@ package utils
 import (
 	"strings"
 
-	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
+
+// 标准字段的映射关系 使用缓存可提升性能 参见 benchmark
+var dotToUnderline = map[string]string{
+	"service.name":               "service_name",
+	"service.version":            "service_version",
+	"status.code":                "status_code",
+	"bk.instance.id":             "bk_instance_id",
+	"telemetry.sdk.name":         "telemetry_sdk_name",
+	"telemetry.sdk.version":      "telemetry_sdk_version",
+	"telemetry.sdk.language":     "telemetry_sdk_language",
+	"db.name":                    "db_name",
+	"db.operation":               "db_operation",
+	"db.system":                  "db_system",
+	"net.host.port":              "net_host_port",
+	"net.host.name":              "net_host_name",
+	"net.peer.name":              "net_peer_name",
+	"net.peer.ip":                "net_peer_ip",
+	"net.peer.port":              "net_peer_port",
+	"http.scheme":                "http_scheme",
+	"http.method":                "http_method",
+	"http.flavor":                "http_favor",
+	"http.status_code":           "http_status_code",
+	"http.server_name":           "http_server_name",
+	"rpc.method":                 "rpc_method",
+	"rpc.service":                "rpc_service",
+	"rpc.system":                 "rpc_system",
+	"rpc.grpc.status_code":       "rpc_grpc_status_code",
+	"peer.service":               "peer_service",
+	"messaging.system":           "messaging_system",
+	"messaging.destination":      "messaging_destination",
+	"messaging.destination_kind": "messaging_destination_kind",
+	"celery.action":              "celery_action",
+	"celery.state":               "celery_state",
+	"celery.task_name":           "celery_task_name",
+}
 
 func CloneMap(m map[string]string) map[string]string {
 	if m == nil {
@@ -39,41 +73,17 @@ func MergeMaps(ms ...map[string]string) map[string]string {
 	return dst
 }
 
-// 标准字段的映射关系 使用缓存可提升性能 参见 benchmark
-var mappings = map[string]string{
-	"service.name":               "service_name",
-	"service.version":            "service_version",
-	"status.code":                "status_code",
-	"bk.instance.id":             "bk_instance_id",
-	"telemetry.sdk.name":         "telemetry_sdk_name",
-	"telemetry.sdk.version":      "telemetry_sdk_version",
-	"telemetry.sdk.language":     "telemetry_sdk_language",
-	"db.name":                    "db_name",
-	"db.operation":               "db_operation",
-	"db.system":                  "db_system",
-	"net.host.port":              "net_host_port",
-	"net.host.name":              "net_host_name",
-	"http.scheme":                "http_scheme",
-	"http.method":                "http_method",
-	"http.flavor":                "http_favor",
-	"http.status_code":           "http_status_code",
-	"http.server_name":           "http_server_name",
-	"rpc.method":                 "rpc_method",
-	"rpc.service":                "rpc_service",
-	"rpc.grpc.status_code":       "rpc_grpc_status_code",
-	"peer.service":               "peer_service",
-	"messaging.system":           "messaging_system",
-	"messaging.destination":      "messaging_destination",
-	"messaging.destination_kind": "messaging_destination_kind",
-}
-
-func MergeReplaceMaps(ms ...map[string]string) map[string]string {
-	dst := make(map[string]string)
-	for _, m := range ms {
-		for k, v := range m {
-			newKey := strings.ReplaceAll(k, ".", "_")
-			dst[newKey] = v
+// MergeMapWith 拷贝 map 并设置指定的键值对
+//
+// 优先考虑使用 MergeMapWith 而不是 MergeMaps 前者性能更优 参见 benchmark
+// 所有的 Map 拷贝都应遵循 COW 原则（Copy On Write）
+func MergeMapWith(m map[string]string, kv ...string) map[string]string {
+	dst := MergeMaps(m)
+	for i := 0; i < len(kv); i += 2 {
+		if i+1 >= len(kv) {
+			break
 		}
+		dst[kv[i]] = kv[i+1]
 	}
 
 	return dst
@@ -83,7 +93,7 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 	dst := make(map[string]string)
 	for _, attr := range attrs {
 		attr.Range(func(k string, v pcommon.Value) bool {
-			newKey, ok := mappings[k]
+			newKey, ok := dotToUnderline[k]
 			if ok {
 				dst[newKey] = v.AsString()
 			} else {
@@ -94,54 +104,4 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 		})
 	}
 	return dst
-}
-
-func NameOpts(s string) (string, string) {
-	if s == "" {
-		return "", ""
-	}
-
-	nameOpts := strings.Split(s, ";")
-	if len(nameOpts) == 1 {
-		return nameOpts[0], ""
-	}
-	return nameOpts[0], nameOpts[1]
-}
-
-type OptMap struct {
-	m map[string]any // 不会有并发读写
-}
-
-func NewOptMap(s string) *OptMap {
-	m := make(map[string]any)
-	pairs := strings.Split(s, ",")
-	for _, pair := range pairs {
-		kv := strings.Split(strings.TrimSpace(pair), "=")
-		if len(kv) != 2 {
-			continue
-		}
-		m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-	}
-	return &OptMap{m: m}
-}
-
-func (om *OptMap) GetInt(k string) (int, bool) {
-	v, ok := om.m[k]
-	if !ok {
-		return 0, false
-	}
-
-	i, err := cast.ToIntE(v)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
-}
-
-func (om *OptMap) GetIntDefault(k string, defaultVal int) int {
-	i, ok := om.GetInt(k)
-	if ok {
-		return i
-	}
-	return defaultVal
 }

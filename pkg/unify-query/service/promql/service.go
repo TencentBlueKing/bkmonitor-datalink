@@ -12,7 +12,6 @@ package promql
 import (
 	"context"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -49,5 +48,4 @@ func (s *Service) Wait() {
 
 // Close
 func (s *Service) Close() {
-	log.Infof(context.TODO(), "promql service context canceled")
 }

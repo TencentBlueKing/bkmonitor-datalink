@@ -12,6 +12,7 @@ package operator
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -22,7 +23,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v2"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
@@ -30,11 +30,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor/instance"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
 )
 
-func writeResponse(w http.ResponseWriter, data interface{}) {
+func writeResponse(w http.ResponseWriter, data any) {
 	bs, err := json.Marshal(data)
 	if err != nil {
 		w.Write([]byte(fmt.Sprintf(`{"msg": "%s"}`, err.Error())))
@@ -278,7 +279,7 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	writef := func(format string, a ...interface{}) {
+	writef := func(format string, a ...any) {
 		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 
@@ -430,26 +431,6 @@ func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "success"}`))
 }
 
-func (c *Operator) AdminReloadRoute(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte(`{"msg": "/-/reload route only POST method supported"}`))
-		return
-	}
-
-	timer := time.NewTimer(time.Second * 15)
-	select {
-	case <-timer.C:
-		w.Write([]byte(`{"status": "failed"}`))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-
-	case beat.ReloadChan <- true:
-		w.Write([]byte(`{"status": "success"}`))
-		return
-	}
-}
-
 func (c *Operator) AdminDispatchRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -587,12 +568,145 @@ func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	w.Write(b)
 }
 
+func (c *Operator) QCloudMonitorInstancesRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var params instance.Parameters
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	data, err := q.Query(&params)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"%s\"}", err)))
+		return
+	}
+
+	type R struct {
+		Total int   `json:"total"`
+		Data  []any `json:"data"`
+	}
+	b, _ := json.Marshal(R{
+		Total: len(data),
+		Data:  data,
+	})
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorNamespacesRoute(w http.ResponseWriter, _ *http.Request) {
+	b, _ := json.Marshal(instance.Namespaces())
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorParametersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string            `json:"namespace"`
+		Tags      []instance.Tag    `json:"tags"`
+		Filters   []instance.Filter `json:"filters"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	b, _ := q.ParametersJSON(&instance.Parameters{
+		Namespace: params.Namespace,
+		Tags:      params.Tags,
+		Filters:   params.Filters,
+	})
+	w.Write([]byte(b))
+}
+
+func (c *Operator) QCloudMonitorInstancesFiltersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string `json:"namespace"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	type R struct {
+		Namespace string   `json:"namespace"`
+		Filters   []string `json:"filters"`
+	}
+	b, _ := json.Marshal(R{
+		Namespace: params.Namespace,
+		Filters:   q.Filters(),
+	})
+	w.Write(b)
+}
+
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 	content := `
 # Admin Routes
 --------------
 * POST /-/logger
-* POST /-/reload
 * POST /-/dispatch
 
 # Metadata Routes
@@ -606,6 +720,13 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
+
+# QCloudMonitor Routes
+----------------------
+* GET /qcloudmonitor/namespaces
+* POST /qcloudmonitor/parameters
+* POST /qcloudmonitor/instances
+* POST /qcloudmonitor/instances/filters
 
 # Check Routes
 --------------
@@ -639,7 +760,6 @@ func (c *Operator) ListenAndServe() error {
 
 	// admin 路由
 	router.HandleFunc("/-/logger", c.AdminLoggerRoute)
-	router.HandleFunc("/-/reload", c.AdminReloadRoute)
 	router.HandleFunc("/-/dispatch", c.AdminDispatchRoute)
 
 	// metadata 路由
@@ -652,6 +772,12 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
+
+	// qcloudmonitor 路由
+	router.HandleFunc("/qcloudmonitor/namespaces", c.QCloudMonitorNamespacesRoute)
+	router.HandleFunc("/qcloudmonitor/parameters", c.QCloudMonitorParametersRoute)
+	router.HandleFunc("/qcloudmonitor/instances", c.QCloudMonitorInstancesRoute)
+	router.HandleFunc("/qcloudmonitor/instances/filters", c.QCloudMonitorInstancesFiltersRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

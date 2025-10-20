@@ -20,7 +20,7 @@ import (
 	"github.com/jarcoal/httpmock"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type VmRequest struct {
@@ -163,14 +163,9 @@ type elasticSearchResultData struct {
 
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
-
-	log.Infof(context.Background(), "mock handler start")
-
 	mockBKBaseHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockElasticSearchHandler(ctx)
-
-	log.Infof(context.Background(), "mock handler end")
 }
 
 const (
@@ -216,9 +211,11 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 		d, ok := Es.Get(string(body))
 		if !ok {
-			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
-			log.Errorf(ctx, err.Error())
-			return w, err
+			return w, metadata.Sprintf(
+				metadata.MsgQueryES,
+				"es mock data is empty in %s",
+				body,
+			).Error(ctx, nil)
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
 		return w, err
@@ -265,8 +262,11 @@ func mockInfluxDBHandler(ctx context.Context) {
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			err = fmt.Errorf(`influxdb mock data is empty in "%s"`, key)
-			return w, err
+			return w, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"influxdb mock data is empty in %s",
+				key,
+			).Error(ctx, nil)
 		}
 
 		switch t := d.(type) {
@@ -297,9 +297,11 @@ func mockBKBaseHandler(ctx context.Context) {
 		if request.PreferStorage != "vm" {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
-				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
-				log.Errorf(ctx, err.Error())
-				return w, err
+				return w, metadata.Sprintf(
+					metadata.MsgQueryBKSQL,
+					"bk sql mock data is empty in %s",
+					request.Sql,
+				).Error(ctx, nil)
 			}
 			switch t := d.(type) {
 			case string:

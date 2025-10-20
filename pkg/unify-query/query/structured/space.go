@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -37,7 +37,7 @@ type SpaceFilter struct {
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
 func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) {
 	if opt == nil {
-		return nil, fmt.Errorf("%s", ErrMetricMissing)
+		return nil, ErrMetricMissing
 	}
 
 	router, err := influxdb.GetSpaceTsDbRouter()
@@ -52,10 +52,11 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	if !opt.IsSkipSpace {
 		if space == nil {
 			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
-
-			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
-			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-			log.Warnf(ctx, msg)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				"空间 %s 不存在",
+				opt.SpaceUid,
+			).Status(ctx, metadata.SpaceIsNotExists)
 		}
 	}
 
@@ -191,8 +192,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				log.Infof(s.ctx, "table_id_change: (%s: %s => %s)", mName, defaultTsDB.TableID, sepRt.TableId)
-
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
 
@@ -216,7 +215,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
 	route := strings.Split(tableID, ".")
 	if len(route) != 2 {
-		log.Errorf(s.ctx, "TableID(%s) format is wrong", tableID)
+		metadata.Sprintf(
+			metadata.MsgQueryRouter,
+			"表ID格式不符合规范",
+		).Warn(s.ctx)
 		return nil
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
@@ -251,9 +253,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
-
-			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
-			log.Warnf(s.ctx, routerMessage)
+			metadata.Sprintf(
+				metadata.MsgQueryRouter,
+				routerMessage,
+			).Status(s.ctx, metadata.SpaceTableIDFieldIsNotExists)
 		}
 	}()
 
@@ -310,7 +313,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	}
 
-	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
+	isK8sFeatureFlag := featureFlag.GetIsK8sFeatureFlag(s.ctx)
 
 	for _, tID := range tableIDs.ToArray() {
 		spaceRt := s.GetSpaceRtInfo(tID)

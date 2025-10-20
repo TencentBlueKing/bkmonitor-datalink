@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // MetaFieldType :
@@ -166,7 +167,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 		db, has := shipper.StorageConfig[MetadataStorageDataBaseKey]
 		dbStr, ok := db.(string)
 		if !has || !ok {
-			log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], database:[%v]", dataID, db)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"获取数据库, id %v 数据库 %s",
+				dataID, db,
+			).Error(context.TODO(), fmt.Errorf("数据库不存在"))
 			continue
 		}
 		tableID.ClusterID = fmt.Sprintf("%d", shipper.ClusterConfig.ClusterID)
@@ -180,7 +184,10 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 			measurement, has := shipper.StorageConfig[MetadataStorageTableKey]
 			measurementStr, ok := measurement.(string)
 			if !has || !ok {
-				log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], measurement:[%v]", dataID, measurement)
+				_ = metadata.Sprintf(metadata.MsgQueryRouter,
+					"获取数据库, id %v 数据库 %s",
+					dataID, db,
+				).Error(context.TODO(), fmt.Errorf("表名不存在"))
 				continue
 			}
 			tableID.Measurement = measurementStr
@@ -262,7 +269,10 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 		var pipeConf *PipelineConfig
 		err = json.Unmarshal(kvPair.Value, &pipeConf)
 		if err != nil {
-			log.Errorf(context.TODO(), "marshal pipelineConfig error: %s", err)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kvPair.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		PipelineConfList = append(PipelineConfList, pipeConf)
@@ -390,12 +400,18 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		}
 		dataid, err := strconv.Atoi(items[0])
 		if err != nil {
-			log.Errorf(context.TODO(), "get dataid metrics, Atoi err: %v, dataid: %s", err, items[0])
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"格式解析异常 %v",
+				items[0],
+			).Error(context.TODO(), err)
 			continue
 		}
 		metrics := make([]string, 0)
 		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
-			log.Warnf(context.TODO(), "get dataid metrics, Unmarshar err: %v, metrics: %s", err, kv.Value)
+			_ = metadata.Sprintf(metadata.MsgQueryRouter,
+				"json 解析异常 %v",
+				kv.Value,
+			).Error(context.TODO(), err)
 			continue
 		}
 		result[dataid] = metrics

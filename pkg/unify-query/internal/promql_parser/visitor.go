@@ -19,12 +19,13 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type Node interface {
 	antlr.ParseTreeVisitor
 	Error() error
-	Matchers() []*labels.Matcher
+	Matchers(ctx context.Context) []*labels.Matcher
 }
 
 type baseNode struct {
@@ -37,7 +38,7 @@ func (n *baseNode) Error() error {
 	return n.err
 }
 
-func (n *baseNode) Matchers() []*labels.Matcher {
+func (n *baseNode) Matchers(ctx context.Context) []*labels.Matcher {
 	return n.matchers
 }
 
@@ -48,11 +49,15 @@ func (n *baseNode) VisitErrorNode(ctx antlr.ErrorNode) any {
 
 type Statement struct {
 	baseNode
+
+	ctx  context.Context
 	node Node
 }
 
-func NewStatement() *Statement {
-	return &Statement{}
+func NewStatement(ctx context.Context) *Statement {
+	return &Statement{
+		ctx: ctx,
+	}
 }
 
 func (s *Statement) VisitChildren(ctx antlr.RuleNode) any {
@@ -67,9 +72,9 @@ func (s *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	return visitChildren(next, ctx)
 }
 
-func (s *Statement) Matchers() []*labels.Matcher {
+func (s *Statement) Matchers(ctx context.Context) []*labels.Matcher {
 	if s.node != nil {
-		return s.node.Matchers()
+		return s.node.Matchers(s.ctx)
 	}
 	return s.matchers
 }
@@ -102,20 +107,23 @@ func (g *GroupNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	return nil
 }
 
-func (g *GroupNode) Matchers() []*labels.Matcher {
+func (g *GroupNode) Matchers(ctx context.Context) []*labels.Matcher {
 	var result []*labels.Matcher
 
 	if g.metricName != "" {
 		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, g.metricName)
 		if err != nil {
-			log.Errorf(context.TODO(), "failed to create metric name matcher: %v", err)
+			_ = metadata.Sprintf(
+				metadata.MsgParserDoris,
+				"promql matcher metric 解析失败",
+			).Error(ctx, err)
 		} else {
 			result = append(result, matcher)
 		}
 	}
 
 	for _, labelNode := range g.nodes {
-		result = append(result, labelNode.Matchers()...)
+		result = append(result, labelNode.Matchers(ctx)...)
 	}
 
 	return result
@@ -145,6 +153,7 @@ func (m *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 
 	text = strings.Trim(text, `"`)
+	text = strings.Trim(text, `'`)
 	if m.operator != "" {
 		m.value = text
 	}
@@ -152,11 +161,14 @@ func (m *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	return nil
 }
 
-func (m *MatcherNode) Matchers() []*labels.Matcher {
+func (m *MatcherNode) Matchers(ctx context.Context) []*labels.Matcher {
 	if m.labelName != "" && m.value != "" {
 		matcher, err := labels.NewMatcher(operatorFromString(m.operator), m.labelName, m.value)
 		if err != nil {
-			log.Errorf(context.TODO(), "failed to create label matcher: %v", err)
+			err = metadata.Sprintf(
+				metadata.MsgParserDoris,
+				"promql matcher 解析",
+			).Error(ctx, err)
 			return nil
 		}
 		return []*labels.Matcher{matcher}

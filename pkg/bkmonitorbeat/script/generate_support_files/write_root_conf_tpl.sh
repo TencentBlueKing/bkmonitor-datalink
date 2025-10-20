@@ -100,6 +100,17 @@ bkmonitorbeat:
   metricbeat_align_ts: true
   {%- endif %}
   metrics_batch_size: 1024
+
+  # 是否为多租户模式（默认不开启）
+  {%- if nodeman is defined and nodeman.is_multi_tenant is defined and nodeman.is_multi_tenant == "true" %}
+  enable_multi_tenant: true
+  {%- endif %}
+  # 多租户场景下需要映射的 tasks 列表
+  multi_tenant_tasks: ["basereport","exceptionbeat","processbeat_perf","processbeat_port","global_heartbeat","gather_up_beat","timesync","dmesg"]
+  # 多租户场景下 gse 新的通信管道 ipc 地址
+  {%- if control_info is defined and control_info.pluginipc is defined %}
+  gse_message_endpoint: '{{ control_info.pluginipc }}'
+  {%- endif %}
   # 管理服务，包含指标和调试接口, 可动态reload开关或变更监听地址（unix使用SIGUSR2,windows发送bkreload2）
   # admin_addr: localhost:56060
   # 并发限制，按照任务类型区分(http, tcp, udp, ping)，分为per_instance单实例限制和per_task单任务限制
@@ -186,7 +197,11 @@ EOF
       info_timeout: 30s
     disk:
       stat_times: 1
+{%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) }}
+{%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+{%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
       fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
 {%- else %}

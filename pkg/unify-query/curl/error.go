@@ -11,44 +11,26 @@ package curl
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-type ClientErr struct {
-	OriginalError error
-	Message       string
-}
-
-func (e *ClientErr) Error() string {
-	return e.Message
-}
-
-func (e *ClientErr) Unwrap() error {
-	return e.OriginalError
-}
-
-func HandleClientError(ctx context.Context, url string, err error) error {
+func HandleClientError(ctx context.Context, id, url string, err error) error {
 	if err == nil {
 		return nil
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		friendlyMsg := fmt.Sprintf("Query Timeout: the request to %s timed out", url)
-		metadata.SetStatus(ctx, metadata.StorageTimeout, friendlyMsg)
-		return &ClientErr{
-			OriginalError: err,
-			Message:       friendlyMsg,
-		}
+		return metadata.Sprintf(id,
+			"查询 %s 超时",
+			url,
+		).Error(ctx, err)
 	}
 
-	friendlyMsg := fmt.Sprintf("Query Error: failed to connect to %s, error: %v", url, err)
-	metadata.SetStatus(ctx, metadata.StorageError, friendlyMsg)
-	return &ClientErr{
-		OriginalError: err,
-		Message:       friendlyMsg,
-	}
+	return metadata.Sprintf(id,
+		"查询 %s 报错",
+		url,
+	).Error(ctx, err)
 }

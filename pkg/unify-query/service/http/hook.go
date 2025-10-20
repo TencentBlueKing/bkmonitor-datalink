@@ -10,14 +10,11 @@
 package http
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
 // setDefaultConfig
@@ -110,16 +107,6 @@ func LoadConfig() {
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
-
-	promql.SetSegmented(&promql.Segmented{
-		Enable:      viper.GetBool(SegmentedEnable),
-		MaxRoutines: viper.GetInt(SegmentedMaxRoutines),
-		MinInterval: viper.GetString(SegmentedMinInterval),
-	})
-
-	log.Debugf(context.TODO(), "reload success new config address->[%s] port->[%d] username->[%s] password->[%s]"+
-		"going to reload the service.",
-		IPAddress, Port, Username, Password)
 }
 
 // init

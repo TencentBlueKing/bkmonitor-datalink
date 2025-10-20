@@ -39,28 +39,28 @@ func TestHandleClientError(t *testing.T) {
 			name:             "context canceled for ES",
 			url:              "http://elasticsearch.example.com:9200/logs/_search",
 			inputError:       context.Canceled,
-			expectedContains: "Query Timeout: the request to http://elasticsearch.example.com:9200/logs/_search timed out",
+			expectedContains: "查询 http://elasticsearch.example.com:9200/logs/_search 超时",
 			expectedStatus:   metadata.StorageTimeout,
 		},
 		{
 			name:             "context deadline exceeded for Doris",
 			url:              "http://doris.example.com:8030/api/query",
 			inputError:       context.DeadlineExceeded,
-			expectedContains: "Query Timeout: the request to http://doris.example.com:8030/api/query timed out",
+			expectedContains: "查询 http://doris.example.com:8030/api/query 超时",
 			expectedStatus:   metadata.StorageTimeout,
 		},
 		{
 			name:             "network connection error for InfluxDB",
 			url:              "http://influxdb.example.com:8086/query",
 			inputError:       errors.New("dial tcp: connection refused"),
-			expectedContains: "Query Error: failed to connect to http://influxdb.example.com:8086/query",
+			expectedContains: "查询 http://influxdb.example.com:8086/query 报错",
 			expectedStatus:   metadata.StorageError,
 		},
 		{
 			name:             "HTTP 404 error for BkSQL",
 			url:              "http://bksql.example.com/api/v1/query",
 			inputError:       errors.New("404 Not Found"),
-			expectedContains: "Query Error: failed to connect to http://bksql.example.com/api/v1/query",
+			expectedContains: "查询 http://bksql.example.com/api/v1/query 报错: 404 Not Found",
 			expectedStatus:   metadata.StorageError,
 		},
 	}
@@ -68,7 +68,7 @@ func TestHandleClientError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			err := HandleClientError(ctx, tt.url, tt.inputError)
+			err := HandleClientError(ctx, metadata.MsgQueryTs, tt.url, tt.inputError)
 
 			if tt.shouldReturnNil {
 				if err != nil {
@@ -95,16 +95,6 @@ func TestHandleClientError(t *testing.T) {
 				if status.Code != tt.expectedStatus {
 					t.Errorf("expected status code '%s', got '%s'", tt.expectedStatus, status.Code)
 				}
-			}
-
-			// Check if it's a ClientErr
-			var clientErr *ClientErr
-			if errors.As(err, &clientErr) {
-				if clientErr.OriginalError != tt.inputError {
-					t.Errorf("expected original error to be preserved")
-				}
-			} else {
-				t.Errorf("expected ClientErr, got %T", err)
 			}
 		})
 	}

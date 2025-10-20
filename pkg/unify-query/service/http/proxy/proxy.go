@@ -70,7 +70,10 @@ func HandleProxy(c *gin.Context) {
 
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			_ = metadata.Sprintf(
+				metadata.MsgHandlerAPI,
+				"代理接口查询异常",
+			).Error(ctx, err)
 			resp.failed(err)
 		}
 

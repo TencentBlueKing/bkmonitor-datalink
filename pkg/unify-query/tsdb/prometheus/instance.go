@@ -19,11 +19,9 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -66,7 +64,7 @@ func (i *Instance) InstanceType() string {
 	if i.instanceType != "" {
 		return i.instanceType
 	} else {
-		return consul.PrometheusStorageType
+		return metadata.PrometheusStorageType
 	}
 }
 
@@ -100,24 +98,32 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
-		return nil, false, result.Err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, false, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	return matrix, false, nil
@@ -142,23 +148,31 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
-		return nil, result.Err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, result.Err)
 	}
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	return vector, nil

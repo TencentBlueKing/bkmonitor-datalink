@@ -17,7 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Operator interface {
@@ -25,7 +24,7 @@ type Operator interface {
 	Clean()
 }
 
-func NewTracesOperator(conf Config) Operator {
+func NewOperator(conf Config) Operator {
 	ch := NewConfigHandler(conf)
 
 	to := tracesOperator{
@@ -76,7 +75,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					// 如果该 type 没有匹配到任何指标 直接跳过
 					dim, ok := to.dm.Match(t.Type, spans.At(k))
 					if !ok {
-						logger.Debugf("span miss matched, token=%v", record.Token.Original)
 						continue
 					}
 					// 匹配 resource keys 并提取合并维度
@@ -110,7 +108,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 				}
 			}
 		}
-
 	}
 
 	for k, v := range metricItems {

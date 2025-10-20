@@ -14,14 +14,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
 )
-
-// ToHostPath to host path
-func ToHostPath(path string) string {
-	return filepath.Join(config.HostPath, path)
-}
 
 // GetContainerMount get container mountMap
 func GetContainerMount(path string, container *Container) (map[string]string, error) {

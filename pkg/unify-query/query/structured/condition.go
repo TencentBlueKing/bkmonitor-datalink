@@ -100,15 +100,18 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 			// 然后创建一个新的行数组放置新的内容
 			rowBuffer = []ConditionField{field}
 		} else {
-			log.Errorf(context.TODO(), "unknown condition->[%s] in condition list, nothing will do.", c.ConditionList[index-1])
-			return nil, ErrUnknownConditionOperator
+			return nil, metadata.Sprintf(
+				metadata.MsgParserUnifyQuery,
+				"不支持的条件: %s",
+				c.ConditionList[index-1],
+			).Error(
+				context.TODO(),
+				ErrUnknownConditionOperator,
+			)
 		}
 	}
 	// 最后结束的时候，需要将所有的缓存放置到结果中
-	log.Debugf(context.TODO(), "loop finish, will flush all row->[%d] to the buffer now", len(rowBuffer))
 	totalBuffer = append(totalBuffer, rowBuffer)
-	log.Debugf(context.TODO(), "total row->[%d] is found.", len(totalBuffer))
-
 	return totalBuffer, nil
 }
 
@@ -128,26 +131,23 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 
 	// 1. 判断请求是否为空，如果为空，则直接返回空的内容
 	if len(c.FieldList) == 0 {
-		log.Debugf(context.TODO(), "field list is empty, nothing will return .")
 		return nil, nil, nil
 	}
 
 	if totalBuffer, err = c.AnalysisConditions(); err != nil {
-		log.Errorf(context.TODO(), "failed to analysis conditions for->[%s], nothing will return.", err)
+		err = metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"条件分析失败",
+		).Error(context.TODO(), err)
 		return nil, nil, err
 	}
 
 	if totalBuffer == nil {
-		log.Debugf(context.TODO(), "not condition need to return")
 		return nil, nil, nil
 	}
 
 	// 2. 判断是否二维数组，如果是表示过滤存在or关系，需要往ctx中塞入新的过滤条件信息
 	if len(totalBuffer) >= 2 {
-		log.Debugf(context.TODO(),
-			"condition is more than two level with->[%d], it contains or conditions, will update context.",
-			len(totalBuffer),
-		)
 		return nil, totalBuffer, fmt.Errorf("or 过滤条件无法直接转换为 promql 语句，请使用结构化查询")
 	}
 
@@ -156,14 +156,15 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 		// 如果发现有任何一个条件是存在contains，那么将这个buffer内容放置在ctx中返回
 		// 这样做的原因是为了提高influxdb的实际查询效率，如果是使用正则的方式进行查询，效率会严重减低
 		if c.Operator == ConditionContains || c.Operator == ConditionNotContains {
-			log.Debugf(context.TODO(), "found op->[%s] which cause contains op, will return the whole buffer in ctx.", c.Operator)
-
 			return nil, totalBuffer, nil
 		}
 
 		// 否则，就先构建对应的labelMatcher信息
 		if label, err = labels.NewMatcher(c.ToPromOperator(), c.DimensionName, c.Value[0]); err != nil {
-			log.Errorf(context.TODO(), "failed to make matcher for->[%s], will return err", err)
+			err = metadata.Sprintf(
+				metadata.MsgParserPromQL,
+				"创建标签匹配器失败",
+			).Error(context.TODO(), err)
 			return nil, nil, err
 		}
 

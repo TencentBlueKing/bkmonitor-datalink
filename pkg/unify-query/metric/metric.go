@@ -18,7 +18,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const (
@@ -204,8 +203,6 @@ func counterAdd(
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
-		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
 		metric.Add(val)
@@ -228,8 +225,6 @@ func observe(
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
-		} else {
-			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
 		metric.Observe(value)

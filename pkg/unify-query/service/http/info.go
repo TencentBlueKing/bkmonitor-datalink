@@ -10,9 +10,7 @@
 package http
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 
@@ -21,11 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -70,161 +64,10 @@ func SplitByte(str string, seq uint8) []string {
 	return r
 }
 
-// FormatSeriesData 解析返回格式
-// 返回数据格式为：
-// bk_apm_duration,apdex_type=tolerating,bk_instance_id=python:bk_monitorv3_web:::,
-// http_method=GET,http_status_code=500,kind=3,service_name=bk_monitorv3_web,span_name=HTTP\
-// GET,status_code=1,target=otlp,telemetry_sdk_language=python,telemetry_sdk_name=opentelemetry,
-// telemetry_sdk_version=1.6.0
-//
-// 44: ,
-// 61: =
-// 92: \
-func FormatSeriesData(infoData *InfoData, keys []string) []*SeriesData {
-	dataList := make([]*SeriesData, 0)
-
-	measurements := make(map[string]struct{}, 0)
-	measurementKeys := make(map[string][]string)
-	measurementSeries := make(map[string][][]string)
-
-	keyExists := make(map[string]struct{})
-	dataExists := make(map[string]struct{})
-	for _, table := range infoData.Tables {
-		for _, value := range table.Values {
-			if len(value) != 1 {
-				log.Errorf(context.TODO(), "table get wrong num of field,origin data:%v", value)
-				continue
-			}
-			row := SplitByte(value[0].(string), 44)
-			measurement := row[0]
-			if _, ok := measurements[measurement]; !ok {
-				measurements[measurement] = struct{}{}
-			}
-			if _, ok := measurementKeys[measurement]; !ok {
-				measurementKeys[measurement] = make([]string, 0)
-			}
-			if _, ok := measurementSeries[measurement]; !ok {
-				measurementSeries[measurement] = make([][]string, 0)
-			}
-
-			kv := make(map[string]string)
-			for _, columnStr := range row[1:] {
-				column := SplitByte(columnStr, 61)
-				if len(column) != 2 {
-					log.Errorf(context.TODO(), "tag split wrong,origin data:%v", columnStr)
-					continue
-				}
-
-				// 如果不传tag key，则取所有的key
-				if len(keys) == 0 {
-					if _, ok := keyExists[column[0]]; !ok {
-						keyExists[column[0]] = struct{}{}
-						measurementKeys[measurement] = append(measurementKeys[measurement], column[0])
-					}
-				} else {
-					for _, k := range keys {
-						if k != "" {
-							if _, ok := keyExists[k]; !ok {
-								keyExists[k] = struct{}{}
-								measurementKeys[measurement] = append(measurementKeys[measurement], k)
-							}
-						}
-					}
-				}
-
-				if _, ok := keyExists[column[0]]; ok {
-					kv[column[0]] = column[1]
-				}
-			}
-
-			l := make([]string, 0)
-			dataKey := ""
-			for _, k := range measurementKeys[measurement] {
-				l = append(l, kv[k])
-				dataKey = fmt.Sprintf("%s%s%s", dataKey, k, kv[k])
-			}
-			// 移除重复的series
-			if _, ok := dataExists[dataKey]; ok {
-				continue
-			}
-			measurementSeries[measurement] = append(measurementSeries[measurement], l)
-			dataExists[dataKey] = struct{}{}
-		}
-	}
-
-	for m := range measurements {
-		dataList = append(dataList, &SeriesData{
-			Measurement: m,
-			Keys:        measurementKeys[m],
-			Series:      measurementSeries[m],
-		})
-	}
-
-	return dataList
-}
-
-// NewTagValuesData :
-func NewTagValuesData(infoData *InfoData) *TagValuesData {
-	result := new(TagValuesData)
-	if len(infoData.Tables) == 0 {
-		return result
-	}
-
-	hashKey := make(map[string]struct{})
-	values := make(map[string][]string)
-	// 默认0为tag key，1为tag value
-	for _, table := range infoData.Tables {
-		for _, value := range table.Values {
-			if len(value) != 2 {
-				log.Errorf(context.TODO(), "table get wrong num of field,origin data:%v", value)
-				continue
-			}
-			tagKey, ok := value[0].(string)
-			if !ok {
-				log.Errorf(context.TODO(), "table get wrong type of field,origin data:%v", value)
-				continue
-			}
-			tagValue, ok := value[1].(string)
-			if !ok {
-				log.Errorf(context.TODO(), "table get wrong type of field,origin data:%v", value)
-				continue
-			}
-			tagValues, ok := values[tagKey]
-			if ok {
-				// 去重，tagKey和tagValue一样则不需要写入
-				checkKey := fmt.Sprintf("%s%s", tagKey, tagValue)
-				if _, d := hashKey[checkKey]; !d {
-					tagValues = append(tagValues, tagValue)
-					hashKey[checkKey] = struct{}{}
-				}
-			} else {
-				tagValues = make([]string, 0)
-				tagValues = append(tagValues, tagValue)
-			}
-			values[tagKey] = tagValues
-		}
-	}
-
-	result.Values = values
-
-	return result
-}
-
 // InfoData 返回结构化数据
 type InfoData struct {
 	dimensions map[string]bool
 	Tables     []*TablesItem `json:"series"`
-}
-
-// NewInfoData
-func NewInfoData(dimensions []string) *InfoData {
-	dimensionsMap := make(map[string]bool)
-	for _, dimension := range dimensions {
-		dimensionsMap[dimension] = true
-	}
-	return &InfoData{
-		dimensions: dimensionsMap,
-	}
 }
 
 // Fill
@@ -271,11 +114,6 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 		d.Tables = append(d.Tables, tableItem)
 	}
 	return nil
-}
-
-// HandleTimeSeries :
-func HandleTimeSeries(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.TimeSeries, c)
 }
 
 // HandlePrint  打印路由信息
@@ -478,149 +316,4 @@ func HandleTsDBPrint(c *gin.Context) {
 		}
 	}
 	c.String(200, strings.Join(results, "\n\n"))
-}
-
-// HandleTsQueryInfosRequest 查询info数据接口
-func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
-	var (
-		ctx  = c.Request.Context()
-		err  error
-		user = metadata.GetUser(ctx)
-	)
-
-	// 这里开始context就使用trace生成的了
-	ctx, span := trace.NewSpan(ctx, "handle-ts-info")
-	defer span.End(&err)
-
-	// 获取body中的具体参数
-	queryStmt, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
-		c.JSON(400, ErrResponse{Err: err.Error()})
-		return
-	}
-
-	span.Set("info-request-header", c.Request.Header)
-	span.Set("info-request-data", string(queryStmt))
-
-	// 如果header中有bkbizid，则以header中的值为最优先
-	spaceUid := user.SpaceUID
-
-	span.Set("request-space-uid", spaceUid)
-
-	params, err := infos.AnalysisQuery(string(queryStmt))
-	if err != nil {
-		log.Errorf(context.TODO(), "analysis info query failed for->[%s]", err)
-		c.JSON(400, ErrResponse{Err: err.Error()})
-		return
-	}
-
-	result, err := infos.QueryAsync(ctx, infoType, params, spaceUid)
-	if err != nil {
-		log.Errorf(context.TODO(), "query info failed for->[%s]", err)
-		c.JSON(400, ErrResponse{Err: err.Error()})
-		return
-	}
-
-	// 根据info type，转化为不同的数据
-	data, err := convertInfoData(ctx, infoType, params, result)
-	if err != nil {
-		c.JSON(400, ErrResponse{Err: err.Error()})
-		return
-	}
-	c.JSON(200, data)
-}
-
-// convertInfoData: 转化influxdb数据
-func convertInfoData(
-	ctx context.Context, infoType infos.InfoType, params *infos.Params, tables *influxdb.Tables,
-) (any, error) {
-	resp := NewInfoData(nil)
-	if tables == nil {
-		return resp, nil
-	}
-	err := resp.Fill(tables)
-	if err != nil {
-		log.Errorf(context.TODO(), "fill info data failed for->[%s]", err)
-		return nil, err
-	}
-
-	switch infoType {
-	case infos.TimeSeries:
-		return resp, nil
-	case infos.Series:
-		realResp := FormatSeriesData(resp, params.Keys)
-		return realResp, nil
-	case infos.TagValues:
-		// tagvalues需要进行一次数据格式转换
-		if len(resp.Tables) == 0 {
-			dimensions := params.Keys
-			result := &TagValuesData{
-				Values: make(map[string][]string),
-			}
-			for _, dimension := range dimensions {
-				result.Values[dimension] = []string{}
-			}
-			return result, nil
-		}
-		realResp := NewTagValuesData(resp)
-		return realResp, nil
-	case infos.TagKeys:
-		// tagKeys需要进行提取values
-		if len(resp.Tables) == 0 {
-			return []any{}, nil
-		}
-
-		// 合并多table数据，并去重
-		res := make(map[string]struct{}, 0)
-		result := make([]string, 0)
-		for _, table := range resp.Tables {
-			for _, value := range table.Values {
-				k, ok := value[0].(string)
-				if !ok {
-					continue
-				}
-				if _, ok = res[k]; !ok {
-					res[k] = struct{}{}
-					result = append(result, k)
-				}
-			}
-		}
-
-		return result, nil
-	case infos.FieldKeys:
-		if len(resp.Tables) == 0 {
-			return []any{}, nil
-		}
-
-		res := make(map[string]struct{}, 0)
-		result := make([]string, 0)
-		for _, table := range resp.Tables {
-			fieldIndex := 0
-			for index, value := range table.Columns {
-				if value == "fieldKey" {
-					fieldIndex = index
-					break
-				}
-			}
-			for _, value := range table.Values {
-				if len(value) <= fieldIndex+1 {
-					log.Errorf(context.TODO(), "get wrong length value:%v", value)
-					continue
-				}
-				v, ok := value[fieldIndex].(string)
-				if !ok {
-					log.Errorf(context.TODO(), "get wrong type value:%v", value)
-					continue
-				}
-				if _, ok = res[v]; !ok {
-					res[v] = struct{}{}
-					result = append(result, v)
-				}
-			}
-		}
-		return result, nil
-	}
-
-	return nil, fmt.Errorf("unsupport infotype %v", infoType)
 }

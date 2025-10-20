@@ -114,7 +114,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		service, ok := obj.(*corev1.Service)
 		if !ok {
 			logger.Errorf("excepted Service type, got %T", obj)
@@ -132,7 +132,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			service, ok := obj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", obj)
@@ -140,7 +140,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 			}
 			objs.Set(service)
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			service, ok := newObj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", newObj)
@@ -148,7 +148,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 			}
 			objs.Set(service)
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			service, ok := obj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", obj)

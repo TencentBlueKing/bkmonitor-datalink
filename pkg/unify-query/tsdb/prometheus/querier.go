@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -83,7 +82,10 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
-			log.Warnf(ctx, "not instance in %s", qry.StorageID)
+			metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询实例为空",
+			).Warn(ctx)
 			return
 		}
 
@@ -202,8 +204,11 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		create: func() (s storage.SeriesSet, ok bool) {
 			set, ok := <-promise
 			if set.Err() != nil {
-				log.Errorf(q.ctx, set.Err().Error())
-				return storage.ErrSeriesSet(set.Err()), false
+				err := metadata.Sprintf(
+					metadata.MsgQueryTs,
+					"查询异常",
+				).Error(q.ctx, set.Err())
+				return storage.ErrSeriesSet(err), false
 			}
 			if !ok {
 				return storage.ErrSeriesSet(ErrChannelReceived), false
@@ -238,7 +243,10 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			_ = metadata.Sprintf(
+				metadata.MsgQueryTs,
+				"查询异常",
+			).Error(q.ctx, err)
 			continue
 		}
 		for _, l := range lbl {

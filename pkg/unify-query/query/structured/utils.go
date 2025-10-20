@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
@@ -35,8 +35,11 @@ func getExpressionByParam(param any) (parser.Expr, error) {
 	case int:
 		return &parser.NumberLiteral{Val: float64(param.(int))}, nil
 	default:
-		log.Errorf(context.TODO(), "unknown vArg type:%#v", t)
-		return nil, ErrExprNotAllow
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"未知类型 %T",
+			t,
+		).Error(context.TODO(), ErrExprNotAllow)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
@@ -50,7 +51,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 
 	return &serviceDiscover{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
-		fetcher:         processor.NewSpanDimensionFetcher(),
+		fetcher:         fields.NewSpanFieldFetcher(),
 		matcher:         NewMatcher(),
 		configs:         configs,
 	}, nil
@@ -59,7 +60,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 type serviceDiscover struct {
 	processor.CommonProcessor
 	matcher Matcher
-	fetcher processor.SpanDimensionFetcher
+	fetcher fields.SpanFieldFetcher
 	configs *confengine.TierConfig // type: *ConfigHandler
 }
 
@@ -106,10 +107,10 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 		rules := ch.Get(span.Kind().String())
 	loop:
 		for _, rule := range rules {
-			df, pk := processor.DecodeDimensionFrom(rule.PredicateKey)
-			switch df {
+			ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
+			switch ff {
 			// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-			case processor.DimensionFromAttribute:
+			case fields.FieldFromAttributes:
 				// 1) 先判断是否有 predicateKey
 				if s := p.fetcher.FetchAttribute(span, pk); s == "" {
 					continue
@@ -125,15 +126,15 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}
 
 				p.matcher.Match(span, mappings, rule.ReplaceType)
 				break loop
-			case processor.DimensionFromMethod:
+
+			case fields.FieldFromMethod:
 				// 1) 先判断是否有 predicateKey
 				if s := p.fetcher.FetchMethod(span, pk); s == "" {
 					continue
@@ -149,8 +150,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}

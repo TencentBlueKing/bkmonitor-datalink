@@ -41,7 +41,7 @@ func (r *RegisterHandler) RegisterWithOutHandlerMap(method, handlerPath string, 
 	case http.MethodHead:
 		r.g.HEAD(handlerPath, handlerFunc...)
 	default:
-		log.Errorf(r.ctx, "registerHandlers error type is error %s", method)
+		log.Errorf(r.ctx, "不支持的HTTP方法类型: %s", method)
 		return
 	}
 }

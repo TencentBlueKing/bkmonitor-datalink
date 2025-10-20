@@ -16,18 +16,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -135,15 +134,12 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
-	if !resp.Result {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+	if !resp.Result || resp.Code != OK {
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "response-"
@@ -179,7 +175,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				_ = metadata.Sprintf(
+					metadata.MsgQueryVictoriaMetrics,
+					"查询异常",
+				).Error(ctx, err)
 				continue
 			}
 			point.T = nt
@@ -200,15 +199,12 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 }
 
 func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
-	if !resp.Result {
-		return nil, false, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, false, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+	if !resp.Result || resp.Code != OK {
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "vm-data"
@@ -243,7 +239,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryVictoriaMetrics,
+						"值格式解析异常",
+					).Error(ctx, err)
 					continue
 				}
 				points = append(points, promql.Point{
@@ -254,7 +253,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						log.Errorf(ctx, err.Error())
+						_ = metadata.Sprintf(
+							metadata.MsgQueryVictoriaMetrics,
+							"值格式解析异常",
+						).Error(ctx, err)
 						continue
 					}
 					points = append(points, promql.Point{
@@ -287,10 +289,11 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		log.Errorf(ctx, resp.Errors.Error)
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s, %s, %s",
+			resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		).Error(ctx, nil)
 	}
 
 	prefix := "vm-data"
@@ -343,7 +346,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 
 // GetInstanceType 获取实例类型
 func (i *Instance) InstanceType() string {
-	return consul.VictoriaMetricsStorageType
+	return metadata.VictoriaMetricsStorageType
 }
 
 // nocache 判定
@@ -406,7 +409,10 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return err
+		return metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常",
+		).Error(ctx, err)
 	}
 
 	queryCost := time.Since(startAnaylize)

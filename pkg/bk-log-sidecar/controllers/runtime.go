@@ -14,14 +14,27 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bk-log-sidecar/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 // NewRuntime new Runtime
 func NewRuntime(runtimeVersion string) define.Runtime {
 	// example: "docker://19.3.1", "containerd://1.4.1"
-	if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeContainerd)) || strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeEks)) {
+	if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeContainerd)) {
+		parts := strings.Split(runtimeVersion, "://")
+		if len(parts) < 2 {
+			utils.CheckError(fmt.Errorf("runtime init failed, invalid version format: %s", runtimeVersion))
+			return nil
+		}
+
+		version := parts[1]
+		if utils.CompareVersion(version, "1.4") >= 0 {
+			return NewContainerdV2Runtime()
+		} else {
+			return NewContainerdRuntime()
+		}
+	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeEks)) {
 		return NewContainerdRuntime()
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeDocker)) {
 		return NewDockerRuntime()

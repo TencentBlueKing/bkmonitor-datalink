@@ -31,14 +31,14 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 	ins := createTestInstance(ctx)
 
 	mock.BkSQL.Set(map[string]any{
-		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":20,"external_api_call_time_mills":{"bkbase_auth_api":64,"bkbase_meta_api":6,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE","Analyzed":"true"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c1","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c2","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":27,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":9,"connect_db":56,"match_query_routing_rule":0,"check_permission":66,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":13168,"timetaken":0.161,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SHOW CREATE TABLE `bklog_pure_v4_log_doris_for_unify_query_2`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":28,"external_api_call_time_mills":{"bkbase_auth_api":44,"bkbase_meta_api":13,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Analyzed":"false","Type":"int","Null":"No","Key":"true","Default":null,"Extra":""},{"Field":"__shard_key__","Analyzed":"false","Type":"bigint","Null":"No","Key":"true","Default":null,"Extra":""},{"Field":"__unique_key__","Analyzed":"false","Type":"varchar(512)","Null":"Yes","Key":"true","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Analyzed":"false","Type":"bigint","Null":"No","Key":"false","Default":null,"Extra":"NONE"},{"Field":"dtEventTime","Analyzed":"false","Type":"varchar(32)","Null":"No","Key":"false","Default":null,"Extra":"NONE"},{"Field":"localTime","Analyzed":"false","Type":"varchar(32)","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext","Analyzed":"false","Type":"variant","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"cloudId","Analyzed":"false","Type":"double","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"file","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"gseIndex","Analyzed":"false","Type":"double","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"iterationIndex","Analyzed":"false","Type":"double","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"level","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"log","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"message","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"path","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"report_time","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"serverIp","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"time","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"trace_id","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.container_id","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.container_image","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.container_name","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_pod","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_pod_ip","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_pod_namespace","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_pod_uid","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_workload_name","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"},{"Field":"__ext.io_kubernetes_workload_type","Analyzed":"false","Type":"text","Null":"Yes","Key":"false","Default":null,"Extra":"NONE"}],"bk_biz_ids":[],"stage_elapsed_time_mills":{"check_query_syntax":0,"query_db":16,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":12,"connect_db":48,"match_query_routing_rule":0,"check_permission":45,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"DESC mapleleaf_2.bklog_pure_v4_log_doris_for_unify_query_2","total_record_size":19880,"trino_cluster_host":"","timetaken":0.121,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 	})
 
 	end := time.UnixMilli(1730118889181)
 	start := time.UnixMilli(1730118589181)
 
 	datasource := "bklog"
-	db := "132_lol_new_login_queue_login_1min"
+	db := "bklog_pure_v4_log_doris_for_unify_query_2"
 	measurement := "doris"
 
 	for name, c := range map[string]struct {
@@ -50,8 +50,11 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 				DataSource:  datasource,
 				DB:          db,
 				Measurement: measurement,
+				FieldAlias: map[string]string{
+					"container_name": "__ext.container_name",
+				},
 			},
-			expected: `{"__ext":{"Type":"varchar(65533)","Analyzed":false},"__shard_key__":{"Type":"bigint","Analyzed":false},"c1":{"Type":"text","Analyzed":false},"c2":{"Type":"text","Analyzed":false},"cloudid":{"Type":"double","Analyzed":false},"dteventtime":{"Type":"varchar(32)","Analyzed":false},"dteventtimestamp":{"Type":"bigint","Analyzed":false},"file":{"Type":"varchar(65533)","Analyzed":false},"gseindex":{"Type":"double","Analyzed":false},"iterationindex":{"Type":"double","Analyzed":false},"level":{"Type":"varchar(65533)","Analyzed":false},"localtime":{"Type":"varchar(32)","Analyzed":false},"log":{"Type":"text","Analyzed":true},"message":{"Type":"varchar(65533)","Analyzed":false},"path":{"Type":"text","Analyzed":false},"report_time":{"Type":"varchar(65533)","Analyzed":false},"serverip":{"Type":"varchar(65533)","Analyzed":false},"thedate":{"Type":"int","Analyzed":false},"time":{"Type":"text","Analyzed":false},"trace_id":{"Type":"varchar(65533)","Analyzed":false}}`,
+			expected: `{"__ext":{"alias_name":"","field_name":"__ext","field_type":"variant","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.container_id":{"alias_name":"","field_name":"__ext.container_id","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.container_image":{"alias_name":"","field_name":"__ext.container_image","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.container_name":{"alias_name":"container_name","field_name":"__ext.container_name","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_pod":{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_pod_ip":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_pod_namespace":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_pod_uid":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_workload_name":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__ext.io_kubernetes_workload_type":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"text","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__shard_key__":{"alias_name":"","field_name":"__shard_key__","field_type":"bigint","origin_field":"__shard_key__","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__unique_key__":{"alias_name":"","field_name":"__unique_key__","field_type":"varchar(512)","origin_field":"__unique_key__","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"cloudId":{"alias_name":"","field_name":"cloudId","field_type":"double","origin_field":"cloudId","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"dtEventTime":{"alias_name":"","field_name":"dtEventTime","field_type":"varchar(32)","origin_field":"dtEventTime","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"dtEventTimeStamp":{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"bigint","origin_field":"dtEventTimeStamp","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"file":{"alias_name":"","field_name":"file","field_type":"text","origin_field":"file","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"gseIndex":{"alias_name":"","field_name":"gseIndex","field_type":"double","origin_field":"gseIndex","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"iterationIndex":{"alias_name":"","field_name":"iterationIndex","field_type":"double","origin_field":"iterationIndex","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"level":{"alias_name":"","field_name":"level","field_type":"text","origin_field":"level","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"localTime":{"alias_name":"","field_name":"localTime","field_type":"varchar(32)","origin_field":"localTime","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"message":{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"path":{"alias_name":"","field_name":"path","field_type":"text","origin_field":"path","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"report_time":{"alias_name":"","field_name":"report_time","field_type":"text","origin_field":"report_time","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"serverIp":{"alias_name":"","field_name":"serverIp","field_type":"text","origin_field":"serverIp","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"thedate":{"alias_name":"","field_name":"thedate","field_type":"int","origin_field":"thedate","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"time":{"alias_name":"","field_name":"time","field_type":"text","origin_field":"time","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"trace_id":{"alias_name":"","field_name":"trace_id","field_type":"text","origin_field":"trace_id","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -61,7 +64,7 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 			assert.Nil(t, err)
 
 			actual, _ := json.Marshal(fact.FieldMap())
-			assert.JSONEq(t, c.expected, string(actual))
+			assert.Equal(t, c.expected, string(actual))
 		})
 	}
 }
@@ -1108,7 +1111,6 @@ func TestInstance_bkSql(t *testing.T) {
 
 			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY _timestamp_",
 		},
-
 		//{
 		//	name: "aggregate multi function",
 		//	query: &metadata.Query{
@@ -1239,21 +1241,21 @@ func TestInstance_bkSql(t *testing.T) {
 			query: &metadata.Query{
 				DB:          "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
 				Measurement: sql_expr.Doris,
-				Field:       "origin_field",
+				Field:       "alias_field",
 				FieldAlias: map[string]string{
-					"origin_field": "new_field",
+					"alias_field": "origin_field",
 				},
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",
 						Window:     time.Hour,
-						Dimensions: []string{"origin_field"},
+						Dimensions: []string{"alias_field"},
 					},
 				},
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "origin_field",
+							DimensionName: "alias_field",
 							Operator:      "eq",
 							Value:         []string{"123"},
 						},
@@ -1261,7 +1263,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT `new_field` AS `origin_field`, COUNT(`new_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `new_field` = '123' GROUP BY origin_field, _timestamp_",
+			expected: "SELECT `origin_field` AS `alias_field`, COUNT(`origin_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `origin_field` = '123' GROUP BY alias_field, _timestamp_",
 		},
 		{
 			name:  "query with regexp_extract and AS alias",
@@ -1274,7 +1276,62 @@ func TestInstance_bkSql(t *testing.T) {
 				QueryString: "buy weekly card success",
 				SQL:         `SELECT DISTINCT (regexp_extract(log, 'openid:(\\d+)', 1)) AS id LIMIT 100000`,
 			},
-			expected: "SELECT DISTINCT regexp_extract(`log`, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR (`log` = 'weekly' OR (`log` = 'card' OR `log` = 'success')))) LIMIT 100000",
+			expected: "SELECT DISTINCT regexp_extract(`log`, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) LIMIT 100000",
+		},
+		{
+			name: "object field eq and aggregate with sql and union table",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: []string{
+					"100915_bklog_pub_svrlog_pangusvr_other_9_analysis",
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				},
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "thedate",
+							Operator:      metadata.ConditionExisted,
+						},
+					},
+				},
+				QueryString: "",
+				SQL: `SELECT 
+    path, 
+    COUNT(*) AS total_count WHERE thedate>='20250923' AND thedate<='20250923' GROUP BY path LIMIT 100`,
+			},
+			start:    time.UnixMilli(1758607200000),
+			end:      time.UnixMilli(1758610800000),
+			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) AS combined_data GROUP BY `path` LIMIT 100",
+		},
+		{
+			name: "object field eq and aggregate with sql and union table",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: []string{
+					"100915_bklog_pub_svrlog_pangusvr_other_9_analysis",
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				},
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "thedate",
+							Operator:      metadata.ConditionExisted,
+						},
+					},
+				},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"path"},
+					},
+				},
+				Size: 100,
+			},
+			start:    time.UnixMilli(1758607200000),
+			end:      time.UnixMilli(1758610800000),
+			expected: "SELECT `path`, COUNT(*) AS `_value_` FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) AS combined_data GROUP BY `path` LIMIT 100",
 		},
 	}
 
@@ -1288,10 +1345,15 @@ func TestInstance_bkSql(t *testing.T) {
 				c.end = end
 			}
 
-			fieldsMap := map[string]sql_expr.FieldOption{
+			fieldsMap := metadata.FieldsMap{
 				"text": {
-					Type:     sql_expr.DorisTypeText,
-					Analyzed: false,
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
+				},
+				"origin_field": {
+					AliasName:  "alias_field",
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
 				},
 			}
 
@@ -1909,7 +1971,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
 		},
 		{
 			name: "object field eq and aggregate with sql - 2",
@@ -1942,7 +2004,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
+			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
 	}
 
@@ -1961,11 +2023,11 @@ LIMIT
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]sql_expr.FieldOption{
-				"text":                             {Type: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {Type: sql_expr.DorisTypeInt},
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
+				"text":                             {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
@@ -2058,10 +2120,10 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 		"SHOW CREATE TABLE `5000140_bklog_container_log_demo_analysis`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":20,"external_api_call_time_mills":{"bkbase_auth_api":64,"bkbase_meta_api":6,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE","Analyzed":"true"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c1","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c2","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":27,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":9,"connect_db":56,"match_query_routing_rule":0,"check_permission":66,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":13168,"timetaken":0.161,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 
 		// normal-case
-		"SELECT `bk_host_id`, COUNT(*) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' GROUP BY `bk_host_id` LIMIT 2": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"5000140_bklog_container_log_demo_analysis":{"start":"2025022600","end":"2025022623"}},"cluster":"doris_bklog","totalRecords":26,"external_api_call_time_mills":{"bkbase_meta_api":6},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"bk_host_id":5843771,"_value_":6520005},{"bk_host_id":4580470,"_value_":703143}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":204,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":39,"match_query_routing_rule":0,"check_permission":6,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["bk_host_id","_value_"],"total_record_size":6952,"timetaken":0.257,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"bk_host_id","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"3592ea81c52ab826aba587d91e5054b6","span_id":"f21eca23481c778d"}`,
+		"SELECT DISTINCT `bk_host_id`, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 2": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"5000140_bklog_container_log_demo_analysis":{"start":"2025022600","end":"2025022623"}},"cluster":"doris_bklog","totalRecords":2,"external_api_call_time_mills":{"bkbase_meta_api":6},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"bk_host_id":5843771,"_timestamp_":1740551971000},{"bk_host_id":4580470,"_timestamp_":1740551971001}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":204,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":39,"match_query_routing_rule":0,"check_permission":6,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["bk_host_id","_timestamp_"],"total_record_size":6952,"timetaken":0.257,"result_schema":[{"field_type":"int","field_name":"bk_host_id","field_alias":"bk_host_id","field_index":0},{"field_type":"long","field_name":"_timestamp_","field_alias":"_timestamp_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"3592ea81c52ab826aba587d91e5054b6","span_id":"f21eca23481c778d"}`,
 
 		// object field
-		"SELECT CAST(dimensions['pipelineName'] AS STRING) AS `dimensions__bk_46__pipelineName`, COUNT(*) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' GROUP BY dimensions__bk_46__pipelineName LIMIT 3": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"100147_apm_devops_event":{"start":"2025082900","end":"2025082923"}},"cluster":"monitor-log1","totalRecords":5,"external_api_call_time_mills":{"bkbase_meta_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"dimensions__bk_46__pipelineName":"Arashi 配置热刷","_value_":46},{"dimensions__bk_46__pipelineName":"PAC-free-bird-mr-V2","_value_":1229},{"dimensions__bk_46__pipelineName":"[子流水线]free-bird-unittest","_value_":132},{"dimensions__bk_46__pipelineName":"free-bird-unittest@MERGE_REQUEST","_value_":96},{"dimensions__bk_46__pipelineName":"【Server】变更TcaplusDB","_value_":21}],"bk_biz_ids":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":37,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":35,"match_query_routing_rule":0,"check_permission":1,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["dimensions__bk_46__pipelineName","_value_"],"total_record_size":1856,"trino_cluster_host":"","timetaken":0.076,"result_schema":[{"field_type":"string","field_name":"__c0","field_alias":"dimensions__bk_46__pipelineName","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["100147_apm_devops_event"]},"errors":null,"trace_id":"606f1e90be4b2ceb050ee8e176bf1164","span_id":"b181deac3ae9807c"}`,
+		"SELECT DISTINCT CAST(dimensions['pipelineName'] AS STRING) AS `dimensions__bk_46__pipelineName`, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 3": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"100147_apm_devops_event":{"start":"2025082900","end":"2025082923"}},"cluster":"monitor-log1","totalRecords":5,"external_api_call_time_mills":{"bkbase_meta_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"dimensions__bk_46__pipelineName":"Arashi 配置热刷","_timestamp_":1740551971000},{"dimensions__bk_46__pipelineName":"PAC-free-bird-mr-V2","_timestamp_":1740551971001},{"dimensions__bk_46__pipelineName":"[子流水线]free-bird-unittest","_timestamp_":1740551971002},{"dimensions__bk_46__pipelineName":"free-bird-unittest@MERGE_REQUEST","_timestamp_":1740551971003},{"dimensions__bk_46__pipelineName":"【Server】变更TcaplusDB","_timestamp_":1740551971004}],"bk_biz_ids":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":37,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":35,"match_query_routing_rule":0,"check_permission":1,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["dimensions__bk_46__pipelineName","_timestamp_"],"total_record_size":1856,"trino_cluster_host":"","timetaken":0.076,"result_schema":[{"field_type":"string","field_name":"dimensions__bk_46__pipelineName","field_alias":"dimensions__bk_46__pipelineName","field_index":0},{"field_type":"long","field_name":"_timestamp_","field_alias":"_timestamp_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["100147_apm_devops_event"]},"errors":null,"trace_id":"606f1e90be4b2ceb050ee8e176bf1164","span_id":"b181deac3ae9807c"}`,
 	})
 
 	// 测试用例
@@ -2129,7 +2191,7 @@ func createTestInstance(ctx context.Context) *bksql.Instance {
 		Timeout:   time.Minute,
 		MaxLimit:  1e4,
 		Tolerance: 5,
-		Curl:      &curl.HttpCurl{Log: log.DefaultLogger},
+		Curl:      &curl.HttpCurl{},
 	})
 	if err != nil {
 		log.Fatalf(ctx, err.Error())

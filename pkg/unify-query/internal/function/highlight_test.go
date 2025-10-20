@@ -10,10 +10,253 @@
 package function
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
+
+// TestQuery_LabelMap 测试 Query.LabelMap 函数（包含 QueryString 和 Conditions 的组合）
+func TestQuery_LabelMap(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query *metadata.Query
+
+		expected map[string][]LabelMapValue
+
+		data          map[string]any
+		highLightData map[string]any
+	}{
+		{
+			name: "只有 Conditions",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"status": {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "只有 QueryString",
+			query: &metadata.Query{
+				QueryString: "level:warning",
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {{Value: "warning", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "querystring - 1",
+			query: &metadata.Query{
+				QueryString: `file: *elasticsearch\/query_string* AND level: ("warn" OR "error") AND trace_id: /[\d]+/ `,
+			},
+			expected: map[string][]LabelMapValue{
+				"file": {
+					{
+						Value: "elasticsearch/query_string", Operator: metadata.ConditionContains,
+					},
+				},
+				"level": {
+					{
+						Value: "warn", Operator: metadata.ConditionEqual,
+					},
+					{
+						Value: "error", Operator: metadata.ConditionEqual,
+					},
+				},
+				"trace_id": {
+					{
+						Value: "[\\d]+", Operator: metadata.ConditionRegEqual,
+					},
+				},
+			},
+			data: map[string]any{
+				"file":     `elasticsearch/query_string.go:76`,
+				"level":    "warn",
+				"trace_id": "my12356bro",
+			},
+			highLightData: map[string]any{
+				"file": []string{
+					`<mark>elasticsearch/query_string</mark>.go:76`,
+				},
+				"level": []string{
+					`<mark>warn</mark>`,
+				},
+				"trace_id": []string{
+					"my<mark>12356</mark>bro",
+				},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 组合",
+			query: &metadata.Query{
+				QueryString: "service:web",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"service": {{Value: "web", Operator: metadata.ConditionEqual}},
+				"status":  {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段",
+			query: &metadata.Query{
+				QueryString: "level:error",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {
+					{
+						Value: "error", Operator: metadata.ConditionEqual,
+					},
+				},
+				"status": {
+					{
+						Value: "warning", Operator: metadata.ConditionEqual,
+					},
+				},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段和值（去重）",
+			query: &metadata.Query{
+				QueryString: "level:error",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "level",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions - 1",
+			query: &metadata.Query{
+				QueryString: "NOT service:web AND component:database",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      metadata.ConditionNotEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      metadata.ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-2"},
+							Operator:      metadata.ConditionEqual,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"component": {
+					{Value: "database", Operator: metadata.ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: metadata.ConditionEqual},
+					{Value: "us-east-2", Operator: metadata.ConditionContains},
+				},
+				"service": {
+					{Value: "web", Operator: metadata.ConditionNotEqual},
+				},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions",
+			query: &metadata.Query{
+				QueryString: "service:web AND component:database",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      metadata.ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"service": {
+					{Value: "web", Operator: metadata.ConditionEqual},
+				},
+				"component": {
+					{Value: "database", Operator: metadata.ConditionEqual},
+				},
+				"status": {
+					{Value: "warning", Operator: metadata.ConditionEqual},
+					{Value: "error", Operator: metadata.ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: metadata.ConditionEqual},
+				},
+			},
+		},
+		{
+			name:     "空 QueryString 和空 Conditions",
+			query:    nil,
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := LabelMap(context.TODO(), tc.query)
+			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
+
+			if len(tc.data) > 0 {
+				hf := HighLightFactory{
+					labelMap:          result,
+					maxAnalyzedOffset: 200,
+				}
+				resultData := hf.Process(tc.data)
+				assert.Equal(t, tc.highLightData, resultData, "Query.HighLightFactory result should match expected")
+			}
+		})
+	}
+}
 
 func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
 	type fields struct {

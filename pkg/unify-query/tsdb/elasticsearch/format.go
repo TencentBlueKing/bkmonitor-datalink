@@ -24,8 +24,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -53,6 +53,7 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+	Object = "object"
 
 	ESStep = "."
 
@@ -86,6 +87,9 @@ const (
 	Should    = "should"
 	ShouldNot = "should_not"
 )
+
+// text、object、nested 类型不支持聚合，其他类型默认支持
+var nonAggTypes = []string{Text, Object, Nested}
 
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
@@ -146,7 +150,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	fieldMap map[string]map[string]any
+	fieldsMap metadata.FieldsMap
 
 	data map[string]any
 
@@ -182,8 +186,8 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
-	f.fieldMap = fieldMap
+func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
+	f.fieldsMap = fieldsMap
 	return f
 }
 
@@ -320,16 +324,46 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
-		return v
+	if v, ok := f.fieldsMap[k]; ok {
+		return v.FieldType
 	}
 
 	return ""
 }
 
+func (s *FormatFactory) queryString(str string, isPrefix bool) elastic.Query {
+	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	if isPrefix {
+		q.Type("phrase_prefix")
+	}
+	return q
+}
+
+func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefix bool) elastic.Query {
+	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
+		FieldsMap: f.fieldsMap,
+	})
+
+	if node != nil && node.Error() == nil {
+		return lucene_parser.MergeQuery(node.DSL())
+	}
+
+	var reason string
+	if node != nil && node.Error() != nil {
+		reason = fmt.Sprintf(" 失败原因：%s", node.Error())
+	}
+
+	metadata.Sprintf(
+		metadata.MsgParserLucene, "%s 解析失败%s",
+		q, reason,
+	).Warn(ctx)
+
+	return f.queryString(q, isPrefix)
+}
+
 func (f *FormatFactory) FieldType() map[string]string {
 	ft := make(map[string]string)
-	for k := range f.fieldMap {
+	for k := range f.fieldsMap {
 		nv := f.GetFieldType(k)
 		if nv != "" {
 			ft[k] = nv
@@ -436,7 +470,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 
@@ -567,7 +604,10 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 

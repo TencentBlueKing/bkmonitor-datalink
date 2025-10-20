@@ -128,13 +128,13 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				log.Errorf(context.TODO(), "deregister check:%s failed,error:%s", i.checkID, err)
+				log.Errorf(context.TODO(), "consul check id:%s deregistered", i.checkID)
 			}
 			err = i.CancelService()
 			if err != nil {
-				log.Errorf(context.TODO(), "cancel service:%s failed,error:%s", i.serviceID, err)
+				log.Errorf(context.TODO(), "consul service id:%s canceled", i.serviceID)
 			}
-			log.Warnf(context.TODO(), "cancel service:%s with check:%s done", i.serviceID, i.checkID)
+			log.Warnf(context.TODO(), "consul service id:%s canceled", i.serviceID)
 		}()
 		defer ticker.Stop()
 
@@ -145,7 +145,7 @@ func (i *Instance) LoopAwakeService() error {
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
 				if err := i.CheckPass(); err != nil {
-					log.Errorf(context.TODO(), "FAILED TO CHECK CONSUL, may cause the domain name failed for err->[%s]!", err)
+					log.Errorf(context.TODO(), "consul check id:%s send failed", i.checkID)
 				}
 			}
 		}

@@ -17,6 +17,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var globalInstance *Instance
@@ -51,10 +52,12 @@ func SetInstance(ctx context.Context, serviceName string, options *goRedis.Unive
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
-	log.Debugf(ctx, "[redis] set instance %s, %+v", serviceName, options)
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
-		log.Errorf(ctx, "new redis instance error: %s", err)
+		err = metadata.Sprintf(
+			metadata.MsgQueryRedis,
+			"创建Redis实例失败",
+		).Error(ctx, err)
 	}
 	return err
 }

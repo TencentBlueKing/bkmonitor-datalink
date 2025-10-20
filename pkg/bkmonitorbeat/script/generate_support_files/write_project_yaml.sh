@@ -59,6 +59,12 @@ config_templates:
               items:
                 title: interface
                 type: string
+            mountpoint_black_list:
+              title: mountpoint_black_list
+              type: array
+              items:
+                title: interface
+                type: string
             corefile_pattern:
               title: corefile_pattern
               type: string

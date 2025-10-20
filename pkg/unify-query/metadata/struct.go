@@ -18,12 +18,6 @@ import (
 
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/spf13/cast"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
 const (
@@ -58,6 +52,23 @@ const (
 	TypeDate      = "date"
 	TypeDateNanos = "date_nanos"
 )
+
+type FieldsMap map[string]FieldOption
+
+func (f FieldsMap) Field(k string) FieldOption {
+	return f[k]
+}
+
+type FieldOption struct {
+	AliasName       string   `json:"alias_name"`
+	FieldName       string   `json:"field_name"`
+	FieldType       string   `json:"field_type"`
+	OriginField     string   `json:"origin_field"`
+	IsAgg           bool     `json:"is_agg"`
+	IsAnalyzed      bool     `json:"is_analyzed"`
+	IsCaseSensitive bool     `json:"is_case_sensitive"`
+	TokenizeOnChars []string `json:"tokenize_on_chars"`
+}
 
 type VmCondition string
 
@@ -120,6 +131,7 @@ type Query struct {
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
 	DB              string     `json:"db,omitempty"`               // 存储 DB
+	DBs             []string   `json:"dbs,omitempty"`              // 多个 DB 用于用户合并查询
 	Measurement     string     `json:"measurement,omitempty"`      // 存储 Measurement
 	MeasurementType string     `json:"measurement_type,omitempty"` // 存储类型
 	Field           string     `json:"field,omitempty"`            // 存储 Field
@@ -168,6 +180,32 @@ type Query struct {
 	Collapse    *Collapse `json:"collapse,omitempty"`
 
 	DryRun bool `json:"dry_run,omitempty"`
+
+	// sql 使用SELECT DISTINCT 语法
+	IsDistinct bool `json:"is_distinct,omitempty"`
+
+	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
+	IsMergeDB bool `json:"is_merge_db"`
+}
+
+// GetMergeDBStatus 判断是否进行 db 合并处理
+func (q *Query) GetMergeDBStatus() bool {
+	// 如果 db 为空，则不需要合并
+	if q.DB == "" {
+		return false
+	}
+
+	// 如果是 es 可以使用合并，优化查询速度
+	if q.StorageType == ElasticsearchStorageType {
+		return true
+	}
+
+	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
+		return true
+	}
+
+	return false
 }
 
 func (q *Query) VMExpand() *VmExpand {
@@ -178,54 +216,6 @@ func (q *Query) VMExpand() *VmExpand {
 		},
 		ClusterName: q.StorageName,
 	}
-}
-
-func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
-	labelMap := make(map[string][]function.LabelMapValue)
-	labelCheck := make(map[string]struct{})
-
-	addLabel := func(key string, operator string, values ...string) {
-		if len(values) == 0 {
-			return
-		}
-
-		for _, value := range values {
-			checkKey := key + ":" + value + ":" + operator
-			if _, ok := labelCheck[checkKey]; !ok {
-				labelCheck[checkKey] = struct{}{}
-				labelMap[key] = append(labelMap[key], function.LabelMapValue{
-					Value:    value,
-					Operator: operator,
-				})
-			}
-		}
-	}
-
-	for _, condition := range q.AllConditions {
-		for _, cond := range condition {
-			if cond.Value != nil && len(cond.Value) > 0 {
-				// 处理通配符
-				if cond.IsWildcard {
-					addLabel(cond.DimensionName, ConditionContains, cond.Value...)
-				} else {
-					switch cond.Operator {
-					// 只保留等于和包含的用法，其他类型不用处理
-					case ConditionEqual, ConditionExact, ConditionContains:
-						addLabel(cond.DimensionName, cond.Operator, cond.Value...)
-					}
-				}
-			}
-		}
-	}
-
-	if q.QueryString != "" {
-		err := querystring_parser.LabelMap(q.QueryString, addLabel)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return labelMap, nil
 }
 
 type HighLight struct {
@@ -274,6 +264,22 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+}
+
+// Signature 生成条件的唯一签名，用于条件比较和去重
+// 例如：host|eq|server1 或 status|eq|1,2,3
+func (c ConditionField) Signature() string {
+	sortedValues := make([]string, len(c.Value))
+	copy(sortedValues, c.Value)
+	sort.Strings(sortedValues)
+
+	return fmt.Sprintf("%v|%v|%v|%s|%s|%s|",
+		c.IsWildcard,
+		c.IsSuffix,
+		c.IsPrefix,
+		c.DimensionName,
+		c.Operator,
+		strings.Join(sortedValues, ","))
 }
 
 // TimeAggregation 时间聚合字段
@@ -356,20 +362,6 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 	return VmCondition(cond)
 }
 
-// ToJson 通过 tableID 排序，并且返回 json 序列化
-func (qMetric *QueryMetric) ToJson(isSort bool) string {
-	if isSort {
-		sort.SliceStable(qMetric.QueryList, func(i, j int) bool {
-			a := qMetric.QueryList[i].TableID
-			b := qMetric.QueryList[j].TableID
-			return a < b
-		})
-	}
-
-	s, _ := json.Marshal(qMetric)
-	return string(s)
-}
-
 func (qRef QueryReference) Count() int {
 	var i int
 	qRef.Range("", func(qry *Query) {
@@ -420,58 +412,6 @@ func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
 	return window, timezone
 }
 
-// ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
-func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
-	vmClusterNames := set.New[string]()
-	vmResultTable := set.New[string]()
-	metricFilterCondition := make(map[string]string)
-
-	for referenceName, references := range qRef {
-		if len(references) == 0 {
-			continue
-		}
-
-		// 因为是直查，reference 还需要承担聚合语法生成，所以 vm 不支持同指标的拼接，所以这里只取第一个 reference
-		reference := references[0]
-		if 0 < len(reference.QueryList) {
-			vmConditions := set.New[string]()
-			for _, query := range reference.QueryList {
-				if query.VmRt == "" {
-					continue
-				}
-
-				vmResultTable.Add(query.VmRt)
-				vmConditions.Add(string(query.VmCondition))
-				vmClusterNames.Add(query.StorageName)
-			}
-
-			filterCondition := ""
-			if vmConditions.Size() > 0 {
-				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
-			}
-
-			metricFilterCondition[referenceName] = filterCondition
-		}
-	}
-
-	if vmResultTable.Size() == 0 {
-		return vmExpand
-	}
-
-	vmExpand = &VmExpand{
-		MetricFilterCondition: metricFilterCondition,
-		ResultTableList:       vmResultTable.ToArray(),
-	}
-	sort.Strings(vmExpand.ResultTableList)
-
-	// 当所有的 vm 集群都一样的时候，才进行传递
-	if vmClusterNames.Size() == 1 {
-		vmExpand.ClusterName = vmClusterNames.First()
-	}
-
-	return vmExpand
-}
-
 func (vs VmCondition) String() string {
 	return string(vs)
 }
@@ -503,63 +443,6 @@ func (a Aggregates) Copy() Aggregates {
 		}
 	}
 	return aggs
-}
-
-func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]string) {
-	if len(os) == 0 {
-		return
-	}
-	if len(list) == 0 {
-		return
-	}
-
-	sort.SliceStable(list, func(i, j int) bool {
-		for _, o := range os {
-			a := list[i][o.Name]
-			b := list[j][o.Name]
-
-			if a == b {
-				continue
-			}
-
-			if ft, ok := fieldType[o.Name]; ok {
-				switch ft {
-				case TypeDate, TypeDateNanos:
-					t1 := function.StringToNanoUnix(cast.ToString(a))
-					t2 := function.StringToNanoUnix(cast.ToString(b))
-
-					if t1 > 0 && t2 > 0 {
-						if o.Ast {
-							return t1 < t2
-						} else {
-							return t1 > t2
-						}
-					}
-				}
-			}
-
-			// 如果是 float 格式则使用 float 进行对比
-			f1, f1Err := cast.ToFloat64E(a)
-			f2, f2Err := cast.ToFloat64E(b)
-			if f1Err == nil && f2Err == nil {
-				if o.Ast {
-					return f1 < f2
-				} else {
-					return f1 > f2
-				}
-			}
-
-			// 最后使用 string 的方式进行排序
-			t1 := cast.ToString(a)
-			t2 := cast.ToString(b)
-			if o.Ast {
-				return t1 < t2
-			} else {
-				return t1 > t2
-			}
-		}
-		return false
-	})
 }
 
 func (fa FieldAlias) OriginField(f string) string {

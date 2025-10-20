@@ -12,13 +12,14 @@ package structured
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -63,7 +64,7 @@ func TestQueryToMetric(t *testing.T) {
 						DB:              db,
 						Measurement:     field,
 						StorageID:       storageID,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						ClusterName:     clusterName,
 						MeasurementType: redis.BkSplitMeasurement,
 						Field:           promql.StaticField,
@@ -94,7 +95,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -107,10 +108,11 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `__name__="kube_pod_info_value"`,
 						VmConditionNum:  1,
 						DataLabel:       "influxdb",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 					{
 						DataSource:      BkMonitor,
-						StorageType:     consul.VictoriaMetricsStorageType,
+						StorageType:     md.VictoriaMetricsStorageType,
 						StorageID:       "2",
 						TableID:         "result_table.vm",
 						VmRt:            "2_bcs_prom_computation_result_table",
@@ -124,6 +126,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum:  2,
 						DataLabel:       "vm",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -147,7 +150,7 @@ func TestQueryToMetric(t *testing.T) {
 						TableID:         tableID,
 						DataLabel:       "influxdb",
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -159,10 +162,11 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:        "UTC",
 						VmCondition:     `__name__="kube_pod_info_value"`,
 						VmConditionNum:  1,
+						Aggregates:      make(md.Aggregates, 0),
 					},
 					{
 						DataSource:      BkMonitor,
-						StorageType:     consul.VictoriaMetricsStorageType,
+						StorageType:     md.VictoriaMetricsStorageType,
 						StorageID:       "2",
 						TableID:         "result_table.vm",
 						VmRt:            "2_bcs_prom_computation_result_table",
@@ -176,6 +180,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum:  2,
 						DataLabel:       "vm",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -199,7 +204,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
-						StorageType:     consul.InfluxDBStorageType,
+						StorageType:     md.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
 						Field:           promql.StaticField,
@@ -212,6 +217,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmCondition:     `__name__=~"kube_.*_value"`,
 						VmConditionNum:  1,
 						DataLabel:       "influxdb",
+						Aggregates:      make(md.Aggregates, 0),
 					},
 				},
 				ReferenceName: "a",
@@ -231,7 +237,7 @@ func TestQueryToMetric(t *testing.T) {
 					{
 						DataSource:  BkData,
 						TableID:     "2_table_id",
-						StorageType: consul.BkSqlStorageType,
+						StorageType: md.BkSqlStorageType,
 						DB:          "2_table_id",
 						Field:       "kube_.*",
 					},
@@ -277,7 +283,13 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 
-			assert.Equal(t, c.metric.ToJson(true), metric.ToJson(true))
+			sort.SliceStable(metric.QueryList, func(i, j int) bool {
+				return metric.QueryList[i].TableID < metric.QueryList[j].TableID
+			})
+
+			a, _ := json.Marshal(c.metric)
+			b, _ := json.Marshal(metric)
+			assert.Equal(t, string(a), string(b))
 		})
 	}
 }
@@ -339,7 +351,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -373,7 +385,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -437,7 +449,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -471,7 +483,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -522,7 +534,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -585,7 +597,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  4,
 								VmCondition:     `bk_biz_id="2", bk_obj_id!="0", result_table_id="rt_by_cmdb_level", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -652,7 +664,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  4,
 								VmCondition:     `bk_biz_id="2", bk_obj_id!="0", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -724,7 +736,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -792,7 +804,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -868,7 +880,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -943,7 +955,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.VictoriaMetricsStorageType,
+								StorageType:     md.VictoriaMetricsStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1017,7 +1029,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1090,7 +1102,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								AllConditions: md.AllConditions{
@@ -1161,7 +1173,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum:  2,
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "usage",
 								MeasurementType: redis.BKTraditionalMeasurement,
 								DataLabel:       "cpu_summary",
@@ -1235,6 +1247,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								MetricNames:    []string{"bklog:result_table:es:usage"},
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1242,7 +1255,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								FieldAlias: md.FieldAlias{
 									"alias_ns": "__ext.host.bk_set_name",
 								},
-								StorageType: consul.ElasticsearchStorageType,
+								StorageType: md.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1306,6 +1319,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1315,7 +1329,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									"alias_ns": "__ext.host.bk_set_name",
 								},
 								MetricNames: []string{"bklog:result_table:es:usage"},
-								StorageType: consul.ElasticsearchStorageType,
+								StorageType: md.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1378,7 +1392,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "exporter",
 								Measurements:    []string{"exporter"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								Field:           "metric_value",
 								MeasurementType: redis.BkExporter,
 								Aggregates: md.Aggregates{
@@ -1443,7 +1457,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Measurement:     "standard_v2_time_series",
 								Measurements:    []string{"standard_v2_time_series"},
 								ClusterName:     "default",
-								StorageType:     consul.InfluxDBStorageType,
+								StorageType:     md.InfluxDBStorageType,
 								MeasurementType: redis.BkStandardV2TimeSeries,
 								Field:           ".*",
 								Aggregates: md.Aggregates{
@@ -1504,7 +1518,110 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+		},
+		"判断是否进行合并 vm": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkMonitor,
+						TableID:       "",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: true,
+			promql:        `count(a)`,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"2_bcs_prom_computation_result_table"},
+				MetricFilterCondition: map[string]string{
+					"a": `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
+				},
+			},
+			refString: `{"a":[{"QueryList":[{"storage_type":"influxdb","storage_id":"2","cluster_name":"default","data_source":"bkmonitor","data_label":"influxdb","table_id":"result_table.influxdb","db":"result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"victoria_metrics","storage_id":"2","data_source":"bkmonitor","data_label":"vm","table_id":"result_table.vm","vm_rt":"2_bcs_prom_computation_result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"result_table_id=\"2_bcs_prom_computation_result_table\", __name__=\"kube_pod_info_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"合并 es 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "merge_es",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index","es_index_1"],"field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es_with_time_filed","db":"es_index","dbs":["es_index"],"field":"kube_pod_info","time_field":{"name":"end_time","type":"long","unit":"microsecond"},"timezone":"UTC","fields":["kube_pod_info"],"metric_names":["bklog:result_table:es_with_time_filed:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"手动开启合并 doris 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "multi_doris",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+				IsMergeDB:   true,
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","dbs":["100915_bklog_pub_svrlog_pangusvr_lobby_analysis","100915_bklog_pub_svrlog_pangusvr_other_9_analysis"],"measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":true}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
+		"默认不合并 doris 查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "multi_doris",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: false,
+			promql:        `count(a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_2","db":"100915_bklog_pub_svrlog_pangusvr_other_9_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_2:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1517,6 +1634,16 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			md.SetUser(ctx, &md.User{SpaceUID: influxdb.SpaceUid})
 			ref, err := tc.ts.ToQueryReference(ctx)
 
+			for _, r := range ref {
+				for _, q := range r {
+					sort.SliceStable(q.QueryList, func(i, j int) bool {
+						a := q.QueryList[i]
+						b := q.QueryList[j]
+						return a.TableID < b.TableID
+					})
+				}
+			}
+
 			assert.Nil(t, err)
 			refJson, _ := json.Marshal(ref)
 
@@ -1527,7 +1654,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			assert.JSONEq(t, tc.refString, string(refJson))
 
-			vmExpand = ref.ToVmExpand(ctx)
+			vmExpand = query.ToVmExpand(ctx, ref)
 			isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()
 
 			assert.Equal(t, tc.isDirectQuery, isDirectQuery)
@@ -1612,7 +1739,7 @@ func TestOrderBy(t *testing.T) {
 		"-minute1",
 	}}
 
-	queryTs.OrderBy.Orders().SortSliceList(data, map[string]string{
+	query.SortSliceListWithTime(data, queryTs.OrderBy.Orders(), map[string]string{
 		"minute1": md.TypeDateNanos,
 	})
 

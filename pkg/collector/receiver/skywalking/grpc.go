@@ -304,22 +304,7 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 		meter, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				r := &define.Record{
-					RecordType:    define.RecordMetrics,
-					RequestType:   define.RequestGrpc,
-					RequestClient: define.RequestClient{IP: ip},
-					Data:          converter.Get(),
-				}
-				prettyprint.Pretty(define.RecordMetrics, r)
-				code, processorName, err := s.Validate(r)
-				if err != nil {
-					err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
-					logger.WarnRate(time.Minute, r.Token.Original, err)
-					metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
-				} else {
-					s.Publish(r)
-				}
-				return stream.SendAndClose(&commonv3.Commands{})
+				break
 			}
 			return err
 		}
@@ -328,6 +313,25 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 		}
 		converter.Convert(meter)
 	}
+
+	r := &define.Record{
+		RecordType:    define.RecordMetrics,
+		RequestType:   define.RequestGrpc,
+		RequestClient: define.RequestClient{IP: ip},
+		Data:          converter.Get(),
+	}
+	prettyprint.Pretty(define.RecordMetrics, r)
+	code, processorName, err := s.Validate(r)
+	if err != nil {
+		err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
+		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
+	} else {
+		s.Publish(r)
+	}
+
+	return stream.SendAndClose(&commonv3.Commands{})
+
 }
 
 func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatchServer) error {

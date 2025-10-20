@@ -551,9 +551,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			err = metadata.Sprintf(
 				metadata.MsgQueryRawScroll,
 				"停止 scroll 失败",
-			).Error(ctx, stopErr)
+			).Error(ctx, fmt.Errorf("origin: %w; stop: %v", err, stopErr))
 		} else {
-			err = stopErr
+			return total, list, done, metadata.Sprintf(
+				metadata.MsgQueryRawScroll,
+				"停止 scroll 失败",
+			).Error(ctx, stopErr)
 		}
 	}
 

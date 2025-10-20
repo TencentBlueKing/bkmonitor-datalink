@@ -4613,7 +4613,8 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 					break
 				}
 
-				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				fmt.Printf("done: %v\n", done)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -4624,11 +4625,12 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 				})
 
 				actual, _ := json.Marshal(list)
-				opt, _ := json.Marshal(option)
 
 				assert.JSONEq(t, c.list[loop], string(actual))
 				assert.Equal(t, c.total[loop], total)
-				assert.JSONEq(t, c.option[loop], string(opt))
+
+				expectedDone := len(list) == 0 || total == 0
+				assert.Equal(t, expectedDone, done, "done should be true when no data returned")
 
 				loop++
 			}
@@ -4761,7 +4763,8 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 					break
 				}
 
-				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				fmt.Printf("loop:%d, done:%v\n", loop, done)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -4782,19 +4785,13 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 				assert.JSONEq(t, c.list[loop], string(actual))
 				assert.Equal(t, c.total[loop], total)
 
+				// 根据数据判断是否完成
+				expectedDone := len(list) == 0 || total == 0
+				assert.Equal(t, expectedDone, done, "done should be true when no data returned")
+
 				var ks []string
-				for k := range option {
-					ks = append(ks, k)
-				}
 				sort.Strings(ks)
-				os := make([]*metadata.ResultTableOption, 0, len(option))
-				for _, k := range ks {
-					os = append(os, option[k])
-				}
 
-				optActual, _ := json.Marshal(os)
-
-				assert.JSONEq(t, c.option[loop], string(optActual))
 				loop++
 			}
 		})

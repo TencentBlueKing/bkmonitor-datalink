@@ -326,9 +326,9 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 		err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
-	} else {
-		s.Publish(r)
+		return err
 	}
+	s.Publish(r)
 
 	return stream.SendAndClose(&commonv3.Commands{})
 

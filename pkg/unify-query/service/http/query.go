@@ -503,12 +503,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
-				if err != nil {
+				size, _, option, rawErr := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if rawErr != nil {
 					slice.FailedNum++
 					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
 					if slice.FailedNum >= slice.MaxFailedNum {
-						errCh <- err
+						errCh <- rawErr
 					}
 					return
 				}
@@ -545,9 +545,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	// 清理之前提前获取是否完成的标记位
 	done := session.Done()
-	err = session.Stop(ctx)
-	if err != nil {
-		return 0, nil, true, err
+	stopErr := session.Stop(ctx)
+	if stopErr != nil {
+		if err != nil {
+			err = fmt.Errorf("previous error: %v, stop error: %v", err, stopErr)
+		} else {
+			err = stopErr
+		}
 	}
 
 	return total, list, done, err

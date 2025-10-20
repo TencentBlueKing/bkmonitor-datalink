@@ -67,17 +67,8 @@ type ScrollSession struct {
 }
 
 func (s *ScrollSession) Slice(key string) *SliceStatus {
-	s.mu.RLock()
-	if slice, ok := s.SlicesMap[key]; ok {
-		s.mu.RUnlock()
-		return slice
-	}
-	s.mu.RUnlock()
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// Double-check after acquiring write lock
 	if slice, ok := s.SlicesMap[key]; ok {
 		return slice
 	}

@@ -111,6 +111,9 @@ bk-collector:
         - "maxconns;maxConnectionsRatio=256"
 
 
+  # ================================= Cache ==================================
+  cache: []
+
   # ============================== Pingserver ================================
   pingserver:
     disabled: false

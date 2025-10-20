@@ -97,6 +97,25 @@ processor:
       burst: {{ qps_config.qps }}
 {%- endif %}
 
+{% if field_normalizer_config is defined %}
+  - name: "{{ field_normalizer_config.name }}"
+    config:
+      fields:
+        {%- for field in field_normalizer_config.fields %}
+        - kind: "{{ field.kind }}"
+          predicate_key: "{{ field.predicate_key }}"
+          rules:
+            {%- for rule in field.rules %}
+            - key: "{{ rule.key }}"
+              op: "{{ rule.op }}"
+              values:
+                {%- for value in rule.values %}
+                - "{{ value }}"
+                {%- endfor %}
+            {%- endfor %}
+        {%- endfor %}
+{%- endif %}
+
 {% if token_checker_config is defined %}
   - name: "{{ token_checker_config.name }}"
     config:
@@ -133,6 +152,12 @@ processor:
           {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
           - "{{ drop_key }}"
           {%- endfor %}
+      default_value:
+        {%- for default_value_config in  resource_filter_config.default_value %}
+        - type: "{{ default_value_config.type }}"
+          key: "{{ default_value_config.key }}"
+          value: "{{ default_value_config.value }}"
+        {%- endfor %}
 {%- endif %}
 
 {% if resource_fill_dimensions_config is defined %}

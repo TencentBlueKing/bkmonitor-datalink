@@ -15,22 +15,18 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
-var (
-	testModel, _ = newModel(context.Background())
-)
+var testModel, _ = newModel(context.Background())
 
 func TestModel_Resources(t *testing.T) {
 	mock.Init()
@@ -38,18 +34,17 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "business", "datasource", "deamonset", "deployment", "domain", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "business", "container", "datasource", "deamonset", "deployment", "domain", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
 	mock.Init()
-	ctx := metadata.InitHashID(context.Background())
-	index, err := testModel.getResourceIndex(ctx, "k8s_address")
-	assert.Nil(t, err)
+	index := ResourcesIndex("k8s_address")
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "address"}, index)
 
-	index, err = testModel.getResourceIndex(ctx, "clb")
-	assert.Equal(t, fmt.Errorf("resource is empty clb"), err)
+	// 未配置该资源
+	index = ResourcesIndex("clb")
+	assert.Nil(t, index)
 }
 
 func TestModel_GetPath(t *testing.T) {
@@ -282,6 +277,19 @@ func TestModel_GetPath(t *testing.T) {
 				{"pod", "apm_service_instance", "system", "node"},
 			},
 		},
+		"container info": {
+			target: "container",
+			matcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			source: "container",
+			indexMatcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			expected: [][]string{
+				{"container"},
+			},
+		},
 	}
 
 	for n, c := range testCases {
@@ -326,20 +334,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 
 	timestamp := int64(1693973987)
 	mock.Vm.Set(map[string]any{
-		"query:1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
-			ResultType: victoriaMetrics.VectorType,
-			Result: []victoriaMetrics.Series{
-				{
-					Metric: map[string]string{
-						"bk_target_ip": "127.0.0.1",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-			},
-		},
-		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+		// system to pod
+		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
 			ResultType: victoriaMetrics.VectorType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -364,7 +360,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				},
 			},
 		},
-		"query:1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
+		// pod_name to system through apm service instance
+		"query:1693973987count by (bk_target_ip) (b * on (apm_application_name, apm_service_name, apm_service_instance_name) group_left () (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
 			ResultType: victoriaMetrics.VectorType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -377,7 +374,9 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				},
 			},
 		},
-		"query:1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+		// vm node to system
+		// node to system
+		"query:1693973987count by (bk_target_ip) (a)": victoriaMetrics.Data{
 			ResultType: victoriaMetrics.VectorType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -385,7 +384,24 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 						"bk_target_ip": "127.0.0.1",
 					},
 					Value: []any{
-						1693973987, 1,
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		// container info
+		"query:1693973987count by (bcs_cluster_id, namespace, pod, container, version) (a)": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-2",
+						"version":        "1.2.3",
+					},
+					Value: []any{
+						1693973987, "1",
 					},
 				},
 			},
@@ -395,114 +411,318 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	testCases := map[string]struct {
 		source       cmdb.Resource
 		target       cmdb.Resource
-		matcher      cmdb.Matcher
+		indexMatcher cmdb.Matcher
+
+		expandMatcher  cmdb.Matcher
+		targetInfoShow bool
+
 		pathResource []cmdb.Resource
 
-		expected struct {
-			source     cmdb.Resource
-			sourceInfo cmdb.Matcher
-			targetList cmdb.Matchers
-		}
-		error error
+		expectedTargetList cmdb.Matchers
+		expectedSource     cmdb.Resource
+		expectedSourceInfo cmdb.Matcher
+		expectedTarget     cmdb.Resource
+		expectedPath       []string
+		error              error
 	}{
 		"vm node to system": {
 			target: "system",
-			matcher: cmdb.Matcher{
+			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
 				"demo":           "1",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "node",
-				sourceInfo: cmdb.Matcher{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"node":           "node-127-0-0-1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
-					},
+			expectedPath: []string{"node", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
 				},
 			},
+			expectedSource: "node",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"node":           "node-127-0-0-1",
+			},
+			expectedTarget: "system",
 		},
 		"node to system": {
 			target: "system",
-			matcher: cmdb.Matcher{
+			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
 				"demo":           "1",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "node",
-				sourceInfo: cmdb.Matcher{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"node":           "node-127-0-0-1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
-					},
+			expectedPath: []string{"node", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
 				},
 			},
+			expectedSource: "node",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"node":           "node-127-0-0-1",
+			},
+			expectedTarget: "system",
 		},
 		"system to pod": {
 			target: "pod",
-			matcher: cmdb.Matcher{
+			indexMatcher: cmdb.Matcher{
 				"bk_target_ip":   "127.0.0.1",
 				"bcs_cluster_id": "BCS-K8S-00000",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "system",
-				sourceInfo: cmdb.Matcher{
-					"bk_target_ip": "127.0.0.1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-1",
-					},
-					cmdb.Matcher{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-2",
-					},
-				},
-			},
-		},
-		"pod_name to system": {
-			target: "system",
-			matcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00000",
-				"namespace":      "bkmonitor-operator",
-				"pod_name":       "bkm-pod-1",
-			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "pod",
-				sourceInfo: cmdb.Matcher{
+			expectedPath: []string{"system", "node", "pod"},
+			expectedTargetList: cmdb.Matchers{
+				{
 					"bcs_cluster_id": "BCS-K8S-00000",
 					"namespace":      "bkmonitor-operator",
 					"pod":            "bkm-pod-1",
 				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
+				{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-2",
+				},
+			},
+			expectedSource: "system",
+			expectedSourceInfo: map[string]string{
+				"bk_target_ip": "127.0.0.1",
+			},
+			expectedTarget: "pod",
+		},
+		"pod_name to system through apm service instance": {
+			target: "system",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkmonitor-operator",
+				"pod_name":       "bkm-pod-1",
+			},
+			expectedPath: []string{"pod", "apm_service_instance", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
+				},
+			},
+			expectedSource: "pod",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkmonitor-operator",
+				"pod":            "bkm-pod-1",
+			},
+			expectedTarget: "system",
+		},
+		"container info": {
+			source: "container",
+			indexMatcher: cmdb.Matcher{
+				"container": "container",
+			},
+			targetInfoShow: true,
+			expectedPath:   []string{"container"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-2",
+					"version":        "1.2.3",
+				},
+			},
+			expectedSource: "container",
+			expectedSourceInfo: map[string]string{
+				"container": "container",
+			},
+			expectedTarget: "container",
+		},
+	}
+
+	for n, c := range testCases {
+		t.Run(n, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
+			assert.Nil(t, err)
+			if err == nil {
+				assert.Equal(t, c.expectedPath, path)
+				assert.Equal(t, c.expectedTargetList, rets)
+				assert.Equal(t, c.expectedSource, source)
+				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
+				assert.Equal(t, c.expectedTarget, target)
+			}
+		})
+	}
+}
+
+func TestModel_GetResourceMatcherRange(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	start := int64(1693973987)
+	end := int64(1693974407)
+	step := "1m"
+
+	mock.Vm.Set(map[string]any{
+		// host info
+		"query_range:1693973987169397440760count by (host_id, version, env_name, env_type, service_version, service_type) (count_over_time(a[1m]))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"host_id":         "12345",
+						"version":         "1.2.2",
+						"env_name":        "my",
+						"env_type":        "test",
+						"service_version": "1.2.2",
+						"service_type":    "test",
+					},
+					Values: []victoriaMetrics.Value{
+						{1693973987, "1"},
+						{1693974047, "1"},
+						{1693974107, "1"},
+						{1693974167, "1"},
+					},
+				},
+				{
+					Metric: map[string]string{
+						"host_id":         "12345",
+						"version":         "1.2.3",
+						"env_name":        "my",
+						"env_type":        "test",
+						"service_version": "1.2.3",
+						"service_type":    "test",
+					},
+					Values: []victoriaMetrics.Value{
+						{1693974107, "1"},
+						{1693974167, "1"},
+						{1693974327, "1"},
+						{1693974407, "1"},
+					},
+				},
+			},
+		},
+	})
+
+	testCases := map[string]struct {
+		source       cmdb.Resource
+		target       cmdb.Resource
+		indexMatcher cmdb.Matcher
+
+		expandMatcher  cmdb.Matcher
+		targetInfoShow bool
+
+		pathResource []cmdb.Resource
+
+		expectedTargetList []cmdb.MatchersWithTimestamp
+		expectedSource     cmdb.Resource
+		expectedSourceInfo cmdb.Matcher
+		expectedTarget     cmdb.Resource
+		expectedPath       []string
+		error              error
+	}{
+		"host info": {
+			source: "host",
+			indexMatcher: cmdb.Matcher{
+				"host_id": "12345",
+			},
+			targetInfoShow: true,
+			expectedPath:   []string{"host"},
+			expectedSource: "host",
+			expectedSourceInfo: map[string]string{
+				"host_id": "12345",
+			},
+			expectedTarget: "host",
+			expectedTargetList: []cmdb.MatchersWithTimestamp{
+				{
+					Timestamp: 1693973987000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.2",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.2",
+							"service_type":    "test",
+						},
+					},
+				},
+				{
+					Timestamp: 1693974047000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.2",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.2",
+							"service_type":    "test",
+						},
+					},
+				},
+				{
+					Timestamp: 1693974107000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.2",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.2",
+							"service_type":    "test",
+						},
+						{
+							"host_id":         "12345",
+							"version":         "1.2.3",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.3",
+							"service_type":    "test",
+						},
+					},
+				},
+				{
+					Timestamp: 1693974167000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.2",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.2",
+							"service_type":    "test",
+						},
+						{
+							"host_id":         "12345",
+							"version":         "1.2.3",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.3",
+							"service_type":    "test",
+						},
+					},
+				},
+				{
+					Timestamp: 1693974327000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.3",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.3",
+							"service_type":    "test",
+						},
+					},
+				},
+				{
+					Timestamp: 1693974407000,
+					Matchers: cmdb.Matchers{
+						{
+							"host_id":         "12345",
+							"version":         "1.2.3",
+							"env_name":        "my",
+							"env_type":        "test",
+							"service_version": "1.2.3",
+							"service_type":    "test",
+						},
 					},
 				},
 			},
@@ -513,95 +733,14 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
-			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
+			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
-			if err != nil {
-				log.Errorf(ctx, err.Error())
-			} else {
-				assert.Equal(t, c.expected.source, source)
-				assert.Equal(t, c.expected.sourceInfo, matcher)
-				assert.Equal(t, c.expected.targetList, rets)
-			}
-		})
-	}
-}
-
-func TestMakeQuery(t *testing.T) {
-	mock.Init()
-	ctx := metadata.InitHashID(context.Background())
-
-	type Case struct {
-		Name    string
-		Path    []string
-		Matcher map[string]string
-		promQL  string
-		step    time.Duration
-	}
-
-	cases := []Case{
-		{
-			Name: "level1 and 1m",
-			Path: []string{"pod", "node"},
-			Matcher: map[string]string{
-				"pod":            "pod1",
-				"namespace":      "ns1",
-				"bcs_cluster_id": "cluster1",
-			},
-			step:   time.Minute,
-			promQL: `(count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}[1m])))`,
-		},
-		{
-			Name: "level1",
-			Path: []string{"pod", "node"},
-			Matcher: map[string]string{
-				"pod":            "pod1",
-				"namespace":      "ns1",
-				"bcs_cluster_id": "cluster1",
-			},
-			promQL: `(count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}))`,
-		},
-		{
-			Name: "level2",
-			Path: []string{"pod", "node", "system"},
-			Matcher: map[string]string{
-				"pod":            "pod1",
-				"namespace":      "ns1",
-				"bcs_cluster_id": "cluster1",
-			},
-			promQL: `count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))`,
-		},
-		{
-			Name: "level3",
-			Path: []string{"node", "pod", "replicaset", "deployment"},
-			Matcher: map[string]string{
-				"node":           "node1",
-				"bcs_cluster_id": "cluster1",
-			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id="cluster1",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace!="",node="node1",pod!=""}))))`,
-		},
-		{
-			Name: "level4",
-			Path: []string{"system", "node", "pod", "replicaset", "deployment"},
-			Matcher: map[string]string{
-				"bk_target_ip": "127.0.0.1",
-			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id!="",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id!="",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip="127.0.0.1",node!=""})))))`,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.Name, func(t *testing.T) {
-			ctx = metadata.InitHashID(ctx)
-			queryTs, err := testModel.makeQuery(ctx, "", c.Path, c.Matcher, c.step)
-			assert.NoError(t, err)
-			assert.NotNil(t, queryTs)
-
-			if queryTs != nil {
-				promQLString, promQLErr := queryTs.ToPromQL(ctx)
-				assert.Nil(t, promQLErr)
-				if promQLErr == nil {
-					assert.Equal(t, c.promQL, promQLString)
-				}
+			if err == nil {
+				assert.Equal(t, c.expectedPath, path)
+				assert.Equal(t, c.expectedTargetList, rets)
+				assert.Equal(t, c.expectedSource, source)
+				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
+				assert.Equal(t, c.expectedTarget, target)
 			}
 		})
 	}

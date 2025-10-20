@@ -14,15 +14,17 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/prometheus/remote"
-	"github.com/prometheus/prometheus/prompb"
 	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 // Instance influxDB 查询引擎
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	host     string
@@ -76,9 +78,9 @@ type Options struct {
 }
 
 type StreamSeriesSetOption struct {
-	Span        *trace.Span
-	Stream      remote.QueryTimeSeriesService_RawClient
-	Limiter     *rate.Limiter
-	Timeout     time.Duration
-	MetricLabel *prompb.Label
+	Span       *trace.Span
+	Stream     remote.QueryTimeSeriesService_RawClient
+	Limiter    *rate.Limiter
+	Timeout    time.Duration
+	MetricName string
 }

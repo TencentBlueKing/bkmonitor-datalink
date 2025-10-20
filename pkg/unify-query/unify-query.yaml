@@ -21,7 +21,6 @@ redis:
   service_name: bkmonitorv3:spaces
 victoria_metrics:
   timeout: 30s
-  cluster_name: abc
 influxdb:
   ping:
     count: 3
@@ -42,6 +41,7 @@ es:
   max_concurrency: 200
   alias_refresh_period: 1m
 http:
+  multiTenantMode: false
   address: 127.0.0.1
   path:
     es: /query/es

@@ -25,8 +25,7 @@ import (
 	"golang.org/x/time/rate"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -110,7 +109,7 @@ func StartStreamSeriesSet(
 				span.Set("resp-point-num", pointsNum)
 
 				metric.TsDBRequestSecond(
-					ctx, sub, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
+					ctx, sub, fmt.Sprintf("%s_grpc", metadata.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)
@@ -192,7 +191,6 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	log.Errorf(s.ctx, "StartStreamSeriesSet handle err: %s", err.Error())
 	s.err = nil
 	s.errMtx.Unlock()
 }
@@ -229,10 +227,6 @@ func (s *streamSeriesSet) At() storage.Series {
 func (s *streamSeriesSet) Err() error {
 	s.errMtx.Lock()
 	defer s.errMtx.Unlock()
-
-	if s.err != nil {
-		log.Errorf(s.ctx, s.err.Error())
-	}
 	return errors.Wrap(s.err, s.name)
 }
 

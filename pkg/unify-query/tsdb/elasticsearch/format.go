@@ -24,8 +24,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -41,9 +41,6 @@ const (
 
 	DefaultReverseAggName = "reverse_nested"
 
-	Type       = "type"
-	Properties = "properties"
-
 	Min         = "min"
 	Max         = "max"
 	Sum         = "sum"
@@ -56,19 +53,12 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+	Object = "object"
 
 	ESStep = "."
-)
 
-const (
-	KeyDocID = "__doc_id"
-	KeySort  = "sort"
-
-	KeyIndex   = "__index"
-	KeyTableID = "__result_table"
-	KeyAddress = "__address"
-
-	KeyDataLabel = "__data_label"
+	NanoTimeFormat  = "2006-01-02T15:04:05.000000000Z"
+	NanoQueryFormat = "strict_date_optional_time_nanos"
 )
 
 const (
@@ -98,6 +88,9 @@ const (
 	ShouldNot = "should_not"
 )
 
+// text、object、nested 类型不支持聚合，其他类型默认支持
+var nonAggTypes = []string{Text, Object, Nested}
+
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
 	Error         error
@@ -108,34 +101,11 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
-		switch v.(type) {
+		switch nv := v.(type) {
 		case map[string]any:
-			mapData(k, v.(map[string]any), res)
+			mapData(k, nv, res)
 		default:
-			res[k] = v
-		}
-	}
-}
-
-func mapProperties(prefix string, data map[string]any, res map[string]string) {
-	if prefix != "" {
-		if t, ok := data[Type]; ok {
-			switch ts := t.(type) {
-			case string:
-				res[prefix] = ts
-			}
-		}
-	}
-
-	if properties, ok := data[Properties]; ok {
-		for k, v := range properties.(map[string]any) {
-			if prefix != "" {
-				k = prefix + ESStep + k
-			}
-			switch v.(type) {
-			case map[string]any:
-				mapProperties(k, v.(map[string]any), res)
-			}
+			res[k] = nv
 		}
 	}
 }
@@ -150,9 +120,10 @@ type ValueAgg struct {
 }
 
 type TimeAgg struct {
-	Name     string
-	Window   time.Duration
-	Timezone string
+	Name           string
+	Window         time.Duration
+	TimeZone       string
+	TimeZoneOffset int64
 }
 
 type TermAgg struct {
@@ -179,8 +150,9 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	mapping map[string]string
-	data    map[string]any
+	fieldsMap metadata.FieldsMap
+
+	data map[string]any
 
 	aggInfoList aggInfoList
 	orders      metadata.Orders
@@ -193,12 +165,13 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap map[string][]function.LabelMapValue
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
-		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
 
 		// default encode / decode
@@ -210,6 +183,30 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
+	f.fieldsMap = fieldsMap
+	return f
+}
+
+func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	if labelMap == nil {
+		return f
+	}
+
+	var newLabelMap map[string][]function.LabelMapValue
+	if f.decode == nil {
+		newLabelMap = labelMap
+	} else {
+		newLabelMap = make(map[string][]function.LabelMapValue, len(labelMap))
+		for k, v := range labelMap {
+			newLabelMap[f.decode(k)] = v
+		}
+	}
+
+	f.labelMap = newLabelMap
 	return f
 }
 
@@ -289,6 +286,9 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	if timeFormat == "" {
 		timeFormat = function.Second
 	}
+	if f.decode != nil {
+		valueKey = f.decode(valueKey)
+	}
 
 	f.start = start
 	f.end = end
@@ -316,25 +316,64 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 	f.orders = make(metadata.Orders, 0, len(orders))
 	for _, order := range orders {
 		if f.decode != nil {
-			order.Name = f.encode(order.Name)
+			order.Name = f.decode(order.Name)
 		}
 		f.orders = append(f.orders, order)
 	}
 	return f
 }
 
-// WithMappings 合并 mapping，后面的合并前面的
-func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
-	for _, mapping := range mappings {
-		mapProperties("", mapping, f.mapping)
+func (f *FormatFactory) GetFieldType(k string) string {
+	if v, ok := f.fieldsMap[k]; ok {
+		return v.FieldType
 	}
-	return f
+
+	return ""
+}
+
+func (s *FormatFactory) queryString(str string, isPrefix bool) elastic.Query {
+	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	if isPrefix {
+		q.Type("phrase_prefix")
+	}
+	return q
+}
+
+func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefix bool) elastic.Query {
+	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
+		FieldsMap: f.fieldsMap,
+	})
+
+	if node != nil && node.Error() == nil {
+		return lucene_parser.MergeQuery(node.DSL())
+	}
+
+	var reason string
+	if node != nil && node.Error() != nil {
+		reason = fmt.Sprintf(" 失败原因：%s", node.Error())
+	}
+
+	metadata.Sprintf(
+		metadata.MsgParserLucene, "%s 解析失败%s",
+		q, reason,
+	).Warn(ctx)
+
+	return f.queryString(q, isPrefix)
+}
+
+func (f *FormatFactory) FieldType() map[string]string {
+	ft := make(map[string]string)
+	for k := range f.fieldsMap {
+		nv := f.GetFieldType(k)
+		if nv != "" {
+			ft[k] = nv
+		}
+	}
+	return ft
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
-	var (
-		err error
-	)
+	var err error
 
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
@@ -358,10 +397,10 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	return query, err
 }
 
-func (f *FormatFactory) timeAgg(name string, window time.Duration, timezone string) {
+func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffset int64, timezone string) {
 	f.aggInfoList = append(
 		f.aggInfoList, TimeAgg{
-			Name: name, Window: window, Timezone: timezone,
+			Name: name, Window: window, TimeZoneOffset: timezoneOffset, TimeZone: timezone,
 		},
 	)
 	f.nestedAgg(name)
@@ -400,10 +439,8 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := f.mapping[checkKey]; ok {
-			if v == Nested {
-				return checkKey
-			}
+		if f.GetFieldType(checkKey) == Nested {
+			return checkKey
 		}
 	}
 	return ""
@@ -433,7 +470,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 
@@ -456,9 +496,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	keySort := make([]string, 0)
 
 	for _, im := range af.items {
-		var (
-			tsLabels []prompb.Label
-		)
+		var tsLabels []prompb.Label
 		if len(im.labels) > 0 {
 			for _, dim := range af.dims {
 				tsLabels = append(tsLabels, prompb.Label{
@@ -566,7 +604,10 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
+			_ = metadata.Sprintf(
+				metadata.MsgQueryES,
+				"聚合数据格式化失败",
+			).Error(f.ctx, fmt.Errorf("%+v", r))
 		}
 	}()
 
@@ -657,7 +698,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			default:
 				err = fmt.Errorf("valueagg aggregation is not support this type %s, info: %+v", info.FuncType, info)
-				return
+				return name, agg, err
 			}
 		case ReverNested:
 			curName := info.Name
@@ -670,12 +711,15 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TimeAgg:
 			curName := info.Name
 
-			var interval string
+			var (
+				interval string
+				offset   string
+			)
 
 			if f.timeField.Type == TimeFieldTypeInt {
 				interval, err = f.toFixInterval(info.Window)
 				if err != nil {
-					return
+					return name, agg, err
 				}
 			} else {
 				interval = shortDur(info.Window)
@@ -685,9 +729,34 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
 				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
 
+			if function.IsAlignTime(info.Window) {
+				if f.timeField.Type == TimeFieldTypeTime {
+					// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
+					curAgg = curAgg.TimeZone(info.TimeZone)
+				} else {
+					// https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-datehistogram-aggregation#search-aggregations-bucket-datehistogram-offset
+					var (
+						fh = "+"
+						ot = info.TimeZoneOffset
+					)
+					if info.TimeZoneOffset < 0 {
+						fh = "-"
+						ot = -ot
+					}
+
+					if ot > 0 {
+						offset, err = f.toFixInterval(time.Duration(ot) * time.Millisecond)
+						if err != nil {
+							return name, agg, err
+						}
+						curAgg = curAgg.Offset(fmt.Sprintf("%s%s", fh, offset))
+					}
+				}
+			}
+
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 			if f.timeField.Type == TimeFieldTypeTime && function.IsAlignTime(info.Window) {
-				curAgg = curAgg.TimeZone(info.Timezone)
+				curAgg = curAgg.TimeZone(info.TimeZone)
 			}
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
@@ -701,14 +770,30 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
-			fieldType, ok := f.mapping[info.Name]
-			if !ok || fieldType == Text || fieldType == KeyWord {
+			fieldType := f.GetFieldType(info.Name)
+			if fieldType == "" || fieldType == Text || fieldType == KeyWord {
 				curAgg = curAgg.Missing(" ")
 			}
 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+			fieldLabelValues, ok := f.labelMap[info.Name]
+			if ok && len(fieldLabelValues) > 0 {
+				var filteredFieldLabelValues []any
+				for _, labelMapValue := range fieldLabelValues {
+					// 只有为非空的值并且操作符为等于时才添加到include子句
+					value := labelMapValue.Value
+					operator := labelMapValue.Operator
+					if value != "" && operator == metadata.ConditionEqual {
+						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
+					}
+				}
+				if len(filteredFieldLabelValues) > 0 {
+					curAgg = curAgg.IncludeValues(filteredFieldLabelValues...)
+				}
+			}
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
@@ -720,11 +805,11 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = curName
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
-			return
+			return name, agg, err
 		}
 	}
 
-	return
+	return name, agg, err
 }
 
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
@@ -736,13 +821,13 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+				f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -765,6 +850,33 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	return f.Agg()
 }
 
+func (f *FormatFactory) Collapse(collapse *metadata.Collapse) string {
+	if collapse == nil {
+		return ""
+	}
+	if collapse.Field == "" {
+		return ""
+	}
+
+	field := collapse.Field
+	if f.decode != nil {
+		field = f.decode(field)
+	}
+
+	return field
+}
+
+func (f *FormatFactory) Source(sources []string) []string {
+	res := make([]string, len(sources))
+	for i, s := range sources {
+		if f.decode != nil {
+			s = f.decode(s)
+		}
+		res[i] = s
+	}
+	return res
+}
+
 func (f *FormatFactory) Orders() metadata.Orders {
 	orders := make(metadata.Orders, 0, len(f.orders))
 	for _, order := range f.orders {
@@ -774,7 +886,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.timeField.Name
 		}
 
-		if _, ok := f.mapping[order.Name]; ok {
+		if v := f.GetFieldType(order.Name); v != "" {
 			orders = append(orders, order)
 		}
 	}
@@ -793,7 +905,7 @@ func (f *FormatFactory) timeFieldUnix(t time.Time) (u int64) {
 		u = t.Unix()
 	}
 
-	return
+	return u
 }
 
 func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Query) {
@@ -833,6 +945,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
+			// 对于星号来说等于空
+			if con.DimensionName == "*" {
+				con.DimensionName = ""
+			}
+
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
@@ -860,12 +977,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					q = f.getQuery(MustNot, q)
 				default:
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType, ok := f.mapping[key]
+					fieldType := f.GetFieldType(key)
 					isExistsQuery := true
-					if ok {
-						if fieldType == Text || fieldType == KeyWord {
-							isExistsQuery = false
-						}
+					if fieldType == Text || fieldType == KeyWord {
+						isExistsQuery = false
 					}
 
 					queries := make([]elastic.Query, 0)
@@ -884,11 +999,27 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									q = f.getQuery(MustNot, query)
 								case structured.ConditionNotEqual, structured.Ncontains:
 									q = query
+								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+									continue
 								default:
 									return fmt.Errorf("operator is not support with empty, %+v", con)
 								}
 								return nil
 							} else {
+								var format string
+								switch fieldType {
+								case metadata.TypeDateNanos:
+									if t, ok := function.StringToTime(value); ok {
+										value = t.Format(NanoTimeFormat)
+										format = NanoQueryFormat
+									}
+								case metadata.TypeDate:
+									if t, ok := function.StringToTime(value); ok {
+										value = fmt.Sprintf("%d", t.UnixMilli())
+										format = EpochMillis
+									}
+								}
+
 								// 非空才进行验证
 								switch con.Operator {
 								case structured.ConditionEqual, structured.ConditionNotEqual:
@@ -899,7 +1030,21 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									}
 								case structured.ConditionContains, structured.ConditionNotContains:
 									if fieldType == KeyWord {
-										value = fmt.Sprintf("*%s*", value)
+										// 针对 value 里的 * 进行转义
+										var (
+											nv    []rune
+											lastv rune
+										)
+										for _, v := range []rune(value) {
+											if v == '*' && lastv != '\\' {
+												nv = append(nv, '\\')
+												nv = append(nv, v)
+											} else {
+												nv = append(nv, v)
+											}
+											lastv = v
+										}
+										value = fmt.Sprintf("*%s*", string(nv))
 									}
 
 									if !con.IsWildcard && fieldType == Text {
@@ -914,19 +1059,23 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 									query = elastic.NewRegexpQuery(key, value)
 								case structured.ConditionGt:
-									query = elastic.NewRangeQuery(key).Gt(value)
+									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
 								case structured.ConditionGte:
-									query = elastic.NewRangeQuery(key).Gte(value)
+									query = elastic.NewRangeQuery(key).Gte(value).Format(format)
 								case structured.ConditionLt:
-									query = elastic.NewRangeQuery(key).Lt(value)
+									query = elastic.NewRangeQuery(key).Lt(value).Format(format)
 								case structured.ConditionLte:
-									query = elastic.NewRangeQuery(key).Lte(value)
+									query = elastic.NewRangeQuery(key).Lte(value).Format(format)
 								default:
 									return fmt.Errorf("operator is not support, %+v", con)
 								}
 							}
 						} else {
-							query = elastic.NewQueryStringQuery(value)
+							if con.IsPrefix {
+								query = elastic.NewMultiMatchQuery(value, "*", "__*").Type("phrase_prefix").Lenient(true)
+							} else {
+								query = elastic.NewQueryStringQuery(value)
+							}
 						}
 
 						if query != nil {
@@ -958,7 +1107,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 				return nil
 			}()
-
 			if err != nil {
 				return nil, err
 			}
@@ -1023,8 +1171,8 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		err error
 		ok  bool
 
-		timestamp interface{}
-		value     interface{}
+		timestamp any
+		value     any
 
 		sample = prompb.Sample{}
 	)
@@ -1120,12 +1268,12 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			value = fmt.Sprintf("%.f", d)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", d)
-		case []interface{}:
+		case []any:
 			o, _ := json.Marshal(d)
 			value = fmt.Sprintf("%s", o)
 		default:
 			err = fmt.Errorf("dimensions key type is error: %T, %v", d, d)
-			return
+			return lbs, err
 		}
 
 		lbs.Labels = append(lbs.Labels, prompb.Label{
@@ -1134,7 +1282,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 		})
 	}
 
-	return
+	return lbs, err
 }
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {

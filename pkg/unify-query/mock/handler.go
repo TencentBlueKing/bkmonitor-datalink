@@ -20,7 +20,7 @@ import (
 	"github.com/jarcoal/httpmock"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type VmRequest struct {
@@ -109,6 +109,12 @@ func (r *resultData) Set(in map[string]any) {
 	}
 }
 
+func (r *resultData) Clear() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.data = make(map[string]any)
+}
+
 func (r *resultData) Get(k string) (any, bool) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
@@ -157,14 +163,9 @@ type elasticSearchResultData struct {
 
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
-
-	log.Infof(context.Background(), "mock handler start")
-
 	mockBKBaseHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockElasticSearchHandler(ctx)
-
-	log.Infof(context.Background(), "mock handler end")
 }
 
 const (
@@ -176,6 +177,23 @@ const (
 	EsUrl     = EsUrlDomain
 	BkBaseUrl = BkBaseUrlDomain + "/bk_data/query_sync"
 )
+
+var FieldType = map[string]string{
+	"a":                        "keyword",
+	"b":                        "keyword",
+	"level":                    "keyword",
+	"dtEventTimeStamp":         "date",
+	"events":                   "nested",
+	"events.name":              "keyword",
+	"group":                    "keyword",
+	"kibana_stats.kibana.name": "keyword",
+	"time":                     "date",
+	"timestamp":                "text",
+	"type":                     "keyword",
+	"user":                     "nested",
+	"user.first":               "keyword",
+	"user.last":                "keyword",
+}
 
 type BkSQLRequest struct {
 	BkAppCode                  string `json:"bk_app_code"`
@@ -193,18 +211,26 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 		d, ok := Es.Get(string(body))
 		if !ok {
-			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
-			log.Errorf(ctx, err.Error())
-			return
+			return w, metadata.Sprintf(
+				metadata.MsgQueryES,
+				"es mock data is empty in %s",
+				body,
+			).Error(ctx, nil)
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
-		return
+		return w, err
 	}
 
-	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"b":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"log"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
-	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
-	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", mappingResp)
-	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
+	index := `{"es_index":{"settings":{"analysis":{"analyzer":{"my_custom_analyzer":{"type":"custom","tokenizer":"my_char_group_tokenizer","filter":["lowercase"]}},"tokenizer":{"my_char_group_tokenizer":{"type":"char_group","tokenize_on_chars":["-","\n"," "],"max_token_length":512}}}},"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
+	indexResp := httpmock.NewStringResponder(http.StatusOK, index)
+	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index", indexResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index", indexResp)
+
+	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", indexResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", indexResp)
+
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/unify_query", httpmock.NewStringResponder(http.StatusNotFound, ``))
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/unify_query/_mapping/", httpmock.NewStringResponder(http.StatusOK, `{"v2_2_bklog_bkunify_query_20250909_0":{"mappings":{"dynamic_templates":[{"strings_as_keywords":{"mapping":{"norms":"false","type":"keyword"},"match_mapping_type":"string"}}],"properties":{"__ext":{"properties":{"container_id":{"type":"keyword"},"container_image":{"type":"keyword"},"container_name":{"type":"keyword"},"io_kubernetes_pod":{"type":"keyword"},"io_kubernetes_pod_ip":{"type":"keyword"},"io_kubernetes_pod_namespace":{"type":"keyword"},"io_kubernetes_pod_uid":{"type":"keyword"},"io_kubernetes_workload_name":{"type":"keyword"},"io_kubernetes_workload_type":{"type":"keyword"}}},"cloudId":{"type":"integer"},"container_name":{"path":"__ext.container_name","type":"alias"},"dtEventTimeStamp":{"format":"epoch_millis","type":"date"},"file":{"type":"keyword"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"integer"},"level":{"type":"keyword"},"log":{"norms":false,"type":"text"},"message":{"norms":false,"type":"text"},"path":{"type":"keyword"},"pod_ip":{"path":"__ext.io_kubernetes_pod_ip","type":"alias"},"pod_uid":{"path":"__ext.io_kubernetes_pod_uid","type":"alias"},"report_time":{"type":"keyword"},"serverIp":{"type":"keyword"},"time":{"format":"epoch_millis","type":"date"},"trace_id":{"type":"keyword"}}}},"v2_2_bklog_bkunify_query_20250912_0":{"mappings":{"dynamic_templates":[{"strings_as_keywords":{"mapping":{"norms":"false","type":"keyword"},"match_mapping_type":"string"}}],"properties":{"__ext":{"properties":{"container_id":{"type":"keyword"},"container_image":{"type":"keyword"},"container_name":{"type":"keyword"},"io_kubernetes_pod":{"type":"keyword"},"io_kubernetes_pod_ip":{"type":"keyword"},"io_kubernetes_pod_namespace":{"type":"keyword"},"io_kubernetes_pod_uid":{"type":"keyword"},"io_kubernetes_workload_name":{"type":"keyword"},"io_kubernetes_workload_type":{"type":"keyword"}}},"cloudId":{"type":"integer"},"container_name":{"path":"__ext.container_name","type":"alias"},"dtEventTimeStamp":{"format":"epoch_millis","type":"date"},"file":{"type":"keyword"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"integer"},"level":{"type":"keyword"},"log":{"norms":false,"type":"text"},"message":{"norms":false,"type":"text"},"path":{"type":"keyword"},"pod_ip":{"path":"__ext.io_kubernetes_pod_ip","type":"alias"},"pod_uid":{"path":"__ext.io_kubernetes_pod_uid","type":"alias"},"report_time":{"type":"keyword"},"serverIp":{"type":"keyword"},"time":{"format":"epoch_millis","type":"date"},"trace_id":{"type":"keyword"}}}}}`))
 
 	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
@@ -231,13 +257,16 @@ func mockInfluxDBHandler(ctx context.Context) {
 	httpmock.RegisterResponder(http.MethodGet, address+"/query", func(r *http.Request) (w *http.Response, err error) {
 		params, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			return
+			return w, err
 		}
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			err = fmt.Errorf(`bksql mock data is empty in "%s"`, key)
-			return
+			return w, metadata.Sprintf(
+				metadata.MsgQueryInfluxDB,
+				"influxdb mock data is empty in %s",
+				key,
+			).Error(ctx, nil)
 		}
 
 		switch t := d.(type) {
@@ -246,11 +275,15 @@ func mockInfluxDBHandler(ctx context.Context) {
 		default:
 			w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 		}
-		return
+		return w, err
 	})
 }
 
 func mockBKBaseHandler(ctx context.Context) {
+	BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":43,"bkbase_meta_api":0,"bkbase_apigw_api":33},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":0,"query_db":5,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":45,"match_query_routing_rule":0,"check_permission":43,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":11776,"timetaken":0.096,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+	})
+
 	httpmock.RegisterResponder(http.MethodPost, BkBaseUrl, func(r *http.Request) (w *http.Response, err error) {
 		var (
 			request VmRequest
@@ -258,15 +291,17 @@ func mockBKBaseHandler(ctx context.Context) {
 		)
 		err = json.NewDecoder(r.Body).Decode(&request)
 		if err != nil {
-			return
+			return w, err
 		}
 
 		if request.PreferStorage != "vm" {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
-				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
-				log.Errorf(ctx, err.Error())
-				return
+				return w, metadata.Sprintf(
+					metadata.MsgQueryBKSQL,
+					"bk sql mock data is empty in %s",
+					request.Sql,
+				).Error(ctx, nil)
 			}
 			switch t := d.(type) {
 			case string:
@@ -275,12 +310,12 @@ func mockBKBaseHandler(ctx context.Context) {
 				w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 			}
 
-			return
+			return w, err
 		}
 
 		err = json.Unmarshal([]byte(request.Sql), &params)
 		if err != nil {
-			return
+			return w, err
 		}
 
 		p := params.ApiParams
@@ -298,14 +333,14 @@ func mockBKBaseHandler(ctx context.Context) {
 			key = fmt.Sprintf("%.f%s", p["time"], p["query"])
 		default:
 			err = fmt.Errorf("api type %s is empty ", params.ApiType)
-			return
+			return w, err
 		}
 
 		key = params.ApiType + ":" + key
 		d, ok := Vm.Get(key)
 		if !ok {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
-			return
+			return w, err
 		}
 
 		switch v := d.(type) {
@@ -314,6 +349,6 @@ func mockBKBaseHandler(ctx context.Context) {
 		default:
 			w, err = httpmock.NewJsonResponse(http.StatusOK, v)
 		}
-		return
+		return w, err
 	})
 }

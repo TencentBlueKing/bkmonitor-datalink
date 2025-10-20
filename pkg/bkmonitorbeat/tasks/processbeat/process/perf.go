@@ -63,19 +63,13 @@ func (p *procPerfMgr) GetOneMetaData(pid int32) (define.ProcStat, error) {
 	return stat, nil
 }
 
-func (p *procPerfMgr) GetOnePerfStat(pid int32) (define.ProcStat, error) {
+func (p *procPerfMgr) GetOnePerfStat(pid int32) define.ProcStat {
 	var stat define.ProcStat
-	// 确定 pid 是否存在
-	_, err := shiroups.NewProcess(pid)
-	if err != nil {
-		return stat, err
-	}
-
 	stat.Mem, _ = p.getMem(pid)
 	stat.CPU, _ = p.getCPU(pid)
 	stat.IO, _ = p.getIO(pid)
 	stat.Fd, _ = p.getFd(pid)
-	return stat, nil
+	return stat
 }
 
 func (p *procPerfMgr) MergeMetaDataPerfStat(meta, perf define.ProcStat) define.ProcStat {
@@ -191,13 +185,13 @@ func (p *procPerfMgr) cpu(pid int32) (define.ProcTime, error) {
 		return define.ProcTime{}, err
 	}
 
-	// 单位均为 ms
+	// 单位均转换为 ms
 	ct, _ := proc.CreateTime()
 	return define.ProcTime{
 		StartTime: uint64(ct),
-		User:      uint64(t.User) * 1000,
-		Sys:       uint64(t.System) * 1000,
-		Total:     (uint64(t.User) + uint64(t.System)) * 1000,
+		User:      uint64(t.User * 1000),
+		Sys:       uint64(t.System * 1000),
+		Total:     uint64((t.User + t.System) * 1000),
 	}, nil
 }
 

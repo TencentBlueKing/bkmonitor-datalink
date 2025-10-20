@@ -18,19 +18,16 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 )
 
-var (
-	client *bksql.Client
-)
+var client *bksql.Client
 
 func MockClient() *bksql.Client {
 	if client == nil {
-		client = (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(&curl.HttpCurl{Log: log.DefaultLogger})
+		client = (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(&curl.HttpCurl{})
 	}
 
 	return client

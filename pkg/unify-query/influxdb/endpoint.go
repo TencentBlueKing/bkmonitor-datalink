@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -73,7 +74,10 @@ func (e *endpointSet) getEndPointRef(ctx context.Context, protocol, address stri
 	case GRPC:
 		conn, err := grpc.DialContext(ctx, address, e.dialOpts...)
 		if err != nil {
-			log.Errorf(ctx, "connect endpoint with %s %s error %s", address, protocol, err.Error())
+			_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+				"InfluxDB %s %s 链接异常",
+				address, protocol,
+			).Error(ctx, err)
 			return nil
 		}
 		er.cc = conn
@@ -194,7 +198,10 @@ func (er *endpointRef) Close() {
 		if errors.Is(err, os.ErrClosed) {
 			return
 		}
-		log.Warnf(er.ctx, "detected close error %s", err.Error())
+
+		_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+			"InfluxDB 关闭异常",
+		).Error(er.ctx, err)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -69,7 +69,11 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to condition op.Will return default op", matchType)
+		metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"类型 %v 不存在",
+			matchType,
+		).Warn(context.TODO())
 		return ConditionEqual
 	}
 }
@@ -187,7 +191,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	}
 
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下
-	var resultValues = make([]string, 0, len(c.Value))
+	resultValues := make([]string, 0, len(c.Value))
 	for _, v := range c.Value {
 		var nv string
 		if isRegx {

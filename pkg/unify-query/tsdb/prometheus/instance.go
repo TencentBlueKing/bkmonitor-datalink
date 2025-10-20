@@ -19,11 +19,9 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -31,6 +29,8 @@ import (
 
 // Instance prometheus 查询引擎
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx          context.Context
 	instanceType string
 
@@ -64,13 +64,8 @@ func (i *Instance) InstanceType() string {
 	if i.instanceType != "" {
 		return i.instanceType
 	} else {
-		return consul.PrometheusStorageType
+		return metadata.PrometheusStorageType
 	}
-}
-
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -86,11 +81,8 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
-
-	var (
-		err error
-	)
+) (promql.Matrix, bool, error) {
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
 	defer span.End(&err)
@@ -106,27 +98,35 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
-		return nil, result.Err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
-	return matrix, nil
+	return matrix, false, nil
 }
 
 // Query instant 查询
@@ -134,9 +134,7 @@ func (i *Instance) DirectQuery(
 	ctx context.Context, qs string,
 	end time.Time,
 ) (promql.Vector, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
 	defer span.End(&err)
@@ -150,30 +148,38 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
-		return nil, result.Err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, result.Err)
 	}
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"Prometheus查询引擎执行查询失败",
+		).Error(ctx, err)
 	}
 
 	return vector, nil
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -191,7 +197,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	metricName := function.MatcherToMetricName(matchers...)
 	if metricName == "" {
-		return
+		return list, err
 	}
 
 	p, _ := ants.NewPool(i.maxRouting)
@@ -223,7 +229,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	wg.Wait()
 	list = res.ToArray()
-	return
+	return list, err
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

@@ -60,40 +60,40 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	}
 
 	// 准备测试输入
-	metricInfoList := []map[string]interface{}{
+	metricInfoList := []map[string]any{
 		{
 			"field_name":       "active_tasks",
 			"last_modify_time": 1726728019, // 2024-09-19 14:40:19 UTC
-			"tag_value_list": map[string]interface{}{
-				"location": map[string]interface{}{
+			"tag_value_list": map[string]any{
+				"location": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
-				"module": map[string]interface{}{
+				"module": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
-				"target": map[string]interface{}{
+				"target": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
 			},
 		},
 		{
 			"field_name":       "backup_tasks_count",
 			"last_modify_time": 1726728019, // 2024-09-19 14:40:19 UTC
-			"tag_value_list": map[string]interface{}{
-				"location": map[string]interface{}{
+			"tag_value_list": map[string]any{
+				"location": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
-				"module": map[string]interface{}{
+				"module": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
-				"target": map[string]interface{}{
+				"target": map[string]any{
 					"last_update_time": 1726728019,
-					"values":           []interface{}{},
+					"values":           []any{},
 				},
 			},
 		},
@@ -102,7 +102,7 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	svc := &TimeSeriesMetricSvc{}
 
 	// 调用 BulkRefreshTSMetrics
-	needPush, err := svc.BulkRefreshTSMetrics(100376, "test_table", metricInfoList, true)
+	needPush, err := svc.BulkRefreshTSMetrics("system", 100376, "test_table", metricInfoList, true)
 	assert.NoError(t, err)
 	assert.False(t, needPush)
 

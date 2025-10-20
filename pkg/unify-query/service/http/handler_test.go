@@ -26,7 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
@@ -37,47 +37,47 @@ type Writer struct {
 }
 
 func (w *Writer) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Flush() {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) CloseNotify() <-chan bool {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Status() int {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Size() int {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) WriteString(s string) (int, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Written() bool {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) WriteHeaderNow() {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Pusher() http.Pusher {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -100,9 +100,7 @@ func (w *Writer) body() string {
 	return string(w.b.Bytes())
 }
 
-var (
-	_ http.ResponseWriter = (*Writer)(nil)
-)
+var _ http.ResponseWriter = (*Writer)(nil)
 
 func TestAPIHandler(t *testing.T) {
 	mock.Init()
@@ -298,7 +296,7 @@ func TestAPIHandler(t *testing.T) {
 		url     string
 		params  gin.Params
 
-		infoParams *infos.Params
+		infoParams *Params
 		expected   string
 	}{
 		"test label values in vm 1": {
@@ -328,7 +326,7 @@ func TestAPIHandler(t *testing.T) {
 		"test field keys in prometheus": {
 			handler: HandlerFieldKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -339,7 +337,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -351,7 +349,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag keys in prometheus with regex": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -364,7 +362,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -377,7 +375,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex below 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end.Unix()),
@@ -391,7 +389,7 @@ func TestAPIHandler(t *testing.T) {
 		"test tag values in prometheus with regex above 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID:  "result_table.vm",
 				Start:    fmt.Sprintf("%d", start.Unix()),
 				End:      fmt.Sprintf("%d", end2d.Unix()),
@@ -405,7 +403,7 @@ func TestAPIHandler(t *testing.T) {
 		"test series in prometheus": {
 			handler: HandlerSeries,
 			method:  http.MethodPost,
-			infoParams: &infos.Params{
+			infoParams: &Params{
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
@@ -414,6 +412,15 @@ func TestAPIHandler(t *testing.T) {
 				Keys:    []string{"bcs_cluster_id", "namespace"},
 			},
 			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+		},
+		"test field map in es": {
+			handler: HandlerFieldMap,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				DataSource: "bklog",
+				TableID:    "result_table.unify_query",
+			},
+			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
 		},
 	}
 
@@ -507,16 +514,25 @@ func TestQueryHandler(t *testing.T) {
 			handler:  HandlerQueryPromQL,
 			promql:   `count(container_cpu_usage_seconds_total) by (bcs_cluster_id)`,
 			step:     "10m",
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729602000000,2042],[1729602600000,2056],[1729603200000,1995],[1729603800000,2008],[1729604400000,1978],[1729605000000,2001],[1729605600000,2052]]}]}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729602000000,2042],[1729602600000,2056],[1729603200000,1995],[1729603800000,2008],[1729604400000,1978],[1729605000000,2001],[1729605600000,2052]]}],"is_partial":false}`,
 		},
 		"test_query_vm_2": {
 			handler:  HandlerQueryPromQL,
 			promql:   `sum(kube_pod_info) by (bcs_cluster_id)`,
 			step:     "30m",
 			instant:  true,
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}]}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}],"is_partial":false}`,
+		},
+		"test promql bkdata": {
+			handler:  HandlerQueryPromQL,
+			promql:   `sum(increase({__name__=~"bkdata:.*trace.*:span_name", span_name=~"handler-query-.*"}[3h])) by (span_name)`,
+			step:     "3h",
+			expected: `{"series":[],"is_partial":false}`,
 		},
 	}
+
+	mock.Init()
+	promql.MockEngine()
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -543,7 +559,6 @@ func TestQueryHandler(t *testing.T) {
 				b := w.body()
 				assert.Equal(t, c.expected, b)
 			}
-
 		})
 	}
 }

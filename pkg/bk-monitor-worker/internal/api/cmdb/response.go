@@ -87,6 +87,7 @@ type ListBizHostsTopoDataInfoHost struct {
 	SvrDeviceClass      string  `json:"svr_device_class" mapstructure:"svr_device_class"`
 	DockerClientVersion string  `json:"docker_client_version" mapstructure:"docker_client_version"`
 	DockerServerVersion string  `json:"docker_server_version" mapstructure:"docker_server_version"`
+	VersionMeta         string  `json:"version_meta"  mapstructure:"version_meta"`
 }
 
 type ListBizHostsTopoDataInfoTopo struct {
@@ -143,50 +144,50 @@ type ListHostsWithoutBizData struct {
 }
 
 type ListHostsWithoutBizDataInfo struct {
-	BkAddressing          string      `json:"bk_addressing"`
-	BkAgentId             string      `json:"bk_agent_id"`
-	BkAssetId             string      `json:"bk_asset_id"`
-	BkBakOperator         string      `json:"bk_bak_operator"`
-	BkCloudHostIdentifier bool        `json:"bk_cloud_host_identifier"`
-	BkCloudHostStatus     interface{} `json:"bk_cloud_host_status"`
-	BkCloudId             int         `json:"bk_cloud_id"`
-	BkCloudInstId         string      `json:"bk_cloud_inst_id"`
-	BkCloudVendor         interface{} `json:"bk_cloud_vendor"`
-	BkComment             string      `json:"bk_comment"`
-	BkCpu                 *int        `json:"bk_cpu"`
-	BkCpuArchitecture     string      `json:"bk_cpu_architecture"`
-	BkCpuModule           string      `json:"bk_cpu_module"`
-	BkDisk                *int        `json:"bk_disk"`
-	BkHostId              int         `json:"bk_host_id"`
-	BkHostInnerip         string      `json:"bk_host_innerip"`
-	BkHostInneripV6       string      `json:"bk_host_innerip_v6"`
-	BkHostName            string      `json:"bk_host_name"`
-	BkHostOuterip         string      `json:"bk_host_outerip"`
-	BkHostOuteripV6       string      `json:"bk_host_outerip_v6"`
-	BkIspName             interface{} `json:"bk_isp_name"`
-	BkMac                 string      `json:"bk_mac"`
-	BkMem                 *int        `json:"bk_mem"`
-	BkOsBit               string      `json:"bk_os_bit"`
-	BkOsName              string      `json:"bk_os_name"`
-	BkOsType              *string     `json:"bk_os_type"`
-	BkOsVersion           string      `json:"bk_os_version"`
-	BkOuterMac            string      `json:"bk_outer_mac"`
-	BkProvinceName        interface{} `json:"bk_province_name"`
-	BkServiceTerm         interface{} `json:"bk_service_term"`
-	BkSla                 interface{} `json:"bk_sla"`
-	BkSn                  string      `json:"bk_sn"`
-	BkState               interface{} `json:"bk_state"`
-	BkStateName           *string     `json:"bk_state_name"`
-	BkSupplierAccount     string      `json:"bk_supplier_account"`
-	BkUpdatedAt           time.Time   `json:"bk_updated_at,omitempty"`
-	BkUpdatedBy           string      `json:"bk_updated_by,omitempty"`
-	CreateTime            time.Time   `json:"create_time"`
-	ImportFrom            *string     `json:"import_from"`
-	LastTime              time.Time   `json:"last_time"`
-	Operator              string      `json:"operator"`
-	DbmMeta               string      `json:"dbm_meta,omitempty"`
-	BkCreatedAt           time.Time   `json:"bk_created_at,omitempty"`
-	BkCreatedBy           string      `json:"bk_created_by,omitempty"`
+	BkAddressing          string    `json:"bk_addressing"`
+	BkAgentId             string    `json:"bk_agent_id"`
+	BkAssetId             string    `json:"bk_asset_id"`
+	BkBakOperator         string    `json:"bk_bak_operator"`
+	BkCloudHostIdentifier bool      `json:"bk_cloud_host_identifier"`
+	BkCloudHostStatus     any       `json:"bk_cloud_host_status"`
+	BkCloudId             int       `json:"bk_cloud_id"`
+	BkCloudInstId         string    `json:"bk_cloud_inst_id"`
+	BkCloudVendor         any       `json:"bk_cloud_vendor"`
+	BkComment             string    `json:"bk_comment"`
+	BkCpu                 *int      `json:"bk_cpu"`
+	BkCpuArchitecture     string    `json:"bk_cpu_architecture"`
+	BkCpuModule           string    `json:"bk_cpu_module"`
+	BkDisk                *int      `json:"bk_disk"`
+	BkHostId              int       `json:"bk_host_id"`
+	BkHostInnerip         string    `json:"bk_host_innerip"`
+	BkHostInneripV6       string    `json:"bk_host_innerip_v6"`
+	BkHostName            string    `json:"bk_host_name"`
+	BkHostOuterip         string    `json:"bk_host_outerip"`
+	BkHostOuteripV6       string    `json:"bk_host_outerip_v6"`
+	BkIspName             any       `json:"bk_isp_name"`
+	BkMac                 string    `json:"bk_mac"`
+	BkMem                 *int      `json:"bk_mem"`
+	BkOsBit               string    `json:"bk_os_bit"`
+	BkOsName              string    `json:"bk_os_name"`
+	BkOsType              *string   `json:"bk_os_type"`
+	BkOsVersion           string    `json:"bk_os_version"`
+	BkOuterMac            string    `json:"bk_outer_mac"`
+	BkProvinceName        any       `json:"bk_province_name"`
+	BkServiceTerm         any       `json:"bk_service_term"`
+	BkSla                 any       `json:"bk_sla"`
+	BkSn                  string    `json:"bk_sn"`
+	BkState               any       `json:"bk_state"`
+	BkStateName           *string   `json:"bk_state_name"`
+	BkSupplierAccount     string    `json:"bk_supplier_account"`
+	BkUpdatedAt           time.Time `json:"bk_updated_at,omitempty"`
+	BkUpdatedBy           string    `json:"bk_updated_by,omitempty"`
+	CreateTime            time.Time `json:"create_time"`
+	ImportFrom            *string   `json:"import_from"`
+	LastTime              time.Time `json:"last_time"`
+	Operator              string    `json:"operator"`
+	DbmMeta               string    `json:"dbm_meta,omitempty"`
+	BkCreatedAt           time.Time `json:"bk_created_at,omitempty"`
+	BkCreatedBy           string    `json:"bk_created_by,omitempty"`
 }
 
 type FindHostBizRelationResp struct {
@@ -226,8 +227,8 @@ func (s *SearchBizInstTopoData) Traverse(fn func(*SearchBizInstTopoData)) {
 }
 
 // ToTopoLinks 递归获取模块ID到拓扑链路的映射
-func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]map[string]interface{}, parents []map[string]interface{}) {
-	parents = append(parents, map[string]interface{}{
+func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]map[string]any, parents []map[string]any) {
+	parents = append(parents, map[string]any{
 		"bk_inst_id":   s.BkInstId,
 		"bk_inst_name": s.BkInstName,
 		"bk_obj_id":    s.BkObjId,
@@ -236,7 +237,7 @@ func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]map[string]interfa
 
 	// 如果是模块，记录链路
 	if s.BkObjId == "module" {
-		reverseParents := make([]map[string]interface{}, len(parents))
+		reverseParents := make([]map[string]any, len(parents))
 		for i, p := range parents {
 			reverseParents[len(parents)-i-1] = p
 		}
@@ -300,18 +301,18 @@ type ResourceWatchData struct {
 }
 
 type ResourceWatchEvent struct {
-	BkCursor    string                 `json:"bk_cursor"`
-	BkResource  string                 `json:"bk_resource"`
-	BkEventType string                 `json:"bk_event_type"`
-	BkDetail    map[string]interface{} `json:"bk_detail"`
+	BkCursor    string         `json:"bk_cursor"`
+	BkResource  string         `json:"bk_resource"`
+	BkEventType string         `json:"bk_event_type"`
+	BkDetail    map[string]any `json:"bk_detail"`
 }
 
 // SearchModuleResp 查询模块返回
 type SearchModuleResp struct {
 	define.ApiCommonRespMeta `mapstructure:",squash"`
 	Data                     struct {
-		Count int                      `json:"count" mapstructure:"count"`
-		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
+		Count int              `json:"count" mapstructure:"count"`
+		Info  []map[string]any `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
 }
 
@@ -319,8 +320,8 @@ type SearchModuleResp struct {
 type SearchSetResp struct {
 	define.ApiCommonRespMeta `mapstructure:",squash"`
 	Data                     struct {
-		Count int                      `json:"count" mapstructure:"count"`
-		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
+		Count int              `json:"count" mapstructure:"count"`
+		Info  []map[string]any `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
 }
 
@@ -338,13 +339,13 @@ type ListServiceInstanceDetailData struct {
 
 // ListServiceInstanceDetailInfo 查询服务实例详情信息
 type ListServiceInstanceDetailInfo struct {
-	BkBizId           int         `json:"bk_biz_id" mapstructure:"bk_biz_id"`
-	ID                int         `json:"id" mapstructure:"id"`
-	Name              string      `json:"name" mapstructure:"name"`
-	BkModuleId        int         `json:"bk_module_id" mapstructure:"bk_module_id"`
-	BkHostId          int         `json:"bk_host_id" mapstructure:"bk_host_id"`
-	ServiceTemplateId int         `json:"service_template_id" mapstructure:"service_template_id"`
-	ProcessInstances  interface{} `json:"process_instances" mapstructure:"process_instances"`
+	BkBizId           int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	ID                int    `json:"id" mapstructure:"id"`
+	Name              string `json:"name" mapstructure:"name"`
+	BkModuleId        int    `json:"bk_module_id" mapstructure:"bk_module_id"`
+	BkHostId          int    `json:"bk_host_id" mapstructure:"bk_host_id"`
+	ServiceTemplateId int    `json:"service_template_id" mapstructure:"service_template_id"`
+	ProcessInstances  any    `json:"process_instances" mapstructure:"process_instances"`
 }
 
 // SearchDynamicGroupResp 查询动态分组返回
@@ -375,6 +376,6 @@ type ExecuteDynamicGroupResp struct {
 
 // ExecuteDynamicGroupData 执行动态分组数据
 type ExecuteDynamicGroupData struct {
-	Count int                      `json:"count" mapstructure:"count"`
-	Info  []map[string]interface{} `json:"info" mapstructure:"info"`
+	Count int              `json:"count" mapstructure:"count"`
+	Info  []map[string]any `json:"info" mapstructure:"info"`
 }

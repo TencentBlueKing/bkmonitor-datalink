@@ -59,9 +59,12 @@ var (
 )
 
 type StartInfo struct {
-	DataId string `json:"data_id"`
-	Qps    *int   `json:"qps"`
+	DataId       string             `json:"data_id"`
+	Qps          *int               `json:"qps"`
+	ExtraOptions map[string]options `json:"extra_options"`
 }
+
+type options map[string]any
 
 type Precalculate struct {
 	// ctx Root context
@@ -86,6 +89,57 @@ type PrecalculateOption struct {
 	storageConfig            []storage.ProxyOption
 
 	profileReportConfig []MetricOption
+}
+
+func newPrecalculateOptionWithStartInfo(startInfo *StartInfo) PrecalculateOption {
+	precalculateOption := PrecalculateOption{}
+	if startInfo == nil || len(startInfo.ExtraOptions) == 0 {
+		return precalculateOption
+	}
+
+	if extraProcessorOptions, ok := startInfo.ExtraOptions["processor_options"]; ok {
+		applyProcessorOptions(&precalculateOption, extraProcessorOptions)
+	}
+	if extraMetricOptions, ok := startInfo.ExtraOptions["metric_options"]; ok {
+		applyMetricOptions(&precalculateOption, extraMetricOptions)
+	}
+	if extraNotifierOptions, ok := startInfo.ExtraOptions["notifier_options"]; ok {
+		applyNotifierOptions(&precalculateOption, extraNotifierOptions)
+	}
+	return precalculateOption
+}
+
+func applyProcessorOptions(precalculateOption *PrecalculateOption, extraProcessorOptions options) {
+	if metricReportEnabled, ok := extraProcessorOptions["metric_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsReportEnabled(metricReportEnabled.(bool)))
+	}
+	if infoReportEnabled, ok := extraProcessorOptions["info_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceInfoReportEnabled(infoReportEnabled.(bool)))
+	}
+	if metricLayer4ReportEnabled, ok := extraProcessorOptions["metric_layer4_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsLayer4ReportEnabled(metricLayer4ReportEnabled.(bool)))
+	}
+	if podToPodErrorFlowEnabled, ok := extraProcessorOptions["pod_instance_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodInstanceErrorFlowReportEnabled(podToPodErrorFlowEnabled.(bool)))
+	}
+	if podToApmErrorFlowEnabled, ok := extraProcessorOptions["pod_apm_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodApmErrorFlowReportEnabled(podToApmErrorFlowEnabled.(bool)))
+	}
+	if podToSystemErrorFlowEnabled, ok := extraProcessorOptions["pod_system_error_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodSystemErrorFlowReportEnabled(podToSystemErrorFlowEnabled.(bool)))
+	}
+}
+
+func applyMetricOptions(precalculateOption *PrecalculateOption, extraMetricOptions options) {
+	if enabledProfile, ok := extraMetricOptions["enabled_profile"]; ok {
+		precalculateOption.profileReportConfig = append(precalculateOption.profileReportConfig, EnabledProfileReport(enabledProfile.(bool)))
+	}
+}
+
+func applyNotifierOptions(precalculateOption *PrecalculateOption, extraNotifierOptions options) {
+	if qps, ok := extraNotifierOptions["qps"]; ok {
+		precalculateOption.notifierConfig = append(precalculateOption.notifierConfig, notifier.Qps(qps.(int)))
+	}
 }
 
 type readySignal struct {
@@ -132,7 +186,6 @@ func (p *Precalculate) WithMetricReport(options ...MetricOption) Builder {
 }
 
 func (p *Precalculate) Build() PreCalculateProcessor {
-
 	preCalculateOnce.Do(func() {
 		preCalculateInstance = p
 	})
@@ -169,7 +222,6 @@ func (p *Precalculate) GetTaskDimension(payload []byte) string {
 }
 
 func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
-
 	var startInfo StartInfo
 	if err := jsonx.Unmarshal(payload, &startInfo); err != nil {
 		errorReceiveChan <- fmt.Errorf(
@@ -178,7 +230,7 @@ func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan ch
 		return
 	}
 
-	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan)
+	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan, newPrecalculateOptionWithStartInfo(&startInfo))
 }
 
 func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption) {
@@ -334,7 +386,6 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 }
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
-
 	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
@@ -404,7 +455,6 @@ func (p *RunInstance) startProfileReport() {
 }
 
 func (p *RunInstance) startRecordSemaphoreAcquired() {
-
 	ticker := time.NewTicker(p.profileCollector.config.reportInterval)
 	apmLogger.Infof(
 		"[RecordSemaphoreAcquired] start report chan metric every %s",
@@ -447,5 +497,4 @@ func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
 			return
 		}
 	}
-
 }

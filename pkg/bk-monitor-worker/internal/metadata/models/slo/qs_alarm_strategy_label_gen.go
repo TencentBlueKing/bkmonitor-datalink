@@ -469,13 +469,13 @@ var AlarmStrategyLabelDBSchema = struct {
 // Update updates AlarmStrategyLabel fields by primary key
 // nolint: dupl
 func (o *AlarmStrategyLabel) Update(db *gorm.DB, fields ...AlarmStrategyLabelDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":          o.ID,
 		"label_name":  o.LabelName,
 		"bk_biz_id":   o.BkBizID,
 		"strategy_id": o.StrategyID,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -494,7 +494,7 @@ func (o *AlarmStrategyLabel) Update(db *gorm.DB, fields ...AlarmStrategyLabelDBS
 
 // AlarmStrategyLabelUpdater is an AlarmStrategyLabel updates manager
 type AlarmStrategyLabelUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -502,7 +502,7 @@ type AlarmStrategyLabelUpdater struct {
 // nolint: dupl
 func NewAlarmStrategyLabelUpdater(db *gorm.DB) AlarmStrategyLabelUpdater {
 	return AlarmStrategyLabelUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&AlarmStrategyLabel{}),
 	}
 }

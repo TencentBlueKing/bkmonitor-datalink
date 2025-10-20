@@ -23,6 +23,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -37,10 +38,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceJaeger, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Jaeger.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceJaeger, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -91,11 +89,13 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	token := tokenparser.FromHttpRequest(req)
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordTraces,
 		Data:          traces,
+		Token:         define.Token{Original: token},
 	}
 	prettyprint.Traces(traces)
 

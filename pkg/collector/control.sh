@@ -14,7 +14,7 @@ set -e
 # shellcheck disable=SC2086
 
 MODULE=bk-collector
-TEST_COVERAGE_THRESHOLD=75
+TEST_COVERAGE_THRESHOLD=76
 
 function unittest() {
   go test ./... -coverprofile coverage.tmp -covermode count
@@ -80,7 +80,7 @@ function sidecar() {
 function encode() {
   local base_dir="./support-files/templates/linux/x86_64/etc"
 
-  tpls=("bk-collector-application.conf.tpl" "bk-collector-platform.conf.tpl")
+  tpls=("bk-collector-application.conf.tpl" "bk-collector-platform.conf.tpl" "bk-collector-report-v2.conf.tpl")
   # shellcheck disable=SC2068
   for tpl in ${tpls[@]}
     do echo 'File:' $tpl && cat ${base_dir}/${tpl} | base64 && echo ''

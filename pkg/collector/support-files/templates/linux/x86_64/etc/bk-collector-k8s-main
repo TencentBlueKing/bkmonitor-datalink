@@ -41,10 +41,17 @@
 
       bk_metrics_pusher:
         disabled: true
-      cluster:
-        disabled: true
+
       proxy:
-        disabled: true
+        disabled: false
+        http:
+          host: ""
+          port: 10205
+          retry_listen: true
+          middlewares:
+            - "logging"
+            - "maxconns;maxConnectionsRatio=256"
+
       pingserver:
         disabled: true
 
@@ -77,24 +84,6 @@
           transport: "tcp"
           endpoint: ":4319"
 
-        components:
-          jaeger:
-            enabled: true
-          zipkin:
-            enabled: true
-          otlp:
-            enabled: true
-          pushgateway:
-            enabled: true
-          remotewrite:
-            enabled: true
-          pyroscope:
-            enabled: true
-          beat:
-            enabled: true
-          tars:
-            enabled: true
-
       processor:
         # ApdexCalculator: 健康度状态计算器
         - name: "apdex_calculator/standard"
@@ -111,6 +100,9 @@
 
         # ResourceFilter: 维度补充
         - name: "resource_filter/fill_dimensions"
+
+        # FieldNormalizer: 协议字段替换
+        - name: "field_normalizer/otel_mapping"
 
         # ResourceFilter: 资源过滤处理器
         - name: "resource_filter/instance_id"
@@ -129,6 +121,12 @@
                 - "resource.bk.data.token"
 
         # ResourceFilter: 资源过滤处理器
+        - name: "resource_filter/user_metadata"
+          config:
+            from_metadata:
+              keys: ["*"]
+
+        # ResourceFilter: 资源过滤处理器
         - name: "resource_filter/logs"
           config:
             assemble:
@@ -144,6 +142,15 @@
               keys:
                 - "resource.bk.data.token"
                 - "resource.process.pid"
+            from_token:
+              keys:
+                - "app_name"
+
+        # MetricsFilter: 指标过滤处理器
+        - name: "metrics_filter/relabel"
+
+        # MethodFilter: method 过滤处理器（做 span 丢弃处理）
+        - name: "method_filter/drop_span
 
         # Sampler: 采样处理器（概率采样）
         - name: "sampler/random"
@@ -200,6 +207,11 @@
         # ProxyValidator: proxy 数据校验器
         - name: "proxy_validator/common"
 
+        # TextSpliter: 文本分割器
+        - name: "text_spliter/common"
+          config:
+            separator: "\n"
+
         # RateLimiter: 流控处理器
         - name: "rate_limiter/token_bucket"
           config:
@@ -224,8 +236,11 @@
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
             - "sampler/drop_traces"
+            - "method_filter/drop_span"
+            - "field_normalizer/otel_mapping"
             - "resource_filter/fill_dimensions"
             - "resource_filter/instance_id"
+            - "resource_filter/user_metadata"
             - "db_filter/common"
             - "attribute_filter/common"
             - "attribute_filter/app"
@@ -247,6 +262,7 @@
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
             - "resource_filter/metrics"
+            - "metrics_filter/relabel"
 
         - name: "metrics_pipeline/derived"
           type: "metrics.derived"
@@ -256,6 +272,7 @@
           type: "logs"
           processors:
             - "token_checker/aes256"
+            - "rate_limiter/token_bucket"
             - "resource_filter/logs"
             - "attribute_filter/logs"
 
@@ -270,6 +287,7 @@
           processors:
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
+            - "metrics_filter/relabel"
 
         - name: "proxy_pipeline/common"
           type: "proxy"
@@ -307,10 +325,28 @@
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
 
+        - name: "logpush_pipeline/common"
+          type: "logpush"
+          processors:
+            - "token_checker/aes256"
+            - "rate_limiter/token_bucket"
+            - "text_spliter/common"
+
       exporter:
         queue:
           metrics_batch_size: 5000
           traces_batch_size: 600
           logs_batch_size: 100
           proxy_batch_size: 3000
+          profiles_batch_size: 50
           flush_interval: 3s
+
+        converter:
+          tars:
+            {{- if .Values.exporter.converter.tars }}
+            is_drop_original: {{ .Values.exporter.converter.tars.isDropOriginal }}
+            drop_original_services:
+            {{- range .Values.exporter.converter.tars.dropOriginalServices }}
+              - {{ . }}
+            {{- end }}
+            {{- end }}

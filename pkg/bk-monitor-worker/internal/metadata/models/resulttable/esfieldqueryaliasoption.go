@@ -21,7 +21,7 @@ type ESFieldQueryAliasOption struct {
 	FieldPath  string `json:"field_path" gorm:"size:256;comment:原始字段路径"`
 	PathType   string `json:"path_type" gorm:"size:128;default:keyword;comment:路径类型"`
 	QueryAlias string `json:"query_alias" gorm:"size:256;comment:查询别名"`
-	IsDeleted  bool   `json:"is_deleted" gorm:"default:false;comment:是否已删除"`
+	IsDeleted  bool   `json:"is_deleted" gorm:"comment:是否已删除"`
 	models.BaseModel
 }
 

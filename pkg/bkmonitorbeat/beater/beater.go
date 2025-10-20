@@ -23,12 +23,15 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/schedulerfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
@@ -49,6 +52,7 @@ type beaterState struct {
 	ctx             context.Context
 	cancelFunc      context.CancelFunc
 	heartBeatTicker *time.Ticker
+	tcli            *tenant.Client
 
 	Scheduler        define.Scheduler
 	KeywordScheduler define.Scheduler
@@ -172,14 +176,26 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 		}
 	}
 
+	// 多租户模式下才需要开启新的通信管道拉取配置
+	if bt.config.EnableMultiTenant {
+		bt.tcli, err = tenant.NewClient(tenant.Option{
+			Version: version,
+			IPC:     bt.config.GseMessageEndpoint,
+			Tasks:   bt.config.MultiTenantTasks,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create gse message client")
+		}
+	}
+
 	return &bt, nil
 }
 
 // initHostIDWatcher 监听cmdb下发host id文件
-func (bt *MonitorBeater) initHostIDWatcher() error {
+func (bt *MonitorBeater) initHostIDWatcher(config *configs.Config) error {
 	var err error
 	if bt.hostIDWatcher != nil {
-		err = bt.hostIDWatcher.Reload(bt.ctx, bt.config.HostIDPath, bt.config.CmdbLevelMaxLength, bt.config.MustHostIDExist)
+		err = bt.hostIDWatcher.Reload(bt.ctx, config.HostIDPath, config.CmdbLevelMaxLength, config.MustHostIDExist)
 		if err != nil {
 			logger.Warnf("reload watch host id failed,error:%s", err.Error())
 			// 不影响其他位置的reload
@@ -190,15 +206,15 @@ func (bt *MonitorBeater) initHostIDWatcher() error {
 
 	// 将watcher初始化并启动
 	hostConfig := host.Config{
-		HostIDPath:         bt.config.HostIDPath,
-		CMDBLevelMaxLength: bt.config.CmdbLevelMaxLength,
-		IgnoreCmdbLevel:    bt.config.IgnoreCmdbLevel,
-		MustHostIDExist:    bt.config.MustHostIDExist,
+		HostIDPath:         config.HostIDPath,
+		CMDBLevelMaxLength: config.CmdbLevelMaxLength,
+		IgnoreCmdbLevel:    config.IgnoreCmdbLevel,
+		MustHostIDExist:    config.MustHostIDExist,
 	}
 	bt.hostIDWatcher = host.NewWatcher(bt.ctx, hostConfig)
 	err = bt.hostIDWatcher.Start()
 	if err != nil {
-		logger.Warnf("start watch host id failed,filepath:%s,cmdb max length:%d,error:%s", bt.config.HostIDPath, bt.config.CmdbLevelMaxLength, err)
+		logger.Warnf("start watch host id failed,filepath:%s,cmdb max length:%d,error:%s", config.HostIDPath, config.CmdbLevelMaxLength, err)
 		return err
 	}
 	define.GlobalWatcher = bt.hostIDWatcher
@@ -211,8 +227,19 @@ func (bt *MonitorBeater) initHostIDWatcher() error {
 func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	var err error
 	ctx := bt.ctx
-	bt.configEngine = NewBaseConfigEngine(ctx)
 
+	// 获取全局 config 以加载 hostid watcher
+	baseConfig := configs.NewConfig()
+	err = cfg.Unpack(baseConfig)
+	if err != nil {
+		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
+	}
+	err = bt.initHostIDWatcher(baseConfig)
+	if err != nil {
+		return fmt.Errorf("init hostid failed,error:%s", err)
+	}
+
+	bt.configEngine = NewBaseConfigEngine(ctx)
 	err = bt.configEngine.Init(cfg, bt)
 	if err != nil {
 		return fmt.Errorf("init configEngine failed: %v", err)
@@ -229,10 +256,6 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	}
 	configs.DisableNetlink = globalConfig.DisableNetLink
 	bt.config = globalConfig
-	err = bt.initHostIDWatcher()
-	if err != nil {
-		return fmt.Errorf("init hostid failed,error:%s", err)
-	}
 
 	// 使用hostid文件中的ip和云区域cloudId信息，替换掉全局配置中的ip和云区域cloudId
 	if bt.hostIDWatcher != nil {
@@ -276,6 +299,7 @@ func (bt *MonitorBeater) PreRun() error {
 	bt.ListenScheduler = schedulerfactory.New(bt, bt.config, schedulerfactory.SchedulerTypeListen)
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 
 	for _, task := range tasks {
@@ -480,6 +504,12 @@ func (bt *MonitorBeater) Run() error {
 	}
 	logger.Info("MonitorBeater is running! Hit CTRL-C to stop it")
 
+	if bt.tcli != nil {
+		if err := bt.tcli.Start(); err != nil {
+			return err
+		}
+	}
+
 	var err error
 	err = bt.PreRun()
 	if err != nil {
@@ -559,11 +589,29 @@ func (bt *MonitorBeater) Stop() {
 	}
 	bt.stopAdminServerReloader()
 	logger.Info("shutting down")
+
+	if bt.tcli != nil {
+		if err := bt.tcli.Close(); err != nil {
+			logger.Errorf("close gse message client failed: %v", err)
+		}
+	}
+}
+
+func updateRunningTasks(tasks []define.Task) {
+	count := make(map[string]int)
+	for i := 0; i < len(tasks); i++ {
+		task := tasks[i]
+		if task != nil && task.GetConfig() != nil {
+			count[task.GetConfig().GetType()]++
+		}
+	}
+	stats.SetRunningTasks(count)
 }
 
 // Reload : reload conf
 func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	logger.Info("MonitorBeater reload")
+	stats.IncReload()
 
 	oldState := bt.beaterState
 	oldConfig := bt.config
@@ -587,6 +635,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	}
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 	beatTasks := make([]define.Task, 0)
 	keywordTasks := make([]define.Task, 0)
@@ -599,7 +648,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 		switch t {
 		case configs.ConfigTypeKeyword:
 			keywordTasks = append(keywordTasks, task)
-		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent:
+		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent, configs.ConfigTypeDmesg:
 			listenTasks = append(listenTasks, task)
 		default:
 			beatTasks = append(beatTasks, task)

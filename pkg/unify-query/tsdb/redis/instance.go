@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -38,13 +37,11 @@ var _ tsdb.Instance = (*Instance)(nil)
 
 // Instance redis 查询实例
 type Instance struct {
+	tsdb.DefaultInstance
+
 	Ctx                 context.Context
 	Timeout             time.Duration
 	ClusterMetricPrefix string
-}
-
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
 }
 
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
@@ -80,7 +77,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 }
 
 func (i *Instance) InstanceType() string {
-	return consul.RedisStorageType
+	return metadata.RedisStorageType
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -91,18 +88,16 @@ func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (p
 	return i.vectorFormat(ctx, *df)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	df, err := i.rawQuery(ctx, start, end, step)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	return i.matrixFormat(ctx, *df)
 }
 
 func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
-	var (
-		startAnaylize time.Time
-	)
+	var startAnaylize time.Time
 
 	// 根据现有支持情况检查 QueryTs 请求体
 	query := metadata.GetQueryClusterMetric(ctx)
@@ -126,15 +121,21 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
-		// 指标配置不存在，则返回空 DF
-		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", metricName, err)
+		_ = metadata.Sprintf(
+			metadata.MsgQueryRedis,
+			"查询异常",
+		).Error(ctx, err)
 		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, metricName, err)
+			metadata.Sprintf(
+				metadata.MsgQueryRedis,
+				"查询异常 %+v",
+				err,
+			).Warn(ctx)
 			continue
 		}
 		if dfPointer.Nrow() > 0 {
@@ -155,7 +156,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 
 func (i *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (promql.Vector, error) {
 	vector := make(promql.Vector, 0)
-	matrix, err := i.matrixFormat(ctx, df)
+	matrix, _, err := i.matrixFormat(ctx, df)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +169,7 @@ func (i *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (pr
 	return vector, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, error) {
+func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, bool, error) {
 	names := df.Names()
 	groupPoints := map[string]promql.Series{}
 	for idx, row := range df.Records() {
@@ -179,7 +180,7 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 		// 处理一行完整的数据，分桶塞点
 		labelsGroup, point, err := arrToPoint(names, row)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		h := consul.HashIt(labelsGroup)
 		var oneSeries promql.Series
@@ -198,13 +199,11 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 	for _, mSeries := range groupPoints {
 		matrix = append(matrix, mSeries)
 	}
-	return matrix, nil
+	return matrix, false, nil
 }
 
 func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, error) {
-	var (
-		err error
-	)
+	var err error
 	labelsGroup := make(labels.Labels, 0)
 	point := promql.Point{}
 
@@ -230,7 +229,8 @@ func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, 
 
 // handleDFQuery 根据传入的查询配置，处理 DF 数据
 func (i *Instance) handleDFQuery(
-	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration) dataframe.DataFrame {
+	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration,
+) dataframe.DataFrame {
 	// 时间过滤
 	df = df.FilterAggregation(
 		dataframe.And,

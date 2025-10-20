@@ -59,7 +59,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 	logger.Infof("CollectAndReportMetrics:start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
-	var customOption map[string]interface{}
+	var customOption map[string]any
 	err := jsonx.Unmarshal([]byte(c.CustomOption), &customOption)
 	if err != nil {
 		return errors.WithMessage(err, "CollectAndReportMetrics:failed to unmarshal custom option")
@@ -75,8 +75,8 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 	} else {
 		schema = "http"
 	}
-	var esURLs = elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
-	var esUsername = c.Username
+	esURLs := elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
+	esUsername := c.Username
 	esPassword, err := cipher.GetDBAESCipher().AESDecrypt(c.Password)
 	if err != nil {
 		return errors.WithMessage(err, "CollectAndReportMetrics:failed to decrypt es cluster password")
@@ -86,7 +86,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 		return errors.WithMessage(err, "CollectAndReportMetrics:failed to parse es cluster url")
 	}
 	esURL.User = url.UserPassword(esUsername, esPassword)
-	var esURI = fmt.Sprintf("%s:%v", c.DomainName, c.Port)
+	esURI := fmt.Sprintf("%s:%v", c.DomainName, c.Port)
 
 	_, err = net.DialTimeout("tcp", esURI, 5*time.Second)
 	if err != nil {
@@ -144,7 +144,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 				// 填充指标值
 				m := make(map[string]float64)
 				m[metricName] = GetMetricValue(metricType, metric)
-				d := make(map[string]interface{})
+				d := make(map[string]any)
 
 				// 填充指标维度
 				for _, label := range metric.GetLabel() {
@@ -192,7 +192,8 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 			metricType, c.ClusterName, len(esMetrics), timestamp)
 
 		customReportData := clustermetrics.CustomReportData{
-			DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
+			DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics,
+		}
 		jsonData, err := jsonx.Marshal(customReportData)
 		if err != nil {
 			return errors.WithMessage(err, "CollectAndReportMetrics:custom report data json marshal failed")

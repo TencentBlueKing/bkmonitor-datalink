@@ -16,6 +16,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -88,22 +91,22 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func makeTracesGenerator(n int, resources map[string]string) *generator.TracesGenerator {
+func makeTracesRecord(n int, resources map[string]string) ptrace.Traces {
 	opts := define.TracesOptions{SpanCount: n}
 	opts.Resources = resources
-	return generator.NewTracesGenerator(opts)
+	return generator.NewTracesGenerator(opts).Generate()
 }
 
-func makeMetricsGenerator(n int, resources map[string]string) *generator.MetricsGenerator {
+func makeMetricsRecord(n int, resources map[string]string) pmetric.Metrics {
 	opts := define.MetricsOptions{GaugeCount: n}
 	opts.Resources = resources
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
-func makeLogsGenerator(n int, resources map[string]string) *generator.LogsGenerator {
+func makeLogsRecord(n int, resources map[string]string) plog.Logs {
 	opts := define.LogsOptions{LogCount: n, LogLength: 16}
 	opts.Resources = resources
-	return generator.NewLogsGenerator(opts)
+	return generator.NewLogsGenerator(opts).Generate()
 }
 
 func aes256TokenChecker() tokenChecker {
@@ -150,11 +153,9 @@ func TestTracesAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
 		}
-		g := makeTracesGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -163,11 +164,9 @@ func TestTracesAes256Token(t *testing.T) {
 
 	t.Run("No Token", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeTracesGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -177,11 +176,9 @@ func TestTracesAes256Token(t *testing.T) {
 
 	t.Run("Skip", func(t *testing.T) {
 		checker := skipTokenChecker()
-		g := makeTracesGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -193,11 +190,9 @@ func TestTracesAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
-		g := makeTracesGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -214,11 +209,9 @@ func TestTracesAes256Token(t *testing.T) {
 
 	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeTracesGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, nil),
 			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
 		}
 
@@ -236,11 +229,9 @@ func TestTracesAes256Token(t *testing.T) {
 
 	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeTracesGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, nil),
 			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
 		}
 
@@ -255,11 +246,9 @@ func TestMetricsAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
 		}
-		g := makeMetricsGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -268,11 +257,9 @@ func TestMetricsAes256Token(t *testing.T) {
 
 	t.Run("No Token", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeMetricsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -282,11 +269,9 @@ func TestMetricsAes256Token(t *testing.T) {
 
 	t.Run("Skip", func(t *testing.T) {
 		checker := skipTokenChecker()
-		g := makeMetricsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -298,11 +283,9 @@ func TestMetricsAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
-		g := makeMetricsGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -319,11 +302,9 @@ func TestMetricsAes256Token(t *testing.T) {
 
 	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeMetricsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, nil),
 			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
 		}
 
@@ -341,11 +322,9 @@ func TestMetricsAes256Token(t *testing.T) {
 
 	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeMetricsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, nil),
 			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
 		}
 
@@ -360,11 +339,9 @@ func TestLogsAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
 		}
-		g := makeLogsGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -373,11 +350,9 @@ func TestLogsAes256Token(t *testing.T) {
 
 	t.Run("No Token", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeLogsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -387,11 +362,9 @@ func TestLogsAes256Token(t *testing.T) {
 
 	t.Run("Skip", func(t *testing.T) {
 		checker := skipTokenChecker()
-		g := makeLogsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, nil),
 		}
 
 		_, err := checker.Process(&record)
@@ -403,11 +376,9 @@ func TestLogsAes256Token(t *testing.T) {
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
-		g := makeLogsGenerator(1, resources)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, resources),
 		}
 
 		_, err := checker.Process(&record)
@@ -424,11 +395,9 @@ func TestLogsAes256Token(t *testing.T) {
 
 	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeLogsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, nil),
 			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
 		}
 
@@ -446,11 +415,9 @@ func TestLogsAes256Token(t *testing.T) {
 
 	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
-		g := makeLogsGenerator(1, nil)
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, nil),
 			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
 		}
 
@@ -526,9 +493,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtiaxJ3i4amfEBRpRly3svdCllhrOjDgm6IjwqqIVKwzKN5",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
-					{"test": "test"},
-				},
+				Data:       []map[string]any{{"test": "test"}},
 				EventId:    "1",
 				IngestTime: time.Now().Unix(),
 			},
@@ -548,9 +513,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "12345",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
-					{"test": "test"},
-				},
+				Data:       []map[string]any{{"test": "test"}},
 				EventId:    "1",
 				IngestTime: time.Now().Unix(),
 			},
@@ -568,9 +531,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtia/r4wM8mjJnSo8oBqbclwaCY2AaNBAvhq1T48ZO09PSe",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
-					{"test": "test"},
-				},
+				Data:       []map[string]any{{"test": "test"}},
 				EventId:    "1",
 				IngestTime: time.Now().Unix(),
 			},
@@ -588,9 +549,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtia5GdDXVAdxBFaOaaHF6kHUNG/yhSoPsPwAr1WfIhU8gc",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
-					{"test": "test"},
-				},
+				Data:       []map[string]any{{"test": "test"}},
 				EventId:    "1",
 				IngestTime: time.Now().Unix(),
 			},

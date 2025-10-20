@@ -18,12 +18,12 @@ type DataIDFilter struct {
 	onlyCondition bool
 	metricDataID  []consul.DataID
 	// [{"bk_biz_id": [1,12]},{"cluster_id": ["cluster1", "cluster2"]}]，这里interface{} 的类型有 []int, []string
-	conditions []map[string]interface{}
+	conditions []map[string]any
 }
 
 // NewDataIDFilter
 func NewDataIDFilter(metric string) *DataIDFilter {
-	var dataIDFilter = &DataIDFilter{}
+	dataIDFilter := &DataIDFilter{}
 
 	// 如果metricName为空，则代表仅仅过滤condition
 	if metric == "" {
@@ -44,7 +44,7 @@ func (d *DataIDFilter) FilterByBizIDs(bizIDs ...int) *DataIDFilter {
 	if len(bizIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.BizID: bizIDs,
 	})
 	return d
@@ -55,7 +55,7 @@ func (d *DataIDFilter) FilterByProjectIDs(projectIDs ...string) *DataIDFilter {
 	if len(projectIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.ProjectID: projectIDs,
 	})
 	return d
@@ -66,7 +66,7 @@ func (d *DataIDFilter) FilterByClusterIDs(clusterIDs ...string) *DataIDFilter {
 	if len(clusterIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.ClusterID: clusterIDs,
 	})
 	return d
@@ -75,7 +75,6 @@ func (d *DataIDFilter) FilterByClusterIDs(clusterIDs ...string) *DataIDFilter {
 // Values 将metric过滤的dataIDList与biz，projectID等过滤的做交集
 // 如果metric过滤出的结果为空，则以biz, projectID等过滤的结果为准
 func (d *DataIDFilter) Values() []consul.DataID {
-
 	// 如果不仅仅是过滤 mcondition 且metricName匹配为空，则unify-query不知道metric的所在db，直接返回空dataID列表
 	if !d.onlyCondition && len(d.metricDataID) == 0 {
 		return nil
@@ -83,8 +82,8 @@ func (d *DataIDFilter) Values() []consul.DataID {
 
 	// 根据bizID，projectID，clusterID过滤出dataID
 	var tmpDataIDList []consul.DataID
-	var bizIDRouter = GetBizRouter()
-	var bcsInfo = consul.GetBcsInfo()
+	bizIDRouter := GetBizRouter()
+	bcsInfo := consul.GetBcsInfo()
 	for index, cond := range d.conditions {
 		for key, filterIDs := range cond {
 			var dataIDs []consul.DataID

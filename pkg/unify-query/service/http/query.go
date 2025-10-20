@@ -16,30 +16,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
-	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
-func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
 
@@ -56,23 +57,20 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
 
-	// 验证 queryList 限制长度
-	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
-		err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
-		log.Errorf(ctx, err.Error())
-		return nil, err
-	}
-
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	go func() {
@@ -109,7 +107,10 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
 				if err != nil {
-					log.Errorf(ctx, "query exemplar: %s", err.Error())
+					_ = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询失败",
+					).Error(ctx, err)
 					continue
 				}
 				if res.Err != "" {
@@ -158,7 +159,9 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
-	ignoreDimensions := []string{elasticsearch.KeyAddress}
+	ignoreDimensions := []string{metadata.KeyTableUUID}
+	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
@@ -166,80 +169,38 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
-		return
+		return total, list, resultTableOptions, err
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
 
-		message   strings.Builder
-		queryList []*metadata.Query
-		lock      sync.Mutex
+		message strings.Builder
+		lock    sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
+
+		queryRef metadata.QueryReference
 	)
 
-	list = make([]map[string]any, 0)
-
-	// 构建查询路由列表
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return total, list, resultTableOptions, err
 	}
-	for _, ql := range queryTs.QueryList {
-		// 时间复用
-		ql.Timezone = queryTs.Timezone
-		ql.Start = queryTs.Start
-		ql.End = queryTs.End
 
-		// 排序复用
-		ql.OrderBy = queryTs.OrderBy
-
-		// 如果 qry.Step 不存在去外部统一的 step
-		if ql.Step == "" {
-			ql.Step = queryTs.Step
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
-
-		if queryTs.ResultTableOptions != nil {
-			ql.ResultTableOptions = queryTs.ResultTableOptions
+		if message.Len() > 0 {
+			err = errors.New(message.String())
 		}
-
-		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
-		if ql.Limit == 0 && queryTs.Limit > 0 {
-			ql.Limit = queryTs.Limit
-		}
-
-		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
-		if queryTs.IsMultiFrom {
-			queryTs.From = 0
-		}
-
-		if ql.From == 0 && queryTs.From > 0 {
-			ql.From = queryTs.From
-		}
-
-		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-			queryTs.IsMultiFrom = false
-		}
-
-		// 复用字段配置，没有特殊配置的情况下使用公共配置
-		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-			ql.KeepColumns = queryTs.ResultColumns
-		}
-
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			err = qmErr
-			return
-		}
-
-		for _, qry := range qm.QueryList {
-			if qry != nil {
-				queryList = append(queryList, qry)
-			}
-		}
-	}
+	}()
 
 	receiveWg.Add(1)
 
@@ -247,67 +208,78 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
-		var data []map[string]any
+		var (
+			data      []map[string]any
+			fieldType = make(map[string]string)
+		)
 		for d := range dataCh {
 			data = append(data, d)
 		}
 
-		span.Set("query-list-num", len(queryList))
+		for _, rto := range resultTableOptions {
+			for k, v := range rto.FieldType {
+				fieldType[k] = v
+			}
+		}
+
+		span.Set("query-list-num", queryRef.Count())
 		span.Set("result-data-num", len(data))
 
-		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(data)
+		query.SortSliceListWithTime(data, queryTs.OrderBy.Orders(), fieldType)
 
-			span.Set("query-scroll", queryTs.Scroll)
-			span.Set("query-result-table", queryTs.ResultTableOptions)
+		span.Set("query-scroll", queryTs.Scroll)
+		span.Set("query-result-table", queryTs.ResultTableOptions)
 
-			// scroll 和 searchAfter 模式不进行裁剪
-			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
-				// 判定是否启用 multi from 特性
-				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("data-length", len(data))
-				span.Set("query-ts-from", queryTs.From)
-				span.Set("query-ts-limit", queryTs.Limit)
+		//  scroll 和 searchAfter 模式不进行裁剪
+		if queryTs.Scroll == "" && !queryTs.IsSearchAfter && queryTs.ResultTableOptions.IsCrop() {
+			// 判定是否启用 multi from 特性
+			span.Set("query-multi-from", queryTs.IsMultiFrom)
+			span.Set("data-length", len(data))
+			span.Set("query-ts-from", queryTs.From)
+			span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit {
-					if queryTs.IsMultiFrom {
-						resultTableOptions = queryTs.ResultTableOptions
-						if resultTableOptions == nil {
-							resultTableOptions = make(metadata.ResultTableOptions)
-						}
-
+			if queryTs.Limit > 0 {
+				if queryTs.IsMultiFrom {
+					if len(data) > 0 && len(data) > queryTs.Limit {
 						data = data[0:queryTs.Limit]
-						for _, l := range data {
-							tableID := l[elasticsearch.KeyTableID].(string)
-							address := l[elasticsearch.KeyAddress].(string)
+					}
+					for _, l := range data {
+						tableUUID := l[metadata.KeyTableUUID].(string)
 
-							option := resultTableOptions.GetOption(tableID, address)
-							if option == nil {
-								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
-							} else {
-								*option.From++
-							}
+						option := resultTableOptions.GetOption(tableUUID)
+						if option == nil || option.From == nil {
+							resultTableOptions.SetOption(tableUUID, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
 						}
-					} else {
-						data = data[queryTs.From : queryTs.From+queryTs.Limit]
+					}
+				} else {
+					// 只有合并数据才需要进行裁剪，否则原始数据里面就已经经过裁剪了
+					if queryRef.Count() > 1 {
+						// 只有长度符合的数据才进行裁剪
+						if len(data) > queryTs.From {
+							maxLength := queryTs.From + queryTs.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
+
+							data = data[queryTs.From:maxLength]
+						} else {
+							data = make([]map[string]any, 0)
+						}
 					}
 				}
 			}
 		}
 
-		labelMap, lbErr := queryTs.LabelMap()
-		if lbErr != nil {
-			err = lbErr
-			return
-		}
-
-		span.Set("query-label-map", labelMap)
+		span.Set("query-label-map", allLabelMap)
 		span.Set("query-highlight", queryTs.HighLight)
 
 		var hlF *function.HighLightFactory
-		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
-			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
+
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -322,7 +294,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					item[function.KeyHighLight] = highlightResult
 				}
 			}
-
 			list = append(list, item)
 		}
 
@@ -342,68 +313,221 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		defer func() {
 			sendWg.Wait()
 			close(dataCh)
+			close(errCh)
 		}()
-		for _, qry := range queryList {
+
+		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
-			qry := qry
+
+			labelMap := function.LabelMap(ctx, qry)
+			// 合并 labelMap
+			for k, lm := range labelMap {
+				if _, ok := allLabelMap[k]; !ok {
+					allLabelMap[k] = make([]function.LabelMapValue, 0)
+				}
+
+				allLabelMap[k] = append(allLabelMap[k], lm...)
+			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if len(queryList) > 1 {
+			if queryRef.Count() > 1 {
 				if !queryTs.IsMultiFrom {
 					qry.Size += qry.From
 					qry.From = 0
 				}
 			}
 
-			err = p.Submit(func() {
+			_ = p.Submit(func() {
 				defer func() {
 					sendWg.Done()
 				}()
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", qry.StorageID)
+					err = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询实例为空",
+					).Error(ctx, nil)
 					return
 				}
 
-				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
-					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					errCh <- queryErr
 					return
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
-				if !queryTs.IsMultiFrom {
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
-					}
-					lock.Lock()
-					resultTableOptions.MergeOptions(options)
-					lock.Unlock()
-				}
+				lock.Lock()
+				resultTableOptions.SetOption(qry.TableUUID(), option)
+				lock.Unlock()
 
 				total += size
 			})
-		}
+		})
 	}()
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
-	if message.Len() > 0 {
-		err = errors.New(message.String())
+	return total, list, resultTableOptions, err
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
+
+		message strings.Builder
+		lock    sync.Mutex
+
+		queryRef metadata.QueryReference
+	)
+
+	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
+
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return total, list, resultTableOptions, err
+	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
+
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return total, list, resultTableOptions, err
 	}
 
-	return
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+		}
+		if message.Len() > 0 {
+			err = errors.New(message.String())
+		}
+	}()
+
+	receiveWg.Add(1)
+
+	go func() {
+		defer receiveWg.Done()
+
+		for d := range dataCh {
+			list = append(list, d)
+		}
+	}()
+
+	// 多协程查询数据
+	var (
+		wg sync.WaitGroup
+	)
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	queryRef.Range("", func(qry *metadata.Query) {
+		for i := 0; i < session.SliceLength(); i++ {
+			wg.Add(1)
+
+			err = p.Submit(func() {
+				defer func() {
+					wg.Done()
+				}()
+
+				newQry := &metadata.Query{}
+				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
+				if err != nil {
+					errCh <- metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询失败",
+					).Error(ctx, err)
+					return
+				}
+
+				// 使用 slice 配置查询
+				newQry.SliceID = cast.ToString(i)
+
+				// slice info
+				slice := session.Slice(newQry.TableUUID())
+				defer func() {
+					session.UpdateSliceStatus(newQry.TableUUID(), slice)
+				}()
+
+				if slice.Done() {
+					return
+				}
+
+				from := slice.Offset + i*slice.Limit
+				newQry.Size = slice.Limit
+				newQry.ResultTableOption = &metadata.ResultTableOption{
+					SliceIndex: i,
+					ScrollID:   slice.ScrollID,
+					SliceMax:   slice.SliceMax,
+					From:       &from,
+				}
+
+				instance := prometheus.GetTsDbInstance(ctx, newQry)
+				if instance == nil {
+					err = metadata.Sprintf(
+						metadata.MsgQueryTs,
+						"查询实例为空",
+					).Error(ctx, nil)
+					return
+				}
+
+				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if err != nil {
+					slice.FailedNum++
+					errCh <- err
+					return
+				}
+
+				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				if option != nil {
+					if option.ScrollID != "" {
+						slice.ScrollID = option.ScrollID
+					}
+					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
+					lock.Lock()
+					resultTableOptions.SetOption(newQry.TableUUID(), option)
+					lock.Unlock()
+				}
+
+				if size == 0 {
+					slice.Status = redisUtil.StatusCompleted
+				}
+				total += size
+			})
+			if err != nil {
+				errCh <- err
+				wg.Done()
+			}
+		}
+	})
+
+	wg.Wait()
+
+	close(dataCh)
+	close(errCh)
+
+	receiveWg.Wait()
+	return total, list, resultTableOptions, err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
-		res  any
-		err  error
-		resp = NewPromData(queryTs.ResultColumns)
+		res       any
+		err       error
+		resp      = NewPromData(queryTs.ResultColumns)
+		isPartial bool
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-reference")
+	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
@@ -414,7 +538,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("query-ts", string(qStr))
 
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = true
+		ql.NotPromFunc = true
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -448,7 +572,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		return nil, err
 	}
 
-	// es 需要使用自己的查询时间范围
+	// 开启时间不对齐模式
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
@@ -473,14 +597,12 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		step time.Duration
 	)
 
-	// 只有聚合场景需要对齐
-	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Hours() > 0 {
-		timezone := "UTC"
-		// 只有按天聚合的时候才启用时区对齐偏移量，否则一律使用 UTC
-		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
-			timezone = queryTs.Timezone
-		}
+	// 获取配置里面的最大时间聚合以及时区
+	window, timezone := queryRef.GetMaxWindowAndTimezone()
 
+	// 只有聚合场景需要对齐
+	if window.Seconds() > 0 {
+		// 移除按天整除逻辑，使用用户传过来的时区
 		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
 		if err != nil {
 			return nil, err
@@ -492,7 +614,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	if queryTs.Instant {
 		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -528,6 +650,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
@@ -558,10 +681,22 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		}
 	}
 
+	// 判定是否开启时间不对齐模式
+	if queryTs.Reference {
+		unit, startTime, endTime, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+		if timeErr != nil {
+			err = timeErr
+			return instance, stmt, err
+		}
+
+		metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
+	}
+
 	// 判断是否打开对齐
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = false
-		ql.AlignInfluxdbResult = AlignInfluxdbResult
+		ql.NotPromFunc = false
+		// 只有时间对齐模式，才需要开启
+		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -584,7 +719,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	if queryTs.LookBackDelta != "" {
 		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
-			return
+			return instance, stmt, err
 		}
 	}
 
@@ -596,17 +731,17 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	// 转换成 queryRef
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return
+		return instance, stmt, err
 	}
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
-		vmExpand := queryRef.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, queryRef)
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试
-			StorageID:   consul.VictoriaMetricsStorageType,
-			StorageType: consul.VictoriaMetricsStorageType,
+			StorageID:   metadata.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 	} else {
 		// 非直查开启忽略时间聚合函数判断
@@ -625,19 +760,19 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
-		return
+		return instance, stmt, err
 	}
 
 	stmt = expr.String()
 
 	if instance == nil {
 		err = fmt.Errorf("storage get error")
-		return
+		return instance, stmt, err
 	}
 
 	span.Set("storage-type", instance.InstanceType())
 	span.Set("stmt", stmt)
-	return
+	return instance, stmt, err
 }
 
 func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -647,8 +782,9 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		instance tsdb.Instance
 		stmt     string
 
-		res  any
-		resp = NewPromData(query.ResultColumns)
+		res       any
+		resp      = NewPromData(query.ResultColumns)
+		isPartial bool
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts")
@@ -660,8 +796,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
@@ -682,7 +820,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, stmt, end)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
 	}
 	if err != nil {
 		return nil, err
@@ -716,13 +854,17 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 			pointsNum++
 		}
 	default:
-		err = fmt.Errorf("data type wrong: %T", v)
+		err = metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"data type wrong: %T", v,
+		).Error(ctx, nil)
 		return nil, err
 	}
 
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
@@ -744,8 +886,10 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 
 	promQL, err := query.ToPromQL(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgParserUnifyQuery,
+			"转换结构体异常",
+		).Error(ctx, err)
 	}
 
 	return &structured.QueryPromQL{
@@ -757,18 +901,16 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (query *structured.QueryTs, err error) {
-	var (
-		matchers []*labels.Matcher
-	)
+	var matchers []*labels.Matcher
 
 	if queryPromQL == nil {
-		return
+		return query, err
 	}
 
 	sp := structured.NewQueryPromQLExpr(queryPromQL.PromQL)
 	query, err = sp.QueryTs()
 	if err != nil {
-		return
+		return query, err
 	}
 
 	query.Start = queryPromQL.Start
@@ -778,19 +920,26 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.LookBackDelta = queryPromQL.LookBackDelta
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
+	query.Reference = queryPromQL.Reference
 
 	if queryPromQL.Match != "" {
-		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)
 		if err != nil {
-			return
+			return query, err
 		}
 	}
 
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	if decodeFunc == nil {
+		decodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	for _, q := range query.QueryList {
 		// decode table id and field name
 		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
+		q.FieldName = decodeFunc(q.FieldName)
 
 		// decode condition
 		for i, d := range q.Conditions.FieldList {
@@ -814,9 +963,10 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 
 		// 补充 Match
-		var verifyDimensions = func(key string) bool {
+		verifyDimensions := func(key string) bool {
 			return true
 		}
+
 		if len(matchers) > 0 {
 			if queryPromQL.IsVerifyDimensions {
 				dimSet := set.New[string]()
@@ -843,21 +993,24 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 	}
 
-	return
+	return query, err
 }
 
-func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
-		err error
-		res any
+		err       error
+		res       any
+		isPartial bool
 	)
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
 	defer span.End(&err)
 
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"查询失败",
+		).Error(ctx, err)
 	}
 
 	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
@@ -877,7 +1030,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, "", end)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, "", start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, "", start, end, step)
 	}
 	if err != nil {
 		return nil, err
@@ -914,6 +1067,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	span.Set("resp-points-num", pointsNum)
 
 	resp := NewPromData(query.ResultColumns)
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err

@@ -15,6 +15,7 @@ package customreport
 // gen:qs
 type TimeSeriesGroup struct {
 	CustomGroupBase
+	BkTenantId          string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
 	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
 }

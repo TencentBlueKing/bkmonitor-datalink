@@ -11,6 +11,8 @@ package tenant
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +34,7 @@ var (
 	lastTenantListUpdate time.Time
 )
 
-// GetTenantIdByBkBizId
+// GetTenantIdByBkBizId 根据 bkBizId 获取租户 ID
 func GetTenantIdByBkBizId(bkBizId int) (string, error) {
 	if !cfg.EnableMultiTenantMode {
 		return DefaultTenantId, nil
@@ -47,6 +49,33 @@ func GetTenantIdByBkBizId(bkBizId int) (string, error) {
 	} else {
 		db.Where("space_id = ?", bkBizId).Where("space_type_id = ?", "bkcc").Find(&spaces)
 	}
+	if len(spaces) == 0 {
+		return DefaultTenantId, nil
+	}
+	if len(spaces) > 1 {
+		return DefaultTenantId, errors.New("multiple spaces found")
+	}
+	return spaces[0].BkTenantId, nil
+}
+
+// GetTenantIdBySpaceUID 根据 spaceUID 获取租户 ID
+func GetTenantIdBySpaceUID(spaceUID string) (string, error) {
+	if !cfg.EnableMultiTenantMode {
+		return DefaultTenantId, nil
+	}
+
+	// 分割 spaceUID，格式为 space_type_id__space_id
+	splits := strings.Split(spaceUID, "__")
+	if len(splits) != 2 {
+		return "", fmt.Errorf("invalid space uid: %s", spaceUID)
+	}
+
+	spaceTypeId := splits[0]
+	spaceId := splits[1]
+
+	db := mysql.GetDBSession().DB
+	spaces := make([]space.Space, 0)
+	db.Where("space_type_id = ?", spaceTypeId).Where("space_id = ?", spaceId).Find(&spaces)
 	if len(spaces) == 0 {
 		return DefaultTenantId, nil
 	}

@@ -30,10 +30,7 @@ func init() {
 }
 
 // Ready 注册 Tars 服务
-func Ready(config receiver.ComponentConfig) {
-	if !config.Tars.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvTarsRoute("StatObj", "tarsstat", NewStatImpl(), new(statf.StatF))
 	receiver.RegisterRecvTarsRoute("PropertyObj", "tarsproperty", NewPropertyImpl(), new(propertyf.PropertyF))
 }

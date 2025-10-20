@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -43,6 +30,11 @@ const (
 
 type DynamicGroupCacheManager struct {
 	*BaseCacheManager
+}
+
+func (m *DynamicGroupCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	// TODO implement me
+	return errors.New("BuildRelationMetrics not implemented for DynamicGroupCacheManager")
 }
 
 // NewDynamicGroupCacheManager 创建动态分组缓存管理器
@@ -89,7 +81,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 	// 获取动态分组下的资源列表
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.ExecuteDynamicGroupResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -101,11 +93,10 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]any{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +123,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 }
 
 // getDynamicGroupList 获取动态分组列表
-func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]interface{}, error) {
+func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]any, error) {
 	cmdbApi, err := api.GetCmdbApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
@@ -140,7 +131,7 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.SearchDynamicGroupResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -152,17 +143,16 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, err
 	}
 
 	// 获取所有动态分组信息
-	dynamicGroupToRelatedIDs := make(map[string]map[string]interface{})
+	dynamicGroupToRelatedIDs := make(map[string]map[string]any)
 	for _, item := range result {
 		if item == nil {
 			logger.Warn("dynamic group item is nil")
@@ -180,7 +170,7 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 				return nil, errors.Wrap(err, "failed to get dynamic group related ids")
 			}
 
-			dynamicGroupToRelatedIDs[dg.ID] = map[string]interface{}{
+			dynamicGroupToRelatedIDs[dg.ID] = map[string]any{
 				"bk_biz_id":   bizID,
 				"bk_inst_ids": relatedIDs,
 				"bk_obj_id":   dg.BkObjId,
@@ -236,11 +226,11 @@ func (m *DynamicGroupCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 清除事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *DynamicGroupCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	return nil
 }
 
 // UpdateByEvents 更新事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *DynamicGroupCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	return nil
 }

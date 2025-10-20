@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -47,24 +34,29 @@ const (
 
 // AlarmServiceInstanceInfo 服务实例信息
 type AlarmServiceInstanceInfo struct {
-	BkBizId           int         `json:"bk_biz_id"`
-	ID                int         `json:"id"`
-	ServiceInstanceId int         `json:"service_instance_id"`
-	Name              string      `json:"name"`
-	BkModuleId        int         `json:"bk_module_id"`
-	BkHostId          int         `json:"bk_host_id"`
-	ServiceTemplateId int         `json:"service_template_id"`
-	ProcessInstances  interface{} `json:"process_instances"`
+	BkBizId           int    `json:"bk_biz_id"`
+	ID                int    `json:"id"`
+	ServiceInstanceId int    `json:"service_instance_id"`
+	Name              string `json:"name"`
+	BkModuleId        int    `json:"bk_module_id"`
+	BkHostId          int    `json:"bk_host_id"`
+	ServiceTemplateId int    `json:"service_template_id"`
+	ProcessInstances  any    `json:"process_instances"`
 
 	// 补充字段
-	IP        string                              `json:"ip"`
-	BkCloudId int                                 `json:"bk_cloud_id"`
-	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+	IP        string                      `json:"ip"`
+	BkCloudId int                         `json:"bk_cloud_id"`
+	TopoLinks map[string][]map[string]any `json:"topo_link"`
 }
 
 // ServiceInstanceCacheManager 服务实例缓存管理器
 type ServiceInstanceCacheManager struct {
 	*BaseCacheManager
+}
+
+func (m *ServiceInstanceCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	// TODO implement me
+	return errors.New("ServiceInstanceCacheManager BuildRelationMetrics not implemented")
 }
 
 // NewServiceInstanceCacheManager 创建服务实例缓存管理器
@@ -98,7 +90,7 @@ func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([
 
 	// 批量拉取业务下的服务实例信息
 	results, err := api.BatchApiRequest(
-		cmdbApiPageSize, func(resp interface{}) (int, error) {
+		cmdbApiPageSize, func(resp any) (int, error) {
 			var res cmdb.ListServiceInstanceDetailResp
 			err := mapstructure.Decode(resp, &res)
 			if err != nil {
@@ -107,7 +99,7 @@ func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([
 			return res.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ListServiceInstanceDetail().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizId})
+			return cmdbApi.ListServiceInstanceDetail().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizId})
 		},
 		10,
 	)
@@ -132,7 +124,7 @@ func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([
 				BkHostId:          instance.BkHostId,
 				ServiceTemplateId: instance.ServiceTemplateId,
 				ProcessInstances:  instance.ProcessInstances,
-				TopoLinks:         make(map[string][]map[string]interface{}),
+				TopoLinks:         make(map[string][]map[string]any),
 			}
 			serviceInstances = append(serviceInstances, serviceInstance)
 		}
@@ -146,7 +138,6 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 	serviceInstances, err := getServiceInstances(ctx, m.GetBkTenantId(), bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get service instances failed")
-
 	}
 	hostIdSet := make(map[int]struct{})
 	for _, instance := range serviceInstances {
@@ -255,12 +246,12 @@ func (m *ServiceInstanceCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 根据事件清理缓存
-func (m *ServiceInstanceCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *ServiceInstanceCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	return nil
 }
 
 // UpdateByEvents 根据事件更新缓存
-func (m *ServiceInstanceCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *ServiceInstanceCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if len(events) == 0 {
 		return nil
 	}

@@ -94,7 +94,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				g1.Observe(context.Background(), 1)
+				g1.Observe(context.Background(), 1, attribute.String("callee_service", "hello"), attribute.String("code", "ret_201"))
 				g2.Observe(context.Background(), float64(time.Now().Second()))
 			case <-ctx.Done():
 				return

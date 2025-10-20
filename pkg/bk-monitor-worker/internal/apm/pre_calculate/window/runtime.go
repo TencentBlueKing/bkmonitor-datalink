@@ -146,7 +146,6 @@ func (c *ConfigBaseRuntimeStrategies) handleNew() *Runtime {
 }
 
 func (c *ConfigBaseRuntimeStrategies) predicate(runtime *Runtime, collect CollectTrace) bool {
-
 	for _, strategy := range c.predicateStrategies {
 		strategy(c.config, runtime, collect)
 	}

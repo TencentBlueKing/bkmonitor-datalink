@@ -131,21 +131,6 @@ func setupLogger(c *Config) {
 	})
 }
 
-// PromSli 自监控配置
-type PromSli struct {
-	Namespace     string        `yaml:"namespace"`
-	SecretName    string        `yaml:"secret_name"`
-	ConfigMapName string        `yaml:"configmap_name"`
-	Scrape        PromSliScrape `yaml:"prometheus"`
-}
-
-// PromSliScrape prometheus 抓取目标配置
-type PromSliScrape struct {
-	Global    map[string]interface{} `yaml:"global"`
-	RuleFiles []string               `yaml:"rule_files"`
-	Alerting  map[string]interface{} `yaml:"alerting"`
-}
-
 // VCluster 配置，bklogconfig 使用中
 type VCluster struct {
 	PodNameAnnotationKey      string `yaml:"pod_name_annotation_key"`
@@ -163,6 +148,21 @@ type TimeSync struct {
 	NtpdPath      string `yaml:"ntpd_path"`
 	ChronyAddress string `yaml:"chrony_address"`
 	QueryTimeout  string `yaml:"query_timeout"`
+}
+
+// QCloudMonitor 腾讯云监控采集配置
+type QCloudMonitor struct {
+	// Enabled 是否启用
+	Enabled bool `yaml:"enabled"`
+
+	// Private 是否为内部模式
+	Private bool `yaml:"private"`
+
+	// TargetNamespaces namespace 匹配白名单
+	TargetNamespaces []string `yaml:"target_namespaces"`
+
+	// DenyTargetNamespaces namespace 匹配黑名单
+	DenyTargetNamespaces []string `yaml:"deny_target_namespaces"`
 }
 
 // Config Operator 进程主配置
@@ -199,9 +199,6 @@ type Config struct {
 
 	// EnablePodMonitor 是否启用 podmonitor
 	EnablePodMonitor bool `yaml:"enable_pod_monitor"`
-
-	// EnablePromRule 是否启用 promrules 自监控专用
-	EnablePromRule bool `yaml:"enable_prometheus_rule"`
 
 	// EnableStatefulSetWorker 是否启用 statefulset worker 调度
 	EnableStatefulSetWorker bool `yaml:"enable_statefulset_worker"`
@@ -250,7 +247,6 @@ type Config struct {
 	Kubelet     Kubelet      `yaml:"kubelet"`
 	Event       Event        `yaml:"event"`
 	Logger      Logger       `yaml:"logger"`
-	PromSli     PromSli      `yaml:"sli"`
 	MetaEnv     env.Metadata `yaml:"meta_env"`
 	PromSDKinds PromSDKinds  `yaml:"prom_sd_kinds"`
 
@@ -258,9 +254,10 @@ type Config struct {
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
 
-	VCluster       VCluster `yaml:"vcluster"`
-	PolarisAddress []string `yaml:"polaris_address"`
-	TimeSync       TimeSync `yaml:"timesync"`
+	VCluster       VCluster      `yaml:"vcluster"`
+	PolarisAddress []string      `yaml:"polaris_address"`
+	TimeSync       TimeSync      `yaml:"timesync"`
+	QCloudMonitor  QCloudMonitor `yaml:"qcloudmonitor"`
 }
 
 type PromSDKinds []string

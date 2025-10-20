@@ -17,7 +17,7 @@ import (
 type HeartBeatConfig struct {
 	// bkmonitorbeeat下的心跳data id配置
 	GlobalDataID int32 `config:"global_dataid" `
-	ChildDataID  int32 `config:"child_dataid"`
+	ChildDataID  int32 `config:"child_dataid"` // 暂无用到
 	// uptimecheckbeat下的心跳data id配置，缺少子任务的data_id
 	DataID             int32         `config:"dataid"`
 	Period             time.Duration `config:"period" validate:"min=1s"`

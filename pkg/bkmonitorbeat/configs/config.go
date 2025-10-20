@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -83,6 +84,10 @@ type Config struct {
 	ConcurrencyLimit ConcurrencyLimitConfig `config:"concurrency_limit"`
 	JsonLib          string                 `config:"jsonlib"`
 
+	EnableMultiTenant  bool     `config:"enable_multi_tenant"`  // 是否启用多租户模式
+	MultiTenantTasks   []string `config:"multi_tenant_tasks"`   // 多租户场景下需要映射的 task 列表
+	GseMessageEndpoint string   `config:"gse_message_endpoint"` // gseagent 消息通信地址
+
 	MetricbeatWorkers        int  `config:"metricbeat_workers"`
 	MetricbeatSpreadWorkload bool `config:"metricbeat_spread_workload"`
 	MetricbeatAlignTs        bool `config:"metricbeat_align_ts"`
@@ -124,6 +129,7 @@ type Config struct {
 	RpmPackageTask     *RpmPackageConfig      `config:"rpmpackage_task"`
 	TimeSyncTask       *TimeSyncConfig        `config:"timesync_task"`
 	DmesgTask          *DmesgConfig           `config:"dmesg_task"`
+	SelfStatsTask      *SelfStatsConfig       `config:"selfstats_task"`
 }
 
 // NewConfig : new config struct
@@ -163,6 +169,7 @@ func NewConfig() *Config {
 	config.RpmPackageTask = NewRpmPackageConfig(config)
 	config.TimeSyncTask = NewTimeSyncConfig(config)
 	config.DmesgTask = NewDmesgConfig(config)
+	config.SelfStatsTask = NewSelfStatsConfig(config)
 
 	return config
 }
@@ -219,5 +226,9 @@ func (c *Config) GetTaskConfigList() []define.TaskConfig {
 }
 
 func (c *Config) GetGatherUpDataID() int32 {
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleGatherUpBeat); ok {
+		return v
+	}
 	return c.GatherUpBeat.DataID
 }

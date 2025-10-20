@@ -11,13 +11,13 @@ package operator
 
 import (
 	"fmt"
-	"strings"
 
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
@@ -28,15 +28,11 @@ func serviceMonitorID(obj *promv1.ServiceMonitor) string {
 	return fmt.Sprintf("%s/%s", obj.Namespace, obj.Name)
 }
 
-func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
+func (c *Operator) handleServiceMonitorAdd(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
-	}
-
-	if configs.G().EnablePromRule {
-		c.promsliController.UpdateServiceMonitor(serviceMonitor)
 	}
 
 	// 新增的 servicemonitor 命中黑名单则流程终止
@@ -53,7 +49,7 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interface{}) {
+func (c *Operator) handleServiceMonitorUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
@@ -63,10 +59,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", newObj)
 		return
-	}
-
-	if configs.G().EnablePromRule {
-		c.promsliController.UpdateServiceMonitor(cur)
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
@@ -93,15 +85,11 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 }
 
-func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
+func (c *Operator) handleServiceMonitorDelete(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
-	}
-
-	if configs.G().EnablePromRule {
-		c.promsliController.DeleteServiceMonitor(serviceMonitor)
 	}
 
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
@@ -135,9 +123,9 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 		Kind:      monitorKindServiceMonitor,
 		Namespace: serviceMonitor.Namespace,
 	}
-	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	dataID, err := c.pickMonitorDataID(meta, serviceMonitor.Annotations)
 	if err != nil {
-		logger.Errorf("servicemonitor(%+v) no dataid matched", meta)
+		logger.Errorf("servicemonitor (%+v) no dataid matched", meta)
 		return discovers
 	}
 	specLabels := dataID.Spec.Labels
@@ -208,7 +196,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
-				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,
@@ -234,7 +222,7 @@ func ifRejectServiceMonitor(monitor *promv1.ServiceMonitor) bool {
 		if !rule.Validate() {
 			continue
 		}
-		if strings.ToUpper(rule.Kind) == strings.ToUpper(monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
+		if utils.LowerEq(rule.Kind, monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
 			return true
 		}
 	}

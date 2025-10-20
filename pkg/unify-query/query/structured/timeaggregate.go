@@ -27,7 +27,7 @@ type TimeAggregation struct {
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到
 	Position int `json:"position,omitempty" swaggerignore:"true"`
 	// VargsList 函数参数位置，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
-	VargsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
+	VargsList []any `json:"vargs_list,omitempty" swaggerignore:"true"`
 	// IsSubQuery 判断是否为子查询
 	IsSubQuery bool `json:"is_sub_query,omitempty"`
 	// Step 子查询区间 step

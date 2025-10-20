@@ -17,9 +17,9 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -68,7 +68,7 @@ func (j JwtPayLoad) UserName() string {
 }
 
 func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error) {
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
+	keyFunc := func(token *jwt.Token) (any, error) {
 		pubKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKey)
 		if err != nil {
 			return pubKey, errors.Wrap(err, "jwt parse fail")
@@ -145,17 +145,18 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusFailed)
 
 				// 通过特性开关判断是否开启验证，如果未开启验证则不进行 504 校验，但是错误指标还正常处理
-				ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
+				ffStatus := featureFlag.GetJwtAuthFeatureFlag(ctx)
 				if !ffStatus {
 					c.Next()
 					return
 				}
 
-				err = fmt.Errorf("jwt auth unauthorized: %s, app_code: %s, space_uid: %s", err, appCode, spaceUID)
-				log.Errorf(ctx, err.Error())
-
 				res := gin.H{
-					"error": err.Error(),
+					"error": metadata.Sprintf(
+						metadata.MsgHandlerAPI,
+						"jwt auth unauthorized (app_code: %s, space_uid: %s)",
+						appCode, spaceUID,
+					).Error(ctx, err).Error(),
 				}
 				if span.TraceID() != "" {
 					res["trace_id"] = span.TraceID()

@@ -163,6 +163,18 @@ func (m *PodMap) GetByNamespace(namespace string) []PodObject {
 	return ret
 }
 
+func (m *PodMap) CheckIP(s string) bool {
+	m.mut.RLock()
+	defer m.mut.RUnlock()
+
+	for _, obj := range m.objs {
+		if obj.PodIP == s {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *PodMap) GetAll() []PodObject {
 	m.mut.RLock()
 	defer m.mut.RUnlock()

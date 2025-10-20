@@ -15,14 +15,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-func NewSqlBody(tableName string, params map[string]interface{}) SQLBody {
+func NewSqlBody(tableName string, params map[string]any) SQLBody {
 	return SQLBody{TableName: tableName, Params: params}
 }
 
 // SQLBody DB类body
 type SQLBody struct {
-	TableName string                 `json:"table_name"`
-	Params    map[string]interface{} `json:"params"`
+	TableName string         `json:"table_name"`
+	Params    map[string]any `json:"params"`
 }
 
 // String 转化为string

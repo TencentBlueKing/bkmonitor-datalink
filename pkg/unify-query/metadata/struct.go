@@ -18,9 +18,6 @@ import (
 
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
 const (
@@ -47,6 +44,32 @@ const (
 	ConditionLte   = "lte"
 )
 
+const (
+	DefaultReferenceName = "a"
+)
+
+const (
+	TypeDate      = "date"
+	TypeDateNanos = "date_nanos"
+)
+
+type FieldsMap map[string]FieldOption
+
+func (f FieldsMap) Field(k string) FieldOption {
+	return f[k]
+}
+
+type FieldOption struct {
+	AliasName       string   `json:"alias_name"`
+	FieldName       string   `json:"field_name"`
+	FieldType       string   `json:"field_type"`
+	OriginField     string   `json:"origin_field"`
+	IsAgg           bool     `json:"is_agg"`
+	IsAnalyzed      bool     `json:"is_analyzed"`
+	IsCaseSensitive bool     `json:"is_case_sensitive"`
+	TokenizeOnChars []string `json:"tokenize_on_chars"`
+}
+
 type VmCondition string
 
 type FieldAlias map[string]string
@@ -65,10 +88,11 @@ type Aggregate struct {
 	Dimensions []string `json:"dimensions,omitempty"`
 	Without    bool     `json:"without,omitempty"`
 
-	Window   time.Duration `json:"window,omitempty"`
-	TimeZone string        `json:"time_zone,omitempty"`
+	Window         time.Duration `json:"window,omitempty"`
+	TimeZone       string        `json:"time_zone,omitempty"`
+	TimeZoneOffset int64         `json:"time_zone_offset,omitempty"`
 
-	Args []interface{} `json:"args,omitempty"`
+	Args []any `json:"args,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
@@ -89,10 +113,9 @@ type Query struct {
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
-
-	StorageIDs  []string `json:"storage_ids,omitempty"`
-	StorageID   string   `json:"storage_id,omitempty"`
-	StorageName string   `json:"storage_name,omitempty"`
+	SliceID     string `json:"slice_id,omitempty"`     // 切片 ID
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageName string `json:"storage_name,omitempty"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`
@@ -100,21 +123,24 @@ type Query struct {
 	DataSource string `json:"data_source,omitempty"`
 	DataLabel  string `json:"data_label,omitempty"`
 	TableID    string `json:"table_id,omitempty"`
-	MetricName string `json:"metric_name,omitempty"`
 
 	// vm 的 rt
-	VmRt string `json:"vm_rt,omitempty"`
+	VmRt          string `json:"vm_rt,omitempty"`
+	CmdbLevelVmRt string `json:"cmdb_level_vm_rt,omitempty"`
 
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
 	DB              string     `json:"db,omitempty"`               // 存储 DB
+	DBs             []string   `json:"dbs,omitempty"`              // 多个 DB 用于用户合并查询
 	Measurement     string     `json:"measurement,omitempty"`      // 存储 Measurement
+	MeasurementType string     `json:"measurement_type,omitempty"` // 存储类型
 	Field           string     `json:"field,omitempty"`            // 存储 Field
 	TimeField       TimeField  `json:"time_field,omitempty"`       // 时间字段
 	Timezone        string     `json:"timezone,omitempty"`         // 存储 Timezone
 	Fields          []string   `json:"fields,omitempty"`           // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
 	FieldAlias      FieldAlias `json:"field_alias,omitempty"`
 	Measurements    []string   `json:"measurements,omitempty"` // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
+	MetricNames     []string   `json:"metric_names,omitempty"`
 
 	// 用于 promql 查询
 	IsHasOr bool `json:"is_has_or,omitempty"` // 标记是否有 or 条件
@@ -137,18 +163,59 @@ type Query struct {
 	QueryString string `json:"query_string,omitempty"`
 	IsPrefix    bool   `json:"is_prefix,omitempty"`
 
+	// sql 查询
+	SQL string `json:"sql,omitempty"`
+
 	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
 	Source []string `json:"source,omitempty"`
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
 
-	Scroll             string             `json:"scroll,omitempty"`
-	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
+	Scroll            string             `json:"scroll,omitempty"`
+	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+
+	DryRun bool `json:"dry_run,omitempty"`
+
+	// sql 使用SELECT DISTINCT 语法
+	IsDistinct bool `json:"is_distinct,omitempty"`
+
+	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
+	IsMergeDB bool `json:"is_merge_db"`
+}
+
+// GetMergeDBStatus 判断是否进行 db 合并处理
+func (q *Query) GetMergeDBStatus() bool {
+	// 如果 db 为空，则不需要合并
+	if q.DB == "" {
+		return false
+	}
+
+	// 如果是 es 可以使用合并，优化查询速度
+	if q.StorageType == ElasticsearchStorageType {
+		return true
+	}
+
+	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
+		return true
+	}
+
+	return false
+}
+
+func (q *Query) VMExpand() *VmExpand {
+	return &VmExpand{
+		ResultTableList: []string{q.VmRt},
+		MetricFilterCondition: map[string]string{
+			DefaultReferenceName: q.VmCondition.String(),
+		},
+		ClusterName: q.StorageName,
+	}
 }
 
 type HighLight struct {
@@ -197,6 +264,22 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+}
+
+// Signature 生成条件的唯一签名，用于条件比较和去重
+// 例如：host|eq|server1 或 status|eq|1,2,3
+func (c ConditionField) Signature() string {
+	sortedValues := make([]string, len(c.Value))
+	copy(sortedValues, c.Value)
+	sort.Strings(sortedValues)
+
+	return fmt.Sprintf("%v|%v|%v|%s|%s|%s|",
+		c.IsWildcard,
+		c.IsSuffix,
+		c.IsPrefix,
+		c.DimensionName,
+		c.Operator,
+		strings.Join(sortedValues, ","))
 }
 
 // TimeAggregation 时间聚合字段
@@ -279,18 +362,13 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 	return VmCondition(cond)
 }
 
-// ToJson 通过 tableID 排序，并且返回 json 序列化
-func (qMetric *QueryMetric) ToJson(isSort bool) string {
-	if isSort {
-		sort.SliceStable(qMetric.QueryList, func(i, j int) bool {
-			a := qMetric.QueryList[i].TableID
-			b := qMetric.QueryList[j].TableID
-			return a < b
-		})
-	}
+func (qRef QueryReference) Count() int {
+	var i int
+	qRef.Range("", func(qry *Query) {
+		i++
+	})
 
-	s, _ := json.Marshal(qMetric)
-	return string(s)
+	return i
 }
 
 // Range 遍历查询列表
@@ -317,56 +395,21 @@ func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 	}
 }
 
-// ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
-func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
-	vmClusterNames := set.New[string]()
-	vmResultTable := set.New[string]()
-	metricFilterCondition := make(map[string]string)
-
-	for referenceName, references := range qRef {
-		if len(references) == 0 {
-			continue
-		}
-
-		// 因为是直查，reference 还需要承担聚合语法生成，所以 vm 不支持同指标的拼接，所以这里只取第一个 reference
-		reference := references[0]
-		if 0 < len(reference.QueryList) {
-			vmConditions := set.New[string]()
-			for _, query := range reference.QueryList {
-				if query.VmRt == "" {
-					continue
-				}
-
-				vmResultTable.Add(query.VmRt)
-				vmConditions.Add(string(query.VmCondition))
-				vmClusterNames.Add(query.StorageName)
+func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
+	var (
+		window   time.Duration = 0
+		timezone string
+	)
+	qRef.Range("", func(q *Query) {
+		for _, a := range q.Aggregates {
+			if a.Window > window {
+				window = a.Window
+				timezone = a.TimeZone
 			}
-
-			filterCondition := ""
-			if vmConditions.Size() > 0 {
-				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
-			}
-
-			metricFilterCondition[referenceName] = filterCondition
 		}
-	}
+	})
 
-	if vmResultTable.Size() == 0 {
-		return
-	}
-
-	vmExpand = &VmExpand{
-		MetricFilterCondition: metricFilterCondition,
-		ResultTableList:       vmResultTable.ToArray(),
-	}
-	sort.Strings(vmExpand.ResultTableList)
-
-	// 当所有的 vm 集群都一样的时候，才进行传递
-	if vmClusterNames.Size() == 1 {
-		vmExpand.ClusterName = vmClusterNames.First()
-	}
-
-	return
+	return window, timezone
 }
 
 func (vs VmCondition) String() string {
@@ -386,36 +429,34 @@ func (a Aggregates) LastAggName() string {
 	return a[len(a)-1].Name
 }
 
-func (os Orders) SortSliceList(list []map[string]any) {
-	if len(os) == 0 {
-		return
-	}
-	if len(list) == 0 {
-		return
-	}
-
-	sort.SliceStable(list, func(i, j int) bool {
-		for _, o := range os {
-			a, _ := list[i][o.Name].(string)
-			b, _ := list[j][o.Name].(string)
-
-			if a != b {
-				if o.Ast {
-					r := a < b
-					return r
-				} else {
-					r := a > b
-					return r
-				}
-			}
+func (a Aggregates) Copy() Aggregates {
+	aggs := make(Aggregates, len(a))
+	for i, agg := range a {
+		aggs[i] = Aggregate{
+			Name:           agg.Name,
+			Field:          agg.Field,
+			Dimensions:     append([]string{}, agg.Dimensions...),
+			Window:         agg.Window,
+			TimeZone:       agg.TimeZone,
+			TimeZoneOffset: agg.TimeZoneOffset,
+			Args:           append([]any{}, agg.Args...),
 		}
-		return true
-	})
+	}
+	return aggs
 }
 
-func (fa FieldAlias) Alias(f string) string {
+func (fa FieldAlias) OriginField(f string) string {
 	if v, ok := fa[f]; ok {
 		return v
 	}
-	return f
+	return ""
+}
+
+func (fa FieldAlias) AliasName(f string) string {
+	for k, v := range fa {
+		if v == f {
+			return k
+		}
+	}
+	return ""
 }

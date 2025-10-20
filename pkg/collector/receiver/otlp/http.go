@@ -27,6 +27,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -44,10 +45,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceOtlp, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Otlp.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceOtlp, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -104,15 +102,6 @@ func writeError(w http.ResponseWriter, rh receiver.ResponseHandler, err error, s
 	receiver.WriteResponse(w, rh.ContentType(), statusCode, msg)
 }
 
-// 允许从 Http Header 中读取 token
-func extractTokenFromHttpHeader(header http.Header) string {
-	token := header.Get(define.KeyToken)
-	if len(token) > 0 {
-		return token
-	}
-	return header.Get(define.KeyTenantID)
-}
-
 func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
@@ -146,10 +135,11 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 		Data:          data,
 	}
 
-	tk := extractTokenFromHttpHeader(req.Header)
+	tk := tokenparser.FromHttpRequest(req)
 	if len(tk) > 0 {
 		r.Token = define.Token{Original: tk}
 	}
+	r.Metadata = tokenparser.FromHttpUserMetadata(req)
 
 	prettyprint.Pretty(rtype, data)
 
@@ -222,11 +212,11 @@ func (h httpPbResponseHandler) Response(rtype define.RecordType) ([]byte, error)
 	return nil, define.ErrUnknownRecordType
 }
 
-func (h httpPbResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
+func (h httpPbResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (any, error) {
 	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
-func (h httpPbResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {
+func (h httpPbResponseHandler) ErrorStatus(status any) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	s, ok := status.(*spb.Status)
 	if !ok {
@@ -265,11 +255,11 @@ func (h httpJsonResponseHandler) Response(rtype define.RecordType) ([]byte, erro
 	return nil, define.ErrUnknownRecordType
 }
 
-func (h httpJsonResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
+func (h httpJsonResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (any, error) {
 	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
-func (h httpJsonResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {
+func (h httpJsonResponseHandler) ErrorStatus(status any) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	s, ok := status.(*spb.Status)
 	if !ok {

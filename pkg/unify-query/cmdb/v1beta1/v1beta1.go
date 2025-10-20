@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,12 +22,10 @@ import (
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -57,7 +54,6 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 type model struct {
 	cfg *Config
 
-	m map[cmdb.Resource]cmdb.Index
 	g graph.Graph[string, string]
 }
 
@@ -99,14 +95,13 @@ func newModel(ctx context.Context) (*model, error) {
 	return &model{
 		cfg: cfg,
 
-		m: m,
 		g: g,
 	}, nil
 }
 
 func (r *model) resources(ctx context.Context) ([]cmdb.Resource, error) {
-	rs := make([]cmdb.Resource, 0, len(r.m))
-	for k := range r.m {
+	rs := make([]cmdb.Resource, 0, len(AllResources()))
+	for k := range AllResources() {
 		rs = append(rs, k)
 	}
 	sort.Slice(rs, func(i, j int) bool {
@@ -115,26 +110,16 @@ func (r *model) resources(ctx context.Context) ([]cmdb.Resource, error) {
 	return rs, nil
 }
 
-func (r *model) getResourceIndex(ctx context.Context, resource cmdb.Resource) (cmdb.Index, error) {
-	if r.m == nil {
-		return nil, fmt.Errorf("reation m is nil")
-	}
-
-	if v, ok := r.m[resource]; ok {
-		return v, nil
-	} else {
-		return nil, fmt.Errorf("resource is empty %s", resource)
-	}
-}
-
 // getIndexMatcher 获取该资源过滤条件
 func (r *model) getIndexMatcher(ctx context.Context, resource cmdb.Resource, matcher cmdb.Matcher) (cmdb.Matcher, bool, error) {
 	var err error
 	indexMatcher := make(cmdb.Matcher)
-	index, err := r.getResourceIndex(ctx, resource)
-	if err != nil {
+	index := ResourcesIndex(resource)
+	if len(index) == 0 {
+		err = fmt.Errorf("index is empty with %+v", resource)
 		return indexMatcher, false, err
 	}
+
 	allMatch := true
 	for _, i := range index {
 		if v, ok := matcher[i]; ok {
@@ -164,11 +149,6 @@ func (r *model) getResourceFromMatch(ctx context.Context, matcher cmdb.Matcher) 
 }
 
 func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool {
-	// 路径长度至少要 >= 2
-	if len(graphPath) < 2 {
-		return false
-	}
-
 	// 如果不传则判断为命中
 	if len(pathResource) == 0 {
 		return true
@@ -184,7 +164,7 @@ func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool
 		return false
 	}
 
-	var startIndex = -1
+	startIndex := -1
 	for idx, sp := range graphPath {
 		if sp == string(pathResource[0]) {
 			startIndex = idx
@@ -231,12 +211,10 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 	return paths, nil
 }
 
-func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, matcher cmdb.Matcher, hitPath []string, ts []cmdb.MatchersWithTimestamp, err error) {
-	var (
-		user = metadata.GetUser(ctx)
-	)
+func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, sourceInfo cmdb.Matcher, hitPath []string, target cmdb.Resource, ts []cmdb.MatchersWithTimestamp, err error) {
+	user := metadata.GetUser(ctx)
 
-	ctx, span := trace.NewSpan(ctx, "get-resource-matcher")
+	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
 
 	span.Set("source", user.Source)
@@ -247,56 +225,58 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("step", opt.Step.String())
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
-	span.Set("matcher", opt.Matcher)
+	span.Set("index-indexMatcher", opt.IndexMatcher)
 	span.Set("target", opt.PathResource)
 
-	queryMatcher := opt.Matcher.Rename()
-
-	span.Set("query-matcher", queryMatcher)
+	opt.IndexMatcher = opt.IndexMatcher.Rename()
+	span.Set("query-index-indexMatcher", opt.IndexMatcher)
 
 	if opt.Source == "" {
-		opt.Source, err = r.getResourceFromMatch(ctx, queryMatcher)
+		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
 		if err != nil {
 			err = errors.WithMessage(err, "get resource error")
-			return
+			return source, sourceInfo, hitPath, target, ts, err
 		}
 	}
 
-	source = opt.Source
-	matcher, _, err = r.getIndexMatcher(ctx, opt.Source, queryMatcher)
-	if err != nil {
-		err = errors.WithMessagef(err, "get index matcher error")
-		return
+	// 如果 target 为空，则使用 source 作为 target，用于 info 数据展示
+	if opt.Target == "" {
+		opt.Target = opt.Source
 	}
 
 	if opt.SpaceUid == "" {
 		err = errors.New("space uid is empty")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	if opt.Start.Unix() == 0 || opt.End.Unix() == 0 {
 		err = errors.New("timestamp is empty")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("source", opt.Source)
-	span.Set("index-matcher", matcher)
+	span.Set("query-source", opt.Source)
+
+	source = opt.Source
+	target = opt.Target
+	sourceInfo, _, err = r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
+	if err != nil {
+		err = errors.WithMessagef(err, "get index matcher error")
+		return source, sourceInfo, hitPath, target, ts, err
+	}
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
 		err = errors.WithMessagef(err, "get path error")
-		return
+		return source, sourceInfo, hitPath, target, ts, err
 	}
 
 	span.Set("paths", paths)
 	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Unit).SetIsSkipK8s(true)
 
-	var (
-		errorMessage []string
-	)
+	var errorMessage []string
 
 	for _, path := range paths {
-		reqTs, reqErr := r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.Start, opt.End, opt.Step, path, matcher, opt.Instant)
+		reqTs, reqErr := r.doRequest(ctx, path, opt)
 		if reqErr != nil {
 			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
 			continue
@@ -309,8 +289,15 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		}
 	}
 
+	if len(ts) == 0 {
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
+	}
+
 	span.Set("hit_path", hitPath)
-	return
+	return source, sourceInfo, hitPath, target, ts, err
 }
 
 type QueryResourceOptions struct {
@@ -322,15 +309,21 @@ type QueryResourceOptions struct {
 	Unit          string
 	Target        cmdb.Resource
 	Source        cmdb.Resource
-	Matcher       cmdb.Matcher
-	PathResource  []cmdb.Resource
-	Instant       bool
+
+	IndexMatcher  cmdb.Matcher
+	ExpandMatcher cmdb.Matcher
+
+	PathResource []cmdb.Resource
+
+	ExpandShow bool
+
+	Instant bool
 }
 
-func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Matchers, error) {
+func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
 	unit, ts, err := function.ParseTimestamp(strconv.FormatInt(timestamp, 10))
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", nil, err
 	}
 
 	opt := QueryResourceOptions{
@@ -342,22 +335,24 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		Unit:          unit,
 		Source:        source,
 		Target:        target,
-		Matcher:       matcher,
+		IndexMatcher:  indexMatcher,
+		ExpandMatcher: expandMatcher,
 		PathResource:  pathResource,
+		ExpandShow:    expandShow,
 		Instant:       true,
 	}
-	resource, matcher, path, ret, err := r.queryResourceMatcher(ctx, opt)
+	source, sourceInfo, path, target, ret, err := r.queryResourceMatcher(ctx, opt)
 	if err != nil {
-		return resource, matcher, path, nil, err
+		return "", nil, path, "", nil, err
 	}
 
-	return resource, matcher, path, shimMatcherWithTimestamp(ret), nil
+	return source, sourceInfo, path, target, shimMatcherWithTimestamp(ret), nil
 }
 
-func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, stepString string, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
+func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, stepString string, startTs, endTs int64, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
 	unit, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", nil, err
 	}
 
 	step, err := time.ParseDuration(stepString)
@@ -374,14 +369,16 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 		Unit:          unit,
 		Source:        source,
 		Target:        target,
-		Matcher:       matcher,
+		IndexMatcher:  indexMatcher,
+		ExpandMatcher: expandMatcher,
+		ExpandShow:    expandShow,
 		PathResource:  pathResource,
 		Instant:       false,
 	}
 	return r.queryResourceMatcher(ctx, opt)
 }
 
-func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string, startTs, endTs time.Time, step time.Duration, path []string, matcher map[string]string, instant bool) ([]cmdb.MatchersWithTimestamp, error) {
+func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceOptions) ([]cmdb.MatchersWithTimestamp, error) {
 	// 按照关联路径遍历查询
 	var (
 		lookBackDelta time.Duration
@@ -391,29 +388,38 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	ctx, span := trace.NewSpan(ctx, "query-do-request")
 	defer span.End(&err)
 
-	span.Set("lookBackDeltaStr", lookBackDeltaStr)
-	span.Set("spaceUid", spaceUid)
-	span.Set("startTs", startTs)
-	span.Set("endTs", endTs)
-	span.Set("step", step.String())
-	span.Set("path", path)
-	span.Set("matcher", matcher)
-	span.Set("instant", instant)
+	indexMatcher, _, err := r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "get index indexMatcher error")
+	}
 
-	if lookBackDeltaStr != "" {
-		lookBackDelta, err = time.ParseDuration(lookBackDeltaStr)
+	span.Set("query-resource-options", opt)
+
+	if opt.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(opt.LookBackDelta)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	queryTs, err := r.makeQuery(ctx, spaceUid, path, matcher, step)
+	queryMaker := &QueryFactory{
+		Path:   path,
+		Source: opt.Source,
+		Step:   opt.Step,
+
+		IndexMatcher:  indexMatcher,
+		ExpandMatcher: opt.ExpandMatcher,
+
+		Target:     opt.Target,
+		ExpandShow: opt.ExpandShow,
+	}
+
+	queryTs, err := queryMaker.MakeQueryTs()
 	if err != nil {
 		return nil, err
 	}
 
 	queryReference, err := queryTs.ToQueryReference(ctx)
-
 	if err != nil {
 		return nil, err
 	}
@@ -422,14 +428,14 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	var instance tsdb.Instance
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
-		vmExpand := queryReference.ToVmExpand(ctx)
+		vmExpand := query.ToVmExpand(ctx, queryReference)
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			StorageType: consul.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
+			err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
 			return nil, err
 		}
 	} else {
@@ -453,18 +459,21 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 
 	var matrix pl.Matrix
 	var vector pl.Vector
-	if instant {
-		vector, err = instance.DirectQuery(ctx, statement, endTs)
+	if opt.Instant {
+		vector, err = instance.DirectQuery(ctx, statement, opt.End)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.DirectQueryRange(ctx, statement, startTs, endTs, step)
+		matrix, _, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)
 	}
 
 	if len(matrix) == 0 {
-		log.Warnf(ctx, "instance data empty, promql: %s", realPromQL)
+		metadata.Sprintf(
+			metadata.MsgQueryRelation,
+			"查询不到数据",
+		).Warn(ctx)
 		return nil, nil
 	}
 
@@ -495,77 +504,6 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	return ret, nil
 }
 
-func (r *model) makeQuery(ctx context.Context, spaceUid string, path []string, matcher map[string]string, step time.Duration) (*structured.QueryTs, error) {
-	const ascii = 97 // a
-
-	queryTs := &structured.QueryTs{
-		SpaceUid: spaceUid,
-	}
-
-	timeAggregation := structured.TimeAggregation{}
-	if step.Seconds() > 0 {
-		if step < time.Minute {
-			step = time.Minute
-		}
-
-		timeAggregation.Function = structured.CountOT
-		timeAggregation.Window = structured.Window(step.String())
-	}
-
-	cmdbPath, err := pathParser(path)
-	if err != nil {
-		err = errors.WithMessagef(err, "path parser %s", path)
-		return nil, err
-	}
-
-	for i, p := range cmdbPath {
-		if len(p.V) < 2 {
-			return nil, fmt.Errorf("path format is wrong %v", p)
-		}
-
-		metric := getMetric(p)
-		if metric == "" {
-			return nil, fmt.Errorf("metric is empty %v", p)
-		}
-
-		sourceIndex, err := r.getResourceIndex(ctx, p.V[0])
-		if err != nil {
-			return nil, err
-		}
-		targetIndex, err := r.getResourceIndex(ctx, p.V[1])
-		if err != nil {
-			return nil, err
-		}
-
-		onConnect := strings.Join(sourceIndex, ",")
-		groupBy := strings.Join(targetIndex, ",")
-
-		ref := string(rune(ascii + i))
-
-		if i == 0 {
-			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
-				TimeAggregation: timeAggregation,
-				FieldName:       metric,
-				ReferenceName:   ref,
-				Conditions:      convertMapToConditions(matcher, sourceIndex, targetIndex),
-			})
-			queryTs.MetricMerge = fmt.Sprintf(`(count(%s) by (%s))`, ref, groupBy)
-		} else {
-			// 如果查询条件在其他 relation 中也存在，也需要补充，比如（bcs_cluster_id）
-			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
-				TimeAggregation: timeAggregation,
-				FieldName:       metric,
-				ReferenceName:   ref,
-				Conditions:      convertMapToConditions(matcher, sourceIndex, targetIndex),
-			})
-
-			queryTs.MetricMerge = fmt.Sprintf(`count(%s and on(%s) %s) by (%s)`, ref, onConnect, queryTs.MetricMerge, groupBy)
-		}
-	}
-
-	return queryTs, nil
-}
-
 func vectorToMatrix(vector pl.Vector) pl.Matrix {
 	var matrix pl.Matrix
 	for _, sample := range vector {
@@ -585,67 +523,4 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
-}
-
-func getMetric(relation cmdb.Relation) string {
-	if len(relation.V) == 2 {
-		v := []string{string(relation.V[0]), string(relation.V[1])}
-		sort.Strings(v)
-		return fmt.Sprintf("%s_relation", strings.Join(v, "_with_"))
-	}
-	return ""
-}
-
-func convertMapToConditions(matcher cmdb.Matcher, sourceIndex, targetIndex cmdb.Index) structured.Conditions {
-	cond := structured.Conditions{}
-
-	allIndex := make(map[string]struct{})
-	for _, index := range []cmdb.Index{sourceIndex, targetIndex} {
-		for _, i := range index {
-			allIndex[i] = struct{}{}
-		}
-	}
-
-	for i := range allIndex {
-		// 如果查询条件里面有关键维度，则必须相等，否则必须不为空
-		if v, ok := matcher[i]; ok {
-			// 为空的条件不加入过滤判断
-			if v == "" {
-				continue
-			}
-
-			cond.FieldList = append(cond.FieldList, structured.ConditionField{
-				DimensionName: i,
-				Value:         []string{v},
-				Operator:      structured.ConditionEqual,
-			})
-		} else {
-			cond.FieldList = append(cond.FieldList, structured.ConditionField{
-				DimensionName: i,
-				Value:         []string{""},
-				Operator:      structured.ConditionNotEqual,
-			})
-		}
-	}
-
-	// 所有条件均为 and 拼接
-	for i := 0; i < len(cond.FieldList)-1; i++ {
-		cond.ConditionList = append(cond.ConditionList, "and")
-	}
-	return cond
-}
-
-func pathParser(p []string) (cmdb.Path, error) {
-	if len(p) < 2 {
-		return nil, fmt.Errorf("path format is wrong %s", p)
-	}
-
-	path := make(cmdb.Path, 0, len(p)-1)
-	for i := 0; i < len(p)-1; i++ {
-		v := []cmdb.Resource{cmdb.Resource(p[i]), cmdb.Resource(p[i+1])}
-		path = append(path, cmdb.Relation{
-			V: v,
-		})
-	}
-	return path, nil
 }

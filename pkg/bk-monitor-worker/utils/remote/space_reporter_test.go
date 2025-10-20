@@ -36,7 +36,6 @@ func TestSpaceReporter__Do(t *testing.T) {
 
 	metric := fmt.Sprintf("space_reporter_%s", time.Now().Format("2006010215"))
 	ts := append([]prompb.TimeSeries{
-
 		{
 			Labels: []prompb.Label{
 				{

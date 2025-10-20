@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -37,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -107,6 +95,8 @@ type Manager interface {
 	Type() string
 	// RefreshByBiz 按业务刷新缓存
 	RefreshByBiz(ctx context.Context, bizID int) error
+	// BuildRelationMetrics 从缓存构建relation指标
+	BuildRelationMetrics(ctx context.Context) error
 	// RefreshGlobal 刷新全局缓存
 	RefreshGlobal(ctx context.Context) error
 	// CleanByBiz 按业务清理缓存
@@ -124,9 +114,9 @@ type Manager interface {
 	GetConcurrentLimit() int
 
 	// CleanByEvents 根据事件清理缓存
-	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
+	CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error
 	// UpdateByEvents 根据事件更新缓存
-	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
+	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error
 }
 
 // BaseCacheManager 基础缓存管理器
@@ -136,6 +126,7 @@ type BaseCacheManager struct {
 	RedisClient     redis.UniversalClient
 	Expire          time.Duration
 	ConcurrentLimit int
+	BatchLimit      int64
 
 	updatedFieldSet  map[string]map[string]struct{}
 	updateFieldLocks map[string]*sync.Mutex
@@ -155,6 +146,7 @@ func NewBaseCacheManager(bkTenantId string, prefix string, opt *redis.Options, c
 		updatedFieldSet:  make(map[string]map[string]struct{}),
 		updateFieldLocks: make(map[string]*sync.Mutex),
 		ConcurrentLimit:  concurrentLimit,
+		BatchLimit:       1000,
 	}, nil
 }
 
@@ -165,6 +157,41 @@ func (c *BaseCacheManager) Reset() {
 		c.updatedFieldSet[key] = make(map[string]struct{})
 		c.updateFieldLocks[key].Unlock()
 	}
+}
+
+func (c *BaseCacheManager) batchQuery(ctx context.Context, key, matchString string) (map[string]string, error) {
+	var cursor uint64 = 0
+	result := make(map[string]string)
+
+	for {
+		iter := c.RedisClient.HScan(ctx, key, cursor, matchString, c.BatchLimit).Iterator()
+		var field string
+
+		// HScan 返回的结果是 field1, value1, field2, value2, ... 的形式
+		for iter.Next(ctx) {
+			field = iter.Val()
+			if !iter.Next(ctx) {
+				return nil, errors.New("redis HASH scan iterator returned an odd number of items")
+			}
+			value := iter.Val()
+			result[field] = value
+		}
+
+		if err := iter.Err(); err != nil {
+			return nil, err
+		}
+
+		// 获取下一个游标
+		res := c.RedisClient.HScan(ctx, key, cursor, matchString, c.BatchLimit)
+		_, nextCursor, _ := res.Result()
+
+		if nextCursor == 0 {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	return result, nil
 }
 
 // initUpdatedFieldSet 初始化更新字段集合，确保后续不存在并发问题
@@ -252,7 +279,10 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	}
 
 	// 执行删除
-	client.HDel(ctx, key, needDeleteFields...)
+	if len(needDeleteFields) > 0 {
+		client.HDel(ctx, key, needDeleteFields...)
+		logger.Infof("delete missing hashmap fields, key: %s, fields: %v", key, needDeleteFields)
+	}
 
 	return nil
 }

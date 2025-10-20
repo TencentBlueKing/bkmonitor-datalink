@@ -33,6 +33,18 @@ var configData = &Config{
 			},
 		},
 		{
+			Name: "container",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"namespace",
+				"pod",
+				"container",
+			},
+			Info: cmdb.Index{
+				"version",
+			},
+		},
+		{
 			Name: "pod",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -63,7 +75,8 @@ var configData = &Config{
 				"namespace",
 				"deployment",
 			},
-		}, {
+		},
+		{
 			Name: "deamonset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -154,6 +167,13 @@ var configData = &Config{
 			Index: cmdb.Index{
 				"host_id",
 			},
+			Info: cmdb.Index{
+				"version",
+				"env_name",
+				"env_type",
+				"service_version",
+				"service_type",
+			},
 		},
 	},
 	Relation: []RelationConf{
@@ -170,6 +190,11 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"job", "pod",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"container", "pod",
 			},
 		},
 		{
@@ -263,4 +288,32 @@ var configData = &Config{
 			},
 		},
 	},
+}
+
+var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+
+func init() {
+	for _, c := range configData.Resource {
+		resourceConfig[c.Name] = c
+	}
+}
+
+func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
+	var index cmdb.Index
+	for _, r := range resources {
+		index = append(index, resourceConfig[r].Index...)
+	}
+	return index
+}
+
+func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
+	var index []string
+	for _, r := range resources {
+		index = append(index, resourceConfig[r].Info...)
+	}
+	return index
+}
+
+func AllResources() map[cmdb.Resource]ResourceConf {
+	return resourceConfig
 }

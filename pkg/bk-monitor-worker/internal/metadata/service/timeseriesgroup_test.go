@@ -30,9 +30,10 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	tsm := customreport.TimeSeriesGroup{
 		CustomGroupBase: customreport.CustomGroupBase{
-			BkDataID: 22112,
-			TableID:  "test_for_metric_update.base",
-			IsEnable: true,
+			BkDataID:            22112,
+			TableID:             "test_for_metric_update.base",
+			IsEnable:            true,
+			MaxFutureTimeOffset: -1,
 		},
 		TimeSeriesGroupID:   3343,
 		TimeSeriesGroupName: "test_for_metric_update_group",
@@ -45,7 +46,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
 
 	// 创建RTOption
-	opVal1 := models.OptionBase{Value: "[\"metric_a\"]", ValueType: "list", Creator: "system"}
+	opVal1 := models.OptionBase{Value: "[\"metric_a\", \"metric:invalid\"]", ValueType: "list", Creator: "system"}
 	rtf := resulttable.ResultTableOption{
 		OptionBase: opVal1,
 		TableID:    tsm.TableID,
@@ -61,11 +62,13 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	mockerClient.ZRangeByScoreWithScoresValue = append(mockerClient.ZRangeByScoreWithScoresValue, []goRedis.Z{
 		{Score: score, Member: "metric_a"},
 		{Score: score, Member: "metric_b"},
+		{Score: score, Member: "metric_invalid"},
 		{Score: score - 100000, Member: "metric_expired"},
 	}...)
-	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []interface{}{
+	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []any{
 		"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
+		"{\"dimensions\":{\"d5\":{\"last_update_time\":1685503141,\"values\":[]},\"d6\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 	}...)
 
 	svc := NewTimeSeriesGroupSvc(&tsm)
@@ -74,7 +77,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, updated)
 	// metric
-	var metricA, metricB, metricExpired customreport.TimeSeriesMetric
+	var metricA, metricB, metricInvalid, metricExpired customreport.TimeSeriesMetric
 	var tagListA []string
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_a").One(&metricA)
 	assert.NoError(t, err)
@@ -88,6 +91,9 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_expired").One(&metricExpired)
+	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
+
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).FieldNameEq("metric_invalid").One(&metricInvalid)
 	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
 
 	// rtf

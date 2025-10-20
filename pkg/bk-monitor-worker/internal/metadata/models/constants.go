@@ -85,6 +85,8 @@ const (
 	StorageTypeBkdata   = "bkdata"
 	StorageTypeArgus    = "argus"
 	StorageTypeVM       = "victoria_metrics"
+	StorageTypeDoris    = "doris"
+	StorageTypeBkSql    = "bk_sql"
 )
 
 const (
@@ -113,25 +115,11 @@ const (
 // bcs cluster
 const (
 	// 兼容状态
-	BcsClusterStatusRunning         = "running"                   // 集群状态running
-	BcsRawClusterStatusRunning      = "RUNNING"                   // 集群状态RUNNING
-	BcsClusterStatusDeleted         = "deleted"                   // 集群状态deleted
-	BcsRawClusterStatusDeleted      = "DELETED"                   // 集群状态RUNNING
-	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
-	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
-	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据
-	BcsResourceGroupName            = "monitoring.bk.tencent.com" // 容器资源组名
-	BcsResourceVersion              = "v1beta1"                   // 容器资源版本号
-	BcsResourceDataIdResourceKind   = "DataID"                    // data_id注入资源类型
-	BcsResourceDataIdResourcePlural = "dataids"                   // data_id注入类型查询名
-	BcsMonitorResourceGroupName     = "monitoring.coreos.com"     // monitor资源组名
-	BcsMonitorResourceVersion       = "v1"                        // monitor资源版本号
-	BcsPodMonitorResourcePlural     = "podmonitors"               // pod monitor注入类型查询名
-	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
-	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
-	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
-	BcsClusterTypeSingle            = "single"                    // 独占集群类型
-	BcsClusterTypeShared            = "shared"                    // 共享集群类型
+	BcsRawClusterStatusRunning = "RUNNING" // 集群状态RUNNING
+	BcsClusterStatusDeleted    = "deleted" // 集群状态deleted
+	BcsRawClusterStatusDeleted = "DELETED" // 集群状态RUNNING
+	BcsClusterTypeSingle       = "single"  // 独占集群类型
+	BcsClusterTypeShared       = "shared"  // 共享集群类型
 )
 
 // Label
@@ -143,14 +131,7 @@ const (
 
 const (
 	TSGroupDefaultMeasurement = "__default__"
-)
-
-// ReplaceConfig
-const (
-	ReplaceTypesMetric          = "metric"
-	ReplaceTypesDimension       = "dimension"
-	ReplaceCustomLevelsCluster  = "cluster"
-	ReplaceCustomLevelsResource = "resource"
+	DorisMeasurement          = "doris"
 )
 
 // Datasource
@@ -170,13 +151,12 @@ const (
 
 // root consul path template
 const (
-	DataSourceConsulPathTemplate          = "%s/metadata/v1"                            // DataSource的consul根路径
-	InfluxdbClusterInfoConsulPathTemplate = "%s%s/metadata/influxdb_info/cluster_info"  // InfluxdbClusterInfo的consul根路径
-	InfluxdbStorageConsulPathTemplate     = "%s%s/metadata/influxdb_info/router"        // InfluxdbStorage router的consul根路径
-	InfluxdbHostInfoConsulPathTemplate    = "%s%s/metadata/influxdb_info/host_info"     // InfluxdbHostInfo的consul根路径
-	InfluxdbTagInfoConsulPathTemplate     = "%s%s/metadata/influxdb_info/tag_info"      // InfluxdbTagInfo的consul根路径
-	InfluxdbInfoVersionConsulPathTemplate = "%s%s/metadata/influxdb_info/version/"      // InfluxdbInfoVersion的consul路径
-	BcsResourceConsulPathTemplate         = "%s%s/metadata/project_id/%s/cluster_id/%s" // bcs资源与集群对应data_id的consul路径
+	DataSourceConsulPathTemplate          = "%s/metadata/v1"                           // DataSource的consul根路径
+	InfluxdbClusterInfoConsulPathTemplate = "%s%s/metadata/influxdb_info/cluster_info" // InfluxdbClusterInfo的consul根路径
+	InfluxdbStorageConsulPathTemplate     = "%s%s/metadata/influxdb_info/router"       // InfluxdbStorage router的consul根路径
+	InfluxdbHostInfoConsulPathTemplate    = "%s%s/metadata/influxdb_info/host_info"    // InfluxdbHostInfo的consul根路径
+	InfluxdbTagInfoConsulPathTemplate     = "%s%s/metadata/influxdb_info/tag_info"     // InfluxdbTagInfo的consul根路径
+	InfluxdbInfoVersionConsulPathTemplate = "%s%s/metadata/influxdb_info/version/"     // InfluxdbInfoVersion的consul路径
 )
 
 const RecommendedBkCollectorVersion = "0.16.1061" // 推荐的bkcollector版本
@@ -214,6 +194,7 @@ const (
 	VmDataTypeUserCustom       = "user_custom"
 	VmDataTypeBcsClusterK8s    = "bcs_cluster_k8s"
 	VmDataTypeBcsClusterCustom = "bcs_cluster_custom"
+	CmdbLevelVmrt              = "cmdb_level_vm_rt"
 )
 
 // TimeStampLen
@@ -238,7 +219,7 @@ const (
 
 const SystemUser = "system"
 
-const LogReportMaxQPS = 50000 //Log Report Default QPS
+const LogReportMaxQPS = 50000 // Log Report Default QPS
 
 var TimeStampLenValeMap = map[int]string{
 	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",

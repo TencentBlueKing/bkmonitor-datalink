@@ -940,7 +940,7 @@ var ESFieldQueryAliasOptionDBSchema = struct {
 // Update updates ESFieldQueryAliasOption fields by primary key
 // nolint: dupl
 func (o *ESFieldQueryAliasOption) Update(db *gorm.DB, fields ...ESFieldQueryAliasOptionDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":     o.TableID,
 		"bk_tenant_id": o.BkTenantID,
 		"field_path":   o.FieldPath,
@@ -952,7 +952,7 @@ func (o *ESFieldQueryAliasOption) Update(db *gorm.DB, fields ...ESFieldQueryAlia
 		"updater":      o.Updater,
 		"update_time":  o.UpdateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -971,7 +971,7 @@ func (o *ESFieldQueryAliasOption) Update(db *gorm.DB, fields ...ESFieldQueryAlia
 
 // ESFieldQueryAliasOptionUpdater is an ESFieldQueryAliasOption updates manager
 type ESFieldQueryAliasOptionUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -979,7 +979,7 @@ type ESFieldQueryAliasOptionUpdater struct {
 // nolint: dupl
 func NewESFieldQueryAliasOptionUpdater(db *gorm.DB) ESFieldQueryAliasOptionUpdater {
 	return ESFieldQueryAliasOptionUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ESFieldQueryAliasOption{}),
 	}
 }

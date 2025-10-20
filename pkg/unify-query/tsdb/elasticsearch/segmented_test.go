@@ -16,7 +16,7 @@ import (
 )
 
 func TestSegmentedList(t *testing.T) {
-	var testCases = []struct {
+	testCases := []struct {
 		name          string
 		segmentOption *querySegmentOption
 		list          [][2]int64

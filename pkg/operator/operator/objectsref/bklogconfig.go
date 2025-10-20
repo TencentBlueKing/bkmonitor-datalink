@@ -79,7 +79,7 @@ func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
 }
 
 func (e *bkLogConfigEntity) MatchWorkload(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
-	return e.matchWorkloadType(labels, annotations, ownerRefs) && e.matchWorkloadType(labels, annotations, ownerRefs)
+	return e.matchWorkloadType(labels, annotations, ownerRefs) && e.matchWorkloadName(labels, annotations, ownerRefs)
 }
 
 func (e *bkLogConfigEntity) matchWorkloadName(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
@@ -184,34 +184,34 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		return true
 	}
 
-	if len(e.Obj.Spec.NamespaceSelector.ExcludeNames) != 0 {
-		// 全部不匹配 true，否则为 false
+	// 全部不匹配 true，否则为 false
+	if len(e.Obj.Spec.NamespaceSelector.ExcludeNames) > 0 {
 		for _, ns := range e.Obj.Spec.NamespaceSelector.ExcludeNames {
 			if ns == namespace {
 				return false
 			}
 		}
 		return true
-	} else if len(e.Obj.Spec.NamespaceSelector.MatchNames) != 0 {
-		// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
-		// 有一个匹配上则为 true，否则直接 false
+	}
+
+	// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
+	// 有一个匹配上则为 true，否则直接 false
+	if len(e.Obj.Spec.NamespaceSelector.MatchNames) > 0 {
 		for _, ns := range e.Obj.Spec.NamespaceSelector.MatchNames {
 			if ns == namespace {
 				return true
 			}
 		}
 		return false
-	} else {
-		// 其次，使用 Namespace 配置，直接名字匹配
-		if e.Obj.Spec.Namespace != "" {
-			if e.Obj.Spec.Namespace != namespace {
-				return false
-			}
-			return true
-		}
-		// 未配置则返回 true
-		return true
 	}
+
+	// 其次，使用 Namespace 配置，直接名字匹配
+	if e.Obj.Spec.Namespace != "" {
+		return e.Obj.Spec.Namespace == namespace
+	}
+
+	// 未配置则返回 true
+	return true
 }
 
 type BkLogConfigMap struct {
@@ -274,7 +274,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", obj)
@@ -286,7 +286,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 				objsMap.Set(entity)
 			}
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", oldObj)
@@ -306,7 +306,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 				objsMap.Set(entity)
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", obj)

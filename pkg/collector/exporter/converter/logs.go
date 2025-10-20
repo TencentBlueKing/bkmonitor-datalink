@@ -28,9 +28,9 @@ func (e logsEvent) RecordType() define.RecordType {
 	return define.RecordLogs
 }
 
-var LogsConverter EventConverter = logsConverter{}
-
 type logsConverter struct{}
+
+func (c logsConverter) Clean() {}
 
 func (c logsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return logsEvent{define.NewCommonEvent(token, dataId, data)}
@@ -50,13 +50,13 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	for i := 0; i < resourceLogsSlice.Len(); i++ {
 		resourceLogs := resourceLogsSlice.At(i)
-		rsAttrs := resourceLogs.Resource().Attributes().AsRaw()
+		rs := resourceLogs.Resource().Attributes().AsRaw()
 		scopeLogsSlice := resourceLogs.ScopeLogs()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeLogsSlice.Len(); j++ {
 			logRecordSlice := scopeLogsSlice.At(j).LogRecords()
 			for k := 0; k < logRecordSlice.Len(); k++ {
-				content, err := c.Extract(record.RequestClient.IP, logRecordSlice.At(k), rsAttrs)
+				content, err := c.Extract(record.RequestClient.IP, logRecordSlice.At(k), rs)
 				if err != nil {
 					logger.Warnf("failed to extract content: %v", err)
 					continue
@@ -70,7 +70,7 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	}
 }
 
-func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rsAttrs common.MapStr) (common.MapStr, error) {
+func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rs common.MapStr) (common.MapStr, error) {
 	timeUnix := logRecord.Timestamp()
 	if timeUnix <= 0 {
 		timeUnix = logRecord.ObservedTimestamp()
@@ -85,7 +85,7 @@ func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rsAttrs comm
 		"flags":           logRecord.Flags(),
 		"severity_number": logRecord.SeverityNumber(),
 		"severity_text":   logRecord.SeverityText(),
-		"resource":        rsAttrs,
+		"resource":        rs,
 	}
 
 	buf := &bytes.Buffer{}

@@ -12,7 +12,6 @@
 package collector
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/shirou/gopsutil/v3/mem"
@@ -35,31 +34,4 @@ func TestGetSwapInfo(t *testing.T) {
 	if in <= 0 || out <= 0 {
 		t.Errorf("Invalid swap info: in=%f, out=%f", in, out)
 	}
-}
-
-func TestGetSwapinfoLogic(t *testing.T) {
-	//  Test case 1: SwapMemory returns error containing "no swap devices"
-	sinfo := &swapinfo{}
-	expectedSinfo := &swapinfo{}
-	expectedSinfo.Sin = 50
-	expectedSinfo.Sout = 100
-	result, err := GetSwapinfoLogic(sinfo)
-	assert.NoError(t, err)
-	assert.Equal(t, expectedSinfo, result)
-
-	//  Test case 2: SwapMemory returns valid swap memory information
-	sinfo = &swapinfo{}
-	expectedSinfo = &swapinfo{}
-	expectedSinfo.Sin = 100
-	expectedSinfo.Sout = 200
-	result, err = GetSwapinfoLogic(sinfo)
-	assert.NoError(t, err)
-	assert.Equal(t, expectedSinfo, result)
-
-	//  Test case 3: SwapMemory returns unknown error
-	sinfo = &swapinfo{}
-	expectedErr := errors.New("unknown error")
-	result, err = GetSwapinfoLogic(sinfo)
-	assert.Error(t, err)
-	assert.Equal(t, expectedErr, err)
 }

@@ -93,6 +93,7 @@ func (s *Sidecar) Start() error {
 }
 
 func (s *Sidecar) Stop() {
+	s.cancel()
 	s.sm.Stop()
 }
 

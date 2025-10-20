@@ -12,30 +12,39 @@ package resourcefilter
 import (
 	"strings"
 
+	"github.com/spf13/cast"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
 )
 
 type Config struct {
-	Drop       DropAction       `config:"drop" mapstructure:"drop"`
-	FromCache  FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
-	Assemble   []AssembleAction `config:"assemble" mapstructure:"assemble"`
-	Replace    []ReplaceAction  `config:"replace" mapstructure:"replace"`
-	Add        []AddAction      `config:"add" mapstructure:"add"`
-	FromRecord []FromRecord     `config:"from_record" mapstructure:"from_record"`
+	Drop         DropAction           `config:"drop" mapstructure:"drop"`
+	FromCache    FromCacheAction      `config:"from_cache" mapstructure:"from_cache"`
+	FromMetadata FromMetadataAction   `config:"from_metadata" mapstructure:"from_metadata"`
+	Assemble     []AssembleAction     `config:"assemble" mapstructure:"assemble"`
+	Replace      []ReplaceAction      `config:"replace" mapstructure:"replace"`
+	Add          []AddAction          `config:"add" mapstructure:"add"`
+	FromRecord   []FromRecordAction   `config:"from_record" mapstructure:"from_record"`
+	FromToken    FromTokenAction      `config:"from_token" mapstructure:"from_token"`
+	DefaultValue []DefaultValueAction `config:"default_value" mapstructure:"default_value"`
 }
 
 func (c *Config) Clean() {
-	c.Drop.Keys = cleanResourcesPrefix(c.Drop.Keys)
+	c.Drop.Keys = fields.TrimResourcePrefix(c.Drop.Keys...)
 	for i := 0; i < len(c.Assemble); i++ {
-		c.Assemble[i].Keys = cleanResourcesPrefix(c.Assemble[i].Keys)
+		c.Assemble[i].Keys = fields.TrimResourcePrefix(c.Assemble[i].Keys...)
 	}
 	for i := 0; i < len(c.FromRecord); i++ {
-		c.FromRecord[i].Destination = cleanResourcePrefix(c.FromRecord[i].Destination)
+		c.FromRecord[i].Destination = fields.TrimResourcePrefix(c.FromRecord[i].Destination).String()
+	}
+	for i := 0; i < len(c.DefaultValue); i++ {
+		c.DefaultValue[i].Key = fields.TrimResourcePrefix(c.DefaultValue[i].Key).String()
 	}
 
 	keys := strings.Split(c.FromCache.Key, "|")
 	for i := 0; i < len(keys); i++ {
-		keys[i] = cleanResourcePrefix(keys[i])
+		keys[i] = fields.TrimResourcePrefix(keys[i]).String()
 	}
 	c.FromCache.keys = keys
 }
@@ -71,26 +80,33 @@ func (a FromCacheAction) CombineKeys() []string {
 	return a.keys
 }
 
-type FromRecord struct {
+type FromRecordAction struct {
 	Source      string `config:"source" mapstructure:"source"`
 	Destination string `config:"destination" mapstructure:"destination"`
 }
 
-func cleanResourcesPrefix(keys []string) []string {
-	const prefix = "resource."
-	var ret []string
-	for _, key := range keys {
-		if strings.HasPrefix(key, prefix) {
-			ret = append(ret, key[len(prefix):])
-		}
-	}
-	return ret
+type FromMetadataAction struct {
+	Keys []string `config:"keys" mapstructure:"keys"`
 }
 
-func cleanResourcePrefix(key string) string {
-	const prefix = "resource."
-	if strings.HasPrefix(key, prefix) {
-		return key[len(prefix):]
-	}
-	return key
+type FromTokenAction struct {
+	Keys []string `config:"keys" mapstructure:"keys"`
+}
+
+type DefaultValueAction struct {
+	Key   string `config:"key" mapstructure:"key"`
+	Type  string `config:"type" mapstructure:"type"`
+	Value any    `config:"value" mapstructure:"value"`
+}
+
+func (d DefaultValueAction) StringValue() string {
+	return cast.ToString(d.Value)
+}
+
+func (d DefaultValueAction) IntValue() int {
+	return cast.ToInt(d.Value)
+}
+
+func (d DefaultValueAction) BoolValue() bool {
+	return cast.ToBool(d.Value)
 }

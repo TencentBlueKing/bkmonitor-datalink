@@ -10,9 +10,253 @@
 package function
 
 import (
-	"reflect"
+	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
+
+// TestQuery_LabelMap 测试 Query.LabelMap 函数（包含 QueryString 和 Conditions 的组合）
+func TestQuery_LabelMap(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query *metadata.Query
+
+		expected map[string][]LabelMapValue
+
+		data          map[string]any
+		highLightData map[string]any
+	}{
+		{
+			name: "只有 Conditions",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"status": {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "只有 QueryString",
+			query: &metadata.Query{
+				QueryString: "level:warning",
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {{Value: "warning", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "querystring - 1",
+			query: &metadata.Query{
+				QueryString: `file: *elasticsearch\/query_string* AND level: ("warn" OR "error") AND trace_id: /[\d]+/ `,
+			},
+			expected: map[string][]LabelMapValue{
+				"file": {
+					{
+						Value: "elasticsearch/query_string", Operator: metadata.ConditionContains,
+					},
+				},
+				"level": {
+					{
+						Value: "warn", Operator: metadata.ConditionEqual,
+					},
+					{
+						Value: "error", Operator: metadata.ConditionEqual,
+					},
+				},
+				"trace_id": {
+					{
+						Value: "[\\d]+", Operator: metadata.ConditionRegEqual,
+					},
+				},
+			},
+			data: map[string]any{
+				"file":     `elasticsearch/query_string.go:76`,
+				"level":    "warn",
+				"trace_id": "my12356bro",
+			},
+			highLightData: map[string]any{
+				"file": []string{
+					`<mark>elasticsearch/query_string</mark>.go:76`,
+				},
+				"level": []string{
+					`<mark>warn</mark>`,
+				},
+				"trace_id": []string{
+					"my<mark>12356</mark>bro",
+				},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 组合",
+			query: &metadata.Query{
+				QueryString: "service:web",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"service": {{Value: "web", Operator: metadata.ConditionEqual}},
+				"status":  {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段",
+			query: &metadata.Query{
+				QueryString: "level:error",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {
+					{
+						Value: "error", Operator: metadata.ConditionEqual,
+					},
+				},
+				"status": {
+					{
+						Value: "warning", Operator: metadata.ConditionEqual,
+					},
+				},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段和值（去重）",
+			query: &metadata.Query{
+				QueryString: "level:error",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "level",
+							Value:         []string{"error"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {{Value: "error", Operator: metadata.ConditionEqual}},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions - 1",
+			query: &metadata.Query{
+				QueryString: "NOT service:web AND component:database",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      metadata.ConditionNotEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      metadata.ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-2"},
+							Operator:      metadata.ConditionEqual,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"component": {
+					{Value: "database", Operator: metadata.ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: metadata.ConditionEqual},
+					{Value: "us-east-2", Operator: metadata.ConditionContains},
+				},
+				"service": {
+					{Value: "web", Operator: metadata.ConditionNotEqual},
+				},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions",
+			query: &metadata.Query{
+				QueryString: "service:web AND component:database",
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      metadata.ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      metadata.ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"service": {
+					{Value: "web", Operator: metadata.ConditionEqual},
+				},
+				"component": {
+					{Value: "database", Operator: metadata.ConditionEqual},
+				},
+				"status": {
+					{Value: "warning", Operator: metadata.ConditionEqual},
+					{Value: "error", Operator: metadata.ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: metadata.ConditionEqual},
+				},
+			},
+		},
+		{
+			name:     "空 QueryString 和空 Conditions",
+			query:    nil,
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := LabelMap(context.TODO(), tc.query)
+			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
+
+			if len(tc.data) > 0 {
+				hf := HighLightFactory{
+					labelMap:          result,
+					maxAnalyzedOffset: 200,
+				}
+				resultData := hf.Process(tc.data)
+				assert.Equal(t, tc.highLightData, resultData, "Query.HighLightFactory result should match expected")
+			}
+		})
+	}
+}
 
 func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
 	type fields struct {
@@ -112,213 +356,50 @@ func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
 	}
 }
 
-func TestNewHighLightFactory(t *testing.T) {
-	type args struct {
-		labelMap          map[string][]string
-		maxAnalyzedOffset int
+func TestHighLightFactory_process(t *testing.T) {
+	data := map[string]any{
+		"file":           "victoriaMetrics/instance.go:397",
+		"gseIndex":       "8019256",
+		"iterationIndex": 14,
+		"level":          "info",
+		"message":        "victoriaMetrics query and victoriaMetrics query or victoria metrics query and victoriametrics query",
 	}
-	tests := []struct {
-		name string
-		args args
-		want *HighLightFactory
-	}{
-		{
-			name: "normal initialization",
-			args: args{
-				labelMap: map[string][]string{
-					"service":  {"api", "backend"},
-					"env":      {"prod"},
-					"response": {"2xx", "5xx"},
+
+	// map[gseIndex:[{Value:8019256 Operator:eq}]]
+	h := &HighLightFactory{
+		labelMap: map[string][]LabelMapValue{
+			"gseIndex": {
+				{
+					Value:    "8019256",
+					Operator: "eq",
 				},
-				maxAnalyzedOffset: 1024,
 			},
-			want: &HighLightFactory{
-				labelMap: map[string][]string{
-					"service":  {"api", "backend"},
-					"env":      {"prod"},
-					"response": {"2xx", "5xx"},
+			"": {
+				{
+					Value:    "metrics",
+					Operator: "contains",
 				},
-				maxAnalyzedOffset: 1024,
 			},
-		},
-		{
-			name: "zero value offset",
-			args: args{
-				labelMap:          map[string][]string{"status": {"active"}},
-				maxAnalyzedOffset: 0,
-			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"status": {"active"}},
-				maxAnalyzedOffset: 0,
-			},
-		},
-		{
-			name: "negative offset",
-			args: args{
-				labelMap:          map[string][]string{"error": {"timeout"}},
-				maxAnalyzedOffset: -1,
-			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"error": {"timeout"}},
-				maxAnalyzedOffset: -1,
-			},
-		},
-		{
-			name: "empty labelMap",
-			args: args{
-				labelMap:          nil,
-				maxAnalyzedOffset: 2048,
-			},
-			want: &HighLightFactory{
-				labelMap:          nil,
-				maxAnalyzedOffset: 2048,
-			},
-		},
-		{
-			name: "empty slice value",
-			args: args{
-				labelMap:          map[string][]string{"tags": {}},
-				maxAnalyzedOffset: 512,
-			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"tags": {}},
-				maxAnalyzedOffset: 512,
-			},
-		},
-		{
-			name: "complex multi-value map",
-			args: args{
-				labelMap: map[string][]string{
-					"metrics": {"cpu", "mem", "disk"},
-					"alerts":  {"critical"},
+			"level": {
+				{
+					Value:    "info",
+					Operator: "eq",
 				},
-				maxAnalyzedOffset: 4096,
-			},
-			want: &HighLightFactory{
-				labelMap: map[string][]string{
-					"metrics": {"cpu", "mem", "disk"},
-					"alerts":  {"critical"},
+				{
+					Value:    "In",
+					Operator: "contains",
 				},
-				maxAnalyzedOffset: 4096,
 			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := NewHighLightFactory(tt.args.labelMap, tt.args.maxAnalyzedOffset)
-
-			if tt.want.labelMap == nil && got.labelMap != nil {
-				t.Errorf("labelMap should be nil, got %v", got.labelMap)
-			} else if !reflect.DeepEqual(got.labelMap, tt.want.labelMap) {
-				t.Errorf("labelMap mismatch\ngot:  %v\nwant: %v", got.labelMap, tt.want.labelMap)
-			}
-
-			if got.maxAnalyzedOffset != tt.want.maxAnalyzedOffset {
-				t.Errorf("maxAnalyzedOffset = %v, want %v", got.maxAnalyzedOffset, tt.want.maxAnalyzedOffset)
-			}
-		})
-	}
-}
-
-func TestHighLightFactory_processField(t *testing.T) {
-	type fields struct {
-		maxAnalyzedOffset int
-	}
-	type args struct {
-		fieldValue any
-		keywords   []string
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   any
-	}{
-		{
-			name: "string type with highlight",
-			fields: fields{
-				maxAnalyzedOffset: 100,
-			},
-			args: args{
-				fieldValue: "hello world",
-				keywords:   []string{"hello"},
-			},
-			want: []string{"<mark>hello</mark> world"},
-		},
-		{
-			name: "int type converted to string and highlighted",
-			fields: fields{
-				maxAnalyzedOffset: 100,
-			},
-			args: args{
-				fieldValue: 123,
-				keywords:   []string{"123"},
-			},
-			want: []string{"<mark>123</mark>"},
-		},
-		{
-			name: "muti contains string type with highlight",
-			fields: fields{
-				maxAnalyzedOffset: 100,
-			},
-			args: args{
-				fieldValue: "hello world",
-				keywords:   []string{"he", "hello", "hello", "hel"},
-			},
-			want: []string{"<mark>hello</mark> world"},
-		},
-		{
-			name: "unsupported type returns nil",
-			args: args{
-				fieldValue: true,
-				keywords:   []string{"true"},
-			},
-			want: nil,
-		},
-		{
-			name: "no highlight when keywords not found",
-			fields: fields{
-				maxAnalyzedOffset: 100,
-			},
-			args: args{
-				fieldValue: "no match",
-				keywords:   []string{"xyz"},
-			},
-			want: nil,
-		},
-		{
-			name: "empty string with empty keywords",
-			fields: fields{
-				maxAnalyzedOffset: 100,
-			},
-			args: args{
-				fieldValue: "",
-				keywords:   []string{""},
-			},
-			want: nil,
-		},
-		{
-			name: "maxAnalyzedOffset truncates string",
-			fields: fields{
-				maxAnalyzedOffset: 5,
-			},
-			args: args{
-				fieldValue: "longstring",
-				keywords:   []string{},
-			},
-			want: nil,
-		},
+	expected := map[string]any{
+		"gseIndex": []string{"<mark>8019256</mark>"},
+		"file":     []string{"victoria<mark>Metrics</mark>/instance.go:397"},
+		"level":    []string{"<mark>info</mark>"},
+		"message":  []string{"victoria<mark>Metrics</mark> query and victoria<mark>Metrics</mark> query or victoria <mark>metrics</mark> query and victoria<mark>metrics</mark> query"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h := &HighLightFactory{
-				maxAnalyzedOffset: tt.fields.maxAnalyzedOffset,
-			}
-			if got := h.processField(tt.args.fieldValue, tt.args.keywords); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("HighLightFactory.processField() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	nd := h.Process(data)
+	assert.Equal(t, expected, nd)
 }

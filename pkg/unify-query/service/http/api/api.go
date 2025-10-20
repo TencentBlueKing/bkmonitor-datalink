@@ -19,7 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -87,12 +86,13 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 				Code: http.StatusOK,
 			}
 
-			d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
 			}
 
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
 			if d.TargetList == nil {
 				d.TargetList = make(cmdb.Matchers, 0)
 			}
@@ -170,14 +170,21 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 				Code: http.StatusOK,
 			}
 
-			d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
-
-				d.Message = err.Error()
+				d.Message = metadata.Sprintf(
+					metadata.MsgQueryRelation,
+					"关联数据查询异常",
+				).Error(ctx, err).Error()
 				d.Code = http.StatusBadRequest
 			}
 
+			if len(d.Path) > 0 {
+				d.SourceType = cmdb.Resource(d.Path[0])
+				d.TargetType = cmdb.Resource(d.Path[len(d.Path)-1])
+			}
+
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
 			if d.TargetList == nil {
 				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
 			}

@@ -36,6 +36,7 @@ func (s *PingConfiSuite) TestConfigClean() {
 		{
 			"127.0.0.1",
 			"ip",
+			nil,
 		},
 	}
 	metaConf.Tasks = append(metaConf.Tasks, taskConf)

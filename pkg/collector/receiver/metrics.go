@@ -10,7 +10,6 @@
 package receiver
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -20,15 +19,6 @@ import (
 )
 
 var (
-	tokenInfo = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "receiver_token_info",
-			Help:      "Receiver decoded token info",
-		},
-		[]string{"token", "metrics_id", "traces_id", "logs_id", "profiles_id", "app_name", "biz_id"},
-	)
-
 	handledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
@@ -108,18 +98,6 @@ var DefaultMetricMonitor = &metricMonitor{}
 
 type metricMonitor struct {
 	source string
-}
-
-func (m *metricMonitor) SetTokenInfo(token define.Token) {
-	tokenInfo.WithLabelValues(
-		token.Original,
-		fmt.Sprintf("%d", token.MetricsDataId),
-		fmt.Sprintf("%d", token.TracesDataId),
-		fmt.Sprintf("%d", token.LogsDataId),
-		fmt.Sprintf("%d", token.ProfilesDataId),
-		token.AppName,
-		fmt.Sprintf("%d", token.BizId),
-	).Set(1)
 }
 
 func (m *metricMonitor) Source(s string) *metricMonitor {

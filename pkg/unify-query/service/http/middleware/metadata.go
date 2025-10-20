@@ -10,12 +10,10 @@
 package middleware
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -59,7 +57,6 @@ func MetaData(p *Params) gin.HandlerFunc {
 
 		if span != nil {
 			defer func() {
-
 				span.Set("local-ip", ip)
 				span.Set("local-host-name", hostName)
 
@@ -69,12 +66,11 @@ func MetaData(p *Params) gin.HandlerFunc {
 				// 记录慢查询
 				if p != nil {
 					if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-						log.Warnf(ctx,
-							fmt.Sprintf(
-								"slow query log request: %s, duration: %s",
-								c.Request.URL.Path, sub.String(),
-							),
-						)
+						metadata.Sprintf(
+							metadata.MsgQueryTs,
+							"慢查询 %+v",
+							sub.String(),
+						).Warn(ctx)
 					}
 				}
 

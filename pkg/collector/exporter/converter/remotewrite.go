@@ -25,9 +25,9 @@ func (e remoteWriteEvent) RecordType() define.RecordType {
 	return define.RecordRemoteWrite
 }
 
-var RemoteWriteConverter EventConverter = remoteWriteConverter{}
-
 type remoteWriteConverter struct{}
+
+func (c remoteWriteConverter) Clean() {}
 
 func (c remoteWriteConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return remoteWriteEvent{define.NewCommonEvent(token, dataId, data)}
@@ -59,7 +59,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				Metrics:    common.MapStr{name: sample.GetValue()},
 				Target:     target,
 				Timestamp:  sample.GetTimestamp(),
-				Dimensions: utils.CloneMap(dims),
+				Dimensions: dims, // 无需拷贝
 			}
 			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
 		}

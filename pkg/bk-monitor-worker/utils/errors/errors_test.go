@@ -42,7 +42,7 @@ func TestErrorString(t *testing.T) {
 		want string
 	}{
 		{
-			desc: "With Op, Code, and string",
+			desc: "With Op, Code and error",
 			err:  E(Op("rdb.DeleteTask"), NotFound, "cannot find task with id=123"),
 			want: "NOT_FOUND: cannot find task with id=123",
 		},
@@ -61,7 +61,7 @@ func TestErrorString(t *testing.T) {
 }
 
 func TestErrorIs(t *testing.T) {
-	var ErrCustom = New("custom sentinel error")
+	ErrCustom := New("custom sentinel error")
 
 	tests := []struct {
 		desc   string
@@ -88,7 +88,7 @@ func TestErrorAs(t *testing.T) {
 	tests := []struct {
 		desc   string
 		err    error
-		target interface{}
+		target any
 		want   bool
 	}{
 		{

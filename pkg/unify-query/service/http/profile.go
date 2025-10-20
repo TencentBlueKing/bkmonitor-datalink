@@ -36,5 +36,5 @@ func registerProfile(ctx context.Context, g *gin.RouterGroup) {
 		pprof.Handler("heap").ServeHTTP(writer, request)
 	}))
 
-	log.Infof(ctx, "profile start server success.")
+	log.Infof(ctx, "Profile服务启动成功")
 }

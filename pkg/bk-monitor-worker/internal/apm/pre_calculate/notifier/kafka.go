@@ -179,7 +179,6 @@ func (c consumeHandler) sendSpans(message []byte) {
 }
 
 func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
-
 	args := &Options{}
 
 	for _, setter := range setters {
@@ -228,7 +227,6 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 			topic:   config.KafkaTopic,
 		},
 	}, nil
-
 }
 
 // getConnectionSASLConfig Establish a connection by SHA512
@@ -251,9 +249,7 @@ func getConnectionSASLConfig(username, password string) *sarama.Config {
 	return config
 }
 
-var (
-	SHA512 scram.HashGeneratorFcn = sha512.New
-)
+var SHA512 scram.HashGeneratorFcn = sha512.New
 
 // SCRAMSHA512Client SHA 512 implements
 type SCRAMSHA512Client struct {

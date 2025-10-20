@@ -98,11 +98,6 @@ bk-collector:
     metric_relabel_configs:
 
 
-  # ================================ Cluster =================================
-  cluster:
-    disabled: true
-
-
   # ================================= Proxy ==================================
   proxy:
     disabled: false
@@ -186,28 +181,6 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      remotewrite:
-        enabled: true
-      zipkin:
-        enabled: true
-      skywalking:
-        enabled: false
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: false
-
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"
@@ -224,6 +197,9 @@ bk-collector:
 
     # ResourceFilter: 维度补充
     - name: "resource_filter/fill_dimensions"
+
+    # FieldNormalizer: 协议字段替换
+    - name: "field_normalizer/otel_mapping"
 
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
@@ -257,6 +233,15 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
             - "resource.process.pid"
+        from_token:
+          keys:
+            - "app_name"
+
+    # MetricsFilter: 指标过滤处理器
+    - name: "metrics_filter/relabel"
+
+    # MethodFilter: method 过滤处理器（做 span 丢弃处理）
+    - name: "method_filter/drop_span
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
@@ -313,6 +298,11 @@ bk-collector:
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
 
+    # TextSpliter: 文本分割器
+    - name: "text_spliter/common"
+      config:
+        separator: "\n"
+
     # RateLimiter: 流控处理器
     - name: "rate_limiter/token_bucket"
       config:
@@ -337,6 +327,8 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "method_filter/drop_span"
+        - "field_normalizer/otel_mapping"
         - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
         - "db_filter/common"
@@ -360,6 +352,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "resource_filter/metrics"
+        - "metrics_filter/relabel"
 
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
@@ -369,6 +362,7 @@ bk-collector:
       type: "logs"
       processors:
         - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
         - "resource_filter/logs"
         - "attribute_filter/logs"
 
@@ -383,6 +377,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "metrics_filter/relabel"
 
     - name: "proxy_pipeline/common"
       type: "proxy"
@@ -420,6 +415,13 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
 
+    - name: "logpush_pipeline/common"
+      type: "logpush"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+        - "text_spliter/common"
+
   # =============================== Exporter =================================
   exporter:
     queue:
@@ -427,4 +429,5 @@ bk-collector:
       traces_batch_size: 600
       logs_batch_size: 100
       proxy_batch_size: 3000
+      profiles_batch_size: 50
       flush_interval: 3s

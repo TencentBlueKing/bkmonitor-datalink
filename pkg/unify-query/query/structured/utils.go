@@ -15,12 +15,12 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
 // getExpressionByParam
-func getExpressionByParam(param interface{}) (parser.Expr, error) {
+func getExpressionByParam(param any) (parser.Expr, error) {
 	switch t := param.(type) {
 	case string:
 		return &parser.StringLiteral{Val: param.(string)}, nil
@@ -35,14 +35,17 @@ func getExpressionByParam(param interface{}) (parser.Expr, error) {
 	case int:
 		return &parser.NumberLiteral{Val: float64(param.(int))}, nil
 	default:
-		log.Errorf(context.TODO(), "unknown vArg type:%#v", t)
-		return nil, ErrExprNotAllow
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"未知类型 %T",
+			t,
+		).Error(context.TODO(), ErrExprNotAllow)
 	}
 }
 
 // 拼接一个参数列表
-func combineExprList(position int, expr parser.Expr, exprParams []interface{}) ([]parser.Expr, error) {
-	var params = make([]parser.Expr, 0)
+func combineExprList(position int, expr parser.Expr, exprParams []any) ([]parser.Expr, error) {
+	params := make([]parser.Expr, 0)
 	// 判断是否需要追加参数
 	if len(exprParams) != 0 {
 		for _, vArg := range exprParams {
@@ -162,7 +165,7 @@ func compressFilterCondition(tKeys []string, filters []query.Filter) [][]Conditi
 	// 开始组装 condition
 	filterConditions := make([][]ConditionField, 0)
 	for k, v := range compressMap {
-		var cond = make([]ConditionField, 0, 2)
+		cond := make([]ConditionField, 0, 2)
 		cond = []ConditionField{{
 			DimensionName: groupKey,
 			Value:         []string{k},

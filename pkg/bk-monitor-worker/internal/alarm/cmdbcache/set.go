@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -29,14 +16,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -47,6 +37,46 @@ const (
 
 type SetCacheManager struct {
 	*BaseCacheManager
+}
+
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
+	// 1. 从缓存获取数据（自动滚动获取所有数据）
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(setCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get set cache failed")
+	}
+
+	// 2. 解析JSON数据并按业务ID分组
+	bizDataMap := make(map[int][]map[string]any)
+	for _, jsonStr := range cacheData {
+		var item map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &item); err != nil {
+			logger.Warnf("unmarshal set cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := int(item["bk_biz_id"].(float64))
+		bizDataMap[bizID] = append(bizDataMap[bizID], item)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, data := range bizDataMap {
+		m.buildRelationMetricsByBizAndData(ctx, data, bizID)
+	}
+	logger.Infof("[cmdb_relation] build cache type:set action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
+
+	return nil
+}
+
+func (m *SetCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]any, bizID int) {
+	infos := m.SetToRelationInfos(data)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos); err != nil {
+		logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
+	}
 }
 
 // NewSetCacheManager 创建模块缓存管理器
@@ -63,13 +93,13 @@ func NewSetCacheManager(bkTenantId string, prefix string, opt *redis.Options, co
 }
 
 // getSetListByBizID 通过业务ID获取集群列表
-func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
+func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.SearchSetResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -83,17 +113,16 @@ func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map
 		},
 		// 生成分页请求
 		func(page int) define.Operation {
-			return cmdbApi.SearchSet().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchSet().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to request cmdb api")
 	}
 
 	// 准备缓存数据
-	setList := make([]map[string]interface{}, 0)
+	setList := make([]map[string]any, 0)
 	for _, item := range result {
 		var res cmdb.SearchSetResp
 		err = mapstructure.Decode(item, &res)
@@ -129,6 +158,9 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	setCacheData := make(map[string]string)
 	templateToSets := make(map[string][]string)
 	for _, set := range result {
+		// 注入业务 ID 信息
+		set["bk_biz_id"] = bizID
+
 		setStr, err := json.Marshal(set)
 		if err != nil {
 			return errors.Wrap(err, "failed to marshal set")
@@ -173,7 +205,49 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 		logger.Infof("refresh set_template cache by biz: %d, set_template count: %d", bizID, len(setTemplateCacheData))
 	}
 
+	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	m.buildRelationMetricsByBizAndData(ctx, result, bizID)
+
 	return nil
+}
+
+// SetToRelationInfos Set 信息转关联缓存信息
+func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(result))
+	for _, r := range result {
+		id := cast.ToString(r[relation.SetID])
+
+		if id == "" {
+			continue
+		}
+
+		var expands map[string]map[string]any
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok && expandString != "" {
+			err := json.Unmarshal([]byte(expandString), &expands)
+			if err != nil {
+				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s, %s", expandString, err)
+				continue
+			}
+		}
+
+		info := &relation.Info{
+			ID:       id,
+			Resource: relation.Set,
+			Label: map[string]string{
+				relation.SetID: id,
+			},
+			Expands: relation.TransformExpands(expands),
+		}
+
+		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
+		if info.Expands[relation.Set] != nil {
+			info.Expands[relation.Set][relation.SetName] = cast.ToString(r[relation.SetName])
+		}
+
+		infos = append(infos, info)
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局模块缓存
@@ -205,7 +279,7 @@ func (m *SetCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 根据事件清理缓存
-func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "set" || len(events) == 0 {
 		return nil
 	}
@@ -264,6 +338,25 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 		for setID := range needDeleteSetIds {
 			setIds = append(setIds, strconv.Itoa(setID))
 		}
+
+		// 清理 relationMetrics 里的缓存数据
+		rmb := relation.GetRelationMetricsBuilder()
+		result := m.RedisClient.HMGet(ctx, m.GetCacheKey(setCacheKey), setIds...)
+		for _, value := range result.Val() {
+			if value == nil {
+				continue
+			}
+
+			var set map[string]any
+			err := json.Unmarshal([]byte(cast.ToString(value)), &set)
+			if err != nil {
+				continue
+			}
+
+			// 清理 relation metrics 里面的 set 资源
+			rmb.ClearResourceWithID(cast.ToInt(set["bk_biz_id"]), relation.Set, cast.ToString(set["bk_set_id"]))
+		}
+
 		m.RedisClient.HDel(ctx, m.GetCacheKey(setCacheKey), setIds...)
 	}
 
@@ -284,7 +377,7 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 }
 
 // UpdateByEvents 根据事件更新缓存
-func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if resourceType != "set" || len(events) == 0 {
 		return nil
 	}

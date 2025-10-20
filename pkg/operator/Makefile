@@ -1,7 +1,8 @@
 # REQUIRE TOOLS
-# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@latest
+# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@0.5.0
 # https://github.com/incu6us/goimports-reviser => $go install github.com/incu6us/goimports-reviser/v3@v3.1.1
 # https://github.com/golangci/golangci-lint => $go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
+# https://sigs.k8s.io/controller-tools => $ go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0
 
 GO ?= go
 SHELL = bash
@@ -22,30 +23,32 @@ help:
 	@echo " test: Run unit tests"
 	@echo " build: Build Go package"
 	@echo " image: Build and push docker image"
-
-.PHONY: lint
-lint: mod
-	diff -u <(echo -n) <(gofumpt -w .)
-	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
-
-.PHONY: test
-test: mod
-	$(GO) test ./... -buildmode=pie -parallel=4 -cover
+	@echo " codegen: Generate code for CRD"
 
 .PHONY: mod
 mod:
 	$(GO) mod download
 	$(GO) mod tidy
 
+.PHONY: lint
+lint:
+	gofmt -r 'interface{} -> any' -w .
+	diff -u <(echo -n) <(gofumpt -w .)
+	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
+
+.PHONY: test
+test:
+	$(GO) test ./... -buildmode=pie -parallel=4 -cover -ldflags "-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore"
+
 .PHONY: build
-build: mod
+build:
 	cd $(RELEASE_PATH) && ls -lh && rm -rf *
-	GOOS=linux GOARCH=amd64 \
-	go build -ldflags " \
+	$(GO) build -ldflags " \
 	-s -w \
 	-X $(PKG)/cmd.Version=$(VERSION) \
 	-X $(PKG)/cmd.BuildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \
-	-X $(PKG)/cmd.GitHash=$(shell git rev-parse HEAD)" \
+	-X $(PKG)/cmd.GitHash=$(shell git rev-parse HEAD) \
+	-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore" \
 	-o $(BIN) .
 
 .PHONY: image
@@ -59,3 +62,5 @@ image: build
 .PHONY: codegen
 codegen:
 	chmod +x ./hack/update-codegen.sh && bash ./hack/update-codegen.sh
+	controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=crd/bases
+	gofmt -r 'interface{} -> any' -w .

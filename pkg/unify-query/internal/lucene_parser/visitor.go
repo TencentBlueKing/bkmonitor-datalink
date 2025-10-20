@@ -225,16 +225,11 @@ func (n *LogicNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.ModClauseContext:
-		node := n.MakeInitNode(&ConditionNode{
-			reverseOp: n.reverseOp,
-			mustOp:    n.mustOp,
-		})
+		node := n.MakeInitNode(&ConditionNode{})
 		n.Nodes = append(n.Nodes, node.(*ConditionNode))
 		if len(n.logics) < len(n.Nodes)-1 {
 			n.logics = append(n.logics, "")
 		}
-		n.reverseOp = false
-		n.mustOp = false
 		next = node
 	case *gen.ModifierContext:
 		switch strings.ToUpper(ctx.GetText()) {

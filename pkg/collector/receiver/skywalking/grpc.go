@@ -276,7 +276,6 @@ func (s *ConfigurationDiscoveryService) createCustomParam(language string, swCon
 	return nil
 }
 
-// Meter指标接收服务
 type MeterService struct {
 	receiver.Publisher
 	pipeline.Validator
@@ -299,7 +298,6 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 	}
 
 	var converter *meterConverter
-
 	for {
 		meter, err := stream.Recv()
 		if err != nil {
@@ -314,12 +312,19 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 		converter.Convert(meter)
 	}
 
+	if converter == nil {
+		logger.Warnf("empty meterservice data, ip=%v", ip)
+		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordMetrics)
+		return nil
+	}
+
 	r := &define.Record{
 		RecordType:    define.RecordMetrics,
 		RequestType:   define.RequestGrpc,
 		RequestClient: define.RequestClient{IP: ip},
 		Data:          converter.Get(),
 	}
+
 	prettyprint.Pretty(define.RecordMetrics, r)
 	code, processorName, err := s.Validate(r)
 	if err != nil {
@@ -328,10 +333,9 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 		return err
 	}
+
 	s.Publish(r)
-
 	return stream.SendAndClose(&commonv3.Commands{})
-
 }
 
 func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatchServer) error {
@@ -357,9 +361,11 @@ func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatc
 			}
 			return err
 		}
+
 		for _, meter := range meterCollection.MeterData {
 			converter := newMeterConverter(meter.GetService(), meter.GetServiceInstance(), meter.GetTimestamp(), token)
 			converter.Convert(meter)
+
 			r := &define.Record{
 				RecordType:    define.RecordMetrics,
 				RequestType:   define.RequestGrpc,
@@ -368,14 +374,13 @@ func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatc
 			}
 			code, processorName, err := s.Validate(r)
 			if err != nil {
-				err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
+				err = errors.Wrapf(err, "run pre-check failed, service=MetricService-CollectBatch, code=%d, ip=%s", code, ip)
 				logger.WarnRate(time.Minute, r.Token.Original, err)
 				metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 				return err
 			}
 			s.Publish(r)
 		}
-
 	}
 }
 

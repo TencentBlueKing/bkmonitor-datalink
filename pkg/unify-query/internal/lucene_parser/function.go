@@ -91,7 +91,7 @@ func extractBoost(s string) (baseValue string, boost string) {
 		baseValue = s
 		boost = ""
 	}
-	return baseValue, boost
+	return
 }
 
 func extractRange(s string, boost string) (node Node, matched bool) {
@@ -128,7 +128,7 @@ func extractRange(s string, boost string) (node Node, matched bool) {
 			}
 		}
 	}
-	return node, matched
+	return
 }
 
 func extractRegexp(s string, boost string) (node Node, matched bool) {
@@ -145,7 +145,7 @@ func extractRegexp(s string, boost string) (node Node, matched bool) {
 			Boost: boost,
 		}
 	}
-	return node, matched
+	return
 }
 
 func extractWildCard(s string, boost string) (node Node, matched bool) {
@@ -160,7 +160,7 @@ func extractWildCard(s string, boost string) (node Node, matched bool) {
 			Boost: boost,
 		}
 	}
-	return node, matched
+	return
 }
 
 func parseTerm(s string) Node {

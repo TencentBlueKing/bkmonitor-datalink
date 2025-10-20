@@ -167,6 +167,7 @@ type JVMMetricReportService struct {
 func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agentv3.JVMMetricCollection) (*commonv3.Commands, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
+	start := time.Now()
 
 	md := getMetaDataFromContext(ctx)
 	token, err := getTokenFromMetadata(md)
@@ -193,6 +194,7 @@ func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agentv
 	}
 
 	s.Publish(r)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestGrpc, define.RecordMetrics, 0, start)
 	return &commonv3.Commands{}, nil
 }
 
@@ -285,6 +287,7 @@ type MeterService struct {
 func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) error {
 	defer utils.HandleCrash()
 
+	start := time.Now()
 	ctx := stream.Context()
 	ip := utils.GetGrpcIpFromContext(ctx)
 	logger.Debugf("grpc request: service=metricService, remoteAddr=%v", ip)
@@ -328,19 +331,21 @@ func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) 
 	prettyprint.Pretty(define.RecordMetrics, r)
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, service=MetricService-Collect, code=%d, ip=%s", code, ip)
+		err = errors.Wrapf(err, "run pre-check failed, service=MetricService/Collect, code=%d, ip=%s", code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 		return err
 	}
 
 	s.Publish(r)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestGrpc, define.RecordMetrics, 0, start)
 	return stream.SendAndClose(&commonv3.Commands{})
 }
 
 func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatchServer) error {
 	defer utils.HandleCrash()
 
+	start := time.Now()
 	ctx := batch.Context()
 	ip := utils.GetGrpcIpFromContext(ctx)
 	logger.Debugf("grpc request: service=metricService, remoteAddr=%v", ip)
@@ -372,13 +377,17 @@ func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatc
 				RequestClient: define.RequestClient{IP: ip},
 				Data:          converter.Get(),
 			}
+			prettyprint.Pretty(define.RecordMetrics, r)
+
 			code, processorName, err := s.Validate(r)
 			if err != nil {
-				err = errors.Wrapf(err, "run pre-check failed, service=MetricService-CollectBatch, code=%d, ip=%s", code, ip)
+				err = errors.Wrapf(err, "run pre-check failed, service=MetricService/CollectBatch, code=%d, ip=%s", code, ip)
 				logger.WarnRate(time.Minute, r.Token.Original, err)
 				metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 				return err
 			}
+
+			receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestGrpc, define.RecordMetrics, 0, start)
 			s.Publish(r)
 		}
 	}

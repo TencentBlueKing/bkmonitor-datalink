@@ -4614,7 +4614,6 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 				}
 
 				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
-				fmt.Printf("done: %v\n", done)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -4764,7 +4763,6 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 				}
 
 				total, list, done, err := queryRawWithScroll(ctx, c.queryTs, session)
-				fmt.Printf("loop:%d, done:%v\n", loop, done)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {

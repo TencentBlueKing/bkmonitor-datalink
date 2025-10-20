@@ -1004,11 +1004,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}}}}`,
 			sql: "`log` MATCH_PHRASE 'a' AND `log` MATCH_PHRASE 'b' OR `log` MATCH_PHRASE 'b'",
 		},
-		// 注意: a ! b 中的 ! 会被当作普通文本处理
+		// 注意: a ! b 中的 ! 会被当作普通文本处理，解析为 a OR b
 		"lucene_operator_exclamation_with_spaces": {
 			q:   `a ! b`,
-			es:  `{"bool":{"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"!"}}]}}`,
-			sql: "{\"bool\":{\"should\":[{\"query_string\":{\"analyze_wildcard\":true,\"fields\":[\"*\",\"__*\"],\"lenient\":true,\"query\":\"a\"}},{\"query_string\":{\"analyze_wildcard\":true,\"fields\":[\"*\",\"__*\"],\"lenient\":true,\"query\":\"b\"}}]}}",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}}`,
+			sql: "`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b'",
 		},
 		// 注意: +guinea pig 会被解析为 pig AND guinea OR guinea
 		"lucene_guinea_pig_plus": {
@@ -1371,7 +1371,7 @@ func TestLuceneParser(t *testing.T) {
 		"boost_wildcard_query": {
 			q:   `test*^2`,
 			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"test*"}}`,
-			sql: "`log` MATCH_PHRASE 'test*'",
+			sql: "`log` LIKE 'test%'",
 		},
 		"boost_range_query": {
 			q:   `count:[1 TO 10]^3`,
@@ -1420,7 +1420,7 @@ func TestLuceneParser(t *testing.T) {
 		"phrase_boost_v2": {
 			q:   `(term)^2.0`,
 			es:  `{"bool":{"boost":2,"must":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"term"}}}}`,
-			sql: "(`log` MATCH_PHRASE 'term')", //已知doris不处理boost
+			sql: "(`log` MATCH_PHRASE 'term')", // 已知doris不处理boost
 		},
 		"phrase_boost_v3": {
 			q:   `(germ term)^2.0`,
@@ -1440,7 +1440,7 @@ func TestLuceneParser(t *testing.T) {
 		"like_boost": {
 			q:   `term*^2`,
 			es:  `{"query_string":{"analyze_wildcard":true,"boost":2,"fields":["*","__*"],"lenient":true,"query":"term*"}}`,
-			sql: "`log` MATCH_PHRASE 'term*'",
+			sql: "`log` LIKE 'term%'",
 		},
 		"force_or": {
 			q:   `term +(stop) term`,

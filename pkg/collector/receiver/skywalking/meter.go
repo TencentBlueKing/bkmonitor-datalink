@@ -22,7 +22,10 @@ const (
 	totalConnections  = "totalConnections"
 )
 
-var keepMetricsList = map[string]map[string]map[string]string{
+// whitelistMetrics 白名单
+//
+// map[name]dimensions{key: metric}
+var whitelistMetrics = map[string]map[string]map[string]string{
 	"datasource": {
 		"status": {
 			// hikaricp-3.x-4.x
@@ -43,8 +46,8 @@ var keepMetricsList = map[string]map[string]map[string]string{
 	},
 }
 
-func newMeterConverter(service string, instance string, ts int64, token string) *meterConverter {
-	converter := &meterConverter{
+func newMeterConverter(service, instance string, ts int64, token string) *meterConverter {
+	return &meterConverter{
 		mb: metricsbuilder.New(
 			metricsbuilder.ResourceKv{Key: "service_name", Value: service},
 			metricsbuilder.ResourceKv{Key: "bk_instance_id", Value: instance},
@@ -52,7 +55,6 @@ func newMeterConverter(service string, instance string, ts int64, token string) 
 		),
 		timestamp: ts,
 	}
-	return converter
 }
 
 type meterConverter struct {
@@ -72,35 +74,46 @@ func (c *meterConverter) Convert(meter *agentv3.MeterData) {
 	}
 }
 
-func (c *meterConverter) convertDimension(labels []*agentv3.Label) map[string]string {
-	dimension := make(map[string]string)
-	for _, label := range labels {
-		dimension[label.GetName()] = label.GetValue()
+func (c *meterConverter) convertSingleValue(meter *agentv3.MeterData) {
+	val := meter.GetSingleValue()
+	if val == nil {
+		return
 	}
-	return dimension
+
+	ts := microsecondsToTimestamp(c.timestamp)
+	dims := c.toDims(val.GetLabels())
+	name := val.GetName()
+	if c.filterMetrics(name, dims) {
+		c.mb.Build(name, metricsbuilder.Metric{Val: val.Value, Dimensions: dims, Ts: ts})
+	}
 }
 
-func (c *meterConverter) convertSingleValue(meter *agentv3.MeterData) {
-	ts := microsecondsToTimestamp(c.timestamp)
-	gaugeMetric := meter.GetSingleValue()
-	gaugeDimension := c.convertDimension(gaugeMetric.GetLabels())
-	if c.filterMetrics(gaugeMetric.GetName(), gaugeDimension) {
-		c.mb.Build(gaugeMetric.GetName(), metricsbuilder.Metric{Val: float64(gaugeMetric.Value), Dimensions: gaugeDimension, Ts: ts})
+func (c *meterConverter) toDims(labels []*agentv3.Label) map[string]string {
+	dims := make(map[string]string)
+	for _, label := range labels {
+		dims[label.GetName()] = label.GetValue()
 	}
+	return dims
 }
 
 func (c *meterConverter) filterMetrics(name string, dims map[string]string) bool {
-	filter, set := keepMetricsList[name]
-	if !set {
+	filter, ok := whitelistMetrics[name]
+	if !ok {
 		return false
 	}
+
 	for dim, dimMapping := range filter {
-		if oldVal, set := dims[dim]; set {
-			if newVal, set := dimMapping[oldVal]; set {
-				dims[dim] = newVal
-				return true
-			}
+		oldVal, ok := dims[dim]
+		if !ok {
+			continue
 		}
+		newVal, ok := dimMapping[oldVal]
+		if !ok {
+			continue
+		}
+
+		dims[dim] = newVal
+		return true
 	}
 	return false
 }

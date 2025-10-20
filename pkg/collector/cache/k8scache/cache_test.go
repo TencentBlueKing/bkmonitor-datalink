@@ -48,7 +48,9 @@ func TestCache(t *testing.T) {
 	defer svr.Close()
 
 	c := New(&Config{
-		URL: svr.URL,
+		URL:      svr.URL,
+		Interval: time.Second * 10,
+		Timeout:  time.Second * 10,
 	})
 	c.Sync()
 	defer c.Clean()

@@ -11,7 +11,6 @@ package resourcefilter
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,6 +22,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -374,17 +374,22 @@ func TestFromCacheAction(t *testing.T) {
 	}))
 	defer svr.Close()
 
-	content := fmt.Sprintf(`
+	err := k8scache.Install(&k8scache.Config{
+		URL:      svr.URL,
+		Timeout:  10 * time.Second,
+		Interval: 10 * time.Second,
+	})
+	assert.NoError(t, err)
+	defer k8scache.Uninstall()
+
+	content := `
 processor:
     - name: "resource_filter/from_cache"
       config:
         from_cache:
           key: "resource.net.host.ip|resource.client.ip"
-          cache:
-            url: %s
-            interval: "1m"
-            timeout: "1m"
-`, svr.URL)
+          cache_name: "k8s_cache"
+`
 
 	t.Run("traces net.host.ip", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)

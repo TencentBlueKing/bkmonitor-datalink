@@ -7,32 +7,45 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package tenant
 
-const (
-	SubConfigFieldDefault  = "default"
-	SubConfigFieldService  = "service"
-	SubConfigFieldInstance = "instance"
+import (
+	"reflect"
+	"sync"
 )
 
-const (
-	ConfigTypePrivileged = "privileged"
-	ConfigTypePlatform   = "platform"
-	ConfigTypeSubConfig  = "subconfig"
-	ConfigTypeReportV2   = "report_v2"
-	ConfigTypeReportV1   = "report"
+type Storage struct {
+	mut   sync.Mutex
+	tasks map[string]int32 // 与 gse 通信获取
+}
 
-	ConfigFieldApmConfig  = "apm"
-	ConfigFieldProcessor  = "processor"
-	ConfigFieldPipeline   = "pipeline"
-	ConfigFieldReceiver   = "receiver"
-	ConfigFieldPusher     = "bk_metrics_pusher"
-	ConfigFieldExporter   = "exporter"
-	ConfigFieldProxy      = "proxy"
-	ConfigFieldPingserver = "pingserver"
-	ConfigFieldCache      = "cache"
-)
+func NewStorage() *Storage {
+	return &Storage{
+		tasks: make(map[string]int32),
+	}
+}
 
-type ApmConfig struct {
-	Patterns []string `config:"patterns"`
+func (s *Storage) GetTaskDataID(task string) (int32, bool) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	dst, ok := s.tasks[task]
+	return dst, ok
+}
+
+func (s *Storage) UpdateTaskDataIDs(tasks map[string]int32) bool {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	if reflect.DeepEqual(tasks, s.tasks) {
+		return false
+	}
+	s.tasks = tasks
+	return true
+}
+
+var defaultStorage = NewStorage()
+
+func DefaultStorage() *Storage {
+	return defaultStorage
 }

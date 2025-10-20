@@ -52,6 +52,13 @@
             - "logging"
             - "maxconns;maxConnectionsRatio=256"
 
+      cache:
+        - name: "k8s_cache"
+          config:
+            url: http://{{ .Release.Name }}-operator:8080/pods
+            interval: 5s
+            timeout: 5s
+
       pingserver:
         disabled: true
 
@@ -101,6 +108,9 @@
         # ResourceFilter: 维度补充
         - name: "resource_filter/fill_dimensions"
 
+        # FieldNormalizer: 协议字段替换
+        - name: "field_normalizer/otel_mapping"
+
         # ResourceFilter: 资源过滤处理器
         - name: "resource_filter/instance_id"
           config:
@@ -145,6 +155,9 @@
 
         # MetricsFilter: 指标过滤处理器
         - name: "metrics_filter/relabel"
+
+        # MethodFilter: method 过滤处理器（做 span 丢弃处理）
+        - name: "method_filter/drop_span"
 
         # Sampler: 采样处理器（概率采样）
         - name: "sampler/random"
@@ -230,6 +243,8 @@
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
             - "sampler/drop_traces"
+            - "method_filter/drop_span"
+            - "field_normalizer/otel_mapping"
             - "resource_filter/fill_dimensions"
             - "resource_filter/instance_id"
             - "resource_filter/user_metadata"
@@ -336,6 +351,7 @@
         converter:
           tars:
             {{- if .Values.exporter.converter.tars }}
+            is_drop_original: {{ .Values.exporter.converter.tars.isDropOriginal }}
             drop_original_services:
             {{- range .Values.exporter.converter.tars.dropOriginalServices }}
               - {{ . }}

@@ -309,11 +309,11 @@ default:
               {%- endfor %}
           {%- endif %}
           {%- if resource_filter_config_metrics.get("from_record") %}
-            from_record:
-              {%- for record_item in resource_filter_config_metrics.from_record %}
-              - source: '{{ record_item.source }}'
-                destination: '{{ record_item.destination }}'
-              {%- endfor %}
+          from_record:
+            {%- for record_item in resource_filter_config_metrics.from_record %}
+            - source: '{{ record_item.source }}'
+              destination: '{{ record_item.destination }}'
+            {%- endfor %}
           {%- endif %}
           {%- if resource_filter_config_metrics.get("from_cache") %}
           from_cache:

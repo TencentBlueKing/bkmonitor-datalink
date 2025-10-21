@@ -65,6 +65,7 @@ func (n *StringNode) String() string {
 type WildCardNode struct {
 	BaseNode
 	Value string
+	Boost string
 }
 
 func (n *WildCardNode) String() string {
@@ -74,6 +75,7 @@ func (n *WildCardNode) String() string {
 type RegexpNode struct {
 	BaseNode
 	Value string
+	Boost string
 }
 
 func (n *RegexpNode) String() string {
@@ -87,6 +89,7 @@ type RangeNode struct {
 	End            Node
 	IsIncludeStart bool
 	IsIncludeEnd   bool
+	Boost          string
 }
 
 type LogicNode struct {
@@ -454,6 +457,8 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			value = fmt.Sprintf(`/%s/`, value)
 		case *StringNode:
 			boost = v.Boost
+		case *WildCardNode:
+			boost = v.Boost
 		}
 
 		if n.fuzziness != "" {
@@ -512,12 +517,21 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			cq.To(realValue(cv.End))
 		}
 		cq.IncludeUpper(cv.IsIncludeEnd)
+		if cv.Boost != "" {
+			cq.Boost(cast.ToFloat64(cv.Boost))
+		}
 		result = cq
 	case *WildCardNode:
 		cq := elastic.NewWildcardQuery(field, value)
+		if cv.Boost != "" {
+			cq.Boost(cast.ToFloat64(cv.Boost))
+		}
 		result = cq
 	case *RegexpNode:
 		cq := elastic.NewRegexpQuery(field, value)
+		if cv.Boost != "" {
+			cq.Boost(cast.ToFloat64(cv.Boost))
+		}
 		result = cq
 	case *StringNode:
 		switch op {

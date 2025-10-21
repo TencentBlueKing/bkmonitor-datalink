@@ -145,11 +145,7 @@ func (s *ScrollSession) Stop(ctx context.Context) error {
 		}
 	}()
 
-	if s.Done() {
-		return s.Clear(ctx)
-	} else {
-		return s.Update(ctx)
-	}
+	return s.Update(ctx)
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -203,7 +199,7 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWind
 	}
 
 	session := NewScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
-	if sessionCache, ok := checkScrollSession(ctx, session.SessionKey); ok {
+	if sessionCache, ok := checkScrollSession(ctx, session.SessionKey); ok && !sessionCache.Done() {
 		log.Debugf(ctx, "session cache")
 		sessionCache.Cache = true
 		return sessionCache, nil

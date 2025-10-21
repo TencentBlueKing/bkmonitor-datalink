@@ -397,6 +397,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			"下载已经触发，请稍后重试",
 		).Error(ctx, err)
 	}
+	defer func() {
+		_ = session.Stop(ctx)
+	}()
 
 	list := make([]map[string]any, 0)
 
@@ -543,24 +546,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	receiveWg.Wait()
 
-	// 清理之前提前获取是否完成的标记位
-	done := session.Done()
-	stopErr := session.Stop(ctx)
-	if stopErr != nil {
-		if err != nil {
-			err = metadata.Sprintf(
-				metadata.MsgQueryRawScroll,
-				"停止 scroll 失败",
-			).Error(ctx, fmt.Errorf("origin: %w; stop: %v", err, stopErr))
-		} else {
-			return total, list, done, metadata.Sprintf(
-				metadata.MsgQueryRawScroll,
-				"停止 scroll 失败",
-			).Error(ctx, stopErr)
-		}
-	}
-
-	return total, list, done, err
+	return total, list, session.Done(), err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {

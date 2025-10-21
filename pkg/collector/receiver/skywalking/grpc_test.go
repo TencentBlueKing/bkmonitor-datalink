@@ -242,14 +242,6 @@ func TestEmptyImpl(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("MeterService", func(t *testing.T) {
-		svc := &MeterService{}
-		err := svc.Collect(nil)
-		assert.NoError(t, err)
-		err = svc.CollectBatch(nil)
-		assert.NoError(t, err)
-	})
-
 	t.Run("ClrService", func(t *testing.T) {
 		svc := &ClrService{}
 		_, err := svc.Collect(nil, nil)

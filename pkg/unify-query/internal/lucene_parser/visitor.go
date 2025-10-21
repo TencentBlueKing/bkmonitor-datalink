@@ -153,6 +153,7 @@ func (n *LogicNode) String() string {
 			g = fmt.Sprintf("%s %s %s", g, logicAnd, mustString)
 			orList = append(orList, g)
 		}
+
 		orList = append(orList, mustString)
 
 		return strings.Join(orList, fmt.Sprintf(" %s ", logicOR))

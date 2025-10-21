@@ -49,7 +49,10 @@ type MetricProcessor struct {
 	appId   string
 	dataId  string
 
-	enabledLayer4Report bool
+	enabledLayer4Report               bool
+	podInstanceErrorFlowReportEnabled bool
+	podApmErrorFlowReportEnabled      bool
+	podSystemErrorFlowReportEnabled   bool
 
 	customServiceDiscoverType string
 	customServiceRules        []models.CustomServiceRule
@@ -165,6 +168,18 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 
 		cSpanKind := pairs[0].Kind
 		sSpanKind := pairs[1].Kind
+
+		cBcsClusterId := pairs[0].GetFieldValue(core.K8sBcsClusterId)
+		sBcsClusterId := pairs[1].GetFieldValue(core.K8sBcsClusterId)
+
+		cPodName := pairs[0].GetFieldValue(core.K8sPodName, core.NetHostnameField)
+		sPodName := pairs[1].GetFieldValue(core.K8sPodName, core.NetHostnameField)
+
+		cPodIp := pairs[0].GetFieldValue(core.K8sPodIp, core.NetHostIpField)
+		sPodIp := pairs[1].GetFieldValue(core.K8sPodIp, core.NetHostIpField)
+
+		cStatusCode := pairs[0].StatusCode
+
 		// unit: μs
 		var duration int
 		if cSpanKind == int(core.KindClient) {
@@ -205,11 +220,105 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			metricCount[storage.ApmServiceFlow]++
 		}
 
+		// Only traffic of error needs to consider the caller and callee of the pod.
+		if cStatusCode == core.StatusCodeError && m.podInstanceErrorFlowReportEnabled {
+			if cBcsClusterId != "" && sBcsClusterId != "" {
+				// ---> find pod -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", cBcsClusterId),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", sBcsClusterId),
+						pair("to_namespace", pairs[1].GetFieldValue(core.K8sNamespace)),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+		}
+
+		if cStatusCode == core.StatusCodeError && m.podApmErrorFlowReportEnabled {
+			if cBcsClusterId != "" && sService != "" {
+				// ---> find pod -> service relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", cBcsClusterId),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.ApmService),
+						pair("to_instance_name", sService),
+						pair("to_span_name", sServiceSpanName),
+						pair("to_apm_service_name", sService),
+						pair("to_apm_application_name", m.appName),
+						pair("to_apm_service_category", storage.CategoryHttp),
+						pair("to_apm_service_kind", storage.KindService),
+						pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
+						pair("to_span_http_status_code", pairs[1].GetFieldValue(core.HttpStatusCodeField)),
+						pair("to_span_grpc_status_code", pairs[1].GetFieldValue(core.RpcGrpcStatusCode)),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+
+			if cService != "" && sBcsClusterId != "" {
+				// ---> find service -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.ApmService),
+						pair("from_instance_name", cService),
+						pair("from_span_name", cServiceSpanName),
+						pair("from_apm_service_name", cService),
+						pair("from_apm_application_name", m.appName),
+						pair("from_apm_service_category", storage.CategoryHttp),
+						pair("from_apm_service_kind", storage.KindService),
+						pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
+						pair("from_span_http_status_code", pairs[0].GetFieldValue(core.HttpStatusCodeField)),
+						pair("from_span_grpc_status_code", pairs[0].GetFieldValue(core.RpcGrpcStatusCode)),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", pairs[1].GetFieldValue(core.K8sBcsClusterId)),
+						pair("to_namespace", sBcsClusterId),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+		}
 		if !m.enabledLayer4Report {
 			continue
 		}
 		parentIp := pairs[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
 		childIp := pairs[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
+
+		parentHostName := pairs[0].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
+		childHostName := pairs[1].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
+
 		if parentIp != "" {
 			// ----> Find system -> service relation
 			labelKey := strings.Join(
@@ -268,6 +377,54 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.SystemFlow]++
+		}
+
+		if cStatusCode == core.StatusCodeError && m.podSystemErrorFlowReportEnabled {
+			if cBcsClusterId != "" && childIp != "" {
+				// ---> find pod -> system relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", cBcsClusterId),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.System),
+						pair("to_instance_name", childHostName),
+						pair("to_bk_target_ip", childIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+
+			if parentIp != "" && sBcsClusterId != "" {
+				// ---> system -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.System),
+						pair("from_instance_name", parentHostName),
+						pair("from_bk_target_ip", parentIp),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", sBcsClusterId),
+						pair("to_namespace", pairs[1].GetFieldValue(core.K8sNamespace)),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
 		}
 	}
 
@@ -662,16 +819,19 @@ func pair(k, v string) string {
 	return k + "=" + v
 }
 
-func newMetricProcessor(ctx context.Context, dataId string, enabledLayer4Metric bool) *MetricProcessor {
+func newMetricProcessor(ctx context.Context, dataId string, processorOpts ProcessorOptions) *MetricProcessor {
 	logger.Infof("[RelationMetric] create metric processor, dataId: %s", dataId)
 	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
 	p := MetricProcessor{
-		ctx:                 ctx,
-		dataId:              dataId,
-		bkBizId:             baseInfo.BkBizId,
-		appName:             baseInfo.AppName,
-		appId:               baseInfo.AppId,
-		enabledLayer4Report: enabledLayer4Metric,
+		ctx:                               ctx,
+		dataId:                            dataId,
+		bkBizId:                           baseInfo.BkBizId,
+		appName:                           baseInfo.AppName,
+		appId:                             baseInfo.AppId,
+		enabledLayer4Report:               processorOpts.metricLayer4ReportEnabled,
+		podInstanceErrorFlowReportEnabled: processorOpts.podInstanceErrorFlowReportEnabled,
+		podApmErrorFlowReportEnabled:      processorOpts.podApmErrorFlowReportEnabled,
+		podSystemErrorFlowReportEnabled:   processorOpts.podSystemErrorFlowReportEnabled,
 		// 自定义服务的发现 目前统一为从 Span 的字段中匹配
 		customServiceDiscoverType: MatchFromSpan,
 	}

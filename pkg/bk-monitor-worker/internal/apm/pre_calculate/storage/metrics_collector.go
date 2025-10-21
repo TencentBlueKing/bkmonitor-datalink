@@ -22,6 +22,13 @@ import (
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// InstanceType
+const (
+	ApmService = "apm_service"
+	System     = "system"
+	Pod        = "pod"
+)
+
 // MetricsName
 const (
 	ApmServiceInstanceRelation = "apm_service_with_apm_service_instance_relation"
@@ -32,6 +39,8 @@ const (
 	SystemApmServiceFlow = "system_to_apm_service_flow"
 	ApmServiceSystemFlow = "apm_service_to_system_flow"
 	SystemFlow           = "system_to_system_flow"
+
+	InstanceErrorFlow = "instance_to_instance_error_flow"
 )
 
 // Flow metrics category and kind

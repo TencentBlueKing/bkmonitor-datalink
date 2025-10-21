@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
@@ -149,6 +150,10 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if err = cache.Install(conf); err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,6 +323,8 @@ func (c *Controller) Stop() error {
 	if c.pusherMgr != nil {
 		c.pusherMgr.Stop()
 	}
+
+	cache.Uninstall()
 
 	c.cancel()
 	c.wg.Wait()

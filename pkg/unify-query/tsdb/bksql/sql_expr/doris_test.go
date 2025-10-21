@@ -367,6 +367,241 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			},
 			want: `ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'errorString') != 1`,
 		},
+		{
+			name: "doris 条件合并",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "lt",
+					}, {
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "iterationIndex",
+						Value: []string{
+							"11",
+						},
+						Operator: "lt",
+					}, {
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "iterationIndex",
+						Value: []string{
+							"11",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "dtEventTimeStamp",
+						Value: []string{
+							"1760514288000",
+						},
+						Operator: "lt",
+					}, {
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+			},
+			want: "`serverIp` = '127.0.0.1' AND `path` = '/var/host/data/bcs/lib/docker/containers/npc/npc-json.log' AND CAST(__ext['container_id'] AS STRING) = 'npc' AND (`gseIndex` < 101010 OR `gseIndex` = '101010' AND `iterationIndex` < 11 OR `gseIndex` = '101010' AND `iterationIndex` = '11' AND `dtEventTimeStamp` < 1760514288000)",
+		},
+		{
+			name: "doris 条件合并 - 有个全都是公共条件",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "lt",
+					}, {
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "eq",
+					},
+					{
+						DimensionName: "iterationIndex",
+						Value: []string{
+							"11",
+						},
+						Operator: "lt",
+					},
+					{
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					},
+					{
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					},
+					{
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+				{
+					{
+						DimensionName: "gseIndex",
+						Value: []string{
+							"101010",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "iterationIndex",
+						Value: []string{
+							"11",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "dtEventTimeStamp",
+						Value: []string{
+							"1760514288000",
+						},
+						Operator: "lt",
+					}, {
+						DimensionName: "serverIp",
+						Value: []string{
+							"127.0.0.1",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "path",
+						Value: []string{
+							"/var/host/data/bcs/lib/docker/containers/npc/npc-json.log",
+						},
+						Operator: "eq",
+					}, {
+						DimensionName: "__ext.container_id",
+						Value: []string{
+							"npc",
+						},
+						Operator: "eq",
+					},
+				},
+			},
+			want: "`serverIp` = '127.0.0.1' AND `path` = '/var/host/data/bcs/lib/docker/containers/npc/npc-json.log' AND CAST(__ext['container_id'] AS STRING) = 'npc'",
+		},
 	}
 
 	e := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{

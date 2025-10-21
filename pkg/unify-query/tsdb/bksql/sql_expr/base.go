@@ -499,6 +499,14 @@ func extractCommonConditions(allConditions metadata.AllConditions) (
 				newBranch = append(newBranch, cond)
 			}
 		}
+
+		// 判断如果其中有一个分组为长度为空，则说明里面的条件都是公共条件，所以后面的 remaining 就必定为 true 可以提前返回
+		// 例如： a = 1 and b = 2 or a = 1 and b = 3 or a = 1
+		// 只需要保留 a = 1 即可，而无需完整的写成： a = 1 and (b = 2 or b = 3 or 1 = 1)
+		if len(newBranch) == 0 {
+			return common, nil
+		}
+
 		remaining = append(remaining, newBranch)
 	}
 

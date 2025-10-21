@@ -530,11 +530,14 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 }
 
 type ProcessorOptions struct {
-	enabledInfoCache          bool
-	traceEsQueryRate          int
-	metricReportEnabled       bool
-	infoReportEnabled         bool
-	metricLayer4ReportEnabled bool
+	enabledInfoCache                  bool
+	traceEsQueryRate                  int
+	metricReportEnabled               bool
+	infoReportEnabled                 bool
+	metricLayer4ReportEnabled         bool
+	podInstanceErrorFlowReportEnabled bool // pod <-> pod , 错误流上报开关
+	podApmErrorFlowReportEnabled      bool // pod <-> apm_service , 错误流上报开关
+	podSystemErrorFlowReportEnabled   bool // pod <-> system , 错误流上报开关
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -575,6 +578,24 @@ func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
 	}
 }
 
+func PodInstanceErrorFlowReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.podInstanceErrorFlowReportEnabled = e
+	}
+}
+
+func PodApmErrorFlowReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.podApmErrorFlowReportEnabled = e
+	}
+}
+
+func PodSystemErrorFlowReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.podSystemErrorFlowReportEnabled = e
+	}
+}
+
 func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
@@ -598,7 +619,7 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor:        newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
+		metricProcessor:        newMetricProcessor(ctx, dataId, opts),
 		baseInfo:               core.GetMetadataCenter().GetBaseInfo(dataId),
 		indexNameLastUpdate:    time.Now().Add(-24 * time.Hour),
 		traceEsOriginIndexName: core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName,

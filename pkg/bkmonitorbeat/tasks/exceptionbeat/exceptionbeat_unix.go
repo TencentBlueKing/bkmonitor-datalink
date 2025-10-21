@@ -46,6 +46,7 @@ type Gather struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	prevDataID int32 // 多租户场景下可能会发生 dataid 变更的情况，此时需要重新加载任务
 	tasks.BaseTask
 }
 
@@ -67,6 +68,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.config.CheckBit = bits
 	gather.Init()
 
+	gather.prevDataID = taskConfig.GetDataID()
 	logger.Info("NewOomParser a ExceptionBeat Task Instance")
 	return gather
 }
@@ -75,6 +77,20 @@ func (g *Gather) Stop() {
 	g.cancel()
 	g.isRunning = false
 	logger.Info("ExceptionBeat has already Stopped")
+}
+
+func (g *Gather) SetConfig(task define.TaskConfig) {
+	g.TaskConfig = task
+	g.config = task.(*configs.ExceptionBeatConfig)
+}
+
+func (g *Gather) Reload() {
+	if g.TaskConfig.GetDataID() != g.prevDataID {
+		g.cancel()
+		g.isRunning = false
+		logger.Info("ExceptionBeat has already Reloaded")
+	}
+	g.prevDataID = g.TaskConfig.GetDataID()
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {

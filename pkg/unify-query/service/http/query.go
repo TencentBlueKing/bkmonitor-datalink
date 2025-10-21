@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jinzhu/copier"
@@ -198,7 +199,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
 		if message.Len() > 0 {
-			err = errors.New(message.String())
+			err = metadata.Sprintf(
+				metadata.MsgQueryRaw,
+				"查询原始数据报错",
+			).Error(ctx, errors.New(message.String()))
 		}
 	}()
 
@@ -345,7 +349,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					err = metadata.Sprintf(
-						metadata.MsgQueryTs,
+						metadata.MsgQueryRaw,
 						"查询实例为空",
 					).Error(ctx, nil)
 					return
@@ -362,7 +366,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				resultTableOptions.SetOption(qry.TableUUID(), option)
 				lock.Unlock()
 
-				total += size
+				atomic.AddInt64(&total, size)
 			})
 		})
 	}()
@@ -372,43 +376,65 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return total, list, resultTableOptions, err
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, bool, error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
 
-		message strings.Builder
-		lock    sync.Mutex
-
-		queryRef metadata.QueryReference
+		total int64
+		err   error
 	)
-
-	list = make([]map[string]any, 0)
-	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
-	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if timeErr != nil {
-		err = timeErr
-		return total, list, resultTableOptions, err
+
+	// 先获取分布式锁，是否正在使用中
+	err = session.Start(ctx)
+	if err != nil {
+		return 0, nil, true, metadata.Sprintf(
+			metadata.MsgQueryRawScroll,
+			"下载已经触发，请稍后重试",
+		).Error(ctx, err)
+	}
+	defer func() {
+		_ = session.Stop(ctx)
+	}()
+
+	list := make([]map[string]any, 0)
+
+	unit, start, end, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if err != nil {
+		return 0, nil, true, metadata.Sprintf(
+			metadata.MsgQueryRawScroll,
+			"查询时间错误格式 %s - %s",
+			queryTs.Start, queryTs.End,
+		).Error(ctx, err)
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
-	queryRef, err = queryTs.ToQueryReference(ctx)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return total, list, resultTableOptions, err
+		return 0, nil, true, metadata.Sprintf(
+			metadata.MsgQueryRawScroll,
+			"查询参数配置异常",
+		).Error(ctx, err)
 	}
 
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
+
+		var msg strings.Builder
 		for e := range errCh {
-			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+			msg.WriteString(e.Error())
 		}
-		if message.Len() > 0 {
-			err = errors.New(message.String())
+
+		if msg.Len() > 0 {
+			err = metadata.Sprintf(
+				metadata.MsgQueryRawScroll,
+				"下载接口调用失败",
+			).Error(ctx, errors.New(msg.String()))
 		}
 	}()
 
@@ -432,25 +458,25 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef.Range("", func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
+			sliceIndex := i
 			wg.Add(1)
 
-			err = p.Submit(func() {
+			if submitErr := p.Submit(func() {
 				defer func() {
 					wg.Done()
 				}()
 
 				newQry := &metadata.Query{}
-				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
-				if err != nil {
+				if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
 					errCh <- metadata.Sprintf(
-						metadata.MsgQueryTs,
+						metadata.MsgQueryRawScroll,
 						"查询失败",
-					).Error(ctx, err)
+					).Error(ctx, copyErr)
 					return
 				}
 
 				// 使用 slice 配置查询
-				newQry.SliceID = cast.ToString(i)
+				newQry.SliceID = cast.ToString(sliceIndex)
 
 				// slice info
 				slice := session.Slice(newQry.TableUUID())
@@ -462,10 +488,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				from := slice.Offset + i*slice.Limit
+				from := slice.Offset + sliceIndex*slice.Limit
 				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
-					SliceIndex: i,
+					SliceIndex: sliceIndex,
 					ScrollID:   slice.ScrollID,
 					SliceMax:   slice.SliceMax,
 					From:       &from,
@@ -473,38 +499,41 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
-					err = metadata.Sprintf(
-						metadata.MsgQueryTs,
+					errCh <- metadata.Sprintf(
+						metadata.MsgQueryRawScroll,
 						"查询实例为空",
 					).Error(ctx, nil)
 					return
 				}
 
-				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
-				if err != nil {
+				size, _, option, rawErr := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if rawErr != nil {
 					slice.FailedNum++
-					errCh <- err
+					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
+					if slice.FailedNum >= slice.MaxFailedNum {
+						errCh <- rawErr
+					}
 					return
 				}
 
-				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				// 查询成功，更新 scroll 状态
 				if option != nil {
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}
 					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
-					lock.Lock()
-					resultTableOptions.SetOption(newQry.TableUUID(), option)
-					lock.Unlock()
 				}
+
+				atomic.AddInt64(&total, size)
 
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted
 				}
-				total += size
-			})
-			if err != nil {
-				errCh <- err
+			}); submitErr != nil {
+				errCh <- metadata.Sprintf(
+					metadata.MsgQueryRawScroll,
+					"提交查询任务失败",
+				).Error(ctx, submitErr)
 				wg.Done()
 			}
 		}
@@ -516,7 +545,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	close(errCh)
 
 	receiveWg.Wait()
-	return total, list, resultTableOptions, err
+
+	return total, list, session.Done(), err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {

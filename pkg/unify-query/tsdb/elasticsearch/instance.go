@@ -358,7 +358,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}()
 	if err != nil {
-		return nil, processOnESErr(ctx, qo.conn.Address, err)
+		err = processOnESErr(ctx, qo.conn.Address, err)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if res.Error != nil {
 		err = metadata.Sprintf(

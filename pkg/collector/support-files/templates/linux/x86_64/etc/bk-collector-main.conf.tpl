@@ -111,6 +111,11 @@ bk-collector:
         - "maxconns;maxConnectionsRatio=256"
 
 
+  # ================================= Cache ==================================
+  # 二进制部署暂不需要 cache
+  cache: []
+
+
   # ============================== Pingserver ================================
   pingserver:
     disabled: false

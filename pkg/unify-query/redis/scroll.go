@@ -112,7 +112,7 @@ func (s *ScrollSession) lock(ctx context.Context) error {
 	return Client().SetNX(ctx, s.LockKey, "locked", s.ScrollLockTimeout).Err()
 }
 
-func (s *ScrollSession) unLock(ctx context.Context) error {
+func (s *ScrollSession) unlock(ctx context.Context) error {
 	return Client().Del(ctx, s.LockKey).Err()
 }
 
@@ -137,7 +137,7 @@ func (s *ScrollSession) Start(ctx context.Context) error {
 
 func (s *ScrollSession) Stop(ctx context.Context) error {
 	defer func() {
-		err := s.unLock(ctx)
+		err := s.unlock(ctx)
 		if err != nil {
 			_ = metadata.Sprintf(metadata.MsgRedisLock,
 				"redis unlock failed",

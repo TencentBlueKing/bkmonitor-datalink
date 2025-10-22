@@ -17,15 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 )
 
-const (
-	SdkNameField            = "telemetry.sdk.name"
-	OriginTraceID           = "origin.trace_id"
-	SkywalkingOriginTraceID = "sw8.trace_id"
-
-	SkyWalkingSDKName    = "skywalking"
-	OpenTelemetrySDKName = "opentelemetry"
-)
-
 type Config struct {
 	Drop              DropAction              `config:"drop" mapstructure:"drop"`
 	FromCache         FromCacheAction         `config:"from_cache" mapstructure:"from_cache"`

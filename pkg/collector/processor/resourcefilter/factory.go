@@ -117,6 +117,9 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.FromCache.CacheName) > 0 {
 		p.fromCacheAction(record, config)
 	}
+	if config.KeepOriginTraceId.Enabled {
+		p.keepOriginTraceIdAction(record)
+	}
 	return nil, nil
 }
 
@@ -417,6 +420,27 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.DefaultValue {
 				handle(rs, action)
+			}
+		})
+	}
+}
+
+// keepOriginTraceIdAction 保留原始 traceID
+func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+
+		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
+			if v, ok := rs.Get(SdkNameField); ok && v.Type() == pcommon.ValueTypeString {
+				switch strings.ToLower(v.AsString()) {
+				case SkyWalkingSDKName:
+					if src, ok := rs.Get(SkywalkingOriginTraceID); ok && src.Type() == pcommon.ValueTypeString {
+						rs.InsertString(OriginTraceID, src.AsString())
+					}
+				case OpenTelemetrySDKName:
+					rs.InsertString(OriginTraceID, span.TraceID().HexString())
+				}
 			}
 		})
 	}

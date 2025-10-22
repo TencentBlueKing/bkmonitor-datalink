@@ -24,7 +24,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
@@ -635,5 +637,69 @@ processor:
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstLogRecordAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "app.v1")
+	})
+}
+
+func TestKeepOriginTraceIdAction(t *testing.T) {
+	const enabledContent = `
+processor:
+  - name: "resource_filter/keep_origin_traceid"
+    config:
+      keep_origin_traceid:
+        enabled: true
+`
+	const disabledContent = `
+processor:
+  - name: "resource_filter/keep_origin_traceid"
+    config:
+      keep_origin_traceid:
+        enabled: false
+`
+
+	newFactory := func(conf string) processor.Processor {
+		return processor.MustCreateFactory(conf, NewFactory)
+	}
+
+	t.Run("opentelemetry enabled copies trace id", func(t *testing.T) {
+		factory := newFactory(enabledContent)
+		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 3}).Generate()
+		testkits.FirstSpanAttrs(data).InsertString(SdkNameField, OpenTelemetrySDKName)
+		// unify spans traceID
+		tid := random.TraceID()
+		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
+		record := define.Record{RecordType: define.RecordTraces, Data: data}
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		v, ok := attrs.Get(OriginTraceID)
+		assert.True(t, ok)
+		assert.Equal(t, tid.HexString(), v.AsString())
+	})
+
+	t.Run("skywalking enabled copies resource field", func(t *testing.T) {
+		factory := newFactory(enabledContent)
+		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 2}).Generate()
+		attrs := testkits.FirstSpanAttrs(data)
+		orig := testkits.FirstSpan(data).TraceID().HexString()
+		attrs.InsertString(SkywalkingOriginTraceID, orig)
+		attrs.InsertString(SdkNameField, SkyWalkingSDKName)
+		record := define.Record{RecordType: define.RecordTraces, Data: data}
+		testkits.MustProcess(t, factory, record)
+		v, ok := attrs.Get(OriginTraceID)
+		assert.True(t, ok)
+		assert.Equal(t, orig, v.AsString())
+	})
+
+	t.Run("opentelemetry disabled no origin.trace_id", func(t *testing.T) {
+		factory := newFactory(disabledContent)
+		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
+		testkits.FirstSpanAttrs(data).InsertString(SdkNameField, OpenTelemetrySDKName)
+		// assign a trace id
+		tid := random.TraceID()
+		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
+		record := define.Record{RecordType: define.RecordTraces, Data: data}
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		_, ok := attrs.Get(OriginTraceID)
+		assert.False(t, ok)
 	})
 }

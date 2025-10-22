@@ -293,6 +293,12 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			handle(rs)
 		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
+			handle(rs)
+		})
 	}
 }
 
@@ -317,6 +323,14 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
+			for _, action := range config.FromRecord {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.FromRecord {
 				handle(rs, action)
 			}
@@ -425,22 +439,33 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 	}
 }
 
+const (
+	keySdkName       = "telemetry.sdk.name"
+	keyOriginTraceID = "origin.trace_id"
+	keySw8TraceID    = "sw8.trace_id"
+
+	sdkSkyWalking    = "skywalking"
+	sdkOpenTelemetry = "opentelemetry"
+)
+
 // keepOriginTraceIdAction 保留原始 traceID
 func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-
 		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
-			if v, ok := rs.Get(SdkNameField); ok && v.Type() == pcommon.ValueTypeString {
-				switch strings.ToLower(v.AsString()) {
-				case SkyWalkingSDKName:
-					if src, ok := rs.Get(SkywalkingOriginTraceID); ok && src.Type() == pcommon.ValueTypeString {
-						rs.InsertString(OriginTraceID, src.AsString())
-					}
-				case OpenTelemetrySDKName:
-					rs.InsertString(OriginTraceID, span.TraceID().HexString())
+			v, ok := rs.Get(keySdkName)
+			if !ok {
+				return
+			}
+
+			switch strings.ToLower(v.AsString()) {
+			case sdkSkyWalking:
+				if src, ok := rs.Get(keySw8TraceID); ok {
+					rs.InsertString(keyOriginTraceID, src.AsString())
 				}
+			case sdkOpenTelemetry:
+				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())
 			}
 		})
 	}

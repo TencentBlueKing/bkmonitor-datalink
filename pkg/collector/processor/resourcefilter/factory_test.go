@@ -343,6 +343,18 @@ processor:
 		testkits.MustProcess(t, factory, record)
 		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
+
+	t.Run("logs", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType:    define.RecordLogs,
+			Data:          makeLogsRecord(1, 10, "int"),
+			RequestClient: define.RequestClient{IP: "127.1.1.1"},
+		}
+
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
+	})
 }
 
 func TestFromCacheAction(t *testing.T) {
@@ -448,6 +460,27 @@ processor:
 
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstMetricAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.3",
+			"k8s.pod.name", "myapp3",
+			"k8s.namespace.name", "my-ns3",
+			"k8s.bcs.cluster.id", "K8S-BCS-90000",
+		)
+	})
+
+	t.Run("logs net.host.ip", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
+		data := makeLogsRecord(1, 10, "bool")
+		testkits.FirstLogRecordAttrs(data).InsertString("net.host.ip", "127.1.0.3")
+
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstLogRecordAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs,
 			"k8s.pod.ip", "127.1.0.3",
 			"k8s.pod.name", "myapp3",
@@ -660,46 +693,55 @@ processor:
 		return processor.MustCreateFactory(conf, NewFactory)
 	}
 
-	t.Run("opentelemetry enabled copies trace id", func(t *testing.T) {
+	t.Run("opentelemetry enabled", func(t *testing.T) {
 		factory := newFactory(enabledContent)
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 3}).Generate()
-		testkits.FirstSpanAttrs(data).InsertString(SdkNameField, OpenTelemetrySDKName)
-		// unify spans traceID
+		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
+
 		tid := random.TraceID()
 		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
-		record := define.Record{RecordType: define.RecordTraces, Data: data}
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 		testkits.MustProcess(t, factory, record)
+
 		attrs := testkits.FirstSpanAttrs(record.Data)
-		v, ok := attrs.Get(OriginTraceID)
-		assert.True(t, ok)
-		assert.Equal(t, tid.HexString(), v.AsString())
+		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, tid.HexString())
 	})
 
-	t.Run("skywalking enabled copies resource field", func(t *testing.T) {
+	t.Run("skywalking enabled", func(t *testing.T) {
 		factory := newFactory(enabledContent)
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 2}).Generate()
-		attrs := testkits.FirstSpanAttrs(data)
 		orig := testkits.FirstSpan(data).TraceID().HexString()
-		attrs.InsertString(SkywalkingOriginTraceID, orig)
-		attrs.InsertString(SdkNameField, SkyWalkingSDKName)
-		record := define.Record{RecordType: define.RecordTraces, Data: data}
+
+		attrs := testkits.FirstSpanAttrs(data)
+		attrs.InsertString(keySw8TraceID, orig)
+		attrs.InsertString(keySdkName, sdkSkyWalking)
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 		testkits.MustProcess(t, factory, record)
-		v, ok := attrs.Get(OriginTraceID)
-		assert.True(t, ok)
-		assert.Equal(t, orig, v.AsString())
+
+		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, orig)
 	})
 
-	t.Run("opentelemetry disabled no origin.trace_id", func(t *testing.T) {
+	t.Run("opentelemetry disabled", func(t *testing.T) {
 		factory := newFactory(disabledContent)
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
-		testkits.FirstSpanAttrs(data).InsertString(SdkNameField, OpenTelemetrySDKName)
-		// assign a trace id
+		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
+
 		tid := random.TraceID()
 		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
-		record := define.Record{RecordType: define.RecordTraces, Data: data}
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 		testkits.MustProcess(t, factory, record)
+
 		attrs := testkits.FirstSpanAttrs(record.Data)
-		_, ok := attrs.Get(OriginTraceID)
-		assert.False(t, ok)
+		testkits.AssertAttrsNotFound(t, attrs, keyOriginTraceID)
 	})
 }

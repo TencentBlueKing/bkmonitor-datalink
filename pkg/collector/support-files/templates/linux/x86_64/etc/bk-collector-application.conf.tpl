@@ -283,7 +283,7 @@ default:
 {% if resource_filter_config_metrics is defined %}
       - name: '{{ resource_filter_config_metrics.name }}'
         config:
-          {%- if resource_filter_config_metrics.get("assemble"，[]) %}
+          {%- if resource_filter_config_metrics.get("assemble") %}
           assemble:
             {%- for as_config in resource_filter_config_metrics.assemble %}
             - destination: '{{ as_config.destination }}'

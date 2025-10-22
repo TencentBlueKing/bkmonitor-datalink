@@ -81,6 +81,12 @@ processor:
           - type: string
             key: resource.service.name
             value: "unknown_service"
+
+    # KeepOriginTraceId Action
+    - name: "resource_filter/keep_origin_traceid"
+	  config:
+		keep_origin_traceid:
+		  enabled: true
 */
 
 package resourcefilter

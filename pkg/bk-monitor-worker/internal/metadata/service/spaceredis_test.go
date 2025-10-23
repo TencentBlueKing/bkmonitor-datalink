@@ -281,7 +281,7 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 	}
 
 	tableIds := []string{"table1", "table2", "table3", "table4", "table5", "table6"}
-	data, err := NewSpacePusher().getTableIdClusterId(tenant.DefaultTenantId, tableIds)
+	data, err := NewSpacePusher().getTableIdBcsClusterId(tenant.DefaultTenantId, tableIds)
 	assert.NoError(t, err)
 
 	// 验证结果

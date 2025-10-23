@@ -123,15 +123,17 @@ const (
 
 // RTFBatchQueryConfig ResultTableField 分批查询配置
 type RTFBatchQueryConfig struct {
-	BatchSize  int           // 每批查询的记录数量
-	BatchDelay time.Duration // 批次间隔时间
+	TableIdBatchSize int           // 每批查询的table_id数量
+	BatchSize        int           // 每批查询的记录数量
+	BatchDelay       time.Duration // 批次间隔时间
 }
 
 // GetDefaultRTFBatchConfig 获取默认配置
 func GetDefaultRTFBatchConfig() *RTFBatchQueryConfig {
 	return &RTFBatchQueryConfig{
-		BatchSize:  cfg.QueryDbBatchSize,  // 默认每批1000条记录
-		BatchDelay: cfg.QueryDbBatchDelay, // 默认延迟20毫秒
+		TableIdBatchSize: cfg.QueryDbTableIdBatchSize, // 默认每批200条table_id
+		BatchSize:        cfg.QueryDbBatchSize,        // 默认每批10000条记录
+		BatchDelay:       cfg.QueryDbBatchDelay,       // 默认延迟20毫秒
 	}
 }
 
@@ -663,7 +665,7 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		return err
 	}
 	// 再追加上结果表的指标数据、集群 ID、类型
-	tableIdClusterIdMap, err := s.getTableIdClusterId(bkTenantId, tableIds)
+	tableIdClusterIdMap, err := s.getTableIdBcsClusterId(bkTenantId, tableIds)
 	if err != nil {
 		logger.Errorf("PushTableIdDetail: get table id cluster id failed, err: %s", err.Error())
 		return err
@@ -1466,6 +1468,8 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 	if len(tableIds) == 0 {
 		return nil, nil
 	}
+
+	// 查询结果表关联的TimeSeriesGroup
 	db := mysql.GetDBSession().DB
 	var tsGroupList []customreport.TimeSeriesGroup
 	if err := customreport.NewTimeSeriesGroupQuerySet(db).BkTenantIdEq(bkTenantId).TableIDIn(tableIds...).All(&tsGroupList); err != nil {
@@ -1477,68 +1481,150 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 
 	var tsGroupIdList []uint
 	TableIdTsGroupIdMap := make(map[string]uint)
+	tsGroupIdToTableIdMap := make(map[uint]string)
 	var tsGroupTableId []string
 	for _, group := range tsGroupList {
 		tsGroupIdList = append(tsGroupIdList, group.TimeSeriesGroupID)
 		TableIdTsGroupIdMap[group.TableID] = group.TimeSeriesGroupID
+		tsGroupIdToTableIdMap[group.TimeSeriesGroupID] = group.TableID
 		tsGroupTableId = append(tsGroupTableId, group.TableID)
 	}
 
-	// NOTE: 针对自定义时序，过滤掉历史废弃的指标，时间在`TIME_SERIES_METRIC_EXPIRED_SECONDS`的为有效数据
-	// 其它类型直接获取所有指标和维度
-	beginTime := time.Now().UTC().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds) * time.Second)
+	// 获取所有VM集群的保留时间，单位为秒，用于后续过滤掉历史数据
+	var vmClusterList []storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.DefaultSettings).ClusterTypeEq(models.StorageTypeVM).All(&vmClusterList); err != nil {
+		return nil, err
+	}
+	vmClusterRetentionTimeMap := make(map[uint]int)
+	for _, cluster := range vmClusterList {
+		var defaultSettings map[string]any
+		if err := jsonx.UnmarshalString(cluster.DefaultSettings, &defaultSettings); err != nil {
+			return nil, err
+		}
+		retentionTime, ok := defaultSettings["retention_time"]
+		if !ok {
+			continue
+		}
+		vmClusterRetentionTimeMap[cluster.ClusterID] = retentionTime.(int)
+	}
 
-	// 分批查询 TimeSeriesMetric（优化部分
+	// 获取tableId与VM集群的对应关系
+	var accessVmRecordList []storage.AccessVMRecord
+	tableIdVmClusterIdMap := make(map[string]uint)
+	if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.ResultTableId).BkTenantIdEq(bkTenantId).All(&accessVmRecordList); err != nil {
+		return nil, err
+	}
+	if len(accessVmRecordList) == 0 {
+		return nil, nil
+	}
+	for _, record := range accessVmRecordList {
+		tableIdVmClusterIdMap[record.ResultTableId] = record.VmClusterId
+	}
+
+	// 按照保留时间对 tsGroupId 进行分组
+	// key: retentionTime (秒), value: tsGroupId 列表
+	retentionTimeGroupsMap := make(map[int][]uint)
+	const defaultRetentionTime = 60 * 24 * 3600 // 默认60天保留时间（秒）
+
+	for _, groupId := range tsGroupIdList {
+		// 获取该 groupId 对应的保留时间，失败则使用默认值
+		retentionTime := defaultRetentionTime
+		if tableId, ok := tsGroupIdToTableIdMap[groupId]; ok {
+			if vmClusterId, ok := tableIdVmClusterIdMap[tableId]; ok {
+				if rt, ok := vmClusterRetentionTimeMap[vmClusterId]; ok {
+					retentionTime = rt
+				}
+			}
+		}
+		retentionTimeGroupsMap[retentionTime] = append(retentionTimeGroupsMap[retentionTime], groupId)
+	}
+
+	// 预分组结构：保留时间 + groupIds 分组
+	type queryGroup struct {
+		retentionTime int       // 集群数据保留时间（秒），如 2592000 = 30天
+		beginTime     time.Time // 查询开始时间，计算方式: now - retentionTime，用于过滤 LastModifyTime
+		groupIds      []uint    // 该组的 groupIds（最多 maxGroupIdsPerQuery 个）
+		groupIndex    int       // 在同一 retentionTime 下的分组索引（用于日志标识）
+	}
+
+	// 配置分批查询的参数
+	queryConfig := GetDefaultRTFBatchConfig()
+
+	// 对 groupIds 进行二次分组，避免单次查询的 IN 子句过大
+	var queryGroups []queryGroup
+	totalGroupIdCount := 0
+
+	for retentionTime, groupIds := range retentionTimeGroupsMap {
+		if len(groupIds) == 0 {
+			continue
+		}
+
+		// 根据集群的保留时间计算 beginTime
+		// retentionTime: 集群数据保留时间（秒），例如 30天 = 2592000秒
+		// beginTime: 用于过滤 LastModifyTime，只查询在保留时间内有更新的活跃指标
+		// 逻辑: 只保留 LastModifyTime >= (当前时间 - retentionTime) 的指标数据
+		beginTime := time.Now().Add(-time.Duration(retentionTime) * time.Second)
+
+		// 将 groupIds 按 maxGroupIdsPerQuery 分组
+		for i := 0; i < len(groupIds); i += queryConfig.TableIdBatchSize {
+			end := i + queryConfig.TableIdBatchSize
+			if end > len(groupIds) {
+				end = len(groupIds)
+			}
+
+			queryGroups = append(queryGroups, queryGroup{
+				retentionTime: retentionTime,
+				beginTime:     beginTime,
+				groupIds:      groupIds[i:end],
+				groupIndex:    i/queryConfig.TableIdBatchSize + 1,
+			})
+			totalGroupIdCount += len(groupIds[i:end])
+		}
+
+	}
+
+	logger.Infof("filterTsInfo: Starting query - %d groups, %d retention types, max %d groupIds/query",
+		len(queryGroups), len(retentionTimeGroupsMap), queryConfig.TableIdBatchSize)
+
+	// 按预分组查询 TimeSeriesMetric
 	var tsmList []customreport.TimeSeriesMetric
+	overallStartTime := time.Now()
+	totalRecordsAcrossGroups := 0
 
-	if len(tsGroupIdList) != 0 {
-		// 分批查询配置
-		queryConfig := GetDefaultRTFBatchConfig()
-
-		logger.Infof("filterTsInfo: Starting batch query for TimeSeriesMetric records, target groups: %d, batch size: %d records per batch",
-			len(tsGroupIdList), queryConfig.BatchSize)
-
-		// 记录查询开始时间
-		startTime := time.Now()
+	for queryIdx, qg := range queryGroups {
+		// 分批查询当前 groupIds 组的数据
+		groupStartTime := time.Now()
 		offset := 0
 		batchNum := 1
-		totalRecords := 0
+		groupTotalRecords := 0
 
 		for {
-			logger.Infof("filterTsInfo: Querying TimeSeriesMetric batch %d, offset: %d, limit: %d",
-				batchNum, offset, queryConfig.BatchSize)
-
-			// 执行当前批次的查询，使用 Limit 和 Offset 进行分页
+			// 执行当前批次的查询
 			var batchTsmList []customreport.TimeSeriesMetric
 			query := customreport.NewTimeSeriesMetricQuerySet(db).
 				Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).
-				GroupIDIn(tsGroupIdList...).
-				LastModifyTimeGte(beginTime).
+				GroupIDIn(qg.groupIds...).
+				LastModifyTimeGte(qg.beginTime). // 根据 retentionTime 过滤，只保留活跃指标
 				Limit(queryConfig.BatchSize).
 				Offset(offset)
 
 			if err := query.All(&batchTsmList); err != nil {
-				logger.Errorf("filterTsInfo: Failed to query TimeSeriesMetric batch %d (offset: %d): %v", batchNum, offset, err)
+				logger.Errorf("filterTsInfo: Query group %d/%d failed (retention=%ds, groupIds=%d, batch=%d): %v",
+					queryIdx+1, len(queryGroups), qg.retentionTime, len(qg.groupIds), batchNum, err)
 				return nil, err
 			}
 
 			// 如果当前批次没有数据，说明已经查询完毕
 			if len(batchTsmList) == 0 {
-				logger.Infof("filterTsInfo: No more TimeSeriesMetric records found, batch query completed")
 				break
 			}
 
 			// 合并当前批次的结果
 			tsmList = append(tsmList, batchTsmList...)
-			totalRecords += len(batchTsmList)
-
-			logger.Infof("filterTsInfo: Completed TimeSeriesMetric batch %d, retrieved %d records, total so far: %d",
-				batchNum, len(batchTsmList), totalRecords)
+			groupTotalRecords += len(batchTsmList)
 
 			// 如果当前批次的记录数少于批次大小，说明这是最后一批
 			if len(batchTsmList) < queryConfig.BatchSize {
-				logger.Infof("filterTsInfo: Last batch detected (records: %d < batch_size: %d), query completed",
-					len(batchTsmList), queryConfig.BatchSize)
 				break
 			}
 
@@ -1550,11 +1636,17 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 			time.Sleep(queryConfig.BatchDelay)
 		}
 
-		queryDuration := time.Since(startTime)
-		logger.Infof("filterTsInfo: TimeSeriesMetric batch query completed, total records: %d, batches: %d, duration: %v",
-			totalRecords, batchNum, queryDuration)
+		groupDuration := time.Since(groupStartTime)
+		totalRecordsAcrossGroups += groupTotalRecords
+		logger.Infof("filterTsInfo: Query group %d/%d completed: retention=%dd, groupIds=%d, records=%d, batches=%d, duration=%v",
+			queryIdx+1, len(queryGroups), qg.retentionTime/(24*3600), len(qg.groupIds), groupTotalRecords, batchNum, groupDuration)
 	}
 
+	overallDuration := time.Since(overallStartTime)
+	logger.Infof("filterTsInfo: Completed - total records: %d, query groups: %d, duration: %v",
+		totalRecordsAcrossGroups, len(queryGroups), overallDuration)
+
+	// 构建 groupId -> fields 映射
 	groupIdFieldsMap := make(map[uint][]string)
 	for _, metric := range tsmList {
 		if fieldList, ok := groupIdFieldsMap[metric.GroupID]; ok {
@@ -1571,7 +1663,7 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 }
 
 // 获取结果表对应的集群 ID
-func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) (map[string]string, error) {
+func (s *SpacePusher) getTableIdBcsClusterId(bkTenantId string, tableIds []string) (map[string]string, error) {
 	if len(tableIds) == 0 {
 		return make(map[string]string), nil
 	}

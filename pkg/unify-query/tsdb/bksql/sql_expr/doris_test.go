@@ -20,6 +20,44 @@ import (
 )
 
 func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
+	fieldMap := metadata.FieldsMap{
+		"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
+		"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+		"name":                             {FieldType: DorisTypeText},
+		"age":                              {FieldType: DorisTypeInt},
+		"a":                                {FieldType: DorisTypeText},
+		"b":                                {FieldType: DorisTypeText},
+		"c":                                {FieldType: DorisTypeText},
+		"d":                                {FieldType: DorisTypeText},
+		"log":                              {FieldType: DorisTypeText, IsAnalyzed: true},
+		"123field":                         {FieldType: DorisTypeText},
+		"cpu_usage":                        {FieldType: DorisTypeInt},
+		"env":                              {FieldType: DorisTypeText},
+		"status":                           {FieldType: DorisTypeText},
+		"code":                             {FieldType: DorisTypeText},
+		"timestamp":                        {FieldType: DorisTypeText},
+		"tag":                              {FieldType: DorisTypeText},
+		"__ext.container_name":             {FieldType: DorisTypeText},
+		"object.field":                     {FieldType: DorisTypeText},
+		"object.field.name":                {FieldType: DorisTypeText},
+		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
+		"value":                            {FieldType: DorisTypeText},
+		"container_name":                   {FieldType: DorisTypeText},
+		"events":                           {FieldType: DorisTypeText},
+		"exception":                        {FieldType: DorisTypeText},
+		"message":                          {FieldType: DorisTypeText},
+		"error":                            {FieldType: DorisTypeText},
+		"test":                             {FieldType: DorisTypeText},
+		"1":                                {FieldType: DorisTypeText},
+		"2":                                {FieldType: DorisTypeText},
+		"3":                                {FieldType: DorisTypeText},
+		"4":                                {FieldType: DorisTypeText},
+		"exact":                            {FieldType: DorisTypeText},
+		"match":                            {FieldType: DorisTypeText},
+		"query":                            {FieldType: DorisTypeText},
+		"hello":                            {FieldType: DorisTypeText},
+		"world":                            {FieldType: DorisTypeText},
+	}
 	tests := []struct {
 		name  string
 		input string
@@ -124,12 +162,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
-			got, err := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
-				"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
-			}).WithEncode(func(s string) string {
-				return fmt.Sprintf("`%s`", s)
-			}).ParserQueryString(ctx, tt.input)
+			got, err := NewSQLExpr(Doris).
+				WithFieldsMap(fieldMap).
+				WithEncode(func(s string) string {
+					return fmt.Sprintf("`%s`", s)
+				}).
+				ParserQueryString(ctx, tt.input)
 			if err != nil {
 				assert.Equal(t, tt.err, err.Error())
 				return
@@ -613,6 +651,12 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			FieldType:  DorisTypeText,
 			IsAnalyzed: true,
 		},
+		"serverIp":           {FieldType: DorisTypeText},
+		"path":               {FieldType: DorisTypeText},
+		"gseIndex":           {FieldType: DorisTypeDouble},
+		"iterationIndex":     {FieldType: DorisTypeDouble},
+		"dtEventTimeStamp":   {FieldType: DorisTypeBigInt},
+		"__ext.container_id": {FieldType: DorisTypeText},
 	})
 
 	for _, tt := range tests {

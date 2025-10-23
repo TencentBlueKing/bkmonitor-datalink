@@ -12,6 +12,7 @@ package bksql_test
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 	"strings"
 	"testing"
 	"time"
@@ -258,7 +259,33 @@ func TestNewSqlFactory(t *testing.T) {
 			}
 
 			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
-			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
+			fieldsMap := metadata.FieldsMap{
+				"gseIndex":                          {FieldType: sql_expr.DorisTypeDouble},
+				"level":                             {FieldType: sql_expr.DorisTypeText},
+				"ip":                                {FieldType: sql_expr.DorisTypeText},
+				"dtEventTimeStamp":                  {FieldType: sql_expr.DorisTypeBigInt},
+				"dtEventTime":                       {FieldType: sql_expr.DorisTypeVarchar512},
+				"thedate":                           {FieldType: sql_expr.DorisTypeInt},
+				"__shard_key__":                     {FieldType: sql_expr.DorisTypeBigInt},
+				"localTime":                         {FieldType: sql_expr.DorisTypeVarchar512},
+				"__ext.container_id":                {FieldType: sql_expr.DorisTypeText},
+				"cloudId":                           {FieldType: sql_expr.DorisTypeDouble},
+				"namespace":                         {FieldType: sql_expr.DorisTypeText},
+				"path":                              {FieldType: sql_expr.DorisTypeText},
+				"value":                             {FieldType: sql_expr.DorisTypeDouble},
+				"login_rate":                        {FieldType: sql_expr.DorisTypeDouble},
+				"message":                           {FieldType: sql_expr.DorisTypeText},
+				"log":                               {FieldType: sql_expr.DorisTypeText},
+				"time":                              {FieldType: sql_expr.DorisTypeText},
+				"serverIp":                          {FieldType: sql_expr.DorisTypeText},
+				"iterationIndex":                    {FieldType: sql_expr.DorisTypeDouble},
+				"attributes.http.host":              {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type":  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"__ext.io_kubernetes_workload_name": {FieldType: sql_expr.DorisTypeText},
+				"__ext.io_kubernetes_workload_type": {FieldType: sql_expr.DorisTypeText},
+			}
+			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end).WithFieldsMap(fieldsMap)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)

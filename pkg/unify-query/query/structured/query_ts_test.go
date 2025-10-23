@@ -1247,7 +1247,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								MetricNames:    []string{"bklog:result_table:es:usage"},
 								DataLabel:      "es",
 								DB:             "es_index",
-								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1319,7 +1318,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",
-								DBs:            []string{"es_index"},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1518,7 +1516,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index"],"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"is_merge_db":false}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
 		},
 		"判断是否进行合并 vm": {
 			ts: &QueryTs{
@@ -1550,7 +1548,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			refString: `{"a":[{"QueryList":[{"storage_type":"influxdb","storage_id":"2","cluster_name":"default","data_source":"bkmonitor","data_label":"influxdb","table_id":"result_table.influxdb","db":"result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"victoria_metrics","storage_id":"2","data_source":"bkmonitor","data_label":"vm","table_id":"result_table.vm","vm_rt":"2_bcs_prom_computation_result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"timezone":"UTC","fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"result_table_id=\"2_bcs_prom_computation_result_table\", __name__=\"kube_pod_info_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
-		"合并 es 查询": {
+		"合并 es 查询，不会进行合并": {
 			ts: &QueryTs{
 				QueryList: []*Query{
 					{
@@ -1572,7 +1570,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `count(a)`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":["es_index","es_index_1"],"field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es_with_time_filed","db":"es_index","dbs":["es_index"],"field":"kube_pod_info","time_field":{"name":"end_time","type":"long","unit":"microsecond"},"timezone":"UTC","fields":["kube_pod_info"],"metric_names":["bklog:result_table:es_with_time_filed:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es_1","db":"es_index_1","field":"kube_pod_info","time_field":{},"timezone":"UTC","fields":["kube_pod_info"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es_with_time_filed","db":"es_index","field":"kube_pod_info","time_field":{"name":"end_time","type":"long","unit":"microsecond"},"timezone":"UTC","fields":["kube_pod_info"],"metric_names":["bklog:result_table:es_with_time_filed:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
 		"手动开启合并 doris 查询": {
 			ts: &QueryTs{

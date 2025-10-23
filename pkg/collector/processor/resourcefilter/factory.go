@@ -463,6 +463,8 @@ func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 			case sdkSkyWalking:
 				if src, ok := rs.Get(keySw8TraceID); ok {
 					rs.InsertString(keyOriginTraceID, src.AsString())
+					// 删除 sw8.trace_id 冗余字段
+					rs.Remove(keySw8TraceID)
 				}
 			case sdkOpenTelemetry:
 				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())

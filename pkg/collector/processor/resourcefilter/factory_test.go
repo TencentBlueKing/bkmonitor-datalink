@@ -24,7 +24,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -696,10 +695,9 @@ processor:
 	t.Run("opentelemetry enabled", func(t *testing.T) {
 		factory := newFactory(enabledContent)
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 3}).Generate()
+		orig := testkits.FirstSpan(data).TraceID().HexString()
 		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
 
-		tid := random.TraceID()
-		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
@@ -707,7 +705,7 @@ processor:
 		testkits.MustProcess(t, factory, record)
 
 		attrs := testkits.FirstSpanAttrs(record.Data)
-		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, tid.HexString())
+		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, orig)
 	})
 
 	t.Run("skywalking enabled", func(t *testing.T) {
@@ -715,9 +713,8 @@ processor:
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 2}).Generate()
 		orig := testkits.FirstSpan(data).TraceID().HexString()
 
-		attrs := testkits.FirstSpanAttrs(data)
-		attrs.InsertString(keySw8TraceID, orig)
-		attrs.InsertString(keySdkName, sdkSkyWalking)
+		testkits.FirstSpanAttrs(data).InsertString(keySw8TraceID, orig)
+		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkSkyWalking)
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -725,7 +722,9 @@ processor:
 		}
 		testkits.MustProcess(t, factory, record)
 
+		attrs := testkits.FirstSpanAttrs(data)
 		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, orig)
+		testkits.AssertAttrsNotFound(t, attrs, keySw8TraceID)
 	})
 
 	t.Run("opentelemetry disabled", func(t *testing.T) {
@@ -733,8 +732,6 @@ processor:
 		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
 		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
 
-		tid := random.TraceID()
-		foreach.Spans(data, func(span ptrace.Span) { span.SetTraceID(tid) })
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
@@ -742,6 +739,24 @@ processor:
 		testkits.MustProcess(t, factory, record)
 
 		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsNotFound(t, attrs, keyOriginTraceID)
+	})
+
+	t.Run("skywalking disabled", func(t *testing.T) {
+		factory := newFactory(disabledContent)
+		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
+		orig := random.TraceID().HexString()
+		testkits.FirstSpanAttrs(data).InsertString(keySw8TraceID, orig)
+		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkSkyWalking)
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+		testkits.MustProcess(t, factory, record)
+
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, keySw8TraceID, orig)
 		testkits.AssertAttrsNotFound(t, attrs, keyOriginTraceID)
 	})
 }

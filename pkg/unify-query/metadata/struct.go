@@ -195,16 +195,12 @@ func (q *Query) GetMergeDBStatus() bool {
 		return false
 	}
 
-	// 如果是 es 可以使用合并，优化查询速度
-	if q.StorageType == ElasticsearchStorageType {
-		return true
-	}
-
 	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
 	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
 		return true
 	}
 
+	// es 合并逻辑有问题，因为需要获取 mapping 信息，所以一旦字段不一样，查询可能就会有问题
 	return false
 }
 

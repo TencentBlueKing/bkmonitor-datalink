@@ -4247,16 +4247,20 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 
 	const EsUrlDomain = "http://127.0.0.1:93002"
 
-	routeMappings := `{"route1":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}},"route2":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
-	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+`/route2%2Croute1`, httpmock.NewStringResponder(http.StatusOK, routeMappings))
-	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+`/route2%2Croute1/_mapping/`, httpmock.NewStringResponder(http.StatusOK, routeMappings))
+	route1Mappings := `{"route1":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route1", httpmock.NewStringResponder(http.StatusOK, route1Mappings))
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route1/_mapping/", httpmock.NewStringResponder(http.StatusOK, route1Mappings))
 
-	routeSearchResponse := `{
+	route2Mappings := `{"route2":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route2", httpmock.NewStringResponder(http.StatusOK, route2Mappings))
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route2/_mapping/", httpmock.NewStringResponder(http.StatusOK, route2Mappings))
+
+	route1SearchResponse := `{
 		"took": 5,
 		"timed_out": false,
 		"_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
 		"hits": {
-			"total": {"value": 3000, "relation": "eq"},
+			"total": {"value": 1000, "relation": "eq"},
 			"max_score": null,
 			"hits": [
 				{"_index": "route1", "_id": "id1", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 1, "iterationIndex": 3, "__data_label": "route1", "log": "route1 message 1"}},
@@ -4268,7 +4272,20 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 				{"_index": "route1", "_id": "id7", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 5, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 7"}},
 				{"_index": "route1", "_id": "id8", "_score": null, "_source": {"dtEventTimeStamp": "1752141600000", "gseIndex": 8, "iterationIndex": 1, "__data_label": "route1", "log": "route1 message 8"}},
 				{"_index": "route1", "_id": "id9", "_score": null, "_source": {"dtEventTimeStamp": "1752141600000", "gseIndex": 8, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 9"}},
-				{"_index": "route1", "_id": "id10", "_score": null, "_source": {"dtEventTimeStamp": "1752141500000", "gseIndex": 10, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 10"}},
+				{"_index": "route1", "_id": "id10", "_score": null, "_source": {"dtEventTimeStamp": "1752141500000", "gseIndex": 10, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 10"}}
+			]
+		}
+	}`
+	httpmock.RegisterResponder(http.MethodPost, EsUrlDomain+"/route1/_search", httpmock.NewStringResponder(http.StatusOK, route1SearchResponse))
+
+	route2SearchResponse := `{
+		"took": 5,
+		"timed_out": false,
+		"_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+		"hits": {
+			"total": {"value": 2000, "relation": "eq"},
+			"max_score": null,
+			"hits": [
 				{"_index": "route2", "_id": "id1", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 2, "__data_label": "route2", "log": "route2 message 1"}},
 				{"_index": "route2", "_id": "id2", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 1, "__data_label": "route2", "log": "route2 message 2"}},
 				{"_index": "route2", "_id": "id3", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 0, "__data_label": "route2", "log": "route2 message 3"}},
@@ -4282,7 +4299,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 			]
 		}
 	}`
-	httpmock.RegisterResponder(http.MethodPost, EsUrlDomain+"/route2%2Croute1/_search", httpmock.NewStringResponder(http.StatusOK, routeSearchResponse))
+	httpmock.RegisterResponder(http.MethodPost, EsUrlDomain+"/route2/_search", httpmock.NewStringResponder(http.StatusOK, route2SearchResponse))
 
 	// -dtEventTimeStamp, -gseIndex, -iterationIndex
 	queryTs := &structured.QueryTs{

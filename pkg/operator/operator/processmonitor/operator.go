@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -192,7 +191,7 @@ func (c *Operator) waitForCacheSync() error {
 // 尽量保证其状态迭代的一致性
 // 当返回 error 的情况下 workqueue 会记录并进行重试 确保事件不会丢失（补偿机制）
 func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
-	obj, err := c.bkCli.MonitoringV1beta1().QCloudMonitors(namespace).Get(ctx, name, metav1.GetOptions{})
+	obj, err := c.bkCli.MonitoringV1beta1().ProcessMonitors(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		// 没找到可能是因为该对象已经被删除 此时无需再进行 diff
 		// 交由 ownerref 进行 cleanup 即可
@@ -218,14 +217,14 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 }
 
 // OwnerRef 返回 qcm 作为 OwnerReference 的对象
-func OwnerRef(om *bkv1beta1.ProcessMonitor) metav1.OwnerReference {
+func OwnerRef(pm *bkv1beta1.ProcessMonitor) metav1.OwnerReference {
 	return metav1.OwnerReference{
 		APIVersion:         bkv1beta1.SchemeGroupVersion.String(),
 		BlockOwnerDeletion: ptr.To(true),
 		Controller:         ptr.To(true),
 		Kind:               "ProcessMonitor",
-		Name:               om.Name,
-		UID:                om.UID,
+		Name:               pm.Name,
+		UID:                pm.UID,
 	}
 }
 
@@ -238,33 +237,33 @@ func castDuration(s string) promv1.Duration {
 	return promv1.Duration(s)
 }
 
-func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, pm *bkv1beta1.ProcessMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
-		labelAppInstance:  qcm.Name,
+		labelAppInstance:  pm.Name,
 	}
 
 	serviceMonitor := &promv1.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      qcm.Name,
-			Namespace: qcm.Namespace,
+			Name:      pm.Name,
+			Namespace: pm.Namespace,
 			Labels:    selector,
 			Annotations: map[string]string{
-				feature.KeyScheduledDataID: strconv.Itoa(qcm.Spec.DataID),
-				feature.KeyExtendLabels:    utils.MapToSelector(qcm.Spec.ExtendLabels),
+				feature.KeyScheduledDataID: strconv.Itoa(pm.Spec.DataID),
+				//feature.KeyExtendLabels:    utils.MapToSelector(pm.Spec.ExtendLabels),
 			},
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
+			OwnerReferences: []metav1.OwnerReference{OwnerRef(pm)},
 		},
 		Spec: promv1.ServiceMonitorSpec{
 			NamespaceSelector: promv1.NamespaceSelector{
-				MatchNames: []string{qcm.Namespace},
+				MatchNames: []string{pm.Namespace},
 			},
 			Endpoints: []promv1.Endpoint{
 				{
-					Port:          "http",
-					Path:          "/metrics",
-					Interval:      castDuration(string(qcm.Spec.Interval)),
-					ScrapeTimeout: castDuration(string(qcm.Spec.Timeout)),
+					Port:     "http",
+					Path:     "/metrics",
+					Interval: castDuration(string(pm.Spec.Interval)),
+					//ScrapeTimeout: castDuration(string(pm.Spec.Timeout)),
 				},
 			},
 			Selector: metav1.LabelSelector{
@@ -273,6 +272,6 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 		},
 	}
 
-	cli := c.promCli.MonitoringV1().ServiceMonitors(qcm.Namespace)
+	cli := c.promCli.MonitoringV1().ServiceMonitors(pm.Namespace)
 	return k8sutils.CreateOrUpdateServiceMonitor(ctx, cli, serviceMonitor)
 }

@@ -600,10 +600,6 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		return ns, as
 	}
 
-	if _, ok := d.fieldMap[s]; !ok {
-		return "null", "null"
-	}
-
 	ns = s
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns

@@ -24,29 +24,7 @@ func TestParserAllConditions(t *testing.T) {
 
 	doris := sql_expr.DorisSQLExpr{}
 	doris.WithFieldsMap(metadata.FieldsMap{
-		"text_field":   {FieldType: "text", IsAnalyzed: true},
-		"host":         {FieldType: "text"},
-		"os":           {FieldType: "text"},
-		"status":       {FieldType: "int"},
-		"region":       {FieldType: "text"},
-		"log":          {FieldType: "text"},
-		"level":        {FieldType: "text"},
-		"cpu":          {FieldType: "int"},
-		"memory":       {FieldType: "int"},
-		"service":      {FieldType: "text"},
-		"error":        {FieldType: "int"},
-		"path":         {FieldType: "text"},
-		"text":         {FieldType: "text", IsAnalyzed: true},
-		"text_field_1": {FieldType: "text", IsAnalyzed: false},
-		"version":      {FieldType: "text"},
-		"A":            {FieldType: "text"},
-		"B":            {FieldType: "text"},
-		"C":            {FieldType: "text"},
-		"D":            {FieldType: "text"},
-		"E":            {FieldType: "text"},
-		"F":            {FieldType: "text"},
-		"G":            {FieldType: "text"},
-		"common":       {FieldType: "text"},
+		"text_field": {FieldType: "text", IsAnalyzed: true},
 	})
 
 	t.Run("空条件测试", func(t *testing.T) {

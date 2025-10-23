@@ -2491,3 +2491,279 @@ func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
 		"1001_test.__default__": {"field1", "field2", "field3", "field4"},
 	}, actualData, "composeTableIdFields should return the expected data")
 }
+
+// TestSpaceRedisSvc_composeTableIdFields_WithRetentionTime 测试指标过期相关逻辑
+func TestSpaceRedisSvc_composeTableIdFields_WithRetentionTime(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理测试数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+		db.Delete(&resulttable.ResultTableField{})
+		db.Delete(&customreport.TimeSeriesGroup{})
+		db.Delete(&customreport.TimeSeriesMetric{})
+		db.Delete(&storage.ClusterInfo{})
+		db.Delete(&storage.AccessVMRecord{})
+	}
+	cleanTestData()
+	defer cleanTestData()
+
+	// 创建两个 VM 集群，设置不同的保留时间
+	// 集群1：保留30天
+	cluster1 := storage.ClusterInfo{
+		ClusterID:       1001,
+		ClusterName:     "vm_cluster_30d",
+		ClusterType:     models.StorageTypeVM,
+		DomainName:      "vm1.example.com",
+		Port:            8428,
+		DefaultSettings: `{"retention_time": 2592000}`, // 30天 = 2592000秒
+	}
+	err := cluster1.Create(db)
+	assert.NoError(t, err, "Failed to create cluster1")
+
+	// 集群2：保留90天
+	cluster2 := storage.ClusterInfo{
+		ClusterID:       1002,
+		ClusterName:     "vm_cluster_90d",
+		ClusterType:     models.StorageTypeVM,
+		DomainName:      "vm2.example.com",
+		Port:            8428,
+		DefaultSettings: `{"retention_time": 7776000}`, // 90天 = 7776000秒
+	}
+	err = cluster2.Create(db)
+	assert.NoError(t, err, "Failed to create cluster2")
+
+	// 集群3：无保留时间配置（测试默认值）
+	cluster3 := storage.ClusterInfo{
+		ClusterID:       1003,
+		ClusterName:     "vm_cluster_default",
+		ClusterType:     models.StorageTypeVM,
+		DomainName:      "vm3.example.com",
+		Port:            8428,
+		DefaultSettings: `{}`, // 空配置，使用默认60天
+	}
+	err = cluster3.Create(db)
+	assert.NoError(t, err, "Failed to create cluster3")
+
+	// 创建结果表
+	tables := []resulttable.ResultTable{
+		{
+			TableId:        "1001_table_30d.__default__",
+			BkBizId:        1001,
+			DefaultStorage: models.StorageTypeVM,
+			BkTenantId:     "system",
+		},
+		{
+			TableId:        "1002_table_90d.__default__",
+			BkBizId:        1002,
+			DefaultStorage: models.StorageTypeVM,
+			BkTenantId:     "system",
+		},
+		{
+			TableId:        "1003_table_default.__default__",
+			BkBizId:        1003,
+			DefaultStorage: models.StorageTypeVM,
+			BkTenantId:     "system",
+		},
+	}
+	for _, table := range tables {
+		err = table.Create(db)
+		assert.NoError(t, err, "Failed to create result table")
+	}
+
+	// 创建 AccessVMRecord 关联关系
+	accessRecords := []storage.AccessVMRecord{
+		{
+			BkTenantId:    "system",
+			ResultTableId: "1001_table_30d.__default__",
+			VmClusterId:   1001, // 关联到30天保留期的集群
+		},
+		{
+			BkTenantId:    "system",
+			ResultTableId: "1002_table_90d.__default__",
+			VmClusterId:   1002, // 关联到90天保留期的集群
+		},
+		{
+			BkTenantId:    "system",
+			ResultTableId: "1003_table_default.__default__",
+			VmClusterId:   1003, // 关联到默认保留期的集群
+		},
+	}
+	for _, record := range accessRecords {
+		err = record.Create(db)
+		assert.NoError(t, err, "Failed to create AccessVMRecord")
+	}
+
+	// 创建 TimeSeriesGroup
+	tsGroups := []customreport.TimeSeriesGroup{
+		{
+			CustomGroupBase: customreport.CustomGroupBase{
+				TableID:  "1001_table_30d.__default__",
+				BkDataID: 50010,
+				BkBizID:  1001,
+			},
+			TimeSeriesGroupID:   60001,
+			TimeSeriesGroupName: "group_30d",
+			BkTenantId:          "system",
+		},
+		{
+			CustomGroupBase: customreport.CustomGroupBase{
+				TableID:  "1002_table_90d.__default__",
+				BkDataID: 50020,
+				BkBizID:  1002,
+			},
+			TimeSeriesGroupID:   60002,
+			TimeSeriesGroupName: "group_90d",
+			BkTenantId:          "system",
+		},
+		{
+			CustomGroupBase: customreport.CustomGroupBase{
+				TableID:  "1003_table_default.__default__",
+				BkDataID: 50030,
+				BkBizID:  1003,
+			},
+			TimeSeriesGroupID:   60003,
+			TimeSeriesGroupName: "group_default",
+			BkTenantId:          "system",
+		},
+	}
+	for _, group := range tsGroups {
+		err = group.Create(db)
+		assert.NoError(t, err, "Failed to create TimeSeriesGroup")
+	}
+
+	now := time.Now()
+
+	// 创建 ResultTableField 数据（composeTableIdFields 需要）
+	rtfList := []resulttable.ResultTableField{
+		// 集群1 (30天保留期)
+		{TableID: "1001_table_30d.__default__", FieldName: "active_metric_1", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1001_table_30d.__default__", FieldName: "active_metric_2", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1001_table_30d.__default__", FieldName: "expired_metric_1", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1001_table_30d.__default__", FieldName: "expired_metric_2", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		// 集群2 (90天保留期)
+		{TableID: "1002_table_90d.__default__", FieldName: "active_metric_90d_1", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1002_table_90d.__default__", FieldName: "active_metric_90d_2", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1002_table_90d.__default__", FieldName: "expired_metric_90d", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		// 集群3 (默认60天保留期)
+		{TableID: "1003_table_default.__default__", FieldName: "active_metric_default", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+		{TableID: "1003_table_default.__default__", FieldName: "expired_metric_default", Tag: models.ResultTableFieldTagMetric, BkTenantId: "system"},
+	}
+	for _, rtf := range rtfList {
+		err = rtf.Create(db)
+		assert.NoError(t, err, "Failed to create ResultTableField")
+	}
+
+	// 创建 TimeSeriesMetric，测试不同的过期场景
+	tsMetrics := []customreport.TimeSeriesMetric{
+		// 集群1 (30天保留期) - 活跃指标
+		{
+			GroupID:        60001,
+			TableID:        "1001_table_30d.__default__",
+			FieldName:      "active_metric_1",
+			LastModifyTime: now.Add(-10 * 24 * time.Hour), // 10天前，在保留期内
+		},
+		{
+			GroupID:        60001,
+			TableID:        "1001_table_30d.__default__",
+			FieldName:      "active_metric_2",
+			LastModifyTime: now.Add(-25 * 24 * time.Hour), // 25天前，在保留期内
+		},
+		// 集群1 (30天保留期) - 过期指标
+		{
+			GroupID:        60001,
+			TableID:        "1001_table_30d.__default__",
+			FieldName:      "expired_metric_1",
+			LastModifyTime: now.Add(-40 * 24 * time.Hour), // 40天前，已过期
+		},
+		{
+			GroupID:        60001,
+			TableID:        "1001_table_30d.__default__",
+			FieldName:      "expired_metric_2",
+			LastModifyTime: now.Add(-100 * 24 * time.Hour), // 100天前，已过期
+		},
+
+		// 集群2 (90天保留期) - 活跃指标
+		{
+			GroupID:        60002,
+			TableID:        "1002_table_90d.__default__",
+			FieldName:      "active_metric_90d_1",
+			LastModifyTime: now.Add(-50 * 24 * time.Hour), // 50天前，在保留期内
+		},
+		{
+			GroupID:        60002,
+			TableID:        "1002_table_90d.__default__",
+			FieldName:      "active_metric_90d_2",
+			LastModifyTime: now.Add(-85 * 24 * time.Hour), // 85天前，在保留期内
+		},
+		// 集群2 (90天保留期) - 过期指标
+		{
+			GroupID:        60002,
+			TableID:        "1002_table_90d.__default__",
+			FieldName:      "expired_metric_90d",
+			LastModifyTime: now.Add(-100 * 24 * time.Hour), // 100天前，已过期
+		},
+
+		// 集群3 (默认60天保留期) - 活跃指标
+		{
+			GroupID:        60003,
+			TableID:        "1003_table_default.__default__",
+			FieldName:      "active_metric_default",
+			LastModifyTime: now.Add(-30 * 24 * time.Hour), // 30天前，在保留期内
+		},
+		// 集群3 (默认60天保留期) - 过期指标
+		{
+			GroupID:        60003,
+			TableID:        "1003_table_default.__default__",
+			FieldName:      "expired_metric_default",
+			LastModifyTime: now.Add(-70 * 24 * time.Hour), // 70天前，已过期
+		},
+	}
+
+	for i, metric := range tsMetrics {
+		// 手动设置 LastModifyTime 和 field_id，避免被 BeforeCreate 覆盖
+		fieldID := uint(70000 + i) // 使用唯一的 field_id
+		result := db.Exec(`INSERT INTO metadata_timeseriesmetric (field_id, group_id, table_id, field_name, last_modify_time, tag_list, last_index, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			fieldID, metric.GroupID, metric.TableID, metric.FieldName, metric.LastModifyTime, "[]", 0, "")
+		assert.NoError(t, result.Error, "Failed to insert TimeSeriesMetric")
+	}
+
+	// 测试：集群1（30天保留期）应该只返回未过期的指标
+	actualData1, err := NewSpacePusher().composeTableIdFields("system", []string{"1001_table_30d.__default__"})
+	assert.NoError(t, err, "composeTableIdFields should not return an error")
+	assert.Len(t, actualData1["1001_table_30d.__default__"], 2, "Should only return 2 active metrics for 30-day retention")
+	assert.Contains(t, actualData1["1001_table_30d.__default__"], "active_metric_1")
+	assert.Contains(t, actualData1["1001_table_30d.__default__"], "active_metric_2")
+	assert.NotContains(t, actualData1["1001_table_30d.__default__"], "expired_metric_1")
+	assert.NotContains(t, actualData1["1001_table_30d.__default__"], "expired_metric_2")
+
+	// 测试：集群2（90天保留期）应该只返回未过期的指标
+	actualData2, err := NewSpacePusher().composeTableIdFields("system", []string{"1002_table_90d.__default__"})
+	assert.NoError(t, err, "composeTableIdFields should not return an error")
+	assert.Len(t, actualData2["1002_table_90d.__default__"], 2, "Should only return 2 active metrics for 90-day retention")
+	assert.Contains(t, actualData2["1002_table_90d.__default__"], "active_metric_90d_1")
+	assert.Contains(t, actualData2["1002_table_90d.__default__"], "active_metric_90d_2")
+	assert.NotContains(t, actualData2["1002_table_90d.__default__"], "expired_metric_90d")
+
+	// 测试：集群3（默认60天保留期）应该只返回未过期的指标
+	actualData3, err := NewSpacePusher().composeTableIdFields("system", []string{"1003_table_default.__default__"})
+	assert.NoError(t, err, "composeTableIdFields should not return an error")
+	assert.Len(t, actualData3["1003_table_default.__default__"], 1, "Should only return 1 active metric for default retention")
+	assert.Contains(t, actualData3["1003_table_default.__default__"], "active_metric_default")
+	assert.NotContains(t, actualData3["1003_table_default.__default__"], "expired_metric_default")
+
+	// 测试：同时查询多个表
+	actualDataAll, err := NewSpacePusher().composeTableIdFields("system", []string{
+		"1001_table_30d.__default__",
+		"1002_table_90d.__default__",
+		"1003_table_default.__default__",
+	})
+	assert.NoError(t, err, "composeTableIdFields should not return an error for multiple tables")
+	assert.Len(t, actualDataAll, 3, "Should return data for all 3 tables")
+	assert.Len(t, actualDataAll["1001_table_30d.__default__"], 2, "Table 1 should have 2 active metrics")
+	assert.Len(t, actualDataAll["1002_table_90d.__default__"], 2, "Table 2 should have 2 active metrics")
+	assert.Len(t, actualDataAll["1003_table_default.__default__"], 1, "Table 3 should have 1 active metric")
+}

@@ -1505,7 +1505,7 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 		if !ok {
 			continue
 		}
-		vmClusterRetentionTimeMap[cluster.ClusterID] = retentionTime.(int)
+		vmClusterRetentionTimeMap[cluster.ClusterID] = int(retentionTime.(float64))
 	}
 
 	// 获取tableId与VM集群的对应关系

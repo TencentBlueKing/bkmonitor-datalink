@@ -1,4 +1,4 @@
-// Code generated from DorisLexer.g4 by ANTLR 4.13.2. DO NOT EDIT.
+// Code generated from DorisLexer.g4 by ANTLR 4.13.1. DO NOT EDIT.
 
 package gen
 
@@ -5396,7 +5396,6 @@ const (
 var has_unclosed_bracketed_comment = false
 
 func isValidDecimal(ctx antlr.RuleContext) bool {
-	fmt.Println("isValidDecimal input:", ctx.GetText())
 	return true
 }
 

@@ -10,7 +10,6 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"path"
 
@@ -23,9 +22,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
 
-func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
+func registerDefaultHandlers(registerHandler *endpoint.RegisterHandler) {
 	var handlerPath string
-	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	// query/ts
 	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
@@ -87,10 +85,8 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
 }
 
-func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
+func registerOtherHandlers(registerHandler *endpoint.RegisterHandler) {
 	var handlerPath string
-
-	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	// register prometheus metrics
 	if viper.GetBool(EnablePrometheusConfigPath) {
@@ -150,13 +146,12 @@ func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	// profile
 	if viper.GetBool(EnableProfileConfigPath) {
-		registerProfile(ctx, g)
+		registerProfile(registerHandler)
 	}
 }
 
-func registerProxyHandler(ctx context.Context, g *gin.RouterGroup) {
+func registerProxyHandler(registerHandler *endpoint.RegisterHandler) {
 	var handlerPath string
-	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	handlerPath = viper.GetString(ProxyConfigPath)
 	registerHandler.RegisterWithOutHandlerMap(http.MethodPost, handlerPath, proxy.HandleProxy)

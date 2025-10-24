@@ -10,31 +10,28 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"net/http/pprof"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
 
 // registerProfile
-func registerProfile(ctx context.Context, g *gin.RouterGroup) {
+func registerProfile(registerHandler *endpoint.RegisterHandler) {
 	path := viper.GetString(ProfilePathConfigPath)
-	g.GET(path, gin.WrapF(pprof.Index))
-	g.GET(path+"cmdline", gin.WrapF(pprof.Cmdline))
-	g.GET(path+"profile", gin.WrapF(pprof.Profile))
-	g.GET(path+"symbol", gin.WrapF(pprof.Symbol))
-	g.GET(path+"trace", gin.WrapF(pprof.Trace))
-	g.GET(path+"goroutine", gin.WrapF(func(writer http.ResponseWriter, request *http.Request) {
+
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path, gin.WrapF(pprof.Index))
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"cmdline", gin.WrapF(pprof.Cmdline))
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"profile", gin.WrapF(pprof.Profile))
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"symbol", gin.WrapF(pprof.Symbol))
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"trace", gin.WrapF(pprof.Trace))
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"goroutine", gin.WrapF(func(writer http.ResponseWriter, request *http.Request) {
 		pprof.Handler("goroutine").ServeHTTP(writer, request)
 	}))
-
-	g.GET(path+"heap", gin.WrapF(func(writer http.ResponseWriter, request *http.Request) {
+	registerHandler.RegisterWithOutHandlerMap(http.MethodGet, path+"heap", gin.WrapF(func(writer http.ResponseWriter, request *http.Request) {
 		pprof.Handler("heap").ServeHTTP(writer, request)
 	}))
-
-	log.Infof(ctx, "Profile服务启动成功")
 }

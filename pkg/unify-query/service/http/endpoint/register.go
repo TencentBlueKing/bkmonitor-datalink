@@ -47,11 +47,8 @@ func (r *RegisterHandler) RegisterWithOutHandlerMap(method, handlerPath string, 
 }
 
 func NewRegisterHandler(ctx context.Context, g *gin.RouterGroup) *RegisterHandler {
-	if registerHandler == nil {
-		registerHandler = &RegisterHandler{
-			ctx: ctx,
-			g:   g,
-		}
+	return &RegisterHandler{
+		ctx: ctx,
+		g:   g,
 	}
-	return registerHandler
 }

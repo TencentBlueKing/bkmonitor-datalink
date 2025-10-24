@@ -797,35 +797,24 @@ group by
   ) AS openid`,
 			limit:  100,
 			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100 OFFSET 10`,
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100 OFFSET 10`, // if not set in sql, use outer limit/offset
 		},
 		{
-			name: `outer-limit`,
-			q: `SELECT
-  COUNT(
-    DISTINCT (
-      cast(
-        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
-      )
-    )
-  ) AS openid LIMIT 200`,
-			limit:  100,
-			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100 OFFSET 10`, // 如果SQL中指定了Limit应该进行保留.并且选择更小的
+			name: `dot sep offset limit`,
+			q:    `SELECT * FROM t LIMIT 10,100`, // should be treated as LIMIT 100 OFFSET 10
+			sql:  `SELECT * FROM t LIMIT 100 OFFSET 10`,
 		},
 		{
-			name: `outer-limit-bigger`,
-			q: `SELECT
-  COUNT(
-    DISTINCT (
-      cast(
-        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
-      )
-    )
-  ) AS openid LIMIT 200`,
-			limit:  300,
-			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 300 OFFSET 10`, // 如果传递进来的limit更大则进行覆盖
+			name: "dot sep offset limit and outer offset",  // outer offset should override inner offset
+			q:    `SELECT * FROM t LIMIT 10,100 OFFSET 20`, // should be treated as LIMIT 100 OFFSET 10
+			sql:  `SELECT * FROM t LIMIT 100 OFFSET 20`,
+		},
+		{
+			name:   `dot sep offset limit and custom limit offset`,
+			q:      `SELECT * FROM t LIMIT 10,100`, // should be treated as LIMIT 100 OFFSET 10
+			limit:  50,
+			offset: 5,
+			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
 		},
 	}
 

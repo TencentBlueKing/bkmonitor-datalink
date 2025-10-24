@@ -19,8 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-var registerHandler *RegisterHandler
-
 type RegisterHandler struct {
 	ctx context.Context
 	g   *gin.RouterGroup

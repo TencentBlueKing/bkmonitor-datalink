@@ -797,7 +797,7 @@ group by
   ) AS openid`,
 			limit:  100,
 			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 100`,
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100 OFFSET 10`,
 		},
 		{
 			name: `outer-limit`,
@@ -811,7 +811,7 @@ group by
   ) AS openid LIMIT 200`,
 			limit:  100,
 			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 200`, // 如果SQL中指定了Limit应该进行保留.并且选择更大的
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100 OFFSET 10`, // 如果SQL中指定了Limit应该进行保留.并且选择更小的
 		},
 		{
 			name: `outer-limit-bigger`,
@@ -825,7 +825,7 @@ group by
   ) AS openid LIMIT 200`,
 			limit:  300,
 			offset: 10,
-			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 300`, // 如果传递进来的limit更大则进行覆盖
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 300 OFFSET 10`, // 如果传递进来的limit更大则进行覆盖
 		},
 	}
 

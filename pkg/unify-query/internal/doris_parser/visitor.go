@@ -12,6 +12,7 @@ package doris_parser
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
@@ -27,6 +28,7 @@ const (
 	OrderItem  = "ORDER BY"
 	GroupItem  = "GROUP BY"
 	LimitItem  = "LIMIT"
+	OffsetItem = "OFFSET"
 
 	AsItem = "AS"
 )
@@ -72,9 +74,10 @@ type Statement struct {
 
 	nodeMap map[string]Node
 
-	Tables []string
-	Where  string
-
+	Tables  []string
+	Where   string
+	Offset  int
+	Limit   int
 	errNode []string
 }
 
@@ -86,15 +89,43 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
+func (v *Statement) calcLimit() (result int) {
+	if v.Limit > 0 {
+		result = v.Limit
+		if existingLimit, exists := v.nodeMap[LimitItem]; exists && existingLimit.String() != "" {
+			existingStr := existingLimit.String()
+			if existingLimitInt := parseLimitValue(existingStr); existingLimitInt > 0 {
+				if v.Limit > existingLimitInt {
+					result = v.Limit
+				} else {
+					result = existingLimitInt
+				}
+			}
+		}
+	} else {
+		if existingLimit, exists := v.nodeMap[LimitItem]; exists && existingLimit.String() != "" {
+			if existingLimitInt := parseLimitValue(existingLimit.String()); existingLimitInt > 0 {
+				result = existingLimitInt
+			}
+		}
+	}
+	return
+}
+
 func (v *Statement) String() string {
 	var result []string
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
-		res := v.ItemString(name)
-		key := name
+		var res string
+		var key string
 
 		switch name {
+		case SelectItem, GroupItem, OrderItem:
+			res = v.ItemString(name)
+			key = name
 		case TableItem:
+			res = v.ItemString(name)
+			key = name
 			if len(v.Tables) > 0 {
 				if len(v.Tables) == 1 {
 					res = v.Tables[0]
@@ -112,6 +143,8 @@ func (v *Statement) String() string {
 				}
 			}
 		case WhereItem:
+			res = v.ItemString(name)
+			key = name
 			// 清空 where 条件
 			if len(v.Tables) > 1 {
 				res = ""
@@ -125,7 +158,22 @@ func (v *Statement) String() string {
 				}
 			}
 		case LimitItem:
-			key = ""
+			finalLimit := v.calcLimit()
+			if finalLimit > 0 {
+				if v.Limit > 0 {
+					res = fmt.Sprintf("%d", finalLimit)
+					key = "LIMIT"
+				} else {
+					if existingLimit, exists := v.nodeMap[LimitItem]; exists && existingLimit.String() != "" {
+						res = existingLimit.String()
+						key = ""
+					}
+				}
+			}
+
+			if v.Offset > 0 {
+				result = append(result, fmt.Sprintf("OFFSET %d", v.Offset))
+			}
 		}
 
 		if res != "" {
@@ -142,6 +190,22 @@ func (v *Statement) String() string {
 	}
 
 	return sql
+}
+
+func parseLimitValue(limitStr string) int {
+	limitStr = strings.TrimSpace(limitStr)
+	if val, err := strconv.Atoi(limitStr); err == nil {
+		return val
+	}
+
+	parts := strings.Fields(limitStr)
+	for _, part := range parts {
+		if val, err := strconv.Atoi(part); err == nil {
+			return val
+		}
+	}
+
+	return 0
 }
 
 func (v *Statement) Error() error {
@@ -1125,4 +1189,6 @@ type Option struct {
 
 	Tables []string
 	Where  string
+	Offset int
+	Limit  int
 }

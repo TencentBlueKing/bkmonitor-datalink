@@ -266,8 +266,10 @@ func TestParseDorisSQLWithVisitor(t *testing.T) {
 		name string
 		q    string
 
-		sql string
-		err error
+		sql    string
+		limit  int
+		err    error
+		offset int
 	}{
 		// 用法验证
 		{
@@ -783,6 +785,48 @@ group by
   ) AS openid`,
 			sql: `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid`,
 		},
+		{
+			name: `outer-limit`,
+			q: `SELECT
+  COUNT(
+    DISTINCT (
+      cast(
+        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
+      )
+    )
+  ) AS openid`,
+			limit:  100,
+			offset: 10,
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 100`,
+		},
+		{
+			name: `outer-limit`,
+			q: `SELECT
+  COUNT(
+    DISTINCT (
+      cast(
+        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
+      )
+    )
+  ) AS openid LIMIT 200`,
+			limit:  100,
+			offset: 10,
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 200`, // 如果SQL中指定了Limit应该进行保留.并且选择更大的
+		},
+		{
+			name: `outer-limit-bigger`,
+			q: `SELECT
+  COUNT(
+    DISTINCT (
+      cast(
+        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
+      )
+    )
+  ) AS openid LIMIT 200`,
+			limit:  300,
+			offset: 10,
+			sql:    `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid OFFSET 10 LIMIT 300`, // 如果传递进来的limit更大则进行覆盖
+		},
 	}
 
 	mock.Init()
@@ -804,6 +848,8 @@ group by
 					}
 					return s, ""
 				},
+				Limit:  c.limit,
+				Offset: c.offset,
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)
 			if c.err != nil {

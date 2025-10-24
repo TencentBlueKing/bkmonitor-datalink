@@ -38,6 +38,7 @@ const (
 )
 
 var (
+	errTokenEmpty      = errors.New("token is empty")
 	errUnauthorized    = errors.New("token is unauthorized")
 	errExpired         = errors.New("token is expired")
 	errNBFInvalid      = errors.New("token nbf validation failed")
@@ -129,6 +130,9 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 		)
 
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
+
+		span.Set("enabled", enabled)
+
 		defer func() {
 			span.End(&err)
 
@@ -164,6 +168,7 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 
 		// 如果未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
 		if tokenString == "" {
+			err = errTokenEmpty
 			return
 		}
 

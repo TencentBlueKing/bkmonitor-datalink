@@ -65,7 +65,17 @@ type QueryTs struct {
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
 
+	// Reference 查询开始时间是否需要对齐，
+	// 例如：
+	// true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+	// false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
 	Reference bool `json:"reference,omitempty"`
+
+	// NotTimeAlign 查询开始时间和聚合是否需要对齐
+	// 例如
+	// true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23
+	// false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+	NotTimeAlign bool `json:"not_time_align"`
 
 	// 增加公共限制
 	// Limit 点数限制数量

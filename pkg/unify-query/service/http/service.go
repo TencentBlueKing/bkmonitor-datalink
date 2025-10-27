@@ -11,6 +11,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	gohttp "net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/middleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/trace"
 )
@@ -78,14 +80,16 @@ func (s *Service) Reload(ctx context.Context) {
 		middleware.MetaData(&middleware.Params{
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
-		middleware.JwtAuthMiddleware(JwtPublicKey, JwtBkAppCodeSpaces),
+		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
 	)
-	registerDefaultHandlers(ctx, public)
-	api.RegisterRelation(ctx, public)
-	registerProxyHandler(ctx, public)
 
-	private := s.g.Group("/")
-	registerOtherHandlers(ctx, private)
+	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)
+	registerDefaultHandlers(publicRegisterHandler)
+	api.RegisterRelation(publicRegisterHandler)
+	registerProxyHandler(publicRegisterHandler)
+
+	privateRegisterHandler := endpoint.NewRegisterHandler(ctx, s.g.Group("/"))
+	registerOtherHandlers(privateRegisterHandler)
 
 	// 构造新的http服务
 	s.server = &gohttp.Server{
@@ -98,7 +102,7 @@ func (s *Service) Reload(ctx context.Context) {
 	s.wg.Add(1)
 	go func(server *gohttp.Server) {
 		defer s.wg.Done()
-		if err = server.ListenAndServe(); err != nil && err != gohttp.ErrServerClosed {
+		if err = server.ListenAndServe(); err != nil && !errors.Is(gohttp.ErrServerClosed, err) {
 			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}

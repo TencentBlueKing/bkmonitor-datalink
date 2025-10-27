@@ -306,7 +306,11 @@ func (n *ConditionNode) String() string {
 				n.value.SetField(n.field)
 			}
 			sql := n.value.String()
-			return fmt.Sprintf("(%s)", sql)
+			sql = fmt.Sprintf("(%s)", sql)
+			if n.reverseOp {
+				sql = fmt.Sprintf("NOT %s", sql)
+			}
+			return sql
 		}
 	}
 

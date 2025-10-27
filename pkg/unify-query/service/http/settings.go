@@ -78,6 +78,7 @@ const (
 
 	JwtPublicKeyConfigPath       = "jwt.public_key"
 	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
+	JwtEnabledConfigPath         = "jwt.enabled"
 )
 
 var (
@@ -101,6 +102,7 @@ var (
 
 	JwtPublicKey       string
 	JwtBkAppCodeSpaces map[string][]string
+	JwtEnabled         bool
 
 	ScrollWindowTimeout      string
 	ScrollSessionLockTimeout string

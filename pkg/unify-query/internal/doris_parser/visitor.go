@@ -10,9 +10,11 @@
 package doris_parser
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	antlr "github.com/antlr4-go/antlr/v4"
 	"github.com/spf13/cast"
 
@@ -81,8 +83,13 @@ type Statement struct {
 
 type nodeMap map[string]Node
 
-func (n *nodeMap) Append(name string, node Node) {
+func (n *nodeMap) append(name string, node Node) {
 	(*n)[name] = node
+}
+
+func (n *nodeMap) isExist(name string) (Node, bool) {
+	v, ok := (*n)[name]
+	return v, ok
 }
 
 func (v *Statement) ItemString(name string) string {
@@ -95,21 +102,26 @@ func (v *Statement) ItemString(name string) string {
 
 func (v *Statement) checkOuter() {
 	if v.Limit != 0 {
-		v.nodeMap.Append(LimitItem, &LimitNode{
-			nodes: []Node{
-				&StringNode{
-					Name: cast.ToString(v.Limit),
-				},
-			},
-		})
-		if v.Offset != 0 {
-			v.nodeMap.Append(OffsetItem, &LimitNode{
-				nodes: []Node{
-					&StringNode{
-						Name: cast.ToString(v.Offset),
-					},
-				},
-			})
+		if existingLimit, exists := v.nodeMap.isExist(LimitItem); exists {
+			if limitNode, ok := existingLimit.(*LimitNode); ok {
+				limitNode.limitValue = cast.ToString(v.Limit)
+				if v.Offset != 0 {
+					internalOffset := 0
+					if limitNode.offsetValue != "" {
+						internalOffset = cast.ToInt(limitNode.offsetValue)
+					}
+					totalOffset := internalOffset + v.Offset
+					limitNode.offsetValue = cast.ToString(totalOffset)
+				}
+			}
+		} else {
+			limitNode := &LimitNode{
+				limitValue: cast.ToString(v.Limit),
+			}
+			if v.Offset != 0 {
+				limitNode.offsetValue = cast.ToString(v.Offset)
+			}
+			v.nodeMap.append(LimitItem, limitNode)
 		}
 	}
 }
@@ -120,6 +132,7 @@ func (v *Statement) String() string {
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem, OffsetItem} {
 		res := v.ItemString(name)
 		key := name
+
 		switch name {
 		case TableItem:
 			if len(v.Tables) > 0 {
@@ -152,16 +165,7 @@ func (v *Statement) String() string {
 				}
 			}
 		case LimitItem:
-			key = "LIMIT"
-			resVal := cast.ToInt(res)
-			if v.Limit != 0 && resVal != 0 {
-				if v.Limit < resVal {
-					res = cast.ToString(v.Limit)
-				}
-			}
-
-		case OffsetItem:
-			key = "OFFSET"
+			key = ""
 		}
 
 		if res != "" {
@@ -232,16 +236,38 @@ type LimitNode struct {
 	baseNode
 
 	nodes []Node
+
+	hasComma           bool
+	hasSeenFirstNumber bool
+	firstNumber        string
+	limitValue         string
+	offsetValue        string
 }
 
 func (v *LimitNode) String() string {
+	if v.limitValue != "" || v.offsetValue != "" {
+		var parts []string
+		parts = append(parts, "LIMIT")
+		if v.limitValue != "" {
+			parts = append(parts, v.limitValue)
+		}
+		if v.offsetValue != "" {
+			parts = append(parts, "OFFSET", v.offsetValue)
+		}
+		return strings.Join(parts, " ")
+	}
+
+	// 如果 firstNumber 不为空，说明只有一个数字，表示 LIMIT
+	if v.firstNumber != "" {
+		v.limitValue = v.firstNumber
+		v.firstNumber = ""
+		return "LIMIT " + v.limitValue
+	}
+
 	var ns []string
 	for _, fn := range v.nodes {
 		ss := nodeToString(fn)
 		if ss != "" {
-			if ss == "LIMIT" {
-				continue
-			}
 			ns = append(ns, ss)
 		}
 	}
@@ -250,10 +276,45 @@ func (v *LimitNode) String() string {
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	result := strings.ToUpper(ctx.GetText())
-	v.nodes = append(v.nodes, &StringNode{
-		Name: result,
-	})
+	text := ctx.GetText()
+	upperText := strings.ToUpper(text)
+
+	switch upperText {
+	case "LIMIT":
+		v.hasComma = false
+		v.hasSeenFirstNumber = false
+		v.limitValue = ""
+		v.offsetValue = ""
+		v.firstNumber = ""
+		v.nodes = append(v.nodes, &StringNode{Name: "LIMIT"})
+	case "OFFSET":
+		v.hasComma = false
+		if v.firstNumber != "" {
+			v.limitValue = v.firstNumber
+			v.firstNumber = ""
+		}
+		v.nodes = append(v.nodes, &StringNode{Name: "OFFSET"})
+	case ",":
+		v.hasComma = true
+		v.offsetValue = v.firstNumber
+		v.firstNumber = ""
+	default:
+		if text == "0" || (len(text) > 0 && text[0] >= '0' && text[0] <= '9') {
+			if v.hasComma {
+				v.limitValue = text
+			} else {
+				if !v.hasSeenFirstNumber {
+					v.firstNumber = text
+					v.hasSeenFirstNumber = true
+				} else {
+					v.offsetValue = text
+				}
+			}
+			v.nodes = append(v.nodes, &StringNode{Name: text})
+		} else {
+			v.nodes = append(v.nodes, &StringNode{Name: upperText})
+		}
+	}
 	return nil
 }
 
@@ -1150,9 +1211,9 @@ func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) an
 	next.WithSetAs(setAs)
 	for _, child := range node.GetChildren() {
 		if tree, ok := child.(antlr.ParseTree); ok {
-			// log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
+			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
 			tree.Accept(next)
-			// log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
+			log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
 		}
 	}
 

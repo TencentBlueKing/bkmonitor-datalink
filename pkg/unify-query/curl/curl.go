@@ -119,8 +119,8 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	if resp.StatusCode != http.StatusOK {
 		return size, metadata.Sprintf(
 			metadata.MsgHttpCurl,
-			"http code error: %s",
-			resp.Status,
+			"http code error: %s in %s",
+			resp.Status, opt.UrlPath,
 		).Error(ctx, err)
 	}
 

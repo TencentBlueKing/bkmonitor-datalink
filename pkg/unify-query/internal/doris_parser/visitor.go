@@ -226,8 +226,6 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 type LimitNode struct {
 	baseNode
 
-	nodes []Node
-
 	hasComma           bool
 	hasSeenFirstNumber bool
 	firstNumber        string
@@ -266,16 +264,7 @@ func (v *LimitNode) String() string {
 		v.firstNumber = ""
 		return "LIMIT " + v.limitValue
 	}
-
-	var ns []string
-	for _, fn := range v.nodes {
-		ss := nodeToString(fn)
-		if ss != "" {
-			ns = append(ns, ss)
-		}
-	}
-
-	return strings.Join(ns, " ")
+	return ""
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
@@ -289,14 +278,12 @@ func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 		v.limitValue = ""
 		v.offsetValue = ""
 		v.firstNumber = ""
-		v.nodes = append(v.nodes, &StringNode{Name: "LIMIT"})
 	case "OFFSET":
 		v.hasComma = false
 		if v.firstNumber != "" {
 			v.limitValue = v.firstNumber
 			v.firstNumber = ""
 		}
-		v.nodes = append(v.nodes, &StringNode{Name: "OFFSET"})
 	case ",":
 		v.hasComma = true
 		v.offsetValue = v.firstNumber
@@ -313,9 +300,6 @@ func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 					v.offsetValue = text
 				}
 			}
-			v.nodes = append(v.nodes, &StringNode{Name: text})
-		} else {
-			v.nodes = append(v.nodes, &StringNode{Name: upperText})
 		}
 	}
 	return nil

@@ -516,15 +516,28 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
+				session.TotalProcessedData += int(size)
+
 				// 查询成功，更新 scroll 状态
 				if option != nil {
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}
+
+					if option.QueryLimit > 0 && option.HasQueryLimit {
+						session.UpdateEndStrategy(option.QueryLimit, option.HasQueryLimit)
+					}
+
 					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
 				}
 
 				atomic.AddInt64(&total, size)
+				if session.EndStrategy == redisUtil.EndOnDataLimit {
+					remaining := session.DataLimit - session.TotalProcessedData
+					if remaining <= 0 {
+						slice.Status = redisUtil.StatusCompleted
+					}
+				}
 
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted

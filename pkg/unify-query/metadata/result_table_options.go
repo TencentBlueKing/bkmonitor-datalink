@@ -24,6 +24,9 @@ type ResultTableOption struct {
 
 	SQL          string           `json:"sql,omitempty"`
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
+
+	QueryLimit    int  `json:"query_limit,omitempty"`
+	HasQueryLimit bool `json:"has_query_limit,omitempty"`
 }
 
 func (o ResultTableOptions) SetOption(tableUUID string, option *ResultTableOption) {

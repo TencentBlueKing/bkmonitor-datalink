@@ -63,6 +63,11 @@ type ScrollSession struct {
 
 	SlicesMap map[string]*SliceStatus `json:"slices_map"`
 
+	EndStrategy ScrollEndStrategy `json:"end_strategy"`
+	DataLimit   int               `json:"data_limit"`
+
+	TotalProcessedData int `json:"total_processed_data"`
+
 	mu sync.RWMutex
 }
 
@@ -102,6 +107,15 @@ func (s *ScrollSession) UpdateSliceStatus(key string, value *SliceStatus) {
 	// 重试次数超过先定之后，直接算失败
 	if value.FailedNum > s.SliceMaxFailedNum {
 		value.Status = StatusFailed
+	}
+
+	if s.EndStrategy == EndOnDataLimit {
+		remaining := s.DataLimit - s.TotalProcessedData
+		if remaining > 0 && remaining < value.Limit {
+			value.Limit = remaining
+		} else if remaining <= 0 {
+			value.Limit = 0
+		}
 	}
 
 	s.SlicesMap[key] = value
@@ -164,6 +178,12 @@ func (s *ScrollSession) Done() bool {
 		return false
 	}
 
+	if s.EndStrategy == EndOnDataLimit {
+		if s.TotalProcessedData >= s.DataLimit {
+			return true
+		}
+	}
+
 	for _, sliceValue := range s.SlicesMap {
 		if sliceValue.Status != StatusCompleted && sliceValue.FailedNum < s.SliceMaxFailedNum {
 			return false
@@ -183,6 +203,7 @@ func NewScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.D
 		SliceMaxFailedNum:   sliceMaxFailedNum,
 		Limit:               limit,
 		SlicesMap:           make(map[string]*SliceStatus),
+		EndStrategy:         EndOnEmptyData,
 	}
 
 	return session
@@ -225,4 +246,14 @@ func checkScrollSession(ctx context.Context, key string) (*ScrollSession, bool) 
 		}
 	}
 	return nil, false
+}
+
+func (s *ScrollSession) UpdateEndStrategy(queryLimit int, hasLimit bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if hasLimit && queryLimit > 0 {
+		s.EndStrategy = EndOnDataLimit
+		s.DataLimit = queryLimit
+	}
 }

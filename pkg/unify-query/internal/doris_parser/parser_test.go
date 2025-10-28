@@ -652,7 +652,7 @@ group by
 		{
 			name: "反正则查询",
 			q:    "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
-			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
+			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 		},
 		{
 			name: "test-22",

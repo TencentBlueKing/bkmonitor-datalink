@@ -226,7 +226,15 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 		}
 	}
 
-	return cast.ToString(offset), cast.ToString(limit)
+	var resultOffset, resultLimit string
+	if offset > 0 {
+		resultOffset = cast.ToString(offset)
+	}
+	if limit > 0 {
+		resultLimit = cast.ToString(limit)
+	}
+
+	return resultOffset, resultLimit
 }
 
 func (v *LimitNode) String() string {

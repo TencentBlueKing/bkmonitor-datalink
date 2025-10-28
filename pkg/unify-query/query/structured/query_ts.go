@@ -122,15 +122,6 @@ func StepParse(step string) time.Duration {
 	}
 }
 
-// AlignTime 开始时间根据时区对齐
-func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
-	step := StepParse(stepStr)
-
-	// 根据 timezone 来对齐开始时间
-	newTimezone, newStart := function.TimeOffset(start, timezone, step)
-	return newStart, end, step, newTimezone, nil
-}
-
 func (q *QueryTs) ToTime(ctx context.Context) error {
 	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
@@ -146,7 +137,7 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 	// 如果关闭了对齐，则无需对齐开始时间
 	if !q.NotTimeAlign {
 		// 根据 timezone 来对齐开始时间
-		timezone, alianStart = function.TimeOffset(startTime, q.Timezone, step)
+		alianStart = function.TimeOffset(startTime, timezone, step)
 	}
 
 	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
@@ -676,7 +667,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	var timeZoneOffset int64
 	qp := metadata.GetQueryParams(ctx)
 	if qp.Timezone != "" && qp.Timezone != "UTC" {
-		utcAlignStart, _, _, _, _ := AlignTime(qp.Start, qp.End, q.Step, "UTC")
+		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
 		// 不同时区对齐时间的差值
 		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
 	}

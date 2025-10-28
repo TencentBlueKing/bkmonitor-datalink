@@ -250,7 +250,7 @@ func IsAlignTime(t time.Duration) bool {
 }
 
 // TimeOffset 根据 timezone 偏移对齐
-func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time) {
+func TimeOffset(t time.Time, timezone string, step time.Duration) time.Time {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.UTC
@@ -261,7 +261,7 @@ func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.
 	t1 := t.Add(offsetDuration)
 	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
 	t3 := t2.Add(offsetDuration * -1).In(loc)
-	return timezone, t3
+	return t3
 }
 
 // GetRealMetricName 获取真实指标名

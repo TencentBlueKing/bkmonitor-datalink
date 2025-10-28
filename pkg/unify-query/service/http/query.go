@@ -58,22 +58,6 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
 
-	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
-	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
 	go func() {
 		defer func() { recvDone <- struct{}{} }()
 		var tableList []*influxdb.Tables
@@ -96,17 +80,17 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 		return resp, nil
 	}
 
+	qp := metadata.GetQueryParams(ctx)
 	for _, qList := range query.QueryList {
 		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid)
 		if err != nil {
 			return nil, err
 		}
 		for _, qry := range queryMetric.QueryList {
-			qry.Timezone = timezone
 
 			instance := prometheus.GetTsDbInstance(ctx, qry)
 			if instance != nil {
-				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
+				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, qp.Start, qp.End)
 				if err != nil {
 					_ = metadata.Sprintf(
 						metadata.MsgQueryTs,
@@ -982,7 +966,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
 	defer span.End(&err)
 
-	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	err = query.ToTime(ctx)
 	if err != nil {
 		return nil, metadata.Sprintf(
 			metadata.MsgQueryTs,
@@ -990,11 +974,8 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 		).Error(ctx, err)
 	}
 
-	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
-	if err != nil {
-		return nil, err
-	}
-	query.Timezone = timezone
+	qb := metadata.GetQueryParams(ctx)
+
 	queryCM, err := query.ToQueryClusterMetric(ctx)
 	if err != nil {
 		return nil, err
@@ -1005,17 +986,17 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	}
 	instance := redis.Instance{Ctx: ctx, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
 	if query.Instant {
-		res, err = instance.DirectQuery(ctx, "", end)
+		res, err = instance.DirectQuery(ctx, "", qb.End)
 	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, "", start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, "", qb.Start, qb.End, qb.Step)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	span.Set("start", start.String())
-	span.Set("end", end.String())
-	span.Set("step", step.String())
+	span.Set("start", qb.Start.String())
+	span.Set("end", qb.End.String())
+	span.Set("step", qb.Step.String())
 	tables := promql.NewTables()
 	seriesNum := 0
 	pointsNum := 0

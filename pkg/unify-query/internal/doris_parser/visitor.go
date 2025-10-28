@@ -106,17 +106,13 @@ func (v *Statement) checkOuter() {
 			if limitNode, ok := existingLimit.(*LimitNode); ok {
 				limitNode.limitValue = cast.ToString(v.Limit)
 				if v.Offset != 0 {
-					internalOffset := 0
-					if limitNode.offsetValue != "" {
-						internalOffset = cast.ToInt(limitNode.offsetValue)
-					}
-					totalOffset := internalOffset + v.Offset
+					innerLimit, innerOffset := limitNode.calcLimitAndOffset()
+					totalOffset := innerOffset + v.Offset
 					limitNode.offsetValue = cast.ToString(totalOffset)
-					if v.Offset != 0 {
+					isLimitOverwhelming := innerLimit >= 0 && (totalOffset >= innerLimit)
+					if isLimitOverwhelming {
 						// 如果外层的OFFSET已经超出了内层的LIMIT，则需要设置LIMIT为0.代表没有数据
-						if totalOffset >= v.Offset {
-							limitNode.limitValue = "0"
-						}
+						limitNode.limitValue = "0"
 					}
 				}
 			}
@@ -124,7 +120,9 @@ func (v *Statement) checkOuter() {
 			limitNode := &LimitNode{
 				limitValue: cast.ToString(v.Limit),
 			}
-
+			if v.Offset != 0 {
+				limitNode.offsetValue = cast.ToString(v.Offset)
+			}
 			v.nodeMap.append(LimitItem, limitNode)
 		}
 	}
@@ -246,6 +244,18 @@ type LimitNode struct {
 	firstNumber        string
 	limitValue         string
 	offsetValue        string
+}
+
+func (l *LimitNode) calcLimitAndOffset() (limit int, offset int) {
+	limit = -1
+	offset = 0
+	if l.limitValue != "" {
+		limit = cast.ToInt(l.limitValue)
+	}
+	if l.offsetValue != "" {
+		offset = cast.ToInt(l.offsetValue)
+	}
+	return limit, offset
 }
 
 func (v *LimitNode) String() string {

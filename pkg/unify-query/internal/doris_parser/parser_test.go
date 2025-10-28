@@ -810,8 +810,15 @@ group by
 			sql:  `SELECT * FROM t LIMIT 100 OFFSET 20`,
 		},
 		{
-			name:   `dot sep offset limit and custom limit offset`,
+			name:   `dot sep offset limit and custom limit offset comma`,
 			q:      `SELECT * FROM t LIMIT 10,100`, // should be treated as LIMIT 100 OFFSET 10
+			limit:  50,
+			offset: 5,
+			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
+		},
+		{
+			name:   `dot sep offset limit and custom limit offset`,
+			q:      `SELECT * FROM t LIMIT 100 OFFSET 10`,
 			limit:  50,
 			offset: 5,
 			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
@@ -821,14 +828,21 @@ group by
 			q:      `SELECT * FROM t LIMIT 10`,
 			limit:  50,
 			offset: 500,
-			sql:    `SELECT * FROM t LIMIT 0 OFFSET 500`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
+			sql:    `SELECT * FROM t LIMIT 0 OFFSET 500`,
 		},
 		{
 			name:   `if outer limit is bigger than inner limit with offset`,
 			q:      `SELECT * FROM t LIMIT 10 OFFSET 10`,
 			limit:  50,
 			offset: 500,
-			sql:    `SELECT * FROM t LIMIT 0 OFFSET 510`, // should be LIMIT 50(the smaller one) OFFSET 0(0+0)
+			sql:    `SELECT * FROM t LIMIT 0 OFFSET 510`,
+		},
+		{
+			name:   `if is no outer limit`,
+			q:      `SELECT * FROM t `,
+			limit:  50,
+			offset: 500,
+			sql:    `SELECT * FROM t LIMIT 50 OFFSET 500`,
 		},
 	}
 

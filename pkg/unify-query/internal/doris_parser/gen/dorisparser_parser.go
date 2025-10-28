@@ -4591,7 +4591,7 @@ func (s *MultiStatementsContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultiStatementsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MultiStatementsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMultiStatements(s)
@@ -4836,7 +4836,7 @@ func (s *SingleStatementContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SingleStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SingleStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSingleStatement(s)
@@ -5050,7 +5050,7 @@ func (s *ShowCreateProcedureContext) MultipartIdentifier() IMultipartIdentifierC
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateProcedure(s)
@@ -5094,7 +5094,7 @@ func (s *StatementBaseAliasContext) StatementBase() IStatementBaseContext {
 	return t.(IStatementBaseContext)
 }
 
-func (s *StatementBaseAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StatementBaseAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStatementBaseAlias(s)
@@ -5179,7 +5179,7 @@ func (s *ShowProcedureStatusContext) ValueExpression() IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ShowProcedureStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowProcedureStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowProcedureStatus(s)
@@ -5260,7 +5260,7 @@ func (s *CreateProcedureContext) OR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserOR, 0)
 }
 
-func (s *CreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateProcedure(s)
@@ -5351,7 +5351,7 @@ func (s *ShowConfigContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowConfigContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowConfigContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowConfig(s)
@@ -5461,7 +5461,7 @@ func (s *CallProcedureContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CallProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CallProcedureContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCallProcedure(s)
@@ -5530,7 +5530,7 @@ func (s *DropProcedureContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropProcedureContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropProcedure(s)
@@ -6164,7 +6164,7 @@ func (s *SupportedSetStatementAliasContext) SupportedSetStatement() ISupportedSe
 	return t.(ISupportedSetStatementContext)
 }
 
-func (s *SupportedSetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedSetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedSetStatementAlias(s)
@@ -6208,7 +6208,7 @@ func (s *ConstraintStatementAliasContext) ConstraintStatement() IConstraintState
 	return t.(IConstraintStatementContext)
 }
 
-func (s *ConstraintStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConstraintStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitConstraintStatementAlias(s)
@@ -6252,7 +6252,7 @@ func (s *SupportedKillStatementAliasContext) SupportedKillStatement() ISupported
 	return t.(ISupportedKillStatementContext)
 }
 
-func (s *SupportedKillStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedKillStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedKillStatementAlias(s)
@@ -6296,7 +6296,7 @@ func (s *SupportedRecoverStatementAliasContext) SupportedRecoverStatement() ISup
 	return t.(ISupportedRecoverStatementContext)
 }
 
-func (s *SupportedRecoverStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedRecoverStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedRecoverStatementAlias(s)
@@ -6340,7 +6340,7 @@ func (s *SupportedJobStatementAliasContext) SupportedJobStatement() ISupportedJo
 	return t.(ISupportedJobStatementContext)
 }
 
-func (s *SupportedJobStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedJobStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedJobStatementAlias(s)
@@ -6384,7 +6384,7 @@ func (s *UnsupportedContext) UnsupportedStatement() IUnsupportedStatementContext
 	return t.(IUnsupportedStatementContext)
 }
 
-func (s *UnsupportedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnsupportedContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnsupported(s)
@@ -6460,7 +6460,7 @@ func (s *StatementDefaultContext) OutFileClause() IOutFileClauseContext {
 	return t.(IOutFileClauseContext)
 }
 
-func (s *StatementDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StatementDefaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStatementDefault(s)
@@ -6504,7 +6504,7 @@ func (s *SupportedAdminStatementAliasContext) SupportedAdminStatement() ISupport
 	return t.(ISupportedAdminStatementContext)
 }
 
-func (s *SupportedAdminStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedAdminStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedAdminStatementAlias(s)
@@ -6548,7 +6548,7 @@ func (s *SupportedStatsStatementAliasContext) SupportedStatsStatement() ISupport
 	return t.(ISupportedStatsStatementContext)
 }
 
-func (s *SupportedStatsStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedStatsStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedStatsStatementAlias(s)
@@ -6592,7 +6592,7 @@ func (s *SupportedDescribeStatementAliasContext) SupportedDescribeStatement() IS
 	return t.(ISupportedDescribeStatementContext)
 }
 
-func (s *SupportedDescribeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedDescribeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedDescribeStatementAlias(s)
@@ -6636,7 +6636,7 @@ func (s *SupportedCancelStatementAliasContext) SupportedCancelStatement() ISuppo
 	return t.(ISupportedCancelStatementContext)
 }
 
-func (s *SupportedCancelStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedCancelStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedCancelStatementAlias(s)
@@ -6680,7 +6680,7 @@ func (s *SupportedOtherStatementAliasContext) SupportedOtherStatement() ISupport
 	return t.(ISupportedOtherStatementContext)
 }
 
-func (s *SupportedOtherStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedOtherStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedOtherStatementAlias(s)
@@ -6724,7 +6724,7 @@ func (s *SupportedDmlStatementAliasContext) SupportedDmlStatement() ISupportedDm
 	return t.(ISupportedDmlStatementContext)
 }
 
-func (s *SupportedDmlStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedDmlStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedDmlStatementAlias(s)
@@ -6768,7 +6768,7 @@ func (s *SupportedLoadStatementAliasContext) SupportedLoadStatement() ISupported
 	return t.(ISupportedLoadStatementContext)
 }
 
-func (s *SupportedLoadStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedLoadStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedLoadStatementAlias(s)
@@ -6812,7 +6812,7 @@ func (s *SupportedTransactionStatementAliasContext) SupportedTransactionStatemen
 	return t.(ISupportedTransactionStatementContext)
 }
 
-func (s *SupportedTransactionStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedTransactionStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedTransactionStatementAlias(s)
@@ -6856,7 +6856,7 @@ func (s *SupportedGrantRevokeStatementAliasContext) SupportedGrantRevokeStatemen
 	return t.(ISupportedGrantRevokeStatementContext)
 }
 
-func (s *SupportedGrantRevokeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedGrantRevokeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedGrantRevokeStatementAlias(s)
@@ -6900,7 +6900,7 @@ func (s *SupportedAlterStatementAliasContext) SupportedAlterStatement() ISupport
 	return t.(ISupportedAlterStatementContext)
 }
 
-func (s *SupportedAlterStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedAlterStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedAlterStatementAlias(s)
@@ -6944,7 +6944,7 @@ func (s *SupportedCleanStatementAliasContext) SupportedCleanStatement() ISupport
 	return t.(ISupportedCleanStatementContext)
 }
 
-func (s *SupportedCleanStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedCleanStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedCleanStatementAlias(s)
@@ -6988,7 +6988,7 @@ func (s *SupportedUnsetStatementAliasContext) SupportedUnsetStatement() ISupport
 	return t.(ISupportedUnsetStatementContext)
 }
 
-func (s *SupportedUnsetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedUnsetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedUnsetStatementAlias(s)
@@ -7032,7 +7032,7 @@ func (s *SupportedUseStatementAliasContext) SupportedUseStatement() ISupportedUs
 	return t.(ISupportedUseStatementContext)
 }
 
-func (s *SupportedUseStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedUseStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedUseStatementAlias(s)
@@ -7076,7 +7076,7 @@ func (s *MaterializedViewStatementAliasContext) MaterializedViewStatement() IMat
 	return t.(IMaterializedViewStatementContext)
 }
 
-func (s *MaterializedViewStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MaterializedViewStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMaterializedViewStatementAlias(s)
@@ -7120,7 +7120,7 @@ func (s *SupportedDropStatementAliasContext) SupportedDropStatement() ISupported
 	return t.(ISupportedDropStatementContext)
 }
 
-func (s *SupportedDropStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedDropStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedDropStatementAlias(s)
@@ -7164,7 +7164,7 @@ func (s *SupportedCreateStatementAliasContext) SupportedCreateStatement() ISuppo
 	return t.(ISupportedCreateStatementContext)
 }
 
-func (s *SupportedCreateStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedCreateStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedCreateStatementAlias(s)
@@ -7208,7 +7208,7 @@ func (s *SupportedShowStatementAliasContext) SupportedShowStatement() ISupported
 	return t.(ISupportedShowStatementContext)
 }
 
-func (s *SupportedShowStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedShowStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedShowStatementAlias(s)
@@ -7252,7 +7252,7 @@ func (s *SupportedRefreshStatementAliasContext) SupportedRefreshStatement() ISup
 	return t.(ISupportedRefreshStatementContext)
 }
 
-func (s *SupportedRefreshStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedRefreshStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedRefreshStatementAlias(s)
@@ -7640,7 +7640,7 @@ func (s *UnsupportedStatementContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UnsupportedStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnsupportedStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnsupportedStatement(s)
@@ -7834,7 +7834,7 @@ func (s *RefreshMTMVContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *RefreshMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshMTMV(s)
@@ -8021,7 +8021,7 @@ func (s *AlterMTMVContext) RefreshTrigger() IRefreshTriggerContext {
 	return t.(IRefreshTriggerContext)
 }
 
-func (s *AlterMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterMTMV(s)
@@ -8338,7 +8338,7 @@ func (s *CreateMTMVContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *CreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateMTMV(s)
@@ -8407,7 +8407,7 @@ func (s *ResumeMTMVContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ResumeMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ResumeMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitResumeMTMV(s)
@@ -8472,7 +8472,7 @@ func (s *ShowCreateMTMVContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateMTMV(s)
@@ -8550,7 +8550,7 @@ func (s *CancelMTMVTaskContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *CancelMTMVTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelMTMVTaskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelMTMVTask(s)
@@ -8619,7 +8619,7 @@ func (s *PauseMTMVContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *PauseMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PauseMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPauseMTMV(s)
@@ -8722,7 +8722,7 @@ func (s *DropMTMVContext) ON() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserON, 0)
 }
 
-func (s *DropMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropMTMVContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropMTMV(s)
@@ -9881,7 +9881,7 @@ func (s *CancelJobTaskContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *CancelJobTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelJobTaskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelJobTask(s)
@@ -9955,7 +9955,7 @@ func (s *ResumeJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ResumeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ResumeJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitResumeJob(s)
@@ -10037,7 +10037,7 @@ func (s *DropJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropJob(s)
@@ -10211,7 +10211,7 @@ func (s *CreateScheduledJobContext) STRING_LITERAL(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, i)
 }
 
-func (s *CreateScheduledJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateScheduledJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateScheduledJob(s)
@@ -10285,7 +10285,7 @@ func (s *PauseJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *PauseJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PauseJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPauseJob(s)
@@ -10955,7 +10955,7 @@ func (s *ShowConstraintContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowConstraintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowConstraint(s)
@@ -11045,7 +11045,7 @@ func (s *DropConstraintContext) ErrorCapturingIdentifier() IErrorCapturingIdenti
 	return t.(IErrorCapturingIdentifierContext)
 }
 
-func (s *DropConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropConstraintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropConstraint(s)
@@ -11151,7 +11151,7 @@ func (s *AddConstraintContext) ErrorCapturingIdentifier() IErrorCapturingIdentif
 	return t.(IErrorCapturingIdentifierContext)
 }
 
-func (s *AddConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddConstraintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddConstraint(s)
@@ -11600,7 +11600,7 @@ func (s *InsertTableContext) IdentifierSeq() IIdentifierSeqContext {
 	return t.(IIdentifierSeqContext)
 }
 
-func (s *InsertTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *InsertTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitInsertTable(s)
@@ -11772,7 +11772,7 @@ func (s *LoadContext) CommentSpec() ICommentSpecContext {
 	return t.(ICommentSpecContext)
 }
 
-func (s *LoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLoad(s)
@@ -11955,7 +11955,7 @@ func (s *CopyIntoContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *CopyIntoContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CopyIntoContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCopyInto(s)
@@ -12108,7 +12108,7 @@ func (s *UpdateContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *UpdateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UpdateContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUpdate(s)
@@ -12180,7 +12180,7 @@ func (s *TruncateTableContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *TruncateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TruncateTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTruncateTable(s)
@@ -12224,7 +12224,7 @@ func (s *ReplayContext) ReplayCommand() IReplayCommandContext {
 	return t.(IReplayCommandContext)
 }
 
-func (s *ReplayContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplayContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplay(s)
@@ -12381,7 +12381,7 @@ func (s *DeleteContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *DeleteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DeleteContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDelete(s)
@@ -12524,7 +12524,7 @@ func (s *ExportContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExportContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExport(s)
@@ -13897,7 +13897,7 @@ func (s *CreateTableContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *CreateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateTable(s)
@@ -14047,7 +14047,7 @@ func (s *CreateWorkloadPolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateWorkloadPolicy(s)
@@ -14141,7 +14141,7 @@ func (s *CreateResourceContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateResourceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateResource(s)
@@ -14271,7 +14271,7 @@ func (s *CreateWorkloadGroupContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateWorkloadGroup(s)
@@ -14452,7 +14452,7 @@ func (s *CreateDictionaryContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateDictionary(s)
@@ -14592,7 +14592,7 @@ func (s *CreateTableLikeContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *CreateTableLikeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateTableLikeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateTableLike(s)
@@ -14669,7 +14669,7 @@ func (s *CreateRoleContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *CreateRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateRoleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateRole(s)
@@ -14759,7 +14759,7 @@ func (s *CreateStageContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStageContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateStageContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateStage(s)
@@ -14857,7 +14857,7 @@ func (s *CreateIndexAnalyzerContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateIndexAnalyzer(s)
@@ -14955,7 +14955,7 @@ func (s *CreateIndexTokenizerContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateIndexTokenizer(s)
@@ -15050,7 +15050,7 @@ func (s *CreateFileContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CreateFileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateFileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateFile(s)
@@ -15243,7 +15243,7 @@ func (s *CreateRowPolicyContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *CreateRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateRowPolicy(s)
@@ -15315,7 +15315,7 @@ func (s *CreateEncryptkeyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *CreateEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateEncryptkey(s)
@@ -15449,7 +15449,7 @@ func (s *CreateViewContext) SimpleColumnDefs() ISimpleColumnDefsContext {
 	return t.(ISimpleColumnDefsContext)
 }
 
-func (s *CreateViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateView(s)
@@ -15543,7 +15543,7 @@ func (s *CreateStorageVaultContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateStorageVault(s)
@@ -15739,7 +15739,7 @@ func (s *CreateUserDefineFunctionContext) PropertyClause() IPropertyClauseContex
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateUserDefineFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateUserDefineFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateUserDefineFunction(s)
@@ -15833,7 +15833,7 @@ func (s *CreateStoragePolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateStoragePolicy(s)
@@ -15988,7 +15988,7 @@ func (s *CreateIndexContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateIndex(s)
@@ -16073,7 +16073,7 @@ func (s *CreateRepositoryContext) ONLY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserONLY, 0)
 }
 
-func (s *CreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateRepository(s)
@@ -16167,7 +16167,7 @@ func (s *CreateDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateDatabase(s)
@@ -16265,7 +16265,7 @@ func (s *BuildIndexContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *BuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBuildIndex(s)
@@ -16382,7 +16382,7 @@ func (s *CreateUserContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *CreateUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateUser(s)
@@ -16518,7 +16518,7 @@ func (s *CreateCatalogContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateCatalog(s)
@@ -16683,7 +16683,7 @@ func (s *CreateAliasFunctionContext) IdentifierSeq() IIdentifierSeqContext {
 	return t.(IIdentifierSeqContext)
 }
 
-func (s *CreateAliasFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateAliasFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateAliasFunction(s)
@@ -16773,7 +16773,7 @@ func (s *CreateSqlBlockRuleContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateSqlBlockRule(s)
@@ -16871,7 +16871,7 @@ func (s *CreateIndexTokenFilterContext) PropertyClause() IPropertyClauseContext 
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateIndexTokenFilter(s)
@@ -20344,7 +20344,7 @@ func (s *DictionaryColumnDefsContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DictionaryColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DictionaryColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDictionaryColumnDefs(s)
@@ -20508,7 +20508,7 @@ func (s *DictionaryColumnDefContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DictionaryColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DictionaryColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDictionaryColumnDef(s)
@@ -20706,7 +20706,7 @@ func (s *AlterSystemRenameComputeGroupContext) Identifier(i int) IIdentifierCont
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterSystemRenameComputeGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterSystemRenameComputeGroupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterSystemRenameComputeGroup(s)
@@ -20758,7 +20758,7 @@ func (s *AlterSystemContext) AlterSystemClause() IAlterSystemClauseContext {
 	return t.(IAlterSystemClauseContext)
 }
 
-func (s *AlterSystemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterSystemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterSystem(s)
@@ -20849,7 +20849,7 @@ func (s *AlterCatalogRenameContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterCatalogRenameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterCatalogRenameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterCatalogRename(s)
@@ -20960,7 +20960,7 @@ func (s *AlterDatabaseSetQuotaContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *AlterDatabaseSetQuotaContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterDatabaseSetQuotaContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterDatabaseSetQuota(s)
@@ -21042,7 +21042,7 @@ func (s *AlterStorageVaultContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterStorageVault(s)
@@ -21158,7 +21158,7 @@ func (s *AlterWorkloadGroupContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterWorkloadGroup(s)
@@ -21272,7 +21272,7 @@ func (s *AlterTableDropRollupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableDropRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterTableDropRollupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterTableDropRollup(s)
@@ -21357,7 +21357,7 @@ func (s *AlterTablePropertiesContext) MultipartIdentifier() IMultipartIdentifier
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *AlterTablePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterTablePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterTableProperties(s)
@@ -21441,7 +21441,7 @@ func (s *AlterUserContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AlterUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterUser(s)
@@ -21514,7 +21514,7 @@ func (s *AlterRoleContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *AlterRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterRoleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterRole(s)
@@ -21596,7 +21596,7 @@ func (s *AlterWorkloadPolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterWorkloadPolicy(s)
@@ -21687,7 +21687,7 @@ func (s *AlterDatabaseRenameContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterDatabaseRenameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterDatabaseRenameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterDatabaseRename(s)
@@ -21776,7 +21776,7 @@ func (s *AlterCatalogPropertiesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterCatalogPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterCatalogPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterCatalogProperties(s)
@@ -21865,7 +21865,7 @@ func (s *AlterDatabasePropertiesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterDatabasePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterDatabasePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterDatabaseProperties(s)
@@ -21939,7 +21939,7 @@ func (s *AlterCatalogCommentContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AlterCatalogCommentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterCatalogCommentContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterCatalogComment(s)
@@ -22073,7 +22073,7 @@ func (s *AlterViewContext) SimpleColumnDefs() ISimpleColumnDefsContext {
 	return t.(ISimpleColumnDefsContext)
 }
 
-func (s *AlterViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterView(s)
@@ -22155,7 +22155,7 @@ func (s *AlterStoragePolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterStoragePolicy(s)
@@ -22233,7 +22233,7 @@ func (s *AlterSqlBlockRuleContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterSqlBlockRule(s)
@@ -22311,7 +22311,7 @@ func (s *AlterResourceContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterResourceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterResource(s)
@@ -22446,7 +22446,7 @@ func (s *AlterRoutineLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterRoutineLoad(s)
@@ -22560,7 +22560,7 @@ func (s *AlterTableAddRollupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableAddRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterTableAddRollupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterTableAddRollup(s)
@@ -22638,7 +22638,7 @@ func (s *AlterRepositoryContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterRepository(s)
@@ -22744,7 +22744,7 @@ func (s *AlterTableContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterTable(s)
@@ -22833,7 +22833,7 @@ func (s *AlterColocateGroupContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *AlterColocateGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterColocateGroupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterColocateGroup(s)
@@ -24419,7 +24419,7 @@ func (s *DropUserContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropUser(s)
@@ -24492,7 +24492,7 @@ func (s *DropDatabaseContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *DropDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropDatabase(s)
@@ -24557,7 +24557,7 @@ func (s *DropDictionaryContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropDictionary(s)
@@ -24626,7 +24626,7 @@ func (s *DropWorkloadPolicyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropWorkloadPolicy(s)
@@ -24774,7 +24774,7 @@ func (s *DropRowPolicyContext) ROLE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROLE, 0)
 }
 
-func (s *DropRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropRowPolicy(s)
@@ -24874,7 +24874,7 @@ func (s *DropFunctionContext) FunctionArguments() IFunctionArgumentsContext {
 	return t.(IFunctionArgumentsContext)
 }
 
-func (s *DropFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropFunction(s)
@@ -24977,7 +24977,7 @@ func (s *DropWorkloadGroupContext) FOR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFOR, 0)
 }
 
-func (s *DropWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropWorkloadGroup(s)
@@ -25037,7 +25037,7 @@ func (s *DropSqlBlockRuleContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropSqlBlockRule(s)
@@ -25102,7 +25102,7 @@ func (s *DropViewContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropView(s)
@@ -25192,7 +25192,7 @@ func (s *DropIndexContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropIndex(s)
@@ -25257,7 +25257,7 @@ func (s *DropEncryptkeyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropEncryptkey(s)
@@ -25314,7 +25314,7 @@ func (s *DropRepositoryContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DropRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropRepository(s)
@@ -25379,7 +25379,7 @@ func (s *DropRoleContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropRoleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropRole(s)
@@ -25452,7 +25452,7 @@ func (s *DropIndexAnalyzerContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropIndexAnalyzer(s)
@@ -25517,7 +25517,7 @@ func (s *DropStageContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropStageContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropStageContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropStage(s)
@@ -25590,7 +25590,7 @@ func (s *DropIndexTokenizerContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropIndexTokenizer(s)
@@ -25655,7 +25655,7 @@ func (s *DropResourceContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropResourceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropResource(s)
@@ -25750,7 +25750,7 @@ func (s *DropFileContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DropFileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropFileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropFile(s)
@@ -25815,7 +25815,7 @@ func (s *DropCatalogContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropCatalog(s)
@@ -25885,7 +25885,7 @@ func (s *DropCatalogRecycleBinContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *DropCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropCatalogRecycleBin(s)
@@ -25958,7 +25958,7 @@ func (s *DropIndexTokenFilterContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropIndexTokenFilter(s)
@@ -26027,7 +26027,7 @@ func (s *DropTableContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *DropTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropTable(s)
@@ -26096,7 +26096,7 @@ func (s *DropStoragePolicyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropStoragePolicy(s)
@@ -27701,7 +27701,7 @@ func (s *ShowRepositoriesContext) REPOSITORIES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserREPOSITORIES, 0)
 }
 
-func (s *ShowRepositoriesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRepositoriesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRepositories(s)
@@ -27798,7 +27798,7 @@ func (s *ShowDataContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDataContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDataContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowData(s)
@@ -27913,7 +27913,7 @@ func (s *ShowIndexContext) MultipartIdentifier(i int) IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowIndex(s)
@@ -27986,7 +27986,7 @@ func (s *ShowDynamicPartitionContext) MultipartIdentifier() IMultipartIdentifier
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDynamicPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDynamicPartitionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDynamicPartition(s)
@@ -28071,7 +28071,7 @@ func (s *ShowTableStatusContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTableStatus(s)
@@ -28152,7 +28152,7 @@ func (s *ShowBackupContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowBackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowBackupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowBackup(s)
@@ -28277,7 +28277,7 @@ func (s *ShowCreateFunctionContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateFunction(s)
@@ -28333,7 +28333,7 @@ func (s *ShowGrantsForUserContext) UserIdentify() IUserIdentifyContext {
 	return t.(IUserIdentifyContext)
 }
 
-func (s *ShowGrantsForUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowGrantsForUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowGrantsForUser(s)
@@ -28427,7 +28427,7 @@ func (s *ShowViewContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowView(s)
@@ -28512,7 +28512,7 @@ func (s *ShowTablesContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTablesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTables(s)
@@ -28625,7 +28625,7 @@ func (s *ShowExportContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowExportContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowExport(s)
@@ -28661,7 +28661,7 @@ func (s *ShowAuthorsContext) AUTHORS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTHORS, 0)
 }
 
-func (s *ShowAuthorsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowAuthorsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowAuthors(s)
@@ -28701,7 +28701,7 @@ func (s *ShowStorageEnginesContext) STORAGE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTORAGE, 0)
 }
 
-func (s *ShowStorageEnginesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowStorageEnginesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowStorageEngines(s)
@@ -28757,7 +28757,7 @@ func (s *ShowWarningErrorsContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowWarningErrorsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowWarningErrorsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowWarningErrors(s)
@@ -28809,7 +28809,7 @@ func (s *ShowCatalogsContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowCatalogsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCatalogsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCatalogs(s)
@@ -28845,7 +28845,7 @@ func (s *ShowRolesContext) ROLES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROLES, 0)
 }
 
-func (s *ShowRolesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRolesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRoles(s)
@@ -28930,7 +28930,7 @@ func (s *ShowRowPolicyContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRowPolicy(s)
@@ -28996,7 +28996,7 @@ func (s *ShowTabletsBelongContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *ShowTabletsBelongContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTabletsBelongContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTabletsBelong(s)
@@ -29081,7 +29081,7 @@ func (s *ShowTriggersContext) MultipartIdentifier() IMultipartIdentifierContext 
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTriggersContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTriggersContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTriggers(s)
@@ -29146,7 +29146,7 @@ func (s *ShowCreateTableContext) BRIEF() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBRIEF, 0)
 }
 
-func (s *ShowCreateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateTable(s)
@@ -29203,7 +29203,7 @@ func (s *ShowCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCatalog(s)
@@ -29330,7 +29330,7 @@ func (s *ShowColumnsContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowColumnsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowColumnsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowColumns(s)
@@ -29447,7 +29447,7 @@ func (s *ShowBuildIndexContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowBuildIndex(s)
@@ -29515,7 +29515,7 @@ func (s *ShowVariablesContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowVariablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowVariablesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowVariables(s)
@@ -29596,7 +29596,7 @@ func (s *ShowEventsContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowEventsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowEventsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowEvents(s)
@@ -29632,7 +29632,7 @@ func (s *ShowPluginsContext) PLUGINS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPLUGINS, 0)
 }
 
-func (s *ShowPluginsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowPluginsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowPlugins(s)
@@ -29680,7 +29680,7 @@ func (s *ShowAllPropertiesContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowAllPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowAllPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowAllProperties(s)
@@ -29740,7 +29740,7 @@ func (s *ShowDataSkewContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *ShowDataSkewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDataSkewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDataSkew(s)
@@ -29805,7 +29805,7 @@ func (s *ShowConvertLscContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowConvertLscContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowConvertLscContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowConvertLsc(s)
@@ -29866,7 +29866,7 @@ func (s *ShowSqlBlockRuleContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowSqlBlockRule(s)
@@ -29943,7 +29943,7 @@ func (s *ShowTableCreationContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTableCreationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTableCreationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTableCreation(s)
@@ -29999,7 +29999,7 @@ func (s *ShowWarningErrorCountContext) ERRORS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserERRORS, 0)
 }
 
-func (s *ShowWarningErrorCountContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowWarningErrorCountContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowWarningErrorCount(s)
@@ -30075,7 +30075,7 @@ func (s *ShowReplicaStatusContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *ShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowReplicaStatus(s)
@@ -30140,7 +30140,7 @@ func (s *ShowDeleteContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDeleteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDeleteContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDelete(s)
@@ -30265,7 +30265,7 @@ func (s *ShowTabletsFromTableContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowTabletsFromTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTabletsFromTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTabletsFromTable(s)
@@ -30301,7 +30301,7 @@ func (s *ShowStagesContext) STAGES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTAGES, 0)
 }
 
-func (s *ShowStagesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowStagesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowStages(s)
@@ -30382,7 +30382,7 @@ func (s *ShowTransactionContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTransactionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTransaction(s)
@@ -30418,7 +30418,7 @@ func (s *ShowBrokerContext) BROKER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBROKER, 0)
 }
 
-func (s *ShowBrokerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowBrokerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowBroker(s)
@@ -30458,7 +30458,7 @@ func (s *ShowGrantsContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *ShowGrantsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowGrantsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowGrants(s)
@@ -30542,7 +30542,7 @@ func (s *ShowResourcesContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowResourcesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowResourcesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowResources(s)
@@ -30590,7 +30590,7 @@ func (s *ShowWorkloadGroupsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowWorkloadGroupsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowWorkloadGroupsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowWorkloadGroups(s)
@@ -30650,7 +30650,7 @@ func (s *ShowReplicaDistributionContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *ShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowReplicaDistribution(s)
@@ -30698,7 +30698,7 @@ func (s *ShowTabletStorageFormatContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *ShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTabletStorageFormat(s)
@@ -30742,7 +30742,7 @@ func (s *ShowCharsetContext) SET() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSET, 0)
 }
 
-func (s *ShowCharsetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCharsetContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCharset(s)
@@ -30787,7 +30787,7 @@ func (s *ShowProcContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowProcContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowProcContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowProc(s)
@@ -30848,7 +30848,7 @@ func (s *ShowCreateViewContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateView(s)
@@ -30933,7 +30933,7 @@ func (s *ShowOpenTablesContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowOpenTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowOpenTablesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowOpenTables(s)
@@ -31031,7 +31031,7 @@ func (s *ShowQueryStatsContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *ShowQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowQueryStats(s)
@@ -31096,7 +31096,7 @@ func (s *ShowCreateDatabaseContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateDatabase(s)
@@ -31161,7 +31161,7 @@ func (s *ShowQueryProfileContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowQueryProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowQueryProfileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowQueryProfile(s)
@@ -31213,7 +31213,7 @@ func (s *ShowDictionariesContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowDictionariesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDictionariesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDictionaries(s)
@@ -31282,7 +31282,7 @@ func (s *ShowStoragePolicyContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ShowStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowStoragePolicy(s)
@@ -31355,7 +31355,7 @@ func (s *ShowEncryptKeysContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowEncryptKeysContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowEncryptKeysContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowEncryptKeys(s)
@@ -31472,7 +31472,7 @@ func (s *ShowLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowLoad(s)
@@ -31516,7 +31516,7 @@ func (s *ShowClustersContext) GROUPS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserGROUPS, 0)
 }
 
-func (s *ShowClustersContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowClustersContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowClusters(s)
@@ -31565,7 +31565,7 @@ func (s *ShowTrashContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowTrashContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTrashContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTrash(s)
@@ -31678,7 +31678,7 @@ func (s *ShowPartitionsContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowPartitions(s)
@@ -31730,7 +31730,7 @@ func (s *ShowGlobalFunctionsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowGlobalFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowGlobalFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowGlobalFunctions(s)
@@ -31787,7 +31787,7 @@ func (s *ShowFrontendsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowFrontendsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowFrontendsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowFrontends(s)
@@ -31852,7 +31852,7 @@ func (s *ShowLoadProfileContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowLoadProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowLoadProfileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowLoadProfile(s)
@@ -31897,7 +31897,7 @@ func (s *ShowPartitionIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowPartitionIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowPartitionIdContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowPartitionId(s)
@@ -31974,7 +31974,7 @@ func (s *ShowSnapshotContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowSnapshot(s)
@@ -32038,7 +32038,7 @@ func (s *ShowCatalogRecycleBinContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *ShowCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCatalogRecycleBin(s)
@@ -32151,7 +32151,7 @@ func (s *ShowCopyContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCopyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCopyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCopy(s)
@@ -32203,7 +32203,7 @@ func (s *ShowCollationContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowCollationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCollationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCollation(s)
@@ -32239,7 +32239,7 @@ func (s *ShowBackendsContext) BACKENDS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBACKENDS, 0)
 }
 
-func (s *ShowBackendsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowBackendsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowBackends(s)
@@ -32304,7 +32304,7 @@ func (s *ShowTypeCastContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowTypeCastContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTypeCastContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTypeCast(s)
@@ -32340,7 +32340,7 @@ func (s *ShowPrivilegesContext) PRIVILEGES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPRIVILEGES, 0)
 }
 
-func (s *ShowPrivilegesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowPrivilegesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowPrivileges(s)
@@ -32425,7 +32425,7 @@ func (s *ShowRestoreContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRestoreContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRestore(s)
@@ -32539,7 +32539,7 @@ func (s *ShowLoadWaringsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowLoadWaringsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowLoadWaringsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowLoadWarings(s)
@@ -32672,7 +32672,7 @@ func (s *ShowAlterTableContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowAlterTable(s)
@@ -32717,7 +32717,7 @@ func (s *ShowTableIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTableIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTableIdContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTableId(s)
@@ -32782,7 +32782,7 @@ func (s *ShowSmallFilesContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowSmallFilesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowSmallFilesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowSmallFiles(s)
@@ -32863,7 +32863,7 @@ func (s *ShowDatabasesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowDatabasesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDatabasesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDatabases(s)
@@ -32919,7 +32919,7 @@ func (s *ShowCreateUserContext) UserIdentify() IUserIdentifyContext {
 	return t.(IUserIdentifyContext)
 }
 
-func (s *ShowCreateUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateUser(s)
@@ -32964,7 +32964,7 @@ func (s *ShowTabletIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTabletIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTabletIdContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTabletId(s)
@@ -33008,7 +33008,7 @@ func (s *ShowStorageVaultContext) VAULTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVAULTS, 0)
 }
 
-func (s *ShowStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowStorageVault(s)
@@ -33060,7 +33060,7 @@ func (s *ShowStatusContext) StatementScope() IStatementScopeContext {
 	return t.(IStatementScopeContext)
 }
 
-func (s *ShowStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowStatus(s)
@@ -33129,7 +33129,7 @@ func (s *ShowUserPropertiesContext) IdentifierOrText() IIdentifierOrTextContext 
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ShowUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowUserProperties(s)
@@ -33189,7 +33189,7 @@ func (s *ShowWarmUpJobContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowWarmUpJob(s)
@@ -33229,7 +33229,7 @@ func (s *ShowLastInsertContext) INSERT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINSERT, 0)
 }
 
-func (s *ShowLastInsertContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowLastInsertContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowLastInsert(s)
@@ -33290,7 +33290,7 @@ func (s *ShowCreateCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateCatalog(s)
@@ -33384,7 +33384,7 @@ func (s *ShowCreateMaterializedViewContext) MultipartIdentifier() IMultipartIden
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateMaterializedViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateMaterializedViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateMaterializedView(s)
@@ -33424,7 +33424,7 @@ func (s *ShowProcessListContext) FULL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFULL, 0)
 }
 
-func (s *ShowProcessListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowProcessListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowProcessList(s)
@@ -33464,7 +33464,7 @@ func (s *ShowDataTypesContext) TYPES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTYPES, 0)
 }
 
-func (s *ShowDataTypesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDataTypesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDataTypes(s)
@@ -33513,7 +33513,7 @@ func (s *ShowDiagnoseTabletContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDiagnoseTablet(s)
@@ -33549,7 +33549,7 @@ func (s *ShowWhitelistContext) WHITELIST() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserWHITELIST, 0)
 }
 
-func (s *ShowWhitelistContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowWhitelistContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowWhitelist(s)
@@ -33634,7 +33634,7 @@ func (s *ShowViewsContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowViewsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowViewsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowViews(s)
@@ -33715,7 +33715,7 @@ func (s *ShowFunctionsContext) MultipartIdentifier() IMultipartIdentifierContext
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowFunctions(s)
@@ -33760,7 +33760,7 @@ func (s *ShowDatabaseIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowDatabaseIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowDatabaseIdContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowDatabaseId(s)
@@ -33820,7 +33820,7 @@ func (s *ShowCreateRepositoryContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateRepository(s)
@@ -39031,7 +39031,7 @@ func (s *ShowRoutineLoadContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRoutineLoad(s)
@@ -39096,7 +39096,7 @@ func (s *ResumeRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ResumeRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ResumeRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitResumeRoutineLoad(s)
@@ -39140,7 +39140,7 @@ func (s *CreateRoutineLoadAliasContext) CreateRoutineLoad() ICreateRoutineLoadCo
 	return t.(ICreateRoutineLoadContext)
 }
 
-func (s *CreateRoutineLoadAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateRoutineLoadAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateRoutineLoadAlias(s)
@@ -39184,7 +39184,7 @@ func (s *ShowIndexTokenizerContext) TOKENIZER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTOKENIZER, 0)
 }
 
-func (s *ShowIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowIndexTokenizer(s)
@@ -39228,7 +39228,7 @@ func (s *PauseAllRoutineLoadContext) LOAD() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOAD, 0)
 }
 
-func (s *PauseAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PauseAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPauseAllRoutineLoad(s)
@@ -39260,7 +39260,7 @@ func (s *SyncContext) SYNC() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSYNC, 0)
 }
 
-func (s *SyncContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SyncContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSync(s)
@@ -39333,7 +39333,7 @@ func (s *ShowCreateRoutineLoadContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *ShowCreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateRoutineLoad(s)
@@ -39398,7 +39398,7 @@ func (s *PauseRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierCont
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *PauseRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PauseRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPauseRoutineLoad(s)
@@ -39442,7 +39442,7 @@ func (s *ShowIndexTokenFilterContext) TOKEN_FILTER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTOKEN_FILTER, 0)
 }
 
-func (s *ShowIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowIndexTokenFilter(s)
@@ -39486,7 +39486,7 @@ func (s *ShowIndexAnalyzerContext) ANALYZER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserANALYZER, 0)
 }
 
-func (s *ShowIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowIndexAnalyzer(s)
@@ -39575,7 +39575,7 @@ func (s *ShowRoutineLoadTaskContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRoutineLoadTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowRoutineLoadTaskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowRoutineLoadTask(s)
@@ -39619,7 +39619,7 @@ func (s *ResumeAllRoutineLoadContext) LOAD() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOAD, 0)
 }
 
-func (s *ResumeAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ResumeAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitResumeAllRoutineLoad(s)
@@ -39684,7 +39684,7 @@ func (s *StopRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *StopRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StopRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStopRoutineLoad(s)
@@ -40389,7 +40389,7 @@ func (s *KillQueryContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *KillQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *KillQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitKillQuery(s)
@@ -40429,7 +40429,7 @@ func (s *KillConnectionContext) CONNECTION() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCONNECTION, 0)
 }
 
-func (s *KillConnectionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *KillConnectionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitKillConnection(s)
@@ -40634,7 +40634,7 @@ func (s *HelpContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *HelpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *HelpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitHelp(s)
@@ -40670,7 +40670,7 @@ func (s *UnlockTablesContext) TABLES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTABLES, 0)
 }
 
-func (s *UnlockTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnlockTablesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnlockTables(s)
@@ -40727,7 +40727,7 @@ func (s *UninstallPluginContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *UninstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UninstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUninstallPlugin(s)
@@ -40895,7 +40895,7 @@ func (s *BackupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *BackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BackupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBackup(s)
@@ -40980,7 +40980,7 @@ func (s *LockTablesContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *LockTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LockTablesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLockTables(s)
@@ -41148,7 +41148,7 @@ func (s *RestoreContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *RestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RestoreContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRestore(s)
@@ -41230,7 +41230,7 @@ func (s *InstallPluginContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *InstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *InstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitInstallPlugin(s)
@@ -41398,7 +41398,7 @@ func (s *WarmUpClusterContext) AND(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAND, i)
 }
 
-func (s *WarmUpClusterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WarmUpClusterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWarmUpCluster(s)
@@ -42151,7 +42151,7 @@ func (s *UnsupportedStartTransactionContext) SNAPSHOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSNAPSHOT, 0)
 }
 
-func (s *UnsupportedStartTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnsupportedStartTransactionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnsupportedStartTransaction(s)
@@ -42351,7 +42351,7 @@ func (s *WarmUpItemContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WarmUpItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WarmUpItemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWarmUpItem(s)
@@ -42555,7 +42555,7 @@ func (s *LockTableContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LockTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LockTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLockTable(s)
@@ -43004,7 +43004,7 @@ func (s *CreateRoutineLoadContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateRoutineLoad(s)
@@ -43336,7 +43336,7 @@ func (s *ShowCreateLoadContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowCreateLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowCreateLoad(s)
@@ -43433,7 +43433,7 @@ func (s *MysqlLoadContext) PropertyItemList() IPropertyItemListContext {
 	return t.(IPropertyItemListContext)
 }
 
-func (s *MysqlLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MysqlLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMysqlLoad(s)
@@ -43675,7 +43675,7 @@ func (s *ImportPrecedingFilterContext) ImportPrecedingFilterStatement() IImportP
 	return t.(IImportPrecedingFilterStatementContext)
 }
 
-func (s *ImportPrecedingFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportPrecedingFilterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportPrecedingFilter(s)
@@ -43719,7 +43719,7 @@ func (s *ImportSequenceContext) ImportSequenceStatement() IImportSequenceStateme
 	return t.(IImportSequenceStatementContext)
 }
 
-func (s *ImportSequenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportSequenceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportSequence(s)
@@ -43763,7 +43763,7 @@ func (s *ImportColumnsContext) ImportColumnsStatement() IImportColumnsStatementC
 	return t.(IImportColumnsStatementContext)
 }
 
-func (s *ImportColumnsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportColumnsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportColumns(s)
@@ -43807,7 +43807,7 @@ func (s *ImportWhereContext) ImportWhereStatement() IImportWhereStatementContext
 	return t.(IImportWhereStatementContext)
 }
 
-func (s *ImportWhereContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportWhereContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportWhere(s)
@@ -43851,7 +43851,7 @@ func (s *SeparatorContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *SeparatorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SeparatorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSeparator(s)
@@ -43895,7 +43895,7 @@ func (s *ImportPartitionsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *ImportPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportPartitions(s)
@@ -43939,7 +43939,7 @@ func (s *ImportDeleteOnContext) ImportDeleteOnStatement() IImportDeleteOnStateme
 	return t.(IImportDeleteOnStatementContext)
 }
 
-func (s *ImportDeleteOnContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportDeleteOnContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportDeleteOn(s)
@@ -44140,7 +44140,7 @@ func (s *ImportSequenceStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportSequenceStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportSequenceStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportSequenceStatement(s)
@@ -44268,7 +44268,7 @@ func (s *ImportDeleteOnStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportDeleteOnStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportDeleteOnStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportDeleteOnStatement(s)
@@ -44391,7 +44391,7 @@ func (s *ImportWhereStatementContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportWhereStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportWhereStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportWhereStatement(s)
@@ -44511,7 +44511,7 @@ func (s *ImportPrecedingFilterStatementContext) ToStringTree(ruleNames []string,
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportPrecedingFilterStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportPrecedingFilterStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportPrecedingFilterStatement(s)
@@ -44680,7 +44680,7 @@ func (s *ImportColumnsStatementContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportColumnsStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportColumnsStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportColumnsStatement(s)
@@ -44879,7 +44879,7 @@ func (s *ImportColumnDescContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportColumnDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ImportColumnDescContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitImportColumnDesc(s)
@@ -45116,7 +45116,7 @@ func (s *RefreshCatalogContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *RefreshCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshCatalog(s)
@@ -45173,7 +45173,7 @@ func (s *RefreshDictionaryContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *RefreshDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshDictionary(s)
@@ -45246,7 +45246,7 @@ func (s *RefreshDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *RefreshDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshDatabase(s)
@@ -45303,7 +45303,7 @@ func (s *RefreshTableContext) MultipartIdentifier() IMultipartIdentifierContext 
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *RefreshTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshTable(s)
@@ -45368,7 +45368,7 @@ func (s *RefreshLdapContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RefreshLdapContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshLdapContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshLdap(s)
@@ -45740,7 +45740,7 @@ func (s *CleanLabelContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CleanLabelContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CleanLabelContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCleanLabel(s)
@@ -45834,7 +45834,7 @@ func (s *CleanQueryStatsContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *CleanQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CleanQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCleanQueryStats(s)
@@ -45874,7 +45874,7 @@ func (s *CleanAllProfileContext) PROFILE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPROFILE, 0)
 }
 
-func (s *CleanAllProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CleanAllProfileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCleanAllProfile(s)
@@ -45918,7 +45918,7 @@ func (s *CleanAllQueryStatsContext) STATS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTATS, 0)
 }
 
-func (s *CleanAllQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CleanAllQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCleanAllQueryStats(s)
@@ -46261,7 +46261,7 @@ func (s *CancelBackupContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelBackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelBackupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelBackup(s)
@@ -46321,7 +46321,7 @@ func (s *CancelWarmUpJobContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *CancelWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelWarmUpJob(s)
@@ -46402,7 +46402,7 @@ func (s *CancelExportContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelExportContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelExport(s)
@@ -46501,7 +46501,7 @@ func (s *CancelBuildIndexContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelBuildIndex(s)
@@ -46566,7 +46566,7 @@ func (s *CancelRestoreContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelRestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelRestoreContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelRestore(s)
@@ -46647,7 +46647,7 @@ func (s *CancelLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelLoadContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelLoad(s)
@@ -46713,7 +46713,7 @@ func (s *CancelDecommisionBackendContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelDecommisionBackendContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelDecommisionBackendContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelDecommisionBackend(s)
@@ -46828,7 +46828,7 @@ func (s *CancelAlterTableContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CancelAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCancelAlterTable(s)
@@ -47604,7 +47604,7 @@ func (s *AdminShowReplicaDistributionContext) BaseTableRef() IBaseTableRefContex
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminShowReplicaDistribution(s)
@@ -47656,7 +47656,7 @@ func (s *AdminShowTabletStorageFormatContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *AdminShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminShowTabletStorageFormat(s)
@@ -47734,7 +47734,7 @@ func (s *AdminRebalanceDiskContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminRebalanceDisk(s)
@@ -47806,7 +47806,7 @@ func (s *AdminSetReplicaStatusContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *AdminSetReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminSetReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminSetReplicaStatus(s)
@@ -47878,7 +47878,7 @@ func (s *AdminSetReplicaVersionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *AdminSetReplicaVersionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminSetReplicaVersionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminSetReplicaVersion(s)
@@ -47964,7 +47964,7 @@ func (s *AdminSetTableStatusContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminSetTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminSetTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminSetTableStatus(s)
@@ -48024,7 +48024,7 @@ func (s *AdminCancelRepairTableContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminCancelRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCancelRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCancelRepairTable(s)
@@ -48094,7 +48094,7 @@ func (s *AdminCopyTabletContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminCopyTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCopyTabletContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCopyTablet(s)
@@ -48150,7 +48150,7 @@ func (s *AdminRepairTableContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminRepairTable(s)
@@ -48230,7 +48230,7 @@ func (s *AdminSetFrontendConfigContext) FRONTENDS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFRONTENDS, 0)
 }
 
-func (s *AdminSetFrontendConfigContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminSetFrontendConfigContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminSetFrontendConfig(s)
@@ -48303,7 +48303,7 @@ func (s *AdminCheckTabletsContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminCheckTabletsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCheckTabletsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCheckTablets(s)
@@ -48381,7 +48381,7 @@ func (s *AdminCleanTrashContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminCleanTrashContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCleanTrashContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCleanTrash(s)
@@ -48453,7 +48453,7 @@ func (s *AdminCompactTableContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AdminCompactTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCompactTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCompactTable(s)
@@ -48502,7 +48502,7 @@ func (s *AdminDiagnoseTabletContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *AdminDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminDiagnoseTablet(s)
@@ -48584,7 +48584,7 @@ func (s *AdminCancelRebalanceDiskContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminCancelRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminCancelRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminCancelRebalanceDisk(s)
@@ -48668,7 +48668,7 @@ func (s *AdminShowReplicaStatusContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AdminShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminShowReplicaStatus(s)
@@ -50011,7 +50011,7 @@ func (s *RecoverPartitionContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *RecoverPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RecoverPartitionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRecoverPartition(s)
@@ -50102,7 +50102,7 @@ func (s *RecoverTableContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RecoverTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RecoverTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRecoverTable(s)
@@ -50202,7 +50202,7 @@ func (s *RecoverDatabaseContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *RecoverDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RecoverDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRecoverDatabase(s)
@@ -50609,7 +50609,7 @@ func (s *AdminSetPartitionVersionContext) PropertyClause() IPropertyClauseContex
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminSetPartitionVersionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AdminSetPartitionVersionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAdminSetPartitionVersion(s)
@@ -50893,7 +50893,7 @@ func (s *BaseTableRefContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BaseTableRefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BaseTableRefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBaseTableRef(s)
@@ -51098,7 +51098,7 @@ func (s *WildWhereContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WildWhereContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WildWhereContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWildWhere(s)
@@ -51270,7 +51270,7 @@ func (s *TranscationCommitContext) NO(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNO, i)
 }
 
-func (s *TranscationCommitContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TranscationCommitContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTranscationCommit(s)
@@ -51326,7 +51326,7 @@ func (s *TransactionRollbackContext) NO(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNO, i)
 }
 
-func (s *TransactionRollbackContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TransactionRollbackContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTransactionRollback(s)
@@ -51382,7 +51382,7 @@ func (s *TransactionBeginContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *TransactionBeginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TransactionBeginContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTransactionBegin(s)
@@ -51878,7 +51878,7 @@ func (s *GrantResourcePrivilegeContext) IdentifierOrText() IIdentifierOrTextCont
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *GrantResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GrantResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGrantResourcePrivilege(s)
@@ -51991,7 +51991,7 @@ func (s *RevokeRoleContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *RevokeRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RevokeRoleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRevokeRole(s)
@@ -52099,7 +52099,7 @@ func (s *GrantTablePrivilegeContext) IdentifierOrText() IIdentifierOrTextContext
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *GrantTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GrantTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGrantTablePrivilege(s)
@@ -52212,7 +52212,7 @@ func (s *GrantRoleContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *GrantRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GrantRoleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGrantRole(s)
@@ -52352,7 +52352,7 @@ func (s *RevokeResourcePrivilegeContext) IdentifierOrText() IIdentifierOrTextCon
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RevokeResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RevokeResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRevokeResourcePrivilege(s)
@@ -52460,7 +52460,7 @@ func (s *RevokeTablePrivilegeContext) IdentifierOrText() IIdentifierOrTextContex
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RevokeTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RevokeTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRevokeTablePrivilege(s)
@@ -53199,7 +53199,7 @@ func (s *PrivilegeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPrivilege(s)
@@ -53383,7 +53383,7 @@ func (s *PrivilegeListContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrivilegeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PrivilegeListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPrivilegeList(s)
@@ -53572,7 +53572,7 @@ func (s *DropBrokerClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DropBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropBrokerClause(s)
@@ -53634,7 +53634,7 @@ func (s *ModifyFrontendOrBackendHostNameClauseContext) STRING_LITERAL(i int) ant
 	return s.GetToken(DorisParserParserSTRING_LITERAL, i)
 }
 
-func (s *ModifyFrontendOrBackendHostNameClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyFrontendOrBackendHostNameClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyFrontendOrBackendHostNameClause(s)
@@ -53679,7 +53679,7 @@ func (s *DropObserverClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropObserverClause(s)
@@ -53724,7 +53724,7 @@ func (s *AddFollowerClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AddFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddFollowerClause(s)
@@ -53769,7 +53769,7 @@ func (s *DropFollowerClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropFollowerClause(s)
@@ -53830,7 +53830,7 @@ func (s *DropAllBrokerClauseContext) IdentifierOrText() IIdentifierOrTextContext
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *DropAllBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropAllBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropAllBrokerClause(s)
@@ -53896,7 +53896,7 @@ func (s *DropBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DropBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropBackendClause(s)
@@ -53961,7 +53961,7 @@ func (s *AlterLoadErrorUrlClauseContext) PropertyClause() IPropertyClauseContext
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterLoadErrorUrlClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterLoadErrorUrlClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterLoadErrorUrlClause(s)
@@ -54051,7 +54051,7 @@ func (s *ModifyBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *ModifyBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyBackendClause(s)
@@ -54134,7 +54134,7 @@ func (s *AddBrokerClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AddBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddBrokerClause(s)
@@ -54179,7 +54179,7 @@ func (s *AddObserverClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AddObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddObserverClause(s)
@@ -54241,7 +54241,7 @@ func (s *DecommissionBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DecommissionBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecommissionBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDecommissionBackendClause(s)
@@ -54324,7 +54324,7 @@ func (s *AddBackendClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddBackendClause(s)
@@ -55207,7 +55207,7 @@ func (s *DropRollupClauseContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropRollupClause(s)
@@ -55462,7 +55462,7 @@ func (s *AddRollupClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AddRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddRollupClause(s)
@@ -55704,7 +55704,7 @@ func (s *ModifyDistributionClauseContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *ModifyDistributionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyDistributionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyDistributionClause(s)
@@ -55809,7 +55809,7 @@ func (s *AddColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddColumnClause(s)
@@ -55914,7 +55914,7 @@ func (s *ModifyColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ModifyColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyColumnClause(s)
@@ -56011,7 +56011,7 @@ func (s *AddColumnsClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddColumnsClause(s)
@@ -56097,7 +56097,7 @@ func (s *ReplaceTableClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReplaceTableClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplaceTableClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplaceTableClause(s)
@@ -56162,7 +56162,7 @@ func (s *DropIndexClauseContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropIndexClause(s)
@@ -56273,7 +56273,7 @@ func (s *DropPartitionClauseContext) INDEX() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINDEX, 0)
 }
 
-func (s *DropPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropPartitionClause(s)
@@ -56389,7 +56389,7 @@ func (s *ReplacePartitionClauseContext) PropertyClause() IPropertyClauseContext 
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReplacePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplacePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplacePartitionClause(s)
@@ -56434,7 +56434,7 @@ func (s *ModifyTableCommentClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ModifyTableCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyTableCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyTableCommentClause(s)
@@ -56523,7 +56523,7 @@ func (s *ReorderColumnsClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReorderColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReorderColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReorderColumnsClause(s)
@@ -56567,7 +56567,7 @@ func (s *DropBranchClausesContext) DropBranchClause() IDropBranchClauseContext {
 	return t.(IDropBranchClauseContext)
 }
 
-func (s *DropBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropBranchClauses(s)
@@ -56615,7 +56615,7 @@ func (s *AddIndexClauseContext) IndexDef() IIndexDefContext {
 	return t.(IIndexDefContext)
 }
 
-func (s *AddIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddIndexClause(s)
@@ -56685,7 +56685,7 @@ func (s *ModifyColumnCommentClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ModifyColumnCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyColumnCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyColumnCommentClause(s)
@@ -56772,7 +56772,7 @@ func (s *RenameColumnClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RenameColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRenameColumnClause(s)
@@ -56816,7 +56816,7 @@ func (s *CreateOrReplaceTagClausesContext) CreateOrReplaceTagClause() ICreateOrR
 	return t.(ICreateOrReplaceTagClauseContext)
 }
 
-func (s *CreateOrReplaceTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateOrReplaceTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateOrReplaceTagClauses(s)
@@ -56886,7 +56886,7 @@ func (s *EnableFeatureClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *EnableFeatureClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *EnableFeatureClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitEnableFeatureClause(s)
@@ -56930,7 +56930,7 @@ func (s *CreateOrReplaceBranchClausesContext) CreateOrReplaceBranchClause() ICre
 	return t.(ICreateOrReplaceBranchClauseContext)
 }
 
-func (s *CreateOrReplaceBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateOrReplaceBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateOrReplaceBranchClauses(s)
@@ -57057,7 +57057,7 @@ func (s *AddPartitionClauseContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *AddPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAddPartitionClause(s)
@@ -57144,7 +57144,7 @@ func (s *RenameRollupClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RenameRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRenameRollupClause(s)
@@ -57231,7 +57231,7 @@ func (s *RenamePartitionClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenamePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RenamePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRenamePartitionClause(s)
@@ -57325,7 +57325,7 @@ func (s *DropColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *DropColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropColumnClause(s)
@@ -57378,7 +57378,7 @@ func (s *RenameClauseContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RenameClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRenameClause(s)
@@ -57513,7 +57513,7 @@ func (s *ModifyPartitionClauseContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ModifyPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyPartitionClause(s)
@@ -57595,7 +57595,7 @@ func (s *ModifyEngineClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ModifyEngineClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ModifyEngineClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitModifyEngineClause(s)
@@ -57639,7 +57639,7 @@ func (s *DropTagClausesContext) DropTagClause() IDropTagClauseContext {
 	return t.(IDropTagClauseContext)
 }
 
-func (s *DropTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropTagClauses(s)
@@ -57790,7 +57790,7 @@ func (s *AlterMultiPartitionClauseContext) PropertyClause() IPropertyClauseConte
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterMultiPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterMultiPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterMultiPartitionClause(s)
@@ -59525,7 +59525,7 @@ func (s *CreateOrReplaceTagClauseContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateOrReplaceTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateOrReplaceTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateOrReplaceTagClause(s)
@@ -59834,7 +59834,7 @@ func (s *CreateOrReplaceBranchClauseContext) ToStringTree(ruleNames []string, re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateOrReplaceBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CreateOrReplaceBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCreateOrReplaceBranchClause(s)
@@ -60100,7 +60100,7 @@ func (s *TagOptionsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TagOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TagOptionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTagOptions(s)
@@ -60307,7 +60307,7 @@ func (s *BranchOptionsContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BranchOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BranchOptionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBranchOptions(s)
@@ -60485,7 +60485,7 @@ func (s *RetainTimeContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RetainTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RetainTimeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRetainTime(s)
@@ -60627,7 +60627,7 @@ func (s *RetentionSnapshotContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RetentionSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RetentionSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRetentionSnapshot(s)
@@ -60835,7 +60835,7 @@ func (s *MinSnapshotsToKeepContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MinSnapshotsToKeepContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MinSnapshotsToKeepContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMinSnapshotsToKeep(s)
@@ -60977,7 +60977,7 @@ func (s *TimeValueWithUnitContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TimeValueWithUnitContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TimeValueWithUnitContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTimeValueWithUnit(s)
@@ -61137,7 +61137,7 @@ func (s *DropBranchClauseContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropBranchClause(s)
@@ -61317,7 +61317,7 @@ func (s *DropTagClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropTagClause(s)
@@ -61487,7 +61487,7 @@ func (s *ColumnPositionContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnPositionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColumnPositionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColumnPosition(s)
@@ -61645,7 +61645,7 @@ func (s *ToRollupContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ToRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ToRollupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitToRollup(s)
@@ -61779,7 +61779,7 @@ func (s *FromRollupContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FromRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FromRollupContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFromRollup(s)
@@ -61973,7 +61973,7 @@ func (s *ShowTableStatsContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowTableStats(s)
@@ -62095,7 +62095,7 @@ func (s *AnalyzeDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AnalyzeDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AnalyzeDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAnalyzeDatabase(s)
@@ -62198,7 +62198,7 @@ func (s *ShowQueuedAnalyzeJobsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowQueuedAnalyzeJobsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowQueuedAnalyzeJobsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowQueuedAnalyzeJobs(s)
@@ -62280,7 +62280,7 @@ func (s *ShowIndexStatsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowIndexStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowIndexStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowIndexStats(s)
@@ -62374,7 +62374,7 @@ func (s *DropStatsContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *DropStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropStats(s)
@@ -62435,7 +62435,7 @@ func (s *DropCachedStatsContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *DropCachedStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropCachedStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropCachedStats(s)
@@ -62480,7 +62480,7 @@ func (s *KillAnalyzeJobContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *KillAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *KillAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitKillAnalyzeJob(s)
@@ -62588,7 +62588,7 @@ func (s *ShowAnalyzeContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowAnalyzeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowAnalyzeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowAnalyze(s)
@@ -62632,7 +62632,7 @@ func (s *DropAnalyzeJobContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *DropAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropAnalyzeJob(s)
@@ -62800,7 +62800,7 @@ func (s *AlterColumnStatsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *AlterColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterColumnStats(s)
@@ -62840,7 +62840,7 @@ func (s *DropExpiredStatsContext) STATS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTATS, 0)
 }
 
-func (s *DropExpiredStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DropExpiredStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDropExpiredStats(s)
@@ -62999,7 +62999,7 @@ func (s *AnalyzeTableContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *AnalyzeTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AnalyzeTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAnalyzeTable(s)
@@ -63104,7 +63104,7 @@ func (s *AlterTableStatsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *AlterTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AlterTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAlterTableStats(s)
@@ -63190,7 +63190,7 @@ func (s *ShowColumnHistogramStatsContext) IdentifierList() IIdentifierListContex
 	return t.(IIdentifierListContext)
 }
 
-func (s *ShowColumnHistogramStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowColumnHistogramStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowColumnHistogramStats(s)
@@ -64340,7 +64340,7 @@ func (s *ShowColumnStatsContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ShowColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowColumnStats(s)
@@ -64393,7 +64393,7 @@ func (s *ShowAnalyzeTaskContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowAnalyzeTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ShowAnalyzeTaskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitShowAnalyzeTask(s)
@@ -64736,7 +64736,7 @@ func (s *AnalyzePropertiesContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnalyzePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AnalyzePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAnalyzeProperties(s)
@@ -65065,7 +65065,7 @@ func (s *WorkloadPolicyActionsContext) ToStringTree(ruleNames []string, recog an
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyActionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WorkloadPolicyActionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWorkloadPolicyActions(s)
@@ -65207,7 +65207,7 @@ func (s *WorkloadPolicyActionContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyActionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WorkloadPolicyActionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWorkloadPolicyAction(s)
@@ -65396,7 +65396,7 @@ func (s *WorkloadPolicyConditionsContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyConditionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WorkloadPolicyConditionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWorkloadPolicyConditions(s)
@@ -65578,7 +65578,7 @@ func (s *WorkloadPolicyConditionContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyConditionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WorkloadPolicyConditionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWorkloadPolicyCondition(s)
@@ -65788,7 +65788,7 @@ func (s *StorageBackendContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StorageBackendContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StorageBackendContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStorageBackend(s)
@@ -66177,7 +66177,7 @@ func (s *PasswordOptionContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PasswordOptionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PasswordOptionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPasswordOption(s)
@@ -66630,7 +66630,7 @@ func (s *FunctionArgumentsContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionArgumentsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionArgumentsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFunctionArguments(s)
@@ -66814,7 +66814,7 @@ func (s *DataTypeListContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataTypeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DataTypeListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDataTypeList(s)
@@ -67015,7 +67015,7 @@ func (s *SetTransactionContext) StatementScope() IStatementScopeContext {
 	return t.(IStatementScopeContext)
 }
 
-func (s *SetTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetTransactionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetTransaction(s)
@@ -67092,7 +67092,7 @@ func (s *SetUserPropertiesContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *SetUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetUserProperties(s)
@@ -67156,7 +67156,7 @@ func (s *SetDefaultStorageVaultContext) VAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVAULT, 0)
 }
 
-func (s *SetDefaultStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetDefaultStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetDefaultStorageVault(s)
@@ -67278,7 +67278,7 @@ func (s *SetOptionsContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *SetOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetOptionsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetOptions(s)
@@ -67714,7 +67714,7 @@ func (s *SetVariableWithTypeContext) DEFAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDEFAULT, 0)
 }
 
-func (s *SetVariableWithTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetVariableWithTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetVariableWithType(s)
@@ -67882,7 +67882,7 @@ func (s *SetNamesContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SetNamesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetNamesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetNames(s)
@@ -67947,7 +67947,7 @@ func (s *SetCharsetContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *SetCharsetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetCharsetContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetCharset(s)
@@ -68042,7 +68042,7 @@ func (s *SetCollateContext) COLLATE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOLLATE, 0)
 }
 
-func (s *SetCollateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetCollateContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetCollate(s)
@@ -68124,7 +68124,7 @@ func (s *SetPasswordContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SetPasswordContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetPasswordContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetPassword(s)
@@ -68168,7 +68168,7 @@ func (s *SetVariableWithoutTypeContext) Variable() IVariableContext {
 	return t.(IVariableContext)
 }
 
-func (s *SetVariableWithoutTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetVariableWithoutTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetVariableWithoutType(s)
@@ -68225,7 +68225,7 @@ func (s *SetLdapAdminPasswordContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SetLdapAdminPasswordContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetLdapAdminPasswordContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetLdapAdminPassword(s)
@@ -68747,7 +68747,7 @@ func (s *SetUserVariableContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SetUserVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetUserVariableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetUserVariable(s)
@@ -68839,7 +68839,7 @@ func (s *SetSystemVariableContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *SetSystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetSystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetSystemVariable(s)
@@ -69056,7 +69056,7 @@ func (s *TransactionAccessModeContext) ToStringTree(ruleNames []string, recog an
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TransactionAccessModeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TransactionAccessModeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTransactionAccessMode(s)
@@ -69193,7 +69193,7 @@ func (s *IsolationLevelContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IsolationLevelContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IsolationLevelContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIsolationLevel(s)
@@ -69428,7 +69428,7 @@ func (s *SupportedUnsetStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SupportedUnsetStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SupportedUnsetStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSupportedUnsetStatement(s)
@@ -69702,7 +69702,7 @@ func (s *UseCloudClusterContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *UseCloudClusterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UseCloudClusterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUseCloudCluster(s)
@@ -69789,7 +69789,7 @@ func (s *UseDatabaseContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *UseDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UseDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUseDatabase(s)
@@ -69842,7 +69842,7 @@ func (s *SwitchCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *SwitchCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SwitchCatalogContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSwitchCatalog(s)
@@ -70126,7 +70126,7 @@ func (s *StageAndPatternContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StageAndPatternContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StageAndPatternContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStageAndPattern(s)
@@ -70393,7 +70393,7 @@ func (s *DescribeTableValuedFunctionContext) PropertyItemList() IPropertyItemLis
 	return t.(IPropertyItemListContext)
 }
 
-func (s *DescribeTableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DescribeTableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDescribeTableValuedFunction(s)
@@ -70469,7 +70469,7 @@ func (s *DescribeTableContext) SpecifiedPartition() ISpecifiedPartitionContext {
 	return t.(ISpecifiedPartitionContext)
 }
 
-func (s *DescribeTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DescribeTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDescribeTable(s)
@@ -70533,7 +70533,7 @@ func (s *DescribeTableAllContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *DescribeTableAllContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DescribeTableAllContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDescribeTableAll(s)
@@ -70597,7 +70597,7 @@ func (s *DescribeDictionaryContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *DescribeDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DescribeDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDescribeDictionary(s)
@@ -70933,7 +70933,7 @@ func (s *ConstraintContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConstraintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitConstraint(s)
@@ -71202,7 +71202,7 @@ func (s *PartitionSpecContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionSpecContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionSpec(s)
@@ -71513,7 +71513,7 @@ func (s *PartitionTableContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionTable(s)
@@ -71788,7 +71788,7 @@ func (s *IdentityOrFunctionListContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentityOrFunctionListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentityOrFunctionListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentityOrFunctionList(s)
@@ -71957,7 +71957,7 @@ func (s *IdentityOrFunctionContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentityOrFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentityOrFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentityOrFunction(s)
@@ -72623,7 +72623,7 @@ func (s *DataDescContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DataDescContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDataDesc(s)
@@ -73348,7 +73348,7 @@ func (s *StatementScopeContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StatementScopeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StatementScopeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStatementScope(s)
@@ -73457,7 +73457,7 @@ func (s *BuildModeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BuildModeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BuildModeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBuildMode(s)
@@ -73596,7 +73596,7 @@ func (s *RefreshTriggerContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshTriggerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshTriggerContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshTrigger(s)
@@ -73795,7 +73795,7 @@ func (s *RefreshScheduleContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshScheduleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshScheduleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshSchedule(s)
@@ -73937,7 +73937,7 @@ func (s *RefreshMethodContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshMethodContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RefreshMethodContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRefreshMethod(s)
@@ -74089,7 +74089,7 @@ func (s *MvPartitionContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MvPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MvPartitionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMvPartition(s)
@@ -74221,7 +74221,7 @@ func (s *IdentifierOrTextContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrTextContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierOrTextContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifierOrText(s)
@@ -74357,7 +74357,7 @@ func (s *IdentifierOrTextOrAsteriskContext) ToStringTree(ruleNames []string, rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrTextOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierOrTextOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifierOrTextOrAsterisk(s)
@@ -74560,7 +74560,7 @@ func (s *MultipartIdentifierOrAsteriskContext) ToStringTree(ruleNames []string, 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultipartIdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MultipartIdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMultipartIdentifierOrAsterisk(s)
@@ -74705,7 +74705,7 @@ func (s *IdentifierOrAsteriskContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifierOrAsterisk(s)
@@ -74894,7 +74894,7 @@ func (s *UserIdentifyContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUserIdentify(s)
@@ -75084,7 +75084,7 @@ func (s *GrantUserIdentifyContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GrantUserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GrantUserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGrantUserIdentify(s)
@@ -75298,7 +75298,7 @@ func (s *ExplainContext) ToStringTree(ruleNames []string, recog antlr.Recognizer
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExplainContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExplainContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExplain(s)
@@ -75460,7 +75460,7 @@ func (s *ExplainCommandContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExplainCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExplainCommandContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExplainCommand(s)
@@ -75604,7 +75604,7 @@ func (s *PlanTypeContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PlanTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PlanTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPlanType(s)
@@ -75725,7 +75725,7 @@ func (s *ReplayCommandContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ReplayCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplayCommandContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplayCommand(s)
@@ -75869,7 +75869,7 @@ func (s *ReplayTypeContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ReplayTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplayTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplayType(s)
@@ -76012,7 +76012,7 @@ func (s *MergeTypeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MergeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MergeTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMergeType(s)
@@ -76133,7 +76133,7 @@ func (s *PreFilterClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PreFilterClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PreFilterClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPreFilterClause(s)
@@ -76261,7 +76261,7 @@ func (s *DeleteOnClauseContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DeleteOnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DeleteOnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDeleteOnClause(s)
@@ -76389,7 +76389,7 @@ func (s *SequenceColClauseContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SequenceColClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SequenceColClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSequenceColClause(s)
@@ -76527,7 +76527,7 @@ func (s *ColFromPathContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColFromPathContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColFromPathContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColFromPath(s)
@@ -76734,7 +76734,7 @@ func (s *ColMappingListContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColMappingListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColMappingListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColMappingList(s)
@@ -76931,7 +76931,7 @@ func (s *MappingExprContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MappingExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MappingExprContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMappingExpr(s)
@@ -77145,7 +77145,7 @@ func (s *WithRemoteStorageSystemContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WithRemoteStorageSystemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WithRemoteStorageSystemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWithRemoteStorageSystem(s)
@@ -77494,7 +77494,7 @@ func (s *ResourceDescContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ResourceDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ResourceDescContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitResourceDesc(s)
@@ -77877,7 +77877,7 @@ func (s *MysqlDataDescContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MysqlDataDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MysqlDataDescContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMysqlDataDesc(s)
@@ -78231,7 +78231,7 @@ func (s *SkipLinesContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SkipLinesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SkipLinesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSkipLines(s)
@@ -78474,7 +78474,7 @@ func (s *OutFileClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *OutFileClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *OutFileClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitOutFileClause(s)
@@ -78678,7 +78678,7 @@ func (s *QueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQuery(s)
@@ -78818,7 +78818,7 @@ func (s *QueryTermDefaultContext) QueryPrimary() IQueryPrimaryContext {
 	return t.(IQueryPrimaryContext)
 }
 
-func (s *QueryTermDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryTermDefaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQueryTermDefault(s)
@@ -78934,7 +78934,7 @@ func (s *SetOperationContext) MINUS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserMINUS, 0)
 }
 
-func (s *SetOperationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetOperationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetOperation(s)
@@ -79181,7 +79181,7 @@ func (s *SetQuantifierContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SetQuantifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SetQuantifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSetQuantifier(s)
@@ -79318,7 +79318,7 @@ func (s *SubqueryContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SubqueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SubqueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSubquery(s)
@@ -79362,7 +79362,7 @@ func (s *ValuesTableContext) InlineTable() IInlineTableContext {
 	return t.(IInlineTableContext)
 }
 
-func (s *ValuesTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ValuesTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitValuesTable(s)
@@ -79406,7 +79406,7 @@ func (s *QueryPrimaryDefaultContext) QuerySpecification() IQuerySpecificationCon
 	return t.(IQuerySpecificationContext)
 }
 
-func (s *QueryPrimaryDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryPrimaryDefaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQueryPrimaryDefault(s)
@@ -79684,7 +79684,7 @@ func (s *RegularQuerySpecificationContext) QualifyClause() IQualifyClauseContext
 	return t.(IQualifyClauseContext)
 }
 
-func (s *RegularQuerySpecificationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RegularQuerySpecificationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRegularQuerySpecification(s)
@@ -79930,7 +79930,7 @@ func (s *CteContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) st
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CteContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCte(s)
@@ -80119,7 +80119,7 @@ func (s *AliasQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AliasQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AliasQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAliasQuery(s)
@@ -80311,7 +80311,7 @@ func (s *ColumnAliasesContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnAliasesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColumnAliasesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColumnAliases(s)
@@ -80474,7 +80474,7 @@ func (s *SelectClauseContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SelectClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSelectClause(s)
@@ -80607,7 +80607,7 @@ func (s *SelectColumnClauseContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SelectColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSelectColumnClause(s)
@@ -80714,7 +80714,7 @@ func (s *WhereClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WhereClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WhereClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWhereClause(s)
@@ -80829,7 +80829,7 @@ func (s *FromClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FromClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FromClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFromClause(s)
@@ -81040,7 +81040,7 @@ func (s *IntoClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IntoClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IntoClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIntoClause(s)
@@ -81232,7 +81232,7 @@ func (s *BulkCollectClauseContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BulkCollectClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BulkCollectClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBulkCollectClause(s)
@@ -81361,7 +81361,7 @@ func (s *TableRowContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableRowContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TableRowContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTableRow(s)
@@ -81523,7 +81523,7 @@ func (s *RelationsContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RelationsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RelationsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRelations(s)
@@ -81705,7 +81705,7 @@ func (s *RelationContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RelationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RelationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRelation(s)
@@ -81903,7 +81903,7 @@ func (s *JoinRelationContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinRelationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *JoinRelationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitJoinRelation(s)
@@ -82071,7 +82071,7 @@ func (s *CommentDistributeTypeContext) HINT_END() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserHINT_END, 0)
 }
 
-func (s *CommentDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CommentDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCommentDistributeType(s)
@@ -82123,7 +82123,7 @@ func (s *BracketDistributeTypeContext) RIGHT_BRACKET() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_BRACKET, 0)
 }
 
-func (s *BracketDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BracketDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBracketDistributeType(s)
@@ -82338,7 +82338,7 @@ func (s *BracketRelationHintContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *BracketRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BracketRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBracketRelationHint(s)
@@ -82423,7 +82423,7 @@ func (s *CommentRelationHintContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CommentRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CommentRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCommentRelationHint(s)
@@ -82647,7 +82647,7 @@ func (s *AggClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AggClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AggClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAggClause(s)
@@ -82879,7 +82879,7 @@ func (s *GroupingElementContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingElementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupingElementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGroupingElement(s)
@@ -83307,7 +83307,7 @@ func (s *GroupingSetContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingSetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupingSetContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitGroupingSet(s)
@@ -83470,7 +83470,7 @@ func (s *HavingClauseContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HavingClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *HavingClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitHavingClause(s)
@@ -83585,7 +83585,7 @@ func (s *QualifyClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QualifyClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QualifyClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQualifyClause(s)
@@ -83758,7 +83758,7 @@ func (s *SelectHintContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SelectHintContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSelectHint(s)
@@ -84100,7 +84100,7 @@ func (s *HintStatementContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HintStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *HintStatementContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitHintStatement(s)
@@ -84448,7 +84448,7 @@ func (s *HintAssignmentContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HintAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *HintAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitHintAssignment(s)
@@ -84658,7 +84658,7 @@ func (s *UpdateAssignmentContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UpdateAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UpdateAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUpdateAssignment(s)
@@ -84862,7 +84862,7 @@ func (s *UpdateAssignmentSeqContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UpdateAssignmentSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UpdateAssignmentSeqContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUpdateAssignmentSeq(s)
@@ -85150,7 +85150,7 @@ func (s *LateralViewContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LateralViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LateralViewContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLateralView(s)
@@ -85412,7 +85412,7 @@ func (s *QueryOrganizationContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryOrganizationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QueryOrganizationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQueryOrganization(s)
@@ -85580,7 +85580,7 @@ func (s *SortClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SortClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SortClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSortClause(s)
@@ -85771,7 +85771,7 @@ func (s *SortItemContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SortItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SortItemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSortItem(s)
@@ -85969,7 +85969,7 @@ func (s *LimitClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LimitClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LimitClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLimitClause(s)
@@ -86286,7 +86286,7 @@ func (s *PartitionClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionClause(s)
@@ -86457,7 +86457,7 @@ func (s *JoinTypeContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *JoinTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitJoinType(s)
@@ -86788,7 +86788,7 @@ func (s *JoinCriteriaContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinCriteriaContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *JoinCriteriaContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitJoinCriteria(s)
@@ -86936,7 +86936,7 @@ func (s *IdentifierListContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifierList(s)
@@ -87116,7 +87116,7 @@ func (s *IdentifierSeqContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierSeqContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifierSeq(s)
@@ -87338,7 +87338,7 @@ func (s *OptScanParamsContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *OptScanParamsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *OptScanParamsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitOptScanParams(s)
@@ -87561,7 +87561,7 @@ func (s *TableValuedFunctionContext) PropertyItemList() IPropertyItemListContext
 	return t.(IPropertyItemListContext)
 }
 
-func (s *TableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTableValuedFunction(s)
@@ -87613,7 +87613,7 @@ func (s *RelationListContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *RelationListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RelationListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRelationList(s)
@@ -87722,7 +87722,7 @@ func (s *AliasedQueryContext) LateralView(i int) ILateralViewContext {
 	return t.(ILateralViewContext)
 }
 
-func (s *AliasedQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AliasedQueryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAliasedQuery(s)
@@ -87935,7 +87935,7 @@ func (s *TableNameContext) LateralView(i int) ILateralViewContext {
 	return t.(ILateralViewContext)
 }
 
-func (s *TableNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TableNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTableName(s)
@@ -88312,7 +88312,7 @@ func (s *MaterializedViewNameContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MaterializedViewNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MaterializedViewNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMaterializedViewName(s)
@@ -88451,7 +88451,7 @@ func (s *PropertyClauseContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PropertyClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPropertyClause(s)
@@ -88638,7 +88638,7 @@ func (s *PropertyItemListContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyItemListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PropertyItemListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPropertyItemList(s)
@@ -88822,7 +88822,7 @@ func (s *PropertyItemContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PropertyItemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPropertyItem(s)
@@ -88959,7 +88959,7 @@ func (s *PropertyKeyContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyKeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PropertyKeyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPropertyKey(s)
@@ -89097,7 +89097,7 @@ func (s *PropertyValueContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyValueContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PropertyValueContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPropertyValue(s)
@@ -89240,7 +89240,7 @@ func (s *TableAliasContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TableAliasContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTableAlias(s)
@@ -89444,7 +89444,7 @@ func (s *MultipartIdentifierContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultipartIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MultipartIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMultipartIdentifier(s)
@@ -89653,7 +89653,7 @@ func (s *SimpleColumnDefsContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SimpleColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SimpleColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSimpleColumnDefs(s)
@@ -89825,7 +89825,7 @@ func (s *SimpleColumnDefContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SimpleColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SimpleColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSimpleColumnDef(s)
@@ -90019,7 +90019,7 @@ func (s *ColumnDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColumnDefs(s)
@@ -90529,7 +90529,7 @@ func (s *ColumnDefContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColumnDef(s)
@@ -91185,7 +91185,7 @@ func (s *IndexDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IndexDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IndexDefsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIndexDefs(s)
@@ -91497,7 +91497,7 @@ func (s *IndexDefContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IndexDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IndexDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIndexDef(s)
@@ -91820,7 +91820,7 @@ func (s *PartitionsDefContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionsDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionsDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionsDef(s)
@@ -92053,7 +92053,7 @@ func (s *PartitionDefContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionDef(s)
@@ -92288,7 +92288,7 @@ func (s *LessThanPartitionDefContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LessThanPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LessThanPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLessThanPartitionDef(s)
@@ -92604,7 +92604,7 @@ func (s *FixedPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FixedPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FixedPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFixedPartitionDef(s)
@@ -92906,7 +92906,7 @@ func (s *StepPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StepPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StepPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStepPartitionDef(s)
@@ -93217,7 +93217,7 @@ func (s *InPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *InPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *InPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitInPartitionDef(s)
@@ -93541,7 +93541,7 @@ func (s *PartitionValueListContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionValueListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionValueListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionValueList(s)
@@ -93705,7 +93705,7 @@ func (s *PartitionValueDefContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionValueDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PartitionValueDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPartitionValueDef(s)
@@ -93935,7 +93935,7 @@ func (s *RollupDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RollupDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RollupDefsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRollupDefs(s)
@@ -94189,7 +94189,7 @@ func (s *RollupDefContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RollupDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RollupDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRollupDef(s)
@@ -94381,7 +94381,7 @@ func (s *AggTypeDefContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AggTypeDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AggTypeDefContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAggTypeDef(s)
@@ -94532,7 +94532,7 @@ func (s *TabletListContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TabletListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TabletListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTabletList(s)
@@ -94745,7 +94745,7 @@ func (s *InlineTableContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *InlineTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *InlineTableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitInlineTable(s)
@@ -94914,7 +94914,7 @@ func (s *NamedExpressionContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NamedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *NamedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitNamedExpression(s)
@@ -95085,7 +95085,7 @@ func (s *NamedExpressionSeqContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NamedExpressionSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *NamedExpressionSeqContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitNamedExpressionSeq(s)
@@ -95241,7 +95241,7 @@ func (s *ExpressionContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExpression(s)
@@ -95467,7 +95467,7 @@ func (s *LambdaExpressionContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LambdaExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LambdaExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLambdaExpression(s)
@@ -95707,7 +95707,7 @@ func (s *ExistContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ExistContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExistContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExist(s)
@@ -95759,7 +95759,7 @@ func (s *LogicalNotContext) NOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNOT, 0)
 }
 
-func (s *LogicalNotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LogicalNotContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLogicalNot(s)
@@ -95819,7 +95819,7 @@ func (s *PredicatedContext) Predicate() IPredicateContext {
 	return t.(IPredicateContext)
 }
 
-func (s *PredicatedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PredicatedContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPredicated(s)
@@ -95879,7 +95879,7 @@ func (s *IsnullContext) IS_NULL_PRED() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserIS_NULL_PRED, 0)
 }
 
-func (s *IsnullContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IsnullContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIsnull(s)
@@ -95935,7 +95935,7 @@ func (s *Is_not_null_predContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *Is_not_null_predContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *Is_not_null_predContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIs_not_null_pred(s)
@@ -96035,7 +96035,7 @@ func (s *LogicalBinaryContext) OR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserOR, 0)
 }
 
-func (s *LogicalBinaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LogicalBinaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLogicalBinary(s)
@@ -96123,7 +96123,7 @@ func (s *DoublePipesContext) DOUBLEPIPES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOUBLEPIPES, 0)
 }
 
-func (s *DoublePipesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DoublePipesContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDoublePipes(s)
@@ -96614,7 +96614,7 @@ func (s *RowConstructorContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RowConstructorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RowConstructorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRowConstructor(s)
@@ -96794,7 +96794,7 @@ func (s *RowConstructorItemContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RowConstructorItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RowConstructorItemContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRowConstructorItem(s)
@@ -97182,7 +97182,7 @@ func (s *PredicateContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PredicateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PredicateContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPredicate(s)
@@ -97736,7 +97736,7 @@ func (s *ValueExpressionDefaultContext) PrimaryExpression() IPrimaryExpressionCo
 	return t.(IPrimaryExpressionContext)
 }
 
-func (s *ValueExpressionDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ValueExpressionDefaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitValueExpressionDefault(s)
@@ -97831,7 +97831,7 @@ func (s *ComparisonContext) ValueExpression(i int) IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ComparisonContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ComparisonContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitComparison(s)
@@ -97951,7 +97951,7 @@ func (s *ArithmeticBinaryContext) PIPE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPIPE, 0)
 }
 
-func (s *ArithmeticBinaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ArithmeticBinaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitArithmeticBinary(s)
@@ -98012,7 +98012,7 @@ func (s *ArithmeticUnaryContext) TILDE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTILDE, 0)
 }
 
-func (s *ArithmeticUnaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ArithmeticUnaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitArithmeticUnary(s)
@@ -98444,7 +98444,7 @@ func (s *DereferenceContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DereferenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DereferenceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDereference(s)
@@ -98481,7 +98481,7 @@ func (s *CurrentDateContext) CURRENT_DATE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_DATE, 0)
 }
 
-func (s *CurrentDateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CurrentDateContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCurrentDate(s)
@@ -98562,7 +98562,7 @@ func (s *CastContext) CAST() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCAST, 0)
 }
 
-func (s *CastContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CastContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCast(s)
@@ -98614,7 +98614,7 @@ func (s *ParenthesizedExpressionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ParenthesizedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ParenthesizedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitParenthesizedExpression(s)
@@ -98662,7 +98662,7 @@ func (s *UserVariableContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *UserVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UserVariableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUserVariable(s)
@@ -98740,7 +98740,7 @@ func (s *ElementAtContext) ValueExpression() IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ElementAtContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ElementAtContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitElementAt(s)
@@ -98777,7 +98777,7 @@ func (s *LocalTimestampContext) LOCALTIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOCALTIMESTAMP, 0)
 }
 
-func (s *LocalTimestampContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LocalTimestampContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLocalTimestamp(s)
@@ -98901,7 +98901,7 @@ func (s *CharFunctionContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *CharFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CharFunctionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCharFunction(s)
@@ -98945,7 +98945,7 @@ func (s *IntervalLiteralContext) Interval() IIntervalContext {
 	return t.(IIntervalContext)
 }
 
-func (s *IntervalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IntervalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIntervalLiteral(s)
@@ -99077,7 +99077,7 @@ func (s *SimpleCaseContext) ELSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserELSE, 0)
 }
 
-func (s *SimpleCaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SimpleCaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSimpleCase(s)
@@ -99125,7 +99125,7 @@ func (s *ColumnReferenceContext) BINARY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBINARY, 0)
 }
 
-func (s *ColumnReferenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ColumnReferenceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitColumnReference(s)
@@ -99218,7 +99218,7 @@ func (s *StarContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *StarContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StarContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStar(s)
@@ -99255,7 +99255,7 @@ func (s *SessionUserContext) SESSION_USER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSESSION_USER, 0)
 }
 
-func (s *SessionUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SessionUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSessionUser(s)
@@ -99336,7 +99336,7 @@ func (s *ConvertTypeContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *ConvertTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConvertTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitConvertType(s)
@@ -99422,7 +99422,7 @@ func (s *ConvertCharSetContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ConvertCharSetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConvertCharSetContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitConvertCharSet(s)
@@ -99474,7 +99474,7 @@ func (s *SubqueryExpressionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SubqueryExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SubqueryExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSubqueryExpression(s)
@@ -99561,7 +99561,7 @@ func (s *EncryptKeyContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *EncryptKeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *EncryptKeyContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitEncryptKey(s)
@@ -99598,7 +99598,7 @@ func (s *CurrentTimeContext) CURRENT_TIME() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_TIME, 0)
 }
 
-func (s *CurrentTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CurrentTimeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCurrentTime(s)
@@ -99635,7 +99635,7 @@ func (s *LocalTimeContext) LOCALTIME() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOCALTIME, 0)
 }
 
-func (s *LocalTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LocalTimeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitLocalTime(s)
@@ -99700,7 +99700,7 @@ func (s *SystemVariableContext) SESSION() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSESSION, 0)
 }
 
-func (s *SystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSystemVariable(s)
@@ -99772,7 +99772,7 @@ func (s *CollateContext) DEFAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDEFAULT, 0)
 }
 
-func (s *CollateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CollateContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCollate(s)
@@ -99809,7 +99809,7 @@ func (s *CurrentUserContext) CURRENT_USER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_USER, 0)
 }
 
-func (s *CurrentUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CurrentUserContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCurrentUser(s)
@@ -99853,7 +99853,7 @@ func (s *ConstantDefaultContext) Constant() IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *ConstantDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ConstantDefaultContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitConstantDefault(s)
@@ -99947,7 +99947,7 @@ func (s *ExtractContext) TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTIMESTAMP, 0)
 }
 
-func (s *ExtractContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExtractContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExtract(s)
@@ -99984,7 +99984,7 @@ func (s *CurrentTimestampContext) CURRENT_TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_TIMESTAMP, 0)
 }
 
-func (s *CurrentTimestampContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CurrentTimestampContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCurrentTimestamp(s)
@@ -100028,7 +100028,7 @@ func (s *FunctionCallContext) FunctionCallExpression() IFunctionCallExpressionCo
 	return t.(IFunctionCallExpressionContext)
 }
 
-func (s *FunctionCallContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionCallContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFunctionCall(s)
@@ -100140,7 +100140,7 @@ func (s *ArraySliceContext) ValueExpression(i int) IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ArraySliceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ArraySliceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitArraySlice(s)
@@ -100242,7 +100242,7 @@ func (s *SearchedCaseContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SearchedCaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SearchedCaseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSearchedCase(s)
@@ -101479,7 +101479,7 @@ func (s *ReplaceContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ReplaceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ReplaceContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitReplace(s)
@@ -101535,7 +101535,7 @@ func (s *ExceptContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ExceptContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExceptContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitExcept(s)
@@ -101727,7 +101727,7 @@ func (s *CastDataTypeContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CastDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CastDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCastDataType(s)
@@ -102049,7 +102049,7 @@ func (s *FunctionCallExpressionContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionCallExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionCallExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFunctionCallExpression(s)
@@ -102351,7 +102351,7 @@ func (s *FunctionIdentifierContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFunctionIdentifier(s)
@@ -102551,7 +102551,7 @@ func (s *FunctionNameIdentifierContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionNameIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionNameIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFunctionNameIdentifier(s)
@@ -102874,7 +102874,7 @@ func (s *WindowSpecContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WindowSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WindowSpecContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWindowSpec(s)
@@ -103107,7 +103107,7 @@ func (s *WindowFrameContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WindowFrameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WindowFrameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWindowFrame(s)
@@ -103258,7 +103258,7 @@ func (s *FrameUnitsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FrameUnitsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FrameUnitsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFrameUnits(s)
@@ -103405,7 +103405,7 @@ func (s *FrameBoundaryContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FrameBoundaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FrameBoundaryContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitFrameBoundary(s)
@@ -103627,7 +103627,7 @@ func (s *QualifiedNameContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QualifiedNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QualifiedNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQualifiedName(s)
@@ -103798,7 +103798,7 @@ func (s *SpecifiedPartitionContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SpecifiedPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SpecifiedPartitionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSpecifiedPartition(s)
@@ -104061,7 +104061,7 @@ func (s *StructLiteralContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *StructLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StructLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStructLiteral(s)
@@ -104093,7 +104093,7 @@ func (s *NullLiteralContext) NULL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNULL, 0)
 }
 
-func (s *NullLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *NullLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitNullLiteral(s)
@@ -104129,7 +104129,7 @@ func (s *StringLiteralContext) BINARY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBINARY, 0)
 }
 
-func (s *StringLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *StringLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitStringLiteral(s)
@@ -104182,7 +104182,7 @@ func (s *TypeConstructorContext) TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTIMESTAMP, 0)
 }
 
-func (s *TypeConstructorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TypeConstructorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTypeConstructor(s)
@@ -104277,7 +104277,7 @@ func (s *ArrayLiteralContext) Constant(i int) IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *ArrayLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ArrayLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitArrayLiteral(s)
@@ -104309,7 +104309,7 @@ func (s *PlaceholderContext) PLACEHOLDER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPLACEHOLDER, 0)
 }
 
-func (s *PlaceholderContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PlaceholderContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPlaceholder(s)
@@ -104412,7 +104412,7 @@ func (s *MapLiteralContext) Constant(i int) IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *MapLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MapLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitMapLiteral(s)
@@ -104456,7 +104456,7 @@ func (s *NumericLiteralContext) Number() INumberContext {
 	return t.(INumberContext)
 }
 
-func (s *NumericLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *NumericLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitNumericLiteral(s)
@@ -104500,7 +104500,7 @@ func (s *BooleanLiteralContext) BooleanValue() IBooleanValueContext {
 	return t.(IBooleanValueContext)
 }
 
-func (s *BooleanLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BooleanLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBooleanLiteral(s)
@@ -104959,7 +104959,7 @@ func (s *ComparisonOperatorContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComparisonOperatorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ComparisonOperatorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitComparisonOperator(s)
@@ -105063,7 +105063,7 @@ func (s *BooleanValueContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BooleanValueContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BooleanValueContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitBooleanValue(s)
@@ -105232,7 +105232,7 @@ func (s *WhenClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WhenClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WhenClauseContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitWhenClause(s)
@@ -105404,7 +105404,7 @@ func (s *IntervalContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IntervalContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IntervalContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitInterval(s)
@@ -105547,7 +105547,7 @@ func (s *UnitIdentifierContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UnitIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnitIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnitIdentifier(s)
@@ -105668,7 +105668,7 @@ func (s *DataTypeWithNullableContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataTypeWithNullableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DataTypeWithNullableContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDataTypeWithNullable(s)
@@ -105896,7 +105896,7 @@ func (s *ComplexDataTypeContext) STRUCT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRUCT, 0)
 }
 
-func (s *ComplexDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ComplexDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitComplexDataType(s)
@@ -106023,7 +106023,7 @@ func (s *AggStateDataTypeContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AggStateDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AggStateDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitAggStateDataType(s)
@@ -106095,7 +106095,7 @@ func (s *PrimitiveDataTypeContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *PrimitiveDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PrimitiveDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPrimitiveDataType(s)
@@ -106645,7 +106645,7 @@ func (s *PrimitiveColTypeContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrimitiveColTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PrimitiveColTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitPrimitiveColType(s)
@@ -107246,7 +107246,7 @@ func (s *ComplexColTypeListContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComplexColTypeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ComplexColTypeListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitComplexColTypeList(s)
@@ -107417,7 +107417,7 @@ func (s *ComplexColTypeContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComplexColTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ComplexColTypeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitComplexColType(s)
@@ -107540,7 +107540,7 @@ func (s *CommentSpecContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CommentSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CommentSpecContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitCommentSpec(s)
@@ -107690,7 +107690,7 @@ func (s *SampleContext) ToStringTree(ruleNames []string, recog antlr.Recognizer)
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SampleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SampleContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSample(s)
@@ -107865,7 +107865,7 @@ func (s *SampleByRowsContext) ROWS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROWS, 0)
 }
 
-func (s *SampleByRowsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SampleByRowsContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSampleByRows(s)
@@ -107906,7 +107906,7 @@ func (s *SampleByPercentileContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *SampleByPercentileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SampleByPercentileContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitSampleByPercentile(s)
@@ -108096,7 +108096,7 @@ func (s *TableSnapshotContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *TableSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitTableSnapshot(s)
@@ -108321,7 +108321,7 @@ func (s *ErrorCapturingIdentifierContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ErrorCapturingIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ErrorCapturingIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitErrorCapturingIdentifier(s)
@@ -108478,7 +108478,7 @@ func (s *ErrorIdentContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ErrorIdentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ErrorIdentContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitErrorIdent(s)
@@ -108506,7 +108506,7 @@ func (s *RealIdentContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *RealIdentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *RealIdentContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitRealIdent(s)
@@ -108657,7 +108657,7 @@ func (s *IdentifierContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIdentifier(s)
@@ -108777,7 +108777,7 @@ func (s *QuotedIdentifierAlternativeContext) QuotedIdentifier() IQuotedIdentifie
 	return t.(IQuotedIdentifierContext)
 }
 
-func (s *QuotedIdentifierAlternativeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QuotedIdentifierAlternativeContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQuotedIdentifierAlternative(s)
@@ -108825,7 +108825,7 @@ func (s *UnquotedIdentifierContext) NonReserved() INonReservedContext {
 	return t.(INonReservedContext)
 }
 
-func (s *UnquotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnquotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitUnquotedIdentifier(s)
@@ -108949,7 +108949,7 @@ func (s *QuotedIdentifierContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QuotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *QuotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitQuotedIdentifier(s)
@@ -109069,7 +109069,7 @@ func (s *DecimalLiteralContext) SUBTRACT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSUBTRACT, 0)
 }
 
-func (s *DecimalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecimalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitDecimalLiteral(s)
@@ -109105,7 +109105,7 @@ func (s *IntegerLiteralContext) SUBTRACT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSUBTRACT, 0)
 }
 
-func (s *IntegerLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IntegerLiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitIntegerLiteral(s)
@@ -110910,7 +110910,7 @@ func (s *NonReservedContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NonReservedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *NonReservedContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case DorisParserVisitor:
 		return t.VisitNonReserved(s)

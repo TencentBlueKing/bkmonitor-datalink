@@ -332,7 +332,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
-	timestamp := int64(1693973987)
+	timestamp := "1693973987"
 	mock.Vm.Set(map[string]any{
 		// system to pod
 		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
@@ -556,8 +556,8 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
-	start := int64(1693973987)
-	end := int64(1693974407)
+	start := "1693973987"
+	end := "1693974407"
 	step := "1m"
 
 	mock.Vm.Set(map[string]any{

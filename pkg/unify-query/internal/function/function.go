@@ -257,12 +257,11 @@ func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.
 	}
 	t0 := t.In(loc)
 	_, offset := t0.Zone()
-	outTimezone := t0.Location().String()
 	offsetDuration := time.Duration(offset) * time.Second
 	t1 := t.Add(offsetDuration)
 	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
 	t3 := t2.Add(offsetDuration * -1).In(loc)
-	return outTimezone, t3
+	return timezone, t3
 }
 
 // GetRealMetricName 获取真实指标名

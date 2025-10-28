@@ -20,9 +20,12 @@ import (
 type QueryParams struct {
 	ctx context.Context
 
-	Start    time.Time
-	End      time.Time
-	TimeUnit string
+	AlignStart time.Time
+	Start      time.Time
+	End        time.Time
+	Step       time.Duration
+	TimeUnit   string
+	Timezone   string
 
 	StorageType *set.Set[string]
 
@@ -49,10 +52,13 @@ func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) SetTime(start, end time.Time, unit string) *QueryParams {
+func (q *QueryParams) SetTime(alianStart, start, end time.Time, step time.Duration, unit, timezone string) *QueryParams {
+	q.AlignStart = alianStart
 	q.Start = start
 	q.End = end
+	q.Step = step
 	q.TimeUnit = unit
+	q.Timezone = timezone
 	return q
 }
 

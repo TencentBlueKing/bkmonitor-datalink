@@ -131,7 +131,35 @@ func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.
 	return newStart, end, step, newTimezone, nil
 }
 
+func (q *QueryTs) ToTime(ctx context.Context) error {
+	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
+	if err != nil {
+		return err
+	}
+
+	timezone := q.Timezone
+	reference := q.Reference
+	alianStart := startTime
+
+	step := StepParse(q.Step)
+
+	// 如果关闭了对齐，则无需对齐开始时间
+	if !q.NotTimeAlign {
+		// 根据 timezone 来对齐开始时间
+		timezone, alianStart = function.TimeOffset(startTime, q.Timezone, step)
+	}
+
+	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	return nil
+}
+
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
+	// 优先解析 queryTs 里面的时间元素
+	err := q.ToTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
 		// 时间复用
@@ -198,6 +226,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], queryMetric)
 	}
 
+	metadata.SetQueryReference(ctx, queryReference)
 	return queryReference, nil
 }
 
@@ -483,6 +512,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if step < window {
 		return aggs, err
 	}
+
 	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
 	if name, ok := domSampledFunc[key]; ok {
 		agg := metadata.Aggregate{
@@ -642,33 +672,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	span.Set("tsdb-num", len(tsDBs))
 
-	// 时间转换格式
-	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
-	// 时间对齐
-	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
 	// 注入时区和时区偏移，用于聚合处理
 	var timeZoneOffset int64
-	if timezone != "UTC" {
-		utcStart, _, _, _, _ := AlignTime(startTime, endTime, q.Step, "UTC")
-		timeZoneOffset = start.UnixMilli() - utcStart.UnixMilli()
+	qp := metadata.GetQueryParams(ctx)
+	if qp.Timezone != "" && qp.Timezone != "UTC" {
+		utcStart, _, _, _, _ := AlignTime(qp.Start, qp.End, q.Step, "UTC")
+		timeZoneOffset = qp.Start.UnixMilli() - utcStart.UnixMilli()
 	}
 	for idx, agg := range aggregates {
 		if agg.Window > 0 {
-			agg.TimeZone = timezone
+			agg.TimeZone = qp.Timezone
 			agg.TimeZoneOffset = timeZoneOffset
 			aggregates[idx] = agg
 		}
@@ -679,7 +692,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(start, end)
+		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.Start)
 
 		for _, storageID := range storageIDs {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
@@ -688,7 +701,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			}
 
 			query.Aggregates = aggregates.Copy()
-			query.Timezone = timezone
+			query.Timezone = qp.Timezone
 			query.StorageID = storageID
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 

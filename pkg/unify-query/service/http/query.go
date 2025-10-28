@@ -672,7 +672,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	for _, ql := range queryTs.QueryList {
 		ql.NotPromFunc = false
 		// 只有时间对齐模式，才需要开启
-		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference
+		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference && !queryTs.NotTimeAlign
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -882,6 +882,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
 	query.Reference = queryPromQL.Reference
+	query.NotTimeAlign = queryPromQL.NotTimeAlign
 
 	if queryPromQL.Match != "" {
 		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)

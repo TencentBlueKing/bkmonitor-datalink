@@ -828,14 +828,14 @@ group by
 			q:      `SELECT * FROM t LIMIT 10`,
 			limit:  50,
 			offset: 500,
-			sql:    `SELECT * FROM t LIMIT 0 OFFSET 500`,
+			sql:    `SELECT * FROM t LIMIT 0`,
 		},
 		{
 			name:   `if outer limit is bigger than inner limit with offset`,
 			q:      `SELECT * FROM t LIMIT 10 OFFSET 10`,
 			limit:  50,
 			offset: 500,
-			sql:    `SELECT * FROM t LIMIT 0 OFFSET 510`,
+			sql:    `SELECT * FROM t LIMIT 0`,
 		},
 		{
 			name:   `if is no outer limit`,

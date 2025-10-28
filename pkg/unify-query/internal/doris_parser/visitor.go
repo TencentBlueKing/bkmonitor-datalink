@@ -89,37 +89,9 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
-func (v *Statement) checkOuter() {
-	if v.Limit > 0 {
-		if existingLimit, exists := v.nodeMap[LimitItem]; exists {
-			if limitNode, ok := existingLimit.(*LimitNode); ok {
-				limitNode.limit = cast.ToString(v.Limit)
-				if v.Offset != 0 {
-					totalOffset := cast.ToInt(limitNode.offset) + v.Offset
-					limitNode.offset = cast.ToString(totalOffset)
-					innerLimit := cast.ToInt(limitNode.limit)
-					isLimitOverwhelming := innerLimit >= 0 && (totalOffset >= innerLimit)
-					if isLimitOverwhelming {
-						// 如果外层的OFFSET已经超出了内层的LIMIT，则需要设置LIMIT为0.代表没有数据
-						limitNode.limit = "0"
-					}
-				}
-			}
-		} else {
-			limitNode := &LimitNode{
-				limit: cast.ToString(v.Limit),
-			}
-			if v.Offset != 0 {
-				limitNode.offset = cast.ToString(v.Offset)
-			}
-			v.nodeMap[LimitItem] = limitNode
-		}
-	}
-}
-
 func (v *Statement) String() string {
 	var result []string
-	v.checkOuter()
+
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem, OffsetItem} {
 		res := v.ItemString(name)
 		key := name
@@ -192,7 +164,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	next = v
 
 	if v.nodeMap == nil {
-		v.nodeMap = map[string]Node{}
+		v.nodeMap = map[string]Node{
+			LimitItem: &LimitNode{
+				ParentLimit:  v.Limit,
+				ParentOffset: v.Offset,
+			},
+		}
 	}
 
 	var isSetAs bool
@@ -216,7 +193,6 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]
 	case *gen.LimitClauseContext:
-		v.nodeMap[LimitItem] = &LimitNode{}
 		next = v.nodeMap[LimitItem]
 	}
 
@@ -227,20 +203,44 @@ type LimitNode struct {
 	baseNode
 
 	prefix string
-	limit  string
-	offset string
+
+	limit  int
+	offset int
+
+	ParentLimit  int
+	ParentOffset int
+}
+
+func (v *LimitNode) getOffsetAndLimit() (string, string) {
+	offset := v.offset + v.ParentOffset
+
+	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
+	if v.limit > 0 && offset > v.limit {
+		return "", "0"
+	}
+
+	limit := v.limit
+	if v.ParentLimit > 0 {
+		if v.limit <= 0 || v.limit > v.ParentLimit {
+			limit = v.ParentLimit
+		}
+	}
+
+	return cast.ToString(offset), cast.ToString(limit)
 }
 
 func (v *LimitNode) String() string {
-	var s string
-	if v.limit != "" {
-		s = fmt.Sprintf("%s %s", LimitItem, v.limit)
+	var s []string
+
+	offset, limit := v.getOffsetAndLimit()
+	if limit != "" {
+		s = append(s, fmt.Sprintf("%s %s", LimitItem, limit))
 	}
-	if v.offset != "" {
-		s = fmt.Sprintf("%s %s %s", s, OffsetItem, v.offset)
+	if offset != "" {
+		s = append(s, fmt.Sprintf("%s %s", OffsetItem, offset))
 	}
 
-	return s
+	return strings.Join(s, " ")
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
@@ -252,9 +252,9 @@ func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 		v.offset = v.limit
 	default:
 		if v.prefix == LimitItem {
-			v.limit = result
+			v.limit = cast.ToInt(result)
 		} else if v.prefix == OffsetItem {
-			v.offset = result
+			v.offset = cast.ToInt(result)
 		}
 	}
 

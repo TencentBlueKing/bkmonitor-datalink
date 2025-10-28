@@ -816,6 +816,20 @@ group by
 			offset: 5,
 			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
 		},
+		{
+			name:   `if outer limit bigger than inner limit`,
+			q:      `SELECT * FROM t LIMIT 10`,
+			limit:  50,
+			offset: 500,
+			sql:    `SELECT * FROM t LIMIT 0 OFFSET 500`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
+		},
+		{
+			name:   `if outer limit is bigger than inner limit with offset`,
+			q:      `SELECT * FROM t LIMIT 10 OFFSET 10`,
+			limit:  50,
+			offset: 500,
+			sql:    `SELECT * FROM t LIMIT 0 OFFSET 510`, // should be LIMIT 50(the smaller one) OFFSET 0(0+0)
+		},
 	}
 
 	mock.Init()

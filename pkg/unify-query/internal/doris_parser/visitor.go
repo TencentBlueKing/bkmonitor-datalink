@@ -112,15 +112,19 @@ func (v *Statement) checkOuter() {
 					}
 					totalOffset := internalOffset + v.Offset
 					limitNode.offsetValue = cast.ToString(totalOffset)
+					if v.Offset != 0 {
+						// 如果外层的OFFSET已经超出了内层的LIMIT，则需要设置LIMIT为0.代表没有数据
+						if totalOffset >= v.Offset {
+							limitNode.limitValue = "0"
+						}
+					}
 				}
 			}
 		} else {
 			limitNode := &LimitNode{
 				limitValue: cast.ToString(v.Limit),
 			}
-			if v.Offset != 0 {
-				limitNode.offsetValue = cast.ToString(v.Offset)
-			}
+
 			v.nodeMap.append(LimitItem, limitNode)
 		}
 	}

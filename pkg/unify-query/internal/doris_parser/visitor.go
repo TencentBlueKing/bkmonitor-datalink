@@ -72,24 +72,13 @@ type Statement struct {
 
 	isSubQuery bool
 
-	nodeMap nodeMap
+	nodeMap map[string]Node
 
 	Tables  []string
 	Where   string
 	Offset  int
 	Limit   int
 	errNode []string
-}
-
-type nodeMap map[string]Node
-
-func (n *nodeMap) append(name string, node Node) {
-	(*n)[name] = node
-}
-
-func (n *nodeMap) isExist(name string) (Node, bool) {
-	v, ok := (*n)[name]
-	return v, ok
 }
 
 func (v *Statement) ItemString(name string) string {
@@ -101,8 +90,8 @@ func (v *Statement) ItemString(name string) string {
 }
 
 func (v *Statement) checkOuter() {
-	if v.Limit != 0 {
-		if existingLimit, exists := v.nodeMap.isExist(LimitItem); exists {
+	if v.Limit > 0 {
+		if existingLimit, exists := v.nodeMap[LimitItem]; exists {
 			if limitNode, ok := existingLimit.(*LimitNode); ok {
 				limitNode.limitValue = cast.ToString(v.Limit)
 				if v.Offset != 0 {
@@ -123,7 +112,7 @@ func (v *Statement) checkOuter() {
 			if v.Offset != 0 {
 				limitNode.offsetValue = cast.ToString(v.Offset)
 			}
-			v.nodeMap.append(LimitItem, limitNode)
+			v.nodeMap[LimitItem] = limitNode
 		}
 	}
 }

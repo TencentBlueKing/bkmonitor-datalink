@@ -676,8 +676,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	var timeZoneOffset int64
 	qp := metadata.GetQueryParams(ctx)
 	if qp.Timezone != "" && qp.Timezone != "UTC" {
-		utcStart, _, _, _, _ := AlignTime(qp.Start, qp.End, q.Step, "UTC")
-		timeZoneOffset = qp.Start.UnixMilli() - utcStart.UnixMilli()
+		utcAlignStart, _, _, _, _ := AlignTime(qp.Start, qp.End, q.Step, "UTC")
+		// 不同时区对齐时间的差值
+		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
 	}
 	for idx, agg := range aggregates {
 		if agg.Window > 0 {

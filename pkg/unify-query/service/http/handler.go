@@ -361,7 +361,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
+	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	if err != nil {
 		return
 	}
@@ -370,7 +370,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.List == nil {
 		listData.List = make([]map[string]any, 0)
 	}
-
+	if listData.ResultTableOptions == nil {
+		listData.ResultTableOptions = make(metadata.ResultTableOptions)
+	}
 	resp.success(ctx, listData)
 }
 

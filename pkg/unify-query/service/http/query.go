@@ -376,14 +376,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return total, list, resultTableOptions, err
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, bool, error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, bool, error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
 
-		total int64
-		err   error
+		total              int64
+		err                error
+		resultTableOptions = make(metadata.ResultTableOptions)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
@@ -392,7 +393,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	// 先获取分布式锁，是否正在使用中
 	err = session.Start(ctx)
 	if err != nil {
-		return 0, nil, true, metadata.Sprintf(
+		return 0, nil, nil, true, metadata.Sprintf(
 			metadata.MsgQueryRawScroll,
 			"下载已经触发，请稍后重试",
 		).Error(ctx, err)
@@ -405,7 +406,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	unit, start, end, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if err != nil {
-		return 0, nil, true, metadata.Sprintf(
+		return 0, nil, nil, true, metadata.Sprintf(
 			metadata.MsgQueryRawScroll,
 			"查询时间错误格式 %s - %s",
 			queryTs.Start, queryTs.End,
@@ -415,7 +416,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return 0, nil, true, metadata.Sprintf(
+		return 0, nil, nil, true, metadata.Sprintf(
 			metadata.MsgQueryRawScroll,
 			"查询参数配置异常",
 		).Error(ctx, err)
@@ -529,6 +530,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted
 				}
+
+				resultTableOptions.SetOption(newQry.TableUUID(), option)
 			}); submitErr != nil {
 				errCh <- metadata.Sprintf(
 					metadata.MsgQueryRawScroll,
@@ -546,7 +549,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	receiveWg.Wait()
 
-	return total, list, session.Done(), err
+	return total, list, resultTableOptions, session.Done(), err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {

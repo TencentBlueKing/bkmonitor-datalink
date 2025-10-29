@@ -17,7 +17,7 @@ func TestQueryClient(t *testing.T) {
 	// client, err := transport.GetClient("http://127.0.0.1:8086", "", "")
 	// fmt.Println(err)
 	// tags := common.Tags{
-	// 	common.Tag{
+	// 	common.ImageTag{
 	// 		Key:   []byte("mytag"),
 	// 		Value: []byte("1"),
 	// 	},
@@ -31,7 +31,7 @@ func TestQueryTimestamp(t *testing.T) {
 	// client, err := transport.GetClient("http://127.0.0.1:8086", "", "")
 	// fmt.Println(err)
 	// tags := common.Tags{
-	// 	common.Tag{
+	// 	common.ImageTag{
 	// 		Key:   []byte("mytag"),
 	// 		Value: []byte("1"),
 	// 	},
@@ -45,7 +45,7 @@ func TestWrite(t *testing.T) {
 	// client1, err := transport.GetClient("http://127.0.0.1:8086", "", "")
 	// fmt.Println(err)
 	// tags := common.Tags{
-	// 	common.Tag{
+	// 	common.ImageTag{
 	// 		Key:   []byte("mytag"),
 	// 		Value: []byte("1"),
 	// 	},

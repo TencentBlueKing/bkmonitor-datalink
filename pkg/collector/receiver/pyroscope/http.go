@@ -53,7 +53,7 @@ const (
 	PerfSpy    = "perf_script"
 )
 
-// TagServiceName 需要忽略的服务 Tag 名称
+// TagServiceName 需要忽略的服务 ImageTag 名称
 var ignoredTagNames = []string{"__session_id__"}
 
 var errNoTokenFound = errors.New("no profile token found")

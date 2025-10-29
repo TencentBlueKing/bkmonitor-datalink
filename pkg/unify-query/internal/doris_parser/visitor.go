@@ -94,7 +94,7 @@ func (v *Statement) ItemString(name string) string {
 func (v *Statement) String() string {
 	var result []string
 
-	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem, OffsetItem} {
+	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
 		res := v.ItemString(name)
 		key := name
 

@@ -539,7 +539,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 
 	size := f.query.Size
-	if size == 0 || size > f.maxLimit {
+	if f.maxLimit > 0 && (size > f.maxLimit || size == 0) {
 		size = f.maxLimit
 	}
 

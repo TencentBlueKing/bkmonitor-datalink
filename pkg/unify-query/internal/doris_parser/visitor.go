@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -27,8 +28,11 @@ const (
 	OrderItem  = "ORDER BY"
 	GroupItem  = "GROUP BY"
 	LimitItem  = "LIMIT"
+	OffsetItem = "OFFSET"
 
 	AsItem = "AS"
+
+	defaultLimit = "100"
 )
 
 type Encode func(string) (string, string)
@@ -77,9 +81,11 @@ type Statement struct {
 	isSubQuery bool
 
 	nodeMap map[string]Node
+
 	Tables  []string
 	Where   string
-
+	Offset  int
+	Limit   int
 	errNode []string
 }
 
@@ -166,7 +172,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	next = v
 
 	if v.nodeMap == nil {
-		v.nodeMap = map[string]Node{}
+		v.nodeMap = map[string]Node{
+			LimitItem: &LimitNode{
+				ParentLimit:  v.Limit,
+				ParentOffset: v.Offset,
+			},
+		}
 	}
 
 	var isSetAs bool
@@ -190,7 +201,6 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]
 	case *gen.LimitClauseContext:
-		v.nodeMap[LimitItem] = &LimitNode{}
 		next = v.nodeMap[LimitItem]
 	}
 
@@ -200,26 +210,72 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 type LimitNode struct {
 	baseNode
 
-	nodes []Node
+	prefix string
+
+	limit  int
+	offset int
+
+	ParentLimit  int
+	ParentOffset int
 }
 
-func (v *LimitNode) String() string {
-	var ns []string
-	for _, fn := range v.nodes {
-		ss := nodeToString(fn)
-		if ss != "" {
-			ns = append(ns, ss)
+func (v *LimitNode) getOffsetAndLimit() (string, string) {
+	offset := v.offset + v.ParentOffset
+
+	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
+	if v.limit > 0 && offset > v.limit {
+		return "", "0"
+	}
+
+	limit := v.limit
+	if v.ParentLimit > 0 {
+		if v.limit <= 0 || v.limit > v.ParentLimit {
+			limit = v.ParentLimit
 		}
 	}
 
-	return strings.Join(ns, " ")
+	var resultOffset, resultLimit string
+	if offset > 0 {
+		resultOffset = cast.ToString(offset)
+	}
+	if limit > 0 {
+		resultLimit = cast.ToString(limit)
+	} else {
+		resultLimit = defaultLimit
+	}
+
+	return resultOffset, resultLimit
+}
+
+func (v *LimitNode) String() string {
+	var s []string
+
+	offset, limit := v.getOffsetAndLimit()
+	if limit != "" {
+		s = append(s, fmt.Sprintf("%s %s", LimitItem, limit))
+	}
+	if offset != "" {
+		s = append(s, fmt.Sprintf("%s %s", OffsetItem, offset))
+	}
+
+	return strings.Join(s, " ")
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	result := strings.ToUpper(ctx.GetText())
-	v.nodes = append(v.nodes, &StringNode{
-		Name: result,
-	})
+	switch result {
+	case LimitItem, OffsetItem:
+		v.prefix = result
+	case ",":
+		v.offset = v.limit
+	default:
+		if v.prefix == LimitItem {
+			v.limit = cast.ToInt(result)
+		} else if v.prefix == OffsetItem {
+			v.offset = cast.ToInt(result)
+		}
+	}
+
 	return nil
 }
 
@@ -1153,4 +1209,6 @@ type Option struct {
 
 	Tables []string
 	Where  string
+	Offset int
+	Limit  int
 }

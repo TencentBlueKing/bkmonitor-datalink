@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -24,7 +23,9 @@ const ascii = 97 // a
 type QueryFactory struct {
 	Path []string
 
-	Step time.Duration
+	Step  string
+	Start string
+	End   string
 
 	Source        cmdb.Resource
 	IndexMatcher  cmdb.Matcher
@@ -111,20 +112,13 @@ func (q *QueryFactory) MakeQueryTs() (*structured.QueryTs, error) {
 	}
 
 	return &structured.QueryTs{
-		QueryList:   queryList,
-		MetricMerge: q.metricMerge,
+		QueryList:    queryList,
+		MetricMerge:  q.metricMerge,
+		Start:        q.Start,
+		End:          q.End,
+		Step:         q.Step,
+		NotTimeAlign: true,
 	}, nil
-}
-
-func (q *QueryFactory) getStep() string {
-	if q.Step == 0 {
-		return ""
-	}
-
-	if q.Step < time.Minute {
-		return time.Minute.String()
-	}
-	return q.Step.String()
 }
 
 func (q *QueryFactory) buildConditionFields(allIndex []string, indexMatcher, expandMatcher cmdb.Matcher) structured.Conditions {
@@ -173,12 +167,12 @@ func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expa
 	query = &structured.Query{
 		FieldName:     field,
 		ReferenceName: ref,
-		Step:          q.getStep(),
+		Step:          q.Step,
 	}
-	if q.getStep() != "" {
+	if q.Step != "" {
 		query.TimeAggregation = structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(q.getStep()),
+			Window:   structured.Window(q.Step),
 		}
 	}
 
@@ -203,12 +197,12 @@ func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*stru
 	query := &structured.Query{
 		FieldName:     field,
 		ReferenceName: ref,
-		Step:          q.getStep(),
+		Step:          q.Step,
 	}
-	if q.getStep() != "" {
+	if q.Step != "" {
 		query.TimeAggregation = structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(q.getStep()),
+			Window:   structured.Window(q.Step),
 		}
 	}
 

@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -34,7 +33,7 @@ func TestMakeQuery(t *testing.T) {
 		indexMatcher map[string]string
 		expandMatch  map[string]string
 		promQL       string
-		step         time.Duration
+		step         string
 
 		err error
 	}
@@ -61,7 +60,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			step:   time.Minute,
+			step:   "1m",
 			promQL: `count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}[1m]))`,
 		},
 		{
@@ -93,7 +92,7 @@ func TestMakeQuery(t *testing.T) {
 			expandMatch: map[string]string{
 				"version": "3.9.3269",
 			},
-			step:   time.Minute,
+			step:   "1m",
 			promQL: `count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod, container) group_left () (count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}[1m])))))`,
 		},
 		{
@@ -125,7 +124,7 @@ func TestMakeQuery(t *testing.T) {
 				"node": "node_1",
 			},
 			expandShow: true,
-			step:       time.Minute,
+			step:       "1m",
 			promQL:     `(count by (bcs_cluster_id, namespace, pod, container) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node="node_1",pod!=""}[1m]))))) * on (bcs_cluster_id, namespace, pod, container) group_left (version) count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m])`,
 		},
 		{

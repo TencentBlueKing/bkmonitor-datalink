@@ -899,6 +899,22 @@ group by
 			sql:      `SELECT * FROM t LIMIT 51 OFFSET 150`, // 150 - 201
 			isScroll: true,
 		},
+		{
+			name:     `scroll no limit - 1`,
+			q:        `SELECT * FROM t `,
+			limit:    100,
+			offset:   0,
+			sql:      `SELECT * FROM t LIMIT 100`,
+			isScroll: true,
+		},
+		{
+			name:     `scroll no limit - 2`,
+			q:        `SELECT * FROM t `,
+			limit:    100,
+			offset:   100,
+			sql:      `SELECT * FROM t LIMIT 100 OFFSET 100`,
+			isScroll: true,
+		},
 	}
 
 	mock.Init()

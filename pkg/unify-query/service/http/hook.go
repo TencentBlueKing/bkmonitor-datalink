@@ -107,6 +107,7 @@ func LoadConfig() {
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
+	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
 }
 
 // init

@@ -70,7 +70,7 @@ type SQLExpr interface {
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 String 语句
-	ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (string, error)
+	ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, isScroll bool) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -140,7 +140,7 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldMap metadata.FieldsMap) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (string, error) {
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, isScroll bool) (string, error) {
 	return "", nil
 }
 

@@ -270,6 +270,8 @@ func TestParseDorisSQLWithVisitor(t *testing.T) {
 		limit  int
 		err    error
 		offset int
+
+		isScroll bool
 	}{
 		// 用法验证
 		{
@@ -849,12 +851,38 @@ group by
 			q:    `SELECT * FROM t `,
 			sql:  `SELECT * FROM t LIMIT 100`,
 		},
+
 		{
-			name:   `rest limit`,
-			q:      `SELECT * FROM t LIMIT 201`,
-			limit:  100,
-			offset: 200,
-			sql:    `SELECT * FROM t LIMIT 1 OFFSET 200`,
+			name:     `rest limit 0`,
+			q:        `SELECT * FROM t LIMIT 201`,
+			limit:    100,
+			offset:   0,
+			sql:      `SELECT * FROM t LIMIT 100`,
+			isScroll: true,
+		},
+		{
+			name:     `rest limit 1`,
+			q:        `SELECT * FROM t LIMIT 201`,
+			limit:    100,
+			offset:   100,
+			sql:      `SELECT * FROM t LIMIT 100 OFFSET 100`,
+			isScroll: true,
+		},
+		{
+			name:     `rest limit 2`,
+			q:        `SELECT * FROM t LIMIT 201`,
+			limit:    100,
+			offset:   200,
+			sql:      `SELECT * FROM t LIMIT 1 OFFSET 200`,
+			isScroll: true,
+		},
+		{
+			name:     `rest limit exceed`,
+			q:        `SELECT * FROM t LIMIT 201`,
+			limit:    100,
+			offset:   300,
+			sql:      `SELECT * FROM t LIMIT 0`,
+			isScroll: true,
 		},
 	}
 
@@ -877,8 +905,9 @@ group by
 					}
 					return s, ""
 				},
-				Limit:  c.limit,
-				Offset: c.offset,
+				Limit:    c.limit,
+				Offset:   c.offset,
+				IsScroll: c.isScroll,
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)
 			if c.err != nil {

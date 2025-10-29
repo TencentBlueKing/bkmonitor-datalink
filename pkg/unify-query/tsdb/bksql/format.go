@@ -80,6 +80,8 @@ type QueryFactory struct {
 	timeField string
 
 	expr sql_expr.SQLExpr
+
+	isScroll bool
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
@@ -456,7 +458,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 		from = *f.query.ResultTableOption.From
 	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size, f.isScroll)
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)

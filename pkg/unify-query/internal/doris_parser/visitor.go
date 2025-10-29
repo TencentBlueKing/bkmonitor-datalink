@@ -73,6 +73,7 @@ type Statement struct {
 	baseNode
 
 	isSubQuery bool
+	isScroll   bool
 
 	nodeMap map[string]Node
 
@@ -168,6 +169,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	if v.nodeMap == nil {
 		v.nodeMap = map[string]Node{
 			LimitItem: &LimitNode{
+				IsScroll:     v.isScroll,
 				ParentLimit:  v.Limit,
 				ParentOffset: v.Offset,
 			},
@@ -211,23 +213,21 @@ type LimitNode struct {
 
 	ParentLimit  int
 	ParentOffset int
+
+	IsScroll bool
 }
 
 func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	offset := v.offset + v.ParentOffset
-	limit := v.limit
-	if limit == 0 {
-		limit = v.ParentLimit
-	}
+
 	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
 	if v.limit > 0 && offset > v.limit {
 		return "", "0"
 	}
-	isLimited := v.limit > 0
-	isOverwhelmed := (limit + offset) > (v.limit + v.offset)
-	if isLimited && isOverwhelmed {
-		limit = v.limit - v.ParentOffset
-		if v.ParentLimit < limit {
+
+	limit := v.limit
+	if v.ParentLimit > 0 {
+		if v.limit <= 0 || v.limit > v.ParentLimit {
 			limit = v.ParentLimit
 		}
 	}
@@ -236,6 +236,12 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	if offset > 0 {
 		resultOffset = cast.ToString(offset)
 	}
+
+	// 如果是滚动查询，则需要根据总限制来调整 LIMIT
+	if v.IsScroll && v.limit > 0 && (limit+offset) > v.limit {
+		limit = v.limit - offset
+	}
+
 	if limit > 0 {
 		resultLimit = cast.ToString(limit)
 	} else {
@@ -1186,4 +1192,6 @@ type Option struct {
 	Where  string
 	Offset int
 	Limit  int
+
+	IsScroll bool
 }

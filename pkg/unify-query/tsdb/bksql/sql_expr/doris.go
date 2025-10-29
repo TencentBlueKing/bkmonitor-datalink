@@ -133,13 +133,14 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 	return "", nil
 }
 
-func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, isScroll bool) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
 		Tables:             tables,
 		Where:              where,
 		Offset:             offset,
 		Limit:              limit,
+		IsScroll:           isScroll,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)

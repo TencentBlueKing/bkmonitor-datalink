@@ -51,6 +51,8 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 
 		stmt.Limit = opt.Limit
 		stmt.Offset = opt.Offset
+
+		stmt.isScroll = opt.IsScroll
 	}
 
 	log.Debugf(ctx, `"action","type","text"`)

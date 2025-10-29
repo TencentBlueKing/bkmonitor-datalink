@@ -814,7 +814,7 @@ group by
 			q:      `SELECT * FROM t LIMIT 10,100`, // should be treated as LIMIT 100 OFFSET 10
 			limit:  50,
 			offset: 5,
-			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // should be LIMIT 50(the smaller one) OFFSET 15(10+5)
+			sql:    `SELECT * FROM t LIMIT 50 OFFSET 15`, // offset 15(10+5) , limit 50(the smaller than 110(100+10))
 		},
 		{
 			name:   `dot sep offset limit and custom limit offset`,
@@ -848,6 +848,13 @@ group by
 			name: `default limit`,
 			q:    `SELECT * FROM t `,
 			sql:  `SELECT * FROM t LIMIT 100`,
+		},
+		{
+			name:   `rest limit`,
+			q:      `SELECT * FROM t LIMIT 201`,
+			limit:  100,
+			offset: 200,
+			sql:    `SELECT * FROM t LIMIT 1 OFFSET 200`,
 		},
 	}
 

@@ -70,6 +70,8 @@ type QueryFactory struct {
 	start time.Time
 	end   time.Time
 
+	maxLimit int
+
 	timeAggregate sql_expr.TimeAggregate
 	dimensionSet  *set.Set[string]
 
@@ -102,6 +104,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
 		WithFieldAlias(query.FieldAlias)
 
+	return f
+}
+
+func (f *QueryFactory) WithMaxLimit(maxLimit int) *QueryFactory {
+	f.maxLimit = maxLimit
 	return f
 }
 
@@ -530,9 +537,15 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sqlBuilder.WriteString(" ORDER BY ")
 		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}
-	if f.query.Size > 0 {
+
+	size := f.query.Size
+	if f.maxLimit > 0 && (size > f.maxLimit || size == 0) {
+		size = f.maxLimit
+	}
+
+	if size > 0 {
 		sqlBuilder.WriteString(" LIMIT ")
-		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.Size))
+		sqlBuilder.WriteString(fmt.Sprintf("%d", size))
 	}
 	if f.query.From > 0 {
 		sqlBuilder.WriteString(" OFFSET ")

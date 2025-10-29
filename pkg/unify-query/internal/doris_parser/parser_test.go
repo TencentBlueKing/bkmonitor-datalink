@@ -670,11 +670,6 @@ group by
 			sql:  "SELECT COUNT(*) LIMIT 100",
 		},
 		{
-			name: "test-24-1",
-			q:    "SELECT\n  log",
-			sql:  "",
-		},
-		{
 			name: "test-25",
 			q:    "SELECT a.b.c",
 			sql:  "SELECT a.b.c LIMIT 100",

@@ -12,8 +12,10 @@ package doris_parser
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cast"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -880,6 +882,143 @@ group by
 				assert.Nil(t, err)
 				assert.NotEmpty(t, sql)
 				assert.Equal(t, c.sql, sql)
+			}
+		})
+	}
+}
+
+func TestOffsetAndLimitMove(t *testing.T) {
+	testCases := []struct {
+		name string
+		n    LimitNode
+		res  []string
+	}{
+		{
+			name: "test-0",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  2,
+				offset:       0,
+				limit:        10,
+			},
+			res: []string{
+				"1,2",
+				"3,4",
+				"5,6",
+				"7,8",
+				"9,10",
+			},
+		},
+		{
+			name: "test-1",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  3,
+				offset:       0,
+				limit:        10,
+			},
+			res: []string{
+				"1,2,3",
+				"4,5,6",
+				"7,8,9",
+				"10",
+			},
+		},
+		{
+			name: "test-2",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  3,
+				offset:       3,
+				limit:        10,
+			},
+			res: []string{
+				"4,5,6",
+				"7,8,9",
+				"10",
+			},
+		},
+		{
+			name: "test-3",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  0,
+				offset:       3,
+				limit:        10,
+			},
+			res: []string{
+				"4,5,6,7,8,9,10,11,12,13",
+			},
+		},
+		{
+			name: "test-4",
+			n: LimitNode{
+				ParentOffset: 2,
+				ParentLimit:  5,
+				offset:       3,
+				limit:        10,
+			},
+			res: []string{
+				"6,7,8,9,10",
+			},
+		},
+		{
+			name: "test-5",
+			n: LimitNode{
+				ParentOffset: 2,
+				ParentLimit:  100,
+				offset:       0,
+				limit:        10,
+			},
+			res: []string{
+				"3,4,5,6,7,8,9,10,11,12",
+			},
+		},
+		{
+			name: "test-6",
+			n: LimitNode{
+				ParentOffset: 2,
+				ParentLimit:  100,
+				offset:       4,
+				limit:        10,
+			},
+			res: []string{
+				"7,8,9,10,11,12,13,14,15,16",
+			},
+		},
+	}
+
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			nn := c.n
+			idx := 0
+			total := 0
+			for {
+				idx++
+				offset, limit, done := nn.getOffsetAndLimit()
+				var s []string
+				for i := 1; i <= cast.ToInt(limit); i++ {
+					s = append(s, fmt.Sprintf("%d", cast.ToInt(offset)+i))
+				}
+				if len(s) == 0 {
+					break
+				}
+
+				if offset == "" {
+					offset = "0"
+				}
+				total += cast.ToInt(limit)
+
+				assert.Equal(t, c.res[idx-1], strings.Join(s, ","))
+
+				fmt.Printf("page: %d limit %s,%s result: %s, done: %v\n", idx, offset, limit, strings.Join(s, ","), done)
+				nn.ParentOffset += cast.ToInt(limit)
+				if done {
+					break
+				}
+				if idx > 10 {
+					break
+				}
 			}
 		})
 	}

@@ -10,12 +10,35 @@
 package query
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestTsDBV2_GetStorageIDs_1(t *testing.T) {
+	db := &TsDBV2{
+		StorageID: "40",
+		StorageClusterRecords: []Record{
+			{
+				StorageID:  "1",
+				EnableTime: 1761635396, // 2025-10-28 15:09:56
+			},
+			//{
+			//	StorageID:  "2",
+			//	EnableTime: 1761738891, // 2025-10-29 19:54:51
+			//},
+		},
+	}
+
+	start := time.UnixMilli(1761735240000) // 2025-10-29 18:54:00
+	end := time.UnixMilli(1761739840000)   // 2025-10-29 20:10:40
+
+	ids := db.GetStorageIDs(start, end)
+	fmt.Println(ids)
+}
 
 func TestTsDBV2_GetStorageIDs(t *testing.T) {
 	db := &TsDBV2{

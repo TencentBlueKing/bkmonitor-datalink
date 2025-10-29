@@ -444,8 +444,12 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	if where != "" {
 		where = fmt.Sprintf("(%s)", where)
 	}
+	from := f.query.From
+	if f.query.Scroll != "" && f.query.ResultTableOption.From != nil {
+		from = *f.query.ResultTableOption.From
+	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size)
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)

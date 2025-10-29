@@ -398,7 +398,7 @@ group by
   ns,
   imn,
   ct`,
-			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct LIMIT 100`,
 		},
 		{
 			name: "查找GUID Duplicated-按照ns/类别聚合",
@@ -409,12 +409,12 @@ group by
 group by
   ns,
   ct`,
-			sql: "SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(log, 'name=', 3), '_', 1) AS ct, count(*) GROUP BY ns, ct",
+			sql: "SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(log, 'name=', 3), '_', 1) AS ct, count(*) GROUP BY ns, ct LIMIT 100",
 		},
 		{
 			name: "真DS-单帧RPC超限-Func名字聚合",
 			q:    `select CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) as ns, split_part(log,'|',3) as ct,count(*) group by ns,ct`,
-			sql:  `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(log, '|', 3) AS ct, count(*) GROUP BY ns, ct`,
+			sql:  `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(log, '|', 3) AS ct, count(*) GROUP BY ns, ct LIMIT 100`,
 		},
 		// CASE WHEN
 		{
@@ -450,12 +450,12 @@ LIMIT 10000;`,
       ) > 200 
     THEN 1 ELSE NULL END
   ) AS cnt`,
-			sql: "SELECT COUNT(CASE WHEN CAST(regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE) > 200 THEN 1 ELSE NULL END) AS cnt",
+			sql: "SELECT COUNT(CASE WHEN CAST(regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE) > 200 THEN 1 ELSE NULL END) AS cnt LIMIT 100",
 		},
 		{
 			name: "函数参数嵌套表达式",
 			q:    `select array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') as cat`,
-			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') AS cat`,
+			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') AS cat LIMIT 100`,
 		},
 		{
 			name: "test-2",
@@ -512,7 +512,7 @@ LIMIT
 		{
 			name: "test-7",
 			q:    `select field_1, field_2 where log match_phrase 'test' group by dim_1, dim_2`,
-			sql:  `SELECT field_1, field_2 WHERE log match_phrase 'test' GROUP BY dim_1, dim_2`,
+			sql:  `SELECT field_1, field_2 WHERE log match_phrase 'test' GROUP BY dim_1, dim_2 LIMIT 100`,
 		},
 		{
 			name: "test-8",
@@ -537,22 +537,22 @@ LIMIT
 		{
 			name: "test-11",
 			q:    `select * from t where (t match_phrase_prefix '%gg%')`,
-			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' )`,
+			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' ) LIMIT 100`,
 		},
 		{
 			name: "test-12",
 			q:    `select * from t where (t match_phrase_prefix '%gg%' or t match_phrase '%gg%') and t != 'test'`,
-			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' OR t match_phrase '%gg%' ) AND t != 'test'`,
+			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' OR t match_phrase '%gg%' ) AND t != 'test' LIMIT 100`,
 		},
 		{
 			name: "test-13",
 			q:    `select * from my_db where dim_1 = 'val_1' and (dim_2 = 'val_2' or dim_3 = 'val_3')`,
-			sql:  `SELECT * FROM my_db WHERE dim_1 = 'val_1' AND ( dim_2 = 'val_2' OR dim_3 = 'val_3' )`,
+			sql:  `SELECT * FROM my_db WHERE dim_1 = 'val_1' AND ( dim_2 = 'val_2' OR dim_3 = 'val_3' ) LIMIT 100`,
 		},
 		{
 			name: "test-14",
 			q:    `select * from my_db where ((dim_1 = 'val_1' or dim_4 > 1) and (dim_2 = 'val_2' or (dim_3 = 'val_3' or t > 1)))`,
-			sql:  `SELECT * FROM my_db WHERE ( ( dim_1 = 'val_1' OR dim_4 > 1 ) AND ( dim_2 = 'val_2' OR ( dim_3 = 'val_3' OR t > 1 ) ) )`,
+			sql:  `SELECT * FROM my_db WHERE ( ( dim_1 = 'val_1' OR dim_4 > 1 ) AND ( dim_2 = 'val_2' OR ( dim_3 = 'val_3' OR t > 1 ) ) ) LIMIT 100`,
 		},
 		{
 			name: "test-15",
@@ -602,32 +602,32 @@ group by
       ) as bigint
     )
   ) as BNum`,
-			sql: `SELECT max(CAST(split_part(split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 2), ' exceed', 1) AS bigint)) AS BNum`,
+			sql: `SELECT max(CAST(split_part(split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 2), ' exceed', 1) AS bigint)) AS BNum LIMIT 100`,
 		},
 		{
 			name: "test-16",
 			q:    `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
-			sql:  `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
+			sql:  `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test' LIMIT 100`,
 		},
 		{
 			name: "test-17",
 			q:    "SELECT * WHERE name IN ('test', 'test-1')",
-			sql:  "SELECT * WHERE name IN ('test', 'test-1')",
+			sql:  "SELECT * WHERE name IN ('test', 'test-1') LIMIT 100",
 		},
 		{
 			name: "test-18",
 			q:    "SELECT a,b",
-			sql:  "SELECT a, b",
+			sql:  "SELECT a, b LIMIT 100",
 		},
 		{
 			name: "test-18",
 			q:    "SELECT a.b.c,b.a WHERE a.b.c != 'test' or b.a != 'test' group by a.b, b.a order by a.b",
-			sql:  "SELECT a.b.c, b.a WHERE a.b.c != 'test' OR b.a != 'test' GROUP BY a.b, b.a ORDER BY a.b",
+			sql:  "SELECT a.b.c, b.a WHERE a.b.c != 'test' OR b.a != 'test' GROUP BY a.b, b.a ORDER BY a.b LIMIT 100",
 		},
 		{
 			name: "test-19",
 			q:    "SELECT * WHERE name = '1' and a > 2",
-			sql:  "SELECT * WHERE name = '1' AND a > 2",
+			sql:  "SELECT * WHERE name = '1' AND a > 2 LIMIT 100",
 		},
 		{
 			name: "test-20",
@@ -637,17 +637,17 @@ group by
 		{
 			name: "子查询验证",
 			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
-			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() LIMIT 100) AS pct LIMIT 100",
 		},
 		{
 			name: "子查询验证 - 1",
 			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() where a > 1 limit 1) AS pct",
-			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() WHERE a > 1 LIMIT 1) AS pct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() WHERE a > 1 LIMIT 1) AS pct LIMIT 100",
 		},
 		{
 			name: "查询值支持函数模式",
 			q:    "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
-			sql:  "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
+			sql:  "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm') LIMIT 100",
 		},
 		{
 			name: "反正则查询",
@@ -657,27 +657,27 @@ group by
 		{
 			name: "test-22",
 			q:    "SELECT namespace, workload as t1, COUNT()",
-			sql:  "SELECT namespace, workload AS t1, COUNT()",
+			sql:  "SELECT namespace, workload AS t1, COUNT() LIMIT 100",
 		},
 		{
 			name: "test-23",
 			q:    "SELECT COUNT()",
-			sql:  "SELECT COUNT()",
+			sql:  "SELECT COUNT() LIMIT 100",
 		},
 		{
 			name: "test-24",
 			q:    "SELECT COUNT(*)",
-			sql:  "SELECT COUNT(*)",
+			sql:  "SELECT COUNT(*) LIMIT 100",
 		},
 		{
 			name: "test-25",
 			q:    "SELECT a.b.c",
-			sql:  "SELECT a.b.c",
+			sql:  "SELECT a.b.c LIMIT 100",
 		},
 		{
 			name: "test-26",
 			q:    "SELECT SUM(COUNT(*))",
-			sql:  "SELECT SUM(COUNT(*))",
+			sql:  "SELECT SUM(COUNT(*)) LIMIT 100",
 		},
 		{
 			name: "test-27",
@@ -687,37 +687,37 @@ group by
 		{
 			name: "test-28",
 			q:    "SELECT __ext.cluster.extra.name_space",
-			sql:  "SELECT __ext.cluster.extra.name_space",
+			sql:  "SELECT __ext.cluster.extra.name_space LIMIT 100",
 		},
 		{
 			name: "test-28",
 			q:    "SELECT __ext['cluster']['extra.name_space']",
-			sql:  "SELECT __ext['cluster']['extra.name_space']",
+			sql:  "SELECT __ext['cluster']['extra.name_space'] LIMIT 100",
 		},
 		{
 			name: "test-29",
 			q:    `SELECT CAST(__ext['cluster']['extra.name_space'] as text)`,
-			sql:  `SELECT CAST(__ext['cluster']['extra.name_space'] AS text)`,
+			sql:  `SELECT CAST(__ext['cluster']['extra.name_space'] AS text) LIMIT 100`,
 		},
 		{
 			name: "test-30",
 			q:    `SELECT COUNT(CAST(__ext['cluster']['extra.name_space'] AS TEXT)) AS nt, CAST(split_part(log, 'Object:', 2) AS TEXT) AS ns`,
-			sql:  `SELECT COUNT(CAST(__ext['cluster']['extra.name_space'] AS TEXT)) AS nt, CAST(split_part(log, 'Object:', 2) AS TEXT) AS ns`,
+			sql:  `SELECT COUNT(CAST(__ext['cluster']['extra.name_space'] AS TEXT)) AS nt, CAST(split_part(log, 'Object:', 2) AS TEXT) AS ns LIMIT 100`,
 		},
 		{
 			name: "test-31",
 			q:    `select a- b`,
-			sql:  `SELECT a - b`,
+			sql:  `SELECT a - b LIMIT 100`,
 		},
 		{
 			name: "test-32",
 			q:    `select count(a)/count(b)`,
-			sql:  `SELECT count(a) / count(b)`,
+			sql:  `SELECT count(a) / count(b) LIMIT 100`,
 		},
 		{
 			name: "test-33",
 			q:    `select count(a)*100.0`,
-			sql:  `SELECT count(a) * 100.0`,
+			sql:  `SELECT count(a) * 100.0 LIMIT 100`,
 		},
 		{
 			name: "test-34",
@@ -728,7 +728,7 @@ ORDER BY cast(count AS bigint) desc, item asc limit 10000`,
 		{
 			name: `test-35`,
 			q:    `SELECT DEPLOYMENT AS t, aaa as t1 from my_bro`,
-			sql:  `SELECT DEPLOYMENT AS t, aaa AS t1 FROM my_bro`,
+			sql:  `SELECT DEPLOYMENT AS t, aaa AS t1 FROM my_bro LIMIT 100`,
 		},
 		{
 			name: `test-36`,
@@ -741,37 +741,37 @@ group by
   ns,
   imn,
   ct`,
-			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct LIMIT 100`,
 		},
 		{
 			name: `test-37`,
 			q:    `select count() where log like 'test*'`,
-			sql:  `SELECT count() WHERE log like 'test*'`,
+			sql:  `SELECT count() WHERE log like 'test*' LIMIT 100`,
 		},
 		{
 			name: `test-38`,
 			q:    `select count() where (log like 'test*')`,
-			sql:  `SELECT count() WHERE ( log like 'test*' )`,
+			sql:  `SELECT count() WHERE ( log like 'test*' ) LIMIT 100`,
 		},
 		{
 			name: `test-39`,
 			q:    `select pod_namespace where pod_namespace != ''`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace WHERE __ext.io_kubernetes_pod_namespace != ''`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace WHERE __ext.io_kubernetes_pod_namespace != '' LIMIT 100`,
 		},
 		{
 			name: `test-40`,
 			q:    `select count(pod_namespace) where log like 'test*'`,
-			sql:  `SELECT count(__ext.io_kubernetes_pod_namespace) WHERE log like 'test*'`,
+			sql:  `SELECT count(__ext.io_kubernetes_pod_namespace) WHERE log like 'test*' LIMIT 100`,
 		},
 		{
 			name: `test-41`,
 			q:    `select DISTINCT(a),b`,
-			sql:  `SELECT DISTINCT(a), b`,
+			sql:  `SELECT DISTINCT(a), b LIMIT 100`,
 		},
 		{
 			name: `test-42`,
 			q:    `SELECT DISTINCT a`,
-			sql:  `SELECT DISTINCT(a)`,
+			sql:  `SELECT DISTINCT(a) LIMIT 100`,
 		},
 		{
 			name: `test-43`,
@@ -783,7 +783,7 @@ group by
       )
     )
   ) AS openid`,
-			sql: `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid`,
+			sql: `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid LIMIT 100`,
 		},
 		{
 			name: `outer-limit`,
@@ -843,6 +843,11 @@ group by
 			limit:  50,
 			offset: 500,
 			sql:    `SELECT * FROM t LIMIT 50 OFFSET 500`,
+		},
+		{
+			name: `default limit`,
+			q:    `SELECT * FROM t `,
+			sql:  `SELECT * FROM t LIMIT 100`,
 		},
 	}
 

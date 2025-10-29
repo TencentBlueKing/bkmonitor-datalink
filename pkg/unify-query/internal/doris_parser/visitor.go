@@ -31,6 +31,8 @@ const (
 	OffsetItem = "OFFSET"
 
 	AsItem = "AS"
+
+	defaultLimit = "100"
 )
 
 type Encode func(string) (string, string)
@@ -232,6 +234,8 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	}
 	if limit > 0 {
 		resultLimit = cast.ToString(limit)
+	} else {
+		resultLimit = defaultLimit
 	}
 
 	return resultOffset, resultLimit

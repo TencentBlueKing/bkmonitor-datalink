@@ -854,26 +854,26 @@ group by
 
 		{
 			name:     `rest limit 0`,
-			q:        `SELECT * FROM t LIMIT 201`,
+			q:        `SELECT * FROM t LIMIT 201`, // max:201 start:0
 			limit:    100,
 			offset:   0,
-			sql:      `SELECT * FROM t LIMIT 100`,
+			sql:      `SELECT * FROM t LIMIT 100`, // 0 - 100
 			isScroll: true,
 		},
 		{
 			name:     `rest limit 1`,
-			q:        `SELECT * FROM t LIMIT 201`,
+			q:        `SELECT * FROM t LIMIT 201`, // max:201 start:100
 			limit:    100,
 			offset:   100,
-			sql:      `SELECT * FROM t LIMIT 100 OFFSET 100`,
+			sql:      `SELECT * FROM t LIMIT 100 OFFSET 100`, // 100 - 200
 			isScroll: true,
 		},
 		{
 			name:     `rest limit 2`,
-			q:        `SELECT * FROM t LIMIT 201`,
+			q:        `SELECT * FROM t LIMIT 201`, // max:201 start:200
 			limit:    100,
 			offset:   200,
-			sql:      `SELECT * FROM t LIMIT 1 OFFSET 200`,
+			sql:      `SELECT * FROM t LIMIT 1 OFFSET 200`, // 200 - 201
 			isScroll: true,
 		},
 		{
@@ -881,30 +881,22 @@ group by
 			q:        `SELECT * FROM t LIMIT 201`,
 			limit:    100,
 			offset:   300,
-			sql:      `SELECT * FROM t LIMIT 0`,
+			sql:      `SELECT * FROM t LIMIT 0`, // if scroll offset exceed, return limit 0
 			isScroll: true,
 		},
 		{
 			name:     `rest limit and offset`,
-			q:        `SELECT * FROM t LIMIT 150 OFFSET 50`,
+			q:        `SELECT * FROM t LIMIT 201 OFFSET 50`, // max:251 start:50
 			limit:    100,
-			sql:      `SELECT * FROM t LIMIT 100 OFFSET 50`,
+			sql:      `SELECT * FROM t LIMIT 100 OFFSET 50`, // 50 - 150
 			isScroll: true,
 		},
 		{
 			name:     `rest limit and offset - 1`,
-			q:        `SELECT * FROM t LIMIT 150 OFFSET 50`,
+			q:        `SELECT * FROM t LIMIT 201 OFFSET 50`, // max: 251 start:150
 			limit:    100,
 			offset:   100,
-			sql:      `SELECT * FROM t LIMIT 100 OFFSET 150`,
-			isScroll: true,
-		},
-		{
-			name:     `rest limit and offset - 2`,
-			q:        `SELECT * FROM t LIMIT 150 OFFSET 50`,
-			limit:    100,
-			offset:   200,
-			sql:      `SELECT * FROM t LIMIT 0`,
+			sql:      `SELECT * FROM t LIMIT 51 OFFSET 150`, // 150 - 201
 			isScroll: true,
 		},
 	}

@@ -217,7 +217,7 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	offset := v.offset + v.ParentOffset
 
 	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
-	if v.limit > 0 && offset > v.limit {
+	if v.limit > 0 && offset >= v.limit {
 		return "", "0"
 	}
 
@@ -232,10 +232,19 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	if offset > 0 {
 		resultOffset = cast.ToString(offset)
 	}
+
 	if limit > 0 {
 		resultLimit = cast.ToString(limit)
 	} else {
 		resultLimit = defaultLimit
+	}
+
+	// 只有制定了 offset 的逻辑的才需要进行切割
+	if v.ParentOffset > 0 && v.limit > 0 && (limit+offset) > v.limit {
+		left := v.limit % limit
+		if left != 0 {
+			resultLimit = cast.ToString(left)
+		}
 	}
 
 	return resultOffset, resultLimit

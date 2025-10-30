@@ -684,7 +684,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.Start)
+		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
 
 		for _, storageID := range storageIDs {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)

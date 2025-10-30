@@ -56,6 +56,8 @@ const (
 	DorisTypeText       = "TEXT"
 	DorisTypeVarchar512 = "VARCHAR(512)"
 
+	DorisTypeVariant = "VARIANT"
+
 	DorisTypeArrayTransform = "%s ARRAY"
 	DorisTypeArray          = "ARRAY<%s>"
 )
@@ -604,6 +606,10 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
+	}
+
+	if _, ok := d.fieldsMap[ns]; !ok {
+		return "null", "null"
 	}
 
 	fieldType := d.getFieldType(ns)

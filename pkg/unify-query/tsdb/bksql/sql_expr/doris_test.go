@@ -28,8 +28,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 	}{
 		{
 			name:  "simple match",
-			input: "name:test",
-			want:  "`name` = 'test'",
+			input: "stringField:test",
+			want:  "`stringField` = 'test'",
 		},
 		{
 			name:  "one word",
@@ -39,13 +39,13 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		},
 		{
 			name:  "complex nested query",
-			input: "(a:1 AND (b:2 OR c:3)) OR NOT d:4",
-			want:  "(`a` = '1' AND (`b` = '2' OR `c` = '3')) OR `d` != '4'",
+			input: "(s1:1 AND (s2:2 OR s3:3)) OR NOT s4:4",
+			want:  "(`s1` = '1' AND (`s2` = '2' OR `s3` = '3')) OR `s4` != '4'",
 		},
 		{
 			name:  "trailing operators ignored",
-			input: "name:test AND OR",
-			want:  "`name` = 'test'",
+			input: "stringField:test AND OR",
+			want:  "`stringField` = 'test'",
 		},
 		{
 			name:  "empty input",
@@ -53,63 +53,63 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		},
 		{
 			name:  "OR expression with multiple terms",
-			input: "a:1 OR b:2 OR c:3",
-			want:  "`a` = '1' OR `b` = '2' OR `c` = '3'",
+			input: "s1:1 OR s2:2 OR s3:3",
+			want:  "`s1` = '1' OR `s2` = '2' OR `s3` = '3'",
 		},
 		{
 			name:  "mixed AND/OR with proper precedence",
-			input: "a:1 AND b:2 OR c:3",
-			want:  "`a` = '1' AND `b` = '2' OR `c` = '3'",
+			input: "s1:1 AND s2:2 OR s3:3",
+			want:  "`s1` = '1' AND `s2` = '2' OR `s3` = '3'",
 		},
 		{
 			name:  "exact match with quotes",
-			input: "name:\"exact match\"",
-			want:  "`name` = 'exact match'",
+			input: "stringField:\"exact match\"",
+			want:  "`stringField` = 'exact match'",
 		},
 		{
 			name:  "numeric equality",
-			input: "age:25",
-			want:  "`age` = '25'",
+			input: "s1:25",
+			want:  "`s1` = '25'",
 		},
 		{
 			name:  "date range query",
-			input: "timestamp:[2023-01-01 TO 2023-12-31]",
-			want:  "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			input: "s1:[2023-01-01 TO 2023-12-31]",
+			want:  "`s1` >= '2023-01-01' AND `s1` <= '2023-12-31'",
 		},
 		{
 			name:  "invalid field name",
-			input: "123field:value",
-			want:  "`123field` = 'value'",
+			input: "s1:value",
+			want:  "`s1` = 'value'",
 		},
 		{
 			name:  "text filter",
-			input: "text:value",
-			want:  "`text` MATCH_PHRASE 'value'",
+			input: "ts1:value",
+			want:  "`ts1` MATCH_PHRASE 'value'",
 		},
 		{
 			name:  "object field",
-			input: "__ext.container_name: value",
-			want:  "CAST(__ext['container_name'] AS STRING) = 'value'",
+			input: "object.field: value",
+			want:  "CAST(object['field'] AS STRING) = 'value'",
 		},
 		{
 			name:  "start",
-			input: "a: >100",
-			want:  "`a` > '100'",
+			input: "s1: >100",
+			want:  "`s1` > '100'",
 		},
 		{
 			name:  "start-2",
-			input: "a:>=100",
-			want:  "`a` >= '100'",
+			input: "s1:>=100",
+			want:  "`s1` >= '100'",
 		},
 		{
 			name:  "end",
-			input: "a: <100",
-			want:  "`a` < '100'",
+			input: "s1: <100",
+			want:  "`s1` < '100'",
 		},
 		{
 			name:  "end-2",
-			input: "a:<=100",
-			want:  "`a` <= '100'",
+			input: "s1:<=100",
+			want:  "`s1` <= '100'",
 		},
 		{
 			name:  "array string",
@@ -127,6 +127,14 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			got, err := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
 				"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
 				"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+				"stringField":                      {FieldType: DorisTypeString},
+				"s1":                               {FieldType: DorisTypeString},
+				"s2":                               {FieldType: DorisTypeString},
+				"s3":                               {FieldType: DorisTypeString},
+				"s4":                               {FieldType: DorisTypeString},
+				"ts1":                              {FieldType: DorisTypeString, IsAnalyzed: true},
+				"log":                              {FieldType: DorisTypeString},
+				"object.field":                     {FieldType: DorisTypeString},
 			}).WithEncode(func(s string) string {
 				return fmt.Sprintf("`%s`", s)
 			}).ParserQueryString(ctx, tt.input)
@@ -606,6 +614,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 
 	e := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
 		"object.field":                     {FieldType: DorisTypeText},
+		"object.field.name":                {FieldType: DorisTypeString},
 		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
 		"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
 		"events.timestamp":                 {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
@@ -613,6 +622,17 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			FieldType:  DorisTypeText,
 			IsAnalyzed: true,
 		},
+		"tag":                {FieldType: DorisTypeString},
+		"status":             {FieldType: DorisTypeString},
+		"code":               {FieldType: DorisTypeString},
+		"cpu_usage":          {FieldType: DorisTypeInt},
+		"env":                {FieldType: DorisTypeString},
+		"serverIp":           {FieldType: DorisTypeString},
+		"__ext.container_id": {FieldType: DorisTypeString},
+		"path":               {FieldType: DorisTypeString},
+		"gseIndex":           {FieldType: DorisTypeInt},
+		"iterationIndex":     {FieldType: DorisTypeInt},
+		"dtEventTimeStamp":   {FieldType: DorisTypeBigInt},
 	})
 
 	for _, tt := range tests {

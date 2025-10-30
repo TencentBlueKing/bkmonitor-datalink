@@ -784,7 +784,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				defer func() {
 					close(dataCh)
 				}()
-
 				_, _, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
@@ -1347,13 +1346,47 @@ func TestInstance_bkSql(t *testing.T) {
 
 			fieldsMap := metadata.FieldsMap{
 				"text": {
-					FieldType:  sql_expr.DorisTypeText,
-					IsAnalyzed: false,
+					FieldType: sql_expr.DorisTypeText,
 				},
 				"origin_field": {
-					AliasName:  "alias_field",
-					FieldType:  sql_expr.DorisTypeText,
-					IsAnalyzed: false,
+					AliasName: "alias_field",
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"login_rate": {
+					FieldType: sql_expr.DorisTypeDouble,
+				},
+				"gseIndex": {
+					FieldType: sql_expr.DorisTypeInt,
+				},
+				"value": {
+					FieldType: sql_expr.DorisTypeDouble,
+				},
+				"dtEventTimeStamp": {
+					FieldType: sql_expr.DorisTypeBigInt,
+				},
+				"ip": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"log": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"path": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"namespace": {
+					FieldType: sql_expr.DorisTypeString,
+				},
+				"thedate": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"iterationIndex": {
+					FieldType: sql_expr.DorisTypeInt,
+				},
+				"_timestamp_": {
+					FieldType: sql_expr.DorisTypeBigInt,
+				},
+				"bk_host_id": {
+					FieldType: sql_expr.DorisTypeInt,
 				},
 			}
 
@@ -2024,10 +2057,22 @@ LIMIT
 
 			// SQL生成验证
 			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {FieldType: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
+				"log":                               {FieldType: sql_expr.DorisTypeText},
+				"text":                              {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type":  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":               {FieldType: sql_expr.DorisTypeInt},
+				"__ext.io_kubernetes_workload_name": {FieldType: sql_expr.DorisTypeString},
+				"__ext.io_kubernetes_workload_type": {FieldType: sql_expr.DorisTypeString},
+				"__ext.container_id":                {FieldType: sql_expr.DorisTypeString},
+				"__ext.pod.namespace":               {FieldType: sql_expr.DorisTypeString, AliasName: "pod_namespace"},
+				"resource.bk.instance.id":           {FieldType: sql_expr.DorisTypeString},
+				"bk_host_id":                        {FieldType: sql_expr.DorisTypeString},
+				"http.host":                         {FieldType: sql_expr.DorisTypeString},
+				"attributes.http.host":              {FieldType: sql_expr.DorisTypeString},
+				"attributes.exception.type":         {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events":                            {FieldType: sql_expr.DorisTypeVariant},
+				"serverIp":                          {FieldType: sql_expr.DorisTypeString},
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

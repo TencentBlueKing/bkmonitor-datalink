@@ -159,7 +159,11 @@ func TestParserAllConditions(t *testing.T) {
 				{DimensionName: "text_field_1", Operator: metadata.ConditionEqual, Value: []string{"v1"}},
 			},
 		}
-		result, err := doris.ParserAllConditions(conditions)
+		result, err := doris.WithFieldsMap(metadata.FieldsMap{
+			"text_field_1": metadata.FieldOption{
+				FieldType: "text",
+			},
+		}).ParserAllConditions(conditions)
 		assert.NoError(t, err)
 		assert.Equal(t, "`text_field_1` = 'v1'", result)
 	})
@@ -298,7 +302,9 @@ func TestParserAllConditions(t *testing.T) {
 				{DimensionName: "A", Operator: metadata.ConditionEqual, Value: []string{"1"}},
 			},
 		}
-		result, err := d.ParserAllConditions(conditions)
+		result, err := d.WithFieldsMap(metadata.FieldsMap{
+			"A": {FieldType: "string", IsAnalyzed: false},
+		}).ParserAllConditions(conditions)
 		assert.NoError(t, err)
 
 		expected := "`A` = '1'"

@@ -660,6 +660,9 @@ func (v *FieldNode) String() string {
 	if v.isField && v.Encode != nil {
 		originField, as := v.Encode(result)
 		if v.SetAs && as != "" && v.as == nil {
+			if as == "null" {
+				as = result
+			}
 			v.as = &StringNode{Name: as}
 		}
 		result = originField

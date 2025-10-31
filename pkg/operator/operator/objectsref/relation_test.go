@@ -301,8 +301,8 @@ func TestWriteContainerInfoRelation(t *testing.T) {
 			"monitoring.bk.tencent.com/relation/info/container/region":      "guangzhou",
 		},
 		Containers: []ContainerKey{
-			{Name: "test-container-1", Tag: "1.0.0"},
-			{Name: "test-container-2", Tag: "2.0.0"},
+			{Name: "test-container-1", ImageTag: "1.0.0", ImageName: "test-image"},
+			{Name: "test-container-2", ImageTag: "2.0.0", ImageName: "test-image"},
 		},
 	}
 
@@ -317,11 +317,13 @@ func TestWriteContainerInfoRelation(t *testing.T) {
 	}
 
 	buf := &bytes.Buffer{}
-	objectsController.WriteContainerInfoRelation(buf)
+	objectsController.WriteAppVersionWithContainerRelation(buf)
 
 	expected := []string{
-		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",version="1.0.0",environment="paasv3",region="guangzhou"} 1`,
-		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",version="2.0.0",environment="paasv3",region="guangzhou"} 1`,
+		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",app_name="test-image",version="1.0.0",environment="paasv3",region="guangzhou"} 1`,
+		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",app_name="test-image",version="2.0.0",environment="paasv3",region="guangzhou"} 1`,
+		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",app_name="test-image",version="1.0.0"} 1`,
+		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",app_name="test-image",version="2.0.0"} 1`,
 	}
 	for _, s := range expected {
 		assert.Contains(t, buf.String(), s)

@@ -26,10 +26,11 @@ type PodEvent struct {
 }
 
 type ContainerKey struct {
-	Name    string
-	ID      string
-	ImageID string
-	Tag     string
+	Name      string
+	ID        string
+	ImageID   string
+	ImageName string
+	ImageTag  string
 }
 
 type PodObject struct {
@@ -204,8 +205,9 @@ func toContainerKey(pod *corev1.Pod) []ContainerKey {
 		}
 
 		img := strings.Split(sc.Image, ":")
-		if len(img) > 0 {
-			ck.Tag = img[len(img)-1]
+		if len(img) == 2 {
+			ck.ImageName = img[0]
+			ck.ImageTag = img[1]
 		}
 		containers = append(containers, ck)
 	}

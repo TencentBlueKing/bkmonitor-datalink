@@ -163,6 +163,20 @@ var configData = &Config{
 			},
 		},
 		{
+			Name: "app_version",
+			Index: cmdb.Index{
+				"app_name",
+				"version",
+			},
+		},
+		{
+			Name: "git_commit",
+			Index: cmdb.Index{
+				"git_repo",
+				"commit_id",
+			},
+		},
+		{
 			Name: "host",
 			Index: cmdb.Index{
 				"host_id",
@@ -285,6 +299,21 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"host", "system",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "host",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "container",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "git_commit",
 			},
 		},
 	},

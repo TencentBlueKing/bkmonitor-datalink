@@ -201,10 +201,11 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]
 	case *gen.LimitClauseContext:
+		v.nodeMap[LimitItem] = &LimitNode{}
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.alias, v.Encode, isSetAs, next, ctx)
+	return visitChildren(v.Encode, isSetAs, next, ctx)
 }
 
 type LimitNode struct {
@@ -712,7 +713,7 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
 
-	return visitChildren(v.alias, v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type FieldNode struct {

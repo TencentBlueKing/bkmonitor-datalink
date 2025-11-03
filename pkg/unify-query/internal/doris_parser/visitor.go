@@ -205,7 +205,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.Encode, isSetAs, next, ctx)
+	return visitChildren(v.alias, v.Encode, isSetAs, next, ctx)
 }
 
 type LimitNode struct {
@@ -713,7 +713,7 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.alias, v.Encode, v.SetAs, next, ctx)
 }
 
 type FieldNode struct {

@@ -157,5 +157,5 @@ replace (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
-	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk
+	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.26.1-bk
 )

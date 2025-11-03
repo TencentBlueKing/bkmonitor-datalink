@@ -385,7 +385,9 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		fn := &FieldNode{}
+		fn := &FieldNode{
+			isAgg: true,
+		}
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
@@ -720,6 +722,7 @@ type FieldNode struct {
 	baseNode
 
 	isField bool
+	isAgg   bool
 
 	node Node
 	as   Node
@@ -745,8 +748,14 @@ func (v *FieldNode) String() string {
 			v.as = &StringNode{Name: as}
 		}
 		if originField == "null" {
+			// 如果encode之后返回的是null说明字段不在fieldMap下面。可能是SQL本身AS的别名
 			if _, ok := v.alias[result]; ok {
 				originField = fmt.Sprintf("`%s`", result)
+			} else {
+				// 如果是 AggNode下面的则直接跳过
+				if v.isAgg {
+					return ""
+				}
 			}
 		}
 

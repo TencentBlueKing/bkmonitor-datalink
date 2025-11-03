@@ -2006,6 +2006,30 @@ LIMIT
 			end:      time.UnixMilli(1752563382292),
 			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
+		{
+			name: "remove unknown groupby",
+			query: &metadata.Query{
+				DB:          "100968_bklog_proz_ds_analysis",
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
+						},
+					},
+				},
+				FieldAlias: map[string]string{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				QueryString: "test",
+				SQL:         `SELECT * GROUP BY unknownField`,
+			},
+			start:    time.UnixMilli(1751958582292),
+			end:      time.UnixMilli(1752563382292),
+			expected: "SELECT * FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') LIMIT 100",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -2023,12 +2047,15 @@ LIMIT
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {FieldType: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
-			}).WithRangeTime(start, end)
+			fact := bksql.NewQueryFactory(ctx, tc.query).
+				WithFieldsMap(metadata.FieldsMap{
+					"text":                             {FieldType: sql_expr.DorisTypeText},
+					"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+					"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+					"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
+					"log":                              {FieldType: sql_expr.DorisTypeText},
+				}).
+				WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
 			if tc.err != nil {

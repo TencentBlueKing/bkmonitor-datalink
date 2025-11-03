@@ -517,17 +517,28 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 }
 
 func (d *DorisSQLExpr) isArray(k string) bool {
-	fieldType := d.getFieldType(k)
+	fieldType, exist := d.getFieldType(k)
+	if !exist {
+		return false
+	}
 	_, ok := d.caseAs(fieldType.FieldType)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k).FieldType == DorisTypeText
+	if t, e := d.getFieldType(k); e {
+		return t.FieldType == DorisTypeText
+	} else {
+		return false
+	}
 }
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
-	return d.getFieldType(k).IsAnalyzed
+	if t, e := d.getFieldType(k); e {
+		return t.IsAnalyzed
+	} else {
+		return false
+	}
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -563,16 +574,18 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption, exist bool) {
 	if d.fieldsMap == nil {
-		return opt
+		return opt, false
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.FieldType = strings.ToUpper(opt.FieldType)
+	} else {
+		return opt, false
 	}
-	return opt
+	return opt, true
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -608,7 +621,10 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		ns = alias
 	}
 
-	fieldType := d.getFieldType(ns)
+	fieldType, exist := d.getFieldType(ns)
+	if !exist {
+		return "null", "null"
+	}
 	castType, _ := d.caseAs(fieldType.FieldType)
 
 	fs := strings.Split(ns, ".")

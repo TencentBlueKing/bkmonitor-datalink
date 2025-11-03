@@ -48,7 +48,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 		stmt.WithEncode(opt.DimensionTransform)
 		stmt.Tables = opt.Tables
 		stmt.Where = opt.Where
-
+		stmt.alias = make(map[string]string)
 		stmt.Limit = opt.Limit
 		stmt.Offset = opt.Offset
 	}

@@ -73,6 +73,7 @@ type FieldOption struct {
 type VmCondition string
 
 type FieldAlias map[string]string
+type FieldAsMap map[string]string
 
 type TimeField struct {
 	Name string `json:"name,omitempty"`

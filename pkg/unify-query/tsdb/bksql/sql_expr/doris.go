@@ -72,6 +72,7 @@ type DorisSQLExpr struct {
 	keepColumns []string
 	fieldsMap   metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
+	fieldAsMap  metadata.FieldAsMap // 记录SQL中存在的别名
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -137,7 +138,7 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
-		AppendAlias:        d.appendAlias,
+		FieldAliasReg:      d.appendFieldAsMap,
 		Tables:             tables,
 		Where:              where,
 		Offset:             offset,
@@ -612,25 +613,8 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
-func (d *DorisSQLExpr) appendAlias(alias, field string) {
-	if _, ok := d.fieldAlias[alias]; ok {
-		return
-	} else {
-		d.fieldAlias[alias] = field
-	}
-}
-
-func (d *DorisSQLExpr) realName(alias string) (string, string) {
-	var lastAlias string
-	for {
-		field, ok := d.fieldAlias[alias]
-		if ok {
-			lastAlias = alias
-			alias = field
-		} else {
-			return lastAlias, alias
-		}
-	}
+func (d *DorisSQLExpr) appendFieldAsMap(alias, field string) {
+	d.fieldAsMap[alias] = field
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
@@ -639,7 +623,15 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = s
-	as, ns = d.realName(ns)
+
+	if alias, ok := d.fieldAlias[ns]; ok {
+		as = ns
+		ns = alias
+	} else {
+		if fieldAlias, ok := d.fieldAsMap[ns]; ok {
+			as = fieldAlias
+		}
+	}
 
 	fieldType, exist := d.getFieldOption(ns)
 	if !exist {

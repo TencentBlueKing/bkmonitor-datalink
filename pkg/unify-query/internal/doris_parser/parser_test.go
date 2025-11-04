@@ -470,7 +470,7 @@ LIMIT 10000;`,
 count(*) AS log_count 
 from t_table 
 where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp order by pod_namespace LIMIT 1000`,
-			sql: `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR test_server_ip MATCH_PHRASE 'Fatal' GROUP BY serverIp ORDER BY pod_namespace LIMIT 1000`,
+			sql: `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp ORDER BY pod_namespace LIMIT 1000`,
 		},
 		{
 			name: "test-2",
@@ -529,12 +529,12 @@ LIMIT
 		{
 			name: "test-10",
 			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND __ext.io_kubernetes_pod_namespace != 'pod_namespace_1' OR ( __ext.io_kubernetes_pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-10-1",
 			q:    `select pod_namespace AS ns, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS ns, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND __ext.io_kubernetes_pod_namespace != 'pod_namespace_1' OR ( __ext.io_kubernetes_pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS ns, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-11",
@@ -758,7 +758,7 @@ group by
 		{
 			name: `test-39`,
 			q:    `select pod_namespace where pod_namespace != ''`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace WHERE __ext.io_kubernetes_pod_namespace != '' LIMIT 100`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace WHERE pod_namespace != '' LIMIT 100`,
 		},
 		{
 			name: `test-40`,

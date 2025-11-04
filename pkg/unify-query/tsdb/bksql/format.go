@@ -128,6 +128,11 @@ func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
 	return f
 }
 
+func (f *QueryFactory) WithFieldAlias(m map[string]string) *QueryFactory {
+	f.expr.WithFieldAlias(m)
+	return f
+}
+
 func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
 }

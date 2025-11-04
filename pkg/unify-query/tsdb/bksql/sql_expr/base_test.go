@@ -24,7 +24,8 @@ func TestParserAllConditions(t *testing.T) {
 
 	doris := sql_expr.DorisSQLExpr{}
 	doris.WithFieldsMap(metadata.FieldsMap{
-		"text_field": {FieldType: "text", IsAnalyzed: true},
+		"text_field":   {FieldType: "text", IsAnalyzed: true},
+		"text_field_t": {FieldType: "text", IsAnalyzed: false},
 	})
 
 	t.Run("空条件测试", func(t *testing.T) {
@@ -156,12 +157,12 @@ func TestParserAllConditions(t *testing.T) {
 	t.Run("字段不分词", func(t *testing.T) {
 		conditions := metadata.AllConditions{
 			{
-				{DimensionName: "text_field_1", Operator: metadata.ConditionEqual, Value: []string{"v1"}},
+				{DimensionName: "text_field_t", Operator: metadata.ConditionEqual, Value: []string{"v1"}},
 			},
 		}
 		result, err := doris.ParserAllConditions(conditions)
 		assert.NoError(t, err)
-		assert.Equal(t, "`text_field_1` = 'v1'", result)
+		assert.Equal(t, "`text_field_t` = 'v1'", result)
 	})
 	t.Run("无公共条件", func(t *testing.T) {
 		// 所有OR分支完全不同

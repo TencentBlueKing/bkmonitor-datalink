@@ -299,7 +299,7 @@ GROUP BY
 LIMIT
   1000
 `,
-			sql: "SELECT test_server_ip AS serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000",
+			sql: "SELECT test_server_ip AS serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000",
 		},
 		{
 			name: "Core日志 (近6个小时)",

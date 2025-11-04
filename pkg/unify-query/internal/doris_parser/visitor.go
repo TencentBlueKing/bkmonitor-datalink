@@ -665,8 +665,6 @@ type SelectNode struct {
 	DistinctIndex int
 	Distinct      bool
 	fieldsNode    []Node
-
-	fieldsAlias map[string]string
 }
 
 func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) any {

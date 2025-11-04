@@ -775,8 +775,10 @@ func (v *FieldNode) String() string {
 		// 如果是聚合或者排序字段，则不需要添加 AS 关键字
 		if v.isCtxNode(groupCtx) || v.isCtxNode(orderCtx) || v.isCtxNode(whereCtx) {
 			result = fmt.Sprintf("%s", as)
-		} else if v.isCtxNode(selectCtx) {
+		} else if v.isCtxNode(selectCtx) && as != result {
 			result = fmt.Sprintf("%s %s %s", result, AsItem, as)
+		} else {
+			result = fmt.Sprintf("%s", as)
 		}
 	}
 

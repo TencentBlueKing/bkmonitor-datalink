@@ -1396,9 +1396,7 @@ func TestInstance_bkSql(t *testing.T) {
 
 			fact := bksql.NewQueryFactory(ctx, c.query).
 				WithFieldsMap(fieldsMap).
-				WithFieldAlias(map[string]string{
-					"alias_field": "origin_field",
-				}).
+				WithFieldAsMap(map[string]string{}).
 				WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)

@@ -105,6 +105,11 @@ func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	return d
 }
 
+func (d *DorisSQLExpr) WithFieldAsMap(fieldAsMap metadata.FieldAsMap) SQLExpr {
+	d.fieldAsMap = fieldAsMap
+	return d
+}
+
 func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	d.keepColumns = cols
 	return d
@@ -623,14 +628,9 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = s
-
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
-	} else {
-		if fieldAlias, ok := d.fieldAsMap[ns]; ok {
-			as = fieldAlias
-		}
 	}
 
 	fieldType, exist := d.getFieldOption(ns)

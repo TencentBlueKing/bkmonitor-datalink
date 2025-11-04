@@ -57,6 +57,8 @@ type SQLExpr interface {
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr
+	// WithFieldAsMap 设置SQL中别名
+	WithFieldAsMap(m metadata.FieldAsMap) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -108,11 +110,17 @@ type DefaultSQLExpr struct {
 	keepColumns []string
 	fieldMap    metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
+	fieldAsMap  metadata.FieldAsMap
 
 	timeField  string
 	valueField string
 
 	key string
+}
+
+func (d *DefaultSQLExpr) WithFieldAsMap(m metadata.FieldAsMap) SQLExpr {
+	d.fieldAsMap = m
+	return d
 }
 
 func (d *DefaultSQLExpr) Type() string {

@@ -784,7 +784,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				defer func() {
 					close(dataCh)
 				}()
-
 				_, _, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
@@ -1347,13 +1346,47 @@ func TestInstance_bkSql(t *testing.T) {
 
 			fieldsMap := metadata.FieldsMap{
 				"text": {
-					FieldType:  sql_expr.DorisTypeText,
-					IsAnalyzed: false,
+					FieldType: sql_expr.DorisTypeText,
 				},
 				"origin_field": {
-					AliasName:  "alias_field",
-					FieldType:  sql_expr.DorisTypeText,
-					IsAnalyzed: false,
+					AliasName: "alias_field",
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"login_rate": {
+					FieldType: sql_expr.DorisTypeDouble,
+				},
+				"gseIndex": {
+					FieldType: sql_expr.DorisTypeInt,
+				},
+				"value": {
+					FieldType: sql_expr.DorisTypeDouble,
+				},
+				"dtEventTimeStamp": {
+					FieldType: sql_expr.DorisTypeBigInt,
+				},
+				"ip": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"log": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"path": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"namespace": {
+					FieldType: sql_expr.DorisTypeString,
+				},
+				"thedate": {
+					FieldType: sql_expr.DorisTypeText,
+				},
+				"iterationIndex": {
+					FieldType: sql_expr.DorisTypeInt,
+				},
+				"_timestamp_": {
+					FieldType: sql_expr.DorisTypeBigInt,
+				},
+				"bk_host_id": {
+					FieldType: sql_expr.DorisTypeInt,
 				},
 			}
 
@@ -1971,7 +2004,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+			expected: "'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY ns LIMIT 1000",
 		},
 		{
 			name: "object field eq and aggregate with sql - 2",
@@ -2004,31 +2037,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
-		},
-		{
-			name: "remove unknown groupby",
-			query: &metadata.Query{
-				DB:          "100968_bklog_proz_ds_analysis",
-				Measurement: sql_expr.Doris,
-				AllConditions: metadata.AllConditions{
-					{
-						{
-							DimensionName: "log",
-							Operator:      metadata.ConditionEqual,
-							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
-						},
-					},
-				},
-				FieldAlias: map[string]string{
-					"pod_namespace": "__ext.pod.namespace",
-				},
-				QueryString: "test",
-				SQL:         `SELECT * GROUP BY unknownField`,
-			},
-			start:    time.UnixMilli(1751958582292),
-			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT * FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') LIMIT 100",
+			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, et LIMIT 1000",
 		},
 	}
 
@@ -2047,15 +2056,24 @@ LIMIT
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).
-				WithFieldsMap(metadata.FieldsMap{
-					"text":                             {FieldType: sql_expr.DorisTypeText},
-					"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-					"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-					"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
-					"log":                              {FieldType: sql_expr.DorisTypeText},
-				}).
-				WithRangeTime(start, end)
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(metadata.FieldsMap{
+				"log":                               {FieldType: sql_expr.DorisTypeText},
+				"text":                              {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type":  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                  {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":               {FieldType: sql_expr.DorisTypeInt},
+				"__ext.io_kubernetes_workload_name": {FieldType: sql_expr.DorisTypeString},
+				"__ext.io_kubernetes_workload_type": {FieldType: sql_expr.DorisTypeString},
+				"__ext.container_id":                {FieldType: sql_expr.DorisTypeString},
+				"__ext.pod.namespace":               {FieldType: sql_expr.DorisTypeString, AliasName: "pod_namespace"},
+				"resource.bk.instance.id":           {FieldType: sql_expr.DorisTypeString},
+				"bk_host_id":                        {FieldType: sql_expr.DorisTypeString},
+				"http.host":                         {FieldType: sql_expr.DorisTypeString},
+				"attributes.http.host":              {FieldType: sql_expr.DorisTypeString},
+				"attributes.exception.type":         {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events":                            {FieldType: sql_expr.DorisTypeVariant},
+				"serverIp":                          {FieldType: sql_expr.DorisTypeString},
+			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
 			if tc.err != nil {

@@ -58,6 +58,7 @@ const (
 
 	DorisTypeArrayTransform = "%s ARRAY"
 	DorisTypeArray          = "ARRAY<%s>"
+	DorisTypeVariant        = "VARIANT"
 )
 
 type DorisSQLExpr struct {
@@ -136,6 +137,7 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
+		AppendAlias:        d.appendAlias,
 		Tables:             tables,
 		Where:              where,
 		Offset:             offset,
@@ -610,16 +612,34 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
+func (d *DorisSQLExpr) appendAlias(alias, field string) {
+	if _, ok := d.fieldAlias[alias]; ok {
+		return
+	} else {
+		d.fieldAlias[alias] = field
+	}
+}
+
+func (d *DorisSQLExpr) realName(alias string) (string, string) {
+	var lastAlias string
+	for {
+		field, ok := d.fieldAlias[alias]
+		if ok {
+			lastAlias = alias
+			alias = field
+		} else {
+			return lastAlias, alias
+		}
+	}
+}
+
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if s == "" || s == "*" {
 		return ns, as
 	}
 
 	ns = s
-	if alias, ok := d.fieldAlias[ns]; ok {
-		as = ns
-		ns = alias
-	}
+	as, ns = d.realName(ns)
 
 	fieldType, exist := d.getFieldType(ns)
 	if !exist {

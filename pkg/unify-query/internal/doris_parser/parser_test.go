@@ -36,7 +36,7 @@ func TestParseDorisSQLWithListener(t *testing.T) {
 count(*) AS log_count 
 from t_table 
 where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp order by pod_namespace LIMIT 1000`,
-			sql: `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR test_server_ip MATCH_PHRASE 'Fatal' GROUP BY test_server_ip ORDER BY __ext.io_kubernetes_pod_namespace LIMIT 1000`,
+			sql: `SELECT pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp ORDER BY pod_namespace LIMIT 1000`,
 		},
 		{
 			name: "test-2",
@@ -61,7 +61,7 @@ LIMIT
 		{
 			name: "test-4",
 			q:    "SELECT pod_namespace AS ns, split_part (log, '|', 3) AS ct, count(*) FROM `table` WHERE log MATCH_ALL 'Reliable RPC called out of limit' group by ns, ct LIMIT 1000",
-			sql:  "SELECT __ext.io_kubernetes_pod_namespace AS ns, split_part(log, '|', 3) AS ct, count(*) FROM `table` WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
+			sql:  "SELECT pod_namespace AS ns, split_part(log, '|', 3) AS ct, count(*) FROM `table` WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
 		},
 		{
 			name: "test-5",
@@ -90,7 +90,7 @@ GROUP BY
 LIMIT
   1000
 `,
-			sql: `SELECT test_server_ip AS serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000`,
+			sql: `SELECT serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
 		},
 		{
 			name: "test-7",
@@ -110,12 +110,12 @@ LIMIT
 		{
 			name: "test-10",
 			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND __ext.io_kubernetes_pod_namespace != 'pod_namespace_1' OR ( __ext.io_kubernetes_pod_namespace = '5' OR a > 4 ) GROUP BY test_server_ip, abc ORDER BY time LIMIT 1000 OFFSET 999`,
+			sql:  `SELECT pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-10-1",
 			q:    `select pod_namespace AS ns, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
-			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS ns, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND __ext.io_kubernetes_pod_namespace != 'pod_namespace_1' OR ( __ext.io_kubernetes_pod_namespace = '5' OR a > 4 ) GROUP BY test_server_ip, abc ORDER BY time LIMIT 1000 OFFSET 999`,
+			sql:  `SELECT pod_namespace AS ns, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-11",
@@ -231,16 +231,12 @@ group by
 	}
 
 	mock.Init()
-	fieldAlias := map[string]string{
-		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
-		"serverIp":      "test_server_ip",
-	}
+	fieldAlias := map[string]string{}
 
 	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-
 			// antlr4 and visitor
 			opt := DorisListenerOption{
 				DimensionTransform: func(s string) (string, string) {

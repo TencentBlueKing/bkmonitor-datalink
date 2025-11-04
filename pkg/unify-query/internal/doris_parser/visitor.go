@@ -667,9 +667,6 @@ type SelectNode struct {
 	fieldsNode    []Node
 
 	fieldsAlias map[string]string
-
-	informalField string
-	informalAlias string
 }
 
 func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) any {

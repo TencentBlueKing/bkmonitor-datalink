@@ -507,7 +507,7 @@ GROUP BY
 LIMIT
   1000
 `,
-			sql: `SELECT test_server_ip AS serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000`,
+			sql: `SELECT test_server_ip, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000`,
 		},
 		{
 			name: "test-7",
@@ -864,13 +864,20 @@ group by
 			// antlr4 and visitor
 			opt := &Option{
 				DimensionTransform: func(s string) (string, string) {
-					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], s
+					if alias, ok := fieldAsMap[s]; ok {
+						s = alias
 					}
-					return s, ""
+					if field, ok := fieldAlias[s]; ok {
+						return s, field
+					}
+
+					return s, s
 				},
-				FieldAliasReg: func(alias, field string) {
-					fieldAsMap[alias] = field
+				RegisterSelectNode: func(alias, field string) {
+					// 如果遇到了不存在的别名，认为是SQL中直接使用了其他的别名
+					if _, ok := fieldAlias[alias]; !ok {
+						fieldAsMap[alias] = field
+					}
 				},
 				Limit:  c.limit,
 				Offset: c.offset,

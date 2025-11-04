@@ -143,7 +143,7 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
-		FieldAliasReg:      d.appendFieldAsMap,
+		RegisterSelectNode: d.registerNaming,
 		Tables:             tables,
 		Where:              where,
 		Offset:             offset,
@@ -618,8 +618,14 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
-func (d *DorisSQLExpr) appendFieldAsMap(alias, field string) {
-	d.fieldAsMap[alias] = field
+func (d *DorisSQLExpr) registerNaming(alias, field string) {
+	// 如果别名不存在则代表是sql中的别名，记录到 fieldAsMap 中
+	if d.fieldAsMap == nil {
+		d.fieldAsMap = make(metadata.FieldAsMap)
+	}
+	if _, ok := d.fieldAlias[alias]; !ok {
+		d.fieldAsMap[alias] = field
+	}
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
@@ -628,6 +634,10 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = s
+	if alias, ok := d.fieldAsMap[ns]; ok {
+		ns = alias
+	}
+
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias

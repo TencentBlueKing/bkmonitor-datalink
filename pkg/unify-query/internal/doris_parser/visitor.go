@@ -1234,7 +1234,7 @@ func visitChildren(appendAlias Naming, encode Encode, next Node, node antlr.Rule
 
 type Option struct {
 	DimensionTransform Encode
-	FieldAliasReg      Naming
+	RegisterSelectNode Naming
 
 	Tables []string
 	Where  string

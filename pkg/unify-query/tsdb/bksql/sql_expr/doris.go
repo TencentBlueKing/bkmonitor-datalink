@@ -519,25 +519,25 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 }
 
 func (d *DorisSQLExpr) isArray(k string) bool {
-	fieldType, exist := d.getFieldType(k)
+	opt, exist := d.getFieldOption(k)
 	if !exist {
 		return false
 	}
-	_, ok := d.caseAs(fieldType.FieldType)
+	_, ok := d.caseAs(opt.FieldType)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	if t, e := d.getFieldType(k); e {
-		return t.FieldType == DorisTypeText
+	if opt, e := d.getFieldOption(k); e {
+		return opt.FieldType == DorisTypeText
 	} else {
 		return false
 	}
 }
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
-	if t, e := d.getFieldType(k); e {
-		return t.IsAnalyzed
+	if opt, e := d.getFieldOption(k); e {
+		return opt.IsAnalyzed
 	} else {
 		return false
 	}
@@ -576,7 +576,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption, exist bool) {
+func (d *DorisSQLExpr) getFieldOption(s string) (opt metadata.FieldOption, exist bool) {
 	if d.fieldsMap == nil {
 		return opt, false
 	}
@@ -641,7 +641,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	ns = s
 	as, ns = d.realName(ns)
 
-	fieldType, exist := d.getFieldType(ns)
+	fieldType, exist := d.getFieldOption(ns)
 	if !exist {
 		return "null", "null"
 	}

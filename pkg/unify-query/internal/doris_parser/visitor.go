@@ -739,9 +739,9 @@ type FieldNode struct {
 
 	sort Node
 
-	args          []Node
-	informalAlias string
-	informalField string
+	args         []Node
+	currentAlias string
+	currentField string
 }
 
 func (v *FieldNode) isCtxNode(ctx CtxType) bool {
@@ -1200,15 +1200,15 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 		node.as = &StringNode{
 			Name: ctx.GetText(),
 		}
-		node.informalAlias = ctx.GetText()
-		node.AppendAlias(node.informalAlias, node.informalField)
-		node.informalAlias = ""
+		node.currentAlias = ctx.GetText()
+		node.AppendAlias(node.currentAlias, node.currentField)
+		node.currentAlias = ""
 		next = node.as
 	case *gen.StarContext:
 		node.node = &StringNode{Name: ctx.GetText()}
 	case *gen.ValueExpressionDefaultContext:
-		node.informalField = ctx.GetText()
-		node.informalAlias = ""
+		node.currentField = ctx.GetText()
+		node.currentAlias = ""
 	}
 
 	return next

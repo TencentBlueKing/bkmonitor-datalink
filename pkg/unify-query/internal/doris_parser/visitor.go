@@ -619,7 +619,7 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ValueExpressionDefaultContext:
 		if v.Left == nil {
 			v.Left = &FieldNode{
-				ctx: orderCtx,
+				ctx: whereCtx,
 			}
 			next = v.Left
 		} else if v.Right == nil {

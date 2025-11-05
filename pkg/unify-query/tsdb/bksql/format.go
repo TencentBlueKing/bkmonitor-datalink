@@ -123,11 +123,6 @@ func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldAsMap(m metadata.FieldAsMap) *QueryFactory {
-	f.expr.WithFieldAsMap(m)
-	return f
-}
-
 func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
 	f.expr.WithKeepColumns(cols)
 	return f

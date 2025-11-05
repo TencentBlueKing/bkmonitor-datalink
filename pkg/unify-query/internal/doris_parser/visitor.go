@@ -65,8 +65,8 @@ func (n *baseNode) WithEncode(encode Encode) {
 	n.Encode = encode
 }
 
-func (n *baseNode) WithSetAs(as bool) {
-	n.SetAs = as
+func (n *baseNode) WithSetAs(setAs bool) {
+	n.SetAs = setAs
 }
 
 type Statement struct {

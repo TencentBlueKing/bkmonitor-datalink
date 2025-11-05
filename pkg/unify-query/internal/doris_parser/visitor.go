@@ -43,7 +43,7 @@ type Node interface {
 	Error() error
 
 	WithEncode(Encode)
-	WithSetAs(as bool)
+	WithSetAs(bool)
 }
 
 type baseNode struct {
@@ -173,11 +173,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 			},
 		}
 	}
-
+	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		v.nodeMap[SelectItem] = &SelectNode{}
 		next = v.nodeMap[SelectItem]
+		isSetAs = true
 	case *gen.FromClauseContext:
 		v.nodeMap[TableItem] = &TableNode{}
 		next = v.nodeMap[TableItem]
@@ -196,7 +197,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, isSetAs, next, ctx)
 }
 
 type LimitNode struct {

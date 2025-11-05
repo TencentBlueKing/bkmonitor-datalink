@@ -35,6 +35,13 @@ const (
 	defaultLimit = "100"
 )
 
+const (
+	whereCtxType = iota
+	selectCtxType
+	groupCtxType
+	orderCtxType
+)
+
 type Encode func(string) (string, string)
 
 type Node interface {
@@ -43,14 +50,16 @@ type Node interface {
 	Error() error
 
 	WithEncode(Encode)
-	WithSetAs(bool)
+	WithAliasSet(map[string]struct{})
+	WithSetAs(as bool)
 }
 
 type baseNode struct {
 	antlr.BaseParseTreeVisitor
 
-	Encode Encode
-	SetAs  bool
+	Encode   Encode
+	aliasSet map[string]struct{}
+	SetAs    bool
 }
 
 func (n *baseNode) String() string {
@@ -69,12 +78,16 @@ func (n *baseNode) WithSetAs(setAs bool) {
 	n.SetAs = setAs
 }
 
+func (n *baseNode) WithAliasSet(aliasSet map[string]struct{}) {
+	n.aliasSet = aliasSet
+}
+
 type Statement struct {
 	baseNode
 
 	isSubQuery bool
-
-	nodeMap map[string]Node
+	aliasSet   map[string]struct{}
+	nodeMap    map[string]Node
 
 	Tables  []string
 	Where   string
@@ -173,6 +186,8 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 			},
 		}
 	}
+
+	aliasSet := make(map[string]struct{})
 	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
@@ -197,7 +212,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.Encode, isSetAs, next, ctx)
+	return visitChildren(v.Encode, isSetAs, aliasSet, next, ctx)
 }
 
 type LimitNode struct {
@@ -309,7 +324,7 @@ func (v *SortNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = fn
 		v.nodes = append(v.nodes, fn)
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type OrderNode struct {
@@ -348,11 +363,11 @@ func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) any {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
 		v.node = &FieldNode{
-			ctx: orderCtx,
+			ctxType: orderCtxType,
 		}
 		next = v.node
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type AggNode struct {
@@ -380,12 +395,12 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) any {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
 		fn := &FieldNode{
-			ctx: groupCtx,
+			ctxType: groupCtxType,
 		}
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type WhereNode struct {
@@ -456,7 +471,7 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.add(on)
 		next = on
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type LeftParenNode struct {
@@ -488,7 +503,7 @@ func (v *ParentNode) String() string {
 func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) any {
 	v.node = &ConditionNode{}
 	next := v.node
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type LogicNode struct {
@@ -573,7 +588,7 @@ func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.node
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type OperatorNode struct {
@@ -619,7 +634,7 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ValueExpressionDefaultContext:
 		if v.Left == nil {
 			v.Left = &FieldNode{
-				ctx: whereCtx,
+				ctxType: whereCtxType,
 			}
 			next = v.Left
 		} else if v.Right == nil {
@@ -629,7 +644,7 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			next = v.Right
 		}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type TableNode struct {
@@ -654,7 +669,7 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.TableNameContext:
 		v.Table = &StringNode{Name: ctx.GetText()}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type SelectNode struct {
@@ -702,30 +717,21 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
 		fn := &FieldNode{
-			ctx: selectCtx,
+			ctxType: selectCtxType,
 		}
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
-
-type CtxType int
-
-const (
-	whereCtx CtxType = iota
-	selectCtx
-	groupCtx
-	orderCtx
-)
 
 type FieldNode struct {
 	baseNode
 
 	isField bool
 
-	ctx CtxType
+	ctxType int
 
 	node Node
 	as   Node
@@ -735,8 +741,8 @@ type FieldNode struct {
 	args []Node
 }
 
-func (v *FieldNode) isCtxNode(ctx CtxType) bool {
-	return v.ctx == ctx
+func (v *FieldNode) checkCtxType(ct int) bool {
+	return v.ctxType == ct
 }
 
 func (v *FieldNode) String() string {
@@ -749,9 +755,17 @@ func (v *FieldNode) String() string {
 			v.as = &StringNode{Name: as}
 		}
 		// 如果是GROUP BY 发现聚合字段为 null 则忽略该字段
-		if originField == "null" && v.isCtxNode(groupCtx) {
-			return ""
+		_, isAlias := v.aliasSet[result]
+		if v.checkCtxType(groupCtxType) {
+			if originField == "null" {
+				if isAlias {
+					originField = result
+				} else {
+					return ""
+				}
+			}
 		}
+
 		result = originField
 	}
 
@@ -769,9 +783,9 @@ func (v *FieldNode) String() string {
 	as := nodeToString(v.as)
 	if as != "" {
 		// 如果是聚合或者排序字段，则不需要添加 AS 关键字
-		if v.isCtxNode(groupCtx) || v.isCtxNode(orderCtx) || v.isCtxNode(whereCtx) {
+		if v.checkCtxType(groupCtxType) || v.checkCtxType(orderCtxType) || v.checkCtxType(whereCtxType) {
 			result = fmt.Sprintf("%s", as)
-		} else if v.isCtxNode(selectCtx) && as != result {
+		} else if v.checkCtxType(selectCtxType) && as != result {
 			result = fmt.Sprintf("%s %s %s", result, AsItem, as)
 		} else {
 			result = fmt.Sprintf("%s", as)
@@ -788,7 +802,7 @@ func (v *FieldNode) String() string {
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
 	next := visitFieldNode(ctx, v)
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type BinaryNode struct {
@@ -825,12 +839,12 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ValueExpressionDefaultContext:
 		if v.Op == nil {
 			v.Left = &FieldNode{
-				ctx: whereCtx,
+				ctxType: whereCtxType,
 			}
 			next = v.Left
 		} else {
 			v.Right = &FieldNode{
-				ctx: whereCtx,
+				ctxType: whereCtxType,
 			}
 			next = v.Right
 		}
@@ -842,7 +856,7 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &StringNode{Name: ctx.GetText()}
 		}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type FunctionNode struct {
@@ -919,7 +933,7 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.StarContext:
 		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type SearchCaseNode struct {
@@ -983,7 +997,7 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodes = append(v.nodes, sn)
 		next = sn
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type CastNode struct {
@@ -1040,7 +1054,7 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.Value = &StringNode{Name: ctx.GetText()}
 		next = v.Value
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type ColumnNode struct {
@@ -1074,7 +1088,7 @@ func (v *ColumnNode) String() string {
 }
 
 func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, v, ctx)
 }
 
 type ValueNode struct {
@@ -1107,7 +1121,7 @@ func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ConstantDefaultContext:
 		v.nodes = append(v.nodes, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, next, ctx)
 }
 
 type StringsNode struct {
@@ -1124,7 +1138,7 @@ func (v *StringsNode) String() string {
 }
 
 func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, v, ctx)
 }
 
 type StringNode struct {
@@ -1137,7 +1151,7 @@ func (v *StringNode) String() string {
 }
 
 func (v *StringNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.Encode, v.SetAs, v.aliasSet, v, ctx)
 }
 
 func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
@@ -1189,8 +1203,13 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 			}
 		}
 	case *gen.IdentifierOrTextContext:
+		alias := ctx.GetText()
 		node.as = &StringNode{
 			Name: ctx.GetText(),
+		}
+		isSelectCtx := node.checkCtxType(selectCtxType)
+		if isSelectCtx {
+			node.aliasSet[alias] = struct{}{}
 		}
 		next = node.as
 	case *gen.StarContext:
@@ -1207,9 +1226,11 @@ func nodeToString(node Node) string {
 	return node.String()
 }
 
-func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) any {
+func visitChildren(encode Encode, setAs bool, aliasSet map[string]struct{}, next Node, node antlr.RuleNode) any {
 	next.WithEncode(encode)
 	next.WithSetAs(setAs)
+	next.WithAliasSet(aliasSet)
+
 	for _, child := range node.GetChildren() {
 		if tree, ok := child.(antlr.ParseTree); ok {
 			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())

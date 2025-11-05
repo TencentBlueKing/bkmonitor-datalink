@@ -72,7 +72,6 @@ type DorisSQLExpr struct {
 	keepColumns []string
 	fieldsMap   metadata.FieldsMap
 	fieldAlias  metadata.FieldAlias
-	fieldAsMap  metadata.FieldAsMap // 记录SQL中存在的别名
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -102,11 +101,6 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	d.fieldsMap = fieldsMap
-	return d
-}
-
-func (d *DorisSQLExpr) WithFieldAsMap(fieldAsMap metadata.FieldAsMap) SQLExpr {
-	d.fieldAsMap = fieldAsMap
 	return d
 }
 
@@ -617,25 +611,12 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
-func (d *DorisSQLExpr) registerNaming(alias, field string) {
-	// 如果别名不存在则代表是sql中的别名，记录到 fieldAsMap 中
-	if d.fieldAsMap == nil {
-		d.fieldAsMap = make(metadata.FieldAsMap)
-	}
-	if _, ok := d.fieldAlias[alias]; !ok {
-		d.fieldAsMap[alias] = field
-	}
-}
-
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if s == "" || s == "*" {
 		return ns, as
 	}
 
 	ns = s
-	if alias, ok := d.fieldAsMap[ns]; ok {
-		ns = alias
-	}
 
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns

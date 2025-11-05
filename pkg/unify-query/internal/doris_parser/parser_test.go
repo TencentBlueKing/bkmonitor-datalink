@@ -859,25 +859,14 @@ group by
 	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
-			fieldAsMap := map[string]string{}
 			ctx = metadata.InitHashID(ctx)
 			// antlr4 and visitor
 			opt := &Option{
 				DimensionTransform: func(s string) (string, string) {
-					if alias, ok := fieldAsMap[s]; ok {
-						s = alias
+					if _, ok := fieldAlias[s]; ok {
+						return fieldAlias[s], s
 					}
-					if field, ok := fieldAlias[s]; ok {
-						return s, field
-					}
-
-					return s, s
-				},
-				RegisterSelectNode: func(alias, field string) {
-					// 如果遇到了不存在的别名，认为是SQL中直接使用了其他的别名
-					if _, ok := fieldAlias[alias]; !ok {
-						fieldAsMap[alias] = field
-					}
+					return s, ""
 				},
 				Limit:  c.limit,
 				Offset: c.offset,

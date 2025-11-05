@@ -143,7 +143,6 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
-		RegisterSelectNode: d.registerNaming,
 		Tables:             tables,
 		Where:              where,
 		Offset:             offset,

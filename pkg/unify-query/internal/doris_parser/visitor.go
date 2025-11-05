@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	antlr "github.com/antlr4-go/antlr/v4"
 	"github.com/spf13/cast"
 
@@ -187,7 +188,6 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		}
 	}
 
-	// 使用Statement级别的aliasSet，如果还没有初始化则创建
 	if v.aliasSet == nil {
 		v.aliasSet = make(map[string]struct{})
 	}
@@ -760,7 +760,7 @@ func (v *FieldNode) String() string {
 		// 如果是GROUP BY 发现聚合字段为 null 则忽略该字段
 		_, isAlias := v.aliasSet[result]
 		if v.checkCtxType(groupCtxType) {
-			if originField == "null" {
+			if originField == metadata.Null {
 				if isAlias {
 					originField = result
 				} else {
@@ -1208,7 +1208,7 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	case *gen.IdentifierOrTextContext:
 		alias := ctx.GetText()
 		node.as = &StringNode{
-			Name: ctx.GetText(),
+			Name: alias,
 		}
 		isSelectCtx := node.checkCtxType(selectCtxType)
 		if isSelectCtx {

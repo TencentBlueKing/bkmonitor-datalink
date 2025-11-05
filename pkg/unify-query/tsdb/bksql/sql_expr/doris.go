@@ -625,7 +625,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	fieldType, exist := d.getFieldOption(ns)
 	if !exist {
-		return "null", "null"
+		return metadata.Null, metadata.Null
 	}
 	castType, _ := d.caseAs(fieldType.FieldType)
 

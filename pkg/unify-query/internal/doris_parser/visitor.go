@@ -177,8 +177,8 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		v.nodeMap[SelectItem] = &SelectNode{}
-		next = v.nodeMap[SelectItem]
 		isSetAs = true
+		next = v.nodeMap[SelectItem]
 	case *gen.FromClauseContext:
 		v.nodeMap[TableItem] = &TableNode{}
 		next = v.nodeMap[TableItem]

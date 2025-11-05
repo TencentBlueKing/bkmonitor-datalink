@@ -187,7 +187,10 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		}
 	}
 
-	aliasSet := make(map[string]struct{})
+	// 使用Statement级别的aliasSet，如果还没有初始化则创建
+	if v.aliasSet == nil {
+		v.aliasSet = make(map[string]struct{})
+	}
 	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
@@ -212,7 +215,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.Encode, isSetAs, aliasSet, next, ctx)
+	return visitChildren(v.Encode, isSetAs, v.aliasSet, next, ctx)
 }
 
 type LimitNode struct {

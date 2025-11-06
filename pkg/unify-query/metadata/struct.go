@@ -53,10 +53,20 @@ const (
 	TypeDateNanos = "date_nanos"
 )
 
+var (
+	DorisDefaultFieldMap = FieldsMap{
+		// sql_expr.TimeStamp
+		"_timestamp_": FieldOption{
+			// sql_Expr.DorisTypeBigInt
+			FieldType: "BIGINT",
+		},
+	}
+)
+
 type FieldsMap map[string]FieldOption
 
 func (f FieldsMap) Field(k string) FieldOption {
-	return f[k]
+	return f[strings.ToUpper(k)]
 }
 
 type FieldOption struct {

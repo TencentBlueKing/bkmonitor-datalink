@@ -12,8 +12,10 @@ package lucene_parser
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -38,11 +40,14 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	}()
 
 	opt.reverseFieldAlias = make(map[string]string)
-	for k, v := range opt.FieldsMap {
-		if v.AliasName != "" {
-			opt.reverseFieldAlias[v.AliasName] = k
+
+	fieldsMap := lo.MapEntries(lo.Assign(metadata.DorisDefaultFieldMap, opt.FieldsMap), func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
+		if value.AliasName != "" {
+			opt.reverseFieldAlias[value.AliasName] = key
 		}
-	}
+		return strings.ToUpper(key), value
+	})
+	opt.FieldsMap = fieldsMap
 
 	if q == "" || q == "*" {
 		return &StringNode{

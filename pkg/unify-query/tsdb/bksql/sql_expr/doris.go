@@ -61,6 +61,17 @@ const (
 	DorisTypeVariant        = "VARIANT"
 )
 
+var (
+	DefaultFieldMaps = metadata.FieldsMap{
+		FieldTime: {
+			FieldType: DorisTypeBigInt,
+		},
+		FieldValue: {
+			FieldType: DorisTypeDouble,
+		},
+	}
+)
+
 type DorisSQLExpr struct {
 	DefaultSQLExpr
 
@@ -100,7 +111,10 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 }
 
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
-	d.fieldsMap = fieldsMap
+	d.fieldsMap = lo.MapEntries(lo.Assign(DefaultFieldMaps, fieldsMap), func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
+		return strings.ToUpper(key), value
+	})
+
 	return d
 }
 
@@ -581,6 +595,7 @@ func (d *DorisSQLExpr) getFieldOption(s string) (opt metadata.FieldOption, exist
 	}
 
 	var ok bool
+	s = strings.ToUpper(s)
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.FieldType = strings.ToUpper(opt.FieldType)
 	} else {

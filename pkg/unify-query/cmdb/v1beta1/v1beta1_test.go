@@ -34,7 +34,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "business", "container", "datasource", "deamonset", "deployment", "domain", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "bklogconfig", "business", "container", "datasource", "deamonset", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -74,6 +74,7 @@ func TestModel_GetPath(t *testing.T) {
 				{"apm_service", "apm_service_instance", "system"},
 				{"apm_service", "apm_service_instance", "pod", "node", "system"},
 				{"apm_service", "apm_service_instance", "pod", "datasource", "node", "system"},
+				{"apm_service", "apm_service_instance", "pod", "container", "app_version", "host", "system"},
 			},
 		},
 		"apm_service to system through wrong service": {
@@ -103,6 +104,7 @@ func TestModel_GetPath(t *testing.T) {
 				{"apm_service", "apm_service_instance", "pod"},
 				{"apm_service", "apm_service_instance", "system", "node", "pod"},
 				{"apm_service", "apm_service_instance", "system", "node", "datasource", "pod"},
+				{"apm_service", "apm_service_instance", "system", "host", "app_version", "container", "pod"},
 			},
 		},
 		"apm_service to system through node and pod": {
@@ -191,6 +193,7 @@ func TestModel_GetPath(t *testing.T) {
 				{"pod", "node", "system"},
 				{"pod", "datasource", "node", "system"},
 				{"pod", "apm_service_instance", "system"},
+				{"pod", "container", "app_version", "host", "system"},
 			},
 		},
 		"no target resource": {
@@ -225,7 +228,9 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"node", "system"},
 				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "pod", "container", "app_version", "host", "system"},
 				{"node", "datasource", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "container", "app_version", "host", "system"},
 			},
 		},
 		"node to system not all match": {
@@ -242,7 +247,9 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"node", "system"},
 				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "pod", "container", "app_version", "host", "system"},
 				{"node", "datasource", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "container", "app_version", "host", "system"},
 			},
 		},
 		"datasource to system all match": {
@@ -260,6 +267,8 @@ func TestModel_GetPath(t *testing.T) {
 				{"datasource", "pod", "node", "system"},
 				{"datasource", "pod", "apm_service_instance", "system"},
 				{"datasource", "node", "pod", "apm_service_instance", "system"},
+				{"datasource", "pod", "container", "app_version", "host", "system"},
+				{"datasource", "node", "pod", "container", "app_version", "host", "system"},
 			},
 		},
 		"pod to node": {
@@ -275,6 +284,7 @@ func TestModel_GetPath(t *testing.T) {
 				{"pod", "node"},
 				{"pod", "datasource", "node"},
 				{"pod", "apm_service_instance", "system", "node"},
+				{"pod", "container", "app_version", "host", "system", "node"},
 			},
 		},
 		"container info": {

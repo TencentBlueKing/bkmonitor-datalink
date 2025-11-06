@@ -56,6 +56,40 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "query string 和 conditions 使用 not ",
+			query: &metadata.Query{
+				QueryString: `log:"good" AND NOT  log:"bad"`,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "level",
+							Value:         []string{"warning"},
+							Operator:      metadata.ConditionNotEqual,
+						},
+						{
+							DimensionName: "level",
+							Value:         []string{"info"},
+							Operator:      metadata.ConditionNotRegEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"log": {
+					{Value: "good", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"log":   "good and bad",
+				"level": "info warning",
+			},
+			highLightData: map[string]any{
+				"log": []string{
+					`<mark>good</mark> and bad`,
+				},
+			},
+		},
+		{
 			name: "querystring - 1",
 			query: &metadata.Query{
 				QueryString: `file: *elasticsearch\/query_string* AND level: ("warn" OR "error") AND trace_id: /[\d]+/ `,
@@ -193,9 +227,6 @@ func TestQuery_LabelMap(t *testing.T) {
 				"region": {
 					{Value: "us-east-1", Operator: metadata.ConditionEqual},
 					{Value: "us-east-2", Operator: metadata.ConditionContains},
-				},
-				"service": {
-					{Value: "web", Operator: metadata.ConditionNotEqual},
 				},
 			},
 		},

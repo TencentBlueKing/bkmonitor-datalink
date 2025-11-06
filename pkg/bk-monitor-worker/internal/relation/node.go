@@ -15,12 +15,6 @@ import (
 	"strings"
 )
 
-const (
-	RelationHostNode     = "host"
-	RelationSystemNode   = "system"
-	RelationBusinessNode = "business"
-)
-
 type Nodes []Node
 
 type Node struct {

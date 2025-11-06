@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ahmetb/go-linq/v3"
-	"github.com/go-redis/redis/v8"
+	linq "github.com/ahmetb/go-linq/v3"
+	redis "github.com/go-redis/redis/v8"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 

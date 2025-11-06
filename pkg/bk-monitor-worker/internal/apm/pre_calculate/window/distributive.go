@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
+	xxhash "github.com/cespare/xxhash/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 

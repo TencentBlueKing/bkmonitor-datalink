@@ -729,7 +729,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 		}
 	}
 	if peerService == "" {
-		return
+		return discoverSpanIds
 	}
 	customServiceLabelKey := strings.Join(
 		[]string{
@@ -759,7 +759,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 	m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
 	metricCount[storage.ApmServiceFlow]++
 	discoverSpanIds = append(discoverSpanIds, span.SpanId)
-	return
+	return discoverSpanIds
 }
 
 func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {

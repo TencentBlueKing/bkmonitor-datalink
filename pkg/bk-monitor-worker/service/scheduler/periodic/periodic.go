@@ -19,6 +19,7 @@ import (
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
@@ -45,6 +46,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	CleanDataIdConsulPath := "periodic:metadata:clean_data_id_consul_path"
 
 	SloPush := "periodic:metadata:slo_push"
+
+	ReportCustomRelation := "periodic:relation:report_custom_resource_relation"
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -85,6 +88,10 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		SloPush: {
 			Cron:    "*/5 * * * *",
 			Handler: metadataTask.SloPush,
+		},
+		ReportCustomRelation: {
+			Cron:    "*/1 * * * *",
+			Handler: relation.ReportCustomRelation,
 		},
 	}
 }

@@ -1843,7 +1843,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 }
 
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 	db := mysql.GetDBSession().DB
 
 	// 数据源表

@@ -56,32 +56,30 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 			return
 		}
 
-		for _, value := range values {
-			checkKey := key + ":" + value + ":" + operator
-			if _, ok := labelCheck[checkKey]; !ok {
-				labelCheck[checkKey] = struct{}{}
-				labelMap[key] = append(labelMap[key], LabelMapValue{
-					Value:    value,
-					Operator: operator,
-				})
+		// 只有正向匹配才需要进行高亮替换
+		switch operator {
+		case metadata.ConditionEqual, metadata.ConditionContains, metadata.ConditionRegEqual, metadata.ConditionExact:
+			for _, value := range values {
+				checkKey := key + ":" + value + ":" + operator
+				if _, ok := labelCheck[checkKey]; !ok {
+					labelCheck[checkKey] = struct{}{}
+					labelMap[key] = append(labelMap[key], LabelMapValue{
+						Value:    value,
+						Operator: operator,
+					})
+				}
 			}
 		}
 	}
 
 	for _, condition := range qry.AllConditions {
 		for _, cond := range condition {
-			if cond.Value != nil && len(cond.Value) > 0 {
-				// 处理通配符
-				op := cond.Operator
-				if cond.IsWildcard {
-					if op == metadata.ConditionEqual {
-						op = metadata.ConditionContains
-					} else if op == metadata.ConditionNotEqual {
-						op = metadata.ConditionNotContains
-					}
-				}
-				addLabels(cond.DimensionName, op, cond.Value...)
+			op := cond.Operator
+			if cond.IsWildcard && op == metadata.ConditionEqual {
+				op = metadata.ConditionContains
 			}
+
+			addLabels(cond.DimensionName, op, cond.Value...)
 		}
 	}
 

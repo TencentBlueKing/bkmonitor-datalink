@@ -77,11 +77,6 @@ func TestQuery_LabelMap(t *testing.T) {
 			expected: map[string][]LabelMapValue{
 				"log": {
 					{Value: "good", Operator: metadata.ConditionEqual},
-					{Value: "bad", Operator: metadata.ConditionNotEqual},
-				},
-				"level": {
-					{Value: "warning", Operator: metadata.ConditionNotEqual},
-					{Value: "info", Operator: metadata.ConditionNotRegEqual},
 				},
 			},
 			data: map[string]any{
@@ -229,16 +224,9 @@ func TestQuery_LabelMap(t *testing.T) {
 				"component": {
 					{Value: "database", Operator: metadata.ConditionEqual},
 				},
-				"status": {
-					{Value: "warning", Operator: metadata.ConditionNotEqual},
-					{Value: "error", Operator: metadata.ConditionNotEqual},
-				},
 				"region": {
 					{Value: "us-east-1", Operator: metadata.ConditionEqual},
 					{Value: "us-east-2", Operator: metadata.ConditionContains},
-				},
-				"service": {
-					{Value: "web", Operator: metadata.ConditionNotEqual},
 				},
 			},
 		},

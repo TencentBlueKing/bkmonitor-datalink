@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
-	"github.com/hpcloud/tail"
+	"github.com/nxadm/tail"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"

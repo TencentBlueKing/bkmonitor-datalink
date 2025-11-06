@@ -43,6 +43,7 @@ type LabelMapOption struct {
 	SQL         string
 }
 
+// LabelMap 获取高亮标签
 func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapValue {
 	if qry == nil {
 		return nil

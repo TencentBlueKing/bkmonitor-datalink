@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package qcloudmonitor
+package processmonitor
 
 import (
 	"context"
@@ -34,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/syncer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -45,25 +46,22 @@ const (
 	appLabelSelection = labelAppManagedBy + "=" + define.AppName
 )
 
-// Operator 需要确保 QCloudMonitor 所关联的资源的一致性
-// - ConfigMap
-// - Service
+// Operator 需要确保 ProcessMonitor 所关联的资源的一致性
 // - ServiceMonitor
-// - Deployment
 //
 // 判断是否关联的条件
-// 1) 资源与 QCloudMonitor 处于相同的 namespace <Required>
-// 2) 资源与 QCloudMonitor 同名 <Required>
+// 1) 资源与 ProcessMonitor 处于相同的 namespace <Required>
+// 2) 资源与 ProcessMonitor 同名 <Required>
 // 3) 资源存在 `monitoring.bk.tencent.com/managed-by: bkmonitor-operator` Labels
-// 4) 资源存在 `metav1.OwnerReference` 且归属于同名 QCloudMonitor
+// 4) 资源存在 `metav1.OwnerReference` 且归属于同名 ProcessMonitor
 //
 // Namespace/Name 优先级会高与 3/4 规则，即同名资源会被 Operator 强制修正，如果是 Name 发生变更
 // 则 Operator 会将其视作脱离管控。
 //
-// 所有关联资源`只能`通过 QCloudMonitor 进行配置，即 QCloudMonitor 资源是唯一的变更入口
-// - 当 Operator 收到关联资源的变更（Add/Update/Delete）事件时，只需溯源到对应的 QCloudMonitor 资源并执行一次 CreateOrUpdate 即可
-// - 当 Operator 收到 QCloudMonitor 的 Add/Update 事件时，执行 CreateOrUpdate
-// - 当 Operator 收到 QCloudMonitor 的 Delete 事件时，会删除 QCloudMonitor 关联的所有资源（OwnerRef）
+// 所有关联资源`只能`通过 ProcessMonitor 进行配置，即 ProcessMonitor 资源是唯一的变更入口
+// - 当 Operator 收到关联资源的变更（Add/Update/Delete）事件时，只需溯源到对应的 ProcessMonitor 资源并执行一次 CreateOrUpdate 即可
+// - 当 Operator 收到 ProcessMonitor 的 Add/Update 事件时，执行 CreateOrUpdate
+// - 当 Operator 收到 ProcessMonitor 的 Delete 事件时，会删除 ProcessMonitor 关联的所有资源（OwnerRef）
 type Operator struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -73,10 +71,10 @@ type Operator struct {
 	bkCli   bkcli.Interface
 	promCli promcli.Interface
 
-	seh *syncEventHandler
+	seh *syncer.SyncEventHandler
 
-	qcmInfs *prominfs.ForResource // ProcessMonitor
-	smInfs  *prominfs.ForResource // ServiceMonitor
+	pmInfs *prominfs.ForResource // ProcessMonitor
+	smInfs *prominfs.ForResource // ServiceMonitor
 }
 
 type ClientSet struct {
@@ -99,16 +97,16 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 	operator.bkCli = cs.BK
 
 	allNamespaces := map[string]struct{}{}
-	if len(configs.G().QCloudMonitor.TargetNamespaces) == 0 {
+	if len(configs.G().ProcessMonitor.TargetNamespaces) == 0 {
 		allNamespaces = map[string]struct{}{corev1.NamespaceAll: {}}
 	} else {
-		for _, namespace := range configs.G().QCloudMonitor.TargetNamespaces {
+		for _, namespace := range configs.G().ProcessMonitor.TargetNamespaces {
 			allNamespaces[namespace] = struct{}{}
 		}
 	}
 
 	denyTargetNamespaces := make(map[string]struct{})
-	for _, namespace := range configs.G().QCloudMonitor.DenyTargetNamespaces {
+	for _, namespace := range configs.G().ProcessMonitor.DenyTargetNamespaces {
 		denyTargetNamespaces[namespace] = struct{}{}
 	}
 
@@ -128,7 +126,7 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 		return nil, errors.Wrap(err, "create ServiceMonitor informer failed")
 	}
 
-	operator.qcmInfs, err = prominfs.NewInformersForResource(
+	operator.pmInfs, err = prominfs.NewInformersForResource(
 		k8sutils.NewBKInformerFactories(
 			allNamespaces,
 			denyTargetNamespaces,
@@ -142,7 +140,7 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 		return nil, errors.Wrap(err, "create ProcessMonitor informer failed")
 	}
 
-	operator.seh = newSyncEventHandler(operator)
+	operator.seh = syncer.NewSyncEventHandler(operator)
 	return operator, nil
 }
 
@@ -154,7 +152,7 @@ func (c *Operator) Start() error {
 		infs.Start(c.ctx.Done())
 	}
 
-	startInfs(c.qcmInfs)
+	startInfs(c.pmInfs)
 	startInfs(c.smInfs)
 
 	return c.waitForCacheSync()
@@ -169,7 +167,7 @@ func (c *Operator) waitForCacheSync() error {
 		name                 string
 		informersForResource *prominfs.ForResource
 	}{
-		{"ProcessMonitor", c.qcmInfs},
+		{"ProcessMonitor", c.pmInfs},
 		{"ServiceMonitor", c.smInfs},
 	} {
 		if infs.informersForResource == nil {
@@ -202,7 +200,7 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 		return err
 	}
 
-	// 创建的所有依附于 QCloudMonitor 的所有资源均于 QCloudMonitor 资源具有相同 namespace/name
+	// 创建依附于 ProcessMonitor 的所有资源均于 ProcessMonitor 资源具有相同 namespace/name
 	// 创建需要遵循以下顺序
 	start := time.Now()
 	if err := c.createOrUpdateServiceMonitor(ctx, obj); err != nil {
@@ -210,14 +208,13 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	}
 
 	key := fmt.Sprintf("%s/%s", namespace, name)
-	// defaultMetricMonitor.IncReconcileQCloudMonitorSuccessCounter(key)
-	// defaultMetricMonitor.ObserveReconcileQCloudMonitorDuration(key, time.Since(start))
+	defaultMetricMonitor.IncReconcileProcessMonitorSuccessCounter(key)
+	defaultMetricMonitor.ObserveReconcileProcessMonitorDuration(key, time.Since(start))
 	logger.Infof("reconcile ProcessMonitor (%s), take: %v", key, time.Since(start))
 	return nil
 }
 
-// OwnerRef 返回 qcm 作为 OwnerReference 的对象
-func OwnerRef(pm *bkv1beta1.ProcessMonitor) metav1.OwnerReference {
+func ownerRef(pm *bkv1beta1.ProcessMonitor) metav1.OwnerReference {
 	return metav1.OwnerReference{
 		APIVersion:         bkv1beta1.SchemeGroupVersion.String(),
 		BlockOwnerDeletion: ptr.To(true),
@@ -250,9 +247,8 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, pm *bkv1bet
 			Labels:    selector,
 			Annotations: map[string]string{
 				feature.KeyScheduledDataID: strconv.Itoa(pm.Spec.DataID),
-				//feature.KeyExtendLabels:    utils.MapToSelector(pm.Spec.ExtendLabels),
 			},
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(pm)},
+			OwnerReferences: []metav1.OwnerReference{ownerRef(pm)},
 		},
 		Spec: promv1.ServiceMonitorSpec{
 			NamespaceSelector: promv1.NamespaceSelector{
@@ -260,10 +256,10 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, pm *bkv1bet
 			},
 			Endpoints: []promv1.Endpoint{
 				{
-					Port:     "http",
-					Path:     "/metrics",
-					Interval: castDuration(string(pm.Spec.Interval)),
-					//ScrapeTimeout: castDuration(string(pm.Spec.Timeout)),
+					Port:          "http",
+					Path:          "/metrics",
+					Interval:      castDuration(string(pm.Spec.Interval)),
+					ScrapeTimeout: castDuration(string(pm.Spec.Interval)),
 				},
 			},
 			Selector: metav1.LabelSelector{

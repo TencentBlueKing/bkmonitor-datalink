@@ -165,6 +165,18 @@ type QCloudMonitor struct {
 	DenyTargetNamespaces []string `yaml:"deny_target_namespaces"`
 }
 
+// ProcessMonitor 进程监控采集配置
+type ProcessMonitor struct {
+	// Enabled 是否启用
+	Enabled bool `yaml:"enabled"`
+
+	// TargetNamespaces namespace 匹配白名单
+	TargetNamespaces []string `yaml:"target_namespaces"`
+
+	// DenyTargetNamespaces namespace 匹配黑名单
+	DenyTargetNamespaces []string `yaml:"deny_target_namespaces"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
@@ -254,10 +266,11 @@ type Config struct {
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
 
-	VCluster       VCluster      `yaml:"vcluster"`
-	PolarisAddress []string      `yaml:"polaris_address"`
-	TimeSync       TimeSync      `yaml:"timesync"`
-	QCloudMonitor  QCloudMonitor `yaml:"qcloudmonitor"`
+	VCluster       VCluster       `yaml:"vcluster"`
+	PolarisAddress []string       `yaml:"polaris_address"`
+	TimeSync       TimeSync       `yaml:"timesync"`
+	QCloudMonitor  QCloudMonitor  `yaml:"qcloudmonitor"`
+	ProcessMonitor ProcessMonitor `yaml:"processmonitor"`
 }
 
 type PromSDKinds []string

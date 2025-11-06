@@ -200,6 +200,7 @@ func (g *Gather) watchEvents(filename string) {
 		Follow: true,
 		ReOpen: true,
 		Poll:   true,
+		Logger: wrapperLogger{},
 	})
 	if err != nil {
 		logger.Errorf("failed to follow file: %s, err: %v", filename, err)

@@ -271,5 +271,5 @@ func (x *SCRAMSHA512Client) Begin(userName, password, authzID string) (err error
 // Step SHA512
 func (x *SCRAMSHA512Client) Step(challenge string) (response string, err error) {
 	response, err = x.ClientConversation.Step(challenge)
-	return
+	return response, err
 }

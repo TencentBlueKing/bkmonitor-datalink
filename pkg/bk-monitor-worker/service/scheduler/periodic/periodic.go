@@ -19,6 +19,7 @@ import (
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
@@ -46,7 +47,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 
 	SloPush := "periodic:metadata:slo_push"
 
-	// 所有任务都需要设置超时时间，避免任务异常退出后redis key一直占用，后续任务无法调度
+	ReportCustomRelation := "periodic:relation:report_custom_resource_relation"
+
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
 			Cron:    "*/5 * * * *",
@@ -92,6 +94,11 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/5 * * * *",
 			Handler: metadataTask.SloPush,
 			Option:  []task.Option{task.Timeout(10 * time.Minute)},
+		},
+		ReportCustomRelation: {
+			Cron:    "*/1 * * * *",
+			Handler: relation.ReportCustomRelation,
+			Option:  []task.Option{task.Timeout(2 * time.Minute)},
 		},
 	}
 }

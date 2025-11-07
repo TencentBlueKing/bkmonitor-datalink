@@ -1631,13 +1631,13 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 
 	db := mysql.GetDBSession().DB
 	if db == nil {
-		return
+		return err
 	}
 
 	res := db.Find(&appSpaces)
 	if res.Error != nil {
 		err = res.Error
-		return
+		return err
 	}
 
 	client := redis.GetStorageRedisInstance()
@@ -1671,11 +1671,11 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 		}
 		_, err = client.HSetWithCompareAndPublish(key, field, valueStr, cfg.BkAppToSpaceChannelKey, field)
 		if err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return err
 }
 
 // PushSpaceTableIds 推送空间及对应的结果表和过滤条件

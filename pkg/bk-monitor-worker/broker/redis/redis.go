@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/avast/retry-go"
+	retry "github.com/avast/retry-go"
 	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
 
@@ -82,7 +82,6 @@ func GetRDB() *RDB {
 			retry.Attempts(3),
 			retry.Delay(5*time.Second),
 		)
-
 		// 因为是必要依赖，如果有错误，直接异常
 		if err != nil {
 			logger.Fatalf("failed to create redis broker client, error: %s", err)

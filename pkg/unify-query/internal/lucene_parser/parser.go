@@ -13,11 +13,9 @@ import (
 	"context"
 	"fmt"
 
-	antlr "github.com/antlr4-go/antlr/v4"
-	"github.com/samber/lo"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	antlr "github.com/antlr4-go/antlr/v4"
 )
 
 type Option struct {
@@ -39,14 +37,11 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	}()
 
 	opt.reverseFieldAlias = make(map[string]string)
-
-	fieldsMap := lo.MapEntries(opt.FieldsMap, func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
-		if value.AliasName != "" {
-			opt.reverseFieldAlias[value.AliasName] = key
+	for k, v := range opt.FieldsMap {
+		if v.AliasName != "" {
+			opt.reverseFieldAlias[v.AliasName] = k
 		}
-		return key, value
-	})
-	opt.FieldsMap = fieldsMap
+	}
 
 	if q == "" || q == "*" {
 		return &StringNode{

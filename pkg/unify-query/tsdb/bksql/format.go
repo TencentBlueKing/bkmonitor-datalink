@@ -41,37 +41,24 @@ const (
 	dtEventTimeFormat = "2006-01-02 15:04:05"
 )
 
-var internalDimensionMap = func() metadata.FieldsMap {
-	m := metadata.FieldsMap{
-		dtEventTimeStamp: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeBigInt,
-		},
-		dtEventTime: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeBigInt,
-		},
-		localTime: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeBigInt,
-		},
-		startTime: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeBigInt,
-		},
-		endTime: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeBigInt,
-		},
-		theDate: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeString,
-		},
-		sql_expr.ShardKey: metadata.FieldOption{
-			FieldType: sql_expr.DorisTypeString,
-		},
+var internalDimensionSet = func() *set.Set[string] {
+	s := set.New[string]()
+	for _, k := range []string{
+		dtEventTimeStamp,
+		dtEventTime,
+		localTime,
+		startTime,
+		endTime,
+		theDate,
+		sql_expr.ShardKey,
+	} {
+		s.Add(strings.ToLower(k))
 	}
-
-	return m
+	return s
 }()
 
-func CheckInternalDimension(key string) (metadata.FieldOption, bool) {
-	v, ok := internalDimensionMap[key]
-	return v, ok
+func checkInternalDimension(key string) bool {
+	return internalDimensionSet.Existed(strings.ToLower(key))
 }
 
 type QueryFactory struct {
@@ -151,8 +138,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 
 	for k, d := range data {
 		// 忽略内置字段
-		_, isInternalDimension := CheckInternalDimension(k)
-		if ignoreInternalDimension && isInternalDimension {
+		if ignoreInternalDimension && checkInternalDimension(k) {
 			continue
 		}
 

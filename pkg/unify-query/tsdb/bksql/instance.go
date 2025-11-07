@@ -510,7 +510,8 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	var lbs []string
 	for _, k := range data.SelectFieldsOrder {
 		// 忽略内置字段
-		if checkInternalDimension(k) {
+		_, isInternalDimension := CheckInternalDimension(k)
+		if isInternalDimension {
 			continue
 		}
 

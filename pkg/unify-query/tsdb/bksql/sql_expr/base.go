@@ -21,10 +21,9 @@ import (
 )
 
 const (
-	SelectAll        = "*"
-	TimeStamp        = "_timestamp_"
-	Value            = "_value_"
-	DtEventTimeStamp = "dtEventTimeStamp"
+	SelectAll = "*"
+	TimeStamp = "_timestamp_"
+	Value     = "_value_"
 
 	FieldValue = "_value"
 	FieldTime  = "_time"

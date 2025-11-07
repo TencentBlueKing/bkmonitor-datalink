@@ -61,17 +61,6 @@ const (
 	DorisTypeVariant        = "VARIANT"
 )
 
-var (
-	DefaultFieldMaps = metadata.FieldsMap{
-		FieldTime: {
-			FieldType: DorisTypeBigInt,
-		},
-		FieldValue: {
-			FieldType: DorisTypeDouble,
-		},
-	}
-)
-
 type DorisSQLExpr struct {
 	DefaultSQLExpr
 
@@ -111,10 +100,7 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 }
 
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
-	d.fieldsMap = lo.MapEntries(lo.Assign(DefaultFieldMaps, fieldsMap), func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
-		return strings.ToUpper(key), value
-	})
-
+	d.fieldsMap = fieldsMap
 	return d
 }
 
@@ -590,18 +576,34 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 }
 
 func (d *DorisSQLExpr) getFieldOption(s string) (opt metadata.FieldOption, exist bool) {
-	if d.fieldsMap == nil {
+	if d.fieldsMap == nil && s == "" {
 		return opt, false
 	}
 
-	var ok bool
-	s = strings.ToUpper(s)
-	if opt, ok = d.fieldsMap[s]; ok {
-		opt.FieldType = strings.ToUpper(opt.FieldType)
-	} else {
-		return opt, false
+	defaultFieldList := metadata.FieldsMap{
+		TimeStamp: metadata.FieldOption{
+			FieldType: DorisTypeBigInt,
+		},
+		Value: metadata.FieldOption{
+			FieldType: DorisTypeDouble,
+		},
+		DtEventTimeStamp: metadata.FieldOption{
+			FieldType: DorisTypeBigInt,
+		},
 	}
-	return opt, true
+
+	mergedMap := lo.Assign(defaultFieldList, d.fieldsMap)
+	key, found := lo.FindKeyBy(mergedMap, func(k string, _ metadata.FieldOption) bool {
+		return strings.EqualFold(k, s)
+	})
+
+	if found {
+		v := mergedMap[key]
+		v.FieldType = strings.ToUpper(v.FieldType)
+		return v, true
+	}
+
+	return opt, false
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {

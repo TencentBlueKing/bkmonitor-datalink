@@ -185,13 +185,6 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.Field
 
 		fieldsMap[k] = opt
 	}
-	fieldsMap[sql_expr.TimeStamp] = metadata.FieldOption{
-		FieldType: sql_expr.DorisTypeBigInt,
-	}
-
-	fieldsMap[sql_expr.Value] = metadata.FieldOption{
-		FieldType: sql_expr.DorisTypeBigInt,
-	}
 
 	return fieldsMap, nil
 }

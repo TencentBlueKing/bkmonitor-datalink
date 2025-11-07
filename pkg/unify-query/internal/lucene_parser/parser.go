@@ -12,7 +12,6 @@ package lucene_parser
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
 	"github.com/samber/lo"
@@ -41,11 +40,11 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 
 	opt.reverseFieldAlias = make(map[string]string)
 
-	fieldsMap := lo.MapEntries(lo.Assign(metadata.DorisDefaultFieldMap, opt.FieldsMap), func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
+	fieldsMap := lo.MapEntries(opt.FieldsMap, func(key string, value metadata.FieldOption) (string, metadata.FieldOption) {
 		if value.AliasName != "" {
 			opt.reverseFieldAlias[value.AliasName] = key
 		}
-		return strings.ToUpper(key), value
+		return key, value
 	})
 	opt.FieldsMap = fieldsMap
 

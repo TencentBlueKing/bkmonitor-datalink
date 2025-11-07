@@ -59,6 +59,14 @@ type PrometheusWriter struct {
 	responseHook func(bool)
 }
 
+func (p *PrometheusWriter) Close(_ context.Context) error {
+	if p.client != nil {
+		p.client.CloseIdleConnections()
+		p.client = nil
+	}
+	return nil
+}
+
 func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
 	if len(writeReq.Timeseries) == 0 {
 		return nil

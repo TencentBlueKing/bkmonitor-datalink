@@ -110,7 +110,8 @@ func TestParseJson_WithArrays(t *testing.T) {
 }
 
 func TestParseJson_UintPrecision(t *testing.T) {
-	bigTraceID := uint64(5149358700871317076) // large uint64 value to test precision
+	// int64 max value is 9223372036854775807
+	bigTraceID := uint64(9223372036854775808) // large uint64 value to test precision
 	input := fmt.Sprintf(`{"traceID": %d}`, bigTraceID)
 	strBigTraceID := fmt.Sprintf("%d", bigTraceID)
 	got, err := json.ParseObject("__ext", input)

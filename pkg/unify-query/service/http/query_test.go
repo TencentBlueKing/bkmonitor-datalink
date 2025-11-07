@@ -92,75 +92,16 @@ func TestQueryTsWithDoris(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 			result: `{
-    "series": [
-        {
-            "name": "_result0",
-            "metric_name": "",
-            "columns": [
-                "_time",
-                "_value"
-            ],
-            "types": [
-                "float",
-                "float"
-            ],
-            "group_keys": [
-                "__ext.container_id",
-                "__ext.container_image",
-                "__ext.container_name",
-                "__ext.io_kubernetes_pod",
-                "__ext.io_kubernetes_pod_ip",
-                "__ext.io_kubernetes_pod_namespace",
-                "__ext.io_kubernetes_pod_uid",
-                "__ext.io_kubernetes_workload_name",
-                "__ext.io_kubernetes_workload_type",
-                "__name__",
-                "cloudid",
-                "file",
-                "gseindex",
-                "iterationindex",
-                "level",
-                "log",
-                "message",
-                "path",
-                "report_time",
-                "serverip",
-                "time",
-                "trace_id"
-            ],
-            "group_values": [
-                "375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2",
-                "sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8",
-                "unify-query",
-                "bk-datalink-unify-query-6df8bcc4c9-rk4sc",
-                "127.0.0.1",
-                "blueking",
-                "558c5b17-b221-47e1-aa66-036cc9b43e2a",
-                "bk-datalink-unify-query-6df8bcc4c9",
-                "ReplicaSet",
-                "bklog:result_table:doris:gseIndex",
-                "0",
-                "http/handler.go:320",
-                "2450131",
-                "19",
-                "info",
-                "2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}",
-                " header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}",
-                "/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log",
-                "2025-04-14T20:22:59.982Z",
-                "127.0.0.1",
-                "1744662180000",
-                "5108397435e997364f8dc1251533e65e"
-            ],
-            "values": [
-                [
-                    1744662480000,
-                    2450131
-                ]
-            ]
-        }
-    ],
-    "is_partial": false
+  "is_partial":false,
+  "series" : [ {
+    "name" : "_result0",
+    "metric_name" : "",
+    "columns" : [ "_time", "_value" ],
+    "types" : [ "float", "float" ],
+    "group_keys" : [ "__ext.container_id", "__ext.container_image", "__ext.container_name", "__ext.io_kubernetes_pod", "__ext.io_kubernetes_pod_ip", "__ext.io_kubernetes_pod_namespace", "__ext.io_kubernetes_pod_uid", "__ext.io_kubernetes_workload_name", "__ext.io_kubernetes_workload_type", "__name__", "cloudid", "file", "gseindex", "iterationindex", "level", "log", "message", "path", "report_time", "serverip", "time", "trace_id" ],
+    "group_values" : [ "375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2", "sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8", "unify-query", "bk-datalink-unify-query-6df8bcc4c9-rk4sc", "127.0.0.1", "blueking", "558c5b17-b221-47e1-aa66-036cc9b43e2a", "bk-datalink-unify-query-6df8bcc4c9", "ReplicaSet", "bklog:result_table:doris:gseIndex", "0", "http/handler.go:320", "2450131", "19", "info", "2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}", " header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}", "/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log", "2025-04-14T20:22:59.982Z", "127.0.0.1", "1744662180000", "5108397435e997364f8dc1251533e65e" ],
+    "values" : [ [ 1744662480000, 2450131 ] ]
+  } ]
 }`,
 		},
 		"根据维度 __ext.container_name 进行 count 聚合，同时用值正向排序": {

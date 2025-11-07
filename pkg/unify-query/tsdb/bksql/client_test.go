@@ -41,39 +41,39 @@ func TestClient_QuerySync(t *testing.T) {
 	end := time.UnixMilli(1729838923416)
 
 	mock.BkSQL.Set(map[string]any{
-		`SELECT * FROM restriction_table WHERE DtEventTimeStamp >= 1729838623416 AND DtEventTimeStamp < 1729838923416 LIMIT 5`: &bksql.Result{
+		`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= 1729838623416 AND dtEventTimeStamp < 1729838923416 LIMIT 5`: &bksql.Result{
 			Result: true,
 			Code:   bksql.StatusOK,
 			Data: &bksql.QuerySyncResultData{
 				TotalRecords: 5,
 				SelectFieldsOrder: []string{
-					"DtEventTimeStamp",
+					"dtEventTimeStamp",
 					"value",
 					"metric_type",
 				},
 				List: []map[string]any{
 					{
-						"DtEventTimeStamp": 1726732280000,
+						"dtEventTimeStamp": 1726732280000,
 						"value":            2.0,
 						"metric_type":      "hermes-server",
 					},
 					{
-						"DtEventTimeStamp": 1726732280000,
+						"dtEventTimeStamp": 1726732280000,
 						"value":            0.02,
 						"metric_type":      "hermes-server",
 					},
 					{
-						"DtEventTimeStamp": 1726732280000,
+						"dtEventTimeStamp": 1726732280000,
 						"value":            1072.0,
 						"metric_type":      "hermes",
 					},
 					{
-						"DtEventTimeStamp": 1726732280000,
+						"dtEventTimeStamp": 1726732280000,
 						"value":            0.4575,
 						"metric_type":      "hermes",
 					},
 					{
-						"DtEventTimeStamp": 1726732280000,
+						"dtEventTimeStamp": 1726732280000,
 						"value":            2.147483648e9,
 						"metric_type":      "hermes",
 					},
@@ -85,7 +85,7 @@ func TestClient_QuerySync(t *testing.T) {
 	res := MockClient().QuerySync(
 		ctx,
 		fmt.Sprintf(
-			`SELECT * FROM restriction_table WHERE DtEventTimeStamp >= %d AND DtEventTimeStamp < %d LIMIT 5`,
+			`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
 			start.UnixMilli(),
 			end.UnixMilli(),
 		),

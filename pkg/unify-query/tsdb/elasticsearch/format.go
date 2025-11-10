@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	stdJson "encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -117,14 +118,14 @@ func mapNumber(data map[string]any) map[string]any {
 	result := make(map[string]any)
 	for k, v := range data {
 		switch nv := v.(type) {
-		case json.Number:
+		case stdJson.Number:
 			result[k] = nv.String()
 		case map[string]any:
 			result[k] = mapNumber(nv)
 		case []any:
 			arr := make([]any, len(nv))
 			for i, item := range nv {
-				if num, ok := item.(json.Number); ok {
+				if num, ok := item.(stdJson.Number); ok {
 					arr[i] = num.String()
 				} else if m, ok := item.(map[string]any); ok {
 					arr[i] = mapNumber(m)

@@ -31,6 +31,9 @@ const (
 	System = "system"
 	Biz    = "biz"
 
+	AppVersion = "app_version"
+	GitCommit  = "git_commit"
+
 	ExpandInfoColumn = "version_meta"
 )
 
@@ -43,8 +46,6 @@ const (
 	HostName   = "bk_host_name"
 	BizID      = "bk_biz_id"
 )
-
-var ExpandTopo = []string{Set, Module, Host}
 
 var (
 	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
@@ -193,7 +194,7 @@ func (b *MetricsBuilder) makeNode(resource string, labels ...map[string]string) 
 	}
 }
 
-func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
+func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 	if b.resources == nil {
 		return nil
 	}
@@ -223,8 +224,8 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 	// 不同业务分开构建，方便拆分数据
 	resources := b.resources[bizID]
 
-	// set -> module -> host，Expand 需要按序遍历，下层需要继承上层的 Expand
-	for _, resource := range ExpandTopo {
+	// 处理 cmdb 关联数据，set -> module -> host，Expand 需要按序遍历，下层需要继承上层的 Expand
+	for _, resource := range []string{Set, Module, Host} {
 		if _, ok := resources[resource]; !ok {
 			continue
 		}
@@ -307,6 +308,12 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 	return metrics
 }
 
+func (b *MetricsBuilder) getAllMetrics(bizID int) []Metric {
+	cmdbMetrics := b.getCMDBMetrics(bizID)
+
+	return append(cmdbMetrics)
+}
+
 // String 以 string 格式获取所有指标数据
 func (b *MetricsBuilder) String() string {
 	var buf bytes.Buffer
@@ -314,7 +321,7 @@ func (b *MetricsBuilder) String() string {
 	for _, bkBizID := range b.BizIDs() {
 
 		b.lock.RLock()
-		metricList := b.toMetricList(bkBizID)
+		metricList := b.getCMDBMetrics(bkBizID)
 		b.lock.RUnlock()
 
 		for _, metric := range metricList {
@@ -336,11 +343,12 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 
 	bizs := b.BizIDs()
 	pushCount := 0
+
 	for _, bkBizID := range bizs {
 		ts := getTsPool()
 
 		b.lock.RLock()
-		metrics := b.toMetricList(bkBizID)
+		metrics := b.getCMDBMetrics(bkBizID)
 		b.lock.RUnlock()
 
 		for _, metric := range metrics {

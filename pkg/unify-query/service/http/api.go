@@ -16,14 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -73,7 +71,7 @@ func HandlerFieldKeys(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, paramsStr,
 	).Info(ctx)
 
-	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	queryRef, err := infoParamsToQueryRef(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -87,6 +85,7 @@ func HandlerFieldKeys(c *gin.Context) {
 		lbl = set.New[string]()
 	)
 
+	qb := metadata.GetQueryParams(ctx)
 	queryRef.Range("", func(qry *metadata.Query) {
 		wg.Add(1)
 		_ = p.Submit(func() {
@@ -96,7 +95,7 @@ func HandlerFieldKeys(c *gin.Context) {
 				return
 			}
 
-			res, err := instance.QueryLabelValues(ctx, qry, labels.MetricName, start, end)
+			res, err := instance.QueryLabelValues(ctx, qry, labels.MetricName, qb.Start, qb.End)
 			if err != nil {
 				return
 			}
@@ -153,7 +152,7 @@ func HandlerTagKeys(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, paramsStr,
 	).Info(ctx)
 
-	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	queryRef, err := infoParamsToQueryRef(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -167,6 +166,7 @@ func HandlerTagKeys(c *gin.Context) {
 		lbl = set.New[string]()
 	)
 
+	qb := metadata.GetQueryParams(ctx)
 	queryRef.Range("", func(qry *metadata.Query) {
 		wg.Add(1)
 		_ = p.Submit(func() {
@@ -176,7 +176,7 @@ func HandlerTagKeys(c *gin.Context) {
 				return
 			}
 
-			res, err := instance.QueryLabelNames(ctx, qry, start, end)
+			res, err := instance.QueryLabelNames(ctx, qry, qb.Start, qb.End)
 			if err != nil {
 				return
 			}
@@ -229,10 +229,10 @@ func HandlerTagValues(c *gin.Context) {
 	metadata.Sprintf(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), c.Request.Header, string(paramsStr),
 	).Info(ctx)
 
-	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	queryRef, err := infoParamsToQueryRef(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -250,7 +250,8 @@ func HandlerTagValues(c *gin.Context) {
 		lblMap sync.Map
 	)
 
-	left := end.Sub(start)
+	qb := metadata.GetQueryParams(ctx)
+	left := qb.End.Sub(qb.Start)
 	span.Set("left", left)
 
 	for _, name := range params.Keys {
@@ -270,7 +271,7 @@ func HandlerTagValues(c *gin.Context) {
 
 				var res []string
 
-				res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
+				res, err = instance.QueryLabelValues(ctx, qry, name, qb.Start, qb.End)
 				if err != nil {
 					return
 				}
@@ -384,7 +385,7 @@ func HandlerSeries(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, paramsStr,
 	).Info(ctx)
 
-	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	queryRef, err := infoParamsToQueryRef(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -411,6 +412,8 @@ func HandlerSeries(c *gin.Context) {
 		paramsSet.Add(k)
 	}
 
+	qb := metadata.GetQueryParams(ctx)
+
 	queryRef.Range("", func(qry *metadata.Query) {
 		wg.Add(1)
 		_ = p.Submit(func() {
@@ -425,7 +428,7 @@ func HandlerSeries(c *gin.Context) {
 				return
 			}
 
-			res, err := instance.QuerySeries(ctx, qry, start, end)
+			res, err := instance.QuerySeries(ctx, qry, qb.Start, qb.End)
 			if err != nil {
 				return
 			}
@@ -545,8 +548,6 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -558,7 +559,10 @@ func HandlerLabelValues(c *gin.Context) {
 	}
 
 	limitNum, _ := strconv.Atoi(limit)
-	result, err := instance.DirectLabelValues(ctx, labelName, startTime, endTime, limitNum, matcher...)
+
+	qb := metadata.GetQueryParams(ctx)
+
+	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, limitNum, matcher...)
 	if err != nil {
 		return
 	}
@@ -617,7 +621,7 @@ func HandlerFieldMap(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(paramsStr),
 	).Info(ctx)
 
-	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
+	queryRef, err := infoParamsToQueryRef(ctx, params)
 	if err != nil {
 		return
 	}
@@ -632,6 +636,7 @@ func HandlerFieldMap(c *gin.Context) {
 		keys    []string
 	)
 
+	qb := metadata.GetQueryParams(ctx)
 	queryRef.Range("", func(qry *metadata.Query) {
 		wg.Add(1)
 		err = p.Submit(func() {
@@ -642,7 +647,7 @@ func HandlerFieldMap(c *gin.Context) {
 				return
 			}
 
-			res, qErr := instance.QueryFieldMap(ctx, qry, start, end)
+			res, qErr := instance.QueryFieldMap(ctx, qry, qb.Start, qb.End)
 			if qErr != nil {
 				_ = metadata.Sprintf(
 					metadata.MsgQueryInfo,
@@ -685,11 +690,8 @@ func HandlerFieldMap(c *gin.Context) {
 	})
 }
 
-func infoParamsToQueryRefAndTime(ctx context.Context, params *Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
-	var (
-		user = metadata.GetUser(ctx)
-		unit string
-	)
+func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadata.QueryReference, err error) {
+	user := metadata.GetUser(ctx)
 
 	queryTs := &structured.QueryTs{
 		SpaceUid: user.SpaceUID,
@@ -710,16 +712,5 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *Params) (queryRef 
 		Timezone:    params.Timezone,
 	}
 
-	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if err != nil {
-		// 如果时间异常则使用最近 1h
-		endTime = time.Now()
-		startTime = endTime.Add(time.Hour * -1)
-		err = nil
-	}
-
-	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
-	queryRef, err = queryTs.ToQueryReference(ctx)
-	return queryRef, startTime, endTime, err
+	return queryTs.ToQueryReference(ctx)
 }

@@ -17,12 +17,12 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -36,7 +36,6 @@ func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 
 func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*resourceFilter, error) {
 	configs := confengine.NewTierConfig()
-	caches := confengine.NewTierConfig()
 
 	c := &Config{}
 	if err := mapstructure.Decode(conf, c); err != nil {
@@ -44,10 +43,6 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 	}
 	c.Clean()
 	configs.SetGlobal(*c)
-
-	cache := k8scache.New(&c.FromCache.Cache)
-	cache.Sync()
-	caches.SetGlobal(cache)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -57,23 +52,17 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		}
 		cfg.Clean()
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
-
-		customCache := k8scache.New(&cfg.FromCache.Cache)
-		customCache.Sync()
-		caches.Set(custom.Token, custom.Type, custom.ID, customCache)
 	}
 
 	return &resourceFilter{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
-		caches:          caches,
 	}, nil
 }
 
 type resourceFilter struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig // type: Config
-	caches  *confengine.TierConfig // type k8scache.Cache
 }
 
 func (p *resourceFilter) Name() string {
@@ -95,38 +84,8 @@ func (p *resourceFilter) Reload(config map[string]any, customized []processor.Su
 		return
 	}
 
-	equal := processor.DiffMainConfig(p.MainConfig(), config)
-	if equal {
-		f.caches.GetGlobal().(k8scache.Cache).Clean()
-	} else {
-		p.caches.GetGlobal().(k8scache.Cache).Clean()
-		p.caches.SetGlobal(f.caches.GetGlobal())
-	}
-
-	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
-	for _, obj := range diffRet.Keep {
-		f.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
-	}
-
-	for _, obj := range diffRet.Updated {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
-		newCache := f.caches.Get(obj.Token, obj.Type, obj.ID)
-		p.caches.Set(obj.Token, obj.Type, obj.ID, newCache)
-	}
-
-	for _, obj := range diffRet.Deleted {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
-		p.caches.Del(obj.Token, obj.Type, obj.ID)
-	}
-
 	p.CommonProcessor = f.CommonProcessor
 	p.configs = f.configs
-}
-
-func (p *resourceFilter) Clean() {
-	for _, obj := range p.caches.All() {
-		obj.(k8scache.Cache).Clean()
-	}
 }
 
 func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) {
@@ -155,9 +114,11 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.DefaultValue) > 0 {
 		p.defaultValueAction(record, config)
 	}
-
-	if config.FromCache.Cache.Validate() {
+	if len(config.FromCache.CacheName) > 0 {
 		p.fromCacheAction(record, config)
+	}
+	if config.KeepOriginTraceId.Enabled {
+		p.keepOriginTraceIdAction(record)
 	}
 	return nil, nil
 }
@@ -291,8 +252,15 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 
 // fromCacheAction 从缓存中补充数据
 func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
-	token := record.Token.Original
-	cache := p.caches.GetByToken(token).(k8scache.Cache)
+	// 目前仅支持 k8scache
+	if config.FromCache.CacheName != k8scache.Name {
+		return
+	}
+
+	cache := k8scache.Default()
+	if cache == nil {
+		return // 缓存未初始化
+	}
 
 	keys := config.FromCache.CombineKeys()
 	handle := func(rs pcommon.Resource) {
@@ -325,6 +293,12 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			handle(rs)
 		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
+			handle(rs)
+		})
 	}
 }
 
@@ -349,6 +323,14 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
+			for _, action := range config.FromRecord {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.FromRecord {
 				handle(rs, action)
 			}
@@ -455,4 +437,72 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 			}
 		})
 	}
+}
+
+const (
+	keySdkName       = "telemetry.sdk.name"
+	keyOriginTraceID = "origin.trace_id"
+	keySw8TraceID    = "sw8.trace_id"
+
+	sdkSkyWalking    = "skywalking"
+	sdkOpenTelemetry = "opentelemetry"
+)
+
+// keepOriginTraceIdAction 保留原始 traceID
+func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		// 根据 traceID 进行重分组，保证同 traceID 下的 span 在同一 resourceSpan 下，方便处理
+		pdTraces := regroupResourceSpansByTraceID(record.Data.(ptrace.Traces))
+		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
+			v, ok := rs.Get(keySdkName)
+			if !ok {
+				return
+			}
+
+			switch strings.ToLower(v.AsString()) {
+			case sdkSkyWalking:
+				if src, ok := rs.Get(keySw8TraceID); ok {
+					rs.InsertString(keyOriginTraceID, src.AsString())
+					// 删除 sw8.trace_id 冗余字段
+					rs.Remove(keySw8TraceID)
+				}
+			case sdkOpenTelemetry:
+				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())
+			}
+		})
+		record.Data = pdTraces
+	}
+}
+
+func regroupResourceSpansByTraceID(traces ptrace.Traces) ptrace.Traces {
+	newTraces := ptrace.NewTraces()
+	traceIDToResourceSpans := make(map[string]ptrace.ResourceSpans)
+
+	originalResourceSpans := traces.ResourceSpans()
+	for i := 0; i < originalResourceSpans.Len(); i++ {
+		resourceSpans := originalResourceSpans.At(i)
+		scopeSpansSlice := resourceSpans.ScopeSpans()
+		for j := 0; j < scopeSpansSlice.Len(); j++ {
+			scopeSpans := scopeSpansSlice.At(j)
+			spans := scopeSpans.Spans()
+			for k := 0; k < spans.Len(); k++ {
+				span := spans.At(k)
+				traceID := span.TraceID().HexString()
+
+				rs, exists := traceIDToResourceSpans[traceID]
+				if !exists {
+					rs = newTraces.ResourceSpans().AppendEmpty()
+					resourceSpans.Resource().CopyTo(rs.Resource())
+					traceIDToResourceSpans[traceID] = rs
+				}
+
+				ss := rs.ScopeSpans().AppendEmpty()
+				scopeSpans.Scope().CopyTo(ss.Scope())
+				newSpan := ss.Spans().AppendEmpty()
+				span.CopyTo(newSpan)
+			}
+		}
+	}
+	return newTraces
 }

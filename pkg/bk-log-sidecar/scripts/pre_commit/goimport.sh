@@ -9,7 +9,7 @@
 # specific language governing permissions and limitations under the License.
 
 # shellcheck disable=SC2006
-temp=`goimports-reviser -project-name "github.com/TencentBlueKing/bk-log-sidecar" -format $@`
+temp=`goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar" -format $@`
 echo $temp
 
 code=`echo $temp | sed '/^\s*$/d' | wc -l`

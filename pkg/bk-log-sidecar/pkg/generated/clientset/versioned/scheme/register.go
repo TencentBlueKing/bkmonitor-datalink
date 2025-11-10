@@ -18,7 +18,7 @@ limitations under the License.
 package scheme
 
 import (
-	bkv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

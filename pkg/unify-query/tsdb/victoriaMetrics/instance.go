@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
@@ -133,15 +134,12 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
-	if !resp.Result {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+	if !resp.Result || resp.Code != OK {
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "response-"
@@ -201,15 +199,12 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 }
 
 func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
-	if !resp.Result {
-		return nil, false, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
-	}
-	if resp.Code != OK {
-		return nil, false, fmt.Errorf(
-			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
-		)
+	if !resp.Result || resp.Code != OK {
+		return nil, false, metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常 %s",
+			resp.Message,
+		).Error(ctx, errors.New(resp.Errors.Error))
 	}
 
 	prefix := "vm-data"
@@ -246,7 +241,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				if err != nil {
 					_ = metadata.Sprintf(
 						metadata.MsgQueryVictoriaMetrics,
-						"查询异常",
+						"值格式解析异常",
 					).Error(ctx, err)
 					continue
 				}
@@ -260,7 +255,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 					if err != nil {
 						_ = metadata.Sprintf(
 							metadata.MsgQueryVictoriaMetrics,
-							"查询异常",
+							"值格式解析异常",
 						).Error(ctx, err)
 						continue
 					}
@@ -414,7 +409,10 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return err
+		return metadata.Sprintf(
+			metadata.MsgQueryVictoriaMetrics,
+			"查询异常",
+		).Error(ctx, err)
 	}
 
 	queryCost := time.Since(startAnaylize)

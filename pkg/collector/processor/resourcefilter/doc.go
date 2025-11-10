@@ -53,10 +53,7 @@ processor:
       config:
         from_cache:
           key: "resource.net.host.ip|resource.client.ip"
-          cache:
-            url: http://localhost:8080/pods
-            interval: "1m"
-            timeout: "1m"
+          cache_name: "k8s_cache"
 
     # FromRecord Action
     - name: "resource_filter/from_record"
@@ -84,6 +81,12 @@ processor:
           - type: string
             key: resource.service.name
             value: "unknown_service"
+
+    # KeepOriginTraceId Action
+    - name: "resource_filter/keep_origin_traceid"
+	  config:
+		keep_origin_traceid:
+		  enabled: true
 */
 
 package resourcefilter

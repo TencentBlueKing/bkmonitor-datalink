@@ -18,8 +18,8 @@ limitations under the License.
 package bk
 
 import (
-	v1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/informers/externalversions/bk.tencent.com/v1alpha1"
-	internalinterfaces "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/informers/externalversions/internalinterfaces"
+	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/informers/externalversions/bk.tencent.com/v1alpha1"
+	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to each of this group's versions.

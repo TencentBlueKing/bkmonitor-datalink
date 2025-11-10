@@ -174,7 +174,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 			defer cancel()
 
 			start, end := time.Unix(c.Start, 0), time.Unix(c.End, 0)
-			metadata.GetQueryParams(ctx).SetTime(start, end, "")
+			metadata.GetQueryParams(ctx).SetTime(start, start, end, 0, "", "")
 
 			actual := GetMustVmQueryFeatureFlag(ctx, c.TableID)
 			assert.Equal(t, c.Expected, actual)

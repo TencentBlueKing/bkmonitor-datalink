@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -64,7 +65,17 @@ type QueryTs struct {
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
 
+	// Reference 查询开始时间是否需要对齐，
+	// 例如：
+	// true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+	// false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
 	Reference bool `json:"reference,omitempty"`
+
+	// NotTimeAlign 查询开始时间和聚合是否需要对齐
+	// 例如
+	// true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23
+	// false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+	NotTimeAlign bool `json:"not_time_align"`
 
 	// 增加公共限制
 	// Limit 点数限制数量
@@ -90,6 +101,9 @@ type QueryTs struct {
 
 	// DryRun 是否启用 DryRun
 	DryRun bool `json:"dry_run,omitempty"`
+
+	// IsMergeDB 是否启用合并 db 特性
+	IsMergeDB bool `json:"is_merge_db,omitempty"`
 }
 
 // StepParse 解析step
@@ -108,16 +122,35 @@ func StepParse(step string) time.Duration {
 	}
 }
 
-// AlignTime 开始时间根据时区对齐
-func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
-	step := StepParse(stepStr)
+func (q *QueryTs) ToTime(ctx context.Context) error {
+	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
+	if err != nil {
+		return err
+	}
 
-	// 根据 timezone 来对齐开始时间
-	newTimezone, newStart := function.TimeOffset(start, timezone, step)
-	return newStart, end, step, newTimezone, nil
+	timezone := q.Timezone
+	reference := q.Reference
+	alianStart := startTime
+
+	step := StepParse(q.Step)
+
+	// 如果关闭了对齐，则无需对齐开始时间
+	if !q.NotTimeAlign {
+		// 根据 timezone 来对齐开始时间
+		alianStart = function.TimeOffset(startTime, timezone, step)
+	}
+
+	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	return nil
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
+	// 优先解析 queryTs 里面的时间元素
+	err := q.ToTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
 		// 时间复用
@@ -131,6 +164,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// dry-run 复用
 		if q.DryRun {
 			query.DryRun = q.DryRun
+		}
+
+		// is_merge_db 复用
+		if q.IsMergeDB {
+			query.IsMergeDB = q.IsMergeDB
 		}
 
 		// 如果 query.Step 不存在去外部统一的 step
@@ -179,6 +217,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], queryMetric)
 	}
 
+	metadata.SetQueryReference(ctx, queryReference)
 	return queryReference, nil
 }
 
@@ -404,7 +443,8 @@ type Query struct {
 	Scroll   string `json:"-"`
 	SliceMax int    `json:"-"`
 	// DryRun
-	DryRun bool `json:"-"`
+	DryRun    bool `json:"-"`
+	IsMergeDB bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -463,6 +503,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if step < window {
 		return aggs, err
 	}
+
 	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
 	if name, ok := domSampledFunc[key]; ok {
 		agg := metadata.Aggregate{
@@ -622,49 +663,37 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	span.Set("tsdb-num", len(tsDBs))
 
-	// 时间转换格式
-	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
-	// 时间对齐
-	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
 	// 注入时区和时区偏移，用于聚合处理
 	var timeZoneOffset int64
-	if timezone != "UTC" {
-		utcStart, _, _, _, _ := AlignTime(startTime, endTime, q.Step, "UTC")
-		timeZoneOffset = start.UnixMilli() - utcStart.UnixMilli()
+	qp := metadata.GetQueryParams(ctx)
+	if qp.Timezone != "" && qp.Timezone != "UTC" {
+		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
+		// 不同时区对齐时间的差值
+		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
 	}
 	for idx, agg := range aggregates {
 		if agg.Window > 0 {
-			agg.TimeZone = timezone
+			agg.TimeZone = qp.Timezone
 			agg.TimeZoneOffset = timeZoneOffset
 			aggregates[idx] = agg
 		}
 	}
 
+	// 构建 query map 使得相同的 storage 可以进行合并查询
+	queryMap := make(map[string]*metadata.Query)
+
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(start, end)
+		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
 
 		for _, storageID := range storageIDs {
-			query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions)
-			if err != nil {
+			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			if query == nil {
+				continue
 			}
 
 			query.Aggregates = aggregates.Copy()
-			query.Timezone = timezone
+			query.Timezone = qp.Timezone
 			query.StorageID = storageID
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
@@ -735,9 +764,31 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-			queryMetric.QueryList = append(queryMetric.QueryList, query)
+			// 判断是否跳过合并操作
+			if !query.GetMergeDBStatus() {
+				queryMetric.QueryList = append(queryMetric.QueryList, query)
+				continue
+			}
+
+			storageUUID := query.StorageUUID()
+			if oq, ok := queryMap[storageUUID]; ok {
+				span.Set(fmt.Sprintf("query_merge_%s", oq.TableID), query.TableID)
+				oq.DBs = append(oq.DBs, query.DB)
+			} else {
+				query.DBs = []string{query.DB}
+				queryMap[storageUUID] = query
+			}
 		}
 	}
+
+	span.Set("query_map_length", len(queryMap))
+
+	for _, qry := range queryMap {
+		sort.Strings(qry.DBs)
+		queryMetric.QueryList = append(queryMetric.QueryList, qry)
+	}
+
+	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
 }
@@ -746,7 +797,7 @@ func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
 	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
-) (*metadata.Query, error) {
+) *metadata.Query {
 	var (
 		field        string
 		fields       []string
@@ -775,13 +826,18 @@ func (q *Query) BuildMetadataQuery(
 	if measurement != "" {
 		measurements = []string{measurement}
 	}
-
-	span.Set("tsdb", tsDB)
+	jsonString, _ := json.Marshal(tsDB)
+	span.Set("tsdb-json", jsonString)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
 		if err != nil {
-			return nil, err
+			metadata.Sprintf(
+				metadata.MsgParserUnifyQuery,
+				"offset %s 格式异常 %s",
+				q.Offset, err.Error(),
+			).Warn(ctx)
+			return nil
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
 	}
@@ -924,6 +980,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Scroll = q.Scroll
 	query.DryRun = q.DryRun
+	query.IsMergeDB = q.IsMergeDB
 
 	query.Size = q.Limit
 	query.From = q.From
@@ -932,10 +989,10 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
-	jsonString, _ := json.Marshal(query)
+	jsonString, _ = json.Marshal(query)
 	span.Set("query-json", jsonString)
 
-	return query, nil
+	return query
 }
 
 func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {

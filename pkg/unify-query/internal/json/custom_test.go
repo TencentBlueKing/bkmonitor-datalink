@@ -10,6 +10,8 @@
 package json_test
 
 import (
+	stdjson "encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,7 +37,7 @@ func TestParseJson(t *testing.T) {
 			name:  "normal nested json",
 			input: `{"a": {"b": 1, "c": "test"}, "d": true}`,
 			expected: map[string]any{
-				"__ext.a.b": float64(1),
+				"__ext.a.b": json.Number{Number: "1"},
 				"__ext.a.c": "test",
 				"__ext.d":   true,
 			},
@@ -46,7 +48,7 @@ func TestParseJson(t *testing.T) {
 			input: `{"key1": "value1", "key2": 123}`,
 			expected: map[string]any{
 				"__ext.key1": "value1",
-				"__ext.key2": float64(123), // JSON numbers are decoded as float64
+				"__ext.key2": json.Number{Number: "123"},
 			},
 			wantErr: false,
 		},
@@ -96,17 +98,26 @@ func TestParseJson(t *testing.T) {
 }
 
 func TestParseJson_WithArrays(t *testing.T) {
-	// 虽然当前实现不支持数组，但测试一下看看行为
 	input := `{"a": [1, 2, 3], "b": {"c": [4, 5]}}`
 	expected := map[string]any{
-		"__ext.a":   []any{float64(1), float64(2), float64(3)},
-		"__ext.b.c": []any{float64(4), float64(5)},
-	}
-	got, err := json.ParseObject("__ext", input)
-	if err != nil {
-		t.Errorf("ParseObject() with arrays returned error: %v", err)
-		return
+		"__ext.a":   []any{stdjson.Number("1"), stdjson.Number("2"), stdjson.Number("3")},
+		"__ext.b.c": []any{stdjson.Number("4"), stdjson.Number("5")},
 	}
 
-	assert.Equal(t, got, expected)
+	got, err := json.ParseObject("__ext", input)
+	assert.Nil(t, err)
+	assert.Equal(t, expected, got)
+}
+
+func TestParseJson_UintPrecision(t *testing.T) {
+	// int64 max value is 9223372036854775807
+	bigTraceID := uint64(9223372036854775808) // large uint64 value to test precision
+	input := fmt.Sprintf(`{"traceID": %d}`, bigTraceID)
+	strBigTraceID := fmt.Sprintf("%d", bigTraceID)
+	got, err := json.ParseObject("__ext", input)
+	assert.Nil(t, err)
+	gotTraceID, ok := got["__ext.traceID"].(json.Number)
+	assert.True(t, ok)
+	gotTraceIDStr := gotTraceID.String()
+	assert.Equal(t, strBigTraceID, gotTraceIDStr)
 }

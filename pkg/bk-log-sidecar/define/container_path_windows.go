@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 )
 
 func ToHostPath(path string) string {

@@ -62,6 +62,13 @@ module_with_set_relation{bk_biz_id="138",bk_module_id="181232",bk_set_id="25425"
 host_info_relation{bk_biz_id="138",bk_host_id="93475",env_name="LIVE",env_type="prod",version="tlinux_update_20250729_134916_ver92184_127.0.0.1.tgz"} 1
 `,
 		},
+		{
+			name:     "test-3 with app_version and git_commit",
+			bizID:    2,
+			resource: `{"app_version":{"name":"app_version","data":{"mirrors.tencent.com/build/blueking/unify-query|3.9.3851":{"id":"mirrors.tencent.com/build/blueking/unify-query|3.9.3851","resource":"app_version","label":{"app_name":"mirrors.tencent.com/build/blueking/unify-query","version":"3.9.3851"},"links":[[{"id":"https://github.com/TencentBlueKing/bkmonitor-datalink.git|master|3c8c33d2c898b94d2d3136cecbcc58c6eb7743a7","resource":"git_commit","label":{"git_repo":"https://github.com/TencentBlueKing/bkmonitor-datalink.git","commit_id":"3c8c33d2c898b94d2d3136cecbcc58c6eb7743a7"}}]]}}}}`,
+			expected: `app_version_with_git_commit_relation{app_name="mirrors.tencent.com/build/blueking/unify-query",bk_biz_id="2",commit_id="3c8c33d2c898b94d2d3136cecbcc58c6eb7743a7",git_repo="https://github.com/TencentBlueKing/bkmonitor-datalink.git",version="3.9.3851"} 1
+`,
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b := GetRelationMetricsBuilder()

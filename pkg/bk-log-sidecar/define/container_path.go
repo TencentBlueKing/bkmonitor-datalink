@@ -13,6 +13,7 @@ package define
 import (
 	"errors"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -29,6 +30,11 @@ func ContainerRootPath(container types.ContainerJSON) string {
 	default:
 		return fmt.Sprintf("/proc/%d/root", container.State.Pid)
 	}
+}
+
+// ToHostPath to host path
+func ToHostPath(path string) string {
+	return filepath.Join(config.HostPath, path)
 }
 
 // EvalSymlinks 从容器内递归转换软链，获取日志指向的真实路径

@@ -32,6 +32,7 @@ const (
 	ResultTableVM              = "result_table.vm"
 	ResultTableInfluxDB        = "result_table.influxdb"
 	ResultTableEs              = "result_table.es"
+	ResultTableEs1             = "result_table.es_1"
 	ResultTableEsWithTimeFiled = "result_table.es_with_time_filed"
 	ResultTableBkBaseEs        = "result_table.bk_base_es"
 	ResultTableBkSQL           = "result_table.bk_sql"
@@ -190,6 +191,9 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableEs: &ir.SpaceResultTable{
 						TableId: ResultTableEs,
 					},
+					ResultTableEs1: &ir.SpaceResultTable{
+						TableId: ResultTableEs1,
+					},
 					"alias_es_1": &ir.SpaceResultTable{
 						TableId: "alias_es_1",
 					},
@@ -204,6 +208,12 @@ func MockSpaceRouter(ctx context.Context) {
 					},
 					ResultTableDoris: &ir.SpaceResultTable{
 						TableId: ResultTableDoris,
+					},
+					"rt.doris_1": &ir.SpaceResultTable{
+						TableId: "rt.doris_1",
+					},
+					"rt.doris_2": &ir.SpaceResultTable{
+						TableId: "rt.doris_2",
 					},
 				},
 			},
@@ -328,6 +338,29 @@ func MockSpaceRouter(ctx context.Context) {
 						"alias_ns": "__ext.host.bk_set_name",
 					},
 				},
+				ResultTableEs1: &ir.ResultTableDetail{
+					StorageId:   3,
+					TableId:     ResultTableEs1,
+					DB:          "es_index_1",
+					SourceType:  "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageClusterRecords: []ir.Record{
+						{
+							StorageID: 3,
+							// 2019-12-02 08:00:00
+							EnableTime: 1575244800,
+						},
+						{
+							StorageID: 4,
+							// 2019-11-02 08:00:00
+							EnableTime: 1572652800,
+						},
+					},
+					DataLabel: "es",
+					FieldAlias: map[string]string{
+						"alias_ns": "__ext.host.bk_set_name",
+					},
+				},
 				"alias_es_1": &ir.ResultTableDetail{
 					StorageId:   3,
 					TableId:     ResultTableEs,
@@ -388,6 +421,22 @@ func MockSpaceRouter(ctx context.Context) {
 					DB:          "2_bklog_bkunify_query_doris",
 					StorageType: metadata.BkSqlStorageType,
 				},
+				"rt.doris_1": &ir.ResultTableDetail{
+					StorageId:   0,
+					TableId:     "rt.doris_1",
+					DB:          "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+					Measurement: "doris",
+					DataLabel:   "multi_doris",
+					StorageType: metadata.BkSqlStorageType,
+				},
+				"rt.doris_2": &ir.ResultTableDetail{
+					StorageId:   0,
+					TableId:     "rt.doris_1",
+					DB:          "100915_bklog_pub_svrlog_pangusvr_other_9_analysis",
+					Measurement: "doris",
+					DataLabel:   "multi_doris",
+					StorageType: metadata.BkSqlStorageType,
+				},
 				ResultTableDoris: &ir.ResultTableDetail{
 					StorageId:   4,
 					TableId:     ResultTableDoris,
@@ -404,6 +453,10 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			}, nil,
 			ir.DataLabelToResultTable{
+				"multi_doris": ir.ResultTableList{
+					"rt.doris_1",
+					"rt.doris_2",
+				},
 				"alias_es": ir.ResultTableList{
 					ResultTableEs,
 					"alias_es_1",
@@ -414,6 +467,11 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 				"multi_es": ir.ResultTableList{
 					ResultTableEs,
+					ResultTableEsWithTimeFiled,
+				},
+				"merge_es": ir.ResultTableList{
+					ResultTableEs,
+					ResultTableEs1,
 					ResultTableEsWithTimeFiled,
 				},
 				"es_and_doris": ir.ResultTableList{

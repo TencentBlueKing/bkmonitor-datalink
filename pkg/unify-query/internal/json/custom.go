@@ -29,6 +29,9 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		switch nv := v.(type) {
 		case map[string]any:
 			mapData(k, nv, res)
+		case json.Number:
+			// 将标准库的 json.Number 转换为我们自定义的 Number 类型
+			res[k] = Number{Number: nv}
 		default:
 			res[k] = v
 		}
@@ -39,8 +42,9 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 func ParseObject(prefix, intput string) (map[string]any, error) {
 	oldData := make(map[string]any)
 	newData := make(map[string]any)
-
-	err := json.Unmarshal([]byte(intput), &oldData)
+	decoder := json.NewDecoder(strings.NewReader(intput))
+	decoder.UseNumber()
+	err := decoder.Decode(&oldData)
 	if err != nil {
 		return newData, err
 	}

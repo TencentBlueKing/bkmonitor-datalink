@@ -10,7 +10,7 @@
 package mocker
 
 import (
-	"github.com/agiledragon/gomonkey/v2"
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	goRedis "github.com/go-redis/redis/v8"
 

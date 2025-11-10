@@ -15,7 +15,7 @@ import (
 	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/patrickmn/go-cache"
+	cache "github.com/patrickmn/go-cache"
 
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"

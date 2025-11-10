@@ -11,13 +11,10 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"unsafe"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
@@ -29,7 +26,6 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
-	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 
@@ -46,7 +42,6 @@ func (r *response) failed(ctx context.Context, err error) {
 }
 
 func (r *response) success(ctx context.Context, data any) {
-	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
 	isUnifyRespProcess := r.isConfigUnifyRespProcess(r.c)

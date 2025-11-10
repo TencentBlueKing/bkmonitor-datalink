@@ -80,58 +80,110 @@ func getErrorNode(s string) Node {
 	return &ErrorNode{value: s}
 }
 
-func parseTerm(s string) Node {
-	rangeParent := regexp.MustCompile(`^([\[{])(.+)TO(.+)([\]}])$`)
-	all := rangeParent.FindStringSubmatch(s)
-	if len(all) == 5 {
-		node := &RangeNode{
-			IsIncludeStart: all[1] == "[",
-			IsIncludeEnd:   all[4] == "]",
+func extractBoost(s string) (baseValue string, boost string) {
+	boostPattern := regexp.MustCompile(`^(.+)\^([\d\.]+)$`) // boostValue^boost
+	matches := boostPattern.FindStringSubmatch(s)
+
+	if len(matches) == 3 {
+		baseValue = matches[1]
+		boost = matches[2]
+	} else {
+		baseValue = s
+		boost = ""
+	}
+	return baseValue, boost
+}
+
+func extractRange(s string, boost string) (node Node, matched bool) {
+	rangePattern := regexp.MustCompile(`^([\[{])(.+)TO(.+)([\]}])$`)
+	matches := rangePattern.FindStringSubmatch(s)
+
+	// 完整匹配, 开始括号, : 起始值, 结束值, 结束括号
+	matched = len(matches) == 5
+	if matched {
+		startBracket := matches[1] // [ 或 {
+		startValue := matches[2]   // 起始值
+		endValue := matches[3]     // 结束值
+		endBracket := matches[4]   // ] 或 }
+
+		node = &RangeNode{
+			IsIncludeStart: startBracket == "[",
+			IsIncludeEnd:   endBracket == "]",
+			Boost:          boost,
 		}
 
-		all[2] = strings.Trim(all[2], `"`)
-		if all[2] != "*" {
-			node.Start = &StringNode{
-				Value: all[2],
+		startValue = strings.Trim(startValue, `"`)
+		if startValue != "*" {
+			rangeNode := node.(*RangeNode)
+			rangeNode.Start = &StringNode{
+				Value: startValue,
 			}
 		}
-		all[3] = strings.Trim(all[3], `"`)
-		if all[3] != "*" {
-			node.End = &StringNode{
-				Value: all[3],
+
+		endValue = strings.Trim(endValue, `"`)
+		if endValue != "*" {
+			rangeNode := node.(*RangeNode)
+			rangeNode.End = &StringNode{
+				Value: endValue,
 			}
 		}
-		return node
 	}
+	return node, matched
+}
 
-	boostParent := regexp.MustCompile(`^(.+)\^([\d\.]+)$`)
-	all = boostParent.FindStringSubmatch(s)
-	if len(all) == 3 {
-		return &StringNode{
-			Value: all[1],
-			Boost: all[2],
+func extractRegexp(s string, boost string) (node Node, matched bool) {
+	regexpPattern := regexp.MustCompile(`^/(.+)/$`)
+	matches := regexpPattern.FindStringSubmatch(s)
+
+	// matches[0]: 完整匹配, matches[1]: 正则表达式内容
+	matched = len(matches) == 2
+	if matched {
+		pattern := matches[1]
+
+		node = &RegexpNode{
+			Value: pattern,
+			Boost: boost,
 		}
 	}
+	return node, matched
+}
 
-	regexpParent := regexp.MustCompile(`^/(.+)/$`)
-	all = regexpParent.FindStringSubmatch(s)
-	if len(all) == 2 {
-		return &RegexpNode{
-			Value: all[1],
-		}
-	}
+func extractWildCard(s string, boost string) (node Node, matched bool) {
+	// 检查通配符: 移除转义后的通配符
+	unescapeStr := strings.ReplaceAll(s, `\*`, "")
+	unescapeStr = strings.ReplaceAll(unescapeStr, `\?`, "")
 
-	aliasStr := strings.ReplaceAll(s, `\*`, "")
-	aliasStr = strings.ReplaceAll(aliasStr, `\?`, "")
-
-	if strings.ContainsAny(aliasStr, "*?") {
-		return &WildCardNode{
+	matched = strings.ContainsAny(unescapeStr, "*?")
+	if matched {
+		node = &WildCardNode{
 			Value: s,
+			Boost: boost,
 		}
+	}
+	return node, matched
+}
+
+func parseTerm(s string) Node {
+	baseValue, boost := extractBoost(s)
+
+	rangeNode, rangeMatched := extractRange(baseValue, boost)
+	if rangeMatched {
+		return rangeNode
+	}
+
+	regexpNode, regexpMatched := extractRegexp(baseValue, boost)
+	if regexpMatched {
+		return regexpNode
+	}
+
+	wildCardNode, wildCardMatched := extractWildCard(baseValue, boost)
+	if wildCardMatched {
+		return wildCardNode
 	}
 
 	return &StringNode{
-		Value: s,
+		Value: baseValue,
+		Boost: boost,
 	}
 }
 

@@ -16,7 +16,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	baseInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	tsDBService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
@@ -50,7 +49,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	span.Set("storage-id", qry.StorageID)
 
 	span.Set("storage-type", qry.StorageType)
-	curlGet := &curl.HttpCurl{Log: log.DefaultLogger}
+	curlGet := &curl.HttpCurl{}
 
 	switch qry.StorageType {
 	case metadata.InfluxDBStorageType:

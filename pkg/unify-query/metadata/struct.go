@@ -12,6 +12,8 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
@@ -129,6 +131,7 @@ type Query struct {
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
 	DB              string     `json:"db,omitempty"`               // 存储 DB
+	DBs             []string   `json:"dbs,omitempty"`              // 多个 DB 用于用户合并查询
 	Measurement     string     `json:"measurement,omitempty"`      // 存储 Measurement
 	MeasurementType string     `json:"measurement_type,omitempty"` // 存储类型
 	Field           string     `json:"field,omitempty"`            // 存储 Field
@@ -180,6 +183,25 @@ type Query struct {
 
 	// sql 使用SELECT DISTINCT 语法
 	IsDistinct bool `json:"is_distinct,omitempty"`
+
+	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
+	IsMergeDB bool `json:"is_merge_db"`
+}
+
+// GetMergeDBStatus 判断是否进行 db 合并处理
+func (q *Query) GetMergeDBStatus() bool {
+	// 如果 db 为空，则不需要合并
+	if q.DB == "" {
+		return false
+	}
+
+	// 如果是 doris 需要通过人工的方式确认是否需要进行合并，因为如果两个表的字段不一致合并会导致数据出错
+	if q.IsMergeDB && q.StorageType == BkSqlStorageType && q.Measurement == DorisStorageType {
+		return true
+	}
+
+	// es 合并逻辑有问题，因为需要获取 mapping 信息，所以一旦字段不一样，查询可能就会有问题
+	return false
 }
 
 func (q *Query) VMExpand() *VmExpand {
@@ -238,6 +260,22 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+}
+
+// Signature 生成条件的唯一签名，用于条件比较和去重
+// 例如：host|eq|server1 或 status|eq|1,2,3
+func (c ConditionField) Signature() string {
+	sortedValues := make([]string, len(c.Value))
+	copy(sortedValues, c.Value)
+	sort.Strings(sortedValues)
+
+	return fmt.Sprintf("%v|%v|%v|%s|%s|%s|",
+		c.IsWildcard,
+		c.IsSuffix,
+		c.IsPrefix,
+		c.DimensionName,
+		c.Operator,
+		strings.Join(sortedValues, ","))
 }
 
 // TimeAggregation 时间聚合字段

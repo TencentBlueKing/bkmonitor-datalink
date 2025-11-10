@@ -258,9 +258,8 @@ func TestTimeOffset(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			tz1, t1 := function.TimeOffset(c.t, c.tz, c.step)
+			t1 := function.TimeOffset(c.t, c.tz, c.step)
 
-			fmt.Println(c.tz, "=>", tz1)
 			fmt.Println(c.t.String(), "=>", t1.String())
 			fmt.Println(c.t, "=>", t1.Unix())
 

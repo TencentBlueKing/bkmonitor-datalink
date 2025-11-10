@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jinzhu/copier"
@@ -57,22 +58,6 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
 
-	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
-	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
 	go func() {
 		defer func() { recvDone <- struct{}{} }()
 		var tableList []*influxdb.Tables
@@ -95,17 +80,17 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 		return resp, nil
 	}
 
+	qp := metadata.GetQueryParams(ctx)
 	for _, qList := range query.QueryList {
 		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid)
 		if err != nil {
 			return nil, err
 		}
 		for _, qry := range queryMetric.QueryList {
-			qry.Timezone = timezone
 
 			instance := prometheus.GetTsDbInstance(ctx, qry)
 			if instance != nil {
-				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
+				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, qp.Start, qp.End)
 				if err != nil {
 					_ = metadata.Sprintf(
 						metadata.MsgQueryTs,
@@ -166,13 +151,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
-	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if timeErr != nil {
-		err = timeErr
-		return total, list, resultTableOptions, err
-	}
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
-
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
@@ -198,7 +176,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
 		if message.Len() > 0 {
-			err = errors.New(message.String())
+			err = metadata.Sprintf(
+				metadata.MsgQueryRaw,
+				"查询原始数据报错",
+			).Error(ctx, errors.New(message.String()))
 		}
 	}()
 
@@ -316,6 +297,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			close(errCh)
 		}()
 
+		qb := metadata.GetQueryParams(ctx)
 		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
 
@@ -345,13 +327,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					err = metadata.Sprintf(
-						metadata.MsgQueryTs,
+						metadata.MsgQueryRaw,
 						"查询实例为空",
 					).Error(ctx, nil)
 					return
 				}
 
-				_, size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, qry, qb.Start, qb.End, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -362,7 +344,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				resultTableOptions.SetOption(qry.TableUUID(), option)
 				lock.Unlock()
 
-				total += size
+				atomic.AddInt64(&total, size)
 			})
 		})
 	}()
@@ -372,43 +354,56 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return total, list, resultTableOptions, err
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, bool, error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
 
-		message strings.Builder
-		lock    sync.Mutex
-
-		queryRef metadata.QueryReference
+		total              int64
+		err                error
+		resultTableOptions = make(metadata.ResultTableOptions)
 	)
-
-	list = make([]map[string]any, 0)
-	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
-	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if timeErr != nil {
-		err = timeErr
-		return total, list, resultTableOptions, err
-	}
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
-	queryRef, err = queryTs.ToQueryReference(ctx)
+	// 先获取分布式锁，是否正在使用中
+	err = session.Start(ctx)
 	if err != nil {
-		return total, list, resultTableOptions, err
+		return 0, nil, nil, true, metadata.Sprintf(
+			metadata.MsgQueryRawScroll,
+			"下载已经触发，请稍后重试",
+		).Error(ctx, err)
+	}
+	defer func() {
+		_ = session.Stop(ctx)
+	}()
+
+	list := make([]map[string]any, 0)
+
+	queryRef, err := queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return 0, nil, nil, true, metadata.Sprintf(
+			metadata.MsgQueryRawScroll,
+			"查询参数配置异常",
+		).Error(ctx, err)
 	}
 
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
+
+		var msg strings.Builder
 		for e := range errCh {
-			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+			msg.WriteString(e.Error())
 		}
-		if message.Len() > 0 {
-			err = errors.New(message.String())
+
+		if msg.Len() > 0 {
+			err = metadata.Sprintf(
+				metadata.MsgQueryRawScroll,
+				"下载接口调用失败",
+			).Error(ctx, errors.New(msg.String()))
 		}
 	}()
 
@@ -430,27 +425,28 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	p, _ := ants.NewPool(QueryMaxRouting)
 	defer p.Release()
 
+	qb := metadata.GetQueryParams(ctx)
 	queryRef.Range("", func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
+			sliceIndex := i
 			wg.Add(1)
 
-			err = p.Submit(func() {
+			if submitErr := p.Submit(func() {
 				defer func() {
 					wg.Done()
 				}()
 
 				newQry := &metadata.Query{}
-				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
-				if err != nil {
+				if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
 					errCh <- metadata.Sprintf(
-						metadata.MsgQueryTs,
+						metadata.MsgQueryRawScroll,
 						"查询失败",
-					).Error(ctx, err)
+					).Error(ctx, copyErr)
 					return
 				}
 
 				// 使用 slice 配置查询
-				newQry.SliceID = cast.ToString(i)
+				newQry.SliceID = cast.ToString(sliceIndex)
 
 				// slice info
 				slice := session.Slice(newQry.TableUUID())
@@ -462,10 +458,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				from := slice.Offset + i*slice.Limit
+				from := slice.Offset + sliceIndex*slice.Limit
 				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
-					SliceIndex: i,
+					SliceIndex: sliceIndex,
 					ScrollID:   slice.ScrollID,
 					SliceMax:   slice.SliceMax,
 					From:       &from,
@@ -473,38 +469,43 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
-					err = metadata.Sprintf(
-						metadata.MsgQueryTs,
+					errCh <- metadata.Sprintf(
+						metadata.MsgQueryRawScroll,
 						"查询实例为空",
 					).Error(ctx, nil)
 					return
 				}
 
-				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
-				if err != nil {
+				size, _, option, rawErr := instance.QueryRawData(ctx, newQry, qb.Start, qb.End, dataCh)
+				if rawErr != nil {
 					slice.FailedNum++
-					errCh <- err
+					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
+					if slice.FailedNum >= slice.MaxFailedNum {
+						errCh <- rawErr
+					}
 					return
 				}
 
-				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				// 查询成功，更新 scroll 状态
 				if option != nil {
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}
 					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
-					lock.Lock()
-					resultTableOptions.SetOption(newQry.TableUUID(), option)
-					lock.Unlock()
 				}
+
+				atomic.AddInt64(&total, size)
 
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted
 				}
-				total += size
-			})
-			if err != nil {
-				errCh <- err
+
+				resultTableOptions.SetOption(newQry.TableUUID(), option)
+			}); submitErr != nil {
+				errCh <- metadata.Sprintf(
+					metadata.MsgQueryRawScroll,
+					"提交查询任务失败",
+				).Error(ctx, submitErr)
 				wg.Done()
 			}
 		}
@@ -516,7 +517,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	close(errCh)
 
 	receiveWg.Wait()
-	return total, list, resultTableOptions, err
+
+	return total, list, resultTableOptions, session.Done(), err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
@@ -562,19 +564,12 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		}
 	}
 
+	// 开启时间 Reference 模式
+	queryTs.Reference = true
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if err != nil {
-		return nil, err
-	}
-
-	// 开启时间不对齐模式
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
-	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
 	if queryTs.LookBackDelta != "" {
@@ -593,28 +588,23 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	}, lookBackDelta, QueryMaxRouting)
 
 	// 根据 step 重新对齐开始时间，因为 prometheus engine 中时间如果不能覆盖源数据，则会丢弃，而源数据是通过聚合而来
-	var (
-		step time.Duration
-	)
 
 	// 获取配置里面的最大时间聚合以及时区
-	window, timezone := queryRef.GetMaxWindowAndTimezone()
+	window, _ := queryRef.GetMaxWindowAndTimezone()
 
+	qb := metadata.GetQueryParams(ctx)
+	var startTime time.Time
 	// 只有聚合场景需要对齐
 	if window.Seconds() > 0 {
-		// 移除按天整除逻辑，使用用户传过来的时区
-		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
-		if err != nil {
-			return nil, err
-		}
+		startTime = qb.AlignStart
 	} else {
-		step = structured.StepParse(queryTs.Step)
+		startTime = qb.Start
 	}
 
 	if queryTs.Instant {
 		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
 	}
 	if err != nil {
 		return nil, err
@@ -681,22 +671,11 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		}
 	}
 
-	// 判定是否开启时间不对齐模式
-	if queryTs.Reference {
-		unit, startTime, endTime, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
-		if timeErr != nil {
-			err = timeErr
-			return instance, stmt, err
-		}
-
-		metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
-	}
-
 	// 判断是否打开对齐
 	for _, ql := range queryTs.QueryList {
 		ql.NotPromFunc = false
 		// 只有时间对齐模式，才需要开启
-		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference
+		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference && !queryTs.NotTimeAlign
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -747,8 +726,6 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		// 非直查开启忽略时间聚合函数判断
 		promExprOpt.IgnoreTimeAggregationEnable = true
 
-		metadata.SetQueryReference(ctx, queryRef)
-
 		span.Set("query-max-routing", QueryMaxRouting)
 		span.Set("singleflight-timeout", SingleflightTimeout.String())
 
@@ -794,22 +771,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		span.End(&err)
 	}()
 
-	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
-	if err != nil {
-		return nil, metadata.Sprintf(
-			metadata.MsgQueryTs,
-			"查询失败",
-		).Error(ctx, err)
-	}
-
-	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
-	if err != nil {
-		return nil, err
-	}
-	query.Timezone = timezone
-
-	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err
@@ -817,19 +778,22 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	span.Set("storage-type", instance.InstanceType())
 
+	qb := metadata.GetQueryParams(ctx)
+	span.Set("query-params", qb)
+
 	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, end)
+		res, err = instance.DirectQuery(ctx, stmt, qb.End)
 	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
 	}
 	if err != nil {
 		return nil, err
 	}
 
 	span.Set("stmt", stmt)
-	span.Set("start", start)
-	span.Set("end", end)
-	span.Set("step", step)
+	span.Set("start", qb.Start)
+	span.Set("end", qb.End)
+	span.Set("step", qb.Step)
 
 	tables := promql.NewTables()
 	seriesNum := 0
@@ -854,7 +818,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 			pointsNum++
 		}
 	default:
-		err = fmt.Errorf("data type wrong: %T", v)
+		err = metadata.Sprintf(
+			metadata.MsgQueryTs,
+			"data type wrong: %T", v,
+		).Error(ctx, nil)
 		return nil, err
 	}
 
@@ -867,7 +834,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		return nil, err
 	}
 
-	if ok, factor, downSampleError := downsample.CheckDownSampleRange(step.String(), query.DownSampleRange); ok {
+	if ok, factor, downSampleError := downsample.CheckDownSampleRange(qb.Step.String(), query.DownSampleRange); ok {
 		if downSampleError == nil {
 			resp.Downsample(factor)
 		}
@@ -918,6 +885,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
 	query.Reference = queryPromQL.Reference
+	query.NotTimeAlign = queryPromQL.NotTimeAlign
 
 	if queryPromQL.Match != "" {
 		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)
@@ -1002,7 +970,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
 	defer span.End(&err)
 
-	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	err = query.ToTime(ctx)
 	if err != nil {
 		return nil, metadata.Sprintf(
 			metadata.MsgQueryTs,
@@ -1010,11 +978,8 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 		).Error(ctx, err)
 	}
 
-	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
-	if err != nil {
-		return nil, err
-	}
-	query.Timezone = timezone
+	qb := metadata.GetQueryParams(ctx)
+
 	queryCM, err := query.ToQueryClusterMetric(ctx)
 	if err != nil {
 		return nil, err
@@ -1025,17 +990,17 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	}
 	instance := redis.Instance{Ctx: ctx, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
 	if query.Instant {
-		res, err = instance.DirectQuery(ctx, "", end)
+		res, err = instance.DirectQuery(ctx, "", qb.End)
 	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, "", start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, "", qb.Start, qb.End, qb.Step)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	span.Set("start", start.String())
-	span.Set("end", end.String())
-	span.Set("step", step.String())
+	span.Set("start", qb.Start.String())
+	span.Set("end", qb.End.String())
+	span.Set("step", qb.Step.String())
 	tables := promql.NewTables()
 	seriesNum := 0
 	pointsNum := 0

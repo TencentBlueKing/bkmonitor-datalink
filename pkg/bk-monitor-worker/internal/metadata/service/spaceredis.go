@@ -1588,9 +1588,7 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义，已删除状态但是允许访问历史数据的集群依然进行推送
-	qs := bcs.NewBCSClusterInfoQuerySet(db).
-		StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).
-		OrIsDeletedAllowView(true)
+	qs := bcs.NewBCSClusterInfoQuerySet(db)
 
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
@@ -1633,13 +1631,13 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 
 	db := mysql.GetDBSession().DB
 	if db == nil {
-		return
+		return err
 	}
 
 	res := db.Find(&appSpaces)
 	if res.Error != nil {
 		err = res.Error
-		return
+		return err
 	}
 
 	client := redis.GetStorageRedisInstance()
@@ -1673,11 +1671,11 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 		}
 		_, err = client.HSetWithCompareAndPublish(key, field, valueStr, cfg.BkAppToSpaceChannelKey, field)
 		if err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return err
 }
 
 // PushSpaceTableIds 推送空间及对应的结果表和过滤条件

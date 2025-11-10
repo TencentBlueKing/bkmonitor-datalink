@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
@@ -91,26 +92,6 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
-func (i *Instance) checkResult(res *Result) error {
-	if !res.Result {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Code != StatusOK {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-	if res.Data == nil {
-		return fmt.Errorf(
-			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
-		)
-	}
-
-	return nil
-}
-
 func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
@@ -139,8 +120,16 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, sql, span)
-	if err = i.checkResult(res); err != nil {
-		return data, err
+	if res == nil {
+		return nil, nil
+	}
+
+	if !res.Result || res.Code != StatusOK || res.Data == nil {
+		return data, metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"查询异常 %s",
+			res.Message,
+		).Error(ctx, errors.New(res.Errors.Error))
 	}
 
 	span.Set("query-timeout", i.timeout.String())
@@ -206,13 +195,14 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
 	defer span.End(&err)
 
-	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	f := NewQueryFactory(ctx, query).
+		WithRangeTime(start, end)
 
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sql_expr.Doris {
-		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
-			return f, err
+			return nil, err
 		}
 
 		// 只能使用在表结构的字段才能使用
@@ -243,6 +233,11 @@ func (i *Instance) Table(query *metadata.Query) string {
 // QueryFieldMap 查询字段映射
 func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
 	var err error
+
+	if query == nil {
+		return nil, nil
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("es query error: %s", r)
@@ -252,32 +247,84 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-field-map")
 	defer span.End(&err)
 
-	if query.DB == "" {
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{query.DB}
+	}
+
+	if len(dbs) == 0 {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
 		return nil, err
 	}
 
-	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-	fieldMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
-	if err != nil {
-		return nil, err
-	}
+	fieldsMap := make(metadata.FieldsMap)
 
-	res := make(metadata.FieldsMap)
-	for k, v := range fieldMap {
-		if k == "" || v.FieldType == "" {
+	// 多表的字段进行合并查询，进行倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
 			continue
 		}
 
-		v.AliasName = query.FieldAlias.AliasName(k)
-		v.FieldName = k
-		ks := strings.Split(k, ".")
-		v.OriginField = ks[0]
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
 
-		res[k] = v
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+			v.TokenizeOnChars = make([]string, 0)
+
+			fieldsMap[k] = v
+		}
 	}
 
-	return res, nil
+	for _, db := range dbs {
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+
+		sql := f.expr.DescribeTableSQL(table)
+		res, err := i.getFieldsMap(ctx, sql)
+		if err != nil {
+			continue
+		}
+
+		for k, v := range res {
+			if k == "" || v.FieldType == "" {
+				continue
+			}
+			// 如果字段相同则忽略
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
+
+			v.AliasName = query.FieldAlias.AliasName(k)
+			v.FieldName = k
+			ks := strings.Split(k, ".")
+			v.OriginField = ks[0]
+
+			fieldsMap[k] = v
+		}
+	}
+
+	return fieldsMap, nil
 }
 
 // QueryRawData 直接查询原始返回
@@ -307,14 +354,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	if i.maxLimit > 0 {
-		maxLimit := i.maxLimit + i.tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.maxLimit {
-			query.Size = maxLimit
-		}
-	}
-
 	if option.From != nil {
 		query.From = *option.From
 	}
@@ -323,6 +362,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	if err != nil {
 		return size, total, option, err
 	}
+	queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return size, total, option, err
@@ -381,14 +421,6 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	if i.maxLimit > 0 {
-		maxLimit := i.maxLimit + i.tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.maxLimit {
-			query.Size = maxLimit
-		}
-	}
-
 	// series 计算需要按照时间排序
 	query.Orders = append(metadata.Orders{
 		{
@@ -401,6 +433,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
+	queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
@@ -408,6 +441,11 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"%s 查询失败",
+			sql,
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -423,6 +461,10 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
+		err = metadata.Sprintf(
+			metadata.MsgQueryBKSQL,
+			"数据解析失败",
+		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
 

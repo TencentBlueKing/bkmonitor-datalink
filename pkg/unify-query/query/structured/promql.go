@@ -79,7 +79,7 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 	}
 	name = expr.Name
 	if promExpr, ok = m[name]; !ok {
-		return nil, nil, ErrMetricMissing
+		return nil, nil, fmt.Errorf("%s 指标未发现，请检查配置", name)
 	}
 	finalExpr = promExpr.Expr
 
@@ -92,7 +92,6 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 		grouping = promExpr.Dimensions
 	}
 
-	log.Debugf(context.TODO(), "exp->[%s] transfer to result->[%s] with grouping->[%s]", e, finalExpr, grouping)
 	return finalExpr, grouping, nil
 }
 

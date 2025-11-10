@@ -104,7 +104,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 	testPublicKey, testPrivateKey, err := mockRSAKey()
 	assert.NoError(t, err)
 
-	r.Use(MetaData(nil), JwtAuthMiddleware(testPublicKey, map[string][]string{"my_code": {"my_space_uid"}}))
+	r.Use(MetaData(nil), JwtAuthMiddleware(true, testPublicKey, map[string][]string{"my_code": {"my_space_uid"}}))
 
 	url := "/protected"
 	r.GET(url, handler)
@@ -126,7 +126,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		"空间如果为空": {
 			appCode:  "my_code",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: ): bk_app_code is unauthorized in this space_uid"}`,
+			expected: `{"error":"jwt auth unauthorized (app_code: my_code, space_uid: ): space_uid is empty"}`,
 		},
 		"访问无权限的空间授权 - 1": {
 			appCode:  "my_code",
@@ -147,7 +147,8 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		},
 		"没有传 token": {
 			spaceUID: "other_space_uid",
-			status:   http.StatusOK,
+			status:   http.StatusUnauthorized,
+			expected: `{"error":"jwt auth unauthorized (app_code: , space_uid: other_space_uid): token is empty"}`,
 		},
 	}
 

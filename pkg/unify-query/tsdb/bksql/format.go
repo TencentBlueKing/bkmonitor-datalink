@@ -70,6 +70,8 @@ type QueryFactory struct {
 	start time.Time
 	end   time.Time
 
+	maxLimit int
+
 	timeAggregate sql_expr.TimeAggregate
 	dimensionSet  *set.Set[string]
 
@@ -105,6 +107,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	return f
 }
 
+func (f *QueryFactory) WithMaxLimit(maxLimit int) *QueryFactory {
+	f.maxLimit = maxLimit
+	return f
+}
+
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
@@ -119,18 +126,6 @@ func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
 	f.expr.WithKeepColumns(cols)
 	return f
-}
-
-func (f *QueryFactory) Table() string {
-	table := fmt.Sprintf("`%s`", f.query.DB)
-	if f.query.Measurement != "" {
-		table += "." + f.query.Measurement
-	}
-	return table
-}
-
-func (f *QueryFactory) DescribeTableSQL() string {
-	return f.expr.DescribeTableSQL(f.Table())
 }
 
 func (f *QueryFactory) FieldMap() metadata.FieldsMap {
@@ -419,14 +414,34 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	return strings.Join(s, " AND "), nil
 }
 
+func (f *QueryFactory) Tables() []string {
+	dbs := f.query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{f.query.DB}
+	}
+
+	tables := make([]string, 0, len(dbs))
+	// 改成倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+		tables = append(tables, table)
+	}
+
+	return tables
+}
+
 func (f *QueryFactory) parserSQL() (sql string, err error) {
 	var span *trace.Span
 	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
 	defer span.End(&err)
 
-	table := f.Table()
+	tables := f.Tables()
 
-	span.Set("table", table)
+	span.Set("tables", tables)
 
 	where, err := f.BuildWhere()
 	if err != nil {
@@ -436,8 +451,12 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	if where != "" {
 		where = fmt.Sprintf("(%s)", where)
 	}
+	from := f.query.From
+	if f.query.Scroll != "" && f.query.ResultTableOption.From != nil {
+		from = *f.query.ResultTableOption.From
+	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, table, where)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size)
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)
@@ -476,18 +495,38 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 
 	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
-	sqlBuilder.WriteString(" FROM ")
-	sqlBuilder.WriteString(f.Table())
 
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
 	if err != nil {
 		return sql, err
 	}
+	if len(f.Tables()) > 0 {
+		var table string
+		if len(f.Tables()) == 1 {
+			table = f.Tables()[0]
+		} else {
+			stmts := make([]string, 0, len(f.Tables()))
+			for _, t := range f.Tables() {
+				s := fmt.Sprintf("SELECT * FROM %s", t)
+				if whereString != "" {
+					s = fmt.Sprintf("%s WHERE %s", s, whereString)
+				}
+				stmts = append(stmts, s)
+			}
+
+			table = fmt.Sprintf("(%s) AS combined_data", strings.Join(stmts, " UNION ALL "))
+			whereString = ""
+		}
+		sqlBuilder.WriteString(" FROM ")
+		sqlBuilder.WriteString(table)
+	}
+
 	if whereString != "" {
 		sqlBuilder.WriteString(" WHERE ")
 		sqlBuilder.WriteString(whereString)
 	}
+
 	if len(groupFields) > 0 {
 		sqlBuilder.WriteString(" GROUP BY ")
 		sqlBuilder.WriteString(strings.Join(groupFields, ", "))
@@ -498,9 +537,15 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sqlBuilder.WriteString(" ORDER BY ")
 		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}
-	if f.query.Size > 0 {
+
+	size := f.query.Size
+	if f.maxLimit > 0 && (size > f.maxLimit || size == 0) {
+		size = f.maxLimit
+	}
+
+	if size > 0 {
 		sqlBuilder.WriteString(" LIMIT ")
-		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.Size))
+		sqlBuilder.WriteString(fmt.Sprintf("%d", size))
 	}
 	if f.query.From > 0 {
 		sqlBuilder.WriteString(" OFFSET ")

@@ -26,7 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus-community/elasticsearch_exporter/collector"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_model/go"
+	io_prometheus_client "github.com/prometheus/client_model/go"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
@@ -216,7 +216,6 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 
 			return nil
 		}()
-
 		if err != nil {
 			logger.Infof("CollectAndReportMetrics:report es %s metrics failed [%s], err: %v", metricType, c.ClusterName, err)
 			continue

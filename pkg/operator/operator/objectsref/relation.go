@@ -44,11 +44,12 @@ const (
 	relationDataSourceWithPod         = "datasource_with_pod_relation"
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
+	relationAppVersionWithContainer   = "app_version_with_container_relation"
 
 	relationContainerInfo = "container_info_relation"
 )
 
-func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
+func (oc *ObjectsController) WriteAppVersionWithContainerRelation(w io.Writer) {
 	for _, pod := range oc.podObjs.GetAll() {
 		var customLabels []promfmt.Label
 		for k, v := range pod.Annotations {
@@ -65,7 +66,7 @@ func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
 		}
 
 		for _, container := range pod.Containers {
-			if container.Tag == "" || container.Name == "" {
+			if container.ImageTag == "" || container.Name == "" {
 				continue
 			}
 
@@ -73,12 +74,24 @@ func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
 				{Name: "pod", Value: pod.ID.Name},
 				{Name: "namespace", Value: pod.ID.Namespace},
 				{Name: "container", Value: container.Name},
-				{Name: "version", Value: container.Tag},
+				{Name: "app_name", Value: container.ImageName},
+				{Name: "version", Value: container.ImageTag},
 			}, customLabels...)
 
 			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationContainerInfo,
 				Labels: labels,
+			})
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name: relationAppVersionWithContainer,
+				Labels: []promfmt.Label{
+					{Name: "pod", Value: pod.ID.Name},
+					{Name: "namespace", Value: pod.ID.Namespace},
+					{Name: "container", Value: container.Name},
+					{Name: "app_name", Value: container.ImageName},
+					{Name: "version", Value: container.ImageTag},
+				},
 			})
 		}
 	}

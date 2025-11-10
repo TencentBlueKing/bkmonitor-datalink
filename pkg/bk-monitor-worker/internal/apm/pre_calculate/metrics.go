@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/grafana/pyroscope-go"
+	pyroscope "github.com/grafana/pyroscope-go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

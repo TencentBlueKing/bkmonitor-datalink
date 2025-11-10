@@ -15,19 +15,19 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
 )
 
 type Config struct {
-	Drop         DropAction           `config:"drop" mapstructure:"drop"`
-	FromCache    FromCacheAction      `config:"from_cache" mapstructure:"from_cache"`
-	FromMetadata FromMetadataAction   `config:"from_metadata" mapstructure:"from_metadata"`
-	Assemble     []AssembleAction     `config:"assemble" mapstructure:"assemble"`
-	Replace      []ReplaceAction      `config:"replace" mapstructure:"replace"`
-	Add          []AddAction          `config:"add" mapstructure:"add"`
-	FromRecord   []FromRecordAction   `config:"from_record" mapstructure:"from_record"`
-	FromToken    FromTokenAction      `config:"from_token" mapstructure:"from_token"`
-	DefaultValue []DefaultValueAction `config:"default_value" mapstructure:"default_value"`
+	Drop              DropAction              `config:"drop" mapstructure:"drop"`
+	FromCache         FromCacheAction         `config:"from_cache" mapstructure:"from_cache"`
+	FromMetadata      FromMetadataAction      `config:"from_metadata" mapstructure:"from_metadata"`
+	FromToken         FromTokenAction         `config:"from_token" mapstructure:"from_token"`
+	KeepOriginTraceId KeepOriginTraceIdAction `config:"keep_origin_traceid" mapstructure:"keep_origin_traceid"`
+	Assemble          []AssembleAction        `config:"assemble" mapstructure:"assemble"`
+	Replace           []ReplaceAction         `config:"replace" mapstructure:"replace"`
+	Add               []AddAction             `config:"add" mapstructure:"add"`
+	FromRecord        []FromRecordAction      `config:"from_record" mapstructure:"from_record"`
+	DefaultValue      []DefaultValueAction    `config:"default_value" mapstructure:"default_value"`
 }
 
 func (c *Config) Clean() {
@@ -70,8 +70,8 @@ type AssembleAction struct {
 }
 
 type FromCacheAction struct {
-	Key   string          `config:"key" mapstructure:"key"`
-	Cache k8scache.Config `config:"cache" mapstructure:"cache"`
+	Key       string `config:"key" mapstructure:"key"`
+	CacheName string `config:"cache_name" mapstructure:"cache_name"`
 
 	keys []string
 }
@@ -91,6 +91,10 @@ type FromMetadataAction struct {
 
 type FromTokenAction struct {
 	Keys []string `config:"keys" mapstructure:"keys"`
+}
+
+type KeepOriginTraceIdAction struct {
+	Enabled bool `config:"enabled" mapstructure:"enabled"`
 }
 
 type DefaultValueAction struct {

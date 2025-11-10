@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -27,8 +28,11 @@ const (
 	OrderItem  = "ORDER BY"
 	GroupItem  = "GROUP BY"
 	LimitItem  = "LIMIT"
+	OffsetItem = "OFFSET"
 
 	AsItem = "AS"
+
+	defaultLimit = "100"
 )
 
 type Encode func(string) (string, string)
@@ -72,9 +76,10 @@ type Statement struct {
 
 	nodeMap map[string]Node
 
-	Table string
-	Where string
-
+	Tables  []string
+	Where   string
+	Offset  int
+	Limit   int
 	errNode []string
 }
 
@@ -95,10 +100,28 @@ func (v *Statement) String() string {
 
 		switch name {
 		case TableItem:
-			if v.Table != "" {
-				res = v.Table
+			if len(v.Tables) > 0 {
+				if len(v.Tables) == 1 {
+					res = v.Tables[0]
+				} else {
+					stmts := make([]string, 0, len(v.Tables))
+					for _, t := range v.Tables {
+						s := fmt.Sprintf("SELECT * FROM %s", t)
+						if v.Where != "" {
+							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
+						}
+						stmts = append(stmts, s)
+					}
+					res = fmt.Sprintf("(%s) AS combined_data", strings.Join(stmts, " UNION ALL "))
+					v.Where = ""
+				}
 			}
 		case WhereItem:
+			// 清空 where 条件
+			if len(v.Tables) > 1 {
+				res = ""
+			}
+
 			if v.Where != "" {
 				if res == "" {
 					res = v.Where
@@ -143,7 +166,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	next = v
 
 	if v.nodeMap == nil {
-		v.nodeMap = map[string]Node{}
+		v.nodeMap = map[string]Node{
+			LimitItem: &LimitNode{
+				ParentLimit:  v.Limit,
+				ParentOffset: v.Offset,
+			},
+		}
 	}
 
 	var isSetAs bool
@@ -167,7 +195,6 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]
 	case *gen.LimitClauseContext:
-		v.nodeMap[LimitItem] = &LimitNode{}
 		next = v.nodeMap[LimitItem]
 	}
 
@@ -177,26 +204,81 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 type LimitNode struct {
 	baseNode
 
-	nodes []Node
+	prefix string
+
+	limit  int
+	offset int
+
+	ParentLimit  int
+	ParentOffset int
 }
 
-func (v *LimitNode) String() string {
-	var ns []string
-	for _, fn := range v.nodes {
-		ss := nodeToString(fn)
-		if ss != "" {
-			ns = append(ns, ss)
+func (v *LimitNode) getOffsetAndLimit() (string, string) {
+	offset := v.offset + v.ParentOffset
+
+	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
+	if v.limit > 0 && offset >= v.limit {
+		return "", "0"
+	}
+
+	limit := v.limit
+	if v.ParentLimit > 0 {
+		if v.limit <= 0 || v.limit > v.ParentLimit {
+			limit = v.ParentLimit
 		}
 	}
 
-	return strings.Join(ns, " ")
+	var resultOffset, resultLimit string
+	if offset > 0 {
+		resultOffset = cast.ToString(offset)
+	}
+
+	if limit > 0 {
+		resultLimit = cast.ToString(limit)
+	} else {
+		resultLimit = defaultLimit
+	}
+
+	// 只有制定了 offset 的逻辑的才需要进行切割
+	if v.ParentOffset > 0 && v.limit > 0 && (limit+offset) > v.limit {
+		left := v.limit % limit
+		if left != 0 {
+			resultLimit = cast.ToString(left)
+		}
+	}
+
+	return resultOffset, resultLimit
+}
+
+func (v *LimitNode) String() string {
+	var s []string
+
+	offset, limit := v.getOffsetAndLimit()
+	if limit != "" {
+		s = append(s, fmt.Sprintf("%s %s", LimitItem, limit))
+	}
+	if offset != "" {
+		s = append(s, fmt.Sprintf("%s %s", OffsetItem, offset))
+	}
+
+	return strings.Join(s, " ")
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	result := strings.ToUpper(ctx.GetText())
-	v.nodes = append(v.nodes, &StringNode{
-		Name: result,
-	})
+	switch result {
+	case LimitItem, OffsetItem:
+		v.prefix = result
+	case ",":
+		v.offset = v.limit
+	default:
+		if v.prefix == LimitItem {
+			v.limit = cast.ToInt(result)
+		} else if v.prefix == OffsetItem {
+			v.offset = cast.ToInt(result)
+		}
+	}
+
 	return nil
 }
 
@@ -1105,6 +1187,8 @@ func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) an
 type Option struct {
 	DimensionTransform Encode
 
-	Table string
-	Where string
+	Tables []string
+	Where  string
+	Offset int
+	Limit  int
 }

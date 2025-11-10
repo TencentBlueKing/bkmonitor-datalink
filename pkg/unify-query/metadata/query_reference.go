@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -52,6 +53,33 @@ func (q *Query) TableUUID() string {
 	} {
 		if s != "" {
 			l = append(l, s)
+		}
+	}
+
+	return strings.Join(l, "|")
+}
+
+// StorageUUID 获取存储唯一标识
+// storageType 存储类型
+// storageID 存储唯一标识
+// storageName 集群名称
+// measurementType 表类型
+// timeField 内置时间配置
+func (q *Query) StorageUUID() string {
+	var l []string
+	for _, s := range []any{
+		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
+	} {
+		switch ns := s.(type) {
+		case string:
+			if ns != "" {
+				l = append(l, ns)
+			}
+		default:
+			nt, _ := json.Marshal(ns)
+			if len(nt) > 0 {
+				l = append(l, string(nt))
+			}
 		}
 	}
 

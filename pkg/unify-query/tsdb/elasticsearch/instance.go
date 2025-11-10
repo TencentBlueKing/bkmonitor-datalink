@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/samber/lo"
@@ -232,7 +234,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		qb  = qo.query
 	)
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
-	defer span.End(&err)
+	defer func() {
+		// 忽略 elastic返回的io.EOF报错
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		span.End(&err)
+	}()
 
 	filterQueries := make([]elastic.Query, 0)
 
@@ -254,10 +262,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		q, err := fact.ParserQueryString(ctx, qb.QueryString)
-		if err != nil {
-			return nil, err
-		}
+		q := fact.ParserQueryString(ctx, qb.QueryString, qb.IsPrefix)
 		if q != nil {
 			filterQueries = append(filterQueries, q)
 		}
@@ -312,7 +317,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	span.Set("query-body", bodyString)
 
 	metadata.Sprintf(
-		metadata.MsgQueryInfo,
+		metadata.MsgQueryES,
 		"es 查询 index: %+v, body: %s",
 		qo.indexes, bodyString,
 	).Info(ctx)
@@ -363,7 +368,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
 	if res.Error != nil {
-		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
+		err = metadata.Sprintf(
+			metadata.MsgQueryES,
+			"es 查询失败 index: %+v",
+			qo.indexes,
+		).Error(ctx, errors.New(res.Error.Reason))
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)
@@ -411,24 +420,58 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	return remote.FromQueryResult(false, qr)
 }
 
-func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) ([]string, error) {
+func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	_, span := trace.NewSpan(ctx, "get-alias")
+
+	allAlias := make([]string, 0)
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = []string{query.DB}
+	}
+
+	span.Set("dbs", dbs)
+
+	// 多表的字段进行合并查询，进行倒序遍历
+	for idx := len(dbs) - 1; idx >= 0; idx-- {
+		db := dbs[idx]
+		if db == "" {
+			continue
+		}
+
+		alias := i.explainDB(ctx, db, query.NeedAddTime, start, end, query.SourceType)
+		allAlias = append(allAlias, alias...)
+	}
+
+	span.Set("alias", allAlias)
+
+	if len(allAlias) == 0 {
+		return nil, metadata.Sprintf(
+			metadata.MsgQueryES,
+			"%s 构建索引异常",
+			query.TableID,
+		).Error(ctx, fmt.Errorf("es 查询没有匹配到索引"))
+	}
+	return allAlias, nil
+}
+
+func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) []string {
 	var (
 		aliases []string
-		_, span = trace.NewSpan(ctx, "get-alias")
+		_, span = trace.NewSpan(ctx, "explain-db")
 		err     error
 		loc     *time.Location
 	)
 	defer span.End(&err)
 
 	if db == "" {
-		return nil, fmt.Errorf("alias is empty")
+		return nil
 	}
 
 	aliases = strings.Split(db, ",")
 
 	span.Set("need-add-time", needAddTime)
 	if !needAddTime {
-		return aliases, nil
+		return aliases
 	}
 
 	span.Set("source-type", sourceType)
@@ -479,7 +522,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	}
 
 	span.Set("new_alias_num", len(newAliases))
-	return newAliases, nil
+	return newAliases
 }
 
 // QueryFieldMap 查询字段映射
@@ -499,10 +542,12 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		return nil, err
 	}
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
+	span.Set("query-db", query.DB)
+	span.Set("query-dbs", query.DBs)
 	span.Set("aliases", aliases)
 
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
@@ -532,7 +577,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return size, total, option, err
 	}
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return size, total, option, err
 	}
@@ -570,9 +615,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	labelMap := function.LabelMap(ctx, query)
-
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 	reverseAlias := make(map[string]string, len(query.FieldAlias))
 	for k, v := range query.FieldAlias {
 		reverseAlias[v] = k
@@ -580,24 +622,21 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	fact := NewFormatFactory(ctx).
 		WithTransform(func(s string) string {
+			if s == "" {
+				return ""
+			}
 			// 别名替换
 			ns := s
 			if alias, ok := reverseAlias[s]; ok {
 				ns = alias
 			}
 
-			// 格式转换
-			if encodeFunc != nil {
-				ns = encodeFunc(ns)
-			}
 			return ns
 		}, func(s string) string {
-			ns := s
-
-			// 格式转换
-			if decodeFunc != nil {
-				ns = decodeFunc(ns)
+			if s == "" {
+				return ""
 			}
+			ns := s
 
 			// 别名替换
 			if alias, ok := query.FieldAlias[s]; ok {
@@ -734,7 +773,7 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-field", query.Field)
 	span.Set("query-fields", query.Fields)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -844,7 +883,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-values")
 	defer span.End(&err)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}

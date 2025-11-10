@@ -57,7 +57,7 @@ func TestNormalizer(t *testing.T) {
 		var n int
 		normalizer := NewSpanFieldNormalizer(conf)
 		foreach.Spans(data, func(span ptrace.Span) {
-			normalizer.Normalize(span)
+			normalizer.Normalize(span, span.Kind().String())
 			v, ok := span.Attributes().Get("net.peer.name")
 			assert.True(t, ok)
 			assert.Equal(t, "localhost:8080", v.AsString())
@@ -71,42 +71,95 @@ func TestNormalizer(t *testing.T) {
 			GeneratorOptions: define.GeneratorOptions{
 				Attributes: map[string]string{
 					"network.peer.address": "localhost",
-					"http.method":          "GET",
+					"http.methodx":         "GET",
+					"http.request.method":  "GET",
+					"db.namespace":         "test",
+					"db.system":            "my.db.system",
 				},
 			},
 			SpanCount: 2,
 			SpanKind:  3,
 		})
-		data := g.Generate()
 
-		conf := Config{
-			Fields: []FieldConfig{
-				{
-					Kind:         "SPAN_KIND_CLIENT",
-					PredicateKey: "attributes.http.method",
-					Rules: []FieldRule{
-						{
-							Key: "attributes.net.peer.ip",
-							Values: []string{
-								"attributes.server.address",
-								"attributes.network.peer.address",
+		confs := []Config{
+			{
+				Fields: []FieldConfig{
+					{
+						Kind:         "",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.method",
+								Values: []string{
+									"attributes.http.request.method",
+								},
+								Op: funcOr,
 							},
-							Op: funcOr,
+						},
+					},
+				},
+			},
+			{
+				Fields: []FieldConfig{
+					{
+						Kind:         "SPAN_KIND_CLIENT",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.method",
+								Values: []string{
+									"attributes.http.request.method",
+								},
+								Op: funcOr,
+							},
+						},
+					},
+				},
+			},
+			{
+				Fields: []FieldConfig{
+					{
+						Kind:         "",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.method",
+								Values: []string{
+									"attributes.http.request.method",
+								},
+								Op: funcOr,
+							},
+						},
+					},
+					{
+						Kind:         "SPAN_KIND_CLIENT",
+						PredicateKey: "attributes.http.method,attributes.http.request.method",
+						Rules: []FieldRule{
+							{
+								Key: "attributes.http.status_code",
+								Values: []string{
+									"attributes.http.response.status_code",
+								},
+								Op: funcOr,
+							},
 						},
 					},
 				},
 			},
 		}
 
-		var n int
-		normalizer := NewSpanFieldNormalizer(conf)
-		foreach.Spans(data, func(span ptrace.Span) {
-			normalizer.Normalize(span)
-			v, ok := span.Attributes().Get("net.peer.ip")
-			assert.True(t, ok)
-			assert.Equal(t, "localhost", v.AsString())
-			n++
-		})
-		assert.Equal(t, 2, n)
+		for _, conf := range confs {
+			var n int
+			normalizer := NewSpanFieldNormalizer(conf)
+			foreach.Spans(g.Generate(), func(span ptrace.Span) {
+				normalizer.Normalize(span, span.Kind().String())
+				normalizer.Normalize(span, "")
+				v, ok := span.Attributes().Get("http.method")
+				assert.True(t, ok)
+				assert.Equal(t, "GET", v.AsString())
+				n++
+			})
+			assert.Equal(t, 2, n)
+		}
 	})
 }

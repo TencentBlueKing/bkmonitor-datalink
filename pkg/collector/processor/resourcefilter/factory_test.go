@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cache/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -127,6 +128,68 @@ func makeLogsRecord(count, length int, valueType string) plog.Logs {
 	}
 	opts.DimensionsValueType = valueType
 	return generator.NewLogsGenerator(opts).Generate()
+}
+
+func createTracesWithResourceSpan(resourceAttrs map[string]string) (ptrace.Traces, ptrace.ResourceSpans) {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	for k, v := range resourceAttrs {
+		rs.Resource().Attributes().InsertString(k, v)
+	}
+	return traces, rs
+}
+
+func addScopeSpanWithSpans(rs ptrace.ResourceSpans, scopeName string, traceID pcommon.TraceID, spanCount int) {
+	ss := rs.ScopeSpans().AppendEmpty()
+	ss.Scope().SetName(scopeName)
+	for i := 0; i < spanCount; i++ {
+		span := ss.Spans().AppendEmpty()
+		span.SetTraceID(traceID)
+		span.SetSpanID(random.SpanID())
+	}
+}
+
+func createSpanInScopeSpan(ss ptrace.ScopeSpans, traceID pcommon.TraceID) ptrace.Span {
+	span := ss.Spans().AppendEmpty()
+	span.SetTraceID(traceID)
+	span.SetSpanID(random.SpanID())
+	return span
+}
+
+// makeOpenTelemetryTraces creates traces data with OpenTelemetry SDK attributes
+func makeOpenTelemetryTraces(spanCount int) ptrace.Traces {
+	data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: spanCount}).Generate()
+	// Add SDK name to Resource attributes for all resource spans
+	foreach.SpansSliceResource(data, func(rs pcommon.Resource) {
+		rs.Attributes().InsertString(keySdkName, sdkOpenTelemetry)
+	})
+	return data
+}
+
+// makeSkyWalkingTraces creates traces data with SkyWalking SDK attributes
+func makeSkyWalkingTraces(spanCount int, traceID string) ptrace.Traces {
+	data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: spanCount}).Generate()
+	// Add SDK name and sw8.trace_id to Resource attributes for all resource spans
+	foreach.SpansSliceResource(data, func(rs pcommon.Resource) {
+		rs.Attributes().InsertString(keySw8TraceID, traceID)
+		rs.Attributes().InsertString(keySdkName, sdkSkyWalking)
+	})
+	return data
+}
+
+// addOpenTelemetryResourceSpan adds an OpenTelemetry resource span to traces
+func addOpenTelemetryResourceSpan(traces ptrace.Traces, traceID pcommon.TraceID, spanCount int) {
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().InsertString(keySdkName, sdkOpenTelemetry)
+	addScopeSpanWithSpans(rs, "", traceID, spanCount)
+}
+
+// addSkyWalkingResourceSpan adds a SkyWalking resource span to traces
+func addSkyWalkingResourceSpan(traces ptrace.Traces, traceID pcommon.TraceID, spanCount int) {
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().InsertString(keySdkName, sdkSkyWalking)
+	rs.Resource().Attributes().InsertString(keySw8TraceID, traceID.HexString())
+	addScopeSpanWithSpans(rs, "", traceID, spanCount)
 }
 
 func TestAssembleAction(t *testing.T) {
@@ -694,15 +757,15 @@ processor:
 
 	t.Run("opentelemetry enabled", func(t *testing.T) {
 		factory := newFactory(enabledContent)
-		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 3}).Generate()
+		data := makeOpenTelemetryTraces(3)
 		orig := testkits.FirstSpan(data).TraceID().HexString()
-		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		testkits.MustProcess(t, factory, record)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
 
 		attrs := testkits.FirstSpanAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, orig)
@@ -710,27 +773,24 @@ processor:
 
 	t.Run("skywalking enabled", func(t *testing.T) {
 		factory := newFactory(enabledContent)
-		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 2}).Generate()
-		orig := testkits.FirstSpan(data).TraceID().HexString()
-
-		testkits.FirstSpanAttrs(data).InsertString(keySw8TraceID, orig)
-		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkSkyWalking)
+		orig := random.TraceID().HexString()
+		data := makeSkyWalkingTraces(2, orig)
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		testkits.MustProcess(t, factory, record)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
 
-		attrs := testkits.FirstSpanAttrs(data)
+		attrs := testkits.FirstSpanAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, orig)
 		testkits.AssertAttrsNotFound(t, attrs, keySw8TraceID)
 	})
 
 	t.Run("opentelemetry disabled", func(t *testing.T) {
 		factory := newFactory(disabledContent)
-		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
-		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkOpenTelemetry)
+		data := makeOpenTelemetryTraces(1)
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -744,10 +804,8 @@ processor:
 
 	t.Run("skywalking disabled", func(t *testing.T) {
 		factory := newFactory(disabledContent)
-		data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: 1}).Generate()
 		orig := random.TraceID().HexString()
-		testkits.FirstSpanAttrs(data).InsertString(keySw8TraceID, orig)
-		testkits.FirstSpanAttrs(data).InsertString(keySdkName, sdkSkyWalking)
+		data := makeSkyWalkingTraces(1, orig)
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -758,5 +816,165 @@ processor:
 		attrs := testkits.FirstSpanAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs, keySw8TraceID, orig)
 		testkits.AssertAttrsNotFound(t, attrs, keyOriginTraceID)
+	})
+
+	t.Run("mixed opentelemetry and skywalking traces enabled", func(t *testing.T) {
+		factory := processor.MustCreateFactory(enabledContent, NewFactory)
+
+		traces := ptrace.NewTraces()
+		traceIDOT := random.TraceID()
+		traceIDSW := random.TraceID()
+
+		// Use helper functions to add resource spans
+		addOpenTelemetryResourceSpan(traces, traceIDOT, 2)
+		addSkyWalkingResourceSpan(traces, traceIDSW, 1)
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       traces,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		pd := record.Data.(ptrace.Traces)
+		foundOT := false
+		foundSW := false
+
+		for i := 0; i < pd.ResourceSpans().Len(); i++ {
+			rs := pd.ResourceSpans().At(i)
+			attrs := rs.Resource().Attributes()
+
+			sdk, hasSdk := attrs.Get(keySdkName)
+			if !hasSdk {
+				continue
+			}
+
+			switch sdk.AsString() {
+			case sdkOpenTelemetry:
+				testkits.AssertAttrsFound(t, attrs, keyOriginTraceID)
+				testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, traceIDOT.HexString())
+				foundOT = true
+
+			case sdkSkyWalking:
+				// sw8.trace_id should be removed
+				testkits.AssertAttrsNotFound(t, attrs, keySw8TraceID)
+				// origin.trace_id should be set
+				testkits.AssertAttrsFound(t, attrs, keyOriginTraceID)
+				testkits.AssertAttrsStringKeyVal(t, attrs, keyOriginTraceID, traceIDSW.HexString())
+				foundSW = true
+			}
+		}
+
+		assert.True(t, foundOT, "Should process OpenTelemetry traces")
+		assert.True(t, foundSW, "Should process SkyWalking traces")
+	})
+
+	t.Run("mixed sdk types disabled", func(t *testing.T) {
+		factory := processor.MustCreateFactory(disabledContent, NewFactory)
+
+		traces := ptrace.NewTraces()
+		traceID := random.TraceID()
+
+		// Use helper functions to add resource spans
+		addOpenTelemetryResourceSpan(traces, traceID, 1)
+		addSkyWalkingResourceSpan(traces, traceID, 1)
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       traces,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		pd := record.Data.(ptrace.Traces)
+		for i := 0; i < pd.ResourceSpans().Len(); i++ {
+			attrs := pd.ResourceSpans().At(i).Resource().Attributes()
+
+			// origin.trace_id should not be added when disabled
+			testkits.AssertAttrsNotFound(t, attrs, keyOriginTraceID)
+
+			// sw8.trace_id should remain when disabled
+			if sdk, ok := attrs.Get(keySdkName); ok && sdk.AsString() == sdkSkyWalking {
+				testkits.AssertAttrsFound(t, attrs, keySw8TraceID)
+			}
+		}
+	})
+}
+
+func TestRegroupResourceSpansByTraceID(t *testing.T) {
+	t.Run("empty traces", func(t *testing.T) {
+		empty := ptrace.NewTraces()
+		regrouped := regroupResourceSpansByTraceID(empty)
+		assert.Equal(t, 0, regrouped.ResourceSpans().Len())
+	})
+
+	t.Run("single trace id", func(t *testing.T) {
+		traceID := random.TraceID()
+		orig, rs := createTracesWithResourceSpan(map[string]string{"service.name": "test-service"})
+		addScopeSpanWithSpans(rs, "test-scope", traceID, 2)
+
+		regrouped := regroupResourceSpansByTraceID(orig)
+		assert.Equal(t, 1, regrouped.ResourceSpans().Len())
+
+		firstRS := regrouped.ResourceSpans().At(0)
+		attrs := firstRS.Resource().Attributes()
+		testkits.AssertAttrsFound(t, attrs, "service.name")
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "test-service")
+	})
+
+	t.Run("multiple trace ids with overlapping resources", func(t *testing.T) {
+		orig := ptrace.NewTraces()
+		traceIDA := random.TraceID()
+		traceIDB := random.TraceID()
+
+		// Resource span 1: contains 2 spans with traceID A
+		rs1 := orig.ResourceSpans().AppendEmpty()
+		rs1.Resource().Attributes().InsertString("service.name", "svc1")
+		addScopeSpanWithSpans(rs1, "scope1", traceIDA, 2)
+
+		// Resource span 2: contains 1 span with traceID A and 1 span with traceID B
+		rs2 := orig.ResourceSpans().AppendEmpty()
+		rs2.Resource().Attributes().InsertString("service.name", "svc2")
+		ss2 := rs2.ScopeSpans().AppendEmpty()
+		ss2.Scope().SetName("scope2")
+		createSpanInScopeSpan(ss2, traceIDA)
+		createSpanInScopeSpan(ss2, traceIDB)
+
+		// Original has 2 resource spans
+		assert.Equal(t, 2, orig.ResourceSpans().Len())
+
+		regrouped := regroupResourceSpansByTraceID(orig)
+
+		// After regrouping, should have 2 resource spans: one for traceID A, one for traceID B
+		assert.Equal(t, 2, regrouped.ResourceSpans().Len())
+
+		// Verify each trace ID is grouped correctly
+		traceToService := make(map[string]string)
+		for i := 0; i < regrouped.ResourceSpans().Len(); i++ {
+			rs := regrouped.ResourceSpans().At(i)
+			serviceName, _ := rs.Resource().Attributes().Get("service.name")
+
+			for j := 0; j < rs.ScopeSpans().Len(); j++ {
+				ss := rs.ScopeSpans().At(j)
+				for k := 0; k < ss.Spans().Len(); k++ {
+					span := ss.Spans().At(k)
+					tid := span.TraceID().HexString()
+
+					if existing, ok := traceToService[tid]; ok {
+						// All spans with same trace ID should be in same resource
+						assert.Equal(t, existing, serviceName.AsString())
+					} else {
+						traceToService[tid] = serviceName.AsString()
+					}
+				}
+			}
+		}
+
+		// Verify trace A uses first occurrence resource (svc1)
+		assert.Equal(t, "svc1", traceToService[traceIDA.HexString()])
+		// Verify trace B uses its original resource (svc2)
+		assert.Equal(t, "svc2", traceToService[traceIDB.HexString()])
 	})
 }

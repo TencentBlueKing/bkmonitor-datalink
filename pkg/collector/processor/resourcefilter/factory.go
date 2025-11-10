@@ -452,7 +452,8 @@ const (
 func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		pdTraces := record.Data.(ptrace.Traces)
+		// 根据 traceID 进行重分组，保证同 traceID 下的 span 在同一 resourceSpan 下，方便处理
+		pdTraces := regroupResourceSpansByTraceID(record.Data.(ptrace.Traces))
 		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 			v, ok := rs.Get(keySdkName)
 			if !ok {
@@ -470,5 +471,38 @@ func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())
 			}
 		})
+		record.Data = pdTraces
 	}
+}
+
+func regroupResourceSpansByTraceID(traces ptrace.Traces) ptrace.Traces {
+	newTraces := ptrace.NewTraces()
+	traceIDToResourceSpans := make(map[string]ptrace.ResourceSpans)
+
+	originalResourceSpans := traces.ResourceSpans()
+	for i := 0; i < originalResourceSpans.Len(); i++ {
+		resourceSpans := originalResourceSpans.At(i)
+		scopeSpansSlice := resourceSpans.ScopeSpans()
+		for j := 0; j < scopeSpansSlice.Len(); j++ {
+			scopeSpans := scopeSpansSlice.At(j)
+			spans := scopeSpans.Spans()
+			for k := 0; k < spans.Len(); k++ {
+				span := spans.At(k)
+				traceID := span.TraceID().HexString()
+
+				rs, exists := traceIDToResourceSpans[traceID]
+				if !exists {
+					rs = newTraces.ResourceSpans().AppendEmpty()
+					resourceSpans.Resource().CopyTo(rs.Resource())
+					traceIDToResourceSpans[traceID] = rs
+				}
+
+				ss := rs.ScopeSpans().AppendEmpty()
+				scopeSpans.Scope().CopyTo(ss.Scope())
+				newSpan := ss.Spans().AppendEmpty()
+				span.CopyTo(newSpan)
+			}
+		}
+	}
+	return newTraces
 }

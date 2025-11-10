@@ -29,7 +29,6 @@ import (
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
 	"k8s.io/utils/ptr"
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
@@ -75,7 +74,6 @@ type Operator struct {
 	cancel context.CancelFunc
 
 	client  kubernetes.Interface
-	metaCli metadata.Interface
 	bkCli   bkcli.Interface
 	promCli promcli.Interface
 
@@ -90,7 +88,6 @@ type Operator struct {
 
 type ClientSet struct {
 	Client kubernetes.Interface
-	Meta   metadata.Interface
 	BK     bkcli.Interface
 	Prom   promcli.Interface
 }
@@ -103,7 +100,6 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 
 	operator.ctx, operator.cancel = context.WithCancel(ctx)
 	operator.client = cs.Client
-	operator.metaCli = cs.Meta
 	operator.promCli = cs.Prom
 	operator.bkCli = cs.BK
 

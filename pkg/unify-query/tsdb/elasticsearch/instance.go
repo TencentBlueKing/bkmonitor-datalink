@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,7 +27,6 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -671,10 +671,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			for idx, d := range sr.Hits.Hits {
 				data := make(map[string]any)
-				if err = json.Unmarshal(d.Source, &data); err != nil {
+				decoder := json.NewDecoder(strings.NewReader(string(d.Source)))
+				decoder.UseNumber()
+				if err = decoder.Decode(&data); err != nil {
 					return size, total, option, err
 				}
-
 				fact.SetData(data)
 
 				// 注入别名

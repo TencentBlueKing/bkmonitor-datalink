@@ -374,7 +374,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) && !d.isArray(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionContains {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
@@ -432,7 +432,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionNotContains {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
@@ -616,14 +616,18 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	fieldType := d.getFieldType(ns)
 	if !fieldType.Existed() && !d.ignoreFieldSet.Existed(strings.ToUpper(ns)) {
+		if d.encodeFunc != nil {
+			ns = d.encodeFunc(ns)
+		}
 		return metadata.Null, ns
 	}
 
-	castType, _ := d.caseAs(fieldType.FieldType)
+	castType, _ := d.caseAs(strings.ToUpper(fieldType.FieldType))
 
 	fs := strings.Split(ns, ".")
 	if len(fs) == 1 {
 		ns = fmt.Sprintf("`%s`", ns)
+
 		return ns, as
 	}
 

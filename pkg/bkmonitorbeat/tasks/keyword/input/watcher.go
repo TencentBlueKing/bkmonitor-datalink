@@ -14,13 +14,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hpcloud/tail"
+	"github.com/nxadm/tail"
+	"github.com/nxadm/tail/watch"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/keyword"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/keyword/input/file"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/keyword/module"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+func init() {
+	watch.POLL_DURATION = 100 * time.Millisecond
+}
 
 type FileWatcher struct {
 	FileTail *tail.Tail

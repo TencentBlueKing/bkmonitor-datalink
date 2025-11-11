@@ -559,7 +559,6 @@ func HandlerLabelValues(c *gin.Context) {
 	}
 
 	limitNum, _ := strconv.Atoi(limit)
-
 	qb := metadata.GetQueryParams(ctx)
 
 	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, limitNum, matcher...)

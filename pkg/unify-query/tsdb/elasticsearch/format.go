@@ -98,47 +98,40 @@ type TimeSeriesResult struct {
 }
 
 func mapData(prefix string, data map[string]any, res map[string]any) {
-	// 先处理数字精度问题
-	processedData := mapNumber(data)
-
-	for k, v := range processedData {
+	for k, v := range data {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
 		switch nv := v.(type) {
+		case stdJson.Number:
+			res[k] = nv.String()
 		case map[string]any:
 			mapData(k, nv, res)
-		default:
-			res[k] = nv
-		}
-	}
-}
-
-func mapNumber(data map[string]any) map[string]any {
-	result := make(map[string]any)
-	for k, v := range data {
-		switch nv := v.(type) {
-		case stdJson.Number:
-			result[k] = nv.String()
-		case map[string]any:
-			result[k] = mapNumber(nv)
 		case []any:
 			arr := make([]any, len(nv))
 			for i, item := range nv {
 				if num, ok := item.(stdJson.Number); ok {
 					arr[i] = num.String()
 				} else if m, ok := item.(map[string]any); ok {
-					arr[i] = mapNumber(m)
+					tempRes := make(map[string]any)
+					mapData("", m, tempRes)
+					if len(tempRes) == 1 {
+						for _, val := range tempRes {
+							arr[i] = val
+							break
+						}
+					} else {
+						arr[i] = tempRes
+					}
 				} else {
 					arr[i] = item
 				}
 			}
-			result[k] = arr
+			res[k] = arr
 		default:
-			result[k] = v
+			res[k] = nv
 		}
 	}
-	return result
 }
 
 type ValueAgg struct {

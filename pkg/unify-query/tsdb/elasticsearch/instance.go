@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -671,7 +672,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			for idx, d := range sr.Hits.Hits {
 				data := make(map[string]any)
-				decoder := json.NewDecoder(strings.NewReader(string(d.Source)))
+				decoder := json.NewDecoder(bytes.NewReader(d.Source))
 				decoder.UseNumber()
 				if err = decoder.Decode(&data); err != nil {
 					return size, total, option, err

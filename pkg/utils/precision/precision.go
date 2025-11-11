@@ -11,32 +11,44 @@ package precision
 
 import (
 	stdJson "encoding/json"
-	"strconv"
 	"strings"
-)
 
-const (
-	JavaScriptSafeIntegerMax = 9007199254740991
-	JavaScriptSafeIntegerMin = -9007199254740991
+	"github.com/spf13/cast"
 )
 
 func ProcessNumber(num stdJson.Number) any {
 	numStr := num.String()
 
-	// 检查是否像浮点数 - 对于浮点数，返回字符串保持原始格式
-	if strings.ContainsAny(numStr, ".eE") {
+	if numStr == "" {
 		return numStr
 	}
 
-	if int64Val, err := strconv.ParseInt(numStr, 10, 64); err == nil {
-		if int64Val >= JavaScriptSafeIntegerMin && int64Val <= JavaScriptSafeIntegerMax {
-			return int64Val
+	// 检查是否包含浮点数特征
+	if strings.ContainsAny(numStr, ".eE") {
+		if floatVal, err := cast.ToFloat64E(numStr); err == nil {
+			return floatVal
 		}
 		return numStr
 	}
 
-	if _, err := strconv.ParseUint(numStr, 10, 64); err == nil {
-		return numStr
+	if intVal, err := cast.ToIntE(numStr); err == nil {
+		return intVal
+	}
+
+	if uintVal, err := cast.ToUintE(numStr); err == nil {
+		return uintVal
+	}
+
+	if int64Val, err := cast.ToInt64E(numStr); err == nil {
+		return int64Val
+	}
+
+	if uint64Val, err := cast.ToUint64E(numStr); err == nil {
+		return uint64Val
+	}
+
+	if floatVal, err := cast.ToFloat64E(numStr); err == nil {
+		return floatVal
 	}
 
 	return numStr

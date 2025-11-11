@@ -1243,8 +1243,8 @@ func TestInstance_queryRawData(t *testing.T) {
   "__doc_id" : "11198970968214182562",
   "_id" : "11198970968214182562",
   "trace_id" : "ac84c276757ac58fcf36b66204bb8c93",
-  "start_time" : "1762732828226681",
-  "end_time" : "1762732828226696",
+  "start_time" : 1762732828226681,
+  "end_time" : 1762732828226696,
   "__index" : "v2_2_bkapm_trace_tilapia_20251110_0",
   "__result_table" : "bk_log_index_set_10",
   "__table_uuid" : "bk_log_index_set_10|log"

@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
 
 const (
@@ -104,7 +105,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		}
 		switch nv := v.(type) {
 		case stdJson.Number:
-			res[k] = nv.String()
+			res[k] = precision.ProcessNumber(nv)
 		case map[string]any:
 			mapData(k, nv, res)
 		case []any:
@@ -112,7 +113,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 			for i, item := range nv {
 				switch t := item.(type) {
 				case stdJson.Number:
-					arr[i] = t.String()
+					arr[i] = precision.ProcessNumber(t)
 				case map[string]any:
 					tempRes := make(map[string]any)
 					mapData("", t, tempRes)

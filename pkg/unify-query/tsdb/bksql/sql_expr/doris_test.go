@@ -34,7 +34,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "one word",
 			input: "test",
-			want:  "`log` = 'test'",
+			want:  "`log` MATCH_PHRASE 'test'",
 			// err:   "doris 不支持全字段检索: test",
 		},
 		{
@@ -125,8 +125,44 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
 			got, err := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
-				"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+				"log": {
+					FieldType:  DorisTypeText,
+					IsAnalyzed: true,
+				},
+				"a": {
+					FieldType: DorisTypeString,
+				},
+				"b": {
+					FieldType: DorisTypeString,
+				},
+				"c": {
+					FieldType: DorisTypeString,
+				},
+				"d": {
+					FieldType: DorisTypeString,
+				},
+				"age": {
+					FieldType: DorisTypeInt,
+				},
+				"timestamp": {
+					FieldType: DorisTypeDate,
+				},
+				"123field": {
+					FieldType: DorisTypeDate,
+				},
+				"name": {
+					FieldType: DorisTypeString,
+				},
+				"text": {
+					FieldType:  DorisTypeText,
+					IsAnalyzed: true,
+				},
+				"__ext.container_name": {
+					FieldType: DorisTypeString,
+				},
+				"events.attributes.exception.type": {
+					FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText),
+				},
 			}).WithEncode(func(s string) string {
 				return fmt.Sprintf("`%s`", s)
 			}).ParserQueryString(ctx, tt.input)
@@ -606,9 +642,20 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 
 	e := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
 		"object.field":                     {FieldType: DorisTypeText},
+		"object.field.name":                {FieldType: DorisTypeText},
 		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
 		"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
 		"events.timestamp":                 {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
+		"__ext.container_id":               {FieldType: DorisTypeText},
+		"tag":                              {FieldType: DorisTypeText},
+		"status":                           {FieldType: DorisTypeText},
+		"env":                              {FieldType: DorisTypeText},
+		"serverIp":                         {FieldType: DorisTypeText},
+		"gseIndex":                         {FieldType: DorisTypeInt},
+		"dtEventTimeStamp":                 {FieldType: DorisTypeDate},
+		"iterationIndex":                   {FieldType: DorisTypeInt},
+		"code":                             {FieldType: DorisTypeInt},
+		"cpu_usage":                        {FieldType: DorisTypeInt},
 		"text": {
 			FieldType:  DorisTypeText,
 			IsAnalyzed: true,

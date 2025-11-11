@@ -69,8 +69,10 @@ type DorisSQLExpr struct {
 	valueField string
 
 	keepColumns []string
-	fieldsMap   metadata.FieldsMap
-	fieldAlias  metadata.FieldAlias
+
+	ignoreFieldSet *set.Set[string]
+	fieldsMap      metadata.FieldsMap
+	fieldAlias     metadata.FieldAlias
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -136,10 +138,13 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
-		Tables:             tables,
-		Where:              where,
-		Offset:             offset,
-		Limit:              limit,
+		AddIgnoreField: func(s string) {
+			d.ignoreFieldSet.Add(strings.ToUpper(s))
+		},
+		Tables: tables,
+		Where:  where,
+		Offset: offset,
+		Limit:  limit,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -147,6 +152,13 @@ func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string,
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
 func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
+	// 默认需要支持
+	d.ignoreFieldSet.Add([]string{
+		strings.ToUpper(Value),
+		strings.ToUpper(TimeStamp),
+		strings.ToUpper(d.timeField),
+	}...)
+
 	valueField, _ := d.dimTransform(d.valueField)
 
 	var (
@@ -242,6 +254,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		if d.timeField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, TimeStamp))
 		}
+
 	}
 
 	orderNameSet := set.New[string]()
@@ -564,15 +577,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 }
 
 func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption) {
-	if d.fieldsMap == nil {
-		return opt
-	}
-
-	var ok bool
-	if opt, ok = d.fieldsMap[s]; ok {
-		opt.FieldType = strings.ToUpper(opt.FieldType)
-	}
-	return opt
+	return d.fieldsMap.Field(s)
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -606,9 +611,14 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
+		d.ignoreFieldSet.Add(strings.ToUpper(as))
 	}
 
 	fieldType := d.getFieldType(ns)
+	if !fieldType.Existed() && !d.ignoreFieldSet.Existed(strings.ToUpper(ns)) {
+		return metadata.Null, ns
+	}
+
 	castType, _ := d.caseAs(fieldType.FieldType)
 
 	fs := strings.Split(ns, ".")

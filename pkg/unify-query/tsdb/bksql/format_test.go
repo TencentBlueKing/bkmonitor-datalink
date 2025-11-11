@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestNewSqlFactory(t *testing.T) {
@@ -258,7 +259,22 @@ func TestNewSqlFactory(t *testing.T) {
 			}
 
 			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
-			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithRangeTime(c.start, c.end).
+				WithFieldsMap(map[string]metadata.FieldOption{
+					"level": {
+						FieldType: sql_expr.DorisTypeString,
+					},
+					"ip": {
+						FieldType: sql_expr.DorisTypeString,
+					},
+					"__ext.container_id": {
+						FieldType: sql_expr.DorisTypeString,
+					},
+					"gseIndex": {
+						FieldType: sql_expr.DorisTypeInt,
+					},
+				})
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)

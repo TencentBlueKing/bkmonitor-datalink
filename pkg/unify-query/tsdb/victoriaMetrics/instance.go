@@ -745,6 +745,9 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	// 如果 tag values 超过 24h 或者报错的话，则跳转到 DirectLabelValues 查询
 	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, metadata.DefaultReferenceName)
+
+	// 构建新的 ctx 进行缓存写入，避免影响原查询，因为会有多个查询并发
+	ctx = metadata.InitHashID(ctx)
 	metadata.SetExpand(ctx, query.VMExpand())
 
 	return i.DirectLabelValues(ctx, name, start, end, query.Size, matcher)

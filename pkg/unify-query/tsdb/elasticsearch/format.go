@@ -110,11 +110,12 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		case []any:
 			arr := make([]any, len(nv))
 			for i, item := range nv {
-				if num, ok := item.(stdJson.Number); ok {
-					arr[i] = num.String()
-				} else if m, ok := item.(map[string]any); ok {
+				switch t := item.(type) {
+				case stdJson.Number:
+					arr[i] = t.String()
+				case map[string]any:
 					tempRes := make(map[string]any)
-					mapData("", m, tempRes)
+					mapData("", t, tempRes)
 					if len(tempRes) == 1 {
 						for _, val := range tempRes {
 							arr[i] = val
@@ -123,7 +124,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 					} else {
 						arr[i] = tempRes
 					}
-				} else {
+				default:
 					arr[i] = item
 				}
 			}

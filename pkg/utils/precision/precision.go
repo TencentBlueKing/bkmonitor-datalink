@@ -19,6 +19,7 @@ import (
 func ProcessNumber(num stdJson.Number) any {
 	numStr := num.String()
 
+	// 处理空字符串
 	if numStr == "" {
 		return numStr
 	}
@@ -31,24 +32,18 @@ func ProcessNumber(num stdJson.Number) any {
 		return numStr
 	}
 
-	if intVal, err := cast.ToIntE(numStr); err == nil {
-		return intVal
+	processList := []func(string) (any, error){
+		func(s string) (any, error) { return cast.ToIntE(s) }, // 优先尝试转换为 int
+		func(s string) (any, error) { return cast.ToUintE(s) },
+		func(s string) (any, error) { return cast.ToInt64E(s) },
+		func(s string) (any, error) { return cast.ToUint64E(s) },
+		func(s string) (any, error) { return cast.ToFloat64E(s) },
 	}
 
-	if uintVal, err := cast.ToUintE(numStr); err == nil {
-		return uintVal
-	}
-
-	if int64Val, err := cast.ToInt64E(numStr); err == nil {
-		return int64Val
-	}
-
-	if uint64Val, err := cast.ToUint64E(numStr); err == nil {
-		return uint64Val
-	}
-
-	if floatVal, err := cast.ToFloat64E(numStr); err == nil {
-		return floatVal
+	for _, processor := range processList {
+		if result, err := processor(numStr); err == nil {
+			return result
+		}
 	}
 
 	return numStr

@@ -48,3 +48,26 @@ func ProcessNumber(num stdJson.Number) any {
 
 	return numStr
 }
+
+// ProcessValue 递归处理值，要开启json解码时的stdJson.UseNumber选项
+func ProcessValue(v any) any {
+	switch nv := v.(type) {
+	case map[string]any:
+		processed := make(map[string]any)
+		for k, val := range nv {
+			processed[k] = ProcessValue(val)
+		}
+		return processed
+	case []any:
+		processed := make([]any, len(nv))
+		for i, val := range nv {
+			processed[i] = ProcessValue(val)
+		}
+		return processed
+	case stdJson.Number:
+		// 使用精度处理器处理数字，保持大数字的精度
+		return ProcessNumber(nv)
+	default:
+		return v
+	}
+}

@@ -23,29 +23,6 @@ const (
 	StepString = "."
 )
 
-// processValue 处理任意类型的值，递归处理其中的数字
-func processValue(v any) any {
-	switch nv := v.(type) {
-	case map[string]any:
-		processed := make(map[string]any)
-		for k, val := range nv {
-			processed[k] = processValue(val)
-		}
-		return processed
-	case []any:
-		processed := make([]any, len(nv))
-		for i, val := range nv {
-			processed[i] = processValue(val)
-		}
-		return processed
-	case json.Number:
-		// 使用精度处理器处理数字，保持大数字的精度
-		return precision.ProcessNumber(nv)
-	default:
-		return v
-	}
-}
-
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
@@ -55,8 +32,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		case map[string]any:
 			mapData(k, nv, res)
 		default:
-			// 使用processValue处理所有其他类型，包括数组和数字
-			res[k] = processValue(nv)
+			res[k] = precision.ProcessValue(nv)
 		}
 	}
 }

@@ -10,6 +10,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/common v0.26.0
 	github.com/spf13/afero v1.9.2
+	github.com/spf13/cast v1.10.0
 	github.com/stretchr/testify v1.8.3
 	github.com/tinylib/msgp v1.1.6
 	github.com/uptrace/opentelemetry-go-extra/otelzap v0.1.18
@@ -43,7 +44,6 @@ require (
 	github.com/mitchellh/mapstructure v1.1.2 // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/spf13/cast v1.10.0 // indirect
 	github.com/uptrace/opentelemetry-go-extra/otelutil v0.1.18 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect

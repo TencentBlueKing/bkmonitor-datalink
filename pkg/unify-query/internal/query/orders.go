@@ -31,15 +31,17 @@ func SortSliceListWithTime(list []map[string]any, os metadata.Orders, fieldType 
 			a := list[i][o.Name]
 			b := list[j][o.Name]
 
-			// 添加nil安全检查
+			// 添加nil安全检查，考虑o.Ast排序方向
 			if a == nil && b == nil {
 				continue
 			}
 			if a == nil {
-				return false
+				// 升序时nil排在后面(false)，降序时nil排在前面(true)
+				return !o.Ast
 			}
 			if b == nil {
-				return true
+				// 升序时nil排在后面(true)，降序时nil排在前面(false)
+				return o.Ast
 			}
 
 			if a == b {

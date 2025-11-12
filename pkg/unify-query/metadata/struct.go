@@ -56,7 +56,12 @@ const (
 type FieldsMap map[string]FieldOption
 
 func (f FieldsMap) Field(k string) FieldOption {
-	return f[k]
+	for key, val := range f {
+		if strings.EqualFold(key, k) {
+			return val
+		}
+	}
+	return FieldOption{}
 }
 
 type FieldOption struct {

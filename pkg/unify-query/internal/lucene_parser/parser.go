@@ -13,10 +13,9 @@ import (
 	"context"
 	"fmt"
 
-	antlr "github.com/antlr4-go/antlr/v4"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	antlr "github.com/antlr4-go/antlr/v4"
 )
 
 type Option struct {

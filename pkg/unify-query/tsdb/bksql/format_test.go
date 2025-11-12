@@ -258,7 +258,22 @@ func TestNewSqlFactory(t *testing.T) {
 			}
 
 			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
-			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithRangeTime(c.start, c.end).
+				WithFieldsMap(metadata.FieldsMap{
+					"ip": metadata.FieldOption{
+						FieldType: "text",
+					},
+					"__ext.container_id": metadata.FieldOption{
+						FieldType: "string",
+					},
+					"gseIndex": metadata.FieldOption{
+						FieldType: "string",
+					},
+					"level": metadata.FieldOption{
+						FieldType: "string",
+					},
+				})
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)

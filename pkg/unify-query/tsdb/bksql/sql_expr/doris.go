@@ -58,6 +58,7 @@ const (
 
 	DorisTypeArrayTransform = "%s ARRAY"
 	DorisTypeArray          = "ARRAY<%s>"
+	DorisTypeVariant        = "VARIANT"
 )
 
 type DorisSQLExpr struct {
@@ -517,17 +518,28 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 }
 
 func (d *DorisSQLExpr) isArray(k string) bool {
-	fieldType := d.getFieldType(k)
-	_, ok := d.caseAs(fieldType.FieldType)
+	opt, exist := d.getFieldOption(k)
+	if !exist {
+		return false
+	}
+	_, ok := d.caseAs(opt.FieldType)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k).FieldType == DorisTypeText
+	if opt, e := d.getFieldOption(k); e {
+		return opt.FieldType == DorisTypeText
+	} else {
+		return false
+	}
 }
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
-	return d.getFieldType(k).IsAnalyzed
+	if opt, e := d.getFieldOption(k); e {
+		return opt.IsAnalyzed
+	} else {
+		return false
+	}
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -563,16 +575,35 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption) {
-	if d.fieldsMap == nil {
-		return opt
+func (d *DorisSQLExpr) getFieldOption(s string) (opt metadata.FieldOption, exist bool) {
+	if d.fieldsMap == nil && s == "" {
+		return opt, false
 	}
 
-	var ok bool
-	if opt, ok = d.fieldsMap[s]; ok {
-		opt.FieldType = strings.ToUpper(opt.FieldType)
+	defaultFieldList := metadata.FieldsMap{
+		TimeStamp: metadata.FieldOption{
+			FieldType: DorisTypeBigInt,
+		},
+		Value: metadata.FieldOption{
+			FieldType: DorisTypeDouble,
+		},
+		DtEventTimeStamp: metadata.FieldOption{
+			FieldType: DorisTypeBigInt,
+		},
 	}
-	return opt
+
+	mergedMap := lo.Assign(defaultFieldList, d.fieldsMap)
+	key, found := lo.FindKeyBy(mergedMap, func(k string, _ metadata.FieldOption) bool {
+		return strings.EqualFold(k, s)
+	})
+
+	if found {
+		v := mergedMap[key]
+		v.FieldType = strings.ToUpper(v.FieldType)
+		return v, true
+	}
+
+	return opt, false
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -603,12 +634,16 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = s
+
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
 	}
 
-	fieldType := d.getFieldType(ns)
+	fieldType, exist := d.getFieldOption(ns)
+	if !exist {
+		return metadata.Null, metadata.Null
+	}
 	castType, _ := d.caseAs(fieldType.FieldType)
 
 	fs := strings.Split(ns, ".")

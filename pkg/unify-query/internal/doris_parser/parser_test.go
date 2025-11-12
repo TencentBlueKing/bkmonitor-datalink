@@ -235,12 +235,10 @@ group by
 		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
 		"serverIp":      "test_server_ip",
 	}
-
 	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-
 			// antlr4 and visitor
 			opt := DorisListenerOption{
 				DimensionTransform: func(s string) (string, string) {
@@ -858,12 +856,10 @@ group by
 		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
 		"serverIp":      "test_server_ip",
 	}
-
 	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-
 			// antlr4 and visitor
 			opt := &Option{
 				DimensionTransform: func(s string) (string, string) {

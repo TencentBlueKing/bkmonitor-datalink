@@ -53,10 +53,21 @@ const (
 	TypeDateNanos = "date_nanos"
 )
 
+const (
+	Null = "NULL"
+)
+
 type FieldsMap map[string]FieldOption
 
 func (f FieldsMap) Field(k string) FieldOption {
-	return f[k]
+	// 获取字段时，忽略字段大小写
+	for fk, fv := range f {
+		if strings.EqualFold(fk, k) {
+			return fv
+		}
+	}
+
+	return FieldOption{}
 }
 
 type FieldOption struct {
@@ -68,6 +79,10 @@ type FieldOption struct {
 	IsAnalyzed      bool     `json:"is_analyzed"`
 	IsCaseSensitive bool     `json:"is_case_sensitive"`
 	TokenizeOnChars []string `json:"tokenize_on_chars"`
+}
+
+func (f FieldOption) Existed() bool {
+	return f.FieldType != ""
 }
 
 type VmCondition string

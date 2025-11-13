@@ -95,7 +95,9 @@ var (
 func NewSQLExpr(key string) SQLExpr {
 	switch key {
 	case Doris:
-		return &DorisSQLExpr{}
+		return &DorisSQLExpr{
+			ignoreFieldSet: set.New[string](),
+		}
 	default:
 		return &DefaultSQLExpr{key: key}
 	}
@@ -106,8 +108,9 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    metadata.FieldsMap
-	fieldAlias  metadata.FieldAlias
+
+	fieldMap   metadata.FieldsMap
+	fieldAlias metadata.FieldAlias
 
 	timeField  string
 	valueField string

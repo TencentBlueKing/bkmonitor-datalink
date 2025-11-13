@@ -24,7 +24,8 @@ func TestParserAllConditions(t *testing.T) {
 
 	doris := sql_expr.DorisSQLExpr{}
 	doris.WithFieldsMap(metadata.FieldsMap{
-		"text_field": {FieldType: "text", IsAnalyzed: true},
+		"text_field":   {FieldType: sql_expr.DorisTypeText, IsAnalyzed: true},
+		"text_field_1": {FieldType: sql_expr.DorisTypeText},
 	})
 
 	t.Run("空条件测试", func(t *testing.T) {

@@ -37,7 +37,7 @@ const (
 	TableFieldType     = "Type"
 	TableFieldAnalyzed = "Analyzed"
 
-	TableTypeVariant = "variant"
+	TableTypeVariant = "VARIANT"
 )
 
 type Instance struct {

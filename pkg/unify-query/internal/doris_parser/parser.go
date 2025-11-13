@@ -46,6 +46,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	stmt := &Statement{}
 	if opt != nil {
 		stmt.WithEncode(opt.DimensionTransform)
+		stmt.WithAddIgnoreField(opt.AddIgnoreField)
 		stmt.Tables = opt.Tables
 		stmt.Where = opt.Where
 

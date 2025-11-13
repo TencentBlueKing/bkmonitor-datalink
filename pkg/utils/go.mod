@@ -1,6 +1,8 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils
 
-go 1.18
+go 1.21.0
+
+toolchain go1.23.1
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
@@ -8,6 +10,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/common v0.26.0
 	github.com/spf13/afero v1.9.2
+	github.com/spf13/cast v1.10.0
 	github.com/stretchr/testify v1.8.3
 	github.com/tinylib/msgp v1.1.6
 	github.com/uptrace/opentelemetry-go-extra/otelzap v0.1.18

@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
 
 const (
@@ -105,7 +106,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		case map[string]any:
 			mapData(k, nv, res)
 		default:
-			res[k] = nv
+			res[k] = precision.ProcessValue(nv)
 		}
 	}
 }

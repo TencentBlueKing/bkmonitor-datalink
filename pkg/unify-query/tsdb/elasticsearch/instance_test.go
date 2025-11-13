@@ -581,6 +581,9 @@ func TestInstance_queryRawData(t *testing.T) {
 	field := "dtEventTimeStamp"
 
 	mock.Es.Set(map[string]any{
+		// 测试大整数精度缺失问题
+		`{"_source":{"includes":["_id","trace_id","span_id","start_time","end_time","elapsed_time","attributes"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":5,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_tilapia_20251110_0","_type":"_doc","_id":"11198970968214182562","_score":null,"_source":{"_id":"11198970968214182562","trace_id":"ac84c276757ac58fcf36b66204bb8c93","span_id":"52449ee1b7cfb6dc","start_time":1762732828226681,"end_time":1762732828226696,"elapsed_time":15,"span_name":"test-span","attributes":{"query-max-routing":4,"tsdb-num":2,"large_uint":9223372036854775808}}}]}}`,
+
 		// nested query + query string 测试 + highlight
 		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"term":{"group":"fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
 		// high light from condition
@@ -594,6 +597,9 @@ func TestInstance_queryRawData(t *testing.T) {
 
 		// 获取 10条 原始数据
 		`{"_source":{"includes":["__ext.io_kubernetes_pod","__ext.container_name"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":10,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8defd23f1c2599e70f3ace3a042b2b5f","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"74ea55e7397582b101f0e21efbc876c6","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"084792484f943e314e31ef2b2e878115","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0a3f47a7c57d0af7d40d82c729c37155","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"85981293cca7102b9560b49a7f089737","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"b429dc6611efafc4d02b90f882271dea","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"01213026ae064c6726fd99dc8276e842","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"93027432b40ccb01b1be8f4ea06a6853","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bc31babcb5d1075fc421bd641199d3aa","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}}]}}`,
+
+		// 测试大整数精度缺失问题 - 匹配查询
+		`{"_source":{"includes":["_id","trace_id","start_time","end_time"]},"from":0,"query":{"bool":{"filter":[{"exists":{"field":"dtEventTimeStamp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":5,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_tilapia_20251110_0","_type":"_doc","_id":"11198970968214182562","_score":null,"_source":{"_id":"11198970968214182562","trace_id":"ac84c276757ac58fcf36b66204bb8c93","start_time":1762732828226681,"end_time":1762732828226696}}]}}`,
 
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"error":{"root_cause":[{"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"}],"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"},"status":400}`,
 
@@ -1198,6 +1204,55 @@ func TestInstance_queryRawData(t *testing.T) {
 					SearchAfter: []any{1743465616224.0, "kibana_stats", "es-os60crz7-kibana"},
 					FieldType:   mock.FieldType,
 					From:        function.IntPoint(0),
+				},
+			},
+		},
+		"测试大整数精度缺失问题": {
+			query: &metadata.Query{
+				DB:         db,
+				Field:      field,
+				From:       0,
+				Size:       2,
+				DataSource: structured.BkLog,
+				TableID:    "bk_log_index_set_10",
+				StorageID:  "log",
+				DataLabel:  "set_10",
+				Orders: metadata.Orders{
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
+				},
+				Source:      []string{"_id", "trace_id", "start_time", "end_time"},
+				StorageType: metadata.ElasticsearchStorageType,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: field,
+							Operator:      "ncontains",
+							Value:         []string{""},
+						},
+					},
+				},
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			total: 1e4,
+			list: `[ {
+  "__data_label" : "set_10",
+  "__doc_id" : "11198970968214182562",
+  "_id" : "11198970968214182562",
+  "trace_id" : "ac84c276757ac58fcf36b66204bb8c93",
+  "start_time" : 1762732828226681,
+  "end_time" : 1762732828226696,
+  "__index" : "v2_2_bkapm_trace_tilapia_20251110_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+} ]`,
+			resultTableOptions: metadata.ResultTableOptions{
+				"bk_log_index_set_10|log": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},

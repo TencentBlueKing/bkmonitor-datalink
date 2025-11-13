@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
 
 const (
@@ -593,13 +594,16 @@ func getValue(k string, d map[string]any) (string, error) {
 			return value, nil
 		}
 
-		switch v.(type) {
+		switch t := v.(type) {
 		case string:
 			value = fmt.Sprintf("%s", v)
 		case float64, float32:
 			value = fmt.Sprintf("%.f", v)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
+		case json.Number:
+			processed := precision.ProcessNumber(t)
+			value = fmt.Sprintf("%v", processed)
 		default:
 			return value, fmt.Errorf("get_value_error: type %T, %v in %s with %+v", v, v, k, d)
 		}

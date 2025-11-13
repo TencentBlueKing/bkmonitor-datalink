@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
-	"github.com/hpcloud/tail"
+	"github.com/nxadm/tail"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -200,6 +200,7 @@ func (g *Gather) watchEvents(filename string) {
 		Follow: true,
 		ReOpen: true,
 		Poll:   true,
+		Logger: wrapperLogger{},
 	})
 	if err != nil {
 		logger.Errorf("failed to follow file: %s, err: %v", filename, err)

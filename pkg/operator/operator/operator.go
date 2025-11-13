@@ -23,6 +23,7 @@ import (
 	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
@@ -37,6 +38,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/processmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -71,6 +73,7 @@ type Operator struct {
 	srv     *http.Server
 
 	qmopr *qcloudmonitor.Operator
+	pmopr *processmonitor.Operator
 
 	serviceMonitorInformer *prominfs.ForResource
 	podMonitorInformer     *prominfs.ForResource
@@ -171,7 +174,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 				define.ReSyncPeriod,
 				nil,
 			),
-			promv1.SchemeGroupVersion.WithResource(promv1.ServiceMonitorName),
+			schema.GroupVersionResource(promv1.SchemeGroupVersion.WithResource(promv1.ServiceMonitorName)),
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "create ServiceMonitor informer failed")
@@ -187,7 +190,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 				define.ReSyncPeriod,
 				nil,
 			),
-			promv1.SchemeGroupVersion.WithResource(promv1.PodMonitorName),
+			schema.GroupVersionResource(promv1.SchemeGroupVersion.WithResource(promv1.PodMonitorName)),
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "create PodMonitor informer failed")
@@ -197,12 +200,22 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	if configs.G().QCloudMonitor.Enabled {
 		operator.qmopr, err = qcloudmonitor.New(ctx, qcloudmonitor.ClientSet{
 			Client: operator.client,
-			Meta:   operator.mdCli,
 			BK:     operator.bkCli,
 			Prom:   operator.promCli,
 		})
 		if err != nil {
 			return nil, errors.Wrap(err, "create QCloudMonitor operator failed")
+		}
+	}
+
+	if configs.G().ProcessMonitor.Enabled {
+		operator.pmopr, err = processmonitor.New(ctx, processmonitor.ClientSet{
+			Client: operator.client,
+			BK:     operator.bkCli,
+			Prom:   operator.promCli,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "create ProcessMonitor operator failed")
 		}
 	}
 
@@ -412,6 +425,11 @@ func (c *Operator) Run() error {
 
 	if configs.G().QCloudMonitor.Enabled {
 		if err := c.qmopr.Start(); err != nil {
+			return err
+		}
+	}
+	if configs.G().ProcessMonitor.Enabled {
+		if err := c.pmopr.Start(); err != nil {
 			return err
 		}
 	}

@@ -57,6 +57,7 @@ const (
 	ProxyConfigPath                               = "http.path.proxy"
 	TSQueryRawMAXLimitConfigPath                  = "http.query.raw.max_limit"
 	TSQueryRawQueryWithScrollHandlePathConfigPath = "http.path.ts_raw_with_scroll"
+	TSQueryRawQueryDirectHandlePathConfigPath     = "http.path.ts_raw_direct"
 	CheckQueryTsConfigPath                        = "http.path.check_query_ts"
 	CheckQueryPromQLConfigPath                    = "http.path.check_query_promql"
 

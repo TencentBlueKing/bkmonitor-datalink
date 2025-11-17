@@ -43,6 +43,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryReferenceQueryHandlePathConfigPath, "/query/ts/reference")
 	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
 	viper.SetDefault(TSQueryRawQueryWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
+	viper.SetDefault(TSQueryRawQueryDirectHandlePathConfigPath, "/query/ts/raw_direct")
 	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")

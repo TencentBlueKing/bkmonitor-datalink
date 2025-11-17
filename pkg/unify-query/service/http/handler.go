@@ -376,6 +376,75 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	resp.success(ctx, listData)
 }
 
+// HandlerQueryRawDirect
+// @Summary query monitor by raw data
+// @ID query_raw
+// @Produce json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      structured.QueryTs  			true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/raw_direct [post]
+func HandlerQueryRawDirect(c *gin.Context) {
+	var (
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
+	)
+
+	ctx, span = trace.NewSpan(ctx, "handler-query-raw-direct")
+	defer func() {
+		span.End(&err)
+	}()
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-tenant-id", user.TenantID)
+	span.Set("query-space-uid", user.SpaceUID)
+
+	// 解析请求 body
+	queryDirect := &structured.QueryDirect{}
+	err = json.NewDecoder(c.Request.Body).Decode(queryDirect)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	// metadata 中的 spaceUid 是从 header 头信息中获取
+	if user.SpaceUID != "" {
+		queryDirect.SpaceUid = user.SpaceUID
+	}
+
+	queryStr, _ := json.Marshal(queryDirect)
+	span.Set("query-body", string(queryStr))
+
+	listData.TraceID = span.TraceID()
+
+	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstanceDirect(ctx, queryDirect)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	// 避免空切片被解析成 null 的问题
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
+	}
+	if listData.ResultTableOptions == nil {
+		listData.ResultTableOptions = make(metadata.ResultTableOptions)
+	}
+
+	resp.success(ctx, listData)
+}
+
 // HandlerQueryTs
 // @Summary  query monitor by ts
 // @ID       query_ts

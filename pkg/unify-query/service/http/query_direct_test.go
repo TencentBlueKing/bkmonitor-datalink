@@ -65,13 +65,13 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 	})
 
 	tests := map[string]struct {
-		queryDirect structured.QueryDirect
+		queryDirect *structured.QueryDirect
 		total       int64
 		expected    string
 		options     string
 	}{
 		"basic query direct test": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -104,7 +104,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.bk_base_es|0":{"from":0}}`,
 		},
 		"query with highlight enabled": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -149,7 +149,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.bk_base_es|0":{"from":0}}`,
 		},
 		"nested query with query string and highlight enabled": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -205,7 +205,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.bk_base_es|0":{"from":0}}`,
 		},
 		"doris basic query": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -237,7 +237,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dtEventTimeStamp","field_index":2,"field_name":"__c2","field_type":"long"},{"field_alias":"thedate","field_index":3,"field_name":"__c3","field_type":"int"},{"field_alias":"localtime","field_index":4,"field_name":"__c4","field_type":"string"},{"field_alias":"iterationIndex","field_index":5,"field_name":"__c5","field_type":"long"},{"field_alias":"__ext","field_index":6,"field_name":"__c6","field_type":"string"},{"field_alias":"cloudId","field_index":7,"field_name":"__c7","field_type":"long"},{"field_alias":"gseIndex","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"path","field_index":9,"field_name":"__c9","field_type":"string"},{"field_alias":"time","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"serverip","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"trace_id","field_index":14,"field_name":"__c14","field_type":"string"}]}}`,
 		},
 		"doris complex conditions query": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -283,7 +283,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dtEventTimeStamp","field_index":2,"field_name":"__c2","field_type":"long"},{"field_alias":"thedate","field_index":3,"field_name":"__c3","field_type":"int"},{"field_alias":"localtime","field_index":4,"field_name":"__c4","field_type":"string"},{"field_alias":"iterationIndex","field_index":5,"field_name":"__c5","field_type":"long"},{"field_alias":"__ext","field_index":6,"field_name":"__c6","field_type":"string"},{"field_alias":"cloudId","field_index":7,"field_name":"__c7","field_type":"long"},{"field_alias":"gseIndex","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"path","field_index":9,"field_name":"__c9","field_type":"string"},{"field_alias":"time","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"serverip","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"trace_id","field_index":14,"field_name":"__c14","field_type":"string"}]}}`,
 		},
 		"doris time range specific query": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{
@@ -315,7 +315,7 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dtEventTimeStamp","field_index":2,"field_name":"__c2","field_type":"long"},{"field_alias":"thedate","field_index":3,"field_name":"__c3","field_type":"int"},{"field_alias":"localtime","field_index":4,"field_name":"__c4","field_type":"string"},{"field_alias":"iterationIndex","field_index":5,"field_name":"__c5","field_type":"long"},{"field_alias":"__ext","field_index":6,"field_name":"__c6","field_type":"string"},{"field_alias":"cloudId","field_index":7,"field_name":"__c7","field_type":"long"},{"field_alias":"gseIndex","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"path","field_index":9,"field_name":"__c9","field_type":"string"},{"field_alias":"time","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"serverip","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"trace_id","field_index":14,"field_name":"__c14","field_type":"string"}]}}`,
 		},
 		"doris query with highlight enabled": {
-			queryDirect: structured.QueryDirect{
+			queryDirect: &structured.QueryDirect{
 				SpaceUid: spaceUid,
 				References: metadata.QueryReference{
 					"a": []*metadata.QueryMetric{

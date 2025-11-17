@@ -1037,7 +1037,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	return resp, nil
 }
 
-func queryRawWithInstanceDirect(ctx context.Context, queryDirect structured.QueryDirect) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+func queryRawWithInstanceDirect(ctx context.Context, queryDirect *structured.QueryDirect) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
 	list = make([]map[string]any, 0)
 	resultTableOptions = make(metadata.ResultTableOptions)

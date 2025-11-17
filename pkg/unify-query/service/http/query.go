@@ -326,7 +326,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					err = metadata.Sprintf(
+					errCh <- metadata.Sprintf(
 						metadata.MsgQueryRaw,
 						"查询实例为空",
 					).Error(ctx, nil)
@@ -1215,7 +1215,7 @@ func queryRawWithInstanceDirect(ctx context.Context, queryDirect structured.Quer
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					err = metadata.Sprintf(
+					errCh <- metadata.Sprintf(
 						metadata.MsgQueryRaw,
 						"查询实例为空",
 					).Error(ctx, nil)

@@ -52,8 +52,8 @@ func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) SetTime(alianStart, start, end time.Time, step time.Duration, unit, timezone string) *QueryParams {
-	q.AlignStart = alianStart
+func (q *QueryParams) SetTime(alignStart, start, end time.Time, step time.Duration, unit, timezone string) *QueryParams {
+	q.AlignStart = alignStart
 	q.Start = start
 	q.End = end
 	q.Step = step

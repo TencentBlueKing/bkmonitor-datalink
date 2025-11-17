@@ -180,17 +180,17 @@ func (q *QueryDirect) ToTime(ctx context.Context) error {
 
 	timezone := q.Timezone
 	reference := q.Reference
-	alianStart := startTime
+	alignStart := startTime
 
 	step := StepParse(q.Step)
 
 	// 如果关闭了对齐，则无需对齐开始时间
 	if !q.NotTimeAlign {
 		// 根据 timezone 来对齐开始时间
-		alianStart = function.TimeOffset(startTime, timezone, step)
+		alignStart = function.TimeOffset(startTime, timezone, step)
 	}
 
-	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	metadata.GetQueryParams(ctx).SetTime(alignStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
 	return nil
 }
 

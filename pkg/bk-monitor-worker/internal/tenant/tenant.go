@@ -44,7 +44,9 @@ func sendRequestToUserApi(tenantId string, method string, path string, urlParams
 	url := fmt.Sprintf("%s%s", baseUrl, path)
 
 	// create http client
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		return err
@@ -68,6 +70,7 @@ func sendRequestToUserApi(tenantId string, method string, path string, urlParams
 		return err
 	}
 	req.Header.Set("X-Bkapi-Authorization", string(authStr))
+
 	// send request
 	resp, err := client.Do(req)
 	if err != nil {
@@ -170,8 +173,14 @@ func GetTenantList() ([]ListTenantData, error) {
 		var result ListTenantResp
 		err := sendRequestToUserApi(DefaultTenantId, http.MethodGet, "api/v3/open/tenants/", nil, &result)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to get tenant list, err: %v", err)
 		}
+
+		// handle api result error
+		if !result.Result {
+			return nil, fmt.Errorf("failed to get tenant list, code: %d, message: %s", result.Code, result.Message)
+		}
+
 		tenantList = result.Data
 		lastTenantListUpdate = time.Now()
 		return tenantList, nil
@@ -200,6 +209,13 @@ func GetTenantAdminUser(tenantId string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get tenant admin user, tenantId: %s, err: %v", tenantId, err)
 	}
+
+	// handle api result error
+	if !result.Result {
+		return "", fmt.Errorf("failed to get tenant admin user, tenantId: %s, code: %d, message: %s", tenantId, result.Code, result.Message)
+	}
+
+	// handle api empty result error
 	if len(result.Data) == 0 {
 		return "", fmt.Errorf("tenant admin user not found, tenantId: %s", tenantId)
 	}

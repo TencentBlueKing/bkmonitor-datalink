@@ -78,7 +78,7 @@ func TestGetTenantAdminUser(t *testing.T) {
 	assert.Equal(t, "admin", adminUser)
 
 	// mock sendRequestToUserApi
-	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, response any) error {
+	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, urlParams map[string]string, response any) error {
 		if resp, ok := response.(*BatchLookupVirtualUserResp); ok {
 			*resp = BatchLookupVirtualUserResp{
 				ApiCommonRespMeta: ApiCommonRespMeta{
@@ -114,7 +114,7 @@ func TestGetTenantList(t *testing.T) {
 	assert.Equal(t, DefaultTenantId, tenantList[0].Id)
 
 	// mock sendRequestToUserApi
-	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, response any) error {
+	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, urlParams map[string]string, response any) error {
 		if resp, ok := response.(*ListTenantResp); ok {
 			*resp = ListTenantResp{
 				ApiCommonRespMeta: ApiCommonRespMeta{
@@ -140,14 +140,8 @@ func TestGetTenantList(t *testing.T) {
 	})
 	defer patch.Reset()
 
-	// 清除缓存，确保多租户模式下的调用会触发 mock
-	tenantListRWMutex.Lock()
-	tenantList = []ListTenantData{}
-	lastTenantListUpdate = time.Time{}
-	tenantListRWMutex.Unlock()
-
 	cfg.EnableMultiTenantMode = true
-	// GetTenantList 有缓存机制，但由于我们 mock 了 SendRequestToUserApi，缓存应该会被正确设置
+	lastTenantListUpdate = time.Now().Add(-TenantListRefreshInterval * 2)
 	tenantList, err = GetTenantList()
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(tenantList))

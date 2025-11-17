@@ -46,6 +46,23 @@ func init() {
 	monitorApiClients = make(map[string]*monitor.Client)
 }
 
+// getBkApiClientConfig 获取bkapi客户端配置
+func getBkApiClientConfig(bkTenantId string, endpoint string) (*bkapi.ClientConfig, error) {
+	adminUser, err := tenant.GetTenantAdminUser(bkTenantId)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bkapi.ClientConfig{
+		Endpoint:            endpoint,
+		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+		Stage:               cfg.BkApiStage,
+	}, nil
+}
+
 // GetGseApi 获取GseApi客户端
 func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 	muForGseApi.Lock()
@@ -53,7 +70,6 @@ func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 	if gseApi != nil {
 		return gseApi, nil
 	}
-	var config define.ClientConfigProvider
 	endpoint := cfg.BkApiGseApiGwUrl
 	useApiGateWay := true
 	if endpoint == "" {
@@ -61,18 +77,9 @@ func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl)
 	}
 
-	adminUser, err := tenant.GetTenantAdminUser(bkTenantId)
+	config, err := getBkApiClientConfig(bkTenantId, endpoint)
 	if err != nil {
 		return nil, err
-	}
-
-	config = bkapi.ClientConfig{
-		Endpoint:            endpoint,
-		Stage:               cfg.BkApiStage,
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
-		AuthorizationParams: map[string]string{"bk_username": adminUser},
 	}
 
 	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": bkTenantId}))
@@ -109,17 +116,9 @@ func GetCmdbApi(tenantId string) (*cmdb.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
 	}
 
-	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	config, err := getBkApiClientConfig(tenantId, endpoint)
 	if err != nil {
 		return nil, err
-	}
-
-	config := bkapi.ClientConfig{
-		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
 	}
 
 	cmdbApiClients[tenantId], err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
@@ -141,17 +140,9 @@ func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/data/", cfg.BkApiUrl)
 	}
 
-	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	config, err := getBkApiClientConfig(tenantId, endpoint)
 	if err != nil {
 		return nil, err
-	}
-
-	config := bkapi.ClientConfig{
-		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
 	}
 
 	bkdataApi, err = bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
@@ -185,18 +176,9 @@ func GetMonitorApi(tenantId string) (*monitor.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl)
 	}
 
-	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	config, err := getBkApiClientConfig(tenantId, endpoint)
 	if err != nil {
 		return nil, err
-	}
-
-	config := bkapi.ClientConfig{
-		Endpoint:            endpoint,
-		Stage:               cfg.BkApiStage,
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
-		AuthorizationParams: map[string]string{"bk_username": adminUser},
 	}
 
 	monitorApiClients[tenantId], err = monitor.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))

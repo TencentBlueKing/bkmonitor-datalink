@@ -2300,7 +2300,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 					{
 						DataSource: structured.BkLog,
 						TableID:    influxdb.ResultTableDoris,
-						SQL:        "SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+						SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 					},
 				},
 				Step: start,

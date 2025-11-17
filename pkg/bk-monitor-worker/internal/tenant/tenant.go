@@ -168,23 +168,24 @@ func GetTenantList() ([]ListTenantData, error) {
 		}
 		lastTenantListUpdate = time.Now()
 		return tenantList, nil
-	} else {
-		// multi tenant mode
-		var result ListTenantResp
-		err := sendRequestToUserApi(DefaultTenantId, http.MethodGet, "api/v3/open/tenants/", nil, &result)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tenant list, err: %v", err)
-		}
-
-		// handle api result error
-		if !result.Result {
-			return nil, fmt.Errorf("failed to get tenant list, code: %d, message: %s", result.Code, result.Message)
-		}
-
-		tenantList = result.Data
-		lastTenantListUpdate = time.Now()
-		return tenantList, nil
 	}
+
+	// multi tenant mode
+	var result ListTenantResp
+	err := sendRequestToUserApi(DefaultTenantId, http.MethodGet, "api/v3/open/tenants/", nil, &result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tenant list, err: %v", err)
+	}
+
+	// handle api result error
+	if !result.Result {
+		return nil, fmt.Errorf("failed to get tenant list, code: %d, message: %s", result.Code, result.Message)
+	}
+
+	tenantList = result.Data
+	lastTenantListUpdate = time.Now()
+	return tenantList, nil
+
 }
 
 // GetTenantAdminUser get tenant admin user

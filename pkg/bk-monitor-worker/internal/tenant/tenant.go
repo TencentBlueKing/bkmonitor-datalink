@@ -178,7 +178,7 @@ func GetTenantList() ([]ListTenantData, error) {
 	}
 }
 
-// getTenantAdminUser get tenant admin user
+// GetTenantAdminUser get tenant admin user
 func GetTenantAdminUser(tenantId string) (string, error) {
 	// single tenant mode use default admin user
 	if !cfg.EnableMultiTenantMode {

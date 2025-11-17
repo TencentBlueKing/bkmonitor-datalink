@@ -1036,3 +1036,209 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	}
 	return resp, nil
 }
+
+func queryRawWithInstanceDirect(ctx context.Context, queryDirect structured.QueryDirect) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	ignoreDimensions := []string{metadata.KeyTableUUID}
+	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
+
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance-direct")
+	defer span.End(&err)
+
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
+
+		message strings.Builder
+		lock    sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
+		ref         = queryDirect.GetReferences(ctx)
+	)
+
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("queryDirect error: %s ", e.Error()))
+		}
+		if message.Len() > 0 {
+			err = metadata.Sprintf(
+				metadata.MsgQueryRawDirect,
+				"直查原始数据报错",
+			).Error(ctx, errors.New(message.String()))
+		}
+	}()
+
+	receiveWg.Add(1)
+
+	// 启动合并数据
+	go func() {
+		defer receiveWg.Done()
+
+		var (
+			data      []map[string]any
+			fieldType = make(map[string]string)
+		)
+		for d := range dataCh {
+			data = append(data, d)
+		}
+
+		for _, rto := range resultTableOptions {
+			for k, v := range rto.FieldType {
+				fieldType[k] = v
+			}
+		}
+
+		span.Set("query-ref-num", ref.Count())
+		span.Set("result-data-num", len(data))
+
+		query.SortSliceListWithTime(data, queryDirect.OrderBy.Orders(), fieldType)
+
+		span.Set("query-scroll", queryDirect.Scroll)
+		span.Set("query-result-table", queryDirect.ResultTableOptions)
+
+		//scroll 和 searchAfter 模式不进行裁剪
+		if queryDirect.Scroll == "" && !queryDirect.IsSearchAfter && queryDirect.ResultTableOptions.IsCrop() {
+			// 判定是否启用 multi from 特性
+			span.Set("query-multi-from", queryDirect.IsMultiFrom)
+			span.Set("data-length", len(data))
+			span.Set("query-ts-from", queryDirect.From)
+			span.Set("query-ts-limit", queryDirect.Limit)
+
+			if queryDirect.Limit > 0 {
+				if queryDirect.IsMultiFrom {
+					if len(data) > 0 && len(data) > queryDirect.Limit {
+						data = data[0:queryDirect.Limit]
+					}
+					for _, l := range data {
+						tableUUID := l[metadata.KeyTableUUID].(string)
+
+						option := resultTableOptions.GetOption(tableUUID)
+						if option == nil || option.From == nil {
+							resultTableOptions.SetOption(tableUUID, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
+						}
+					}
+				} else {
+					if ref.Count() > 1 {
+						if len(data) > queryDirect.From {
+							maxLength := queryDirect.From + queryDirect.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
+
+							data = data[queryDirect.From:maxLength]
+						} else {
+							data = make([]map[string]any, 0)
+						}
+					}
+				}
+			}
+		}
+
+		span.Set("query-label-map", allLabelMap)
+		span.Set("query-highlight", queryDirect.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryDirect.HighLight != nil && queryDirect.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryDirect.HighLight.MaxAnalyzedOffset)
+		}
+
+		for _, item := range data {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+
+			if hlF != nil {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+			list = append(list, item)
+		}
+
+		span.Set("result-list-num", len(list))
+		span.Set("result-option", resultTableOptions)
+	}()
+
+	// 多协程查询数据
+	var (
+		sendWg sync.WaitGroup
+	)
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	go func() {
+		defer func() {
+			sendWg.Wait()
+			close(dataCh)
+			close(errCh)
+		}()
+
+		qb := metadata.GetQueryParams(ctx)
+		refCount := ref.Count()
+		isMultiRef := refCount > 1
+		span.Set("query-ref-count", refCount)
+		ref.Range("", func(qry *metadata.Query) {
+			sendWg.Add(1)
+
+			labelMap := function.LabelMap(ctx, qry)
+			// 合并 labelMap
+			for k, lm := range labelMap {
+				if _, ok := allLabelMap[k]; !ok {
+					allLabelMap[k] = make([]function.LabelMapValue, 0)
+				}
+
+				allLabelMap[k] = append(allLabelMap[k], lm...)
+			}
+
+			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
+			if isMultiRef {
+				if !queryDirect.IsMultiFrom {
+					qry.Size += qry.From
+					qry.From = 0
+				}
+			}
+
+			_ = p.Submit(func() {
+				defer func() {
+					sendWg.Done()
+				}()
+
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					err = metadata.Sprintf(
+						metadata.MsgQueryRaw,
+						"查询实例为空",
+					).Error(ctx, nil)
+					return
+				}
+
+				_, size, option, queryErr := instance.QueryRawData(ctx, qry, qb.Start, qb.End, dataCh)
+				if queryErr != nil {
+					errCh <- queryErr
+					return
+				}
+
+				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				lock.Lock()
+				resultTableOptions.SetOption(qry.TableUUID(), option)
+				lock.Unlock()
+
+				atomic.AddInt64(&total, size)
+			})
+		})
+	}()
+
+	// 等待数据组装完毕
+	receiveWg.Wait()
+	return total, list, resultTableOptions, err
+}

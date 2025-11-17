@@ -40,6 +40,7 @@ const (
 	MsgQueryTs             = "query_ts"
 	MsgQueryReference      = "query_reference"
 	MsgQueryRaw            = "query_raw"
+	MsgQueryRawDirect      = "query_raw_direct"
 	MsgQueryRawScroll      = "query_raw_scroll"
 	MsgQueryExemplar       = "query_exemplar"
 	MsgQueryClusterMetrics = "query_cluster_metrics"

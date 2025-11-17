@@ -67,9 +67,15 @@ func getCmdbApi(tenantId string) *cmdb.Client {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
 	}
 
+	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	if err != nil {
+		logger.Errorf("failed to get tenant admin user, tenantId: %s, err: %v", tenantId, err)
+		return nil
+	}
+
 	config := bkapi.ClientConfig{
 		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,

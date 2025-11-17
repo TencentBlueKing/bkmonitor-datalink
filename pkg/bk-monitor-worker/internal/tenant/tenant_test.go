@@ -81,11 +81,6 @@ func TestGetTenantAdminUser(t *testing.T) {
 	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, urlParams map[string]string, response any) error {
 		if resp, ok := response.(*BatchLookupVirtualUserResp); ok {
 			*resp = BatchLookupVirtualUserResp{
-				ApiCommonRespMeta: ApiCommonRespMeta{
-					Message: "success",
-					Result:  true,
-					Code:    0,
-				},
 				Data: []BatchLookupVirtualUserData{
 					{
 						BkUsername:  "admin",
@@ -117,11 +112,6 @@ func TestGetTenantList(t *testing.T) {
 	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, urlParams map[string]string, response any) error {
 		if resp, ok := response.(*ListTenantResp); ok {
 			*resp = ListTenantResp{
-				ApiCommonRespMeta: ApiCommonRespMeta{
-					Message: "success",
-					Result:  true,
-					Code:    0,
-				},
 				Data: []ListTenantData{
 					{
 						Id:     "system",

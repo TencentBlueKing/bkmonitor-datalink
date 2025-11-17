@@ -187,6 +187,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 			logger.Errorf("failed to get business list, tenantId: %s, err: %v", tenant.Id, err)
 			continue
 		}
+		logger.Infof("get business list success, tenantId: %s, bizList count: %d", tenant.Id, len(bizList))
 
 		// 业务信息处理
 		for _, biz := range bizList {

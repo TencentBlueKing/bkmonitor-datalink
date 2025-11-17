@@ -41,12 +41,13 @@ func registerDefaultHandlers(registerHandler *endpoint.RegisterHandler) {
 	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRaw)
 
+	// query/raw/direct
+	handlerPath = viper.GetString(TSQueryRawQueryDirectHandlePathConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRawDirect)
+
 	// query/raw/with_scroll
 	handlerPath = viper.GetString(TSQueryRawQueryWithScrollHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRawWithScroll)
-
-	handlerPath = viper.GetString(TSQueryRawQueryDirectHandlePathConfigPath)
-	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRawDirect)
 
 	// query/ts/exemplar
 	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)

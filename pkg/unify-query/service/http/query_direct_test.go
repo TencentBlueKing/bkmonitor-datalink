@@ -383,3 +383,77 @@ func TestQueryRawWithInstanceDirect(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryRawWithInstanceDirectStr(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	mock.Es.Set(map[string]any{
+		// basic query direct test
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10}`: `{"took":301,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c726c895a380ba1a9df04ba4a977b29b","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"f6950fef394e813999d7316cdbf0de4d","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
+	})
+
+	tests := map[string]struct {
+		queryDirectStr string
+		total          int64
+		expected       string
+		options        string
+	}{
+		"basic query direct test": {
+			queryDirectStr: `{
+				"space_uid": "bkcc__2",
+				"references": {
+					"a": [{
+						"reference_name": "a",
+						"metric_name": "dtEventTimeStamp",
+						"query_list": [{
+							"data_source": "bkdata",
+							"table_id": "result_table.bk_base_es",
+							"storage_type": "elasticsearch",
+							"storage_id": "0",
+							"source_type": "bkdata",
+							"cluster_name": "",
+							"db": "es_index",
+							"measurement": "",
+							"field": "dtEventTimeStamp"
+						}]
+					}]
+				},
+				"start_time": "1723594000",
+				"end_time": "1723595000",
+				"limit": 10,
+				"from": 0
+			}`,
+			total:    10000,
+			expected: `[{"__data_label":"","__doc_id":"c726c895a380ba1a9df04ba4a977b29b","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__data_label":"","__doc_id":"f6950fef394e813999d7316cdbf0de4d","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594161000","dtEventTimeStamp":"1723594161000"}]`,
+			options:  `{"result_table.bk_base_es|0":{"from":0}}`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var queryDirect structured.QueryDirect
+			err := json.Unmarshal([]byte(tt.queryDirectStr), &queryDirect)
+			assert.Nil(t, err)
+			if err != nil {
+				return
+			}
+
+			total, list, options, err := queryRawWithInstanceDirect(ctx, &queryDirect)
+			assert.Nil(t, err)
+			if err != nil {
+				return
+			}
+			assert.Equal(t, tt.total, total)
+			actual := json.MarshalListMap(list)
+			assert.Equal(t, tt.expected, actual)
+			if len(options) > 0 || tt.options != "" {
+				optActual, _ := json.Marshal(options)
+				assert.JSONEq(t, tt.options, string(optActual))
+			}
+		})
+	}
+}

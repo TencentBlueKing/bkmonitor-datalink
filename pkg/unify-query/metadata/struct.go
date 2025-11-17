@@ -235,12 +235,12 @@ type AllConditions [][]ConditionField
 type QueryList []*Query
 
 type QueryMetric struct {
-	QueryList QueryList
+	QueryList QueryList `json:"query_list,omitempty"`
 
-	ReferenceName string
-	MetricName    string
+	ReferenceName string `json:"reference_name,omitempty"`
+	MetricName    string `json:"metric_name,omitempty"`
 
-	IsCount bool // 标记是否为 count 方法
+	IsCount bool `json:"is_count"` // 标记是否为 count 方法
 }
 
 // ConditionField 过滤条件的字段描述

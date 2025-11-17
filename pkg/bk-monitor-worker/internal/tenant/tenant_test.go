@@ -7,16 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package tenant_test
+package tenant
 
 import (
 	"testing"
+	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -24,16 +25,6 @@ import (
 func TestMain(m *testing.M) {
 	mocker.InitTestDBConfig("../../bmw_test.yaml")
 	m.Run()
-}
-
-func TestGetTenantList(t *testing.T) {
-	cfg.EnableMultiTenantMode = false
-	tenantList, err := tenant.GetTenantList()
-	if err != nil {
-		t.Errorf("TestGetTenantList failed, err: %v", err)
-	}
-	assert.Equal(t, 1, len(tenantList))
-	assert.Equal(t, "system", tenantList[0].Id)
 }
 
 func TestBkBizIdToTenantId(t *testing.T) {
@@ -62,20 +53,120 @@ func TestBkBizIdToTenantId(t *testing.T) {
 	})
 
 	cfg.EnableMultiTenantMode = false
-	tenantId, err := tenant.GetTenantIdByBkBizId(101)
+	tenantId, err := GetTenantIdByBkBizId(101)
 	assert.NoError(t, err)
-	assert.Equal(t, tenant.DefaultTenantId, tenantId)
+	assert.Equal(t, DefaultTenantId, tenantId)
 
 	cfg.EnableMultiTenantMode = true
-	tenantId, err = tenant.GetTenantIdByBkBizId(101)
+	tenantId, err = GetTenantIdByBkBizId(101)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_1", tenantId)
 
-	tenantId, err = tenant.GetTenantIdByBkBizId(102)
+	tenantId, err = GetTenantIdByBkBizId(102)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_2", tenantId)
 
-	tenantId, err = tenant.GetTenantIdByBkBizId(-1003)
+	tenantId, err = GetTenantIdByBkBizId(-1003)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_3", tenantId)
 }
+
+func TestGetTenantAdminUser(t *testing.T) {
+	cfg.EnableMultiTenantMode = false
+	adminUser, err := GetTenantAdminUser("system")
+	assert.NoError(t, err)
+	assert.Equal(t, "admin", adminUser)
+
+	// mock sendRequestToUserApi
+	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, response any) error {
+		if resp, ok := response.(*BatchLookupVirtualUserResp); ok {
+			*resp = BatchLookupVirtualUserResp{
+				ApiCommonRespMeta: ApiCommonRespMeta{
+					Message: "success",
+					Result:  true,
+					Code:    0,
+				},
+				Data: []BatchLookupVirtualUserData{
+					{
+						BkUsername:  "admin",
+						LoginName:   "admin",
+						DisplayName: "admin",
+					},
+				},
+			}
+		}
+		return nil
+	})
+	defer patch.Reset()
+
+	cfg.EnableMultiTenantMode = true
+	// 使用一个未缓存的 tenantId 来测试，避免缓存影响
+	adminUser, err = GetTenantAdminUser("test_tenant")
+	assert.NoError(t, err)
+	assert.Equal(t, "admin", adminUser)
+}
+
+func TestGetTenantList(t *testing.T) {
+	cfg.EnableMultiTenantMode = false
+	tenantList, err := GetTenantList()
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(tenantList))
+	assert.Equal(t, DefaultTenantId, tenantList[0].Id)
+
+	// mock sendRequestToUserApi
+	patch := gomonkey.ApplyFunc(sendRequestToUserApi, func(tenantId string, method string, path string, response any) error {
+		if resp, ok := response.(*ListTenantResp); ok {
+			*resp = ListTenantResp{
+				ApiCommonRespMeta: ApiCommonRespMeta{
+					Message: "success",
+					Result:  true,
+					Code:    0,
+				},
+				Data: []ListTenantData{
+					{
+						Id:     "system",
+						Name:   "System",
+						Status: "normal",
+					},
+					{
+						Id:     "tenant1",
+						Name:   "Tenant1",
+						Status: "normal",
+					},
+				},
+			}
+		}
+		return nil
+	})
+	defer patch.Reset()
+
+	// 清除缓存，确保多租户模式下的调用会触发 mock
+	tenantListRWMutex.Lock()
+	tenantList = []ListTenantData{}
+	lastTenantListUpdate = time.Time{}
+	tenantListRWMutex.Unlock()
+
+	cfg.EnableMultiTenantMode = true
+	// GetTenantList 有缓存机制，但由于我们 mock 了 SendRequestToUserApi，缓存应该会被正确设置
+	tenantList, err = GetTenantList()
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(tenantList))
+	assert.Equal(t, DefaultTenantId, tenantList[0].Id)
+	assert.Equal(t, "tenant1", tenantList[1].Id)
+}
+
+// func TestGetTenantListRealApi(t *testing.T) {
+// 	cfg.EnableMultiTenantMode = true
+// 	tenantList, err := GetTenantList()
+// 	fmt.Println(tenantList, err)
+// 	assert.NoError(t, err)
+// 	assert.Greater(t, len(tenantList), 0)
+// }
+
+// func TestGetTenantAdminUserRealApi(t *testing.T) {
+// 	cfg.EnableMultiTenantMode = true
+// 	adminUser, err := GetTenantAdminUser("putong")
+// 	fmt.Println(adminUser, err)
+// 	assert.NoError(t, err)
+// 	assert.NotEqual(t, "admin", adminUser)
+// }

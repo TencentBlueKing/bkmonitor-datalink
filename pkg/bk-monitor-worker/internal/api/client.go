@@ -23,7 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	apiDefine "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
@@ -32,7 +32,6 @@ var (
 	muForCmdbApi    sync.RWMutex
 	muForBkdataApi  sync.Mutex
 	muForMonitorApi sync.RWMutex
-	muForUserApi    sync.Mutex
 )
 
 var (
@@ -40,7 +39,6 @@ var (
 	cmdbApiClients    map[string]*cmdb.Client
 	bkdataApi         *bkdata.Client
 	monitorApiClients map[string]*monitor.Client
-	userApi           *user.Client
 )
 
 func init() {
@@ -62,15 +60,21 @@ func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 		useApiGateWay = false
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl)
 	}
+
+	adminUser, err := tenant.GetTenantAdminUser(bkTenantId)
+	if err != nil {
+		return nil, err
+	}
+
 	config = bkapi.ClientConfig{
 		Endpoint:            endpoint,
 		Stage:               cfg.BkApiStage,
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
-		AuthorizationParams: map[string]string{"bk_username": "admin"},
+		AuthorizationParams: map[string]string{"bk_username": adminUser},
 	}
-	var err error
+
 	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": bkTenantId}))
 	if err != nil {
 		return nil, err
@@ -105,15 +109,19 @@ func GetCmdbApi(tenantId string) (*cmdb.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
 	}
 
+	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	if err != nil {
+		return nil, err
+	}
+
 	config := bkapi.ClientConfig{
 		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
 	}
 
-	var err error
 	cmdbApiClients[tenantId], err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
@@ -132,15 +140,20 @@ func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/data/", cfg.BkApiUrl)
 	}
+
+	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	if err != nil {
+		return nil, err
+	}
+
 	config := bkapi.ClientConfig{
 		Endpoint:            endpoint,
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AuthorizationParams: map[string]string{"bk_username": adminUser, "bk_supplier_account": "0"},
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
 	}
 
-	var err error
 	bkdataApi, err = bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
@@ -172,43 +185,25 @@ func GetMonitorApi(tenantId string) (*monitor.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl)
 	}
 
+	adminUser, err := tenant.GetTenantAdminUser(tenantId)
+	if err != nil {
+		return nil, err
+	}
+
 	config := bkapi.ClientConfig{
 		Endpoint:            endpoint,
 		Stage:               cfg.BkApiStage,
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
-		AuthorizationParams: map[string]string{"bk_username": "admin"},
+		AuthorizationParams: map[string]string{"bk_username": adminUser},
 	}
 
-	var err error
 	monitorApiClients[tenantId], err = monitor.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}
 	return monitorApiClients[tenantId], nil
-}
-
-// GetUserApi 获取userApi客户端
-func GetUserApi(tenantId string) (*user.Client, error) {
-	muForUserApi.Lock()
-	defer muForUserApi.Unlock()
-	if userApi != nil {
-		return userApi, nil
-	}
-	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/api/bk-user/prod/", cfg.BkApiUrl),
-		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-		AppCode:             cfg.BkApiAppCode,
-		AppSecret:           cfg.BkApiAppSecret,
-		JsonMarshaler:       jsonx.Marshal,
-	}
-
-	userApi, err := user.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
-	if err != nil {
-		return nil, err
-	}
-	return userApi, nil
 }
 
 // HeaderProvider provide request header.

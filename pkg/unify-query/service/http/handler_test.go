@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
@@ -347,6 +348,28 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `["container_tasks_state_value","kube_resource_quota_value"]`,
 		},
+		"test field keys in prometheus direct": {
+			handler: HandlerFieldKeys,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				TableID: "result_table.vm",
+				Start:   fmt.Sprintf("%d", start.Unix()),
+				End:     fmt.Sprintf("%d", end.Unix()),
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:         "result_table.vm",
+						MeasurementType: "bk_split_measurement",
+						DataLabel:       "vm",
+						StorageID:       "2",
+						VmRt:            "2_bcs_prom_computation_result_table",
+						StorageType:     "victoria_metrics",
+					},
+				},
+				Limit: 2,
+			},
+
+			expected: `["container_tasks_state_value","kube_resource_quota_value"]`,
+		},
 		"test tag keys in prometheus": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
@@ -359,7 +382,30 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `["__name__","namespace"]`,
 		},
-		"test tag keys in prometheus with regex": {
+		"test tag keys in prometheus direct": {
+			handler: HandlerTagKeys,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				TableID: "result_table.vm",
+				Start:   fmt.Sprintf("%d", start.Unix()),
+				End:     fmt.Sprintf("%d", end.Unix()),
+				Metric:  "container_cpu_usage_seconds_total",
+				Limit:   2,
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:         "result_table.vm",
+						MeasurementType: "bk_split_measurement",
+						DataLabel:       "vm",
+						StorageID:       "2",
+						VmRt:            "2_bcs_prom_computation_result_table",
+						StorageType:     "victoria_metrics",
+					},
+				},
+			},
+
+			expected: `["__name__","namespace"]`,
+		},
+		"test tag keys in prometheus with regex direct": {
 			handler: HandlerTagKeys,
 			method:  http.MethodPost,
 			infoParams: &Params{
@@ -369,6 +415,16 @@ func TestAPIHandler(t *testing.T) {
 				Metric:   "container_.*",
 				IsRegexp: true,
 				Limit:    2,
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:         "result_table.vm",
+						MeasurementType: "bk_split_measurement",
+						DataLabel:       "vm",
+						StorageID:       "2",
+						VmRt:            "2_bcs_prom_computation_result_table",
+						StorageType:     "victoria_metrics",
+					},
+				},
 			},
 			expected: `["__name__","bcs_cluster_id","namespace","pod"]`,
 		},
@@ -382,6 +438,29 @@ func TestAPIHandler(t *testing.T) {
 				Metric:  "container_cpu_usage_seconds_total",
 				Limit:   5,
 				Keys:    []string{"namespace", "bcs_cluster_id"},
+			},
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
+		},
+		"test tag values in prometheus direct": {
+			handler: HandlerTagValues,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				TableID: "result_table.vm",
+				Start:   fmt.Sprintf("%d", start.Unix()),
+				End:     fmt.Sprintf("%d", end.Unix()),
+				Metric:  "container_cpu_usage_seconds_total",
+				Limit:   5,
+				Keys:    []string{"namespace", "bcs_cluster_id"},
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:         "result_table.vm",
+						MeasurementType: "bk_split_measurement",
+						DataLabel:       "vm",
+						StorageID:       "2",
+						VmRt:            "2_bcs_prom_computation_result_table",
+						StorageType:     "victoria_metrics",
+					},
+				},
 			},
 			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
 		},
@@ -426,12 +505,56 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
 		},
+		"test series in prometheus direct": {
+			handler: HandlerSeries,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				TableID: "result_table.vm",
+				Start:   fmt.Sprintf("%d", start.Unix()),
+				End:     fmt.Sprintf("%d", end.Unix()),
+				Metric:  "container_cpu_usage_seconds_total",
+				Limit:   1,
+				Keys:    []string{"bcs_cluster_id", "namespace"},
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:         "result_table.vm",
+						MeasurementType: "bk_split_measurement",
+						DataLabel:       "vm",
+						StorageID:       "2",
+						VmRt:            "2_bcs_prom_computation_result_table",
+						StorageType:     "victoria_metrics",
+					},
+				},
+			},
+			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+		},
 		"test field map in es": {
 			handler: HandlerFieldMap,
 			method:  http.MethodPost,
 			infoParams: &Params{
 				DataSource: "bklog",
 				TableID:    "result_table.unify_query",
+			},
+			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
+		},
+		"test field map in es direct": {
+			handler: HandlerFieldMap,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				DataSource: "bklog",
+				TableID:    "result_table.unify_query",
+				TsDBs: []*query.TsDBV2{
+					{
+						TableID:     "result_table.unify_query",
+						DataLabel:   "es",
+						StorageID:   "3",
+						StorageType: "elasticsearch",
+						DB:          "unify_query",
+						FieldAlias: map[string]string{
+							"alias_ns": "__ext.host.bk_set_name",
+						},
+					},
+				},
 			},
 			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
 		},

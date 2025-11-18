@@ -336,6 +336,10 @@ func (v *OrderNode) String() string {
 	if result != "" {
 		ns = append(ns, result)
 	}
+	if result == "" {
+		return ""
+	}
+
 	sort := nodeToString(v.sort)
 	if sort != "" {
 		ns = append(ns, sort)
@@ -784,7 +788,7 @@ func (v *FieldNode) String() string {
 	}
 
 	sort := nodeToString(v.sort)
-	if sort != "" {
+	if sort != "" && result != "" {
 		result = fmt.Sprintf("%s %s", result, sort)
 	}
 

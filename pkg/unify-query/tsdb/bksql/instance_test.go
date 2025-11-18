@@ -1293,6 +1293,17 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT DISTINCT regexp_extract(NULL, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) LIMIT 100000",
 		},
 		{
+			name:  "query use all null field",
+			start: time.Unix(1755069858, 0),
+			end:   time.Unix(1757661858, 0),
+			query: &metadata.Query{
+				DB:          "bklog_index_set_21692_analysis",
+				Measurement: "doris",
+				SQL:         `SELECT log_1 GROUP BY log_1 ORDER BY log_1 ASC`,
+			},
+			expected: "",
+		},
+		{
 			name:  "query use null field",
 			start: time.Unix(1755069858, 0),
 			end:   time.Unix(1757661858, 0),

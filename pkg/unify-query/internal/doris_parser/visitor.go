@@ -600,6 +600,9 @@ func (v *OperatorNode) String() string {
 	op := nodeToString(v.Op)
 	right := nodeToString(v.Right)
 
+	if strings.ToUpper(op) == "IN" {
+		right = "(" + right + ")"
+	}
 	result := fmt.Sprintf("%s %s %s", left, op, right)
 	return result
 }
@@ -617,7 +620,10 @@ func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) any {
 	if v.Op == nil {
 		v.Op = &StringsNode{}
 	}
-	v.Op.(*StringsNode).add(node.GetText())
+
+	if op, ok := v.Op.(*StringsNode); ok {
+		op.add(node.GetText())
+	}
 
 	return nil
 }
@@ -1091,7 +1097,7 @@ func (v *ValueNode) String() string {
 		return names[0]
 	}
 
-	return fmt.Sprintf("(%s)", strings.Join(names, ", "))
+	return strings.Join(names, ", ")
 }
 
 func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {

@@ -1306,6 +1306,26 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT NULL AS log_1 FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) LIMIT 100000",
 		},
 		{
+			name:  "query use minute1",
+			start: time.UnixMilli(1763448661759),
+			end:   time.UnixMilli(1763452261760),
+			query: &metadata.Query{
+				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
+				Measurement: "doris",
+				DataLabel:   "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				QueryString: "*error* AND trace_id: \"35f36f59fcc5c74f0d4b627a5a3809d1\"",
+				SQL: `SELECT
+  minute1,
+  COUNT(*) AS log_count
+GROUP BY
+  minute1
+ORDER BY
+  minute1 DESC LIMIT 100`,
+				IsMergeDB: true,
+			},
+			expected: "SELECT `minute1`, COUNT(*) AS log_count FROM `2_bklog_pure_v4_log_doris_for_unify_query`.doris WHERE (`dtEventTimeStamp` >= 1763448661759 AND `dtEventTimeStamp` <= 1763452261760 AND `dtEventTime` >= '2025-11-18 14:51:01' AND `dtEventTime` <= '2025-11-18 15:51:02' AND `thedate` = '20251118' AND (`log` LIKE '%error%' AND `trace_id` = '35f36f59fcc5c74f0d4b627a5a3809d1')) GROUP BY `minute1` ORDER BY `minute1` DESC LIMIT 100",
+		},
+		{
 			name:  "query use null field",
 			start: time.Unix(1755069858, 0),
 			end:   time.Unix(1757661858, 0),
@@ -1314,9 +1334,9 @@ func TestInstance_bkSql(t *testing.T) {
 				Measurement: "doris",
 				DataLabel:   "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
 				QueryString: "buy weekly card success",
-				SQL:         `SELECT log_1, log GROUP BY log_1, log ORDER BY log_1, log`,
+				SQL:         `SELECT log_1, log WHERE log_1 ='1' AND log IN ('1', '2') GROUP BY log_1, log ORDER BY log_1, log`,
 			},
-			expected: "SELECT NULL AS log_1, `log` FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) GROUP BY `log` ORDER BY `log` LIMIT 100",
+			expected: "SELECT NULL AS log_1, `log` FROM `bklog_index_set_21692_analysis`.doris WHERE NULL = '1' AND `log` IN ('1', '2') AND (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) GROUP BY `log` ORDER BY `log` LIMIT 100",
 		},
 		{
 			name: "object field eq and aggregate with sql and union table",
@@ -1398,6 +1418,7 @@ func TestInstance_bkSql(t *testing.T) {
 				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},
 				"iterationIndex":   {FieldType: sql_expr.DorisTypeBigInt},
 				"value":            {FieldType: sql_expr.DorisTypeInt},
+				"trace_id":         {FieldType: sql_expr.DorisTypeString},
 			}
 
 			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithRangeTime(c.start, c.end)

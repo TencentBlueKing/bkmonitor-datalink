@@ -602,6 +602,28 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
+func (d *DorisSQLExpr) getField(s string) (metadata.FieldOption, bool) {
+	fo := d.fieldsMap.Field(s)
+	if fo.Existed() {
+		return fo, true
+	}
+
+	s = strings.ToUpper(s)
+
+	// 检查是否是内置的 MINUTE 字段
+	re := regexp.MustCompile(`MINUTE\d+`)
+	if re.MatchString(s) {
+		return fo, true
+	}
+
+	// 检查是否是可以跳过的字段
+	if d.ignoreFieldSet.Existed(s) {
+		return fo, true
+	}
+
+	return fo, false
+}
+
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if s == "" || s == "*" {
 		return ns, as
@@ -614,15 +636,15 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		d.ignoreFieldSet.Add(strings.ToUpper(as))
 	}
 
-	fieldType := d.getFieldType(ns)
-	if !fieldType.Existed() && !d.ignoreFieldSet.Existed(strings.ToUpper(ns)) {
+	fieldOption, existed := d.getField(ns)
+	if !existed {
 		if d.encodeFunc != nil {
 			ns = d.encodeFunc(ns)
 		}
 		return metadata.Null, ns
 	}
 
-	castType, _ := d.caseAs(strings.ToUpper(fieldType.FieldType))
+	castType, _ := d.caseAs(strings.ToUpper(fieldOption.FieldType))
 
 	fs := strings.Split(ns, ".")
 	if len(fs) == 1 {

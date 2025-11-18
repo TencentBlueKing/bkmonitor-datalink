@@ -177,11 +177,6 @@ func GetTenantList() ([]ListTenantData, error) {
 		return nil, fmt.Errorf("failed to get tenant list, err: %v", err)
 	}
 
-	// handle api result error
-	if !result.Result {
-		return nil, fmt.Errorf("failed to get tenant list, code: %d, message: %s", result.Code, result.Message)
-	}
-
 	tenantList = result.Data
 	lastTenantListUpdate = time.Now()
 	return tenantList, nil
@@ -209,11 +204,6 @@ func GetTenantAdminUser(tenantId string) (string, error) {
 	err := sendRequestToUserApi(tenantId, http.MethodGet, "api/v3/open/tenant/virtual-users/-/lookup/", urlParams, &result)
 	if err != nil {
 		return "", fmt.Errorf("failed to get tenant admin user, tenantId: %s, err: %v", tenantId, err)
-	}
-
-	// handle api result error
-	if !result.Result {
-		return "", fmt.Errorf("failed to get tenant admin user, tenantId: %s, code: %d, message: %s", tenantId, result.Code, result.Message)
 	}
 
 	// handle api empty result error

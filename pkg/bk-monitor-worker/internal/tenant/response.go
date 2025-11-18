@@ -9,15 +9,8 @@
 
 package tenant
 
-type ApiCommonRespMeta struct {
-	Message string `json:"message" mapstructure:"message"`
-	Result  bool   `json:"result" mapstructure:"result"`
-	Code    int    `json:"code" mapstructure:"code"`
-}
-
 type ListTenantResp struct {
-	ApiCommonRespMeta `mapstructure:",squash"`
-	Data              []ListTenantData `json:"data"`
+	Data []ListTenantData `json:"data"`
 }
 
 type ListTenantData struct {
@@ -27,8 +20,7 @@ type ListTenantData struct {
 }
 
 type BatchLookupVirtualUserResp struct {
-	ApiCommonRespMeta `mapstructure:",squash"`
-	Data              []BatchLookupVirtualUserData `json:"data"`
+	Data []BatchLookupVirtualUserData `json:"data"`
 }
 
 type BatchLookupVirtualUserData struct {

@@ -130,20 +130,21 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 		)
 
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
-
 		span.Set("enabled", enabled)
-
-		// 通过配置判断是否开启验证，如果未开启验证则不进行 504 校验
-		if !enabled {
-			c.Next()
-			return
-		}
 
 		defer func() {
 			span.End(&err)
 
 			if err != nil {
 				metric.JWTRequestInc(ctx, c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusFailed)
+
+				// 通过配置判断是否开启验证，如果未开启验证则不进行 504 校验
+				if !enabled {
+					err = nil
+					c.Next()
+					return
+				}
+
 				res := gin.H{
 					"error": metadata.Sprintf(
 						metadata.MsgHandlerAPI,
@@ -160,6 +161,7 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 			} else {
 				metric.JWTRequestInc(ctx, c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusSuccess)
 				c.Next()
+				return
 			}
 		}()
 

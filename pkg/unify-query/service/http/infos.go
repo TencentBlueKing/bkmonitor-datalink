@@ -28,6 +28,7 @@ const (
 
 // Params
 type Params struct {
+	TsDBs      structured.TsDBs   `json:"tsdbs"`
 	DataSource string             `json:"data_source"`
 	TableID    structured.TableID `json:"table_id"`
 	Metric     string             `json:"metric_name"`

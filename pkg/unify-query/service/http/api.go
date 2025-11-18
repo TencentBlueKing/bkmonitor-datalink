@@ -519,6 +519,7 @@ func HandlerLabelValues(c *gin.Context) {
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
+	//queryDirect := c.Query("query_direct")
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)
@@ -543,6 +544,7 @@ func HandlerLabelValues(c *gin.Context) {
 		PromQL: matches[0],
 		Start:  start,
 		End:    end,
+		TsDBs:  nil,
 	})
 	if err != nil {
 		return
@@ -693,6 +695,7 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 	user := metadata.GetUser(ctx)
 
 	queryTs := &structured.QueryTs{
+		TsDBs:    params.TsDBs,
 		SpaceUid: user.SpaceUID,
 		QueryList: []*structured.Query{
 			{

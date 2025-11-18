@@ -42,6 +42,7 @@ const (
 	TSQueryPromQLHandlePathConfigPath             = "http.path.ts_promql"
 	TSQueryReferenceQueryHandlePathConfigPath     = "http.path.ts_reference"
 	TSQueryRawQueryHandlePathConfigPath           = "http.path.ts_raw"
+	TSQueryRawDirectQueryHandlePathConfigPath     = "http.path.ts_raw_direct"
 	TSQueryStructToPromQLHandlePathConfigPath     = "http.path.ts_struct_to_promql"
 	TSQueryPromQLToStructHandlePathConfigPath     = "http.path.ts_promql_to_struct"
 	TSQueryLabelValuesPathConfigPath              = "http.path.ts_label_values"

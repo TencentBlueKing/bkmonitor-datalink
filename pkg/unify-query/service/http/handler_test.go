@@ -311,6 +311,19 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
 		},
+		"test label values in vm 1 with direct": {
+			handler: HandlerLabelValues,
+			method:  http.MethodGet,
+			url: fmt.Sprintf(`query/ts/label/container/value?tsdbs[table_id]=111&tsdbs.Cluster=backup&label=container&label=container&match[]=container_cpu_usage_seconds_total{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system"}&start=%d&end=%d&limit=2`, start.Unix(),
+				end.Unix()),
+			params: gin.Params{
+				{
+					Key:   "label_name",
+					Value: "container",
+				},
+			},
+			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
+		},
 		"test label values in vm 2": {
 			handler: HandlerLabelValues,
 			method:  http.MethodGet,

@@ -142,7 +142,8 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
+		fieldOption := fieldMap.Field(k)
+		if strings.ToUpper(fieldOption.FieldType) == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {

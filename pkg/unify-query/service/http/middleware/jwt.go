@@ -127,6 +127,8 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 
 			appCode  string
 			spaceUID = user.SpaceUID
+
+			tokenString = c.Request.Header.Get(JwtHeaderKey)
 		)
 
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
@@ -165,11 +167,8 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 			}
 		}()
 
-		tokenString := c.Request.Header.Get(JwtHeaderKey)
-
 		// 如果未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
 		if tokenString == "" {
-			err = errTokenEmpty
 			return
 		}
 

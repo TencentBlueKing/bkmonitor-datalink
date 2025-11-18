@@ -80,11 +80,6 @@ package cmdbcache
 //}
 
 // func TestManager(t *testing.T) {
-// 	//redisOptions := redis.Options{
-// 	//	Mode:  "standalone",
-// 	//	Addrs: []string{"127.0.0.1:6379"},
-// 	//}
-
 // 	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 // 	if err != nil {
 // 		t.Errorf("TestManager failed, err: %v", err)

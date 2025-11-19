@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/samber/lo"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -137,6 +138,9 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
+		if d == nil {
+			continue
+		}
 		// 忽略内置字段
 		if ignoreInternalDimension && checkInternalDimension(k) {
 			continue
@@ -254,26 +258,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vtLong = f.start.UnixMilli()
 		}
 
-		switch vtLong.(type) {
-		case int64:
-			vt = vtLong.(int64)
-		case float64:
-			vt = int64(vtLong.(float64))
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-		}
-
-		if vvDouble == nil {
-			continue
-		}
-		switch vvDouble.(type) {
-		case int64:
-			vv = float64(vvDouble.(int64))
-		case float64:
-			vv = vvDouble.(float64)
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", sql_expr.Value, vvDouble, vvDouble)
-		}
+		vt = cast.ToInt64(vtLong)
+		vv = cast.ToFloat64(vvDouble)
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
 		if metricLabel != nil {

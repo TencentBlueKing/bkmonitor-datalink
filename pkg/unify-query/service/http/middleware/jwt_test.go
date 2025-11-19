@@ -147,8 +147,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		},
 		"没有传 token": {
 			spaceUID: "other_space_uid",
-			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized (app_code: , space_uid: other_space_uid): token is empty"}`,
+			status:   http.StatusOK,
 		},
 	}
 

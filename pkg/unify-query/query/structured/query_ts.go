@@ -40,8 +40,8 @@ const (
 )
 
 type QueryTs struct {
-	// TsDBs 查询路由匹配中的 tsDB 列表
-	TsDBs TsDBs `json:"tsdbs,omitempty" swaggerignore:"true"`
+	// TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
+	TsDBMap map[string]TsDBs `json:"tsdb_map,omitempty"`
 	// SpaceUid 空间ID
 	SpaceUid string `json:"space_uid,omitempty"`
 	// QueryList 查询实例
@@ -207,8 +207,8 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
 		}
-
-		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, q.TsDBs)
+		tsDBs := q.TsDBMap[query.ReferenceName]
+		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, tsDBs)
 		if err != nil {
 			return nil, err
 		}

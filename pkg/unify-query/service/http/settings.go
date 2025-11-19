@@ -42,7 +42,6 @@ const (
 	TSQueryPromQLHandlePathConfigPath             = "http.path.ts_promql"
 	TSQueryReferenceQueryHandlePathConfigPath     = "http.path.ts_reference"
 	TSQueryRawQueryHandlePathConfigPath           = "http.path.ts_raw"
-	TSQueryRawDirectQueryHandlePathConfigPath     = "http.path.ts_raw_direct"
 	TSQueryStructToPromQLHandlePathConfigPath     = "http.path.ts_struct_to_promql"
 	TSQueryPromQLToStructHandlePathConfigPath     = "http.path.ts_promql_to_struct"
 	TSQueryLabelValuesPathConfigPath              = "http.path.ts_label_values"
@@ -58,7 +57,6 @@ const (
 	ProxyConfigPath                               = "http.path.proxy"
 	TSQueryRawMAXLimitConfigPath                  = "http.query.raw.max_limit"
 	TSQueryRawQueryWithScrollHandlePathConfigPath = "http.path.ts_raw_with_scroll"
-	TSQueryRawQueryDirectHandlePathConfigPath     = "http.path.ts_raw_direct"
 	CheckQueryTsConfigPath                        = "http.path.check_query_ts"
 	CheckQueryPromQLConfigPath                    = "http.path.check_query_promql"
 

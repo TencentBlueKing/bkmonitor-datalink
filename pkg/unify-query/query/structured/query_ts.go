@@ -108,11 +108,6 @@ type QueryTs struct {
 	IsMergeDB bool `json:"is_merge_db,omitempty"`
 }
 
-type QueryTsDirect struct {
-	*QueryTs
-	TsDBs TsDBs `json:"tsdbs,omitempty" swaggerignore:"true"`
-}
-
 // StepParse 解析step
 func StepParse(step string) time.Duration {
 	if step == "" {

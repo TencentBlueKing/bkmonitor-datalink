@@ -519,7 +519,6 @@ func HandlerLabelValues(c *gin.Context) {
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
-	//queryDirect := c.Query("query_direct")
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)

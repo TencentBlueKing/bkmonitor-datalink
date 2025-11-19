@@ -29,7 +29,7 @@ type StorageClusterRecords []Record
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
-	TableID         string              `json:"table_id" form:"table_id"`
+	TableID         string              `json:"table_id"`
 	Field           []string            `json:"field,omitempty"`
 	FieldAlias      metadata.FieldAlias `json:"field_alias,omitempty"`
 	MeasurementType string              `json:"measurement_type,omitempty"`

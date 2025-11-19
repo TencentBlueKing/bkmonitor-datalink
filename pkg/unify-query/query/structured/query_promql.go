@@ -23,7 +23,6 @@ import (
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
 	PromQL              string   `json:"promql"`
-	TsDBs               []string `json:"tsdbs"`
 	Start               string   `json:"start"`
 	End                 string   `json:"end"`
 	Step                string   `json:"step"`

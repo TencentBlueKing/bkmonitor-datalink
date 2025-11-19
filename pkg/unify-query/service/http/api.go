@@ -543,7 +543,6 @@ func HandlerLabelValues(c *gin.Context) {
 		PromQL: matches[0],
 		Start:  start,
 		End:    end,
-		TsDBs:  nil,
 	})
 	if err != nil {
 		return

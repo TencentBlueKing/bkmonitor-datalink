@@ -9,6 +9,12 @@
 
 package cmdb
 
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
 // Index 实例关键维度
 type Index []string
 
@@ -30,6 +36,18 @@ type Resource string
 // Relation 两点关联路径
 type Relation struct {
 	V []Resource
+}
+
+func (r Relation) Info() (Resource, Resource, string) {
+	if len(r.V) != 2 {
+		return "", "", ""
+	}
+
+	source, target := r.V[0], r.V[1]
+	resources := []string{string(source), string(target)}
+	sort.Strings(resources)
+	field := fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
+	return source, target, field
 }
 
 // Path 关联路径

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dominikbraun/graph"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -29,11 +30,14 @@ type TimeGraph struct {
 }
 
 func NewTimeGraph() *TimeGraph {
-	return &TimeGraph{}
+	return &TimeGraph{
+		nodes: make(map[int64]cmdb.Matchers),
+		gm:    make(map[int64]graph.Graph[int, int]),
+	}
 }
 
-func (q *TimeGraph) MakeQueryList(ctx context.Context, labels map[string]string, step time.Duration, relations ...cmdb.Relation) ([]*structured.Query, error) {
-	queries := make([]*structured.Query, 0, len(relations))
+func (q *TimeGraph) MakeQueryTsList(ctx context.Context, spaceUID string, labels map[string]string, start time.Time, end time.Time, step time.Duration, relations ...cmdb.Relation) ([]*structured.QueryTs, error) {
+	queryTsList := make([]*structured.QueryTs, 0, len(relations))
 	for _, relation := range relations {
 		source, target, metric := relation.Info()
 		if metric == "" {
@@ -60,7 +64,7 @@ func (q *TimeGraph) MakeQueryList(ctx context.Context, labels map[string]string,
 			conditionList = append(conditionList, structured.ConditionAnd)
 		}
 
-		queries = append(queries, &structured.Query{
+		query := &structured.Query{
 			FieldName: metric,
 			TimeAggregation: structured.TimeAggregation{
 				Function: structured.CountOT,
@@ -77,8 +81,17 @@ func (q *TimeGraph) MakeQueryList(ctx context.Context, labels map[string]string,
 				ConditionList: conditionList,
 			},
 			ReferenceName: metadata.DefaultReferenceName,
+		}
+
+		queryTsList = append(queryTsList, &structured.QueryTs{
+			SpaceUid:    spaceUID,
+			QueryList:   []*structured.Query{query},
+			MetricMerge: metadata.DefaultReferenceName,
+			Start:       cast.ToString(start.Unix()),
+			End:         cast.ToString(end.Unix()),
+			Step:        step.String(),
 		})
 	}
 
-	return queries, nil
+	return queryTsList, nil
 }

@@ -19,7 +19,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 // BenchmarkGraphQuery_New 测试创建 GraphQuery 的性能
@@ -172,8 +171,8 @@ func TestTimeGraph_MakeQueryTs(t *testing.T) {
 		},
 	}
 
-	end := "1763640585"
-	start := "1763636985"
+	start := time.Unix(1763636985, 0)
+	end := time.Unix(1763640585, 0)
 	step := time.Minute
 
 	ctx := metadata.InitHashID(context.Background())
@@ -181,18 +180,10 @@ func TestTimeGraph_MakeQueryTs(t *testing.T) {
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
-			queries, err := tg.MakeQueryList(ctx, c.labels, step, c.relations...)
+			queryTsList, err := tg.MakeQueryTsList(ctx, spaceUID, c.labels, start, end, step, c.relations...)
 			assert.NoError(t, err)
 
-			for i, query := range queries {
-				queryTs := &structured.QueryTs{
-					SpaceUid:  spaceUID,
-					QueryList: []*structured.Query{query},
-					Start:     start, End: end,
-					Step:        step.String(),
-					MetricMerge: metadata.DefaultReferenceName,
-				}
-
+			for i, queryTs := range queryTsList {
 				promql, err := queryTs.ToPromQL(ctx)
 				assert.NoError(t, err)
 				assert.Equal(t, c.expected[i], promql)

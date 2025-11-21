@@ -9,7 +9,11 @@
 
 package v1beta1
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+import (
+	"sort"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+)
 
 var configData = &Config{
 	Resource: []ResourceConf{
@@ -332,6 +336,7 @@ func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Index...)
 	}
+	sort.Strings(index)
 	return index
 }
 
@@ -340,6 +345,7 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Info...)
 	}
+	sort.Strings(index)
 	return index
 }
 

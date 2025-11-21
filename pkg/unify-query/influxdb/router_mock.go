@@ -105,6 +105,7 @@ func MockSpaceRouter(ctx context.Context) {
 		vmFields := []string{
 			"container_cpu_usage_seconds_total",
 			"kube_pod_info",
+			"container_with_pod_relation",
 			"node_with_pod_relation",
 			"node_with_system_relation",
 			"deployment_with_replicaset_relation",

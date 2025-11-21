@@ -154,7 +154,7 @@ func TestTimeGraph_MakeQueryTs(t *testing.T) {
 		relations []cmdb.Relation
 		expected  []string
 	}{
-		"test_1": {
+		"test create query ts with relations": {
 			labels: map[string]string{
 				"namespace": "blueking",
 			},

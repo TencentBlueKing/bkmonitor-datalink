@@ -40,6 +40,8 @@ const (
 )
 
 type QueryTs struct {
+	// TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
+	TsDBMap map[string]TsDBs `json:"tsdb_map,omitempty"`
 	// SpaceUid 空间ID
 	SpaceUid string `json:"space_uid,omitempty"`
 	// QueryList 查询实例
@@ -205,8 +207,8 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
 		}
-
-		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
+		tsDBs := q.TsDBMap[query.ReferenceName]
+		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, tsDBs)
 		if err != nil {
 			return nil, err
 		}
@@ -525,7 +527,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
-func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.QueryMetric, error) {
+func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
 	var (
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
@@ -644,19 +646,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
 	}
-
-	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:      spaceUid,
-		TableID:       tableID,
-		FieldName:     metricName,
-		IsRegexp:      q.IsRegexp,
-		AllConditions: allConditions,
-		IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
-		IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
-		IsSkipField:   isSkipField,
-	})
-	if err != nil {
-		return nil, err
+	if len(tsDBs) == 0 {
+		tsDBs, err = GetTsDBList(ctx, &TsDBOption{
+			SpaceUid:      spaceUid,
+			TableID:       tableID,
+			FieldName:     metricName,
+			IsRegexp:      q.IsRegexp,
+			AllConditions: allConditions,
+			IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
+			IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
+			IsSkipField:   isSkipField,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))

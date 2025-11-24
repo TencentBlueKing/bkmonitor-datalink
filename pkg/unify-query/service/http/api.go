@@ -693,6 +693,7 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 	user := metadata.GetUser(ctx)
 
 	queryTs := &structured.QueryTs{
+		TsDBMap:  params.TsDBMap,
 		SpaceUid: user.SpaceUID,
 		QueryList: []*structured.Query{
 			{

@@ -34,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	queryPkg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -796,6 +797,47 @@ func TestQueryReferenceWithEs(t *testing.T) {
 								Method: "date_histogram",
 								Window: "15s",
 							},
+						},
+					},
+				},
+				MetricMerge: "b",
+				Start:       "1757907958808",
+				End:         "1757908858809",
+				Instant:     false,
+				SpaceUid:    spaceUid,
+				Timezone:    "Asia/Shanghai",
+				Step:        "15s",
+			},
+			result: `[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1757907945000,108290],[1757907960000,1534333],[1757907975000,1258311],[1757907990000,1271721],[1757908005000,3935185],[1757908020000,1545801],[1757908035000,1412524],[1757908050000,1650332],[1757908065000,1535187],[1757908080000,1272288],[1757908095000,1945173],[1757908110000,3180213],[1757908125000,2386767],[1757908140000,1773115],[1757908155000,1847895],[1757908170000,1684118],[1757908185000,2108438],[1757908200000,2415215],[1757908215000,1368289],[1757908230000,1301199],[1757908245000,1249317],[1757908260000,1208841],[1757908275000,1715260],[1757908290000,1745386],[1757908305000,2723954],[1757908320000,1183770],[1757908335000,1510203],[1757908350000,1220078],[1757908365000,3434172],[1757908380000,2033392],[1757908395000,2575032],[1757908410000,2295335],[1757908425000,1444699],[1757908440000,1232330],[1757908455000,1535375],[1757908470000,1476212],[1757908485000,1293467],[1757908500000,1514406],[1757908515000,2775552],[1757908530000,2427103],[1757908545000,1265849],[1757908560000,1194307],[1757908575000,1215894],[1757908590000,1186097],[1757908605000,1243180],[1757908620000,1228996],[1757908635000,2432075],[1757908650000,1541736],[1757908665000,1478691],[1757908680000,2327683],[1757908695000,1444483],[1757908710000,1476065],[1757908725000,1232844],[1757908740000,1688680],[1757908755000,1213134],[1757908770000,1640372],[1757908785000,1301628],[1757908800000,1145829],[1757908815000,1280522],[1757908830000,1984717],[1757908845000,1306504]]}]`,
+		},
+		"测试 sql 时区聚合逻辑 Asia/Shanghai direct": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       "result_table.doris",
+						FieldName:     "dtEventTimeStamp",
+						ReferenceName: "b",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+							{
+								Method: "date_histogram",
+								Window: "15s",
+							},
+						},
+					},
+				},
+				TsDBMap: map[string]structured.TsDBs{
+					"b": []*queryPkg.TsDBV2{
+						{
+							TableID:     "result_table.doris",
+							DataLabel:   "bksql",
+							DB:          "2_bklog_bkunify_query_doris",
+							Measurement: "doris",
+							StorageType: "bk_sql",
+							StorageID:   "4",
 						},
 					},
 				},
@@ -2289,6 +2331,35 @@ func TestQueryRawWithInstance(t *testing.T) {
 						DataSource: structured.BkLog,
 						TableID:    influxdb.ResultTableDoris,
 						SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+					},
+				},
+				Step: start,
+				End:  end,
+			},
+			total:    100,
+			expected: `[{"__data_label":"bksql","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":5853918203,"__unique_key__":"12395782465323060901","cloudId":0,"content":" [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","dtEventTime":1756175592000,"dtEventTimeStamp":1756175592000,"func":"Lua","gseIndex":11483283,"iterationIndex":7,"level":"INFO","localTime":"2025-08-26 10:33:12","log":"[20250826 10:33:11:328884][INFO    ][httpgatesvr][(httpgatesvr/cos_file_ci_callback.lua:167) (Lua)] [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","log_file":"httpgatesvr/cos_file_ci_callback.lua:167","log_time":"20250826 10:33:11:328884","path":"/data/home/user00/pangusvr/bin/log/httpgatesvr.log","svr":"httpgatesvr","thedate":20250826,"time":1756175592}]`,
+			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"__unique_key__","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"dtEventTimeStamp","field_index":3,"field_name":"__c3","field_type":"long"},{"field_alias":"thedate","field_index":4,"field_name":"__c4","field_type":"int"},{"field_alias":"localTime","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"iterationIndex","field_index":6,"field_name":"__c6","field_type":"long"},{"field_alias":"__ext","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"bk_host_id","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"cloudId","field_index":9,"field_name":"__c9","field_type":"long"},{"field_alias":"gseIndex","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"path","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"serverIp","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"time","field_index":13,"field_name":"__c13","field_type":"long"},{"field_alias":"log","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"content","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"func","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"level","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"log_file","field_index":18,"field_name":"__c18","field_type":"string"},{"field_alias":"log_time","field_index":19,"field_name":"__c19","field_type":"string"},{"field_alias":"svr","field_index":20,"field_name":"__c20","field_type":"string"}]}}`,
+		},
+		"query object field is null direct": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    influxdb.ResultTableDoris,
+						SQL:        "SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+					},
+				},
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*queryPkg.TsDBV2{
+						{
+							TableID:     "result_table.doris",
+							DataLabel:   "bksql",
+							DB:          "2_bklog_bkunify_query_doris",
+							Measurement: "doris",
+							StorageType: "bk_sql",
+							StorageID:   "4",
+						},
 					},
 				},
 				Step: start,

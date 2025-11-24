@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -222,7 +220,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("space-uid", opt.SpaceUid)
 	span.Set("startTs", opt.Start)
 	span.Set("endTs", opt.End)
-	span.Set("step", opt.Step.String())
+	span.Set("step", opt.Step)
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
 	span.Set("index-indexMatcher", opt.IndexMatcher)
@@ -249,7 +247,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	if opt.Start.Unix() == 0 || opt.End.Unix() == 0 {
+	if opt.Start == "" || opt.End == "" {
 		err = errors.New("timestamp is empty")
 		return source, sourceInfo, hitPath, target, ts, err
 	}
@@ -271,7 +269,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("paths", paths)
-	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Unit).SetIsSkipK8s(true)
+	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 	var errorMessage []string
 
@@ -303,10 +301,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 type QueryResourceOptions struct {
 	LookBackDelta string
 	SpaceUid      string
-	Step          time.Duration
-	Start         time.Time
-	End           time.Time
-	Unit          string
+	Step          string
+	Start         string
+	End           string
 	Target        cmdb.Resource
 	Source        cmdb.Resource
 
@@ -320,19 +317,12 @@ type QueryResourceOptions struct {
 	Instant bool
 }
 
-func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
-	unit, ts, err := function.ParseTimestamp(strconv.FormatInt(timestamp, 10))
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
+func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,
-		Step:          time.Duration(0),
-		Start:         ts,
-		End:           ts,
-		Unit:          unit,
+		Start:         timestamp,
+		End:           timestamp,
 		Source:        source,
 		Target:        target,
 		IndexMatcher:  indexMatcher,
@@ -349,24 +339,13 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 	return source, sourceInfo, path, target, shimMatcherWithTimestamp(ret), nil
 }
 
-func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, stepString string, startTs, endTs int64, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
-	unit, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	step, err := time.ParseDuration(stepString)
-	if err != nil {
-		step = time.Minute
-	}
-
+func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, start, end string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,
 		Step:          step,
 		Start:         start,
 		End:           end,
-		Unit:          unit,
 		Source:        source,
 		Target:        target,
 		IndexMatcher:  indexMatcher,
@@ -405,7 +384,10 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	queryMaker := &QueryFactory{
 		Path:   path,
 		Source: opt.Source,
-		Step:   opt.Step,
+
+		Start: opt.Start,
+		End:   opt.End,
+		Step:  opt.Step,
 
 		IndexMatcher:  indexMatcher,
 		ExpandMatcher: opt.ExpandMatcher,
@@ -423,11 +405,12 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	if err != nil {
 		return nil, err
 	}
-	metadata.SetQueryReference(ctx, queryReference)
 
 	var instance tsdb.Instance
 
-	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+	qb := metadata.GetQueryParams(ctx)
+
+	if qb.IsDirectQuery() {
 		vmExpand := query.ToVmExpand(ctx, queryReference)
 
 		metadata.SetExpand(ctx, vmExpand)
@@ -460,10 +443,10 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	var matrix pl.Matrix
 	var vector pl.Vector
 	if opt.Instant {
-		vector, err = instance.DirectQuery(ctx, statement, opt.End)
+		vector, err = instance.DirectQuery(ctx, statement, qb.End)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, _, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
+		matrix, _, err = instance.DirectQueryRange(ctx, statement, qb.AlignStart, qb.End, qb.Step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)

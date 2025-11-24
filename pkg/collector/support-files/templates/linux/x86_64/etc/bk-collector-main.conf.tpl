@@ -111,6 +111,11 @@ bk-collector:
         - "maxconns;maxConnectionsRatio=256"
 
 
+  # ================================= Cache ==================================
+  # 二进制部署暂不需要 cache
+  cache: []
+
+
   # ============================== Pingserver ================================
   pingserver:
     disabled: false
@@ -241,7 +246,7 @@ bk-collector:
     - name: "metrics_filter/relabel"
 
     # MethodFilter: method 过滤处理器（做 span 丢弃处理）
-    - name: "method_filter/drop_span
+    - name: "method_filter/drop_span"
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"

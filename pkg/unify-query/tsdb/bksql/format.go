@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/samber/lo"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -70,6 +71,8 @@ type QueryFactory struct {
 	start time.Time
 	end   time.Time
 
+	maxLimit int
+
 	timeAggregate sql_expr.TimeAggregate
 	dimensionSet  *set.Set[string]
 
@@ -105,6 +108,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	return f
 }
 
+func (f *QueryFactory) WithMaxLimit(maxLimit int) *QueryFactory {
+	f.maxLimit = maxLimit
+	return f
+}
+
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
@@ -130,12 +138,16 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
+		if d == nil {
+			continue
+		}
 		// 忽略内置字段
 		if ignoreInternalDimension && checkInternalDimension(k) {
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
+		fieldOption := fieldMap.Field(k)
+		if strings.ToUpper(fieldOption.FieldType) == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
@@ -246,26 +258,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vtLong = f.start.UnixMilli()
 		}
 
-		switch vtLong.(type) {
-		case int64:
-			vt = vtLong.(int64)
-		case float64:
-			vt = int64(vtLong.(float64))
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-		}
-
-		if vvDouble == nil {
-			continue
-		}
-		switch vvDouble.(type) {
-		case int64:
-			vv = float64(vvDouble.(int64))
-		case float64:
-			vv = vvDouble.(float64)
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", sql_expr.Value, vvDouble, vvDouble)
-		}
+		vt = cast.ToInt64(vtLong)
+		vv = cast.ToFloat64(vvDouble)
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
 		if metricLabel != nil {
@@ -444,8 +438,12 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	if where != "" {
 		where = fmt.Sprintf("(%s)", where)
 	}
+	from := f.query.From
+	if f.query.Scroll != "" && f.query.ResultTableOption.From != nil {
+		from = *f.query.ResultTableOption.From
+	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size)
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)
@@ -526,9 +524,15 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sqlBuilder.WriteString(" ORDER BY ")
 		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}
-	if f.query.Size > 0 {
+
+	size := f.query.Size
+	if f.maxLimit > 0 && (size > f.maxLimit || size == 0) {
+		size = f.maxLimit
+	}
+
+	if size > 0 {
 		sqlBuilder.WriteString(" LIMIT ")
-		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.Size))
+		sqlBuilder.WriteString(fmt.Sprintf("%d", size))
 	}
 	if f.query.From > 0 {
 		sqlBuilder.WriteString(" OFFSET ")

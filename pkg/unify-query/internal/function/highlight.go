@@ -43,6 +43,7 @@ type LabelMapOption struct {
 	SQL         string
 }
 
+// LabelMap 获取高亮标签
 func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapValue {
 	if qry == nil {
 		return nil
@@ -56,32 +57,30 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 			return
 		}
 
-		for _, value := range values {
-			checkKey := key + ":" + value + ":" + operator
-			if _, ok := labelCheck[checkKey]; !ok {
-				labelCheck[checkKey] = struct{}{}
-				labelMap[key] = append(labelMap[key], LabelMapValue{
-					Value:    value,
-					Operator: operator,
-				})
+		// 只有正向匹配才需要进行高亮替换
+		switch operator {
+		case metadata.ConditionEqual, metadata.ConditionContains, metadata.ConditionRegEqual, metadata.ConditionExact:
+			for _, value := range values {
+				checkKey := key + ":" + value + ":" + operator
+				if _, ok := labelCheck[checkKey]; !ok {
+					labelCheck[checkKey] = struct{}{}
+					labelMap[key] = append(labelMap[key], LabelMapValue{
+						Value:    value,
+						Operator: operator,
+					})
+				}
 			}
 		}
 	}
 
 	for _, condition := range qry.AllConditions {
 		for _, cond := range condition {
-			if cond.Value != nil && len(cond.Value) > 0 {
-				// 处理通配符
-				if cond.IsWildcard {
-					addLabels(cond.DimensionName, metadata.ConditionContains, cond.Value...)
-				} else {
-					switch cond.Operator {
-					// 只保留等于和包含的用法，其他类型不用处理
-					case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
-						addLabels(cond.DimensionName, cond.Operator, cond.Value...)
-					}
-				}
+			op := cond.Operator
+			if cond.IsWildcard && op == metadata.ConditionEqual {
+				op = metadata.ConditionContains
 			}
+
+			addLabels(cond.DimensionName, op, cond.Value...)
 		}
 	}
 
@@ -147,26 +146,29 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	})
 	var newKeywords []LabelMapValue
 	for _, kw := range keywords {
-		// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
-		value := strings.ToLower(kw.Value)
-		if value == "" {
-			continue
-		}
-
-		check := func() bool {
-			// 检查是否已经叠加
-			for _, newKeyword := range newKeywords {
-				if strings.Contains(newKeyword.Value, value) {
-					return true
-				}
+		switch kw.Operator {
+		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains:
+			// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
+			value := strings.ToLower(kw.Value)
+			if value == "" {
+				continue
 			}
-			return false
-		}()
 
-		if !check {
-			kw.Value = value
-			// 如果为空的情况下不要进行判定
-			newKeywords = append(newKeywords, kw)
+			check := func() bool {
+				// 检查是否已经叠加
+				for _, newKeyword := range newKeywords {
+					if strings.Contains(newKeyword.Value, value) {
+						return true
+					}
+				}
+				return false
+			}()
+
+			if !check {
+				kw.Value = value
+				// 如果为空的情况下不要进行判定
+				newKeywords = append(newKeywords, kw)
+			}
 		}
 	}
 

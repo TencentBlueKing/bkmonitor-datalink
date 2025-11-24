@@ -34,7 +34,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "one word",
 			input: "test",
-			want:  "`log` = 'test'",
+			want:  "`log` MATCH_PHRASE 'test'",
 			// err:   "doris 不支持全字段检索: test",
 		},
 		{
@@ -125,8 +125,44 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
 			got, err := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
-				"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
-				"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+				"log": {
+					FieldType:  DorisTypeText,
+					IsAnalyzed: true,
+				},
+				"a": {
+					FieldType: DorisTypeString,
+				},
+				"b": {
+					FieldType: DorisTypeString,
+				},
+				"c": {
+					FieldType: DorisTypeString,
+				},
+				"d": {
+					FieldType: DorisTypeString,
+				},
+				"age": {
+					FieldType: DorisTypeInt,
+				},
+				"timestamp": {
+					FieldType: DorisTypeDate,
+				},
+				"123field": {
+					FieldType: DorisTypeDate,
+				},
+				"name": {
+					FieldType: DorisTypeString,
+				},
+				"text": {
+					FieldType:  DorisTypeText,
+					IsAnalyzed: true,
+				},
+				"__ext.container_name": {
+					FieldType: DorisTypeString,
+				},
+				"events.attributes.exception.type": {
+					FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText),
+				},
 			}).WithEncode(func(s string) string {
 				return fmt.Sprintf("`%s`", s)
 			}).ParserQueryString(ctx, tt.input)
@@ -189,7 +225,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "(CAST(object['field'] AS TEXT) MATCH_PHRASE 'What''s UP' OR CAST(object['field'] AS TEXT) = 'What''s UP' AND `tag` != 'test')",
+			want: "(CAST(object['field'] AS STRING) MATCH_PHRASE 'What''s UP' OR CAST(object['field'] AS STRING) = 'What''s UP' AND `tag` != 'test')",
 		},
 		{
 			name: "doris test object field condition",
@@ -209,7 +245,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` NOT MATCH_PHRASE_EDGE 'test'",
+			want: "CAST(object['field'] AS STRING) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` NOT MATCH_PHRASE_EDGE 'test'",
 		},
 		{
 			name: "doris t8est text field wildcard use *",
@@ -223,7 +259,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) LIKE '%partial%'",
+			want: "CAST(object['field'] AS STRING) LIKE '%partial%'",
 		},
 		{
 			name: "doris t8est text field wildcard use *",
@@ -237,7 +273,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial%'",
+			want: "CAST(object['field'] AS STRING) LIKE '%pa%tial%'",
 		},
 		{
 			name: "doris t8est text field wildcard use ?",
@@ -251,7 +287,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial_'",
+			want: "CAST(object['field'] AS STRING) LIKE '%pa%tial_'",
 		},
 		{
 			name: "doris t8est text field wildcard use ?",
@@ -265,7 +301,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) LIKE '%pa\\*tial_'",
+			want: "CAST(object['field'] AS STRING) LIKE '%pa\\*tial_'",
 		},
 		{
 			name: "doris test OR condition",
@@ -307,7 +343,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					{
 						DimensionName: "env",
 						Value:         []string{"prod", "test"},
-						Operator:      metadata.ConditionContains,
+						Operator:      metadata.ConditionEqual,
 					},
 				},
 			},
@@ -605,14 +641,23 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 	}
 
 	e := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
-		"object.field":                     {FieldType: DorisTypeText},
+		"object.field":                     {FieldType: DorisTypeString},
+		"object.field.name":                {FieldType: DorisTypeString},
 		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
 		"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
 		"events.timestamp":                 {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
-		"text": {
-			FieldType:  DorisTypeText,
-			IsAnalyzed: true,
-		},
+		"__ext.container_id":               {FieldType: DorisTypeString},
+		"tag":                              {FieldType: DorisTypeString},
+		"status":                           {FieldType: DorisTypeString},
+		"env":                              {FieldType: DorisTypeString},
+		"serverIp":                         {FieldType: DorisTypeString},
+		"path":                             {FieldType: DorisTypeString},
+		"gseIndex":                         {FieldType: DorisTypeInt},
+		"dtEventTimeStamp":                 {FieldType: DorisTypeDate},
+		"iterationIndex":                   {FieldType: DorisTypeInt},
+		"code":                             {FieldType: DorisTypeInt},
+		"cpu_usage":                        {FieldType: DorisTypeInt},
+		"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
 	})
 
 	for _, tt := range tests {

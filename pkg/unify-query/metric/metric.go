@@ -113,7 +113,7 @@ var (
 			Name:      "jwt_request_total",
 			Help:      "unify-query jwt request",
 		},
-		[]string{"user_agent", "client_ip", "api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
+		[]string{"api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
 	)
 
 	bkDataApiRequestTotal = promauto.NewCounterVec(
@@ -162,10 +162,9 @@ func ResultTableInfoSet(ctx context.Context, value float64, rtTableID, rtDataID,
 	gaugeSet(ctx, metric, value)
 }
 
-func JWTRequestInc(ctx context.Context, userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status string) {
-	return
-	// metric, _ := jwtRequestTotal.GetMetricWithLabelValues(userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status)
-	// counterInc(ctx, metric)
+func JWTRequestInc(ctx context.Context, api, jwtAppCode, jwtAppUserName, spaceUID, status string) {
+	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(api, jwtAppCode, jwtAppUserName, spaceUID, status)
+	counterInc(ctx, metric)
 }
 
 func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {

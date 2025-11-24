@@ -10,8 +10,11 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -25,7 +28,6 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -233,7 +235,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		qb  = qo.query
 	)
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
-	defer span.End(&err)
+	defer func() {
+		// 忽略 elastic返回的io.EOF报错
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		span.End(&err)
+	}()
 
 	filterQueries := make([]elastic.Query, 0)
 
@@ -414,11 +422,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 }
 
 func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	_, span := trace.NewSpan(ctx, "get-alias")
+
 	allAlias := make([]string, 0)
 	dbs := query.DBs
 	if len(dbs) == 0 {
 		dbs = []string{query.DB}
 	}
+
+	span.Set("dbs", dbs)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
@@ -430,6 +442,8 @@ func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, e
 		alias := i.explainDB(ctx, db, query.NeedAddTime, start, end, query.SourceType)
 		allAlias = append(allAlias, alias...)
 	}
+
+	span.Set("alias", allAlias)
 
 	if len(allAlias) == 0 {
 		return nil, metadata.Sprintf(
@@ -444,7 +458,7 @@ func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, e
 func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) []string {
 	var (
 		aliases []string
-		_, span = trace.NewSpan(ctx, "get-alias")
+		_, span = trace.NewSpan(ctx, "explain-db")
 		err     error
 		loc     *time.Location
 	)
@@ -658,10 +672,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			for idx, d := range sr.Hits.Hits {
 				data := make(map[string]any)
-				if err = json.Unmarshal(d.Source, &data); err != nil {
+				decoder := json.NewDecoder(bytes.NewReader(d.Source))
+				decoder.UseNumber()
+				if err = decoder.Decode(&data); err != nil {
 					return size, total, option, err
 				}
-
 				fact.SetData(data)
 
 				// 注入别名

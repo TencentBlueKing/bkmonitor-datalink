@@ -41,12 +41,24 @@ test:
 tidy:
 	go mod tidy
 
-lint:
-	gofmt -r 'interface{} -> any' -w .
-	gofumpt -w .
-	goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...
-
 .PHONY: gen
 gen:
 	#find . -type f -name 'qs_*_gen.go' -exec rm -f {} \;
 	go generate ./...
+
+.PHONY: fmt
+fmt:
+	gofmt -r 'interface{} -> any' -w .
+	gofumpt -w .
+
+.PHONY: lint
+lint: fmt
+	golangci-lint run -c ${ROOTPATH}/.golangci.yml
+
+.PHONY: addlicense
+addlicense: fmt
+	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \) | xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
+
+.PHONY: imports
+imports: addlicense
+	goimports-reviser -rm-unused -set-alias -format -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...

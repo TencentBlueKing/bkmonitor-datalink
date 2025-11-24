@@ -40,29 +40,6 @@ func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	return status
 }
 
-func GetJwtAuthFeatureFlag(ctx context.Context) bool {
-	var (
-		user = metadata.GetUser(ctx)
-		err  error
-		span *trace.Span
-	)
-
-	ctx, span = trace.NewSpan(ctx, "get-jwt-auth-feature-flag")
-	defer span.End(&err)
-
-	u := FFUser(user.HashID, map[string]any{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUID,
-	})
-
-	span.Set("ff-user-custom", u.GetCustom())
-	status := BoolVariation(ctx, u, "jwt-auth", false)
-	span.Set("ff-status", status)
-
-	return status
-}
-
 // GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (

@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
 
 const (
@@ -30,7 +32,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		case map[string]any:
 			mapData(k, nv, res)
 		default:
-			res[k] = v
+			res[k] = precision.ProcessValue(nv)
 		}
 	}
 }
@@ -40,7 +42,9 @@ func ParseObject(prefix, intput string) (map[string]any, error) {
 	oldData := make(map[string]any)
 	newData := make(map[string]any)
 
-	err := json.Unmarshal([]byte(intput), &oldData)
+	decoder := json.NewDecoder(strings.NewReader(intput))
+	decoder.UseNumber()
+	err := decoder.Decode(&oldData)
 	if err != nil {
 		return newData, err
 	}

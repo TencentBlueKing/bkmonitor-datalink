@@ -26,7 +26,7 @@ import (
 	"github.com/minio/highwayhash"
 	"github.com/stretchr/testify/assert"
 	boom "github.com/tylertreat/BoomFilters"
-	"github.com/wcharczuk/go-chart/v2"
+	chart "github.com/wcharczuk/go-chart/v2"
 
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

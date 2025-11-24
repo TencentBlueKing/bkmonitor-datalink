@@ -19,6 +19,7 @@ import (
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
@@ -46,45 +47,58 @@ func getPeriodicTasks() map[string]PeriodicTask {
 
 	SloPush := "periodic:metadata:slo_push"
 
+	ReportCustomRelation := "periodic:relation:report_custom_resource_relation"
+
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/10 * * * *",
+			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
-			Option:  []task.Option{task.Timeout(600 * time.Second)},
+			Option:  []task.Option{task.Timeout(10 * time.Minute)},
 		},
 		refreshDatasource: {
 			Cron:    "*/20 * * * *",
 			Handler: metadataTask.RefreshDatasource,
+			Option:  []task.Option{task.Timeout(40 * time.Minute)},
 		},
 		RefreshKafkaTopicInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshKafkaTopicInfo,
+			Option:  []task.Option{task.Timeout(20 * time.Minute)},
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
+			Option:  []task.Option{task.Timeout(2 * time.Minute)},
 		},
 		PushAndPublishSpaceRouterInfo: {
-			Cron:    "*/30 * * * *",
+			Cron:    "*/15 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
-			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
+			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName), task.Timeout(30 * time.Minute)},
 		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
-			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(300 * time.Second)},
+			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(5 * time.Minute)},
 		},
 		ClearDeprecatedRedisKey: {
 			Cron:    "0 0 */14 * *",
 			Handler: metadataTask.ClearDeprecatedRedisKey,
+			Option:  []task.Option{task.Timeout(24 * time.Hour)},
 		},
 		CleanDataIdConsulPath: {
 			Cron:    "0 2 * * *", // 每天凌晨2点执行
 			Handler: metadataTask.CleanDataIdConsulPath,
+			Option:  []task.Option{task.Timeout(2 * time.Hour)},
 		},
 		SloPush: {
 			Cron:    "*/5 * * * *",
 			Handler: metadataTask.SloPush,
+			Option:  []task.Option{task.Timeout(10 * time.Minute)},
+		},
+		ReportCustomRelation: {
+			Cron:    "*/1 * * * *",
+			Handler: relation.ReportCustomRelation,
+			Option:  []task.Option{task.Timeout(2 * time.Minute)},
 		},
 	}
 }

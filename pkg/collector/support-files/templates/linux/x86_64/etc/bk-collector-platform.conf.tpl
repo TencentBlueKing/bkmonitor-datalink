@@ -101,7 +101,7 @@ processor:
   - name: "{{ field_normalizer_config.name }}"
     config:
       fields:
-        {%- for field in field_normalizer_config.fields %}
+        {%- for field in field_normalizer_config.get("fields", []) %}
         - kind: "{{ field.kind }}"
           predicate_key: "{{ field.predicate_key }}"
           rules:
@@ -109,7 +109,7 @@ processor:
             - key: "{{ rule.key }}"
               op: "{{ rule.op }}"
               values:
-                {%- for value in rule.values %}
+                {%- for value in rule.get("values", []) %}
                 - "{{ value }}"
                 {%- endfor %}
             {%- endfor %}
@@ -170,10 +170,7 @@ processor:
         {%- endfor %}
       from_cache:
         key: "{{ resource_fill_dimensions_config.from_cache.key }}"
-        cache:
-          url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
-          timeout: "{{ resource_fill_dimensions_config.from_cache.cache.timeout }}"
-          interval: "{{ resource_fill_dimensions_config.from_cache.cache.interval }}"
+        cache_name: "{{ resource_fill_dimensions_config.from_cache.cache_name }}"
 {%- endif %}
 
 {% if metric_configs is defined %}

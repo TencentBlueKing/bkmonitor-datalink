@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	ants "github.com/panjf2000/ants/v2"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
@@ -86,7 +87,8 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 				Code: http.StatusOK,
 			}
 
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			timestamp := cast.ToString(qry.Timestamp)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
@@ -170,7 +172,9 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 				Code: http.StatusOK,
 			}
 
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			startTs := cast.ToString(qry.StartTs)
+			endTs := cast.ToString(qry.EndTs)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = metadata.Sprintf(
 					metadata.MsgQueryRelation,

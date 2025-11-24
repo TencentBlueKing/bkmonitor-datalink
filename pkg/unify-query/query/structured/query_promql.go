@@ -22,18 +22,16 @@ import (
 
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
-	PromQL              string   `json:"promql"`
-	Start               string   `json:"start"`
-	End                 string   `json:"end"`
-	Step                string   `json:"step"`
-	BKBizIDs            []string `json:"bk_biz_ids"`
-	MaxSourceResolution string   `json:"max_source_resolution,omitempty"`
-	NotAlignInfluxdb    bool     `json:"not_align_influxdb,omitempty"` // 不与influxdb对齐
-	Limit               int      `json:"limit,omitempty"`
-	Slimit              int      `json:"slimit,omitempty"`
-	Match               string   `json:"match,omitempty"`
-	IsVerifyDimensions  bool     `json:"is_verify_dimensions,omitempty"`
-	Reference           bool     `json:"reference,omitempty"`
+	PromQL             string   `json:"promql"`
+	Start              string   `json:"start"`
+	End                string   `json:"end"`
+	Step               string   `json:"step,omitempty"`
+	BKBizIDs           []string `json:"bk_biz_ids,omitempty"`
+	Match              string   `json:"match,omitempty"`
+	IsVerifyDimensions bool     `json:"is_verify_dimensions,omitempty"`
+
+	Reference    bool `json:"reference,omitempty"`
+	NotTimeAlign bool `json:"not_time_align,omitempty"`
 
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`

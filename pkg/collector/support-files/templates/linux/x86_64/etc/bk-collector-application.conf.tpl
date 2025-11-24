@@ -280,6 +280,48 @@ default:
               {%- endfor %}
 {%- endif %}
 
+{% if resource_filter_config_metrics is defined %}
+      - name: '{{ resource_filter_config_metrics.name }}'
+        config:
+          {%- if resource_filter_config_metrics.get("assemble") %}
+          assemble:
+            {%- for as_config in resource_filter_config_metrics.assemble %}
+            - destination: '{{ as_config.destination }}'
+              separator: '{{ as_config.separator }}'
+              keys:
+                {%- for key in as_config.get("keys", []) %}
+                - '{{ key }}'
+                {%- endfor %}
+            {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("drop") %}
+          drop:
+            keys:
+              {%- for drop_key in resource_filter_config_metrics.drop.get("keys", []) %}
+              - '{{ drop_key }}'
+              {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_token") %}
+          from_token:
+            keys:
+              {%- for token_key in resource_filter_config_metrics.from_token.get("keys", []) %}
+              - '{{ token_key }}'
+              {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_record") %}
+          from_record:
+            {%- for record_item in resource_filter_config_metrics.from_record %}
+            - source: '{{ record_item.source }}'
+              destination: '{{ record_item.destination }}'
+            {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_cache") %}
+          from_cache:
+            key: '{{ resource_filter_config_metrics.from_cache.get("key", "") }}'
+            cache_name: '{{ resource_filter_config_metrics.from_cache.get("cache_name", "") }}'
+          {%- endif %}
+{%- endif %}
+
 {% if custom_service_config is defined %}
       - name: '{{ custom_service_config.name }}'
         config:

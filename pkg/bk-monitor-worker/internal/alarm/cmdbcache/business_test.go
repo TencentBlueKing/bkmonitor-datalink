@@ -15,13 +15,12 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
-	"github.com/agiledragon/gomonkey/v2"
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
@@ -321,8 +320,8 @@ func TestMultiTenantBusinessCacheManager(t *testing.T) {
 	})
 	defer getSpaceListPatch.Reset()
 
-	listTenantPatch := gomonkey.ApplyFunc(tenant.GetTenantList, func() ([]user.ListTenantData, error) {
-		return []user.ListTenantData{
+	listTenantPatch := gomonkey.ApplyFunc(tenant.GetTenantList, func() ([]tenant.ListTenantData, error) {
+		return []tenant.ListTenantData{
 			{Id: tenant.DefaultTenantId, Name: "System", Status: "normal"},
 			{Id: "tenant1", Name: "Tenant1", Status: "normal"},
 		}, nil

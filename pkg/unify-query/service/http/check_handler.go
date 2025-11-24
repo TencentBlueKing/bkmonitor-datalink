@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -157,21 +156,6 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 		return
 	}
 	r.Step("query-reference", qr)
-
-	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
-	if err != nil {
-		r.Error("function.QueryTimestamp", err)
-		return
-	}
-
-	start, end, _, _, err := structured.AlignTime(startTime, endTime, q.Step, q.Timezone)
-	if err != nil {
-		r.Error("structured.AlignTime", err)
-		return
-	}
-
-	// 写入查询缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	promQL, err := q.ToPromQL(ctx)
 	if err != nil {

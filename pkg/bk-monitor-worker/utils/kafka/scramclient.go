@@ -43,7 +43,7 @@ func (x *XDGSCRAMClient) Begin(userName, password, authzID string) (err error) {
 // Step implements the scram.Client interface.
 func (x *XDGSCRAMClient) Step(challenge string) (response string, err error) {
 	response, err = x.ClientConversation.Step(challenge)
-	return
+	return response, err
 }
 
 // Done implements the scram.Client interface.

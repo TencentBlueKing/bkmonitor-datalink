@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
 
 const (
@@ -36,7 +37,7 @@ const (
 	TableFieldType     = "Type"
 	TableFieldAnalyzed = "Analyzed"
 
-	TableTypeVariant = "variant"
+	TableTypeVariant = "VARIANT"
 )
 
 type Instance struct {
@@ -195,7 +196,8 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
 	defer span.End(&err)
 
-	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	f := NewQueryFactory(ctx, query).
+		WithRangeTime(start, end)
 
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sql_expr.Doris {
@@ -353,14 +355,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	if i.maxLimit > 0 {
-		maxLimit := i.maxLimit + i.tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.maxLimit {
-			query.Size = maxLimit
-		}
-	}
-
 	if option.From != nil {
 		query.From = *option.From
 	}
@@ -369,6 +363,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	if err != nil {
 		return size, total, option, err
 	}
+	queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return size, total, option, err
@@ -427,14 +422,6 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	if i.maxLimit > 0 {
-		maxLimit := i.maxLimit + i.tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.maxLimit {
-			query.Size = maxLimit
-		}
-	}
-
 	// series 计算需要按照时间排序
 	query.Orders = append(metadata.Orders{
 		{
@@ -447,6 +434,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
+	queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
@@ -606,13 +594,16 @@ func getValue(k string, d map[string]any) (string, error) {
 			return value, nil
 		}
 
-		switch v.(type) {
+		switch t := v.(type) {
 		case string:
 			value = fmt.Sprintf("%s", v)
 		case float64, float32:
 			value = fmt.Sprintf("%.f", v)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
+		case json.Number:
+			processed := precision.ProcessNumber(t)
+			value = fmt.Sprintf("%v", processed)
 		default:
 			return value, fmt.Errorf("get_value_error: type %T, %v in %s with %+v", v, v, k, d)
 		}

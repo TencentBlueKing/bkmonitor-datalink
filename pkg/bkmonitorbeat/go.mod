@@ -20,7 +20,6 @@ require (
 	github.com/goccy/go-json v0.10.4
 	github.com/golang/mock v1.6.0
 	github.com/gosnmp/gosnmp v1.32.0
-	github.com/hpcloud/tail v1.0.0
 	github.com/json-iterator/go v1.1.12
 	github.com/magiconair/properties v1.8.1
 	github.com/mattn/go-shellwords v1.0.12
@@ -50,6 +49,7 @@ require (
 
 require (
 	github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3
+	github.com/nxadm/tail v1.4.11
 	github.com/prometheus/client_golang v1.18.0
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 )
@@ -141,7 +141,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231009173412-8bfb1ae86b6c // indirect
 	google.golang.org/grpc v1.58.3 // indirect
 	google.golang.org/protobuf v1.35.2 // indirect
-	gopkg.in/fsnotify.v1 v1.4.7 // indirect
 	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.5.0 // indirect
@@ -157,5 +156,5 @@ replace (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
-	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk
+	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.26.1-bk
 )

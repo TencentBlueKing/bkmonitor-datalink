@@ -179,6 +179,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		sPodIp := pairs[1].GetFieldValue(core.K8sPodIp, core.NetHostIpField)
 
 		cStatusCode := pairs[0].StatusCode
+		sStatusCode := pairs[1].StatusCode
 
 		// unit: μs
 		var duration int
@@ -221,7 +222,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		}
 
 		// Only traffic of error needs to consider the caller and callee of the pod.
-		if cStatusCode == core.StatusCodeError && m.podInstanceErrorFlowReportEnabled {
+		if (cStatusCode == core.StatusCodeError || sStatusCode == core.StatusCodeError) && m.podInstanceErrorFlowReportEnabled {
 			if cBcsClusterId != "" && sBcsClusterId != "" {
 				// ---> find pod -> pod relation
 				labelKey := strings.Join(
@@ -249,7 +250,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			}
 		}
 
-		if cStatusCode == core.StatusCodeError && m.podApmErrorFlowReportEnabled {
+		if (cStatusCode == core.StatusCodeError || sStatusCode == core.StatusCodeError) && m.podApmErrorFlowReportEnabled {
 			if cBcsClusterId != "" && sService != "" {
 				// ---> find pod -> service relation
 				labelKey := strings.Join(
@@ -379,7 +380,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			metricCount[storage.SystemFlow]++
 		}
 
-		if cStatusCode == core.StatusCodeError && m.podSystemErrorFlowReportEnabled {
+		if (cStatusCode == core.StatusCodeError || sStatusCode == core.StatusCodeError) && m.podSystemErrorFlowReportEnabled {
 			if cBcsClusterId != "" && childIp != "" {
 				// ---> find pod -> system relation
 				labelKey := strings.Join(
@@ -728,7 +729,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 		}
 	}
 	if peerService == "" {
-		return
+		return discoverSpanIds
 	}
 	customServiceLabelKey := strings.Join(
 		[]string{
@@ -758,7 +759,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 	m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
 	metricCount[storage.ApmServiceFlow]++
 	discoverSpanIds = append(discoverSpanIds, span.SpanId)
-	return
+	return discoverSpanIds
 }
 
 func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {

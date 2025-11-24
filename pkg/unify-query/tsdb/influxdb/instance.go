@@ -465,7 +465,7 @@ func (i *Instance) query(
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"解析器 %s 解析异常",
 			i.contentType,
@@ -629,7 +629,7 @@ func (i *Instance) grpcStream(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"查询异常 %+v",
 			req,
@@ -737,7 +737,7 @@ func (i *Instance) QuerySeriesSet(
 				}
 				res, err := i.query(ctx, mq, metricName, start, end, multiFieldsFlag)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryInfluxDB,
 						"查询异常 %+v",
 						mq,
@@ -836,7 +836,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"解析器 %s 解析异常",
 				i.contentType,
@@ -866,7 +866,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		span.Set("query-cost", time.Since(startAnaylize).String())
 
 		if res.Err != "" {
-			return nil, fmt.Errorf(res.Err)
+			return nil, fmt.Errorf("%s", res.Err)
 		}
 
 		respNum := 0
@@ -951,7 +951,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	)
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"解析器 %s 解析异常",
 			i.contentType,
@@ -981,7 +981,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	span.Set("query-cost", time.Since(startAnaylize).String())
 
 	if res.Err != "" {
-		return nil, fmt.Errorf(res.Err)
+		return nil, fmt.Errorf("%s", res.Err)
 	}
 	lbs := make([]string, 0)
 	for _, r := range res.Results {
@@ -1097,7 +1097,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"解析器 %s 解析异常",
 				i.contentType,
@@ -1128,7 +1128,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		span.Set("response-size", size)
 
 		if res.Err != "" {
-			return nil, fmt.Errorf(res.Err)
+			return nil, fmt.Errorf("%s", res.Err)
 		}
 
 		respNum := 0

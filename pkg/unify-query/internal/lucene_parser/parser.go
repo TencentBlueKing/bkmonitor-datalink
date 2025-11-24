@@ -30,7 +30,7 @@ type Option struct {
 func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	defer func() {
 		if r := recover(); r != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgParserLucene,
 				"Lucene 语法解析异常",
 			).Error(ctx, fmt.Errorf("%v", r))

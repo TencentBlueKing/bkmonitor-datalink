@@ -334,7 +334,7 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 		for _, k := range influxdb.AllKey {
 			err := r.loadRouter(ctx, k)
 			if err != nil {
-				_ = metadata.Sprintf(
+				_ = metadata.NewMessage(
 					metadata.MsgQueryInfluxDB,
 					"加载路由配置 %s 失败",
 					k,

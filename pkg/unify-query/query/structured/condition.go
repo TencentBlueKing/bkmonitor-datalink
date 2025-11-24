@@ -100,7 +100,7 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 			// 然后创建一个新的行数组放置新的内容
 			rowBuffer = []ConditionField{field}
 		} else {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgParserUnifyQuery,
 				"不支持的条件: %s",
 				c.ConditionList[index-1],
@@ -135,7 +135,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 	}
 
 	if totalBuffer, err = c.AnalysisConditions(); err != nil {
-		err = metadata.Sprintf(
+		err = metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"条件分析失败",
 		).Error(context.TODO(), err)
@@ -161,7 +161,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 
 		// 否则，就先构建对应的labelMatcher信息
 		if label, err = labels.NewMatcher(c.ToPromOperator(), c.DimensionName, c.Value[0]); err != nil {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgParserPromQL,
 				"创建标签匹配器失败",
 			).Error(context.TODO(), err)
@@ -281,7 +281,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 			operator = promql.RegexpOperator
 		}
 
-		defaultLabels = append(defaultLabels, fmt.Sprintf(fmt.Sprintf(`%s%s"%s"`, labels.MetricName, operator, metric)))
+		defaultLabels = append(defaultLabels, fmt.Sprintf(`%s%s"%s"`, labels.MetricName, operator, metric))
 	}
 
 	if len(c) == 0 {

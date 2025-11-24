@@ -47,7 +47,7 @@ func NewTableIDFilter(
 		return tableIDFilter, nil
 	}
 	if !errors.Is(err, ErrEmptyTableID) {
-		return tableIDFilter, metadata.Sprintf(
+		return tableIDFilter, metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"table_id %s metric %s 路由解析",
 			tableID, metricName,
@@ -60,7 +60,7 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		return tableIDFilter, metadata.Sprintf(
+		return tableIDFilter, metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"table_id %s metric %s 路由解析",
 			tableID, metricName,
@@ -90,7 +90,7 @@ func NewTableIDFilter(
 	}
 	// DataID 查询为空不影响查询后续流程
 	if len(resultDataIDList) == 0 {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"table_id %s metric %s 路由获取为空",
 			tableID, metricName,

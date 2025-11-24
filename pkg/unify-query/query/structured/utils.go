@@ -35,7 +35,7 @@ func getExpressionByParam(param any) (parser.Expr, error) {
 	case int:
 		return &parser.NumberLiteral{Val: float64(param.(int))}, nil
 	default:
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"未知类型 %T",
 			t,

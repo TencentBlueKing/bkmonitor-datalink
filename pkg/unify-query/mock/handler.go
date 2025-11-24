@@ -211,7 +211,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 		d, ok := Es.Get(string(body))
 		if !ok {
-			return w, metadata.Sprintf(
+			return w, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"es mock data is empty in %s",
 				body,
@@ -262,7 +262,7 @@ func mockInfluxDBHandler(ctx context.Context) {
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			return w, metadata.Sprintf(
+			return w, metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"influxdb mock data is empty in %s",
 				key,
@@ -297,7 +297,7 @@ func mockBKBaseHandler(ctx context.Context) {
 		if request.PreferStorage != "vm" {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
-				return w, metadata.Sprintf(
+				return w, metadata.NewMessage(
 					metadata.MsgQueryBKSQL,
 					"bk sql mock data is empty in %s",
 					request.Sql,

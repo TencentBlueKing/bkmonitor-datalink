@@ -54,7 +54,7 @@ func SetInstance(ctx context.Context, serviceName string, options *goRedis.Unive
 	var err error
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
-		err = metadata.Sprintf(
+		err = metadata.NewMessage(
 			metadata.MsgQueryRedis,
 			"创建Redis实例失败",
 		).Error(ctx, err)

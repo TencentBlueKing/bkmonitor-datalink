@@ -52,7 +52,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	if !opt.IsSkipSpace {
 		if space == nil {
 			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"空间 %s 不存在",
 				opt.SpaceUid,
@@ -215,7 +215,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
 	route := strings.Split(tableID, ".")
 	if len(route) != 2 {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"表ID格式不符合规范",
 		).Warn(s.ctx)
@@ -253,8 +253,9 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryRouter,
+				"%s",
 				routerMessage,
 			).Status(s.ctx, metadata.SpaceTableIDFieldIsNotExists)
 		}

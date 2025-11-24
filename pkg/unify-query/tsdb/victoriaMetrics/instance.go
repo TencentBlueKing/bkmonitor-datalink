@@ -135,7 +135,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
 	if !resp.Result || resp.Code != OK {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
@@ -175,7 +175,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 			nt, nv, err := series.Value.Point()
 			if err != nil {
-				_ = metadata.Sprintf(
+				_ = metadata.NewMessage(
 					metadata.MsgQueryVictoriaMetrics,
 					"查询异常",
 				).Error(ctx, err)
@@ -200,7 +200,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 
 func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
 	if !resp.Result || resp.Code != OK {
-		return nil, false, metadata.Sprintf(
+		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
@@ -239,7 +239,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 			if data.ResultType == VectorType {
 				nt, nv, err := series.Value.Point()
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryVictoriaMetrics,
 						"值格式解析异常",
 					).Error(ctx, err)
@@ -253,7 +253,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 				for _, value := range series.Values {
 					nt, nv, err := value.Point()
 					if err != nil {
-						_ = metadata.Sprintf(
+						_ = metadata.NewMessage(
 							metadata.MsgQueryVictoriaMetrics,
 							"值格式解析异常",
 						).Error(ctx, err)
@@ -289,7 +289,7 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 		)
 	}
 	if resp.Code != OK {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s, %s, %s",
 			resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -409,7 +409,7 @@ func (i *Instance) vmQuery(
 		data,
 	)
 	if err != nil {
-		return metadata.Sprintf(
+		return metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常",
 		).Error(ctx, err)

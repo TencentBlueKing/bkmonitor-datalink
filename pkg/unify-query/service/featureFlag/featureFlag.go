@@ -113,7 +113,7 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Errorf(s.ctx, err.Error())
+		log.Errorf(s.ctx, "%s", err.Error())
 		return
 	}
 

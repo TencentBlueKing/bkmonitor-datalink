@@ -146,7 +146,7 @@ func (s *TestSuite) TestReloadByKey() {
 	}
 
 	content := router.Print(s.ctx, "", true)
-	s.T().Logf(content)
+	s.T().Logf("%s", content)
 }
 
 func (s *TestSuite) TestReloadBySpaceKey() {

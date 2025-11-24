@@ -65,7 +65,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, paramsStr,
@@ -146,7 +146,7 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, paramsStr,
@@ -226,7 +226,7 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, string(paramsStr),
@@ -332,7 +332,7 @@ func HandlerTimeSeries(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, paramsStr,
@@ -379,7 +379,7 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, paramsStr,
@@ -528,7 +528,7 @@ func HandlerLabelValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v",
 		c.Request.URL.String(), c.Request.Header,
@@ -615,7 +615,7 @@ func HandlerFieldMap(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, string(paramsStr),
@@ -649,7 +649,7 @@ func HandlerFieldMap(c *gin.Context) {
 
 			res, qErr := instance.QueryFieldMap(ctx, qry, qb.Start, qb.End)
 			if qErr != nil {
-				_ = metadata.Sprintf(
+				_ = metadata.NewMessage(
 					metadata.MsgQueryInfo,
 					"查询字段列表接口报错",
 				).Error(ctx, qErr)

@@ -199,7 +199,7 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	_ = metadata.Sprintf(
+	_ = metadata.NewMessage(
 		metadata.MsgQueryInfluxDB,
 		"查询异常",
 	).Error(s.ctx, err)
@@ -242,7 +242,7 @@ func (s *streamSeriesSet) Err() error {
 	defer s.errMtx.Unlock()
 
 	if s.err != nil {
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"查询异常",
 		).Error(s.ctx, s.err)

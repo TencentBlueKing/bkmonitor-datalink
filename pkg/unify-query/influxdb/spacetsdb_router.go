@@ -123,7 +123,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 		k := fmt.Sprintf("%s:%s", stoPrefix, entity.Key)
 		v, err := entity.Val.Marshal(nil)
 		if err != nil {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"序列化实体数据 %v",
 				entity.Val,
@@ -197,7 +197,7 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 
 	err := r.kvClient.Delete(kvstore.String2byte(fullKey))
 	if err != nil {
-		return metadata.Sprintf(
+		return metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"删除失败 %v",
 			fullKey,
@@ -208,7 +208,7 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 		r.cache.Del(fullKey)
 	}
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgQueryRouter,
 		"删除存储和缓存键 %v",
 		fullKey,
@@ -221,7 +221,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	stoKey = fmt.Sprintf("%s:%s", stoPrefix, stoKey)
 	stoVal, err := influxdb.NewGenericValue(stoPrefix)
 	if err != nil {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryRouter,
 			"获取 %s 数据失败 %v",
 			stoPrefix, err,
@@ -239,7 +239,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 			if ok {
 				return value
 			}
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"序列化实体数据 %v 失败",
 				data,
@@ -253,7 +253,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 				log.Debugf(ctx, "Key(%s) not found in KVBolt", stoKey)
 			}
 		} else {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"KVBolt %s 获取值失败",
 				stoKey,
@@ -262,7 +262,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		stoVal = nil
 	} else {
 		if _, err := stoVal.Unmarshal(v); err != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"序列化实体数据失败 %v",
 				v,
@@ -403,7 +403,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		case val, ok = <-genericCh:
 			if ok {
 				if val.Err != nil {
-					metadata.Sprintf(
+					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由加载异常 %v",
 						err,
@@ -417,7 +417,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false, printBytes)
 				if err != nil {
-					metadata.Sprintf(
+					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由 %s 添加异常 %v",
 						key, err,
@@ -529,7 +529,7 @@ func (r *SpaceTsDbRouter) Print(ctx context.Context, typeKey string, includeCont
 			// 遍历并解析存储值
 			stoVal, err := influxdb.NewGenericValue(parts[0])
 			if err != nil {
-				metadata.Sprintf(
+				metadata.NewMessage(
 					metadata.MsgQueryRouter,
 					"获取 %s 数据失败 %v",
 					parts[0], err,
@@ -537,7 +537,7 @@ func (r *SpaceTsDbRouter) Print(ctx context.Context, typeKey string, includeCont
 				continue
 			}
 			if _, err := stoVal.Unmarshal(v); err != nil {
-				metadata.Sprintf(
+				metadata.NewMessage(
 					metadata.MsgQueryRouter,
 					"序列化实体数据 %v 失败",
 					v,

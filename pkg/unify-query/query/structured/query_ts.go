@@ -323,7 +323,7 @@ func (q *QueryTs) ToPromExpr(
 	)
 
 	if q.MetricMerge == "" {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式配置不能为空",
 		).Error(ctx, err)
@@ -331,7 +331,7 @@ func (q *QueryTs) ToPromExpr(
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式 %s 解析失败",
 			q.MetricMerge,
@@ -595,7 +595,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			return nil, bkDataErr
 		}
 		if route.DB() == "" {
-			return nil, metadata.Sprintf(metadata.MsgQueryBKSQL,
+			return nil, metadata.NewMessage(metadata.MsgQueryBKSQL,
 				"bkdata 的表名不能为空",
 			).Error(ctx, nil)
 		}
@@ -835,7 +835,7 @@ func (q *Query) BuildMetadataQuery(
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
 		if err != nil {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgParserUnifyQuery,
 				"offset %s 格式异常 %s",
 				q.Offset, err.Error(),
@@ -1073,7 +1073,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"step %s 解析失败",
 				q.Step,
@@ -1149,7 +1149,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			}
 			method := q.AggregateMethodList[methodIdx]
 			if result, err = method.ToProm(result); err != nil {
-				return nil, metadata.Sprintf(
+				return nil, metadata.NewMessage(
 					metadata.MsgQueryTs,
 					"查询失败",
 				).Error(ctx, err)

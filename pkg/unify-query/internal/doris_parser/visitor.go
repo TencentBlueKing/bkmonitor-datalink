@@ -19,6 +19,11 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+)
+
+const (
+	Star = "*"
 )
 
 const (
@@ -35,6 +40,13 @@ const (
 	defaultLimit = "100"
 )
 
+const (
+	whereCtxType = iota
+	selectCtxType
+	groupCtxType
+	orderCtxType
+)
+
 type Encode func(string) (string, string)
 
 type Node interface {
@@ -42,15 +54,15 @@ type Node interface {
 	String() string
 	Error() error
 
+	WithAddIgnoreField(func(string))
 	WithEncode(Encode)
-	WithSetAs(bool)
 }
 
 type baseNode struct {
 	antlr.BaseParseTreeVisitor
 
-	Encode Encode
-	SetAs  bool
+	AddIgnoreField func(string)
+	Encode         Encode
 }
 
 func (n *baseNode) String() string {
@@ -65,8 +77,8 @@ func (n *baseNode) WithEncode(encode Encode) {
 	n.Encode = encode
 }
 
-func (n *baseNode) WithSetAs(setAs bool) {
-	n.SetAs = setAs
+func (n *baseNode) WithAddIgnoreField(fn func(string)) {
+	n.AddIgnoreField = fn
 }
 
 type Statement struct {
@@ -174,11 +186,9 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		}
 	}
 
-	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		v.nodeMap[SelectItem] = &SelectNode{}
-		isSetAs = true
 		next = v.nodeMap[SelectItem]
 	case *gen.FromClauseContext:
 		v.nodeMap[TableItem] = &TableNode{}
@@ -198,7 +208,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.Encode, isSetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type LimitNode struct {
@@ -310,7 +320,7 @@ func (v *SortNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = fn
 		v.nodes = append(v.nodes, fn)
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type OrderNode struct {
@@ -326,6 +336,10 @@ func (v *OrderNode) String() string {
 	if result != "" {
 		ns = append(ns, result)
 	}
+	if result == "" {
+		return ""
+	}
+
 	sort := nodeToString(v.sort)
 	if sort != "" {
 		ns = append(ns, sort)
@@ -348,10 +362,12 @@ func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		v.node = &FieldNode{}
+		v.node = &FieldNode{
+			exprType: orderCtxType,
+		}
 		next = v.node
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type AggNode struct {
@@ -378,11 +394,13 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		fn := &FieldNode{}
+		fn := &FieldNode{
+			exprType: groupCtxType,
+		}
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type WhereNode struct {
@@ -453,7 +471,7 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.add(on)
 		next = on
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type LeftParenNode struct {
@@ -485,7 +503,7 @@ func (v *ParentNode) String() string {
 func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) any {
 	v.node = &ConditionNode{}
 	next := v.node
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type LogicNode struct {
@@ -570,7 +588,7 @@ func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.node
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type OperatorNode struct {
@@ -586,6 +604,9 @@ func (v *OperatorNode) String() string {
 	op := nodeToString(v.Op)
 	right := nodeToString(v.Right)
 
+	if strings.ToUpper(op) == "IN" {
+		right = "(" + right + ")"
+	}
 	result := fmt.Sprintf("%s %s %s", left, op, right)
 	return result
 }
@@ -603,7 +624,10 @@ func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) any {
 	if v.Op == nil {
 		v.Op = &StringsNode{}
 	}
-	v.Op.(*StringsNode).add(node.GetText())
+
+	if op, ok := v.Op.(*StringsNode); ok {
+		op.add(node.GetText())
+	}
 
 	return nil
 }
@@ -615,7 +639,9 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 	switch ctx.(type) {
 	case *gen.ValueExpressionDefaultContext:
 		if v.Left == nil {
-			v.Left = &FieldNode{}
+			v.Left = &FieldNode{
+				exprType: whereCtxType,
+			}
 			next = v.Left
 		} else if v.Right == nil {
 			v.Right = &ValueNode{}
@@ -624,7 +650,7 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			next = v.Right
 		}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type TableNode struct {
@@ -649,7 +675,7 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.TableNameContext:
 		v.Table = &StringNode{Name: ctx.GetText()}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type SelectNode struct {
@@ -696,17 +722,23 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
-		fn := &FieldNode{}
+		fn := &FieldNode{
+			exprType: selectCtxType,
+		}
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
 
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type FieldNode struct {
 	baseNode
 
+	// 表达式类型
+	exprType int
+
+	// 区分是函数计算还是字段本身
 	isField bool
 
 	node Node
@@ -721,12 +753,22 @@ func (v *FieldNode) String() string {
 	var result string
 	result = nodeToString(v.node)
 
+	if result == Star {
+		return result
+	}
+
 	if v.isField && v.Encode != nil {
 		originField, as := v.Encode(result)
-		if v.SetAs && as != "" && v.as == nil {
+		if v.exprType == selectCtxType && as != "" && v.as == nil {
 			v.as = &StringNode{Name: as}
 		}
 		result = originField
+	}
+
+	if result == metadata.Null {
+		if v.exprType != selectCtxType && v.exprType != whereCtxType {
+			return ""
+		}
 	}
 
 	var cols []string
@@ -746,7 +788,7 @@ func (v *FieldNode) String() string {
 	}
 
 	sort := nodeToString(v.sort)
-	if sort != "" {
+	if sort != "" && result != "" {
 		result = fmt.Sprintf("%s %s", result, sort)
 	}
 
@@ -755,7 +797,7 @@ func (v *FieldNode) String() string {
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
 	next := visitFieldNode(ctx, v)
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type BinaryNode struct {
@@ -791,10 +833,14 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 		}
 	case *gen.ValueExpressionDefaultContext:
 		if v.Op == nil {
-			v.Left = &FieldNode{}
+			v.Left = &FieldNode{
+				exprType: selectCtxType,
+			}
 			next = v.Left
 		} else {
-			v.Right = &FieldNode{}
+			v.Right = &FieldNode{
+				exprType: selectCtxType,
+			}
 			next = v.Right
 		}
 	// 兼容类型识别异常情况
@@ -805,7 +851,7 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &StringNode{Name: ctx.GetText()}
 		}
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type FunctionNode struct {
@@ -882,7 +928,7 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.StarContext:
 		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type SearchCaseNode struct {
@@ -946,7 +992,7 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodes = append(v.nodes, sn)
 		next = sn
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type CastNode struct {
@@ -1003,7 +1049,7 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.Value = &StringNode{Name: ctx.GetText()}
 		next = v.Value
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type ColumnNode struct {
@@ -1037,7 +1083,7 @@ func (v *ColumnNode) String() string {
 }
 
 func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
 }
 
 type ValueNode struct {
@@ -1055,7 +1101,7 @@ func (v *ValueNode) String() string {
 		return names[0]
 	}
 
-	return fmt.Sprintf("(%s)", strings.Join(names, ", "))
+	return strings.Join(names, ", ")
 }
 
 func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {
@@ -1070,7 +1116,7 @@ func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ConstantDefaultContext:
 		v.nodes = append(v.nodes, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }
 
 type StringsNode struct {
@@ -1087,7 +1133,7 @@ func (v *StringsNode) String() string {
 }
 
 func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
 }
 
 type StringNode struct {
@@ -1100,7 +1146,7 @@ func (v *StringNode) String() string {
 }
 
 func (v *StringNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.Encode, v.SetAs, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
 }
 
 func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
@@ -1152,6 +1198,9 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 			}
 		}
 	case *gen.IdentifierOrTextContext:
+		if node.AddIgnoreField != nil {
+			node.AddIgnoreField(ctx.GetText())
+		}
 		node.as = &StringNode{
 			Name: ctx.GetText(),
 		}
@@ -1170,9 +1219,9 @@ func nodeToString(node Node) string {
 	return node.String()
 }
 
-func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) any {
+func visitChildren(addIgnoreField func(string), encode Encode, next Node, node antlr.RuleNode) any {
+	next.WithAddIgnoreField(addIgnoreField)
 	next.WithEncode(encode)
-	next.WithSetAs(setAs)
 	for _, child := range node.GetChildren() {
 		if tree, ok := child.(antlr.ParseTree); ok {
 			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
@@ -1186,6 +1235,7 @@ func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) an
 
 type Option struct {
 	DimensionTransform Encode
+	AddIgnoreField     func(string)
 
 	Tables []string
 	Where  string

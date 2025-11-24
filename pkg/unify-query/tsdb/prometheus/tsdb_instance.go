@@ -38,7 +38,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询实例构建异常",
 			).Error(ctx, nil)

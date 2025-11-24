@@ -66,7 +66,7 @@ func MetaData(p *Params) gin.HandlerFunc {
 				// 记录慢查询
 				if p != nil {
 					if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-						metadata.Sprintf(
+						metadata.NewMessage(
 							metadata.MsgQueryTs,
 							"慢查询 %+v",
 							sub.String(),

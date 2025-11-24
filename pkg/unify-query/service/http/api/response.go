@@ -33,7 +33,7 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
-	log.Errorf(ctx, err.Error())
+	log.Errorf(ctx, "%s", err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 	// 需要阻止响应返回, 交给统一响应处理

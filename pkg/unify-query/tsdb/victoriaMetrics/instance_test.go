@@ -74,7 +74,7 @@ func TestInstance_DirectLabelValues(t *testing.T) {
 
 			res, err := instance.DirectLabelValues(ctx, c.name, start, end, c.limit, matchers...)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 				return
 			}
 
@@ -122,7 +122,7 @@ func TestInstance_DirectQueryRange(t *testing.T) {
 
 			res, _, err := instance.DirectQueryRange(ctx, c.promql, start, end, step)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 				return
 			}
 
@@ -163,7 +163,7 @@ func TestInstance_DirectQuery(t *testing.T) {
 
 			res, err := instance.DirectQuery(ctx, c.promql, end)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 				return
 			}
 
@@ -208,7 +208,7 @@ func TestInstance_QueryLabelValues(t *testing.T) {
 
 			res, err := instance.QueryLabelValues(ctx, query, c.name, start, end)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 				return
 			}
 

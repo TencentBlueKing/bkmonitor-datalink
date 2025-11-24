@@ -121,7 +121,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryRedis,
 			"查询异常",
 		).Error(ctx, err)
@@ -131,7 +131,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryRedis,
 				"查询异常 %+v",
 				err,

@@ -37,6 +37,7 @@ swag:
 
 .PHONY: fmt
 fmt:
+	go vet
 	gofmt -r 'interface{} -> any' -w .
 	gofumpt -w .
 

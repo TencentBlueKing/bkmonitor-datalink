@@ -26,8 +26,8 @@ type QueryPromQL struct {
 	TsDBs               []string `json:"tsdbs"`
 	Start               string   `json:"start"`
 	End                 string   `json:"end"`
-	Step                string   `json:"step"`
-	BKBizIDs            []string `json:"bk_biz_ids"`
+	Step                string   `json:"step,omitempty"`
+	BKBizIDs            []string `json:"bk_biz_ids,omitempty"`
 	MaxSourceResolution string   `json:"max_source_resolution,omitempty"`
 	NotAlignInfluxdb    bool     `json:"not_align_influxdb,omitempty"` // 不与influxdb对齐
 	Limit               int      `json:"limit,omitempty"`

@@ -120,7 +120,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					}
 					value, ok := values[index].(string)
 					if !ok {
-						metadata.Sprintf(
+						metadata.NewMessage(
 							metadata.MsgTableFormat,
 							"数据类型 %v 错误",
 							values[index],
@@ -135,7 +135,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 					keyBuilder.WriteString(comma)
 				} else {
 					// 跳过获取不到的dimension，并打印日志
-					metadata.Sprintf(
+					metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"维度缺失",
 					).Warn(ctx)
@@ -151,7 +151,7 @@ func GroupBySeries(ctx context.Context, seriesList []*decoder.Row) []*decoder.Ro
 				if index, ok := columnIndex[resultColumn]; ok {
 					resultValues = append(resultValues, values[index])
 				} else {
-					metadata.Sprintf(
+					metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"维度缺失",
 					).Warn(ctx)
@@ -208,7 +208,7 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 				if _, ok := series.Tags[k]; !ok {
 					series.Tags[k] = v
 				} else {
-					metadata.Sprintf(
+					metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"维度缺失",
 					).Warn(context.TODO())

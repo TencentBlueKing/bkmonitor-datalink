@@ -37,7 +37,7 @@ const (
 	TableFieldType     = "Type"
 	TableFieldAnalyzed = "Analyzed"
 
-	TableTypeVariant = "variant"
+	TableTypeVariant = "VARIANT"
 )
 
 type Instance struct {
@@ -126,7 +126,7 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	}
 
 	if !res.Result || res.Code != StatusOK || res.Data == nil {
-		return data, metadata.Sprintf(
+		return data, metadata.NewMessage(
 			metadata.MsgQueryBKSQL,
 			"查询异常 %s",
 			res.Message,
@@ -442,7 +442,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
-		err = metadata.Sprintf(
+		err = metadata.NewMessage(
 			metadata.MsgQueryBKSQL,
 			"%s 查询失败",
 			sql,
@@ -462,7 +462,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
-		err = metadata.Sprintf(
+		err = metadata.NewMessage(
 			metadata.MsgQueryBKSQL,
 			"数据解析失败",
 		).Error(ctx, err)

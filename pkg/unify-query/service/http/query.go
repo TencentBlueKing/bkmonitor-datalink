@@ -82,7 +82,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 
 	qp := metadata.GetQueryParams(ctx)
 	for _, qList := range query.QueryList {
-		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid, query.TsDBs)
+		tsDBs := query.TsDBMap[qList.ReferenceName]
+		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid, tsDBs)
 		if err != nil {
 			return nil, err
 		}

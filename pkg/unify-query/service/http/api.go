@@ -543,7 +543,6 @@ func HandlerLabelValues(c *gin.Context) {
 		PromQL: matches[0],
 		Start:  start,
 		End:    end,
-		TsDBs:  nil,
 	})
 	if err != nil {
 		return
@@ -694,7 +693,7 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 	user := metadata.GetUser(ctx)
 
 	queryTs := &structured.QueryTs{
-		TsDBs:    params.TsDBs,
+		TsDBMap:  params.TsDBMap,
 		SpaceUid: user.SpaceUID,
 		QueryList: []*structured.Query{
 			{

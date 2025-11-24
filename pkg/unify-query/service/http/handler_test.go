@@ -312,19 +312,6 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
 		},
-		"test label values in vm 1 with direct": {
-			handler: HandlerLabelValues,
-			method:  http.MethodGet,
-			url: fmt.Sprintf(`query/ts/label/container/value?tsdbs[table_id]=111&tsdbs.Cluster=backup&label=container&label=container&match[]=container_cpu_usage_seconds_total{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system"}&start=%d&end=%d&limit=2`, start.Unix(),
-				end.Unix()),
-			params: gin.Params{
-				{
-					Key:   "label_name",
-					Value: "container",
-				},
-			},
-			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
-		},
 		"test label values in vm 2": {
 			handler: HandlerLabelValues,
 			method:  http.MethodGet,
@@ -355,14 +342,16 @@ func TestAPIHandler(t *testing.T) {
 				TableID: "result_table.vm",
 				Start:   fmt.Sprintf("%d", start.Unix()),
 				End:     fmt.Sprintf("%d", end.Unix()),
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:         "result_table.vm",
-						MeasurementType: "bk_split_measurement",
-						DataLabel:       "vm",
-						StorageID:       "2",
-						VmRt:            "2_bcs_prom_computation_result_table",
-						StorageType:     "victoria_metrics",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:         "result_table.vm",
+							MeasurementType: "bk_split_measurement",
+							DataLabel:       "vm",
+							StorageID:       "2",
+							VmRt:            "2_bcs_prom_computation_result_table",
+							StorageType:     "victoria_metrics",
+						},
 					},
 				},
 				Limit: 2,
@@ -391,14 +380,16 @@ func TestAPIHandler(t *testing.T) {
 				End:     fmt.Sprintf("%d", end.Unix()),
 				Metric:  "container_cpu_usage_seconds_total",
 				Limit:   2,
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:         "result_table.vm",
-						MeasurementType: "bk_split_measurement",
-						DataLabel:       "vm",
-						StorageID:       "2",
-						VmRt:            "2_bcs_prom_computation_result_table",
-						StorageType:     "victoria_metrics",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:         "result_table.vm",
+							MeasurementType: "bk_split_measurement",
+							DataLabel:       "vm",
+							StorageID:       "2",
+							VmRt:            "2_bcs_prom_computation_result_table",
+							StorageType:     "victoria_metrics",
+						},
 					},
 				},
 			},
@@ -415,14 +406,16 @@ func TestAPIHandler(t *testing.T) {
 				Metric:   "container_.*",
 				IsRegexp: true,
 				Limit:    2,
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:         "result_table.vm",
-						MeasurementType: "bk_split_measurement",
-						DataLabel:       "vm",
-						StorageID:       "2",
-						VmRt:            "2_bcs_prom_computation_result_table",
-						StorageType:     "victoria_metrics",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:         "result_table.vm",
+							MeasurementType: "bk_split_measurement",
+							DataLabel:       "vm",
+							StorageID:       "2",
+							VmRt:            "2_bcs_prom_computation_result_table",
+							StorageType:     "victoria_metrics",
+						},
 					},
 				},
 			},
@@ -451,14 +444,16 @@ func TestAPIHandler(t *testing.T) {
 				Metric:  "container_cpu_usage_seconds_total",
 				Limit:   5,
 				Keys:    []string{"namespace", "bcs_cluster_id"},
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:         "result_table.vm",
-						MeasurementType: "bk_split_measurement",
-						DataLabel:       "vm",
-						StorageID:       "2",
-						VmRt:            "2_bcs_prom_computation_result_table",
-						StorageType:     "victoria_metrics",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:         "result_table.vm",
+							MeasurementType: "bk_split_measurement",
+							DataLabel:       "vm",
+							StorageID:       "2",
+							VmRt:            "2_bcs_prom_computation_result_table",
+							StorageType:     "victoria_metrics",
+						},
 					},
 				},
 			},
@@ -515,14 +510,16 @@ func TestAPIHandler(t *testing.T) {
 				Metric:  "container_cpu_usage_seconds_total",
 				Limit:   1,
 				Keys:    []string{"bcs_cluster_id", "namespace"},
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:         "result_table.vm",
-						MeasurementType: "bk_split_measurement",
-						DataLabel:       "vm",
-						StorageID:       "2",
-						VmRt:            "2_bcs_prom_computation_result_table",
-						StorageType:     "victoria_metrics",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:         "result_table.vm",
+							MeasurementType: "bk_split_measurement",
+							DataLabel:       "vm",
+							StorageID:       "2",
+							VmRt:            "2_bcs_prom_computation_result_table",
+							StorageType:     "victoria_metrics",
+						},
 					},
 				},
 			},
@@ -543,15 +540,17 @@ func TestAPIHandler(t *testing.T) {
 			infoParams: &Params{
 				DataSource: "bklog",
 				TableID:    "result_table.unify_query",
-				TsDBs: []*query.TsDBV2{
-					{
-						TableID:     "result_table.unify_query",
-						DataLabel:   "es",
-						StorageID:   "3",
-						StorageType: "elasticsearch",
-						DB:          "unify_query",
-						FieldAlias: map[string]string{
-							"alias_ns": "__ext.host.bk_set_name",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:     "result_table.unify_query",
+							DataLabel:   "es",
+							StorageID:   "3",
+							StorageType: "elasticsearch",
+							DB:          "unify_query",
+							FieldAlias: map[string]string{
+								"alias_ns": "__ext.host.bk_set_name",
+							},
 						},
 					},
 				},

@@ -829,14 +829,16 @@ func TestQueryReferenceWithEs(t *testing.T) {
 						},
 					},
 				},
-				TsDBs: []*queryPkg.TsDBV2{
-					{
-						TableID:     "result_table.doris",
-						DataLabel:   "bksql",
-						DB:          "2_bklog_bkunify_query_doris",
-						Measurement: "doris",
-						StorageType: "bk_sql",
-						StorageID:   "4",
+				TsDBMap: map[string]structured.TsDBs{
+					"b": []*queryPkg.TsDBV2{
+						{
+							TableID:     "result_table.doris",
+							DataLabel:   "bksql",
+							DB:          "2_bklog_bkunify_query_doris",
+							Measurement: "doris",
+							StorageType: "bk_sql",
+							StorageID:   "4",
+						},
 					},
 				},
 				MetricMerge: "b",
@@ -2348,14 +2350,16 @@ func TestQueryRawWithInstance(t *testing.T) {
 						SQL:        "SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 					},
 				},
-				TsDBs: []*queryPkg.TsDBV2{
-					{
-						TableID:     "result_table.doris",
-						DataLabel:   "bksql",
-						DB:          "2_bklog_bkunify_query_doris",
-						Measurement: "doris",
-						StorageType: "bk_sql",
-						StorageID:   "4",
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*queryPkg.TsDBV2{
+						{
+							TableID:     "result_table.doris",
+							DataLabel:   "bksql",
+							DB:          "2_bklog_bkunify_query_doris",
+							Measurement: "doris",
+							StorageType: "bk_sql",
+							StorageID:   "4",
+						},
 					},
 				},
 				Step: start,

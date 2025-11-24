@@ -119,7 +119,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 
 	resp, err = i.query(ctx, db, stmt, precision, "application/json", false)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 查询失败",
 			stmt,
@@ -135,11 +135,9 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	span.Set("query-sql", stmt)
 	span.Set("query-cost", startAnaylize.Sub(startQuery))
 
-	log.Debugf(ctx,
-		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
-	)
+	log.Debugf(ctx, "influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 查询失败",
 			stmt,
@@ -154,7 +152,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	for _, result := range resp.Results {
 		resultsNum++
 		if result.Err != "" {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"%s 查询失败",
 				stmt,
@@ -279,7 +277,7 @@ func (i *Instance) Query(
 	stmt = i.setLimitAndSLimit(stmt, limit, slimit)
 	resp, err = i.query(ctx, db, stmt, precision, "", true)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 查询失败",
 			stmt,
@@ -291,7 +289,7 @@ func (i *Instance) Query(
 	span.Set("query-cost", startAnaylize.Sub(startQuery))
 	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 查询失败",
 			stmt,
@@ -309,7 +307,7 @@ func (i *Instance) Query(
 	for _, result := range resp.Results {
 		resultNum++
 		if result.Err != "" {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"%s 查询失败",
 				stmt,
@@ -343,7 +341,7 @@ func (i *Instance) Query(
 
 	// 由于 ctx 信息无法向上传递，所以增加一个全局 cache 存放异常信息
 	if i.maxLimit > 0 && pointNum > i.maxLimit {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s: %d",
 			ErrPointBeyondLimit.Error(), i.maxLimit,
@@ -351,7 +349,7 @@ func (i *Instance) Query(
 	}
 	// 只有聚合场景下 slimit才会有效
 	if withGroupBy && i.maxSLimit > 0 && seriesNum > i.maxSLimit {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s: %d",
 			ErrSeriesBeyondSLimit.Error(), i.maxSLimit,
@@ -360,10 +358,10 @@ func (i *Instance) Query(
 
 	span.Set("analyzer_cost", time.Since(startAnaylize))
 
-	log.Debugf(ctx, fmt.Sprintf(
+	log.Debugf(ctx,
 		"influxdb query:%s, result anaylize cost:%s, result num: %d, series num: %d, point num: %d",
 		stmt, time.Since(startAnaylize), resultNum, seriesNum, pointNum,
-	))
+	)
 
 	return tables, nil
 }

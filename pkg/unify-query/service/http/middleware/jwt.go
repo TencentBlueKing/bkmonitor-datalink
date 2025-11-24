@@ -148,7 +148,7 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 				}
 
 				res := gin.H{
-					"error": metadata.Sprintf(
+					"error": metadata.NewMessage(
 						metadata.MsgHandlerAPI,
 						"jwt auth unauthorized (app_code: %s, space_uid: %s)",
 						appCode, spaceUID,

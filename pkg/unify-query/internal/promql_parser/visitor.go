@@ -113,7 +113,7 @@ func (g *GroupNode) Matchers(ctx context.Context) []*labels.Matcher {
 	if g.metricName != "" {
 		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, g.metricName)
 		if err != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgParserDoris,
 				"promql matcher metric 解析失败",
 			).Error(ctx, err)
@@ -165,7 +165,7 @@ func (m *MatcherNode) Matchers(ctx context.Context) []*labels.Matcher {
 	if m.labelName != "" && m.value != "" {
 		matcher, err := labels.NewMatcher(operatorFromString(m.operator), m.labelName, m.value)
 		if err != nil {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgParserDoris,
 				"promql matcher 解析",
 			).Error(ctx, err)

@@ -151,7 +151,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"构建数据格式异常",
 					).Error(f.ctx, err)
@@ -235,7 +235,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 				// 获取维度信息
 				val, err := getValue(k, nd)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"获取维度信息异常",
 					).Error(f.ctx, err)

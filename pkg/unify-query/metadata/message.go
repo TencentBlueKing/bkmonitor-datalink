@@ -60,7 +60,7 @@ type Message struct {
 	Content string
 }
 
-func Sprintf(id, format string, args ...any) *Message {
+func NewMessage(id, format string, args ...any) *Message {
 	return &Message{
 		ID:      id,
 		Content: fmt.Sprintf(format, args...),
@@ -86,19 +86,19 @@ func (m *Message) Error(ctx context.Context, err error) error {
 	if err != nil {
 		newErr = errors.Wrap(err, newErr.Error())
 	}
-	log.Errorf(ctx, newErr.Error())
+	log.Errorf(ctx, "%s", newErr.Error())
 	return newErr
 }
 
 func (m *Message) Warn(ctx context.Context) {
-	log.Warnf(ctx, m.Text())
+	log.Warnf(ctx, "%s", m.Text())
 }
 
 func (m *Message) Info(ctx context.Context) {
-	log.Infof(ctx, m.Text())
+	log.Infof(ctx, "%s", m.Text())
 }
 
 func (m *Message) Status(ctx context.Context, code string) {
 	SetStatus(ctx, code, m.String())
-	log.Warnf(ctx, m.Text())
+	log.Warnf(ctx, "%s", m.Text())
 }

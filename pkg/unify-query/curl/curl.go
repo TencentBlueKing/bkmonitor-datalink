@@ -71,16 +71,18 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	if opt.UrlPath == "" {
-		return size, metadata.Sprintf(
+		return size, metadata.NewMessage(
 			metadata.MsgHttpCurl,
+			"%s",
 			"url path is empty",
 		).Error(ctx, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
-		return size, metadata.Sprintf(
+		return size, metadata.NewMessage(
 			metadata.MsgHttpCurl,
+			"%s",
 			"client new request error",
 		).Error(ctx, err)
 	}
@@ -92,7 +94,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	span.Set("req-http-method", method)
 	span.Set("req-http-path", opt.UrlPath)
 
-	metadata.Sprintf(
+	metadata.NewMessage(
 		metadata.MsgHttpCurl,
 		"%s [%s] body: %s",
 		method, opt.UrlPath, opt.Body,
@@ -117,7 +119,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return size, metadata.Sprintf(
+		return size, metadata.NewMessage(
 			metadata.MsgHttpCurl,
 			"http code error: %s in %s",
 			resp.Status, opt.UrlPath,

@@ -98,7 +98,7 @@ func TestInstance_MakeSQL(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 			}
 			if c.query.DB == "" {
 				c.query.DB = db
@@ -173,7 +173,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				log.Fatalf(ctx, "%s", err.Error())
 			}
 			assert.Equal(t, c.expected, timeSeries.String())
 		})

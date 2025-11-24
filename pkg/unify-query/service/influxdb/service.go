@@ -291,7 +291,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 			case <-ticker.C:
 				err = ir.ReloadAllKey(ctx)
 				if err != nil {
-					log.Errorf(ctx, err.Error())
+					log.Errorf(ctx, "%s", err.Error())
 				}
 				log.Infof(ctx, "ir reload all key time ticker reload")
 			case msg := <-ch:

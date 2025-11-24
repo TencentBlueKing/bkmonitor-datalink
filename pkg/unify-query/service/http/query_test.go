@@ -240,7 +240,8 @@ func TestQueryTsWithEs(t *testing.T) {
 
 			res, err := queryTsWithPromEngine(ctx, c.queryTs)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				fmt.Println(err)
+				// log.Errorf(ctx, err.Error())
 				return
 			}
 			data := res.(*PromData)
@@ -249,8 +250,6 @@ func TestQueryTsWithEs(t *testing.T) {
 				fmt.Println("message: ", data.Status.Message)
 				return
 			}
-
-			log.Infof(ctx, fmt.Sprintf("%+v", data.Tables))
 		})
 	}
 }
@@ -4164,7 +4163,7 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 	  	}
 	  }`)
 	if err != nil {
-		log.Fatalf(ctx, err.Error())
+		panic(err)
 	}
 
 	for name, c := range testCases {
@@ -4172,7 +4171,7 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 			if c.promql != "" {
 				qts, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: c.promql})
 				if err != nil {
-					log.Fatalf(ctx, err.Error())
+					panic(err)
 				}
 				c.query = qts
 			}
@@ -4180,7 +4179,7 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 
 			instance, stmt, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
 			if err != nil {
-				log.Fatalf(ctx, err.Error())
+				panic(err)
 			}
 
 			assert.Equal(t, c.stmt, stmt)

@@ -99,7 +99,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 					continue
 				}
 				if res.Err != "" {
-					return nil, fmt.Errorf(res.Err)
+					return nil, errors.New(res.Err)
 				}
 				tables := influxdb.NewTables()
 				for _, result := range res.Results {

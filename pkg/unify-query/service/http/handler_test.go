@@ -536,11 +536,17 @@ func TestQueryHandler(t *testing.T) {
 		},
 	})
 
+	mock.BkSQL.Set(map[string]any{
+		"SELECT `RoomId`, COUNT(`Peakcpuutilpct`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) AS `_timestamp_` FROM `2_result_table`.bk_sql WHERE `dtEventTimeStamp` >= 1763719499999 AND `dtEventTimeStamp` < 1763720159999 AND `dtEventTime` >= '2025-11-21 18:04:59' AND `dtEventTime` <= '2025-11-21 18:16:00' AND `thedate` = '20251121' GROUP BY `RoomId`, (FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) ORDER BY `_timestamp_` ASC LIMIT 2000005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"18970_DSMonitorGamePlayInfo\":{\"start\":\"2025112100\",\"end\":\"2025112123\"}},\"cluster\":\"cag_mysql\",\"totalRecords\":6,\"external_api_call_time_mills\":{\"bkbase_auth_api\":79,\"bkbase_meta_api\":47,\"bkbase_apigw_api\":9},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"RoomId\":30895627249454038,\"_value_\":3860,\"_timestamp_\":1763719560000},{\"RoomId\":30895627249454038,\"_value_\":3912,\"_timestamp_\":1763719620000},{\"RoomId\":30895627249454038,\"_value_\":5456,\"_timestamp_\":1763719680000},{\"RoomId\":30895627249454038,\"_value_\":4622,\"_timestamp_\":1763719740000},{\"RoomId\":30895627249454038,\"_value_\":4107,\"_timestamp_\":1763719800000},{\"RoomId\":30895627249454038,\"_value_\":4491,\"_timestamp_\":1763719860000}],\"bk_biz_ids\":[],\"stage_elapsed_time_mills\":{\"check_query_syntax\":2,\"query_db\":2,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":29,\"connect_db\":10,\"match_query_routing_rule\":0,\"check_permission\":79,\"check_query_semantic\":1,\"pick_valid_storage\":1},\"select_fields_order\":[\"RoomId\",\"_value_\",\"_timestamp_\"]},\"errors\":null,\"trace_id\":\"7f42d4b6a5dd454aa7e51cba595de014\",\"span_id\":\"80b3c2848491553b\"}",
+	})
+
 	testCases := map[string]struct {
 		handler      func(c *gin.Context)
 		promql       string
 		expected     string
 		step         string
+		start        time.Time
+		end          time.Time
 		instant      bool
 		notTimeAlign bool
 	}{
@@ -570,6 +576,14 @@ func TestQueryHandler(t *testing.T) {
 			step:     "3h",
 			expected: `{"series":[],"is_partial":false}`,
 		},
+		"test promql by bkdata with long dim": {
+			handler:  HandlerQueryPromQL,
+			promql:   `sum(count_over_time(bkdata:2_result_table:bk_sql:Peakcpuutilpct[5m])) by (RoomId)`,
+			end:      time.Unix(1763719860, 0),
+			start:    time.Unix(1763719560, 0),
+			step:     "5m",
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["RoomId"],"group_values":["30895627249454038"],"values":[[1763719500000,4622],[1763719800000,4491]]}],"is_partial":false}`,
+		},
 	}
 
 	mock.Init()
@@ -579,6 +593,7 @@ func TestQueryHandler(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
 			queryPromQL := &structured.QueryPromQL{
 				PromQL:       c.promql,
 				Start:        fmt.Sprintf("%d", start.Unix()),
@@ -586,6 +601,13 @@ func TestQueryHandler(t *testing.T) {
 				Step:         c.step,
 				Instant:      c.instant,
 				NotTimeAlign: c.notTimeAlign,
+			}
+
+			if !c.start.IsZero() {
+				queryPromQL.Start = fmt.Sprintf("%d", c.start.Unix())
+			}
+			if !c.end.IsZero() {
+				queryPromQL.End = fmt.Sprintf("%d", c.end.Unix())
 			}
 
 			res, _ := json.Marshal(queryPromQL)

@@ -250,7 +250,6 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 					Name:  k,
 					Value: val,
 				})
-
 			}
 		}
 
@@ -258,7 +257,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vtLong = f.start.UnixMilli()
 		}
 
-		vt = cast.ToInt64(vtLong)
+		// 遇到 json.Number 类型，需要先转换成 float64 之后再转换成 int64，不然就会失败
+		vt = cast.ToInt64(cast.ToFloat64(vtLong))
 		vv = cast.ToFloat64(vvDouble)
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用

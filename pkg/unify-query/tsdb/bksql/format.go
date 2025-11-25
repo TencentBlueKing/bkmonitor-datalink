@@ -307,7 +307,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 		ms := f.timeAggregate.Window.Milliseconds()
 
-		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/ms*ms - f.timeAggregate.OffsetMillis
+		startMilli := (f.start.UnixMilli()-f.timeAggregate.OffsetMillis)/ms*ms + f.timeAggregate.OffsetMillis
 		start = time.UnixMilli(startMilli)
 		end = f.end
 

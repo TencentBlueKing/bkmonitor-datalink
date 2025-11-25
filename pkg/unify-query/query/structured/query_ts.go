@@ -549,6 +549,22 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		return nil, err
 	}
 
+	// 注入时区和时区偏移，用于聚合处理
+	var timeZoneOffset int64
+	qp := metadata.GetQueryParams(ctx)
+	if qp.Timezone != "" && qp.Timezone != "UTC" {
+		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
+		// 不同时区对齐时间的差值
+		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
+	}
+	for idx, agg := range aggregates {
+		if agg.Window > 0 {
+			agg.TimeZone = qp.Timezone
+			agg.TimeZoneOffset = timeZoneOffset
+			aggregates[idx] = agg
+		}
+	}
+
 	allConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
@@ -665,22 +681,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	span.Set("tsdb-num", len(tsDBs))
-
-	// 注入时区和时区偏移，用于聚合处理
-	var timeZoneOffset int64
-	qp := metadata.GetQueryParams(ctx)
-	if qp.Timezone != "" && qp.Timezone != "UTC" {
-		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
-		// 不同时区对齐时间的差值
-		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
-	}
-	for idx, agg := range aggregates {
-		if agg.Window > 0 {
-			agg.TimeZone = qp.Timezone
-			agg.TimeZoneOffset = timeZoneOffset
-			aggregates[idx] = agg
-		}
-	}
 
 	// 构建 query map 使得相同的 storage 可以进行合并查询
 	queryMap := make(map[string]*metadata.Query)

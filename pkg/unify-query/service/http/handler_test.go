@@ -672,7 +672,7 @@ func TestQueryHandler(t *testing.T) {
 	})
 
 	mock.BkSQL.Set(map[string]any{
-		"SELECT `RoomId`, COUNT(`Peakcpuutilpct`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) AS `_timestamp_` FROM `2_result_table`.bk_sql WHERE `dtEventTimeStamp` >= 1763719499999 AND `dtEventTimeStamp` < 1763720159999 AND `dtEventTime` >= '2025-11-21 18:04:59' AND `dtEventTime` <= '2025-11-21 18:16:00' AND `thedate` = '20251121' GROUP BY `RoomId`, (FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) ORDER BY `_timestamp_` ASC LIMIT 2000005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"18970_DSMonitorGamePlayInfo\":{\"start\":\"2025112100\",\"end\":\"2025112123\"}},\"cluster\":\"cag_mysql\",\"totalRecords\":6,\"external_api_call_time_mills\":{\"bkbase_auth_api\":79,\"bkbase_meta_api\":47,\"bkbase_apigw_api\":9},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"RoomId\":30895627249454038,\"_value_\":3860,\"_timestamp_\":1763719560000},{\"RoomId\":30895627249454038,\"_value_\":3912,\"_timestamp_\":1763719620000},{\"RoomId\":30895627249454038,\"_value_\":5456,\"_timestamp_\":1763719680000},{\"RoomId\":30895627249454038,\"_value_\":4622,\"_timestamp_\":1763719740000},{\"RoomId\":30895627249454038,\"_value_\":4107,\"_timestamp_\":1763719800000},{\"RoomId\":30895627249454038,\"_value_\":4491,\"_timestamp_\":1763719860000}],\"bk_biz_ids\":[],\"stage_elapsed_time_mills\":{\"check_query_syntax\":2,\"query_db\":2,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":29,\"connect_db\":10,\"match_query_routing_rule\":0,\"check_permission\":79,\"check_query_semantic\":1,\"pick_valid_storage\":1},\"select_fields_order\":[\"RoomId\",\"_value_\",\"_timestamp_\"]},\"errors\":null,\"trace_id\":\"7f42d4b6a5dd454aa7e51cba595de014\",\"span_id\":\"80b3c2848491553b\"}",
+		"SELECT `RoomId`, MAX(`Peakcpuutilpct`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 28800000) / 60000) * 60000 - 28800000) AS `_timestamp_` FROM `2_DSMonitorGamePlayInfo` WHERE `dtEventTimeStamp` >= 1763719559999 AND `dtEventTimeStamp` < 1763719619999 AND `dtEventTime` >= '2025-11-21 18:05:59' AND `dtEventTime` <= '2025-11-21 18:07:00' AND `thedate` = '20251121' AND `RoomId` = '30895627249454038' GROUP BY `RoomId`, (FLOOR((dtEventTimeStamp + 28800000) / 60000) * 60000 - 28800000) ORDER BY `_timestamp_` ASC LIMIT 2000005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"18970_DSMonitorGamePlayInfo\":{\"start\":\"2025112100\",\"end\":\"2025112123\"}},\"cluster\":\"cag_mysql\",\"totalRecords\":1,\"external_api_call_time_mills\":{\"bkbase_auth_api\":22,\"bkbase_meta_api\":0,\"bkbase_apigw_api\":0},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"RoomId\":30895627249454038,\"_value_\":3860,\"_timestamp_\":1763719560000}],\"bk_biz_ids\":[],\"stage_elapsed_time_mills\":{\"check_query_syntax\":2,\"query_db\":8,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":3,\"connect_db\":11,\"match_query_routing_rule\":0,\"check_permission\":23,\"check_query_semantic\":1,\"pick_valid_storage\":1},\"select_fields_order\":[\"RoomId\",\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT `RoomId`, MAX(`Peakcpuutilpct`) AS `_value_`, MAX(((FLOOR((`dtEventTimeStamp` + 28800000) / 60000)) * 60000) - 28800000) AS `_timestamp_` FROM mapleleaf_18970.DSMonitorGamePlayInfo_18970 WHERE (((((`dtEventTimeStamp` >= 1763719559999) AND (`dtEventTimeStamp` < 1763719619999)) AND ((`dtEventTime` >= '2025-11-21 18:05:59') AND (`dtEventTimeStamp` >= 1763719559000))) AND ((`dtEventTime` <= '2025-11-21 18:07:00') AND (`dtEventTimeStamp` <= 1763719620999))) AND ((`thedate` = '20251121') AND ((`dtEventTimeStamp` >= 1763654400000) AND (`dtEventTimeStamp` < 1763740800000)))) AND (`RoomId` = '30895627249454038') GROUP BY `RoomId`, ((FLOOR((`dtEventTimeStamp` + 28800000) / 60000)) * 60000) - 28800000 ORDER BY `_timestamp_` LIMIT 2000005\",\"total_record_size\":584,\"trino_cluster_host\":\"\",\"timetaken\":0.049,\"result_schema\":[{\"field_type\":\"long\",\"field_name\":\"__c0\",\"field_alias\":\"RoomId\",\"field_index\":0},{\"field_type\":\"long\",\"field_name\":\"__c1\",\"field_alias\":\"_value_\",\"field_index\":1},{\"field_type\":\"double\",\"field_name\":\"__c2\",\"field_alias\":\"_timestamp_\",\"field_index\":2}],\"bksql_call_elapsed_time\":0,\"device\":\"mysql\",\"result_table_ids\":[\"18970_DSMonitorGamePlayInfo\"]},\"errors\":null,\"trace_id\":\"9c5650ade38cf54ee69411d5d660520a\",\"span_id\":\"80e32704cdfd939e\"}",
 	})
 
 	testCases := map[string]struct {
@@ -713,11 +713,12 @@ func TestQueryHandler(t *testing.T) {
 		},
 		"test promql by bkdata with long dim": {
 			handler:  HandlerQueryPromQL,
-			promql:   `sum(count_over_time(bkdata:2_result_table:bk_sql:Peakcpuutilpct[5m])) by (RoomId)`,
-			end:      time.Unix(1763719860, 0),
-			start:    time.Unix(1763719560, 0),
-			step:     "5m",
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["RoomId"],"group_values":["30895627249454038"],"values":[[1763719500000,4622],[1763719800000,4491]]}],"is_partial":false}`,
+			promql:   `max by (RoomId) (max_over_time(bkdata:2_DSMonitorGamePlayInfo:Peakcpuutilpct{RoomId="30895627249454038"}[1m]))`,
+			end:      time.Unix(1763719560, 0),
+			start:    time.Unix(1763719860, 0),
+			step:     "1m",
+			instant:  true,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["RoomId"],"group_values":["30895627249454038"],"values":[[1763719560000,3860]]}],"is_partial":false}`,
 		},
 	}
 
@@ -736,6 +737,7 @@ func TestQueryHandler(t *testing.T) {
 				Step:         c.step,
 				Instant:      c.instant,
 				NotTimeAlign: c.notTimeAlign,
+				Timezone:     "Asia/Shanghai",
 			}
 
 			if !c.start.IsZero() {

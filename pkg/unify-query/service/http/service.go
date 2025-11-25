@@ -16,10 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
@@ -81,6 +83,7 @@ func (s *Service) Reload(ctx context.Context) {
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
+		s.setupCacheMiddleware(),
 	)
 
 	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)
@@ -130,4 +133,28 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
+}
+
+func (s *Service) setupCacheMiddleware() gin.HandlerFunc {
+	globalCache := cache.GetGlobalCache()
+	if globalCache == nil {
+		log.Warnf(s.ctx, "global cache not available, skipping cache middleware")
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
+	cacheConfig := &middleware.CacheConfig{
+		Enable:       true,
+		TTL:          5 * time.Minute,
+		KeyPrefix:    "bk_unify_query:",
+		SkipMethods:  []string{"PUT", "DELETE", "PATCH"},
+		SkipPaths:    []string{"/health", "/metrics", "/ping", "/debug/pprof"},
+		IncludePaths: []string{"/api/v1/", "/query/"},
+	}
+
+	cacheMW := middleware.NewCacheMiddleware(globalCache, cacheConfig)
+	log.Infof(s.ctx, "cache middleware initialized with TTL %v", cacheConfig.TTL)
+
+	return cacheMW.Handler()
 }

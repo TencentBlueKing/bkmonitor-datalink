@@ -11,6 +11,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -105,6 +106,26 @@ var Set = func(ctx context.Context, key, val string, expiration time.Duration) (
 	return res.Result()
 }
 
+var SetNX = func(ctx context.Context, key, val string, expiration time.Duration) (bool, error) {
+	if key == "" {
+		key = globalInstance.serviceName
+	}
+	log.Debugf(ctx, "[redis] setnx %s", key)
+	res := globalInstance.client.SetNX(ctx, key, val, expiration)
+	return res.Result()
+}
+
+var Delete = func(ctx context.Context, keys ...string) (int64, error) {
+	log.Debugf(ctx, "[redis] del %s", keys)
+	res := globalInstance.client.Del(ctx, keys...)
+	return res.Result()
+}
+
+var TxPipeline = func(ctx context.Context) goRedis.Pipeliner {
+	log.Debugf(ctx, "[redis] txpipeline")
+	return globalInstance.client.TxPipeline()
+}
+
 var Get = func(ctx context.Context, key string) (string, error) {
 	if key == "" {
 		key = globalInstance.serviceName
@@ -112,6 +133,10 @@ var Get = func(ctx context.Context, key string) (string, error) {
 	log.Debugf(ctx, "[redis] get %s", key)
 	res := globalInstance.client.Get(ctx, key)
 	return res.Result()
+}
+
+var IsNil = func(err error) bool {
+	return errors.Is(err, goRedis.Nil)
 }
 
 var MGet = func(ctx context.Context, key string) ([]any, error) {
@@ -129,8 +154,12 @@ var SMembers = func(ctx context.Context, key string) ([]string, error) {
 	return res.Result()
 }
 
-var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Message {
+var Subscribe = func(ctx context.Context, channels ...string) (ch <-chan *goRedis.Message, close func() error) {
 	log.Debugf(ctx, "[redis] subscribe %s", channels)
 	p := globalInstance.client.Subscribe(ctx, channels...)
-	return p.Channel()
+
+	close = func() error {
+		return p.Close()
+	}
+	return p.Channel(), close
 }

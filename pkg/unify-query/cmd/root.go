@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/cache"
 	"github.com/google/gops/agent"
 	"github.com/spf13/cobra"
 
@@ -62,6 +63,7 @@ var rootCmd = &cobra.Command{
 			&promql.Service{},
 			&http.Service{},
 			&featureFlag.Service{},
+			&cache.Service{},
 		}
 		log.Infof(ctx, "http service started.")
 
@@ -94,6 +96,7 @@ var rootCmd = &cobra.Command{
 			service.Wait()
 			log.Warnf(ctx, "waiting for service:%s done", service.Type())
 		}
+
 		log.Debugf(ctx, "all service exit, server exit now.")
 		os.Exit(0)
 	},

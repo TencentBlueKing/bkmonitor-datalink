@@ -11,6 +11,8 @@ package v1beta1
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -276,4 +278,169 @@ func TestTimeGraph_MakeQueryTs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTimeGraph_AddTimeRelation(t *testing.T) {
+	ctx := context.Background()
+	tg := NewTimeGraph()
+
+	t.Run("正常添加时间关系", func(t *testing.T) {
+		info := map[string]string{
+			"namespace":      "blueking",
+			"bcs_cluster_id": "BCS-K8S-00000",
+		}
+		timestamps := []int64{1763636985, 1763637285, 1763637585}
+
+		err := tg.AddTimeRelation(ctx, "pod", "container", info, timestamps...)
+		assert.NoError(t, err)
+
+		nodes := tg.GetNodesByResourceType("pod")
+		containers := tg.GetNodesByResourceType("container")
+
+		// 验证节点信息
+
+		assert.Equal(t, info, nodes)
+		assert.Equal(t, info, containers)
+
+		// 验证时间图状态
+		stat := tg.Stat()
+		assert.Contains(t, stat, "节点总数: 2")
+		assert.Contains(t, stat, "时序边数: 1763636985: 1")
+		assert.Contains(t, stat, "时序边数: 1763637285: 1")
+		assert.Contains(t, stat, "时序边数: 1763637585: 1")
+	})
+
+	t.Run("info为空时直接返回", func(t *testing.T) {
+		emptyInfo := map[string]string{}
+		timestamps := []int64{1763636985}
+
+		err := tg.AddTimeRelation(ctx, "node", "pod", emptyInfo, timestamps...)
+		assert.NoError(t, err)
+
+		// 验证没有添加任何关系
+		stat := tg.Stat()
+		// 应该只包含之前测试添加的节点和边
+		assert.Contains(t, stat, "节点总数: 2")
+	})
+
+	t.Run("边已存在的情况", func(t *testing.T) {
+		info := map[string]string{
+			"namespace":      "blueking",
+			"bcs_cluster_id": "BCS-K8S-00000",
+		}
+		timestamps := []int64{1763636985} // 使用已存在的时间戳
+
+		// 第一次添加
+		err := tg.AddTimeRelation(ctx, "node", "system", info, timestamps...)
+		assert.NoError(t, err)
+
+		// 第二次添加相同的边
+		err = tg.AddTimeRelation(ctx, "node", "system", info, timestamps...)
+		assert.NoError(t, err) // 应该成功，边已存在时不会报错
+
+		stat := tg.Stat()
+		assert.Contains(t, stat, "节点总数: 4") // pod, container, node, system
+	})
+
+	t.Run("多个时间戳的情况", func(t *testing.T) {
+		info := map[string]string{
+			"namespace":      "test",
+			"bcs_cluster_id": "BCS-K8S-00001",
+		}
+		// 添加多个连续时间戳
+		timestamps := make([]int64, 10)
+		for i := range timestamps {
+			timestamps[i] = 1763638000 + int64(i*300)
+		}
+
+		err := tg.AddTimeRelation(ctx, "service", "pod", info, timestamps...)
+		assert.NoError(t, err)
+
+		stat := tg.Stat()
+		// 验证所有时间戳都被添加
+		for _, ts := range timestamps {
+			assert.Contains(t, stat, fmt.Sprintf("时序边数: %d: 1", ts))
+		}
+	})
+
+	t.Run("并发添加关系", func(t *testing.T) {
+		var wg sync.WaitGroup
+		errors := make(chan error, 10)
+
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				info := map[string]string{
+					"namespace":      fmt.Sprintf("namespace-%d", index),
+					"bcs_cluster_id": fmt.Sprintf("BCS-K8S-%05d", index),
+				}
+				timestamps := []int64{1763639000 + int64(index)}
+
+				err := tg.AddTimeRelation(ctx, "node", "pod", info, timestamps...)
+				if err != nil {
+					errors <- err
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		// 检查是否有错误发生
+		for err := range errors {
+			assert.NoError(t, err)
+		}
+
+		// 验证所有关系都被正确添加
+		stat := tg.Stat()
+		assert.Contains(t, stat, "节点总数: 16") // 初始4个 + 10个并发添加的节点
+	})
+
+	t.Run("不同资源类型的关系", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			source   cmdb.Resource
+			target   cmdb.Resource
+			info     map[string]string
+			expected string
+		}{
+			{
+				name:   "pod到container关系",
+				source: "pod",
+				target: "container",
+				info: map[string]string{
+					"namespace": "app1",
+				},
+			},
+			{
+				name:   "node到pod关系",
+				source: "node",
+				target: "pod",
+				info: map[string]string{
+					"bk_target_ip": "127.0.0.1",
+				},
+			},
+			{
+				name:   "service到pod关系",
+				source: "service",
+				target: "pod",
+				info: map[string]string{
+					"service_name": "web-service",
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				timestamps := []int64{1763640000}
+				err := tg.AddTimeRelation(ctx, tc.source, tc.target, tc.info, timestamps...)
+				assert.NoError(t, err)
+
+				// 验证关系被正确添加
+				stat := tg.Stat()
+				assert.Contains(t, stat, fmt.Sprintf("时序边数: %d: 1", timestamps[0]))
+			})
+		}
+	})
 }

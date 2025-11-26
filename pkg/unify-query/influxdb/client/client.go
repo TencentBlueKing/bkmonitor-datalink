@@ -80,7 +80,7 @@ func (c *BasicClient) Query(
 	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"创建HTTP %s 请求失败",
 			urlPath,
@@ -99,7 +99,7 @@ func (c *BasicClient) Query(
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 请求失败",
 			urlPath,
@@ -108,7 +108,7 @@ func (c *BasicClient) Query(
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"%s 请求失败 %v",
 				urlPath, err,
@@ -117,7 +117,7 @@ func (c *BasicClient) Query(
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"查询失败",
 		).Error(ctx, errors.New(resp.Status))
@@ -140,13 +140,13 @@ func (c *BasicClient) decodeWithContentType(
 	if err != nil {
 		data, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"%s 解码失败",
 				respContentType,
 			).Error(ctx, errors.New(resp.Status))
 		}
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 解码失败 %v",
 			respContentType, string(data),
@@ -155,7 +155,7 @@ func (c *BasicClient) decodeWithContentType(
 	result := new(decoder.Response)
 	_, err = dec.Decode(ctx, resp.Body, result)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"%s 解码失败",
 			respContentType,

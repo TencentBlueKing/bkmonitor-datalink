@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
@@ -88,6 +87,9 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 
 		// count by 1m with doris
 		"SELECT COUNT(`login_rate`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `dtEventTime` >= '2024-10-28 20:29:49' AND `dtEventTime` <= '2024-10-28 20:34:50' AND `thedate` = '20241028' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 10005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"132_lol_new_login_queue_login_1min\":{}},\"cluster\":\"default2\",\"totalRecords\":5,\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"_value_\":2,\"_timestamp_\":1730118720000}],\"select_fields_order\":[\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT COUNT(`login_rate`) AS `_value_`, MAX(`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) AS `_timestamp_` FROM mapleleaf_132.lol_new_login_queue_login_1min_132 WHERE (`dtEventTimeStamp` >= 1730118589181) AND (`dtEventTimeStamp` < 1730118889181) GROUP BY `dtEventTimeStamp` - (`dtEventTimeStamp` % 60000) ORDER BY `_timestamp_` LIMIT 10005\",\"total_record_size\":1424,\"timetaken\":0.231,\"bksql_call_elapsed_time\":0,\"device\":\"tspider\",\"result_table_ids\":[\"132_lol_new_login_queue_login_1min\"]},\"errors\":null,\"trace_id\":\"127866cb51f85a4a7f620eb0e66588b1\",\"span_id\":\"578f26767bbb78c8\"}",
+
+		// long dim
+		"SELECT `RoomId`, COUNT(`Peakcpuutilpct`) AS `_value_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` < 1730118889181 AND `dtEventTime` >= '2024-10-28 20:29:49' AND `dtEventTime` <= '2024-10-28 20:34:50' AND `thedate` = '20241028' GROUP BY `RoomId` LIMIT 10005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"18970_DSMonitorGamePlayInfo\":{\"start\":\"2025112100\",\"end\":\"2025112123\"}},\"cluster\":\"cag_mysql\",\"totalRecords\":35,\"external_api_call_time_mills\":{\"bkbase_auth_api\":32,\"bkbase_meta_api\":0,\"bkbase_apigw_api\":10},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"RoomId\":30895627249454038,\"_value_\":3860,\"_timestamp_\":1763719560000},{\"RoomId\":71425076474481995,\"_value_\":5888,\"_timestamp_\":1763719560000},{\"RoomId\":66924789340639116,\"_value_\":3758,\"_timestamp_\":1763719560000},{\"RoomId\":48910357545159812,\"_value_\":4214,\"_timestamp_\":1763719560000},{\"RoomId\":53412371255856051,\"_value_\":3219,\"_timestamp_\":1763719560000},{\"RoomId\":8376053933346473,\"_value_\":4320,\"_timestamp_\":1763719560000},{\"RoomId\":8376053933346473,\"_value_\":4136,\"_timestamp_\":1763719620000},{\"RoomId\":30895627249454038,\"_value_\":3912,\"_timestamp_\":1763719620000},{\"RoomId\":71425076474481995,\"_value_\":4649,\"_timestamp_\":1763719620000},{\"RoomId\":66924789340639116,\"_value_\":3601,\"_timestamp_\":1763719620000},{\"RoomId\":48910357545159812,\"_value_\":3496,\"_timestamp_\":1763719620000},{\"RoomId\":53412371255856051,\"_value_\":3420,\"_timestamp_\":1763719620000},{\"RoomId\":53412371255856051,\"_value_\":3301,\"_timestamp_\":1763719680000},{\"RoomId\":8376053933346473,\"_value_\":4751,\"_timestamp_\":1763719680000},{\"RoomId\":30895627249454038,\"_value_\":5456,\"_timestamp_\":1763719680000},{\"RoomId\":71425076474481995,\"_value_\":5266,\"_timestamp_\":1763719680000},{\"RoomId\":66924789340639116,\"_value_\":3033,\"_timestamp_\":1763719680000},{\"RoomId\":48910357545159812,\"_value_\":3804,\"_timestamp_\":1763719680000},{\"RoomId\":48910357545159812,\"_value_\":6929,\"_timestamp_\":1763719740000},{\"RoomId\":53412371255856051,\"_value_\":4068,\"_timestamp_\":1763719740000},{\"RoomId\":8376053933346473,\"_value_\":4306,\"_timestamp_\":1763719740000},{\"RoomId\":30895627249454038,\"_value_\":4622,\"_timestamp_\":1763719740000},{\"RoomId\":71425076474481995,\"_value_\":5995,\"_timestamp_\":1763719740000},{\"RoomId\":66924789340639116,\"_value_\":3013,\"_timestamp_\":1763719740000},{\"RoomId\":48910357545159812,\"_value_\":2480,\"_timestamp_\":1763719800000},{\"RoomId\":53412371255856051,\"_value_\":6198,\"_timestamp_\":1763719800000},{\"RoomId\":8376053933346473,\"_value_\":4330,\"_timestamp_\":1763719800000},{\"RoomId\":30895627249454038,\"_value_\":4107,\"_timestamp_\":1763719800000},{\"RoomId\":71425076474481995,\"_value_\":3946,\"_timestamp_\":1763719800000},{\"RoomId\":66924789340639116,\"_value_\":3513,\"_timestamp_\":1763719800000},{\"RoomId\":66924789340639116,\"_value_\":3829,\"_timestamp_\":1763719860000},{\"RoomId\":53412371255856051,\"_value_\":4704,\"_timestamp_\":1763719860000},{\"RoomId\":8376053933346473,\"_value_\":4694,\"_timestamp_\":1763719860000},{\"RoomId\":30895627249454038,\"_value_\":4491,\"_timestamp_\":1763719860000},{\"RoomId\":71425076474481995,\"_value_\":3372,\"_timestamp_\":1763719860000}],\"bk_biz_ids\":[],\"stage_elapsed_time_mills\":{\"check_query_syntax\":1,\"query_db\":159,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":3,\"connect_db\":10,\"match_query_routing_rule\":0,\"check_permission\":33,\"check_query_semantic\":1,\"pick_valid_storage\":1},\"select_fields_order\":[\"RoomId\",\"_value_\",\"_timestamp_\"]},\"errors\":null,\"trace_id\":\"c8c8bdc119de559b17a17b0d198ea43d\",\"span_id\":\"582f4937a621ff70\"}",
 	})
 
 	end := time.UnixMilli(1730118889181)
@@ -102,6 +104,21 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 		query    *metadata.Query
 		expected string
 	}{
+		"long dim": {
+			query: &metadata.Query{
+				DataSource: datasource,
+				TableID:    tableID,
+				DB:         "2_bklog_bkunify_query_doris",
+				Field:      "Peakcpuutilpct",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"RoomId"},
+					},
+				},
+			},
+			expected: `[{"labels":[{"name":"RoomId","value":"30895627249454038"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":3860,"timestamp":1763719560000},{"value":3912,"timestamp":1763719620000},{"value":5456,"timestamp":1763719680000},{"value":4622,"timestamp":1763719740000},{"value":4107,"timestamp":1763719800000},{"value":4491,"timestamp":1763719860000}],"exemplars":null,"histograms":null},{"labels":[{"name":"RoomId","value":"48910357545159812"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":4214,"timestamp":1763719560000},{"value":3496,"timestamp":1763719620000},{"value":3804,"timestamp":1763719680000},{"value":6929,"timestamp":1763719740000},{"value":2480,"timestamp":1763719800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"RoomId","value":"53412371255856051"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":3219,"timestamp":1763719560000},{"value":3420,"timestamp":1763719620000},{"value":3301,"timestamp":1763719680000},{"value":4068,"timestamp":1763719740000},{"value":6198,"timestamp":1763719800000},{"value":4704,"timestamp":1763719860000}],"exemplars":null,"histograms":null},{"labels":[{"name":"RoomId","value":"66924789340639116"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":3758,"timestamp":1763719560000},{"value":3601,"timestamp":1763719620000},{"value":3033,"timestamp":1763719680000},{"value":3013,"timestamp":1763719740000},{"value":3513,"timestamp":1763719800000},{"value":3829,"timestamp":1763719860000}],"exemplars":null,"histograms":null},{"labels":[{"name":"RoomId","value":"71425076474481995"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":5888,"timestamp":1763719560000},{"value":4649,"timestamp":1763719620000},{"value":5266,"timestamp":1763719680000},{"value":5995,"timestamp":1763719740000},{"value":3946,"timestamp":1763719800000},{"value":3372,"timestamp":1763719860000}],"exemplars":null,"histograms":null},{"labels":[{"name":"RoomId","value":"8376053933346473"},{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:Peakcpuutilpct"}],"samples":[{"value":4320,"timestamp":1763719560000},{"value":4136,"timestamp":1763719620000},{"value":4751,"timestamp":1763719680000},{"value":4306,"timestamp":1763719740000},{"value":4330,"timestamp":1763719800000},{"value":4694,"timestamp":1763719860000}],"exemplars":null,"histograms":null}]`,
+		},
 		"count by cloudId with doris": {
 			query: &metadata.Query{
 				DataSource:  datasource,
@@ -2296,8 +2313,7 @@ func createTestInstance(ctx context.Context) *bksql.Instance {
 		Curl:      &curl.HttpCurl{},
 	})
 	if err != nil {
-		log.Fatalf(ctx, err.Error())
-		return nil
+		panic(err.Error())
 	}
 	return ins
 }

@@ -181,7 +181,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryInfluxDB,
 						"集群 %s 获取失败",
 						clusterID,
@@ -191,7 +191,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 				tables, err := instance.QueryInfos(ctx, metricName, db, sql, precision, limit)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryInfluxDB,
 						"%s 查询失败",
 						sql,
@@ -214,7 +214,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 			}
 		}
 
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryInfo,
 			"查询失败",
 		).Error(ctx, err)
@@ -298,7 +298,7 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 
 				instance, err := GetInstance(clusterID)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryInfluxDB,
 						"%+v 查询失败",
 						sqlInfo,
@@ -328,7 +328,7 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 			}
 		}
 
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgQueryInfluxDB,
 			"查询失败",
 		).Error(ctx, err)

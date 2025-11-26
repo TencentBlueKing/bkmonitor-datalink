@@ -158,6 +158,12 @@ func MockSpaceRouter(ctx context.Context) {
 			},
 			ir.SpaceInfo{
 				SpaceUid: ir.Space{
+					"nano.millisecond": &ir.SpaceResultTable{
+						TableId: "nano.millisecond",
+					},
+					"nano.nano": &ir.SpaceResultTable{
+						TableId: "nano.nano",
+					},
 					"system.disk": &ir.SpaceResultTable{
 						TableId: "system.disk",
 						Filters: []map[string]string{
@@ -219,6 +225,19 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			},
 			ir.ResultTableDetailInfo{
+				"nano.millisecond": &ir.ResultTableDetail{
+					StorageId:   3,
+					StorageType: metadata.ElasticsearchStorageType,
+					DB:          "es_index",
+				},
+				"nano.nano": &ir.ResultTableDetail{
+					StorageId: 3,
+					FieldAlias: map[string]string{
+						"dtEventTimeStamp": "dtEventTimeStampNanos",
+					},
+					StorageType: metadata.ElasticsearchStorageType,
+					DB:          "es_index_1",
+				},
 				"result_table.kubelet_info": &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         "result_table.kubelet_info",
@@ -454,6 +473,10 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			}, nil,
 			ir.DataLabelToResultTable{
+				"nano": ir.ResultTableList{
+					"nano.millisecond",
+					"nano.nano",
+				},
 				"multi_doris": ir.ResultTableList{
 					"rt.doris_1",
 					"rt.doris_2",

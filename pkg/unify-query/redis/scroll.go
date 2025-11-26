@@ -127,7 +127,7 @@ func (s *ScrollSession) Clear(ctx context.Context) error {
 func (s *ScrollSession) Start(ctx context.Context) error {
 	err := s.lock(ctx)
 	if err != nil {
-		return metadata.Sprintf(metadata.MsgRedisLock,
+		return metadata.NewMessage(metadata.MsgRedisLock,
 			"redis lock failed",
 		).Error(ctx, err)
 	}
@@ -139,7 +139,7 @@ func (s *ScrollSession) Stop(ctx context.Context) error {
 	defer func() {
 		err := s.unlock(ctx)
 		if err != nil {
-			_ = metadata.Sprintf(metadata.MsgRedisLock,
+			_ = metadata.NewMessage(metadata.MsgRedisLock,
 				"redis unlock failed",
 			).Error(ctx, err)
 		}

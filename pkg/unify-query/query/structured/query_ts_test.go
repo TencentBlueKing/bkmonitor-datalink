@@ -46,6 +46,7 @@ func TestQueryToMetric(t *testing.T) {
 		spaceUID string
 		query    *Query
 		metric   *md.QueryMetric
+		tsDbs    TsDBs
 	}{
 		"test table id query": {
 			query: &Query{
@@ -274,7 +275,7 @@ func TestQueryToMetric(t *testing.T) {
 				spaceUID = influxdb.SpaceUid
 			}
 
-			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
+			metric, err := c.query.ToQueryMetric(ctx, spaceUID, c.tsDbs)
 			assert.Nil(t, err)
 
 			sort.SliceStable(metric.QueryList, func(i, j int) bool {

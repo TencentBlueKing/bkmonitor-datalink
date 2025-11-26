@@ -23,13 +23,13 @@ func HandleClientError(ctx context.Context, id, url string, err error) error {
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return metadata.Sprintf(id,
+		return metadata.NewMessage(id,
 			"查询 %s 超时",
 			url,
 		).Error(ctx, err)
 	}
 
-	return metadata.Sprintf(id,
+	return metadata.NewMessage(id,
 		"查询 %s 报错",
 		url,
 	).Error(ctx, err)

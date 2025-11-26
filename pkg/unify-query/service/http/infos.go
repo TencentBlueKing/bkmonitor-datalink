@@ -28,9 +28,10 @@ const (
 
 // Params
 type Params struct {
-	DataSource string             `json:"data_source"`
-	TableID    structured.TableID `json:"table_id"`
-	Metric     string             `json:"metric_name"`
+	TsDBMap    map[string]structured.TsDBs `json:"tsdb_map,omitempty"`
+	DataSource string                      `json:"data_source"`
+	TableID    structured.TableID          `json:"table_id"`
+	Metric     string                      `json:"metric_name"`
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp bool `json:"is_regexp" example:"false"`
 

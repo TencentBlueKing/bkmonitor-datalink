@@ -288,8 +288,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	if len(ts) == 0 {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryRelation,
+			"%s",
 			"查询不到数据",
 		).Warn(ctx)
 	}
@@ -453,8 +454,9 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	}
 
 	if len(matrix) == 0 {
-		metadata.Sprintf(
+		metadata.NewMessage(
 			metadata.MsgQueryRelation,
+			"%s",
 			"查询不到数据",
 		).Warn(ctx)
 		return nil, nil

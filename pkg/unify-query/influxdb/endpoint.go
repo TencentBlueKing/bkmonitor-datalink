@@ -74,7 +74,7 @@ func (e *endpointSet) getEndPointRef(ctx context.Context, protocol, address stri
 	case GRPC:
 		conn, err := grpc.DialContext(ctx, address, e.dialOpts...)
 		if err != nil {
-			_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+			_ = metadata.NewMessage(metadata.MsgQueryInfluxDB,
 				"InfluxDB %s %s 链接异常",
 				address, protocol,
 			).Error(ctx, err)
@@ -199,7 +199,7 @@ func (er *endpointRef) Close() {
 			return
 		}
 
-		_ = metadata.Sprintf(metadata.MsgQueryInfluxDB,
+		_ = metadata.NewMessage(metadata.MsgQueryInfluxDB,
 			"InfluxDB 关闭异常",
 		).Error(er.ctx, err)
 	}

@@ -53,7 +53,7 @@ func Print() string {
 func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue string) string {
 	res, err := ffclient.StringVariation(flagKey, user, defaultValue)
 	if err != nil {
-		_ = metadata.Sprintf(
+		_ = metadata.NewMessage(
 			metadata.MsgFeatureFlag,
 			"特性开关获取失败 flag_key: %s, user: %s, default_value: %s, error: %s",
 			flagKey, user.GetKey(), defaultValue, err.Error(),
@@ -95,7 +95,7 @@ func setEvent(ctx context.Context, events []exporter.FeatureEvent) error {
 		if err != nil {
 			return err
 		}
-		log.Debugf(ctx, string(info))
+		log.Debugf(ctx, "%s", string(info))
 	}
 	return nil
 }

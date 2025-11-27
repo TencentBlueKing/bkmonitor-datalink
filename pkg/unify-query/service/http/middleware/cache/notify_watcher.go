@@ -10,7 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
-type SideCar struct {
+type NotifyWatcher struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -19,32 +19,12 @@ type SideCar struct {
 	waiters sync.Map
 }
 
-func newSideCar(ctx context.Context) *SideCar {
-	childCtx, cancel := context.WithCancel(ctx)
-
-	return &SideCar{
-		ctx:     childCtx,
-		cancel:  cancel,
-		wg:      sync.WaitGroup{},
-		waiters: sync.Map{},
-	}
-}
-
-func (s *SideCar) Start() error {
+func (s *NotifyWatcher) run() {
 	s.wg.Add(1)
 	go s.subLoop()
-
-	log.Infof(s.ctx, "optimized sidecar started with single subscription")
-	return nil
 }
 
-func (s *SideCar) Stop() {
-	s.cancel()
-	s.wg.Wait()
-	log.Infof(s.ctx, "sidecar stopped")
-}
-
-func (s *SideCar) waitLoop(key string) <-chan struct{} {
+func (s *NotifyWatcher) waitLoop(key string) <-chan struct{} {
 	ch := make(chan struct{})
 
 	// 1. 尝试加载现有的等待组，如果不存在则创建新的
@@ -60,7 +40,7 @@ func (s *SideCar) waitLoop(key string) <-chan struct{} {
 	return ch
 }
 
-func (s *SideCar) subLoop() {
+func (s *NotifyWatcher) subLoop() {
 	defer s.wg.Done()
 
 	channelName := subscribeAll()
@@ -96,7 +76,7 @@ func (s *SideCar) subLoop() {
 	}
 }
 
-func (s *SideCar) broadcastLocal(key string) {
+func (s *NotifyWatcher) broadcastLocal(key string) {
 	// 1. 从本地waiters中查找等待者
 	if val, ok := s.waiters.LoadAndDelete(key); ok {
 		wg := val.(*WaitGroupValue)
@@ -119,15 +99,15 @@ func (s *SideCar) broadcastLocal(key string) {
 }
 
 func (d *Service) waitForNotify(ctx context.Context, key string) error {
-	if d.sidecar == nil {
-		return fmt.Errorf("sidecar not initialized")
+	if d.notifyWatcher == nil {
+		return fmt.Errorf("run not initialized")
 	}
 
 	start := time.Now()
 	timeoutDuration := time.After(d.conf.executeTTL)
 	select {
 	// case:1  等待直到收到 channel 的关闭通知
-	case <-d.sidecar.waitLoop(key):
+	case <-d.notifyWatcher.waitLoop(key):
 		d.metrics.recordCacheDuration("sidecar_wait", time.Since(start))
 		return nil
 	// case:2 超时处理
@@ -137,16 +117,5 @@ func (d *Service) waitForNotify(ctx context.Context, key string) error {
 	// case:3 上下文取消处理
 	case <-ctx.Done():
 		return ctx.Err()
-	}
-}
-
-func (d *Service) initSide() error {
-	d.sidecar = newSideCar(d.ctx)
-	return d.sidecar.Start()
-}
-
-func (d *Service) closeSideCard() {
-	if d.sidecar != nil {
-		d.sidecar.Stop()
 	}
 }

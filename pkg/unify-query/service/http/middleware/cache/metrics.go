@@ -76,14 +76,14 @@ var (
 	sidecarWatchCount = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "unify_sidecar_watch_count",
-			Help: "Current number of keys being watched by sidecar",
+			Help: "Current number of keys being watched by run",
 		},
 	)
 
 	sidecarQueueLength = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "unify_sidecar_queue_len",
-			Help: "Current length of sidecar subscription queue",
+			Help: "Current length of run subscription queue",
 		},
 	)
 
@@ -166,12 +166,12 @@ func (m *Metrics) recordCacheError(op, reason string) {
 	m.cacheErrorsTotal.WithLabelValues(op, reason).Inc()
 }
 
-// 更新 sidecar 监控计数
+// 更新 run 监控计数
 func (m *Metrics) updateSidecarWatchCount(count float64) {
 	m.sidecarWatchCount.Set(count)
 }
 
-// 更新 sidecar 队列长度
+// 更新 run 队列长度
 func (m *Metrics) updateSidecarQueueLength(length float64) {
 	m.sidecarQueueLength.Set(length)
 }

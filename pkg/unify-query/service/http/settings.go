@@ -77,10 +77,6 @@ const (
 	QueryCacheEnabledConfigPath               = "http.query_cache.enabled"
 	QueryCacheSkipPathsConfigPath             = "http.query_cache.skip_paths"
 	QueryCacheSkipMethodsConfigPath           = "http.query_cache.skip_methods"
-	QueryCacheShortTermRetryConfigPath        = "http.query_cache.short_term_retry"
-	QueryCacheMediumTermRetryConfigPath       = "http.query_cache.medium_term_retry"
-	QueryCacheSumRetryConfigPath              = "http.query_cache.sum_retry"
-	QueryCacheShortRetryConfigPath            = "http.query_cache.short_retry"
 	QueryCacheMaxInflightConfigPath           = "http.query_cache.max_inflight"
 	QueryCacheMaxFailuresConfigPath           = "http.query_cache.max_failures"
 	QueryCacheResetTimeoutConfigPath          = "http.query_cache.reset_timeout"
@@ -123,14 +119,14 @@ var (
 	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
 
-	QueryCacheEnabled                 bool
-	QueryCacheShortTermRetry          time.Duration
-	QueryCacheMediumTermRetry         time.Duration
-	QueryCacheSumRetry                int
-	QueryCacheShortRetry              int
-	QueryCacheMaxInflight             int
-	QueryCacheMaxFailures             int
-	QueryCacheResetTimeout            time.Duration
-	QueryCacheDefaultLimit            int64
-	QueryCacheCircuitBreakerEnabled   bool
+	QueryCacheEnabled               bool
+	QueryCacheShortTermRetry        time.Duration
+	QueryCacheMediumTermRetry       time.Duration
+	QueryCacheSumRetry              int
+	QueryCacheShortRetry            int
+	QueryCacheMaxInflight           int
+	QueryCacheMaxFailures           int
+	QueryCacheResetTimeout          time.Duration
+	QueryCacheDefaultLimit          int64
+	QueryCacheCircuitBreakerEnabled bool
 )

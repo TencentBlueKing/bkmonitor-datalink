@@ -30,7 +30,7 @@ func testSetup(t *testing.T, limit int) (*Service, *miniredis.Miniredis) {
 	require.NoError(t, err)
 
 	client := redis.Client()
-	limitKey := CacheKey(limitKeyType, "")
+	limitKey := cacheKeyMap(limitKeyType, "")
 	_, err = client.Set(ctx, limitKey, fmt.Sprintf("%d", limit), 0).Result()
 	require.NoError(t, err)
 
@@ -66,7 +66,7 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 	}
 
 	// 1. 验证超出限制后 ZSet 大小维持不变
-	indexKey := CacheKey(indexKeyType, "")
+	indexKey := cacheKeyMap(indexKeyType, "")
 	// ZCard 可以根据传递进来的indexKey参数获取对应ZSet的大小
 	zsetSize, err := client.ZCard(ctx, indexKey).Result()
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 	// 前 totalItems - limit 个数据应该被淘汰
 	evictedCount := totalItems - limit
 	for i := 0; i < evictedCount; i++ {
-		redisDataKey := CacheKey(dataKeyType, dataKeys[i])
+		redisDataKey := cacheKeyMap(dataKeyType, dataKeys[i])
 		_, err := redis.Get(ctx, redisDataKey)
 		assert.Equal(t, goRedis.Nil, err, "最早的数据应该被淘汰")
 	}
@@ -84,7 +84,7 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 	// 3. 验证最后保留的是最新的数据
 	// 从 evictedCount 到 totalItems - 1 的数据应该存在
 	for i := evictedCount; i < totalItems; i++ {
-		redisDataKey := CacheKey(dataKeyType, dataKeys[i])
+		redisDataKey := cacheKeyMap(dataKeyType, dataKeys[i])
 		data, err := redis.Get(ctx, redisDataKey)
 		require.NoError(t, err)
 		assert.Contains(t, data, fmt.Sprintf("data_%d", i), "最新数据应该保留")

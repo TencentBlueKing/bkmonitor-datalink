@@ -37,25 +37,25 @@ func (s CircuitBreakerState) String() string {
 
 // CircuitBreaker 熔断器实现
 type CircuitBreaker struct {
-	name           string
-	maxFailures    int           // 最大失败次数
-	resetTimeout   time.Duration // 重置超时时间
-	metrics        *Metrics
+	name         string
+	maxFailures  int           // 最大失败次数
+	resetTimeout time.Duration // 重置超时时间
+	metrics      *Metrics
 
-	state         int32 // 使用 atomic 操作
-	failures      int32
-	lastFailTime  int64 // Unix 纳秒时间戳
-	mu            sync.RWMutex
+	state        int32 // 使用 atomic 操作
+	failures     int32
+	lastFailTime int64 // Unix 纳秒时间戳
+	mu           sync.RWMutex
 }
 
 // NewCircuitBreaker 创建新的熔断器
 func NewCircuitBreaker(name string, maxFailures int, resetTimeout time.Duration, metrics *Metrics) *CircuitBreaker {
 	return &CircuitBreaker{
-		name:          name,
-		maxFailures:   maxFailures,
-		resetTimeout:  resetTimeout,
-		metrics:       metrics,
-		state:         int32(StateClosed),
+		name:         name,
+		maxFailures:  maxFailures,
+		resetTimeout: resetTimeout,
+		metrics:      metrics,
+		state:        int32(StateClosed),
 	}
 }
 
@@ -166,8 +166,8 @@ func (cb *CircuitBreaker) Reset() {
 
 // FlowController 流控器
 type FlowController struct {
-	maxInflight int32         // 最大并发数
-	current     int32         // 当前并发数
+	maxInflight int32 // 最大熔断器释放的并发数
+	current     int32 // 当前并发数
 	metrics     *Metrics
 }
 
@@ -187,7 +187,7 @@ func (fc *FlowController) Acquire() error {
 		return fmt.Errorf("flow controller: max inflight limit %d exceeded", fc.maxInflight)
 	}
 
-	// 更新 sidecar 监控
+	// 更新 run 监控
 	if fc.metrics != nil {
 		fc.metrics.updateSidecarWatchCount(float64(current))
 	}
@@ -202,7 +202,7 @@ func (fc *FlowController) Release() {
 		atomic.StoreInt32(&fc.current, 0)
 	}
 
-	// 更新 sidecar 监控
+	// 更新 run 监控
 	if fc.metrics != nil {
 		fc.metrics.updateSidecarWatchCount(float64(current))
 	}
@@ -215,9 +215,9 @@ func (fc *FlowController) GetCurrent() int32 {
 
 // ResilienceManager 容灾管理器
 type ResilienceManager struct {
-	redisCircuitBreaker *CircuitBreaker
-	flowController      *FlowController
-	metrics             *Metrics
+	redisCircuitBreaker   *CircuitBreaker
+	flowController        *FlowController
+	metrics               *Metrics
 	circuitBreakerEnabled bool
 }
 

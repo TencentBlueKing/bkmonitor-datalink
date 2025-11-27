@@ -56,9 +56,9 @@ return count
 
 func (d *Service) writeRemoteCache(ctx context.Context, dataKey string, data []byte) error {
 	// 1. 生成正确的Redis键名
-	redisDataKey := CacheKey(dataKeyType, dataKey)
-	indexKey := CacheKey(indexKeyType, "")
-	limitConfigKey := CacheKey(limitKeyType, "")
+	redisDataKey := cacheKeyMap(dataKeyType, dataKey)
+	indexKey := cacheKeyMap(indexKeyType, "")
+	limitConfigKey := cacheKeyMap(limitKeyType, "")
 
 	timestamp := time.Now().UnixNano()
 	defaultLimit := viper.GetInt64(http.QueryCacheDefaultLimitConfigPath)
@@ -79,7 +79,7 @@ func (d *Service) writeRemoteCache(ctx context.Context, dataKey string, data []b
 
 func (d *Service) GetCacheStats(ctx context.Context) (int64, error) {
 	// 1. 使用CacheKey生成系统索引键
-	indexKey := CacheKey(indexKeyType, "")
+	indexKey := cacheKeyMap(indexKeyType, "")
 
 	script := goRedis.NewScript(cacheStatsScript)
 	result, err := redis.ExecLua(ctx, script, []string{indexKey})
@@ -97,7 +97,7 @@ func (d *Service) GetCacheStats(ctx context.Context) (int64, error) {
 
 func (d *Service) SetCacheLimit(ctx context.Context, limit int64) error {
 	// 1. 使用CacheKey生成限制配置键
-	limitKey := CacheKey(limitKeyType, "")
+	limitKey := cacheKeyMap(limitKeyType, "")
 
 	_, err := redis.Set(ctx, limitKey, fmt.Sprintf("%d", limit), 0) // 永久有效
 	if err != nil {
@@ -111,7 +111,7 @@ func (d *Service) SetCacheLimit(ctx context.Context, limit int64) error {
 
 func (d *Service) GetCacheLimit(ctx context.Context) (int64, error) {
 	// 1. 使用CacheKey生成限制配置键
-	limitKey := CacheKey(limitKeyType, "")
+	limitKey := cacheKeyMap(limitKeyType, "")
 
 	result, err := redis.Get(ctx, limitKey)
 	if err != nil {

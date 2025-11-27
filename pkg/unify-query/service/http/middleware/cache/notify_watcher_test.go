@@ -9,8 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestSidecar_SubscribeOptimizationAndAwakening 验证 Sidecar 订阅优化和唤醒机制
-func TestSidecar_SubscribeOptimizationAndAwakening(t *testing.T) {
+func TestNotifyWatcher_Awakening(t *testing.T) {
 	const (
 		singleKeyWaiters = 10 // 同一个 key 的等待者数量
 		differentKeys    = 3  // 不同 key 的数量
@@ -18,7 +17,7 @@ func TestSidecar_SubscribeOptimizationAndAwakening(t *testing.T) {
 	)
 
 	t.Run("SingleKeySubscription", func(t *testing.T) {
-		sidecar := &SideCar{
+		sidecar := &NotifyWatcher{
 			ctx:     context.Background(),
 			waiters: sync.Map{},
 		}
@@ -57,7 +56,7 @@ func TestSidecar_SubscribeOptimizationAndAwakening(t *testing.T) {
 	})
 
 	t.Run("MultipleKeysAwakening", func(t *testing.T) {
-		sidecar := &SideCar{
+		sidecar := &NotifyWatcher{
 			ctx:     context.Background(),
 			waiters: sync.Map{},
 		}

@@ -38,11 +38,11 @@ type Service struct {
 	ctx  context.Context
 	conf Config
 
-	localCache  *ristretto.Cache
-	inflightMap InFlightMap
-	sidecar     *SideCar
-	metrics     *Metrics
-	resilience  *ResilienceManager
+	localCache    *ristretto.Cache
+	notifyWatcher *NotifyWatcher
+	metrics       *Metrics
+	resilience    *ResilienceManager
+	winnerMap     sync.Map
 }
 
 type Config struct {
@@ -51,17 +51,14 @@ type Config struct {
 	// payloadTTL 是缓存数据的 TTL
 	payloadTTL time.Duration
 	// lockTTL 是分布式锁的 TTL
-	lockTTL         time.Duration
-	sumRetry        int
-	shortRetry      int
-	shortTermRetry  time.Duration
-	mediumTermRetry time.Duration
+	lockTTL time.Duration
 	// freshLock 是作为配置的锁的续期时间. 真实的刷新频率会是该值的一半
 	freshLock time.Duration
 }
 
-type InFlightMap struct {
-	m sync.Map
+func (d *Service) ttlKeepRefreshInterval() time.Duration {
+	// 按照锁续期间隔的一半频率刷新锁的TTL
+	return d.conf.freshLock / 2
 }
 
 func (d *Service) getCacheFromLocal(key string) (interface{}, bool) {
@@ -72,22 +69,8 @@ func (d *Service) setCacheToLocal(key string, value interface{}) {
 	d.localCache.SetWithTTL(key, value, 1, d.conf.payloadTTL)
 }
 
-func (d *Service) waitDuration(count int) (duration time.Duration, shouldWait bool) {
-	if count > d.conf.sumRetry {
-		return
-	}
-	shouldWait = true
-	if count <= d.conf.shortRetry {
-		duration = d.conf.shortTermRetry
-		return
-	} else {
-		duration = d.conf.mediumTermRetry
-		return
-	}
-}
-
 func (d *Service) doDistributed(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
-	lockKey := CacheKey(lockKeyType, key)
+	lockKey := cacheKeyMap(lockKeyType, key)
 	metrics := d.metrics
 
 	var l2Result interface{}
@@ -129,11 +112,12 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 		return nil, err
 	}
 
-	// 2. 同时调起一个协程来刷新锁的TTL
-	go d.ttlKeeper(ctx, lockKey)
-
-	// 3.1 锁获取成功，成为 Cluster Winner
 	if acquired {
+		// 2.1 锁获取成功，成为 Cluster Winner
+		d.winnerMap.Store(key, key)
+		defer func() {
+			d.winnerMap.Delete(key)
+		}()
 		metrics.recordSingleflightDedup("cluster_winner")
 		metrics.recordDBRequest("cache_miss")
 
@@ -152,10 +136,10 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 }
 
 func (d *Service) runAndNotify(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
-	dataKey := CacheKey(dataKeyType, key)
-	lockKey := CacheKey(lockKeyType, key)
-	channelKey := CacheKey(channelKeyType, key)
+	dataKey := cacheKeyMap(dataKeyType, key)
+	channelKey := cacheKeyMap(channelKeyType, key)
 
+	// 1. 执行函数获取结果
 	result, err := fn()
 	if err != nil {
 		return nil, err
@@ -166,30 +150,28 @@ func (d *Service) runAndNotify(ctx context.Context, key string, fn func() (inter
 		return nil, err
 	}
 
+	// 2. 回写缓存
 	err = d.writeRemoteCache(ctx, dataKey, bts)
 	if err != nil {
 		log.Warnf(ctx, "failed to write cache with limit control: %v", err)
 		return nil, err
 	}
 
+	// 3. 通知等待者
 	_, err = redis.Publish(ctx, channelKey, doneMsg)
 	if err != nil {
 		log.Warnf(ctx, "failed to publish completion for key %s: %v", dataKey, err)
 	}
 
-	if _, err = redis.Delete(ctx, lockKey); err != nil {
-		log.Warnf(ctx, "failed to delete lock for key %s: %v", dataKey, err)
-	}
-
 	return result, nil
 }
 
-func (d *Service) waiterLoop(ctx context.Context, cacheKey string) (interface{}, error) {
-	dataKey := CacheKey(dataKeyType, cacheKey)
+func (d *Service) waiterLoop(ctx context.Context, key string) (interface{}, error) {
+	dataKey := cacheKeyMap(dataKeyType, key)
 	// 1.阻塞进入等待
-	err := d.waitForNotify(ctx, cacheKey)
+	err := d.waitForNotify(ctx, dataKey)
 	if err != nil {
-		log.Warnf(ctx, "sidecar wait timeout for key %s,with error: %v", dataKey, err)
+		log.Warnf(ctx, "run wait timeout for key %s,with error: %v", dataKey, err)
 		// 2. 如果遇到报错，直接返回错误
 		return nil, err
 	}
@@ -197,19 +179,36 @@ func (d *Service) waiterLoop(ctx context.Context, cacheKey string) (interface{},
 	return d.getFromCentreCache(ctx, dataKey)
 }
 
-func (d *Service) ttlKeeper(ctx context.Context, key string) {
-	// 按照锁续期间隔的一半频率刷新锁的TTL
-	ticker := time.NewTicker(d.conf.freshLock / 2)
-	lockKey := CacheKey(lockKeyType, key)
-
+func (d *Service) ttlKeeper(ctx context.Context) {
+	refreshInterval := d.ttlKeepRefreshInterval()
+	ticker := time.NewTicker(refreshInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			_, err := redis.Expire(ctx, lockKey, d.conf.lockTTL)
-			if err != nil {
-				log.Warnf(ctx, "failed to refresh lock TTL for key %s: %v", lockKey, err)
+			var lockKeys []string
+			d.winnerMap.Range(func(key, value interface{}) bool {
+				if keyStr, ok := key.(string); ok {
+					lockKeys = append(lockKeys, cacheKeyMap(lockKeyType, keyStr))
+				}
+				return true
+			})
+
+			if len(lockKeys) > 0 {
+				client := redis.Client()
+				pipe := client.Pipeline()
+
+				for _, lockKey := range lockKeys {
+					pipe.Expire(ctx, lockKey, d.conf.lockTTL)
+				}
+
+				_, err := pipe.Exec(ctx)
+				if err != nil {
+					log.Warnf(ctx, "failed to batch refresh lock TTL for %d keys: %v", len(lockKeys), err)
+				} else {
+					log.Debugf(ctx, "successfully refreshed TTL for %d lock keys", len(lockKeys))
+				}
 			}
 		case <-ctx.Done():
 			return
@@ -218,7 +217,7 @@ func (d *Service) ttlKeeper(ctx context.Context, key string) {
 }
 
 func (d *Service) getFromCentreCache(ctx context.Context, key string) (interface{}, error) {
-	cacheKey := CacheKey(dataKeyType, key)
+	cacheKey := cacheKeyMap(dataKeyType, key)
 	valStr, err := redis.Get(ctx, cacheKey)
 	if redis.IsNil(err) {
 		return nil, err
@@ -236,24 +235,6 @@ func (d *Service) Do(key string, fn func() (interface{}, error)) (interface{}, e
 	return d.do(key, fn)
 }
 
-func (d *Service) Start() error {
-	if err := d.initSide(); err != nil {
-		log.Errorf(d.ctx, "failed to initialize sidecar: %v", err)
-		return err
-	}
-
-	return nil
-}
-
-func (d *Service) Close() {
-	d.closeSideCard()
-
-	// 关闭本地缓存
-	if d.localCache != nil {
-		d.localCache.Close()
-	}
-}
-
 func (d *Service) initialize(ctx context.Context) error {
 	localCache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters:        viper.GetInt64(memcache.RistrettoNumCountersPath),
@@ -267,20 +248,12 @@ func (d *Service) initialize(ctx context.Context) error {
 
 	slowQueryThreshold := viper.GetDuration(http.SlowQueryThresholdConfigPath)
 	readTimeout := viper.GetDuration(http.ReadTimeOutConfigPath)
-	sumRetry := viper.GetInt(http.QueryCacheSumRetryConfigPath)
-	shortRetry := viper.GetInt(http.QueryCacheShortRetryConfigPath)
-	shortTermRetry := viper.GetDuration(http.QueryCacheShortTermRetryConfigPath)
-	mediumTermRetry := viper.GetDuration(http.QueryCacheMediumTermRetryConfigPath)
 
 	d.conf = Config{
-		executeTTL:      slowQueryThreshold,
-		payloadTTL:      readTimeout,
-		lockTTL:         slowQueryThreshold,
-		sumRetry:        sumRetry,
-		shortRetry:      shortRetry,
-		shortTermRetry:  shortTermRetry,
-		mediumTermRetry: mediumTermRetry,
-		freshLock:       slowQueryThreshold / 4,
+		executeTTL: slowQueryThreshold,
+		payloadTTL: readTimeout,
+		lockTTL:    slowQueryThreshold,
+		freshLock:  slowQueryThreshold / 4,
 	}
 
 	d.metrics = NewMetrics()
@@ -292,7 +265,8 @@ func (d *Service) initialize(ctx context.Context) error {
 
 	d.ctx = ctx
 	d.localCache = localCache
-
+	go d.ttlKeeper(ctx)
+	go d.notifyWatcher.run()
 	return nil
 }
 
@@ -393,7 +367,7 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 
 // getCachedResponse 获取缓存的响应
 func (d *Service) getCachedResponse(c *gin.Context, key string) *CachedResponse {
-	dataKey := CacheKey(dataKeyType, key)
+	dataKey := cacheKeyMap(dataKeyType, key)
 	// 直接从 L1 缓存查询
 	if val, found := d.getCacheFromLocal(dataKey); found {
 		if cachedResp, ok := val.(*CachedResponse); ok {
@@ -476,7 +450,7 @@ func (d *Service) execute(c *gin.Context, cacheKey string) {
 		go func() {
 			ctx := c.Request.Context()
 			writeStart := time.Now()
-			err := d.writeToDistributedCache(ctx, cacheKey, cachedResp)
+			err := d.writeRemote(ctx, cacheKey, cachedResp)
 			d.metrics.recordCacheDuration("l2_write", time.Since(writeStart))
 			if err != nil {
 				d.metrics.recordCacheError("l2_write", "write_error")
@@ -490,16 +464,15 @@ func (d *Service) execute(c *gin.Context, cacheKey string) {
 	}
 }
 
-// writeToDistributedCache 写入分布式缓存
-func (d *Service) writeToDistributedCache(ctx context.Context, key string, cachedResp *CachedResponse) error {
-	cacheKey := CacheKey(dataKeyType, key)
-	channelKey := CacheKey(channelKeyType, key)
-	bytes, err := json.Marshal(cachedResp)
+func (d *Service) writeRemote(ctx context.Context, key string, cachedResp *CachedResponse) error {
+	cacheKey := cacheKeyMap(dataKeyType, key)
+	channelKey := cacheKeyMap(channelKeyType, key)
+	bts, err := json.Marshal(cachedResp)
 	if err != nil {
 		return err
 	}
 
-	err = d.writeRemoteCache(ctx, cacheKey, bytes)
+	err = d.writeRemoteCache(ctx, cacheKey, bts)
 	if err != nil {
 		return fmt.Errorf("failed to write cache with limit control: %w", err)
 	}

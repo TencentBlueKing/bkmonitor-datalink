@@ -37,7 +37,7 @@ var (
 	}
 )
 
-func CacheKey(key string, subject string) string {
+func cacheKeyMap(key string, subject string) string {
 	if format, ok := trans[key]; ok {
 		return fmt.Sprintf(format, subject)
 	} else {
@@ -52,7 +52,7 @@ func subscribeAll() string {
 
 func extractKeyFromChannel(channel string) string {
 	// 1. 使用现有的channelKey格式获取前缀
-	channelPrefix := CacheKey(channelKeyType, "")
+	channelPrefix := cacheKeyMap(channelKeyType, "")
 	if channelPrefix == "" {
 		return ""
 	}

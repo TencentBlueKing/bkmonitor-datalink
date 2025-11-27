@@ -12,6 +12,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
 	github.com/bytedance/sonic v1.14.0
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0
 	github.com/gin-gonic/gin v1.10.1
@@ -79,7 +80,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dennwc/varint v1.0.0 // indirect

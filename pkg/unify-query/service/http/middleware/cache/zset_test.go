@@ -67,11 +67,13 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 
 	// 1. 验证超出限制后 ZSet 大小维持不变
 	indexKey := CacheKey(indexKeyType, "")
+	// ZCard 可以根据传递进来的indexKey参数获取对应ZSet的大小
 	zsetSize, err := client.ZCard(ctx, indexKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(limit), zsetSize, "ZSet 大小应该维持在限制值")
 
 	// 2. 验证最早的数据被直接淘汰
+	// 前 totalItems - limit 个数据应该被淘汰
 	evictedCount := totalItems - limit
 	for i := 0; i < evictedCount; i++ {
 		redisDataKey := CacheKey(dataKeyType, dataKeys[i])
@@ -80,6 +82,7 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 	}
 
 	// 3. 验证最后保留的是最新的数据
+	// 从 evictedCount 到 totalItems - 1 的数据应该存在
 	for i := evictedCount; i < totalItems; i++ {
 		redisDataKey := CacheKey(dataKeyType, dataKeys[i])
 		data, err := redis.Get(ctx, redisDataKey)

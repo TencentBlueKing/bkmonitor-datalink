@@ -56,11 +56,6 @@ type Config struct {
 	freshLock time.Duration
 }
 
-func (d *Service) ttlKeepRefreshInterval() time.Duration {
-	// 按照锁续期间隔的一半频率刷新锁的TTL
-	return d.conf.freshLock / 2
-}
-
 func (d *Service) getCacheFromLocal(key string) (interface{}, bool) {
 	return d.localCache.Get(key)
 }
@@ -180,7 +175,7 @@ func (d *Service) waiterLoop(ctx context.Context, key string) (interface{}, erro
 }
 
 func (d *Service) ttlKeeper(ctx context.Context) {
-	refreshInterval := d.ttlKeepRefreshInterval()
+	refreshInterval := d.conf.freshLock
 	ticker := time.NewTicker(refreshInterval)
 	defer ticker.Stop()
 
@@ -252,9 +247,10 @@ func (d *Service) initialize(ctx context.Context) error {
 	d.conf = Config{
 		executeTTL: slowQueryThreshold,
 		payloadTTL: readTimeout,
-		lockTTL:    slowQueryThreshold,
-		freshLock:  slowQueryThreshold / 4,
+		lockTTL:    slowQueryThreshold * 2,
+		freshLock:  slowQueryThreshold / 2,
 	}
+	// freshLock < executeTTL < lockTTL
 
 	d.metrics = NewMetrics()
 

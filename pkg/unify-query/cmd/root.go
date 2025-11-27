@@ -15,7 +15,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/cache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/middleware/cache"
 	"github.com/google/gops/agent"
 	"github.com/spf13/cobra"
 

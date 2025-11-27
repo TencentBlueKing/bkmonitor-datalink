@@ -1,6 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/sliwebhook
 
-go 1.21
+go 1.21.0
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000

@@ -106,6 +106,9 @@ var Set = func(ctx context.Context, key, val string, expiration time.Duration) (
 	return res.Result()
 }
 
+// SetNx sets key to hold string value if key does not exist.
+// - returns true if the key was set.
+// - returns false if the key was not set.(already exists)
 var SetNX = func(ctx context.Context, key, val string, expiration time.Duration) (bool, error) {
 	if key == "" {
 		key = globalInstance.serviceName
@@ -162,4 +165,22 @@ var Subscribe = func(ctx context.Context, channels ...string) (ch <-chan *goRedi
 		return p.Close()
 	}
 	return p.Channel(), close
+}
+
+var ExecLua = func(ctx context.Context, script *goRedis.Script, keys []string, args ...any) (any, error) {
+	log.Debugf(ctx, "[redis] exec lua %s", script)
+	res := script.Run(ctx, globalInstance.client, keys, args...)
+	return res.Result()
+}
+
+var Expire = func(ctx context.Context, key string, expiration time.Duration) (bool, error) {
+	log.Debugf(ctx, "[redis] expire %s", key)
+	res := globalInstance.client.Expire(ctx, key, expiration)
+	return res.Result()
+}
+
+var Publish = func(ctx context.Context, channel string, message any) (int64, error) {
+	log.Debugf(ctx, "[redis] publish %s", channel)
+	res := globalInstance.client.Publish(ctx, channel, message)
+	return res.Result()
 }

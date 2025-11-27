@@ -86,6 +86,11 @@ func setDefaultConfig() {
 	viper.SetDefault(QueryCacheMediumTermRetryConfigPath, "50ms")
 	viper.SetDefault(QueryCacheSumRetryConfigPath, 5)
 	viper.SetDefault(QueryCacheShortRetryConfigPath, 3)
+	viper.SetDefault(QueryCacheMaxInflightConfigPath, 10000)
+	viper.SetDefault(QueryCacheMaxFailuresConfigPath, 5)
+	viper.SetDefault(QueryCacheResetTimeoutConfigPath, "30s")
+	viper.SetDefault(QueryCacheDefaultLimitConfigPath, 10000)
+	viper.SetDefault(QueryCacheCircuitBreakerEnabledConfigPath, false)
 }
 
 // LoadConfig
@@ -117,6 +122,15 @@ func LoadConfig() {
 	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
 
 	QueryCacheEnabled = viper.GetBool(QueryCacheEnabledConfigPath)
+	QueryCacheShortTermRetry = viper.GetDuration(QueryCacheShortTermRetryConfigPath)
+	QueryCacheMediumTermRetry = viper.GetDuration(QueryCacheMediumTermRetryConfigPath)
+	QueryCacheSumRetry = viper.GetInt(QueryCacheSumRetryConfigPath)
+	QueryCacheShortRetry = viper.GetInt(QueryCacheShortRetryConfigPath)
+	QueryCacheMaxInflight = viper.GetInt(QueryCacheMaxInflightConfigPath)
+	QueryCacheMaxFailures = viper.GetInt(QueryCacheMaxFailuresConfigPath)
+	QueryCacheResetTimeout = viper.GetDuration(QueryCacheResetTimeoutConfigPath)
+	QueryCacheDefaultLimit = viper.GetInt64(QueryCacheDefaultLimitConfigPath)
+	QueryCacheCircuitBreakerEnabled = viper.GetBool(QueryCacheCircuitBreakerEnabledConfigPath)
 }
 
 // init

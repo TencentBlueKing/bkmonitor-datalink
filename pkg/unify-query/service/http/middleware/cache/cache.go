@@ -122,15 +122,15 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 		metrics.recordDBRequest("cache_miss")
 
 		dbStart := time.Now()
-		// 3.1.1 执行函数并通知等待者
+		// 2.1.1 执行函数并通知等待者
 		result, dbErr := d.runAndNotify(ctx, key, fn)
 		metrics.recordCacheDuration("db_query", time.Since(dbStart))
 
 		return result, dbErr
 	} else {
 		metrics.recordSingleflightDedup("cluster_waiter")
-		// 3.2 锁获取失败，成为 Cluster Waiter
-		// 3.2.1 进入等待循环
+		// 2.2 锁获取失败，成为 Cluster Waiter
+		// 2.2.1 进入等待循环
 		return d.waiterLoop(ctx, key)
 	}
 }
@@ -266,7 +266,7 @@ func (d *Service) initialize(ctx context.Context) error {
 	d.ctx = ctx
 	d.localCache = localCache
 	go d.ttlKeeper(ctx)
-	go d.notifyWatcher.run()
+	go d.notifyWatcher.subLoop(ctx)
 	return nil
 }
 

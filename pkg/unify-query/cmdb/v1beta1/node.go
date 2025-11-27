@@ -89,10 +89,10 @@ func (n *NodeBuilder) Clean() {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
-	n.index = 0
-	n.data = nil
-	n.reData = nil
-	n.info = nil
+	n.index = 1
+	n.data = make(map[uint64]uint64)
+	n.reData = make(map[uint64]uint64)
+	n.info = make(map[uint64]cmdb.Matcher)
 }
 
 func (n *NodeBuilder) Length() int {
@@ -142,44 +142,51 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 	}
 
 	indexes := ResourcesIndex(resourceType)
-	matcher := make(cmdb.Matcher, len(indexes))
+	if len(indexes) == 0 {
+		return 0, fmt.Errorf(ErrIndexNotMatchIndex, resourceType)
+	}
 
-	h := xxhash.New()
+	// 预分配固定大小的字节切片，避免重复分配
+	const maxKeyValueSize = 256
+	buf := make([]byte, 0, maxKeyValueSize*len(indexes))
 
 	for _, k := range indexes {
 		if _, ok := info[k]; !ok {
 			return 0, fmt.Errorf(ErrIndexNotMatchIndex, k)
 		}
-		matcher[k] = info[k]
 
-		// 写入键
-		_, _ = h.WriteString(k)
-		_, _ = h.Write([]byte{'='}) // 键值分隔符
-
-		// 写入值
-		_, _ = h.WriteString(info[k])
-		_, _ = h.Write([]byte{'|'}) // 键值对分隔符
+		// 直接写入字节切片，避免字符串转换
+		buf = append(buf, k...)
+		buf = append(buf, '=')
+		buf = append(buf, info[k]...)
+		buf = append(buf, '|')
 	}
-	hashID := h.Sum64()
+
+	// 使用更高效的哈希计算
+	hashID := xxhash.Sum64(buf)
 
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
+	// 检查缓存
 	if id, ok := n.data[hashID]; ok {
 		return id, nil
 	}
 
-	defer func() {
-		n.index++
-	}()
-
-	// 获取资源类型ID
+	// 创建新的节点ID
 	rtID := n.resource.id(resourceType)
-	// 将a和b拼接成uint64：前面16位用a，后面48位用b
 	finaID := (uint64(rtID) << 48) | (n.index & 0xFFFFFFFFFFFF)
+
+	// 创建matcher时复用info，避免复制
+	matcher := make(cmdb.Matcher, len(indexes))
+	for _, k := range indexes {
+		matcher[k] = info[k]
+	}
 
 	n.data[hashID] = finaID
 	n.reData[finaID] = hashID
 	n.info[finaID] = matcher
+	n.index++
+
 	return finaID, nil
 }

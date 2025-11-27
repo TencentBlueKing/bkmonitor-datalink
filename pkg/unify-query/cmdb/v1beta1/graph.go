@@ -23,7 +23,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -48,7 +47,7 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	defer q.lock.Unlock()
 
 	q.nodeBuilder.Clean()
-	q.timeGraph = nil
+	q.timeGraph = make(map[int64]graph.Graph[uint64, uint64])
 }
 
 func (q *TimeGraph) Stat() string {
@@ -66,18 +65,17 @@ func (q *TimeGraph) Stat() string {
 }
 
 func (q *TimeGraph) addNode(ctx context.Context, timestamp int64, ids ...uint64) error {
-	for _, id := range ids {
-		if q.timeGraph[timestamp] == nil {
-			q.timeGraph[timestamp] = graph.New(func(t uint64) uint64 {
-				return t
-			}, graph.Directed())
-		}
+	// 检查时间图是否存在，避免重复创建
+	if q.timeGraph[timestamp] == nil {
+		q.timeGraph[timestamp] = graph.New(func(t uint64) uint64 {
+			return t
+		}, graph.Directed())
+	}
 
+	for _, id := range ids {
+		// 添加节点，忽略已存在的节点
 		err := q.timeGraph[timestamp].AddVertex(id)
-		if err != nil {
-			if errors.Is(err, graph.ErrVertexAlreadyExists) {
-				continue
-			}
+		if err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
 			return err
 		}
 	}
@@ -94,9 +92,8 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 	if len(info) == 0 {
 		return nil
 	}
-	q.lock.Lock()
-	defer q.lock.Unlock()
 
+	// 先获取节点ID，避免在锁内进行复杂操作
 	sourceNode, err := q.nodeBuilder.GetID(source, info)
 	if err != nil {
 		return err
@@ -106,24 +103,18 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 		return err
 	}
 
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
 	for _, timestamp := range timestamps {
-		err := q.addNode(ctx, timestamp, sourceNode, targetNode)
+		err = q.addNode(ctx, timestamp, sourceNode, targetNode)
 		if err != nil {
 			return err
 		}
 
+		// 添加边，忽略已存在的边
 		err = q.timeGraph[timestamp].AddEdge(sourceNode, targetNode)
-
-		sourceType, sourceInfo := q.nodeBuilder.Info(sourceNode)
-		targetType, targetInfo := q.nodeBuilder.Info(targetNode)
-
-		log.Infof(ctx, "AddEdge: %s->%s %d %s:%v %s%v\n", source, target, timestamp, sourceType, sourceInfo, targetType, targetInfo)
-		if err != nil {
-			if errors.Is(err, graph.ErrEdgeAlreadyExists) {
-				log.Infof(ctx, "Edge already exists: %s->%s", source, target)
-				continue
-			}
-
+		if err != nil && !errors.Is(err, graph.ErrEdgeAlreadyExists) {
 			return err
 		}
 	}

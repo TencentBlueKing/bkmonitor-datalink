@@ -10,11 +10,16 @@
 package v1beta1
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestResourceType_IDAndName(t *testing.T) {
@@ -114,11 +119,9 @@ func TestNodeBuilder_Info(t *testing.T) {
 func TestNodeBuilder_IDStructure(t *testing.T) {
 	nb := NewNodeBuilder()
 
-	info := cmdb.Matcher{
-		"key": "value",
-	}
-
-	id, err := nb.GetID("test-resource", info)
+	id, err := nb.GetID("system", cmdb.Matcher{
+		"bk_target_ip": "127.0.0.1",
+	})
 	assert.NoError(t, err)
 
 	// 验证ID结构：前16位是资源类型ID，后48位是索引
@@ -129,10 +132,9 @@ func TestNodeBuilder_IDStructure(t *testing.T) {
 	assert.Equal(t, uint64(1), index)
 
 	// 测试第二个ID
-	info2 := cmdb.Matcher{
-		"key2": "value2",
-	}
-	id2, err := nb.GetID("test-resource", info2)
+	id2, err := nb.GetID("system", cmdb.Matcher{
+		"bk_target_ip": "127.0.0.2",
+	})
 	assert.NoError(t, err)
 	resourceTypeID2 := uint16(id2 >> 48)
 	index2 := id2 & 0xFFFFFFFFFFFF
@@ -144,25 +146,28 @@ func TestNodeBuilder_IDStructure(t *testing.T) {
 func TestNodeBuilder_ConcurrentAccess(t *testing.T) {
 	nb := NewNodeBuilder()
 
+	mock.Init()
+
 	// 并发测试
-	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	var wg sync.WaitGroup
+	num := 100
+	wg.Add(num)
+	for i := 0; i < num; i++ {
 		go func(index int) {
+			defer wg.Done()
 			info := cmdb.Matcher{
-				"index": string(rune(index)),
+				"bk_target_ip": fmt.Sprintf("ip_%d", index),
 			}
-			id, err := nb.GetID("concurrent", info)
+			id, err := nb.GetID("system", info)
 			assert.NoError(t, err)
 			_, retrievedInfo := nb.Info(id)
+			log.Infof(context.TODO(), "index: %d, id: %d, info: %+v", index, id, info)
 			assert.Equal(t, info, retrievedInfo)
-			done <- true
 		}(i)
 	}
 
 	// 等待所有goroutine完成
-	for i := 0; i < 10; i++ {
-		<-done
-	}
+	wg.Wait()
 }
 
 func TestResourceType_ConcurrentAccess(t *testing.T) {
@@ -190,19 +195,19 @@ func TestNodeBuilder_ResourceNodeInfo(t *testing.T) {
 	nb := NewNodeBuilder()
 
 	// 添加多个相同资源类型的节点
-	info1 := cmdb.Matcher{"ip": "127.0.0.1"}
-	info2 := cmdb.Matcher{"ip": "192.168.1.1"}
-	info3 := cmdb.Matcher{"ip": "10.0.0.1"}
+	info1 := cmdb.Matcher{"bk_target_ip": "127.0.0.1"}
+	info2 := cmdb.Matcher{"bk_target_ip": "192.168.1.1"}
+	info3 := cmdb.Matcher{"host_id": "10.0.0.1"}
 
-	_, err := nb.GetID("host", info1)
+	_, err := nb.GetID("system", info1)
 	assert.NoError(t, err)
-	_, err = nb.GetID("host", info2)
+	_, err = nb.GetID("system", info2)
 	assert.NoError(t, err)
-	_, err = nb.GetID("service", info3) // 不同资源类型
+	_, err = nb.GetID("host", info3) // 不同资源类型
 	assert.NoError(t, err)
 
 	// 获取host资源类型的所有节点信息
-	hostInfos := nb.ResourceNodeInfo("host")
+	hostInfos := nb.ResourceNodeInfo("system")
 	assert.Len(t, hostInfos, 2)
 	assert.Contains(t, hostInfos, info1)
 	assert.Contains(t, hostInfos, info2)
@@ -220,19 +225,19 @@ func TestNodeBuilder_Length(t *testing.T) {
 	assert.Equal(t, 0, nb.Length())
 
 	// 添加节点后长度增加
-	info := cmdb.Matcher{"key": "value"}
-	_, err := nb.GetID("test", info)
+	info := cmdb.Matcher{"host_id": "1"}
+	_, err := nb.GetID("host", info)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, nb.Length())
 
 	// 添加相同节点长度不变
-	_, err = nb.GetID("test", info)
+	_, err = nb.GetID("host", info)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, nb.Length())
 
 	// 添加不同节点长度增加
-	info2 := cmdb.Matcher{"key2": "value2"}
-	_, err = nb.GetID("test", info2)
+	info2 := cmdb.Matcher{"host_id": "2"}
+	_, err = nb.GetID("host", info2)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, nb.Length())
 }
@@ -241,8 +246,8 @@ func TestNodeBuilder_Clean(t *testing.T) {
 	nb := NewNodeBuilder()
 
 	// 添加一些节点
-	info := cmdb.Matcher{"key": "value"}
-	_, err := nb.GetID("test", info)
+	info := cmdb.Matcher{"host_id": "1"}
+	_, err := nb.GetID("host", info)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, nb.Length())
 
@@ -251,9 +256,9 @@ func TestNodeBuilder_Clean(t *testing.T) {
 	assert.Equal(t, 0, nb.Length())
 
 	// 清理后Info方法应返回空值
-	id, err := nb.GetID("test", info)
+	id, err := nb.GetID("host", info)
 	assert.NoError(t, err)
 	resourceName, retrievedInfo := nb.Info(id)
-	assert.Equal(t, cmdb.Resource("test"), resourceName)
+	assert.Equal(t, cmdb.Resource("host"), resourceName)
 	assert.Equal(t, info, retrievedInfo)
 }

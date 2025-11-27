@@ -281,9 +281,9 @@ func getTimeGrap() *TimeGraph {
 		"namespace": "blueking",
 	}
 	relations := []cmdb.Relation{
-		{V: []cmdb.Resource{"pod", "container"}},
-		{V: []cmdb.Resource{"node", "pod"}},
-		{V: []cmdb.Resource{"node", "system"}},
+		{V: [2]cmdb.Resource{"pod", "container"}},
+		{V: [2]cmdb.Resource{"node", "pod"}},
+		{V: [2]cmdb.Resource{"node", "system"}},
 	}
 
 	ctx := metadata.InitHashID(context.Background())
@@ -365,9 +365,9 @@ func TestTimeGraph_MakeQueryTs(t *testing.T) {
 				"namespace": "blueking",
 			},
 			relations: []cmdb.Relation{
-				{V: []cmdb.Resource{"pod", "container"}},
-				{V: []cmdb.Resource{"node", "pod"}},
-				{V: []cmdb.Resource{"node", "system"}},
+				{V: [2]cmdb.Resource{"pod", "container"}},
+				{V: [2]cmdb.Resource{"node", "pod"}},
+				{V: [2]cmdb.Resource{"node", "system"}},
 			},
 			expected: []string{
 				`count by (bcs_cluster_id, container, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace="blueking",pod!=""}[5m]))`,

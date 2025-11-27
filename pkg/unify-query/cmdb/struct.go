@@ -35,14 +35,10 @@ type Resource string
 
 // Relation 两点关联路径
 type Relation struct {
-	V []Resource
+	V [2]Resource
 }
 
 func (r Relation) Info() (Resource, Resource, string) {
-	if len(r.V) != 2 {
-		return "", "", ""
-	}
-
 	source, target := r.V[0], r.V[1]
 	resources := []string{string(source), string(target)}
 	sort.Strings(resources)

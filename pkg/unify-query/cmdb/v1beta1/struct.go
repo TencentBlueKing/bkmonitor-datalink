@@ -18,7 +18,7 @@ type ResourceConf struct {
 }
 
 type RelationConf struct {
-	Resources []cmdb.Resource `json:"resources"`
+	Resources [2]cmdb.Resource `json:"resources"`
 }
 
 type Config struct {

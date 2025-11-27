@@ -196,138 +196,145 @@ var configData = &Config{
 	},
 	Relation: []RelationConf{
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"node", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"node", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"job", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"container", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "replicaset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "statefulset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"deamonset", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"deployment", "replicaset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"datasource", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"datasource", "node",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"ingress", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"k8s_address", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"domain", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service_instance", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service_instance", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service", "apm_service_instance",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"bklogconfig", "datasource",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"business", "set",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"module", "set",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"host", "module",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"host", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "host",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "container",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "git_commit",
 			},
 		},
 	},
 }
 
-var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+var (
+	resourceConfig = make(map[cmdb.Resource]ResourceConf)
+	relations      []cmdb.Relation
+)
 
 func init() {
 	for _, c := range configData.Resource {
 		resourceConfig[c.Name] = c
+	}
+	relations = make([]cmdb.Relation, 0, len(configData.Relation))
+	for _, r := range configData.Relation {
+		relations = append(relations, cmdb.Relation{V: r.Resources})
 	}
 }
 
@@ -351,4 +358,8 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 
 func AllResources() map[cmdb.Resource]ResourceConf {
 	return resourceConfig
+}
+
+func AllRelations() []cmdb.Relation {
+	return relations
 }

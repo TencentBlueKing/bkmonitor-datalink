@@ -44,7 +44,7 @@ func (q *QueryFactory) pathParser(p []string) (cmdb.Path, error) {
 
 	path := make(cmdb.Path, 0, len(p)-1)
 	for i := 0; i < len(p)-1; i++ {
-		v := []cmdb.Resource{cmdb.Resource(p[i]), cmdb.Resource(p[i+1])}
+		v := [2]cmdb.Resource{cmdb.Resource(p[i]), cmdb.Resource(p[i+1])}
 		path = append(path, cmdb.Relation{
 			V: v,
 		})

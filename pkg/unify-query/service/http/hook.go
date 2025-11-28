@@ -82,11 +82,7 @@ func setDefaultConfig() {
 
 	// cache
 	viper.SetDefault(QueryCacheEnabledConfigPath, true)
-	viper.SetDefault(QueryCacheMaxInflightConfigPath, 10000)
-	viper.SetDefault(QueryCacheMaxFailuresConfigPath, 5)
-	viper.SetDefault(QueryCacheResetTimeoutConfigPath, "30s")
 	viper.SetDefault(QueryCacheDefaultLimitConfigPath, 10000)
-	viper.SetDefault(QueryCacheCircuitBreakerEnabledConfigPath, false)
 }
 
 // LoadConfig
@@ -118,11 +114,6 @@ func LoadConfig() {
 	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
 
 	QueryCacheEnabled = viper.GetBool(QueryCacheEnabledConfigPath)
-	QueryCacheMaxInflight = viper.GetInt(QueryCacheMaxInflightConfigPath)
-	QueryCacheMaxFailures = viper.GetInt(QueryCacheMaxFailuresConfigPath)
-	QueryCacheResetTimeout = viper.GetDuration(QueryCacheResetTimeoutConfigPath)
-	QueryCacheDefaultLimit = viper.GetInt64(QueryCacheDefaultLimitConfigPath)
-	QueryCacheCircuitBreakerEnabled = viper.GetBool(QueryCacheCircuitBreakerEnabledConfigPath)
 }
 
 // init

@@ -74,15 +74,10 @@ const (
 	ScrollWindowTimeoutConfigPath      = "scroll.window_timeout"
 
 	// 查询缓存配置
-	QueryCacheEnabledConfigPath               = "http.query_cache.enabled"
-	QueryCacheSkipPathsConfigPath             = "http.query_cache.skip_paths"
-	QueryCacheSkipMethodsConfigPath           = "http.query_cache.skip_methods"
-	QueryCacheMaxInflightConfigPath           = "http.query_cache.max_inflight"
-	QueryCacheMaxFailuresConfigPath           = "http.query_cache.max_failures"
-	QueryCacheResetTimeoutConfigPath          = "http.query_cache.reset_timeout"
-	QueryCacheDefaultLimitConfigPath          = "http.query_cache.default_limit"
-	QueryCacheCircuitBreakerEnabledConfigPath = "http.query_cache.circuit_breaker.enabled"
-
+	QueryCacheEnabledConfigPath      = "http.query_cache.enabled"
+	QueryCacheSkipPathsConfigPath    = "http.query_cache.skip_paths"
+	QueryCacheSkipMethodsConfigPath  = "http.query_cache.skip_methods"
+	QueryCacheDefaultLimitConfigPath = "http.query_cache.default_limit"
 	// 集群指标查询配置
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
@@ -119,10 +114,5 @@ var (
 	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
 
-	QueryCacheEnabled               bool
-	QueryCacheMaxInflight           int
-	QueryCacheMaxFailures           int
-	QueryCacheResetTimeout          time.Duration
-	QueryCacheDefaultLimit          int64
-	QueryCacheCircuitBreakerEnabled bool
+	QueryCacheEnabled bool
 )

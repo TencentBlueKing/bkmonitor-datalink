@@ -18,8 +18,9 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 
 	t.Run("SingleKeySubscription", func(t *testing.T) {
 		sidecar := &Service{
-			ctx:       context.Background(),
-			waiterMap: sync.Map{},
+			ctx:        context.Background(),
+			waiterMap:  make(map[string]*WaitGroupValue),
+			waiterLock: sync.RWMutex{},
 		}
 
 		testKey := "single_test_key"
@@ -57,8 +58,9 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 
 	t.Run("MultipleKeysAwakening", func(t *testing.T) {
 		sidecar := &Service{
-			ctx:       context.Background(),
-			waiterMap: sync.Map{},
+			ctx:        context.Background(),
+			waiterMap:  make(map[string]*WaitGroupValue),
+			waiterLock: sync.RWMutex{},
 		}
 
 		testKeys := []string{"key1", "key2", "key3"}

@@ -41,6 +41,7 @@ require (
 	github.com/prometheus/common v0.48.0
 	github.com/prometheus/prometheus v0.42.0
 	github.com/samber/lo v1.51.0
+	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.15.0

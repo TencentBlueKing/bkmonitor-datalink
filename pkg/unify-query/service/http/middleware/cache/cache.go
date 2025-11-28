@@ -37,8 +37,6 @@ type Service struct {
 	conf Config
 
 	localCache *ristretto.Cache
-	metrics    *Metrics
-	resilience *ResilienceManager
 
 	winnerMap  map[string]string
 	winnerLock sync.RWMutex
@@ -72,45 +70,18 @@ func (d *Service) setCacheToLocal(key string, value interface{}) {
 
 func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() (interface{}, error)) (interface{}, error) {
 	lockKey := cacheKeyMap(lockKeyType, key)
-	metrics := d.metrics
 
-	var l2Result interface{}
-	var l2Err error
-
-	err := d.resilience.ExecuteWithProtection(ctx, func() error {
-		l2Start := time.Now()
-		l2Result, l2Err = d.getFromDistributedCache(ctx, key)
-		metrics.recordCacheDuration("l2_read", time.Since(l2Start))
-		return l2Err
-	})
-
-	if err == nil && l2Err == nil {
-		metrics.recordCacheRequest("l2", "hit")
-		d.setCacheToLocal(key, l2Result)
-		return l2Result, nil
+	l2Result, l2Err := d.getFromDistributedCache(ctx, key)
+	if l2Err != nil {
+		return nil, l2Err
 	}
+	d.setCacheToLocal(key, l2Result)
 
-	if !d.resilience.IsRedisAvailable() {
-		metrics.recordCacheRequest("l2", "circuit_open")
-		metrics.recordDBRequest("redis_downgrade")
-		return doQuery()
-	}
-
-	metrics.recordCacheRequest("l2", "miss")
-
-	var acquired bool
 	// 1. 尝试从Redis获取分布式锁
-	err = d.resilience.ExecuteWithProtection(ctx, func() error {
-		lockStart := time.Now()
-		acq, lockErr := redis.SetNX(ctx, lockKey, locked, d.conf.lockTTL)
-		acquired = acq
-		metrics.recordCacheDuration("lock_acquire", time.Since(lockStart))
-		return lockErr
-	})
-
-	if err != nil {
-		metrics.recordCacheError("redis_setnx", "lock_error")
-		return nil, err
+	acquired, lockErr := redis.SetNX(ctx, lockKey, locked, d.conf.lockTTL)
+	if lockErr != nil {
+		log.Warnf(ctx, "failed to acquire distributed lock for key %s: %v", lockKey, lockErr)
+		return nil, lockErr
 	}
 
 	if acquired {
@@ -124,17 +95,12 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 			delete(d.winnerMap, key)
 			d.winnerLock.Unlock()
 		}()
-		metrics.recordSingleflightDedup("cluster_winner")
-		metrics.recordDBRequest("cache_miss")
 
-		dbStart := time.Now()
 		// 2.1.1 执行函数并通知等待者
 		result, dbErr := d.runAndNotify(ctx, key, doQuery)
-		metrics.recordCacheDuration("db_query", time.Since(dbStart))
 
 		return result, dbErr
 	} else {
-		metrics.recordSingleflightDedup("cluster_waiter")
 		// 2.2 锁获取失败，成为 Cluster Waiter
 		// 2.2.1 进入等待循环
 		return d.waiterLoop(ctx, key)
@@ -259,13 +225,6 @@ func (d *Service) initialize(ctx context.Context) error {
 	}
 	// freshLock < executeTTL < lockTTL
 
-	d.metrics = NewMetrics()
-
-	maxInflight := viper.GetInt(http.QueryCacheMaxInflightConfigPath)
-	maxFailures := viper.GetInt(http.QueryCacheMaxFailuresConfigPath)
-	resetTimeout := viper.GetDuration(http.QueryCacheResetTimeoutConfigPath)
-	d.resilience = NewResilienceManager(maxInflight, maxFailures, resetTimeout, d.metrics)
-
 	d.ctx = ctx
 	d.localCache = localCache
 	d.winnerMap = make(map[string]string)
@@ -280,21 +239,12 @@ func (d *Service) Do(key string, fn func() (interface{}, error)) (interface{}, e
 }
 
 func (d *Service) do(key string, doQuery func() (interface{}, error)) (interface{}, error) {
-	startTime := time.Now()
-	metrics := d.metrics
-
-	l1Start := time.Now()
 	// 1. 尝试从本地缓存获取
 	if val, found := d.getCacheFromLocal(key); found {
-		metrics.recordCacheRequest("l1", "hit")
-		metrics.recordCacheDuration("l1_read", time.Since(l1Start))
 		return val, nil
 	}
-	metrics.recordCacheRequest("l1", "miss")
 	// 2. 尝试从分布式缓存获取
 	result, err := d.doDistributed(d.ctx, key, doQuery)
-	metrics.recordCacheDuration("total_wait", time.Since(startTime))
-
 	return result, err
 }
 
@@ -417,32 +367,22 @@ func (d *Service) getCachedResponse(c *gin.Context, key string) *CachedResponse 
 	// 直接从 L1 缓存查询
 	if val, found := d.getCacheFromLocal(dataKey); found {
 		if cachedResp, ok := val.(*CachedResponse); ok {
-			d.metrics.recordCacheRequest("l1", "hit")
 			return cachedResp
 		}
-		d.metrics.recordCacheRequest("l1", "error")
 	}
 
-	d.metrics.recordCacheRequest("l1", "miss")
-
 	ctx := c.Request.Context()
-	l2Start := time.Now()
 	result, err := d.getFromDistributedCache(ctx, dataKey)
-	d.metrics.recordCacheDuration("l2_read", time.Since(l2Start))
 
 	if err != nil {
 		// 缓存未命中
-		d.metrics.recordCacheRequest("l2", "miss")
 		return nil
 	}
 
 	cachedResp, ok := result.(*CachedResponse)
 	if !ok {
-		d.metrics.recordCacheRequest("l2", "error")
 		return nil
 	}
-
-	d.metrics.recordCacheRequest("l2", "hit")
 
 	// 回填 L1 缓存
 	d.setCacheToLocal(dataKey, cachedResp)

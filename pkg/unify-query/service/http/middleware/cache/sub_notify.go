@@ -69,16 +69,13 @@ func (d *Service) broadcastLocal(ctx context.Context, key string) {
 }
 
 func (d *Service) waitForNotify(ctx context.Context, key string) error {
-	start := time.Now()
 	timeoutCh := time.After(d.conf.executeTTL)
 	select {
 	// case:1  等待直到收到 channel 的关闭通知
 	case <-d.waitLoop(key):
-		d.metrics.recordCacheDuration("sidecar_wait", time.Since(start))
 		return nil
 	// case:2 超时处理
 	case <-timeoutCh:
-		d.metrics.recordSingleflightTimeout()
 		return fmt.Errorf("timeout waiting for cache notification: %s", key)
 	// case:3 上下文取消处理
 	case <-ctx.Done():

@@ -33,9 +33,7 @@ func testSetup(t *testing.T, limit int) (*Service, *miniredis.Miniredis) {
 	limitKey := cacheKeyMap(limitKeyType, "")
 	_, err = client.Set(ctx, limitKey, fmt.Sprintf("%d", limit), 0).Result()
 	require.NoError(t, err)
-
-	svc := &Service{}
-	err = svc.initialize(ctx)
+	svc, err := NewInstance(ctx)
 	require.NoError(t, err)
 
 	return svc, s

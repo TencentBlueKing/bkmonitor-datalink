@@ -5,14 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 	"github.com/dgraph-io/ristretto"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -23,9 +21,24 @@ const (
 	doneMsg = "done"
 )
 
+func initConf() Config {
+	slowQueryThreshold := viper.GetDuration("http.slow_query_threshold")
+	readTimeout := viper.GetDuration("http.read_timeout")
+	return Config{
+		executeTTL:   slowQueryThreshold,
+		payloadTTL:   readTimeout,
+		lockTTL:      slowQueryThreshold * 2,
+		freshLock:    slowQueryThreshold / 2,
+		skipMethods:  viper.GetStringSlice("http.query_cache.skip_methods"),
+		skipPaths:    viper.GetStringSlice("http.query_cache.skip_paths"),
+		bucketLimit:  viper.GetInt64("cache.bucket_limit"),
+		cacheEnabled: viper.GetBool("cache.enabled"),
+	}
+}
+
 func NewInstance(ctx context.Context) (*Service, error) {
 	service := &Service{}
-	err := service.initialize(ctx)
+	err := service.initialize(ctx, initConf())
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +65,11 @@ type Config struct {
 	// lockTTL 是分布式锁的 TTL
 	lockTTL time.Duration
 	// freshLock 是作为配置的锁的续期时间. 真实的刷新频率会是该值的一半
-	freshLock time.Duration
+	freshLock    time.Duration
+	skipMethods  []string
+	skipPaths    []string
+	bucketLimit  int64
+	cacheEnabled bool
 }
 
 type WaitGroupValue struct {
@@ -203,7 +220,7 @@ func (d *Service) getFromDistributedCache(ctx context.Context, key string) (inte
 	return res, err
 }
 
-func (d *Service) initialize(ctx context.Context) error {
+func (d *Service) initialize(ctx context.Context, conf Config) error {
 	localCache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters:        viper.GetInt64(memcache.RistrettoNumCountersPath),
 		MaxCost:            viper.GetInt64(memcache.RistrettoMaxCostPath),
@@ -214,15 +231,7 @@ func (d *Service) initialize(ctx context.Context) error {
 		return err
 	}
 
-	slowQueryThreshold := viper.GetDuration(http.SlowQueryThresholdConfigPath)
-	readTimeout := viper.GetDuration(http.ReadTimeOutConfigPath)
-
-	d.conf = Config{
-		executeTTL: slowQueryThreshold,
-		payloadTTL: readTimeout,
-		lockTTL:    slowQueryThreshold * 2,
-		freshLock:  slowQueryThreshold / 2,
-	}
+	d.conf = conf
 	// freshLock < executeTTL < lockTTL
 
 	d.ctx = ctx
@@ -271,25 +280,18 @@ func (w *responseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func isCacheEnabled() bool {
-	return viper.GetBool(http.QueryCacheEnabledConfigPath)
-}
-
-func isSkipMethod(method string) bool {
-	skipMethods := viper.GetStringSlice(http.QueryCacheSkipMethodsConfigPath)
-	method = strings.ToUpper(method)
-	for _, m := range skipMethods {
-		if method == strings.ToUpper(m) {
+func (d *Service) isSkipPath(path string) bool {
+	for _, skipPath := range d.conf.skipPaths {
+		if path == skipPath {
 			return true
 		}
 	}
 	return false
 }
 
-func isSkipPath(path string) bool {
-	skipPaths := viper.GetStringSlice(http.QueryCacheSkipPathsConfigPath)
-	for _, skipPath := range skipPaths {
-		if strings.HasPrefix(path, skipPath) {
+func (d *Service) isSkipMethod(method string) bool {
+	for _, skipMethod := range d.conf.skipMethods {
+		if method == skipMethod {
 			return true
 		}
 	}
@@ -299,17 +301,17 @@ func isSkipPath(path string) bool {
 // CacheMiddleware 返回缓存中间件
 func (d *Service) CacheMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !isCacheEnabled() {
+		if !d.conf.cacheEnabled {
 			c.Next()
 			return
 		}
 
-		if isSkipPath(c.Request.URL.Path) {
+		if d.isSkipPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
 
-		if isSkipMethod(c.Request.Method) {
+		if d.isSkipMethod(c.Request.Method) {
 			c.Next()
 			return
 		}

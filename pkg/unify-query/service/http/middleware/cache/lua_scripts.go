@@ -6,9 +6,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 )
 
 const (
@@ -52,12 +50,11 @@ func (d *Service) writeLimitedDistributedCache(ctx context.Context, dataKey stri
 	limitConfigKey := cacheKeyMap(limitKeyType, "")
 
 	timestamp := time.Now().UnixNano()
-	defaultLimit := viper.GetInt64(http.QueryCacheDefaultLimitConfigPath)
 
 	script := goRedis.NewScript(cacheWriteWithLimitScript)
 	// 2. 修复参数列表，使用正确的键名
 	_, err := redis.ExecLua(ctx, script, []string{redisDataKey, indexKey, limitConfigKey},
-		string(data), int(d.conf.payloadTTL.Seconds()), timestamp, defaultLimit)
+		string(data), int(d.conf.payloadTTL.Seconds()), timestamp, d.conf.bucketLimit)
 
 	if err != nil {
 		log.Errorf(ctx, "failed to execute cache write lua script for key %s: %v", dataKey, err)

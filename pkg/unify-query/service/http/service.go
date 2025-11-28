@@ -71,8 +71,7 @@ func (s *Service) Reload(ctx context.Context) {
 
 	gin.SetMode(gin.ReleaseMode)
 	s.g = gin.New()
-
-	cache, err := cache.NewInstance(ctx)
+	c, err := cache.NewInstance(ctx)
 	if err != nil {
 		log.Panicf(ctx, "failed to create cache instance for->[%s]", err)
 	}
@@ -87,7 +86,7 @@ func (s *Service) Reload(ctx context.Context) {
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
-		cache.CacheMiddleware(),
+		c.CacheMiddleware(),
 	)
 
 	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)

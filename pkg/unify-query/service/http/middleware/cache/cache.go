@@ -39,8 +39,11 @@ type Service struct {
 	localCache *ristretto.Cache
 	metrics    *Metrics
 	resilience *ResilienceManager
-	winnerMap  sync.Map
-	waiterMap  sync.Map
+
+	winnerMap  map[string]string
+	winnerLock sync.RWMutex
+	waiterMap  map[string]*WaitGroupValue
+	waiterLock sync.RWMutex
 }
 
 type Config struct {
@@ -52,6 +55,11 @@ type Config struct {
 	lockTTL time.Duration
 	// freshLock 是作为配置的锁的续期时间. 真实的刷新频率会是该值的一半
 	freshLock time.Duration
+}
+
+type WaitGroupValue struct {
+	mu       sync.Mutex
+	channels []chan struct{}
 }
 
 func (d *Service) getCacheFromLocal(key string) (interface{}, bool) {
@@ -107,9 +115,14 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 
 	if acquired {
 		// 2.1 锁获取成功，成为 Cluster Winner
-		d.winnerMap.Store(key, key)
+		d.winnerLock.Lock()
+		d.winnerMap[key] = key
+		d.winnerLock.Unlock()
+
 		defer func() {
-			d.winnerMap.Delete(key)
+			d.winnerLock.Lock()
+			delete(d.winnerMap, key)
+			d.winnerLock.Unlock()
 		}()
 		metrics.recordSingleflightDedup("cluster_winner")
 		metrics.recordDBRequest("cache_miss")
@@ -144,7 +157,7 @@ func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (
 	}
 
 	// 2. 回写缓存
-	err = d.writeDistributedCache(ctx, dataKey, bts)
+	err = d.writeLimitedDistributedCache(ctx, dataKey, bts)
 	if err != nil {
 		log.Warnf(ctx, "failed to write cache with limit control: %v", err)
 		return nil, err
@@ -182,12 +195,10 @@ func (d *Service) ttlKeeper(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			var lockKeys []string
-			d.winnerMap.Range(func(key, value interface{}) bool {
-				if keyStr, ok := key.(string); ok {
-					lockKeys = append(lockKeys, cacheKeyMap(lockKeyType, keyStr))
-				}
-				return true
-			})
+			d.winnerLock.RLock()
+			for keyStr := range d.winnerMap {
+				lockKeys = append(lockKeys, cacheKeyMap(lockKeyType, keyStr))
+			}
 
 			if len(lockKeys) > 0 {
 				client := redis.Client()
@@ -204,6 +215,7 @@ func (d *Service) ttlKeeper(ctx context.Context) {
 					log.Debugf(ctx, "successfully refreshed TTL for %d lock keys", len(lockKeys))
 				}
 			}
+			d.winnerLock.RUnlock()
 		case <-ctx.Done():
 			return
 		}
@@ -256,6 +268,8 @@ func (d *Service) initialize(ctx context.Context) error {
 
 	d.ctx = ctx
 	d.localCache = localCache
+	d.winnerMap = make(map[string]string)
+	d.waiterMap = make(map[string]*WaitGroupValue)
 	go d.ttlKeeper(ctx)
 	go d.subLoop(ctx)
 	return nil
@@ -291,7 +305,7 @@ type CachedResponse struct {
 	Body       []byte              `json:"body"`
 }
 
-type CachePayload struct {
+type Payload struct {
 	req     interface{}
 	spaceID string
 	path    string
@@ -456,7 +470,7 @@ func (d *Service) writeRemote(ctx context.Context, key string, cachedResp *Cache
 		return err
 	}
 
-	err = d.writeDistributedCache(ctx, cacheKey, bts)
+	err = d.writeLimitedDistributedCache(ctx, cacheKey, bts)
 	if err != nil {
 		return fmt.Errorf("failed to write cache with limit control: %w", err)
 	}

@@ -45,7 +45,7 @@ var (
 func generateCacheKey(c *gin.Context) (string, error) {
 	ctx := c.Request.Context()
 	user := metadata.GetUser(ctx)
-	payload := CachePayload{
+	payload := Payload{
 		req:     c.Request,
 		spaceID: user.SpaceUID,
 		path:    c.Request.URL.Path,

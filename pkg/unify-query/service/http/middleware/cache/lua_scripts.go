@@ -45,7 +45,7 @@ return 1
 `
 )
 
-func (d *Service) writeDistributedCache(ctx context.Context, dataKey string, data []byte) error {
+func (d *Service) writeLimitedDistributedCache(ctx context.Context, dataKey string, data []byte) error {
 	// 1. 生成正确的Redis键名
 	redisDataKey := cacheKeyMap(dataKeyType, dataKey)
 	indexKey := cacheKeyMap(indexKeyType, "")

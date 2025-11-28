@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -45,21 +44,26 @@ func (d *Service) subLoop(ctx context.Context) {
 }
 
 func (d *Service) broadcastLocal(ctx context.Context, key string) {
+	d.waiterLock.Lock()
+	defer d.waiterLock.Unlock()
 	// 1. 从本地waiters中查找等待者
-	if val, ok := d.waiterMap.LoadAndDelete(key); ok {
-		wg := val.(*WaitGroupValue)
+	if wg, ok := d.waiterMap[key]; ok {
+		// 2. 从map中删除，防止新的等待者加入
+		delete(d.waiterMap, key)
 
-		// 2. 使用once确保只广播一次
-		wg.once.Do(func() {
-			// 3. 关闭所有channel，唤醒等待的goroutine
-			channels := wg.relatedChannels()
-			for _, ch := range channels {
-				close(ch)
-			}
-			log.Debugf(ctx, "broadcasted to %d waiters for key: %s", len(channels), key)
-		})
+		// 3. 原子性地获取所有channels并标记为已广播
+		wg.mu.Lock()
+		channels := wg.channels
+		wg.channels = make([]chan struct{}, 0)
+		wg.mu.Unlock()
+
+		// 4. 关闭所有channel，唤醒等待的goroutine
+		for _, ch := range channels {
+			close(ch)
+		}
+		log.Debugf(ctx, "broadcasted to %d waiters for key: %s", len(channels), key)
 	} else {
-		// 4. 如果没有本地等待者，忽略此消息
+		// 5. 如果没有本地等待者，忽略此消息
 		log.Debugf(ctx, "no local waiters for key: %s, ignoring message", key)
 	}
 }
@@ -83,16 +87,20 @@ func (d *Service) waitForNotify(ctx context.Context, key string) error {
 }
 
 func (d *Service) waitLoop(key string) <-chan struct{} {
-	ch := make(chan struct{})
+	d.waiterLock.Lock()
+	defer d.waiterLock.Unlock()
 
-	// 1. 尝试加载现有的等待组，如果不存在则创建新的
-	if val, loaded := d.waiterMap.LoadOrStore(key, &WaitGroupValue{
-		channels: []chan struct{}{ch},
-		once:     sync.Once{},
-	}); loaded {
-		// 2. 如果key已存在，将当前channel添加到现有等待组
-		wg := val.(*WaitGroupValue)
-		wg.addChannel(ch)
+	ch := make(chan struct{})
+	var wg *WaitGroupValue
+
+	if rev, exists := d.waiterMap[key]; !exists {
+		wg = &WaitGroupValue{
+			channels: []chan struct{}{ch},
+		}
+		d.waiterMap[key] = wg
+	} else {
+		wg = rev
+		wg.channels = append(wg.channels, ch)
 	}
 
 	return ch

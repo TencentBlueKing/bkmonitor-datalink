@@ -1,13 +1,13 @@
 package cache
 
 import (
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/gin-gonic/gin"
+	"github.com/spaolacci/murmur3"
 )
 
 const (
@@ -42,7 +42,7 @@ var (
 	}
 )
 
-func generateCacheKey(c *gin.Context) string {
+func generateCacheKey(c *gin.Context) (string, error) {
 	ctx := c.Request.Context()
 	user := metadata.GetUser(ctx)
 	payload := CachePayload{
@@ -51,16 +51,21 @@ func generateCacheKey(c *gin.Context) string {
 		path:    c.Request.URL.Path,
 	}
 
-	pStr, _ := json.Marshal(payload)
-	return fmt.Sprintf("%x", md5.Sum(pStr))
+	pStr, err := json.Marshal(payload)
+	return hash(pStr), err
+}
+
+func hash(key []byte) string {
+	hasher := murmur3.New128()
+	result := hasher.Sum(key)
+	return string(result)
 }
 
 func cacheKeyMap(key string, subject string) string {
 	if format, ok := trans[key]; ok {
 		return fmt.Sprintf(format, subject)
-	} else {
-		return ""
 	}
+	return ""
 }
 
 func subscribeAll() string {

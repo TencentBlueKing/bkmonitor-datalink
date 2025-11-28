@@ -43,13 +43,6 @@ end
 
 return 1
 `
-
-	// Redis Lua 脚本：获取当前缓存统计信息
-	cacheStatsScript = `
-local index_key = KEYS[1]
-local count = redis.call('ZCARD', index_key)
-return count
-`
 )
 
 func (d *Service) writeDistributedCache(ctx context.Context, dataKey string, data []byte) error {

@@ -154,6 +154,7 @@ func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (
 	_, err = redis.Publish(ctx, channelKey, doneMsg)
 	if err != nil {
 		log.Warnf(ctx, "failed to publish completion for key %s: %v", dataKey, err)
+		return nil, err
 	}
 
 	return result, nil
@@ -164,7 +165,7 @@ func (d *Service) waiterLoop(ctx context.Context, key string) (interface{}, erro
 	// 1.阻塞进入等待
 	err := d.waitForNotify(ctx, dataKey)
 	if err != nil {
-		log.Warnf(ctx, "run wait timeout for key %s,with error: %v", dataKey, err)
+		log.Warnf(ctx, "cache wait timeout for key %s,with error: %v", dataKey, err)
 		// 2. 如果遇到报错，直接返回错误
 		return nil, err
 	}
@@ -371,7 +372,12 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		cacheKey := generateCacheKey(c)
+		cacheKey, err := generateCacheKey(c)
+		if err != nil {
+			log.Warnf(c.Request.Context(), "failed to generate cache key: %v", err)
+			c.AbortWithError(400, fmt.Errorf("failed to generate cache key: %v", err))
+			return
+		}
 		result, err := d.do(cacheKey, func() (interface{}, error) {
 			return doQuery(cacheKey, c)
 		})

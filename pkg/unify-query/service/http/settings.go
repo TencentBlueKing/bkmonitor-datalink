@@ -120,10 +120,6 @@ var (
 	ScrollSliceLimit         int
 
 	QueryCacheEnabled               bool
-	QueryCacheShortTermRetry        time.Duration
-	QueryCacheMediumTermRetry       time.Duration
-	QueryCacheSumRetry              int
-	QueryCacheShortRetry            int
 	QueryCacheMaxInflight           int
 	QueryCacheMaxFailures           int
 	QueryCacheResetTimeout          time.Duration

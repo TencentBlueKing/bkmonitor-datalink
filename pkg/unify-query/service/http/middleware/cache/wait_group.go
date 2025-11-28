@@ -9,6 +9,14 @@ type WaitGroupValue struct {
 	once     sync.Once
 }
 
+// Reset reinitializes the WaitGroupValue for reuse.
+func (wgv *WaitGroupValue) reset() {
+	wgv.mu.Lock()
+	defer wgv.mu.Unlock()
+	wgv.channels = nil
+	wgv.once = sync.Once{}
+}
+
 func (wgv *WaitGroupValue) addChannel(ch chan struct{}) {
 	wgv.mu.Lock()
 	defer wgv.mu.Unlock()

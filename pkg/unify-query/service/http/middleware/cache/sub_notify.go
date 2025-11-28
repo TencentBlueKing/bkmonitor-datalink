@@ -132,10 +132,10 @@ func (d *Service) waitLoop(ctx context.Context, key string) <-chan struct{} {
 			channels: []chan struct{}{ch},
 		}
 		d.waiterMap[key] = wg
-		existWaiter = false
 	} else {
 		wg = rev
 		wg.channels = append(wg.channels, ch)
+		existWaiter = true
 	}
 
 	span.Set("exist-waiter", existWaiter)

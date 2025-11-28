@@ -82,7 +82,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 
 	qp := metadata.GetQueryParams(ctx)
 	for _, qList := range query.QueryList {
-		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid)
+		tsDBs := query.TsDBMap[qList.ReferenceName]
+		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid, tsDBs)
 		if err != nil {
 			return nil, err
 		}
@@ -92,14 +93,14 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, qp.Start, qp.End)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgQueryTs,
 						"查询失败",
 					).Error(ctx, err)
 					continue
 				}
 				if res.Err != "" {
-					return nil, fmt.Errorf(res.Err)
+					return nil, errors.New(res.Err)
 				}
 				tables := influxdb.NewTables()
 				for _, result := range res.Results {
@@ -176,7 +177,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
 		if message.Len() > 0 {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgQueryRaw,
 				"查询原始数据报错",
 			).Error(ctx, errors.New(message.String()))
@@ -326,7 +327,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
-					err = metadata.Sprintf(
+					err = metadata.NewMessage(
 						metadata.MsgQueryRaw,
 						"查询实例为空",
 					).Error(ctx, nil)
@@ -371,7 +372,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	// 先获取分布式锁，是否正在使用中
 	err = session.Start(ctx)
 	if err != nil {
-		return 0, nil, nil, true, metadata.Sprintf(
+		return 0, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"下载已经触发，请稍后重试",
 		).Error(ctx, err)
@@ -384,7 +385,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return 0, nil, nil, true, metadata.Sprintf(
+		return 0, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"查询参数配置异常",
 		).Error(ctx, err)
@@ -400,7 +401,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		}
 
 		if msg.Len() > 0 {
-			err = metadata.Sprintf(
+			err = metadata.NewMessage(
 				metadata.MsgQueryRawScroll,
 				"下载接口调用失败",
 			).Error(ctx, errors.New(msg.String()))
@@ -438,7 +439,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				newQry := &metadata.Query{}
 				if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
-					errCh <- metadata.Sprintf(
+					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
 						"查询失败",
 					).Error(ctx, copyErr)
@@ -469,7 +470,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
-					errCh <- metadata.Sprintf(
+					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
 						"查询实例为空",
 					).Error(ctx, nil)
@@ -502,7 +503,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				resultTableOptions.SetOption(newQry.TableUUID(), option)
 			}); submitErr != nil {
-				errCh <- metadata.Sprintf(
+				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"提交查询任务失败",
 				).Error(ctx, submitErr)
@@ -818,7 +819,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 			pointsNum++
 		}
 	default:
-		err = metadata.Sprintf(
+		err = metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"data type wrong: %T", v,
 		).Error(ctx, nil)
@@ -850,7 +851,7 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 
 	promQL, err := query.ToPromQL(ctx)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"转换结构体异常",
 		).Error(ctx, err)
@@ -972,7 +973,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 
 	err = query.ToTime(ctx)
 	if err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"查询失败",
 		).Error(ctx, err)

@@ -23,7 +23,7 @@ import (
 func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgParserDoris,
 				"Doris 语法解析异常",
 			).Error(ctx, fmt.Errorf("%v", r))
@@ -70,7 +70,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
 	defer func() {
 		if r := recover(); r != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgParserDoris,
 				"Doris 语法解析",
 			).Error(ctx, fmt.Errorf("%v", r))

@@ -183,6 +183,7 @@ var FieldType = map[string]string{
 	"b":                        "keyword",
 	"level":                    "keyword",
 	"dtEventTimeStamp":         "date",
+	"dtEventTimeStampNanos":    "date",
 	"events":                   "nested",
 	"events.name":              "keyword",
 	"group":                    "keyword",
@@ -211,7 +212,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 		d, ok := Es.Get(string(body))
 		if !ok {
-			return w, metadata.Sprintf(
+			return w, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"es mock data is empty in %s",
 				body,
@@ -221,10 +222,11 @@ func mockElasticSearchHandler(ctx context.Context) {
 		return w, err
 	}
 
-	index := `{"es_index":{"settings":{"analysis":{"analyzer":{"my_custom_analyzer":{"type":"custom","tokenizer":"my_char_group_tokenizer","filter":["lowercase"]}},"tokenizer":{"my_char_group_tokenizer":{"type":"char_group","tokenize_on_chars":["-","\n"," "],"max_token_length":512}}}},"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
+	index := `{"es_index":{"settings":{"analysis":{"analyzer":{"my_custom_analyzer":{"type":"custom","tokenizer":"my_char_group_tokenizer","filter":["lowercase"]}},"tokenizer":{"my_char_group_tokenizer":{"type":"char_group","tokenize_on_chars":["-","\n"," "],"max_token_length":512}}}},"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"dtEventTimeStampNanos":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
 	indexResp := httpmock.NewStringResponder(http.StatusOK, index)
 	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index", indexResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index", indexResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index_1", indexResp)
 
 	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", indexResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", indexResp)
@@ -234,6 +236,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index_1/_search", searchHandler)
 
 	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search?scroll=5m", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search?scroll=5m", searchHandler)
@@ -262,7 +265,7 @@ func mockInfluxDBHandler(ctx context.Context) {
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			return w, metadata.Sprintf(
+			return w, metadata.NewMessage(
 				metadata.MsgQueryInfluxDB,
 				"influxdb mock data is empty in %s",
 				key,
@@ -297,7 +300,7 @@ func mockBKBaseHandler(ctx context.Context) {
 		if request.PreferStorage != "vm" {
 			d, ok := BkSQL.Get(request.Sql)
 			if !ok {
-				return w, metadata.Sprintf(
+				return w, metadata.NewMessage(
 					metadata.MsgQueryBKSQL,
 					"bk sql mock data is empty in %s",
 					request.Sql,

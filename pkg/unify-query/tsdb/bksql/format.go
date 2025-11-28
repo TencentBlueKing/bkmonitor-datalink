@@ -151,7 +151,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"构建数据格式异常",
 					).Error(f.ctx, err)
@@ -235,7 +235,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 				// 获取维度信息
 				val, err := getValue(k, nd)
 				if err != nil {
-					_ = metadata.Sprintf(
+					_ = metadata.NewMessage(
 						metadata.MsgTableFormat,
 						"获取维度信息异常",
 					).Error(f.ctx, err)
@@ -250,7 +250,6 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 					Name:  k,
 					Value: val,
 				})
-
 			}
 		}
 
@@ -258,7 +257,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vtLong = f.start.UnixMilli()
 		}
 
-		vt = cast.ToInt64(vtLong)
+		// 遇到 json.Number 类型，需要先转换成 float64 之后再转换成 int64，不然就会失败
+		vt = cast.ToInt64(cast.ToFloat64(vtLong))
 		vv = cast.ToFloat64(vvDouble)
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
@@ -307,7 +307,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 		ms := f.timeAggregate.Window.Milliseconds()
 
-		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/ms*ms - f.timeAggregate.OffsetMillis
+		startMilli := (f.start.UnixMilli()-f.timeAggregate.OffsetMillis)/ms*ms + f.timeAggregate.OffsetMillis
 		start = time.UnixMilli(startMilli)
 		end = f.end
 

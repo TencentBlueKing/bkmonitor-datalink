@@ -14,7 +14,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt"
+	jwt "github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -148,7 +148,7 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 				}
 
 				res := gin.H{
-					"error": metadata.Sprintf(
+					"error": metadata.NewMessage(
 						metadata.MsgHandlerAPI,
 						"jwt auth unauthorized (app_code: %s, space_uid: %s)",
 						appCode, spaceUID,

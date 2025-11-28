@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -173,9 +172,8 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	var (
-		window       time.Duration
-		offsetMillis int64
-		timezone     string
+		window         time.Duration
+		timeZoneOffset int64
 	)
 
 	// 时间和值排序属于内置字段，默认需要支持
@@ -209,23 +207,27 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		if agg.Window > 0 {
 			window = agg.Window
-			timezone = agg.TimeZone
+			timeZoneOffset = agg.TimeZoneOffset
 		}
 	}
 
+	// 回传时间聚合信息
+	timeAggregate = TimeAggregate{
+		Window:       window,
+		OffsetMillis: timeZoneOffset,
+	}
+
 	if window > 0 {
-		if function.IsAlignTime(window) {
-			// 时间聚合函数兼容时区
-			loc, locErr := time.LoadLocation(timezone)
-			if locErr != nil {
-				loc = time.UTC
-			}
-			// 获取时区偏移量
-			_, offset := time.Now().In(loc).Zone()
-			offsetMillis = int64(offset) * 1e3
+		fh1 := "+"
+		fh2 := "-"
+		if timeZoneOffset > 0 {
+			fh1 = "-"
+			fh2 = "+"
+		} else {
+			timeZoneOffset *= -1
 		}
 
-		timeField := fmt.Sprintf("(FLOOR((%s + %d) / %d) * %d - %d)", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
+		timeField := fmt.Sprintf("(FLOOR((%s %s %d) / %d) * %d %s %d)", d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 
 		groupByFields = append(groupByFields, timeField)
 		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
@@ -279,12 +281,6 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			ascName = "DESC"
 		}
 		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))
-	}
-
-	// 回传时间聚合信息
-	timeAggregate = TimeAggregate{
-		Window:       window,
-		OffsetMillis: offsetMillis,
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err

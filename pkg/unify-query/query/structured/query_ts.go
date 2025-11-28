@@ -40,6 +40,8 @@ const (
 )
 
 type QueryTs struct {
+	// TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
+	TsDBMap map[string]TsDBs `json:"tsdb_map,omitempty"`
 	// SpaceUid 空间ID
 	SpaceUid string `json:"space_uid,omitempty"`
 	// QueryList 查询实例
@@ -205,8 +207,8 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
 		}
-
-		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
+		tsDBs := q.TsDBMap[query.ReferenceName]
+		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, tsDBs)
 		if err != nil {
 			return nil, err
 		}
@@ -321,7 +323,7 @@ func (q *QueryTs) ToPromExpr(
 	)
 
 	if q.MetricMerge == "" {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式配置不能为空",
 		).Error(ctx, err)
@@ -329,7 +331,7 @@ func (q *QueryTs) ToPromExpr(
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		return nil, metadata.Sprintf(
+		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式 %s 解析失败",
 			q.MetricMerge,
@@ -525,7 +527,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
-func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.QueryMetric, error) {
+func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
 	var (
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
@@ -545,6 +547,22 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	aggregates, err = q.Aggregates()
 	if err != nil {
 		return nil, err
+	}
+
+	// 注入时区和时区偏移，用于聚合处理
+	var timeZoneOffset int64
+	qp := metadata.GetQueryParams(ctx)
+	if qp.Timezone != "" && qp.Timezone != "UTC" {
+		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
+		// 不同时区对齐时间的差值
+		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
+	}
+	for idx, agg := range aggregates {
+		if agg.Window > 0 {
+			agg.TimeZone = qp.Timezone
+			agg.TimeZoneOffset = timeZoneOffset
+			aggregates[idx] = agg
+		}
 	}
 
 	allConditions, err := q.Conditions.AnalysisConditions()
@@ -593,7 +611,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 		if route.DB() == "" {
-			return nil, metadata.Sprintf(metadata.MsgQueryBKSQL,
+			return nil, metadata.NewMessage(metadata.MsgQueryBKSQL,
 				"bkdata 的表名不能为空",
 			).Error(ctx, nil)
 		}
@@ -644,40 +662,25 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
 	}
-
-	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:      spaceUid,
-		TableID:       tableID,
-		FieldName:     metricName,
-		IsRegexp:      q.IsRegexp,
-		AllConditions: allConditions,
-		IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
-		IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
-		IsSkipField:   isSkipField,
-	})
-	if err != nil {
-		return nil, err
+	if len(tsDBs) == 0 {
+		tsDBs, err = GetTsDBList(ctx, &TsDBOption{
+			SpaceUid:      spaceUid,
+			TableID:       tableID,
+			FieldName:     metricName,
+			IsRegexp:      q.IsRegexp,
+			AllConditions: allConditions,
+			IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
+			IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
+			IsSkipField:   isSkipField,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	span.Set("tsdb-num", len(tsDBs))
-
-	// 注入时区和时区偏移，用于聚合处理
-	var timeZoneOffset int64
-	qp := metadata.GetQueryParams(ctx)
-	if qp.Timezone != "" && qp.Timezone != "UTC" {
-		utcAlignStart := function.TimeOffset(qp.Start, "UTC", qp.Step)
-		// 不同时区对齐时间的差值
-		timeZoneOffset = qp.AlignStart.UnixMilli() - utcAlignStart.UnixMilli()
-	}
-	for idx, agg := range aggregates {
-		if agg.Window > 0 {
-			agg.TimeZone = qp.Timezone
-			agg.TimeZoneOffset = timeZoneOffset
-			aggregates[idx] = agg
-		}
-	}
 
 	// 构建 query map 使得相同的 storage 可以进行合并查询
 	queryMap := make(map[string]*metadata.Query)
@@ -832,7 +835,7 @@ func (q *Query) BuildMetadataQuery(
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
 		if err != nil {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgParserUnifyQuery,
 				"offset %s 格式异常 %s",
 				q.Offset, err.Error(),
@@ -1070,7 +1073,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
-			return nil, metadata.Sprintf(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"step %s 解析失败",
 				q.Step,
@@ -1146,7 +1149,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			}
 			method := q.AggregateMethodList[methodIdx]
 			if result, err = method.ToProm(result); err != nil {
-				return nil, metadata.Sprintf(
+				return nil, metadata.NewMessage(
 					metadata.MsgQueryTs,
 					"查询失败",
 				).Error(ctx, err)

@@ -36,7 +36,7 @@ func TestInstance_getAlias(t *testing.T) {
 		Timeout: time.Minute,
 	})
 	if err != nil {
-		log.Panicf(ctx, err.Error())
+		log.Panicf(ctx, "%s", err.Error())
 	}
 
 	for name, c := range map[string]struct {

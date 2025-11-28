@@ -209,12 +209,18 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		}
 	}
 
+	// 回传时间聚合信息
+	timeAggregate = TimeAggregate{
+		Window:       window,
+		OffsetMillis: timeZoneOffset,
+	}
+
 	if window > 0 {
-		fh_1 := "+"
-		fh_2 := "-"
+		fh1 := "+"
+		fh2 := "-"
 		if timeZoneOffset > 0 {
-			fh_1 = "-"
-			fh_2 = "+"
+			fh1 = "-"
+			fh2 = "+"
 		} else {
 			timeZoneOffset *= -1
 		}
@@ -223,9 +229,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		var timeField string
 		if int64(window.Seconds())%60 == 0 {
 			windowMinutes := int(window.Minutes())
-			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh_1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh_2, timeZoneOffset/6e4)
+			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh2, timeZoneOffset/6e4)
 		} else {
-			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh_1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh_2, timeZoneOffset)
+			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		}
 
 		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
@@ -289,12 +295,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			ascName = "DESC"
 		}
 		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))
-	}
-
-	// 回传时间聚合信息
-	timeAggregate = TimeAggregate{
-		Window:       window,
-		OffsetMillis: timeZoneOffset,
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err

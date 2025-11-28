@@ -82,7 +82,7 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
-			metadata.Sprintf(
+			metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询实例为空",
 			).Warn(ctx)
@@ -204,7 +204,7 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		create: func() (s storage.SeriesSet, ok bool) {
 			set, ok := <-promise
 			if set.Err() != nil {
-				err := metadata.Sprintf(
+				err := metadata.NewMessage(
 					metadata.MsgQueryTs,
 					"查询异常",
 				).Error(q.ctx, set.Err())
@@ -243,7 +243,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
-			_ = metadata.Sprintf(
+			_ = metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询异常",
 			).Error(q.ctx, err)

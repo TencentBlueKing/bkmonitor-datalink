@@ -176,7 +176,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			endTs := cast.ToString(qry.EndTs)
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
-				d.Message = metadata.Sprintf(
+				d.Message = metadata.NewMessage(
 					metadata.MsgQueryRelation,
 					"关联数据查询异常",
 				).Error(ctx, err).Error()

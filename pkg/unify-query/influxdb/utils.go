@@ -22,20 +22,20 @@ import (
 func CheckSQLInject(ctx context.Context, sql string) error {
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		return metadata.Sprintf(
+		return metadata.NewMessage(
 			metadata.MsgParserSQL,
 			"InfluxQL 语法解析",
 		).Error(ctx, err)
 	}
 
 	if len(query.Statements) != 1 {
-		return metadata.Sprintf(
+		return metadata.NewMessage(
 			metadata.MsgParserSQL,
 			"InfluxQL 语法解析",
 		).Error(ctx, fmt.Errorf("语句数量应为1个，实际为%d个", len(query.Statements)))
 	}
 	if _, ok := query.Statements[0].(*influxql.SelectStatement); !ok {
-		return metadata.Sprintf(
+		return metadata.NewMessage(
 			metadata.MsgParserSQL,
 			"InfluxQL 语法解析",
 		).Error(ctx, fmt.Errorf("非SELECT语句，禁止执行"))

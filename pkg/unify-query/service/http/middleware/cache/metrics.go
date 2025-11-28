@@ -180,22 +180,3 @@ func (m *Metrics) updateSidecarQueueLength(length float64) {
 func (m *Metrics) recordSingleflightTimeout() {
 	m.singleflightTimeouts.Inc()
 }
-
-func (d *Service) do(key string, fn func() (interface{}, error)) (interface{}, error) {
-	startTime := time.Now()
-	metrics := d.metrics
-
-	l1Start := time.Now()
-	// 1. 尝试从本地缓存获取
-	if val, found := d.getCacheFromLocal(key); found {
-		metrics.recordCacheRequest("l1", "hit")
-		metrics.recordCacheDuration("l1_read", time.Since(l1Start))
-		return val, nil
-	}
-	metrics.recordCacheRequest("l1", "miss")
-	// 2. 尝试从redis获取
-	result, err := d.doDistributed(d.ctx, key, fn)
-	metrics.recordCacheDuration("total_wait", time.Since(startTime))
-
-	return result, err
-}

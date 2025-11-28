@@ -10,12 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
-type NotifyWatcher struct {
-	// waiters 保存本地等待者信息：key -> *WaitGroupValue
-	waiters sync.Map
-}
-
-func (s *NotifyWatcher) subLoop(ctx context.Context) {
+func (d *Service) subLoop(ctx context.Context) {
 	channelName := subscribeAll()
 	// 1. 监听channel
 	msgCh, closeFn := redis.Subscribe(ctx, channelName)
@@ -42,16 +37,16 @@ func (s *NotifyWatcher) subLoop(ctx context.Context) {
 				key := extractKeyFromChannel(msg.Channel)
 				if key != "" {
 					// 3.2 广播给本地等待者
-					s.broadcastLocal(ctx, key)
+					d.broadcastLocal(ctx, key)
 				}
 			}
 		}
 	}
 }
 
-func (s *NotifyWatcher) broadcastLocal(ctx context.Context, key string) {
+func (d *Service) broadcastLocal(ctx context.Context, key string) {
 	// 1. 从本地waiters中查找等待者
-	if val, ok := s.waiters.LoadAndDelete(key); ok {
+	if val, ok := d.waiterMap.LoadAndDelete(key); ok {
 		wg := val.(*WaitGroupValue)
 
 		// 2. 使用once确保只广播一次
@@ -70,15 +65,11 @@ func (s *NotifyWatcher) broadcastLocal(ctx context.Context, key string) {
 }
 
 func (d *Service) waitForNotify(ctx context.Context, key string) error {
-	if d.notifyWatcher == nil {
-		return fmt.Errorf("run not initialized")
-	}
-
 	start := time.Now()
 	timeoutCh := time.After(d.conf.executeTTL)
 	select {
 	// case:1  等待直到收到 channel 的关闭通知
-	case <-d.notifyWatcher.waitLoop(key):
+	case <-d.waitLoop(key):
 		d.metrics.recordCacheDuration("sidecar_wait", time.Since(start))
 		return nil
 	// case:2 超时处理
@@ -91,11 +82,11 @@ func (d *Service) waitForNotify(ctx context.Context, key string) error {
 	}
 }
 
-func (s *NotifyWatcher) waitLoop(key string) <-chan struct{} {
+func (d *Service) waitLoop(key string) <-chan struct{} {
 	ch := make(chan struct{})
 
 	// 1. 尝试加载现有的等待组，如果不存在则创建新的
-	if val, loaded := s.waiters.LoadOrStore(key, &WaitGroupValue{
+	if val, loaded := d.waiterMap.LoadOrStore(key, &WaitGroupValue{
 		channels: []chan struct{}{ch},
 		once:     sync.Once{},
 	}); loaded {

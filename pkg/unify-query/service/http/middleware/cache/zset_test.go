@@ -59,7 +59,7 @@ func TestZSet_LRU_Eviction(t *testing.T) {
 		dataKey := fmt.Sprintf("test_key_%d", i)
 		testData := fmt.Sprintf(`{"value": "data_%d"}`, i)
 
-		err := svc.writeRemoteCache(ctx, dataKey, []byte(testData))
+		err := svc.writeDistributedCache(ctx, dataKey, []byte(testData))
 		require.NoError(t, err)
 		dataKeys[i] = dataKey
 		time.Sleep(sleepTime) // 确保时间戳不同

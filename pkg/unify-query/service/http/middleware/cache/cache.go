@@ -3,7 +3,6 @@ package cache
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 	"github.com/dgraph-io/ristretto"
@@ -38,11 +36,11 @@ type Service struct {
 	ctx  context.Context
 	conf Config
 
-	localCache    *ristretto.Cache
-	notifyWatcher *NotifyWatcher
-	metrics       *Metrics
-	resilience    *ResilienceManager
-	winnerMap     sync.Map
+	localCache *ristretto.Cache
+	metrics    *Metrics
+	resilience *ResilienceManager
+	winnerMap  sync.Map
+	waiterMap  sync.Map
 }
 
 type Config struct {
@@ -64,7 +62,7 @@ func (d *Service) setCacheToLocal(key string, value interface{}) {
 	d.localCache.SetWithTTL(key, value, 1, d.conf.payloadTTL)
 }
 
-func (d *Service) doDistributed(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
+func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() (interface{}, error)) (interface{}, error) {
 	lockKey := cacheKeyMap(lockKeyType, key)
 	metrics := d.metrics
 
@@ -73,7 +71,7 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 
 	err := d.resilience.ExecuteWithProtection(ctx, func() error {
 		l2Start := time.Now()
-		l2Result, l2Err = d.getFromCentreCache(ctx, key)
+		l2Result, l2Err = d.getFromDistributedCache(ctx, key)
 		metrics.recordCacheDuration("l2_read", time.Since(l2Start))
 		return l2Err
 	})
@@ -87,7 +85,7 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 	if !d.resilience.IsRedisAvailable() {
 		metrics.recordCacheRequest("l2", "circuit_open")
 		metrics.recordDBRequest("redis_downgrade")
-		return fn()
+		return doQuery()
 	}
 
 	metrics.recordCacheRequest("l2", "miss")
@@ -118,7 +116,7 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 
 		dbStart := time.Now()
 		// 2.1.1 执行函数并通知等待者
-		result, dbErr := d.runAndNotify(ctx, key, fn)
+		result, dbErr := d.runAndNotify(ctx, key, doQuery)
 		metrics.recordCacheDuration("db_query", time.Since(dbStart))
 
 		return result, dbErr
@@ -130,12 +128,12 @@ func (d *Service) doDistributed(ctx context.Context, key string, fn func() (inte
 	}
 }
 
-func (d *Service) runAndNotify(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
+func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (interface{}, error)) (interface{}, error) {
 	dataKey := cacheKeyMap(dataKeyType, key)
 	channelKey := cacheKeyMap(channelKeyType, key)
 
 	// 1. 执行函数获取结果
-	result, err := fn()
+	result, err := doQuery()
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +144,7 @@ func (d *Service) runAndNotify(ctx context.Context, key string, fn func() (inter
 	}
 
 	// 2. 回写缓存
-	err = d.writeRemoteCache(ctx, dataKey, bts)
+	err = d.writeDistributedCache(ctx, dataKey, bts)
 	if err != nil {
 		log.Warnf(ctx, "failed to write cache with limit control: %v", err)
 		return nil, err
@@ -171,7 +169,7 @@ func (d *Service) waiterLoop(ctx context.Context, key string) (interface{}, erro
 		return nil, err
 	}
 	// 3. 通知到达，读取缓存并返回
-	return d.getFromCentreCache(ctx, dataKey)
+	return d.getFromDistributedCache(ctx, dataKey)
 }
 
 func (d *Service) ttlKeeper(ctx context.Context) {
@@ -211,7 +209,7 @@ func (d *Service) ttlKeeper(ctx context.Context) {
 	}
 }
 
-func (d *Service) getFromCentreCache(ctx context.Context, key string) (interface{}, error) {
+func (d *Service) getFromDistributedCache(ctx context.Context, key string) (interface{}, error) {
 	cacheKey := cacheKeyMap(dataKeyType, key)
 	valStr, err := redis.Get(ctx, cacheKey)
 	if redis.IsNil(err) {
@@ -224,10 +222,6 @@ func (d *Service) getFromCentreCache(ctx context.Context, key string) (interface
 	var res interface{}
 	err = json.Unmarshal([]byte(valStr), &res)
 	return res, err
-}
-
-func (d *Service) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
-	return d.do(key, fn)
 }
 
 func (d *Service) initialize(ctx context.Context) error {
@@ -262,8 +256,31 @@ func (d *Service) initialize(ctx context.Context) error {
 	d.ctx = ctx
 	d.localCache = localCache
 	go d.ttlKeeper(ctx)
-	go d.notifyWatcher.subLoop(ctx)
+	go d.subLoop(ctx)
 	return nil
+}
+
+func (d *Service) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
+	return d.do(key, fn)
+}
+
+func (d *Service) do(key string, doQuery func() (interface{}, error)) (interface{}, error) {
+	startTime := time.Now()
+	metrics := d.metrics
+
+	l1Start := time.Now()
+	// 1. 尝试从本地缓存获取
+	if val, found := d.getCacheFromLocal(key); found {
+		metrics.recordCacheRequest("l1", "hit")
+		metrics.recordCacheDuration("l1_read", time.Since(l1Start))
+		return val, nil
+	}
+	metrics.recordCacheRequest("l1", "miss")
+	// 2. 尝试从分布式缓存获取
+	result, err := d.doDistributed(d.ctx, key, doQuery)
+	metrics.recordCacheDuration("total_wait", time.Since(startTime))
+
+	return result, err
 }
 
 type CachedResponse struct {
@@ -289,12 +306,10 @@ func (w *responseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// isCacheEnabled 检查缓存是否启用
 func isCacheEnabled() bool {
 	return viper.GetBool(http.QueryCacheEnabledConfigPath)
 }
 
-// isSkipMethod 检查是否跳过指定HTTP方法
 func isSkipMethod(method string) bool {
 	skipMethods := viper.GetStringSlice(http.QueryCacheSkipMethodsConfigPath)
 	method = strings.ToUpper(method)
@@ -306,7 +321,6 @@ func isSkipMethod(method string) bool {
 	return false
 }
 
-// isSkipPath 检查是否跳过指定路径
 func isSkipPath(path string) bool {
 	skipPaths := viper.GetStringSlice(http.QueryCacheSkipPathsConfigPath)
 	for _, skipPath := range skipPaths {
@@ -315,20 +329,6 @@ func isSkipPath(path string) bool {
 		}
 	}
 	return false
-}
-
-// generateCacheKey 生成缓存键
-func generateCacheKey(c *gin.Context) string {
-	ctx := c.Request.Context()
-	user := metadata.GetUser(ctx)
-	payload := CachePayload{
-		req:     c.Request,
-		spaceID: user.SpaceUID,
-		path:    c.Request.URL.Path,
-	}
-
-	pStr, _ := json.Marshal(payload)
-	return fmt.Sprintf("%x", md5.Sum(pStr))
 }
 
 // CacheMiddleware 返回缓存中间件
@@ -349,15 +349,45 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		cacheKey := generateCacheKey(c)
+		doQuery := func(key string, c *gin.Context) (interface{}, error) {
+			writer := &responseWriter{
+				ResponseWriter: c.Writer,
+				buffer:         bytes.NewBuffer(nil),
+			}
+			originWriter := c.Writer
+			c.Writer = writer
+			c.Next()
+			c.Writer = originWriter
+			isSuccess := c.Writer.Status() >= 200 && c.Writer.Status() < 300
+			if isSuccess {
+				return CachedResponse{
+					CacheKey:   key,
+					StatusCode: c.Writer.Status(),
+					Headers:    c.Writer.Header(),
+					Body:       writer.buffer.Bytes(),
+				}, nil
+			} else {
+				return nil, fmt.Errorf("non-success status code: %d", c.Writer.Status())
+			}
+		}
 
-		cachedResp := d.getCachedResponse(c, cacheKey)
-		if cachedResp != nil {
+		cacheKey := generateCacheKey(c)
+		result, err := d.do(cacheKey, func() (interface{}, error) {
+			return doQuery(cacheKey, c)
+		})
+
+		if err != nil {
+			log.Warnf(c.Request.Context(), "cache error: %v", err)
+			c.Next()
+			return
+		}
+
+		if cachedResp, ok := result.(*CachedResponse); ok {
 			d.serveCachedResponse(c, cachedResp)
 			return
 		}
 
-		d.execute(c, cacheKey)
+		c.Next()
 	}
 }
 
@@ -375,10 +405,9 @@ func (d *Service) getCachedResponse(c *gin.Context, key string) *CachedResponse 
 
 	d.metrics.recordCacheRequest("l1", "miss")
 
-	// 从 Redis 缓存查询 - 使用正确的键格式
 	ctx := c.Request.Context()
 	l2Start := time.Now()
-	result, err := d.getFromCentreCache(ctx, dataKey)
+	result, err := d.getFromDistributedCache(ctx, dataKey)
 	d.metrics.recordCacheDuration("l2_read", time.Since(l2Start))
 
 	if err != nil {
@@ -401,7 +430,6 @@ func (d *Service) getCachedResponse(c *gin.Context, key string) *CachedResponse 
 	return cachedResp
 }
 
-// serveCachedResponse 提供缓存的响应
 func (d *Service) serveCachedResponse(c *gin.Context, cachedResp *CachedResponse) {
 	for key, values := range cachedResp.Headers {
 		for _, value := range values {
@@ -414,52 +442,6 @@ func (d *Service) serveCachedResponse(c *gin.Context, cachedResp *CachedResponse
 	log.Debugf(c.Request.Context(), "cache hit for key: %s", cachedResp.CacheKey)
 }
 
-// execute 执行请求并缓存响应
-func (d *Service) execute(c *gin.Context, cacheKey string) {
-	writer := &responseWriter{
-		ResponseWriter: c.Writer,
-		buffer:         bytes.NewBuffer(nil),
-	}
-
-	c.Writer = writer
-
-	c.Next()
-
-	statusCode := c.Writer.Status()
-	isSuccessReq := statusCode >= 200 && statusCode < 300
-	if isSuccessReq {
-		cachedResp := &CachedResponse{
-			CacheKey:   cacheKey,
-			StatusCode: c.Writer.Status(),
-			Headers:    make(map[string][]string),
-			Body:       writer.buffer.Bytes(),
-		}
-
-		for key, values := range c.Writer.Header() {
-			cachedResp.Headers[key] = values
-		}
-
-		// 记录负载大小
-		payloadSize := float64(len(cachedResp.Body))
-		d.metrics.recordPayloadSize("http_response", payloadSize)
-
-		go func() {
-			ctx := c.Request.Context()
-			writeStart := time.Now()
-			err := d.writeRemote(ctx, cacheKey, cachedResp)
-			d.metrics.recordCacheDuration("l2_write", time.Since(writeStart))
-			if err != nil {
-				d.metrics.recordCacheError("l2_write", "write_error")
-				log.Errorf(ctx, "failed to cache response for key %s: %v", cacheKey, err)
-			}
-		}()
-
-		d.setCacheToLocal(cacheKey, cachedResp)
-
-		log.Debugf(c.Request.Context(), "cached response for key: %s", cacheKey)
-	}
-}
-
 func (d *Service) writeRemote(ctx context.Context, key string, cachedResp *CachedResponse) error {
 	cacheKey := cacheKeyMap(dataKeyType, key)
 	channelKey := cacheKeyMap(channelKeyType, key)
@@ -468,7 +450,7 @@ func (d *Service) writeRemote(ctx context.Context, key string, cachedResp *Cache
 		return err
 	}
 
-	err = d.writeRemoteCache(ctx, cacheKey, bts)
+	err = d.writeDistributedCache(ctx, cacheKey, bts)
 	if err != nil {
 		return fmt.Errorf("failed to write cache with limit control: %w", err)
 	}

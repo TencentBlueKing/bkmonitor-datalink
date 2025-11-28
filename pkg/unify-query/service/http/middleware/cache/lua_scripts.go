@@ -2,8 +2,6 @@ package cache
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -54,7 +52,7 @@ return count
 `
 )
 
-func (d *Service) writeRemoteCache(ctx context.Context, dataKey string, data []byte) error {
+func (d *Service) writeDistributedCache(ctx context.Context, dataKey string, data []byte) error {
 	// 1. 生成正确的Redis键名
 	redisDataKey := cacheKeyMap(dataKeyType, dataKey)
 	indexKey := cacheKeyMap(indexKeyType, "")
@@ -75,54 +73,4 @@ func (d *Service) writeRemoteCache(ctx context.Context, dataKey string, data []b
 
 	log.Debugf(ctx, "successfully wrote cache with limit control for key: %s", dataKey)
 	return nil
-}
-
-func (d *Service) GetCacheStats(ctx context.Context) (int64, error) {
-	// 1. 使用CacheKey生成系统索引键
-	indexKey := cacheKeyMap(indexKeyType, "")
-
-	script := goRedis.NewScript(cacheStatsScript)
-	result, err := redis.ExecLua(ctx, script, []string{indexKey})
-	if err != nil {
-		return 0, err
-	}
-
-	count, ok := result.(int64)
-	if !ok {
-		return 0, fmt.Errorf("unexpected result type from cache stats script: %T", result)
-	}
-
-	return count, nil
-}
-
-func (d *Service) SetCacheLimit(ctx context.Context, limit int64) error {
-	// 1. 使用CacheKey生成限制配置键
-	limitKey := cacheKeyMap(limitKeyType, "")
-
-	_, err := redis.Set(ctx, limitKey, fmt.Sprintf("%d", limit), 0) // 永久有效
-	if err != nil {
-		log.Errorf(ctx, "failed to set cache limit to %d: %v", limit, err)
-		return err
-	}
-
-	log.Infof(ctx, "successfully set cache limit to %d", limit)
-	return nil
-}
-
-func (d *Service) GetCacheLimit(ctx context.Context) (int64, error) {
-	// 1. 使用CacheKey生成限制配置键
-	limitKey := cacheKeyMap(limitKeyType, "")
-
-	result, err := redis.Get(ctx, limitKey)
-	if err != nil {
-		return viper.GetInt64(http.QueryCacheDefaultLimitConfigPath), nil
-	}
-
-	limit, err := strconv.ParseInt(result, 10, 64)
-	if err != nil {
-		log.Warnf(ctx, "failed to parse cache limit from Redis, using default: %v", err)
-		return viper.GetInt64(http.QueryCacheDefaultLimitConfigPath), nil
-	}
-
-	return limit, nil
 }

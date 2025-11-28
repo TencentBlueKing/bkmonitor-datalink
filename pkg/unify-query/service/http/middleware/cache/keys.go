@@ -1,8 +1,13 @@
 package cache
 
 import (
+	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -36,6 +41,19 @@ var (
 		channelKeyType: `dsg:chan:%s`,
 	}
 )
+
+func generateCacheKey(c *gin.Context) string {
+	ctx := c.Request.Context()
+	user := metadata.GetUser(ctx)
+	payload := CachePayload{
+		req:     c.Request,
+		spaceID: user.SpaceUID,
+		path:    c.Request.URL.Path,
+	}
+
+	pStr, _ := json.Marshal(payload)
+	return fmt.Sprintf("%x", md5.Sum(pStr))
+}
 
 func cacheKeyMap(key string, subject string) string {
 	if format, ok := trans[key]; ok {

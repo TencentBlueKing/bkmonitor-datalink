@@ -17,9 +17,9 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 	)
 
 	t.Run("SingleKeySubscription", func(t *testing.T) {
-		sidecar := &NotifyWatcher{
-			ctx:     context.Background(),
-			waiters: sync.Map{},
+		sidecar := &Service{
+			ctx:       context.Background(),
+			waiterMap: sync.Map{},
 		}
 
 		testKey := "single_test_key"
@@ -46,7 +46,7 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 		// 确保所有 waiter 都已启动并在等待
 		time.Sleep(100 * time.Millisecond)
 
-		sidecar.broadcastLocal(testKey)
+		sidecar.broadcastLocal(t.Context(), testKey)
 		wg.Wait()
 
 		// 验证：所有 10 个协程都被唤醒（无死锁）
@@ -56,9 +56,9 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 	})
 
 	t.Run("MultipleKeysAwakening", func(t *testing.T) {
-		sidecar := &NotifyWatcher{
-			ctx:     context.Background(),
-			waiters: sync.Map{},
+		sidecar := &Service{
+			ctx:       context.Background(),
+			waiterMap: sync.Map{},
 		}
 
 		testKeys := []string{"key1", "key2", "key3"}
@@ -91,7 +91,7 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 
 		// 模拟收到 Notify 信号，开始唤醒本地的waiter
 		for _, key := range testKeys {
-			sidecar.broadcastLocal(key)
+			sidecar.broadcastLocal(t.Context(), key)
 		}
 
 		wg.Wait()

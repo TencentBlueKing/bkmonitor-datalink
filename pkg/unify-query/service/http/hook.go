@@ -83,6 +83,8 @@ func setDefaultConfig() {
 	// cache
 	viper.SetDefault(QueryCacheEnabledConfigPath, true)
 	viper.SetDefault(QueryCacheDefaultLimitConfigPath, 10000)
+	viper.SetDefault(QueryCacheSkipPathsConfigPath, []string{})
+	viper.SetDefault(QueryCacheSkipMethodsConfigPath, []string{"PUT", "POST", "DELETE"})
 }
 
 // LoadConfig

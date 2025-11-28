@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,13 +26,15 @@ const (
 func initConf() Config {
 	slowQueryThreshold := viper.GetDuration("http.slow_query_threshold")
 	readTimeout := viper.GetDuration("http.read_timeout")
+	skipPaths := viper.GetStringSlice("http.query_cache.skip_paths")
+
 	return Config{
 		executeTTL:   slowQueryThreshold,
 		payloadTTL:   readTimeout,
 		lockTTL:      slowQueryThreshold * 2,
 		freshLock:    slowQueryThreshold / 2,
 		skipMethods:  viper.GetStringSlice("http.query_cache.skip_methods"),
-		skipPaths:    viper.GetStringSlice("http.query_cache.skip_paths"),
+		skipPaths:    skipPaths,
 		bucketLimit:  viper.GetInt64("cache.bucket_limit"),
 		cacheEnabled: viper.GetBool("cache.enabled"),
 	}
@@ -114,9 +118,7 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 		}()
 
 		// 2.1.1 执行函数并通知等待者
-		result, dbErr := d.runAndNotify(ctx, key, doQuery)
-
-		return result, dbErr
+		return d.runAndNotify(ctx, key, doQuery)
 	} else {
 		// 2.2 锁获取失败，成为 Cluster Waiter
 		// 2.2.1 进入等待循环
@@ -243,10 +245,6 @@ func (d *Service) initialize(ctx context.Context, conf Config) error {
 	return nil
 }
 
-func (d *Service) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
-	return d.do(key, fn)
-}
-
 func (d *Service) do(key string, doQuery func() (interface{}, error)) (interface{}, error) {
 	// 1. 尝试从本地缓存获取
 	if val, found := d.getCacheFromLocal(key); found {
@@ -280,13 +278,29 @@ func (w *responseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func (d *Service) isSkipPath(path string) bool {
-	for _, skipPath := range d.conf.skipPaths {
-		if path == skipPath {
+func skipPath(path string, skipPaths []string) bool {
+	for _, p := range skipPaths {
+		if path == p {
 			return true
+		}
+
+		if strings.Contains(p, "*") {
+			if matchWildcard(path, p) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func matchWildcard(path, pattern string) bool {
+	regexPattern := "^" + strings.ReplaceAll(regexp.QuoteMeta(pattern), "\\*", ".*") + "$"
+	matched, _ := regexp.MatchString(regexPattern, path)
+	return matched
+}
+
+func (d *Service) isSkipPath(path string) bool {
+	return skipPath(path, d.conf.skipPaths)
 }
 
 func (d *Service) isSkipMethod(method string) bool {
@@ -363,35 +377,6 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 	}
 }
 
-// getCachedResponse 获取缓存的响应
-func (d *Service) getCachedResponse(c *gin.Context, key string) *CachedResponse {
-	dataKey := cacheKeyMap(dataKeyType, key)
-	// 直接从 L1 缓存查询
-	if val, found := d.getCacheFromLocal(dataKey); found {
-		if cachedResp, ok := val.(*CachedResponse); ok {
-			return cachedResp
-		}
-	}
-
-	ctx := c.Request.Context()
-	result, err := d.getFromDistributedCache(ctx, dataKey)
-
-	if err != nil {
-		// 缓存未命中
-		return nil
-	}
-
-	cachedResp, ok := result.(*CachedResponse)
-	if !ok {
-		return nil
-	}
-
-	// 回填 L1 缓存
-	d.setCacheToLocal(dataKey, cachedResp)
-
-	return cachedResp
-}
-
 func (d *Service) serveCachedResponse(c *gin.Context, cachedResp *CachedResponse) {
 	for key, values := range cachedResp.Headers {
 		for _, value := range values {
@@ -402,25 +387,4 @@ func (d *Service) serveCachedResponse(c *gin.Context, cachedResp *CachedResponse
 	c.Status(cachedResp.StatusCode)
 	c.Writer.Write(cachedResp.Body)
 	log.Debugf(c.Request.Context(), "cache hit for key: %s", cachedResp.CacheKey)
-}
-
-func (d *Service) writeRemote(ctx context.Context, key string, cachedResp *CachedResponse) error {
-	cacheKey := cacheKeyMap(dataKeyType, key)
-	channelKey := cacheKeyMap(channelKeyType, key)
-	bts, err := json.Marshal(cachedResp)
-	if err != nil {
-		return err
-	}
-
-	err = d.writeLimitedDistributedCache(ctx, cacheKey, bts)
-	if err != nil {
-		return fmt.Errorf("failed to write cache with limit control: %w", err)
-	}
-
-	_, err = redis.Publish(ctx, channelKey, doneMsg)
-	if err != nil {
-		log.Warnf(ctx, "failed to publish completion for key %s: %v", cacheKey, err)
-	}
-
-	return nil
 }

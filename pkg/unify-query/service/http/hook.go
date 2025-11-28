@@ -79,6 +79,12 @@ func setDefaultConfig() {
 	viper.SetDefault(ScrollSliceLimitConfigPath, 10000)
 	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
 	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
+
+	// cache
+	viper.SetDefault(QueryCacheEnabledConfigPath, true)
+	viper.SetDefault(QueryCacheDefaultLimitConfigPath, 10000)
+	viper.SetDefault(QueryCacheSkipPathsConfigPath, []string{})
+	viper.SetDefault(QueryCacheSkipMethodsConfigPath, []string{"PUT", "POST", "DELETE"})
 }
 
 // LoadConfig
@@ -108,6 +114,8 @@ func LoadConfig() {
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
 	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
+
+	QueryCacheEnabled = viper.GetBool(QueryCacheEnabledConfigPath)
 }
 
 // init

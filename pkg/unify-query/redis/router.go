@@ -80,5 +80,26 @@ var GetSpace = func(ctx context.Context, spaceUid string) (Space, error) {
 }
 
 var SubscribeSpace = func(ctx context.Context) <-chan *redis.Message {
-	return Subscribe(ctx, globalInstance.serviceName)
+	inCh, closeFn := Subscribe(ctx, globalInstance.serviceName)
+	outCh := make(chan *redis.Message)
+	go func() {
+		defer closeFn()
+		defer close(outCh)
+		for {
+			select {
+			case msg, ok := <-inCh:
+				if !ok {
+					return
+				}
+				select {
+				case outCh <- msg:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return outCh
 }

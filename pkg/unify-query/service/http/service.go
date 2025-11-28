@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/middleware/cache"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
@@ -70,6 +71,10 @@ func (s *Service) Reload(ctx context.Context) {
 
 	gin.SetMode(gin.ReleaseMode)
 	s.g = gin.New()
+	c, err := cache.NewInstance(ctx)
+	if err != nil {
+		log.Panicf(ctx, "failed to create cache instance for->[%s]", err)
+	}
 
 	public := s.g.Group("/")
 	// 注册默认路由
@@ -81,6 +86,7 @@ func (s *Service) Reload(ctx context.Context) {
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
+		c.CacheMiddleware(),
 	)
 
 	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)

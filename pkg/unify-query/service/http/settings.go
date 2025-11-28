@@ -72,6 +72,12 @@ const (
 	ScrollSliceLimitConfigPath         = "scroll.slice_limit"
 	ScrollSessionLockTimeoutConfigPath = "scroll.session_lock_timeout"
 	ScrollWindowTimeoutConfigPath      = "scroll.window_timeout"
+
+	// 查询缓存配置
+	QueryCacheEnabledConfigPath      = "http.query_cache.enabled"
+	QueryCacheSkipPathsConfigPath    = "http.query_cache.skip_paths"
+	QueryCacheSkipMethodsConfigPath  = "http.query_cache.skip_methods"
+	QueryCacheDefaultLimitConfigPath = "http.query_cache.default_limit"
 	// 集群指标查询配置
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
@@ -107,4 +113,6 @@ var (
 	ScrollWindowTimeout      string
 	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
+
+	QueryCacheEnabled bool
 )

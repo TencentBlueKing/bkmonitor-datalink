@@ -47,6 +47,7 @@ func NewInstance(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Infof(ctx, "cache middleware initialized successfully")
 	return service, nil
 }
 

@@ -33,7 +33,7 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 			go func(index int) {
 				defer wg.Done()
 				// 都在等待同一个 key
-				ch := sidecar.waitLoop(testKey)
+				ch := sidecar.waitLoop(t.Context(), testKey)
 
 				select {
 				case <-ch:
@@ -74,7 +74,7 @@ func TestNotifyWatcher_Awakening(t *testing.T) {
 				wg.Add(1)
 				go func(waitKey string) {
 					defer wg.Done()
-					ch := sidecar.waitLoop(waitKey)
+					ch := sidecar.waitLoop(t.Context(), waitKey)
 
 					select {
 					case <-ch:

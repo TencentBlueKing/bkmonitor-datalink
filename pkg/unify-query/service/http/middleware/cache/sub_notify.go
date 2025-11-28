@@ -127,18 +127,23 @@ func (d *Service) waitLoop(ctx context.Context, key string) <-chan struct{} {
 	var wg *WaitGroupValue
 	rev, existWaiter := d.waiterMap[key]
 
-	if !existWaiter {
+	if !existWaiter || rev == nil {
 		wg = &WaitGroupValue{
 			channels: []chan struct{}{ch},
 		}
 		d.waiterMap[key] = wg
+		existWaiter = false
 	} else {
 		wg = rev
 		wg.channels = append(wg.channels, ch)
 	}
 
 	span.Set("exist-waiter", existWaiter)
-	span.Set("exist-waiter-count", len(rev.channels))
+	var channelsCount int
+	if rev != nil {
+		channelsCount = len(rev.channels)
+	}
+	span.Set("exist-waiter-count", channelsCount)
 
 	return ch
 }

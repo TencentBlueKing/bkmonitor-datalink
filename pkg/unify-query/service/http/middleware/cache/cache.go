@@ -13,6 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/dgraph-io/ristretto"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -89,21 +90,34 @@ func (d *Service) setCacheToLocal(key string, value interface{}) {
 	d.localCache.SetWithTTL(key, value, 1, d.conf.payloadTTL)
 }
 
-func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() (interface{}, error)) (interface{}, error) {
+func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() (interface{}, string, error)) (result interface{}, hit bool, err error) {
+	var (
+		acquired bool
+	)
+
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-do-distributed")
+	defer span.End(&err)
+
 	lockKey := cacheKeyMap(lockKeyType, key)
 
-	l2Result, l2Err := d.getFromDistributedCache(ctx, key)
-	if l2Err != nil {
-		return nil, l2Err
+	span.Set("lock-key", lockKey)
+
+	result, hit, err = d.getFromDistributedCache(ctx, key)
+	if err != nil {
+		return
 	}
-	d.setCacheToLocal(key, l2Result)
+	if hit {
+		d.setCacheToLocal(key, result)
+		return
+	}
 
 	// 1. 尝试从Redis获取分布式锁
-	acquired, lockErr := redis.SetNX(ctx, lockKey, locked, d.conf.lockTTL)
-	if lockErr != nil {
-		log.Warnf(ctx, "failed to acquire distributed lock for key %s: %v", lockKey, lockErr)
-		return nil, lockErr
+	acquired, err = redis.SetNX(ctx, lockKey, locked, d.conf.lockTTL)
+	if err != nil {
+		return
 	}
+
+	span.Set("distributed-lock-acquired", acquired)
 
 	if acquired {
 		// 2.1 锁获取成功，成为 Cluster Winner
@@ -118,22 +132,30 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 		}()
 
 		// 2.1.1 执行函数并通知等待者
-		return d.runAndNotify(ctx, key, doQuery)
+		result, err = d.runAndNotify(ctx, key, doQuery)
+		return
 	} else {
 		// 2.2 锁获取失败，成为 Cluster Waiter
 		// 2.2.1 进入等待循环
-		return d.waiterLoop(ctx, key)
+		result, err = d.runAndNotify(ctx, key, doQuery)
+		return
 	}
 }
 
-func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (interface{}, error)) (interface{}, error) {
+func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (interface{}, string, error)) (result interface{}, err error) {
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-run-and-notify")
+	defer span.End(&err)
+
 	dataKey := cacheKeyMap(dataKeyType, key)
 	channelKey := cacheKeyMap(channelKeyType, key)
 
+	span.Set("data-key", dataKey)
+	span.Set("channel-key", channelKey)
+
 	// 1. 执行函数获取结果
-	result, err := doQuery()
+	result, _, err = doQuery()
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	bts, err := json.Marshal(result)
@@ -148,6 +170,8 @@ func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (
 		return nil, err
 	}
 
+	span.Set("cache-written", true)
+
 	// 3. 通知等待者
 	_, err = redis.Publish(ctx, channelKey, doneMsg)
 	if err != nil {
@@ -155,20 +179,28 @@ func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (
 		return nil, err
 	}
 
+	span.Set("cache-notify-published", true)
+
 	return result, nil
 }
 
-func (d *Service) waiterLoop(ctx context.Context, key string) (interface{}, error) {
+func (d *Service) waiterLoop(ctx context.Context, key string) (result interface{}, err error) {
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-waiter-loop")
+	defer span.End(&err)
+
 	dataKey := cacheKeyMap(dataKeyType, key)
+
+	span.Set("data-key", dataKey)
+
 	// 1.阻塞进入等待
-	err := d.waitForNotify(ctx, dataKey)
+	err = d.waitForNotify(ctx, dataKey)
 	if err != nil {
-		log.Warnf(ctx, "cache wait timeout for key %s,with error: %v", dataKey, err)
-		// 2. 如果遇到报错，直接返回错误
-		return nil, err
+		return
 	}
 	// 3. 通知到达，读取缓存并返回
-	return d.getFromDistributedCache(ctx, dataKey)
+	result, _, err = d.getFromDistributedCache(ctx, dataKey)
+
+	return
 }
 
 func (d *Service) ttlKeeper(ctx context.Context) {
@@ -207,19 +239,42 @@ func (d *Service) ttlKeeper(ctx context.Context) {
 	}
 }
 
-func (d *Service) getFromDistributedCache(ctx context.Context, key string) (interface{}, error) {
+func (d *Service) getFromDistributedCache(ctx context.Context, key string) (result interface{}, hit bool, err error) {
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-get-distributed-cache")
+	defer span.End(&err)
 	cacheKey := cacheKeyMap(dataKeyType, key)
+
+	span.Set("data-key", cacheKey)
+
 	valStr, err := redis.Get(ctx, cacheKey)
-	if redis.IsNil(err) {
-		return nil, err
-	}
 	if err != nil {
-		return nil, err
+		// 如果是缓存未命中，则不返回错误
+		missing := redis.IsNil(err)
+		err = nil
+
+		if missing {
+			err = nil
+		}
+
+		return
+	}
+	if redis.IsNil(err) {
+		span.Set("hit-distributed", false)
+
+		// 缓存未命中
+		err = nil
+		return
 	}
 
-	var res interface{}
-	err = json.Unmarshal([]byte(valStr), &res)
-	return res, err
+	if err != nil {
+		return
+	}
+
+	span.Set("hit-distributed", true)
+	err = json.Unmarshal([]byte(valStr), &result)
+
+	hit = true
+	return
 }
 
 func (d *Service) initialize(ctx context.Context, conf Config) error {
@@ -245,14 +300,37 @@ func (d *Service) initialize(ctx context.Context, conf Config) error {
 	return nil
 }
 
-func (d *Service) do(key string, doQuery func() (interface{}, error)) (interface{}, error) {
+func (d *Service) do(ctx context.Context, key string, doQuery func() (interface{}, string, error)) (result interface{}, crossReason string, err error) {
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-do")
+	defer span.End(&err)
+
+	var (
+		hitLocal       bool
+		hitDistributed bool
+	)
+
 	// 1. 尝试从本地缓存获取
-	if val, found := d.getCacheFromLocal(key); found {
-		return val, nil
+	result, hitLocal = d.getCacheFromLocal(key)
+
+	span.Set("key", key)
+	span.Set("hit-local", hitLocal)
+
+	if hitLocal {
+		crossReason = crossByL1CacheHit
+		return
 	}
+
 	// 2. 尝试从分布式缓存获取
-	result, err := d.doDistributed(d.ctx, key, doQuery)
-	return result, err
+	result, hitDistributed, err = d.doDistributed(d.ctx, key, doQuery)
+	if err != nil {
+		return
+	}
+
+	if hitDistributed {
+		crossReason = crossByL2CacheHit
+	}
+
+	return
 }
 
 type CachedResponse struct {
@@ -312,25 +390,56 @@ func (d *Service) isSkipMethod(method string) bool {
 	return false
 }
 
+const (
+	crossByNotEnabled  = "cache-cross-by-not-enabled"
+	crossBySkipPath    = "cache-cross-by-skip-path"
+	crossBySkipMethod  = "cache-cross-by-skip-method"
+	crossByL1CacheHit  = "cache-cross-by-cache-l1-hit"
+	crossByL2CacheHit  = "cache-cross-by-cache-l2-hit"
+	crossByClientError = "cache-cross-by-client-error"
+	crossByServerError = "cache-cross-by-server-error"
+	crossBySuccess     = "cache-cross-by-success"
+)
+
 // CacheMiddleware 返回缓存中间件
 func (d *Service) CacheMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var (
+			result      interface{}
+			err         error
+			crossReason string
+		)
+
+		ctx, span := trace.NewSpan(c.Request.Context(), "cache-middleware")
+		defer span.End(&err)
+
+		defer func() {
+			span.Set("cache-middleware-cross-reason", crossReason)
+		}()
+
+		span.Set("cache-enabled", d.conf.cacheEnabled)
+		span.Set("cache-skip-path", d.conf.skipPaths)
+		span.Set("cache-skip-methods", d.conf.skipMethods)
+
 		if !d.conf.cacheEnabled {
+			crossReason = crossByNotEnabled
 			c.Next()
 			return
 		}
 
 		if d.isSkipPath(c.Request.URL.Path) {
+			crossReason = crossBySkipPath
 			c.Next()
 			return
 		}
 
 		if d.isSkipMethod(c.Request.Method) {
+			crossReason = crossBySkipMethod
 			c.Next()
 			return
 		}
 
-		doQuery := func(key string, c *gin.Context) (interface{}, error) {
+		doQuery := func(key string, c *gin.Context) (result interface{}, crossReason string, err error) {
 			writer := &responseWriter{
 				ResponseWriter: c.Writer,
 				buffer:         bytes.NewBuffer(nil),
@@ -341,29 +450,40 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 			c.Writer = originWriter
 			isSuccess := c.Writer.Status() >= 200 && c.Writer.Status() < 300
 			if isSuccess {
-				return CachedResponse{
+				result = CachedResponse{
 					CacheKey:   key,
 					StatusCode: c.Writer.Status(),
 					Headers:    c.Writer.Header(),
 					Body:       writer.buffer.Bytes(),
-				}, nil
+				}
+				crossReason = crossBySuccess
+				return
 			} else {
-				return nil, fmt.Errorf("non-success status code: %d", c.Writer.Status())
+				if c.Writer.Status() >= 400 && c.Writer.Status() < 500 {
+					crossReason = crossByClientError
+				}
+				if c.Writer.Status() >= 500 {
+					crossReason = crossByServerError
+				}
+
+				return
 			}
 		}
 
 		cacheKey, err := generateCacheKey(c)
 		if err != nil {
-			log.Warnf(c.Request.Context(), "failed to generate cache key: %v", err)
+			log.Warnf(ctx, "failed to generate cache key: %v", err)
 			c.AbortWithError(400, fmt.Errorf("failed to generate cache key: %v", err))
 			return
 		}
-		result, err := d.do(cacheKey, func() (interface{}, error) {
+
+		span.Set("cache-key", cacheKey)
+
+		result, crossReason, err = d.do(c.Request.Context(), cacheKey, func() (interface{}, string, error) {
 			return doQuery(cacheKey, c)
 		})
 
 		if err != nil {
-			log.Warnf(c.Request.Context(), "cache error: %v", err)
 			c.Next()
 			return
 		}
@@ -386,5 +506,4 @@ func (d *Service) serveCachedResponse(c *gin.Context, cachedResp *CachedResponse
 
 	c.Status(cachedResp.StatusCode)
 	c.Writer.Write(cachedResp.Body)
-	log.Debugf(c.Request.Context(), "cache hit for key: %s", cachedResp.CacheKey)
 }

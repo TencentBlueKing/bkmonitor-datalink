@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	goRedis "github.com/go-redis/redis/v8"
 )
 
@@ -43,24 +43,29 @@ return 1
 `
 )
 
-func (d *Service) writeLimitedDistributedCache(ctx context.Context, dataKey string, data []byte) error {
+func (d *Service) writeLimitedDistributedCache(ctx context.Context, dataKey string, data []byte) (err error) {
+	ctx, span := trace.NewSpan(ctx, "write-limited-distributed-cache")
+	defer span.End(&err)
+
 	// 1. 生成正确的Redis键名
 	redisDataKey := cacheKeyMap(dataKeyType, dataKey)
 	indexKey := cacheKeyMap(indexKeyType, "")
 	limitConfigKey := cacheKeyMap(limitKeyType, "")
-
 	timestamp := time.Now().UnixNano()
+
+	span.Set("data-key", redisDataKey)
+	span.Set("index-key", indexKey)
+	span.Set("limit-config-key", limitConfigKey)
+	span.Set("timestamp", timestamp)
 
 	script := goRedis.NewScript(cacheWriteWithLimitScript)
 	// 2. 修复参数列表，使用正确的键名
-	_, err := redis.ExecLua(ctx, script, []string{redisDataKey, indexKey, limitConfigKey},
+	_, err = redis.ExecLua(ctx, script, []string{redisDataKey, indexKey, limitConfigKey},
 		string(data), int(d.conf.payloadTTL.Seconds()), timestamp, d.conf.bucketLimit)
 
 	if err != nil {
-		log.Errorf(ctx, "failed to execute cache write lua script for key %s: %v", dataKey, err)
-		return err
+		return
 	}
 
-	log.Debugf(ctx, "successfully wrote cache with limit control for key: %s", dataKey)
-	return nil
+	return
 }

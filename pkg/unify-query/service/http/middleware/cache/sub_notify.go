@@ -7,10 +7,20 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func (d *Service) subLoop(ctx context.Context) {
+	var (
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-sub-loop")
+	defer span.End(&err)
+
 	channelName := subscribeAll()
+
+	span.Set("subscribe-channel", channelName)
+
 	// 1. 监听channel
 	msgCh, closeFn := redis.Subscribe(ctx, channelName)
 	if msgCh == nil {
@@ -34,6 +44,7 @@ func (d *Service) subLoop(ctx context.Context) {
 			if msg != nil {
 				// 3.1 从Redis频道名称中提取缓存key（使用keys.go中的通用函数）
 				key := extractKeyFromChannel(msg.Channel)
+				span.Set("key", key)
 				if key != "" {
 					// 3.2 广播给本地等待者
 					d.broadcastLocal(ctx, key)
@@ -44,10 +55,22 @@ func (d *Service) subLoop(ctx context.Context) {
 }
 
 func (d *Service) broadcastLocal(ctx context.Context, key string) {
+	var (
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-broadcast-local")
+	defer span.End(&err)
+
 	d.waiterLock.Lock()
 	defer d.waiterLock.Unlock()
 	// 1. 从本地waiters中查找等待者
-	if wg, ok := d.waiterMap[key]; ok {
+	wg, existWaiter := d.waiterMap[key]
+
+	span.Set("key", key)
+	span.Set("waiter-exist", existWaiter)
+	span.Set("waiter-exist-count", len(wg.channels))
+
+	if existWaiter {
 		// 2. 从map中删除，防止新的等待者加入
 		delete(d.waiterMap, key)
 
@@ -61,18 +84,21 @@ func (d *Service) broadcastLocal(ctx context.Context, key string) {
 		for _, ch := range channels {
 			close(ch)
 		}
-		log.Debugf(ctx, "broadcasted to %d waiters for key: %s", len(channels), key)
-	} else {
-		// 5. 如果没有本地等待者，忽略此消息
-		log.Debugf(ctx, "no local waiters for key: %s, ignoring message", key)
+
 	}
 }
 
-func (d *Service) waitForNotify(ctx context.Context, key string) error {
+func (d *Service) waitForNotify(ctx context.Context, key string) (err error) {
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-wait-notify")
+	defer span.End(&err)
+
 	timeoutCh := time.After(d.conf.executeTTL)
+
+	span.Set("time-out-duration", d.conf.executeTTL.String())
+
 	select {
 	// case:1  等待直到收到 channel 的关闭通知
-	case <-d.waitLoop(key):
+	case <-d.waitLoop(ctx, key):
 		return nil
 	// case:2 超时处理
 	case <-timeoutCh:
@@ -83,14 +109,25 @@ func (d *Service) waitForNotify(ctx context.Context, key string) error {
 	}
 }
 
-func (d *Service) waitLoop(key string) <-chan struct{} {
+func (d *Service) waitLoop(ctx context.Context, key string) <-chan struct{} {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "cache-middleware-wait-loop")
+	defer span.End(&err)
+
+	span.Set("key", key)
+
 	d.waiterLock.Lock()
 	defer d.waiterLock.Unlock()
 
 	ch := make(chan struct{})
-	var wg *WaitGroupValue
 
-	if rev, exists := d.waiterMap[key]; !exists {
+	var wg *WaitGroupValue
+	rev, existWaiter := d.waiterMap[key]
+
+	if !existWaiter {
 		wg = &WaitGroupValue{
 			channels: []chan struct{}{ch},
 		}
@@ -99,6 +136,9 @@ func (d *Service) waitLoop(key string) <-chan struct{} {
 		wg = rev
 		wg.channels = append(wg.channels, ch)
 	}
+
+	span.Set("exist-waiter", existWaiter)
+	span.Set("exist-waiter-count", len(rev.channels))
 
 	return ch
 }

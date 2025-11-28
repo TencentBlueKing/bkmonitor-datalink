@@ -25,15 +25,14 @@ const (
 )
 
 func initConf() Config {
-	slowQueryThreshold := viper.GetDuration("http.slow_query_threshold")
-	readTimeout := viper.GetDuration("http.read_timeout")
+	writeTimeout := viper.GetDuration("http.write_timeout")
 	skipPaths := viper.GetStringSlice("http.query_cache.skip_paths")
 
 	return Config{
-		executeTTL:   slowQueryThreshold,
-		payloadTTL:   readTimeout,
-		lockTTL:      slowQueryThreshold * 2,
-		freshLock:    slowQueryThreshold / 2,
+		executeTTL:   writeTimeout,
+		payloadTTL:   writeTimeout,
+		lockTTL:      writeTimeout * 2,
+		freshLock:    writeTimeout / 2,
 		skipMethods:  viper.GetStringSlice("http.query_cache.skip_methods"),
 		skipPaths:    skipPaths,
 		bucketLimit:  viper.GetInt64("cache.bucket_limit"),

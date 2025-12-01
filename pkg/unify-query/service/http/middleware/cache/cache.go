@@ -91,9 +91,7 @@ func (d *Service) setCacheToLocal(key string, value interface{}) {
 }
 
 func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() (interface{}, string, error)) (result interface{}, hit bool, err error) {
-	var (
-		acquired bool
-	)
+	var acquired bool
 
 	ctx, span := trace.NewSpan(ctx, "cache-middleware-do-distributed")
 	defer span.End(&err)
@@ -104,17 +102,17 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 
 	result, hit, err = d.getFromDistributedCache(ctx, key)
 	if err != nil {
-		return
+		return result, hit, err
 	}
 	if hit {
 		d.setCacheToLocal(key, result)
-		return
+		return result, hit, err
 	}
 
 	// 1. 尝试从Redis获取分布式锁
 	acquired, err = redis.SetNX(ctx, lockKey, locked, d.conf.lockTTL)
 	if err != nil {
-		return
+		return result, hit, err
 	}
 
 	span.Set("distributed-lock-acquired", acquired)
@@ -133,12 +131,12 @@ func (d *Service) doDistributed(ctx context.Context, key string, doQuery func() 
 
 		// 2.1.1 执行函数并通知等待者
 		result, err = d.runAndNotify(ctx, key, doQuery)
-		return
+		return result, hit, err
 	} else {
 		// 2.2 锁获取失败，成为 Cluster Waiter
 		// 2.2.1 进入等待循环
-		result, err = d.runAndNotify(ctx, key, doQuery)
-		return
+		result, err = d.waiterLoop(ctx, key)
+		return result, hit, err
 	}
 }
 
@@ -155,7 +153,7 @@ func (d *Service) runAndNotify(ctx context.Context, key string, doQuery func() (
 	// 1. 执行函数获取结果
 	result, _, err = doQuery()
 	if err != nil {
-		return
+		return result, err
 	}
 
 	bts, err := json.Marshal(result)
@@ -195,12 +193,12 @@ func (d *Service) waiterLoop(ctx context.Context, key string) (result interface{
 	// 1.阻塞进入等待
 	err = d.waitForNotify(ctx, dataKey)
 	if err != nil {
-		return
+		return result, err
 	}
 	// 3. 通知到达，读取缓存并返回
 	result, _, err = d.getFromDistributedCache(ctx, dataKey)
 
-	return
+	return result, err
 }
 
 func (d *Service) ttlKeeper(ctx context.Context) {
@@ -256,25 +254,25 @@ func (d *Service) getFromDistributedCache(ctx context.Context, key string) (resu
 			err = nil
 		}
 
-		return
+		return result, hit, err
 	}
 	if redis.IsNil(err) {
 		span.Set("hit-distributed", false)
 
 		// 缓存未命中
 		err = nil
-		return
+		return result, hit, err
 	}
 
 	if err != nil {
-		return
+		return result, hit, err
 	}
 
 	span.Set("hit-distributed", true)
 	err = json.Unmarshal([]byte(valStr), &result)
 
 	hit = true
-	return
+	return result, hit, err
 }
 
 func (d *Service) initialize(ctx context.Context, conf Config) error {
@@ -317,20 +315,20 @@ func (d *Service) do(ctx context.Context, key string, doQuery func() (interface{
 
 	if hitLocal {
 		crossReason = crossByL1CacheHit
-		return
+		return result, crossReason, err
 	}
 
 	// 2. 尝试从分布式缓存获取
 	result, hitDistributed, err = d.doDistributed(d.ctx, key, doQuery)
 	if err != nil {
-		return
+		return result, crossReason, err
 	}
 
 	if hitDistributed {
 		crossReason = crossByL2CacheHit
 	}
 
-	return
+	return result, crossReason, err
 }
 
 type CachedResponse struct {
@@ -457,7 +455,7 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 					Body:       writer.buffer.Bytes(),
 				}
 				crossReason = crossBySuccess
-				return
+				return result, crossReason, err
 			} else {
 				if c.Writer.Status() >= 400 && c.Writer.Status() < 500 {
 					crossReason = crossByClientError
@@ -466,7 +464,7 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 					crossReason = crossByServerError
 				}
 
-				return
+				return result, crossReason, err
 			}
 		}
 
@@ -482,7 +480,6 @@ func (d *Service) CacheMiddleware() gin.HandlerFunc {
 		result, crossReason, err = d.do(c.Request.Context(), cacheKey, func() (interface{}, string, error) {
 			return doQuery(cacheKey, c)
 		})
-
 		if err != nil {
 			c.Next()
 			return

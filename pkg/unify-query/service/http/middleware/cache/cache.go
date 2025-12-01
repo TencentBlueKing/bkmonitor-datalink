@@ -35,8 +35,8 @@ func initConf() Config {
 		freshLock:    writeTimeout / 2,
 		skipMethods:  viper.GetStringSlice("http.query_cache.skip_methods"),
 		skipPaths:    skipPaths,
-		bucketLimit:  viper.GetInt64("cache.bucket_limit"),
-		cacheEnabled: viper.GetBool("cache.enabled"),
+		bucketLimit:  viper.GetInt64("http.query_cache.default_limit"),
+		cacheEnabled: viper.GetBool("http.query_cache.enabled"),
 	}
 }
 

@@ -274,7 +274,7 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 			}
 
 			timestamp := cast.ToString(qry.Timestamp)
-			d.SourceType, d.SourceInfo, d.Results, err = model.QueryPathResources(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.SourceInfo, qry.PathResource)
+			d.Results, err = model.QueryPathResources(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.Matcher, qry.PathResource)
 			if err != nil {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
@@ -369,7 +369,7 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			d.SourceType, d.SourceInfo, d.Results, err = model.QueryPathResourcesRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.SourceInfo, qry.PathResource)
+			d.Results, err = model.QueryPathResourcesRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.Matcher, qry.PathResource)
 			if err != nil {
 				d.Message = metadata.NewMessage(
 					metadata.MsgQueryRelation,

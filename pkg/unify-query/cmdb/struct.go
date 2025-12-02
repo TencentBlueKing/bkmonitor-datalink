@@ -144,14 +144,10 @@ type RelationPathResourcesRequest struct {
 	QueryList []struct {
 		Timestamp int64 `json:"timestamp"`
 
-		SourceType       Resource `json:"source_type,omitempty"`
-		SourceInfo       Matcher  `json:"source_info,omitempty"`
-		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+		Matcher      Matcher    `json:"source_info,omitempty"`
+		PathResource []Resource `json:"path_resource,omitempty"`
 
-		TargetType []Resource `json:"target_type,omitempty"`
-
-		PathResource  []Resource `json:"path_resource,omitempty"`
-		LookBackDelta string     `json:"look_back_delta,omitempty"`
+		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 
@@ -159,10 +155,8 @@ type RelationPathResourcesRequest struct {
 type RelationPathResourcesResponseData struct {
 	Code int `json:"code"`
 
-	SourceType Resource              `json:"source_type"`
-	SourceInfo Matcher               `json:"source_info"`
-	Results    []PathResourcesResult `json:"results"`
-	Message    string                `json:"message"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
 }
 
 // RelationPathResourcesResponse 路径资源查询请求返回
@@ -178,14 +172,10 @@ type RelationPathResourcesRangeRequest struct {
 		EndTs   int64  `json:"end_time"`
 		Step    string `json:"step"`
 
-		SourceType       Resource `json:"source_type,omitempty"`
-		SourceInfo       Matcher  `json:"source_info,omitempty"`
-		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+		Matcher      Matcher    `json:"source_info,omitempty"`
+		PathResource []Resource `json:"path_resource,omitempty"`
 
-		TargetType []Resource `json:"target_type,omitempty"`
-
-		PathResource  []Resource `json:"path_resource,omitempty"`
-		LookBackDelta string     `json:"look_back_delta,omitempty"`
+		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 
@@ -193,10 +183,8 @@ type RelationPathResourcesRangeRequest struct {
 type RelationPathResourcesRangeResponseData struct {
 	Code int `json:"code"`
 
-	SourceType Resource              `json:"source_type"`
-	SourceInfo Matcher               `json:"source_info"`
-	Results    []PathResourcesResult `json:"results"`
-	Message    string                `json:"message"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
 }
 
 // RelationPathResourcesRangeResponse 路径资源范围查询请求返回

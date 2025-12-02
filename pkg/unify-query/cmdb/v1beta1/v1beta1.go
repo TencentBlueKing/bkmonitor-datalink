@@ -608,9 +608,9 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUid string
 // QueryPathResources 查询指定时间点的路径上的所有资源（instant 查询）
 // 参数:
 //   - pathResource: 指定的资源路径，如 []cmdb.Resource{"pod", "node", "system"}
-//   - sourceInfo: 源节点的匹配条件
+//   - matcher: 节点的匹配条件
 //   - ts: 时间戳
-func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, sourceInfo cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathResourcesResult, error) {
+func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, matcher cmdb.Matcher, pathResource []cmdb.Resource) ([]cmdb.PathResourcesResult, error) {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "query-path-resources")
 	defer span.End(&err)
@@ -621,23 +621,23 @@ func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid 
 
 	if spaceUid == "" {
 		err = errors.New("space uid is empty")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	if ts == "" {
 		err = errors.New("timestamp is empty")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	if len(pathResource) < 2 {
 		err = errors.New("path resource must have at least 2 resources")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	// 解析时间戳
 	timestamp, err := cast.ToInt64E(ts)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "parse timestamp error")
+		return nil, errors.WithMessagef(err, "parse timestamp error")
 	}
 	queryTime := time.Unix(timestamp, 0)
 
@@ -651,19 +651,16 @@ func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid 
 
 	// 构建 TimeGraph（instant 查询，start 和 end 相同）
 	step := time.Minute * 5 // 默认步长
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, queryTime, queryTime, step, sourceInfo, allRelations, lookBackDelta)
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, queryTime, queryTime, step, matcher, allRelations, lookBackDelta)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "build time graph error")
+		return nil, errors.WithMessagef(err, "build time graph error")
 	}
 	defer tg.Clean(ctx)
 
-	// 获取源资源类型
-	sourceResourceType := pathResource[0]
-
 	// 调用 FindPaths，遍历 TimeGraph 中的所有时间戳
-	results, err := tg.FindPaths(ctx, pathResource, sourceInfo)
+	results, err := tg.FindPaths(ctx, pathResource, matcher)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "find paths error")
+		return nil, errors.WithMessagef(err, "find paths error")
 	}
 
 	// 转换为 cmdb.PathResourcesResult
@@ -676,16 +673,16 @@ func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid 
 		})
 	}
 
-	return sourceResourceType, sourceInfo, cmdbResults, nil
+	return cmdbResults, nil
 }
 
 // QueryPathResourcesRange 查询指定时间段的路径上的所有资源（query_range 查询）
 // 参数:
 //   - pathResource: 指定的资源路径，如 []cmdb.Resource{"pod", "node", "system"}
-//   - sourceInfo: 源节点的匹配条件
+//   - matcher: 节点的匹配条件
 //   - startTs, endTs: 时间范围
 //   - step: 查询步长
-func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, sourceInfo cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathResourcesResult, error) {
+func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, matcher cmdb.Matcher, pathResource []cmdb.Resource) ([]cmdb.PathResourcesResult, error) {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "query-path-resources-range")
 	defer span.End(&err)
@@ -698,27 +695,27 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 
 	if spaceUid == "" {
 		err = errors.New("space uid is empty")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	if startTs == "" || endTs == "" {
 		err = errors.New("timestamp is empty")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	if len(pathResource) < 2 {
 		err = errors.New("path resource must have at least 2 resources")
-		return "", nil, nil, err
+		return nil, err
 	}
 
 	// 解析时间范围
 	start, err := cast.ToInt64E(startTs)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "parse start timestamp error")
+		return nil, errors.WithMessagef(err, "parse start timestamp error")
 	}
 	end, err := cast.ToInt64E(endTs)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "parse end timestamp error")
+		return nil, errors.WithMessagef(err, "parse end timestamp error")
 	}
 
 	startTime := time.Unix(start, 0)
@@ -727,7 +724,7 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 	// 解析步长
 	stepDuration, err := time.ParseDuration(step)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "parse step error")
+		return nil, errors.WithMessagef(err, "parse step error")
 	}
 
 	// 从指定路径构建关系列表
@@ -739,19 +736,16 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 	}
 
 	// 构建 TimeGraph
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, startTime, endTime, stepDuration, sourceInfo, allRelations, lookBackDelta)
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, startTime, endTime, stepDuration, matcher, allRelations, lookBackDelta)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "build time graph error")
+		return nil, errors.WithMessagef(err, "build time graph error")
 	}
 	defer tg.Clean(ctx)
 
-	// 获取源资源类型
-	sourceResourceType := pathResource[0]
-
 	// 调用 FindPaths，遍历 TimeGraph 中的所有时间戳
-	results, err := tg.FindPaths(ctx, pathResource, sourceInfo)
+	results, err := tg.FindPaths(ctx, pathResource, matcher)
 	if err != nil {
-		return "", nil, nil, errors.WithMessagef(err, "find paths error")
+		return nil, errors.WithMessagef(err, "find paths error")
 	}
 
 	// 转换为 cmdb.PathResourcesResult
@@ -764,5 +758,5 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 		})
 	}
 
-	return sourceResourceType, sourceInfo, cmdbResults, nil
+	return cmdbResults, nil
 }

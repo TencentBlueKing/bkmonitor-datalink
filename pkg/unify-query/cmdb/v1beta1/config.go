@@ -338,6 +338,13 @@ func init() {
 	}
 }
 
+// ResourcesIndex 获取指定资源的索引字段列表
+// 索引字段是用于唯一标识资源实例的关键维度
+// 参数:
+//   - resources: 资源类型列表，可以传入多个资源类型
+//
+// 返回: 合并后的索引字段列表（已排序）
+// 示例: ResourcesIndex("pod", "container") 返回 ["bcs_cluster_id", "container", "namespace", "pod"]
 func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 	var index cmdb.Index
 	for _, r := range resources {
@@ -347,6 +354,13 @@ func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 	return index
 }
 
+// ResourcesInfo 获取指定资源的信息字段列表
+// 信息字段是资源的扩展属性，用于展示额外的资源信息
+// 参数:
+//   - resources: 资源类型列表，可以传入多个资源类型
+//
+// 返回: 合并后的信息字段列表（已排序）
+// 示例: ResourcesInfo("container") 返回 ["version"]
 func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 	var index []string
 	for _, r := range resources {
@@ -356,10 +370,16 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 	return index
 }
 
+// AllResources 获取所有资源的配置信息
+// 返回: 资源类型到资源配置的映射表
+// 用于查询系统中所有已配置的资源类型及其配置信息
 func AllResources() map[cmdb.Resource]ResourceConf {
 	return resourceConfig
 }
 
+// AllRelations 获取所有资源关系列表
+// 返回: 资源关系列表，每个关系表示两个资源类型之间的关联
+// 用于查询系统中所有已配置的资源关系
 func AllRelations() []cmdb.Relation {
 	return relations
 }

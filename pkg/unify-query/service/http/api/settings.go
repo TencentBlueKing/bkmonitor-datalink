@@ -12,11 +12,15 @@ package api
 const (
 	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
 	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
+	RelationPathResourcesConfigPath      = "api.relation.path_resources"
+	RelationPathResourcesRangeConfigPath = "api.relation.path_resources_range"
 	RelationMaxRoutingConfigPath         = "api.relation.max_routing"
 )
 
 var (
 	RelationMultiResource      string
 	RelationMultiResourceRange string
+	RelationPathResources      string
+	RelationPathResourcesRange string
 	RelationMaxRouting         int
 )

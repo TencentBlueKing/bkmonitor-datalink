@@ -7,15 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package api
+package decoder
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func RegisterRelation(registerHandler *endpoint.RegisterHandler) {
-	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
-	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-	registerHandler.Register("POST", RelationPathResources, HandlerAPIRelationPathResources)
-	registerHandler.Register("POST", RelationPathResourcesRange, HandlerAPIRelationPathResourcesRange)
+func TestErrDecoderNotFound(t *testing.T) {
+	assert.NotNil(t, ErrDecoderNotFound)
+	assert.Equal(t, "decoder not found", ErrDecoderNotFound.Error())
+	assert.True(t, errors.Is(ErrDecoderNotFound, ErrDecoderNotFound))
 }

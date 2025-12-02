@@ -16,16 +16,24 @@ import (
 )
 
 var (
-	once          sync.Once
-	localIP       string
-	localHostName string
+	once          sync.Once // 确保本地主机信息只初始化一次
+	localIP       string    // 本地 IP 地址（IPv4）
+	localHostName string    // 本地主机名
 )
 
-// GetLocalHost 获取本机名称和 IP
+// GetLocalHost 获取本机名称和 IP 地址
+// 使用 sync.Once 确保只初始化一次，提高性能
+// 返回:
+//   - string: 主机名，如果获取失败可能为空
+//   - string: IPv4 地址，如果未找到非回环的 IPv4 地址则为空字符串
+//
+// 注意: 该方法会遍历所有网络接口，查找第一个非回环的 IPv4 地址
 func GetLocalHost() (string, string) {
 	once.Do(func() {
+		// 获取主机名
 		localHostName, _ = os.Hostname()
 
+		// 获取本地 IP 地址
 		func() {
 			interfaces, _ := net.Interfaces()
 			for _, i := range interfaces {
@@ -43,9 +51,11 @@ func GetLocalHost() (string, string) {
 						ip = v.IP
 					}
 
+					// 跳过回环地址和空 IP
 					if ip == nil || ip.IsLoopback() {
 						continue
 					}
+					// 只使用 IPv4 地址
 					ip = ip.To4()
 					if ip == nil {
 						continue

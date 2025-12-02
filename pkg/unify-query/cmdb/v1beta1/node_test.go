@@ -50,7 +50,7 @@ func TestResourceType_IDAndName(t *testing.T) {
 }
 
 func TestNodeBuilder_GetID(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	// 测试第一次获取ID
 	info1 := cmdb.Matcher{
@@ -95,7 +95,7 @@ func TestNodeBuilder_GetID(t *testing.T) {
 }
 
 func TestNodeBuilder_Info(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	info := cmdb.Matcher{
 		"bk_target_ip": "127.0.0.1",
@@ -117,7 +117,7 @@ func TestNodeBuilder_Info(t *testing.T) {
 }
 
 func TestNodeBuilder_IDStructure(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	id, err := nb.GetID("system", cmdb.Matcher{
 		"bk_target_ip": "127.0.0.1",
@@ -144,7 +144,7 @@ func TestNodeBuilder_IDStructure(t *testing.T) {
 }
 
 func TestNodeBuilder_ConcurrentAccess(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	mock.Init()
 
@@ -192,7 +192,7 @@ func TestResourceType_ConcurrentAccess(t *testing.T) {
 }
 
 func TestNodeBuilder_ResourceNodeInfo(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	// 添加多个相同资源类型的节点
 	info1 := cmdb.Matcher{"bk_target_ip": "127.0.0.1"}
@@ -219,7 +219,7 @@ func TestNodeBuilder_ResourceNodeInfo(t *testing.T) {
 }
 
 func TestNodeBuilder_Length(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	// 初始长度应为0
 	assert.Equal(t, 0, nb.Length())
@@ -243,7 +243,7 @@ func TestNodeBuilder_Length(t *testing.T) {
 }
 
 func TestNodeBuilder_Clean(t *testing.T) {
-	nb := NewNodeBuilder()
+	nb := NewNodeBuilder(nil)
 
 	// 添加一些节点
 	info := cmdb.Matcher{"host_id": "1"}

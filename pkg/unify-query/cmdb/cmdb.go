@@ -19,4 +19,14 @@ type CMDB interface {
 
 	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询）
 	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, []MatchersWithTimestamp, error)
+
+	// QueryPathResources 查询指定时间点的路径上的所有资源（instant 查询）
+	// pathResource: 指定的资源路径，如 []Resource{"pod", "node", "system"}
+	// sourceInfo: 源节点的匹配条件
+	QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, sourceInfo Matcher, pathResource []Resource) (Resource, Matcher, []PathResourcesResult, error)
+
+	// QueryPathResourcesRange 查询指定时间段的路径上的所有资源（query_range 查询）
+	// pathResource: 指定的资源路径，如 []Resource{"pod", "node", "system"}
+	// sourceInfo: 源节点的匹配条件
+	QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, sourceInfo Matcher, pathResource []Resource) (Resource, Matcher, []PathResourcesResult, error)
 }

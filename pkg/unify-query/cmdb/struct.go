@@ -125,3 +125,82 @@ type RelationMultiResourceRangeResponse struct {
 	TraceID string                                   `json:"trace_id"`
 	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }
+
+// PathNode 路径节点，包含资源类型和维度信息
+type PathNode struct {
+	ResourceType Resource `json:"resource_type"`
+	Dimensions   Matcher  `json:"dimensions"`
+}
+
+// PathResourcesResult 路径资源查询结果
+type PathResourcesResult struct {
+	Timestamp  int64      `json:"timestamp"`
+	TargetType Resource   `json:"target_type"`
+	Path       []PathNode `json:"path"`
+}
+
+// RelationPathResourcesRequest 路径资源查询请求参数
+type RelationPathResourcesRequest struct {
+	QueryList []struct {
+		Timestamp int64 `json:"timestamp"`
+
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+
+		TargetType []Resource `json:"target_type,omitempty"`
+
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+// RelationPathResourcesResponseData 路径资源查询响应数据
+type RelationPathResourcesResponseData struct {
+	Code int `json:"code"`
+
+	SourceType Resource              `json:"source_type"`
+	SourceInfo Matcher               `json:"source_info"`
+	Results    []PathResourcesResult `json:"results"`
+	Message    string                `json:"message"`
+}
+
+// RelationPathResourcesResponse 路径资源查询请求返回
+type RelationPathResourcesResponse struct {
+	TraceID string                              `json:"trace_id"`
+	Data    []RelationPathResourcesResponseData `json:"data"`
+}
+
+// RelationPathResourcesRangeRequest 路径资源范围查询请求参数
+type RelationPathResourcesRangeRequest struct {
+	QueryList []struct {
+		StartTs int64  `json:"start_time"`
+		EndTs   int64  `json:"end_time"`
+		Step    string `json:"step"`
+
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
+
+		TargetType []Resource `json:"target_type,omitempty"`
+
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+// RelationPathResourcesRangeResponseData 路径资源范围查询响应数据
+type RelationPathResourcesRangeResponseData struct {
+	Code int `json:"code"`
+
+	SourceType Resource              `json:"source_type"`
+	SourceInfo Matcher               `json:"source_info"`
+	Results    []PathResourcesResult `json:"results"`
+	Message    string                `json:"message"`
+}
+
+// RelationPathResourcesRangeResponse 路径资源范围查询请求返回
+type RelationPathResourcesRangeResponse struct {
+	TraceID string                                   `json:"trace_id"`
+	Data    []RelationPathResourcesRangeResponseData `json:"data"`
+}

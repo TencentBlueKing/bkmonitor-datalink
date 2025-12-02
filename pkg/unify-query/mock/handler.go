@@ -211,10 +211,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
-		// /es_index/_search
-		reqPath := r.URL.Path
-		parts := strings.Split(reqPath, "/")
-		idx := "/" + parts[1]
+		idx := "/" + strings.Split(r.URL.Path, "/")[1]
 
 		var d any
 		var ok bool

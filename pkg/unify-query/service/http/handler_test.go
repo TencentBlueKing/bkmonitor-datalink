@@ -620,6 +620,138 @@ func TestQueryRawWithHandler(t *testing.T) {
 	}
 }
 
+func TestQueryReferenceWithHandler(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	mock.Es.Set(map[string]any{
+		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}}]}},"size":0}`: `{"took":620,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.7.93","doc_count":13961116,"_value":{"value":13961116}},{"key":"10.0.6.33","doc_count":53,"_value":{"value":53}},{"key":"10.0.6.4","doc_count":48,"_value":{"value":48}},{"key":"10.0.6.18","doc_count":24,"_value":{"value":24}}]}}}`,
+	})
+	mock.Es1.Set(map[string]any{
+		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}}]}},"size":0}`: `{"took":6,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.6.33","doc_count":42768,"_value":{"value":42768}}]}}}`,
+	})
+
+	testCases := map[string]struct {
+		body     string
+		expected string
+	}{
+		"metrics merge issue": {
+			body: `{
+    "query_list":
+    [
+        {
+            "data_source": "bklog",
+            "reference_name": "a",
+            "dimensions":
+            [],
+            "time_field": "time",
+            "conditions":
+            {
+                "field_list":
+                [
+                    {
+                        "field_name": "serverIp",
+                        "value":
+                        [
+                            ""
+                        ],
+                        "op": "ne"
+                    }
+                ],
+                "condition_list":
+                []
+            },
+            "query_string": "*",
+            "function":
+            [
+                {
+                    "method": "count",
+                    "dimensions":
+                    [
+                        "serverIp"
+                    ]
+                }
+            ],
+            "table_id": "result_table.es",
+            "field_name": "serverIp",
+            "limit": 20
+        },
+        {
+            "data_source": "bklog",
+            "reference_name": "a",
+            "dimensions":
+            [],
+            "time_field": "time",
+            "conditions":
+            {
+                "field_list":
+                [
+                    {
+                        "field_name": "serverIp",
+                        "value":
+                        [
+                            ""
+                        ],
+                        "op": "ne"
+                    }
+                ],
+                "condition_list":
+                []
+            },
+            "query_string": "*",
+            "function":
+            [
+                {
+                    "method": "count",
+                    "dimensions":
+                    [
+                        "serverIp"
+                    ]
+                }
+            ],
+            "table_id": "result_table.es_1",
+            "field_name": "serverIp",
+            "limit": 20
+        }
+    ],
+    "metric_merge": "a",
+    "order_by":
+    [
+        "-_value"
+    ],
+    "step": "1d",
+    "space_uid": "bkcc__2",
+    "start_time": "1761980445276",
+    "end_time": "1764572445277",
+    "down_sample_range": "",
+    "timezone": "Asia/Shanghai",
+    "bk_biz_id": 2
+}`,
+			expected: `{"total":20,"list":[{"__data_label":"","__doc_id":"4","__index":"","__result_table":"nano.nano","_time":"1764065418831","dtEventTimeStamp":"2025-11-25T12:07:38.747332000Z","dtEventTimeStampNanos":"2025-11-25T12:07:38.747332000Z"},{"__data_label":"","__doc_id":"2","__index":"","__result_table":"nano.millisecond","_time":"2025-11-25T12:07:37.747332000Z","dtEventTimeStamp":"2025-11-25T12:07:37.747332000Z"}],"done":false,"status":null,"result_table_options":{"nano.millisecond|3":{"from":0},"nano.nano|3":{"from":0}}}`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			body := bytes.NewBufferString(c.body)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", body)
+			w := &Writer{}
+			ginC := &gin.Context{
+				Request: req,
+				Writer:  w,
+			}
+
+			HandlerQueryReference(ginC)
+			b := w.body()
+			assert.Equal(t, c.expected, b)
+		})
+	}
+}
+
 func TestPromQLQueryHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())

@@ -65,5 +65,17 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 		return nil
 	}
 
+	err = removeCL(err)
+
 	return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
+}
+
+func removeCL(err error) error {
+	errString := err.Error()
+	errString = strings.ReplaceAll(errString, "\r\n", " ")
+	errString = strings.ReplaceAll(errString, "\r", " ")
+	errString = strings.ReplaceAll(errString, "\n", " ")
+
+	return errors.New(errString)
+
 }

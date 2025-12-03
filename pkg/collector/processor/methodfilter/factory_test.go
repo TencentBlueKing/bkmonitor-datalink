@@ -29,11 +29,11 @@ processor:
     config:
       drop_span:
         rules:
-          - match_type: "regex"
-            predicate_key: "span_name"
+          - predicate_key: "span_name"
             kind: "SPAN_KIND_SERVER"
-            rule:
-              regex: "GET:/benchmark/[^/]+"
+            match:
+              op: "reg"
+              value: "GET:/benchmark/[^/]+"
 `
 	mainConf := processor.MustLoadConfigs(content)[0].Config
 
@@ -43,11 +43,11 @@ processor:
     config:
       drop_span:
         rules:
-          - match_type: "regex"
-            predicate_key: "span_name"
+          - predicate_key: "span_name"
             kind: "SPAN_KIND_CLIENT"
-            rule:
-              regex: "/benchmark/[^/]+"
+            match:
+              op: "reg"
+              value: "/benchmark/[^/]+"
 `
 	customConf := processor.MustLoadConfigs(customContent)[0].Config
 
@@ -71,10 +71,10 @@ processor:
 	rules := []*Rule{
 		{
 			Kind:         "SPAN_KIND_SERVER",
-			MatchType:    "regex",
 			PredicateKey: "span_name",
 			MatchConfig: MatchConfig{
-				Regex: `GET:/benchmark/[^/]+`,
+				Op:    "reg",
+				Value: `GET:/benchmark/[^/]+`,
 			},
 		},
 	}
@@ -97,16 +97,16 @@ processor:
     config:
       drop_span:
         rules:
-          - match_type: "regex"
-            predicate_key: "span_name"
+          - predicate_key: "span_name"
             kind: "SPAN_KIND_INTERNAL,SPAN_KIND_SERVER,SPAN_KIND_CLIENT"
-            rule:
-              regex: "getAge"
-          - match_type: "regex"
-            predicate_key: "span_name"
+            match:
+              op: "reg"
+              value: "getAge"
+          - predicate_key: "span_name"
             kind: "SPAN_KIND_INTERNAL,SPAN_KIND_SERVER"
-            rule:
-              regex: "queryAge"
+            match:
+              op: "reg"
+              value: "queryAge"
 `
 
 	t.Run("traces", func(t *testing.T) {

@@ -512,42 +512,20 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 }
 
 // buildTimeGraphFromRelations 从关系路径构建 TimeGraph
-func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUid string, start, end time.Time, step time.Duration, sourceInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
+func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUid string, start, end time.Time, step time.Duration, sourceInfo cmdb.Matcher, relations []cmdb.Relation) (*TimeGraph, error) {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 
 	tg := NewTimeGraph()
 
-	var lookBackDeltaDuration time.Duration
-	if lookBackDelta != "" {
-		lookBackDeltaDuration, err = time.ParseDuration(lookBackDelta)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var instance tsdb.Instance
-	qb := metadata.GetQueryParams(ctx)
-
-	if qb.IsDirectQuery() {
-		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			StorageType: metadata.VictoriaMetricsStorageType,
-		})
-		if instance == nil {
-			return nil, fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
-		}
-	} else {
-		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-			QueryMaxRouting: QueryMaxRouting,
-			Timeout:         Timeout,
-		}, lookBackDeltaDuration, QueryMaxRouting)
-	}
-
-	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
+	instance := prometheus.GetTsDbInstance(ctx, &metadata.Query{
+		StorageType: metadata.VictoriaMetricsStorageType,
+	})
 
 	for _, relation := range relations {
 		ctx = metadata.InitHashID(ctx)
+		metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 		queryTs, err := tg.MakeQueryTs(ctx, spaceUid, sourceInfo, start, end, step, relation)
 		if err != nil {
@@ -566,8 +544,9 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUid string
 		}
 		stmt := expr.String()
 
+		qb := metadata.GetQueryParams(ctx)
 		var matrix pl.Matrix
-		if qb.IsDirectQuery() {
+		if start == end {
 			// instant 查询
 			vector, err := instance.DirectQuery(ctx, stmt, qb.End)
 			if err != nil {
@@ -720,7 +699,7 @@ func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid 
 
 	// 3. 构建 TimeGraph（instant 查询，start 和 end 相同）
 	step := time.Minute * 5 // 默认步长
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, queryTime, queryTime, step, matcher, allRelations, lookBackDelta)
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, queryTime, queryTime, step, matcher, allRelations)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "build time graph error")
 	}
@@ -855,7 +834,7 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 	allRelations := r.buildRelationsFromPaths(allPaths)
 
 	// 3. 构建 TimeGraph
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, startTime, endTime, stepDuration, matcher, allRelations, lookBackDelta)
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, startTime, endTime, stepDuration, matcher, allRelations)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "build time graph error")
 	}

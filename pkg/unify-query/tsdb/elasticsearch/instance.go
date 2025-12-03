@@ -174,6 +174,7 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	cache := GetMappingCache()
 
 	return cache.GetFieldsMap(ctx, aliases, func(missingAlias []string) (metadata.FieldsMap, error) {
+		span.Set("missing-alias", missingAlias)
 		return fetchFieldsMap(ctx, fieldAlias, missingAlias, cli, span, mappings, settings)
 	})
 }

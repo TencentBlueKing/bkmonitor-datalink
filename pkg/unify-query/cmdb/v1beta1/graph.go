@@ -337,7 +337,7 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 			continue
 		}
 
-		// 对每个源节点，查找到目标节点的最短路径
+		// 对每个源节点，查找到每个目标节点的最短路径
 		for _, sourceNode := range sourceNodes {
 			// 获取源节点信息，验证资源类型
 			sourceResource, _ := q.nodeBuilder.Info(sourceNode)
@@ -345,27 +345,34 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 				continue
 			}
 
-			// 查找从源节点到目标节点的最短路径
-			shortestPath := q.findShortestPathToAnyTarget(g, sourceNode, targetNodes)
-			if len(shortestPath) == 0 {
-				continue
-			}
+			// 对每个目标节点，查找最短路径
+			for _, targetNode := range targetNodes {
+				// 查找从源节点到目标节点的最短路径
+				path, err := graph.ShortestPath(g, sourceNode, targetNode)
+				if err != nil {
+					continue
+				}
 
-			// 将节点ID路径转换为资源类型和维度信息路径
-			pathNodes := make([]cmdb.PathNode, 0, len(shortestPath))
-			for _, nodeID := range shortestPath {
-				resourceType, nodeInfo := q.nodeBuilder.Info(nodeID)
-				pathNodes = append(pathNodes, cmdb.PathNode{
-					ResourceType: resourceType,
-					Dimensions:   nodeInfo,
+				if len(path) == 0 {
+					continue
+				}
+
+				// 将节点ID路径转换为资源类型和维度信息路径
+				pathNodes := make([]cmdb.PathNode, 0, len(path))
+				for _, nodeID := range path {
+					resourceType, nodeInfo := q.nodeBuilder.Info(nodeID)
+					pathNodes = append(pathNodes, cmdb.PathNode{
+						ResourceType: resourceType,
+						Dimensions:   nodeInfo,
+					})
+				}
+
+				results = append(results, PathResourcesResult{
+					Timestamp:  timestamp,
+					TargetType: targetType,
+					Path:       pathNodes,
 				})
 			}
-
-			results = append(results, PathResourcesResult{
-				Timestamp:  timestamp,
-				TargetType: targetType,
-				Path:       pathNodes,
-			})
 		}
 	}
 
@@ -438,31 +445,4 @@ func (q *TimeGraph) findNodesByResourceType(resourceType cmdb.Resource) []uint64
 	}
 
 	return nodeIDs
-}
-
-// findShortestPathToAnyTarget 查找从源节点到任意目标节点的最短路径
-// 返回找到的最短路径（节点ID列表），如果不存在路径则返回空切片
-func (q *TimeGraph) findShortestPathToAnyTarget(g graph.Graph[uint64, uint64], sourceNode uint64, targetNodes []uint64) []uint64 {
-	if len(targetNodes) == 0 {
-		return nil
-	}
-
-	var shortestPath []uint64
-	shortestLength := -1
-
-	// 对每个目标节点，尝试查找最短路径
-	for _, targetNode := range targetNodes {
-		path, err := graph.ShortestPath(g, sourceNode, targetNode)
-		if err != nil {
-			continue
-		}
-
-		pathLength := len(path) - 1
-		if shortestLength < 0 || pathLength < shortestLength {
-			shortestPath = path
-			shortestLength = pathLength
-		}
-	}
-
-	return shortestPath
 }

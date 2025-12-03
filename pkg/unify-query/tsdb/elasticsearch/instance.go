@@ -196,7 +196,7 @@ func fetchFieldsMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases
 				"索引查询异常: %+v",
 				aliases,
 			).Error(ctx, indicesErr)
-			return
+			return nil, err
 		}
 
 		for index, r := range res {

@@ -31,19 +31,34 @@ type FieldMapCache struct {
 	cache *ristretto.Cache[string, metadata.FieldOption]
 }
 
-func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchFieldOptionCallback func(missingAlias []string) (metadata.FieldsMap, error)) (metadata.FieldsMap, error) {
-	var (
-		result       = make(metadata.FieldsMap)
-		missingAlias []string
-		hitAlias     []string
-	)
+// Close 关闭缓存并释放资源
+func (m *FieldMapCache) Close() error {
+	if m.cache != nil {
+		m.cache.Close()
+	}
+	return nil
+}
 
+func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchFieldOptionCallback func(missingAlias []string) (metadata.FieldsMap, error)) (metadata.FieldsMap, error) {
 	var (
 		err  error
 		span *trace.Span
 	)
 	ctx, span = trace.NewSpan(ctx, "get-alias-mapping")
 	defer span.End(&err)
+
+	if m.cache == nil {
+		return nil, metadata.NewMessage(
+			metadata.MsgQueryES,
+			"缓存未初始化",
+		).Error(ctx, nil)
+	}
+
+	var (
+		result       = make(metadata.FieldsMap)
+		missingAlias []string
+		hitAlias     []string
+	)
 
 	for _, a := range alias {
 		if mapping, ok := m.cache.Get(a); ok {
@@ -67,6 +82,8 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 			result.Set(a, fieldOptions)
 			m.cache.SetWithTTL(a, fieldOptions, 1, viper.GetDuration(MappingCacheTTLPath))
 		}
+		// 确保缓存操作完成
+		m.cache.Wait()
 	}
 
 	return result, nil
@@ -74,12 +91,15 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 
 func GetMappingCache() *FieldMapCache {
 	once.Do(func() {
-		c, _ := ristretto.NewCache(&ristretto.Config[string, metadata.FieldOption]{
+		c, err := ristretto.NewCache(&ristretto.Config[string, metadata.FieldOption]{
 			MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
 			NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
 			BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
 		})
 
+		if err != nil {
+			panic(err)
+		}
 		fieldMapCache = &FieldMapCache{
 			cache: c,
 		}

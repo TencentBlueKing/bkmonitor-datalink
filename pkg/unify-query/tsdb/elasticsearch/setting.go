@@ -46,7 +46,11 @@ func init() {
 	viper.SetDefault(KeepAlivePath, "5s")
 
 	// ES mapping缓存默认配置
+	// MaxCost: 缓存的最大成本，控制缓存的总大小
 	viper.SetDefault(MappingCacheMaxCostPath, 1000000)
+	// NumCounters: 应该是预期缓存项目数量的10倍，以确保计数器准确性
+	// 由于MaxCost是1,000,000且每个项目成本为1，预期最多1,000,000个项目
+	// 因此设置NumCounters为10,000,000以获得最佳准确性
 	viper.SetDefault(MappingCacheNumCountersPath, 10000000)
 	viper.SetDefault(MappingCacheBufferItemsPath, 64)
 	viper.SetDefault(MappingCacheTTLPath, "30m")

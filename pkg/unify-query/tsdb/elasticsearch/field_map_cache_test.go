@@ -67,6 +67,30 @@ func TestFieldMapCache(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:  "部分缓存命中",
+			alias: []string{"cached_alias", "uncached_alias"},
+			preSetCache: map[string]metadata.FieldOption{
+				"cached_alias": {
+					FieldName: "cached_field",
+					FieldType: "text",
+					IsAgg:     true,
+				},
+			},
+			expectFetch: true,
+			expectFields: map[string]metadata.FieldOption{
+				"cached_alias": {
+					FieldName: "cached_field",
+					FieldType: "text",
+					IsAgg:     true,
+				},
+				"uncached_alias": {
+					FieldName: "field_uncached_alias",
+					FieldType: "keyword",
+					IsAgg:     false,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -104,6 +128,13 @@ func TestFieldMapCache(t *testing.T) {
 
 			result, err := cache.GetFieldsMap(ctx, tt.alias, fetchCallback)
 			assert.NoError(t, err)
+
+			if tt.expectFetch {
+				assert.Greater(t, fetchCount, 0, "期望fetch回调被调用")
+			} else {
+				assert.Equal(t, 0, fetchCount, "期望fetch回调不被调用")
+			}
+
 			for expectedAlias, expectedOption := range tt.expectFields {
 				actualOption, exists := result[expectedAlias]
 				assert.True(t, exists)

@@ -58,7 +58,7 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 
 	var elasticErr *elastic.Error
 	if errors.As(err, &elasticErr) {
-		return handleESSpecificError(elasticErr)
+		return removeCL(handleESSpecificError(elasticErr))
 	}
 
 	if errors.Is(err, io.EOF) {
@@ -71,11 +71,19 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 }
 
 func removeCL(err error) error {
+	if err == nil {
+		return nil
+	}
+
 	errString := err.Error()
-	errString = strings.ReplaceAll(errString, "\r\n", " ")
-	errString = strings.ReplaceAll(errString, "\r", " ")
-	errString = strings.ReplaceAll(errString, "\n", " ")
 
-	return errors.New(errString)
+	cleaned := strings.ReplaceAll(errString, "\r\n", " ")
+	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
+	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
 
+	if cleaned == errString {
+		return err
+	}
+
+	return errors.New(cleaned)
 }

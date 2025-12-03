@@ -70,6 +70,10 @@ func (f FieldsMap) Field(k string) FieldOption {
 	return FieldOption{}
 }
 
+func (f FieldsMap) Set(k string, v FieldOption) {
+	f[k] = v
+}
+
 type FieldOption struct {
 	AliasName       string   `json:"alias_name"`
 	FieldName       string   `json:"field_name"`

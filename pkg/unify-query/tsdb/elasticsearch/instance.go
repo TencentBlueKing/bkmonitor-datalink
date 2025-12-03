@@ -170,6 +170,15 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	settings := make(map[string]map[string]any)
 	mappings := make(map[string]map[string]any)
 	span.Set("get-indexes", aliases)
+
+	cache := GetMappingCache()
+
+	return cache.GetFieldsMap(ctx, aliases, func(missingAlias []string) (metadata.FieldsMap, error) {
+		return fetchFieldsMap(ctx, fieldAlias, missingAlias, cli, span, mappings, settings)
+	})
+}
+
+func fetchFieldsMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases []string, cli *elastic.Client, span *trace.Span, mappings map[string]map[string]any, settings map[string]map[string]any) (fieldsMap metadata.FieldsMap, err error) {
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
 		// 兼容没有索引接口的情况，例如 bkbase
@@ -182,11 +191,12 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
-			return nil, metadata.NewMessage(
+			err = metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
 			).Error(ctx, indicesErr)
+			return
 		}
 
 		for index, r := range res {
@@ -205,7 +215,8 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
-		return iof.FieldsMap(), nil
+		fieldsMap = iof.FieldsMap()
+		return
 	}
 
 	span.Set("mapping-length", len(mappings))
@@ -224,9 +235,8 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 			iof.Parse(settings[index], in)
 		}
 	}
-
-	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), nil
+	fieldsMap = iof.FieldsMap()
+	return
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {

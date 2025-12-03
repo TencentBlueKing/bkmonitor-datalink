@@ -418,7 +418,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 
 	span.Set("time-series-length", len(qr.Timeseries))
 
-	return remote.FromQueryResult(false, qr)
+	return remote.FromQueryResult(true, qr)
 }
 
 func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {

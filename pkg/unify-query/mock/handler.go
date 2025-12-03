@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/jarcoal/httpmock"
@@ -91,6 +92,7 @@ var (
 	BkSQL    = &bkSQLResultData{}
 	InfluxDB = &influxdbResultData{}
 	Es       = &elasticSearchResultData{}
+	Es1      = &elasticSearchResultData{}
 )
 
 type resultData struct {
@@ -209,8 +211,16 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
+		idx := "/" + strings.Split(r.URL.Path, "/")[1]
 
-		d, ok := Es.Get(string(body))
+		var d any
+		var ok bool
+
+		if idx == "/es_index_1" {
+			d, ok = Es1.Get(string(body))
+		} else {
+			d, ok = Es.Get(string(body))
+		}
 		if !ok {
 			return w, metadata.NewMessage(
 				metadata.MsgQueryES,

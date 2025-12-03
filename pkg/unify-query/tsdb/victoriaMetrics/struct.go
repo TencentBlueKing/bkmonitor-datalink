@@ -16,6 +16,7 @@ import (
 )
 
 type ParamsQueryRange struct {
+	BkBizID          string `json:"bk_biz_id,omitempty"`
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
@@ -32,6 +33,7 @@ type ParamsQueryRange struct {
 }
 
 type ParamsQuery struct {
+	BkBizID          string `json:"bk_biz_id,omitempty"`
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
@@ -46,6 +48,7 @@ type ParamsQuery struct {
 }
 
 type ParamsSeries struct {
+	BkBizID          string `json:"bk_biz_id,omitempty"`
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
@@ -75,6 +78,7 @@ type ParamsLabelName struct {
 }
 
 type ParamsLabelValues struct {
+	BkBizID          string `json:"bk_biz_id,omitempty"`
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`

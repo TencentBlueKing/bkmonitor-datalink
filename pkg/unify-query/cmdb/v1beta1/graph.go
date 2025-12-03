@@ -281,25 +281,26 @@ type PathResourcesResult struct {
 	Path       []cmdb.PathNode // 路径上的所有节点，包含资源类型和维度信息（从源到目标）
 }
 
-// FindPaths 查找指定路径上满足条件的完整路径
+// FindShortestPath 查找从源资源类型到目标资源类型的最短路径
 // 参数:
 //   - ctx: 上下文对象
-//   - path: 指定的资源路径，如 []cmdb.Resource{"pod", "node", "system"}，表示从 pod 到 system 的路径
+//   - sourceType: 源资源类型
+//   - targetType: 目标资源类型
 //   - sourceMatcher: 源节点的匹配条件，只需要满足部分维度即可（如只指定 namespace）
 //
 // 返回: 路径结果列表，按时间戳排序
 // 每个结果包含:
 //   - 时间戳：路径所在的时间点
-//   - 目标资源类型：路径的目标资源类型（路径的最后一个资源类型）
+//   - 目标资源类型：路径的目标资源类型
 //   - 路径：从源到目标的完整路径，路径中每个节点包含资源类型和完整的维度信息
 //
 // 注意:
 //   - 遍历 TimeGraph 中的所有时间戳，如果某个时间戳上找不到路径，该时间戳不会出现在结果中
-//   - 路径必须按照指定的资源类型顺序存在（pod -> node -> system）
+//   - 直接查找从 sourceType 到 targetType 的最短路径，不需要指定中间路径
 //   - 部分匹配：只要 sourceMatcher 中的键值对在节点信息中存在且匹配，即认为满足条件
 //   - 结果按时间戳排序
-func (q *TimeGraph) FindPaths(ctx context.Context, path []cmdb.Resource, sourceMatcher cmdb.Matcher) ([]PathResourcesResult, error) {
-	if len(path) < 2 {
+func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resource, targetType cmdb.Resource, sourceMatcher cmdb.Matcher) ([]PathResourcesResult, error) {
+	if sourceType == "" || targetType == "" {
 		return nil, nil
 	}
 
@@ -315,23 +316,19 @@ func (q *TimeGraph) FindPaths(ctx context.Context, path []cmdb.Resource, sourceM
 		return queryTimestamps[i] < queryTimestamps[j]
 	})
 
-	// 获取源资源类型和目标资源类型
-	sourceResourceType := path[0]
-	targetResourceType := path[len(path)-1]
-
 	// 1. 找到满足部分条件的源节点
-	sourceNodes := q.findNodesByPartialMatcher(sourceResourceType, sourceMatcher)
+	sourceNodes := q.findNodesByPartialMatcher(sourceType, sourceMatcher)
 	if len(sourceNodes) == 0 {
 		return nil, nil
 	}
 
 	// 2. 找到所有目标资源类型的节点
-	targetNodes := q.findNodesByResourceType(targetResourceType)
+	targetNodes := q.findNodesByResourceType(targetType)
 	if len(targetNodes) == 0 {
 		return nil, nil
 	}
 
-	// 3. 在每个时间戳的图中查找指定路径上的最短路径
+	// 3. 在每个时间戳的图中查找从源到目标的最短路径
 	var results []PathResourcesResult
 
 	for _, timestamp := range queryTimestamps {
@@ -340,22 +337,17 @@ func (q *TimeGraph) FindPaths(ctx context.Context, path []cmdb.Resource, sourceM
 			continue
 		}
 
-		// 对每个源节点，查找指定路径上的最短路径
+		// 对每个源节点，查找到目标节点的最短路径
 		for _, sourceNode := range sourceNodes {
 			// 获取源节点信息，验证资源类型
 			sourceResource, _ := q.nodeBuilder.Info(sourceNode)
-			if sourceResource != sourceResourceType {
+			if sourceResource != sourceType {
 				continue
 			}
 
 			// 查找从源节点到目标节点的最短路径
 			shortestPath := q.findShortestPathToAnyTarget(g, sourceNode, targetNodes)
 			if len(shortestPath) == 0 {
-				continue
-			}
-
-			// 验证路径是否符合指定的资源类型顺序
-			if !q.validatePathResourceTypes(shortestPath, path) {
 				continue
 			}
 
@@ -371,7 +363,7 @@ func (q *TimeGraph) FindPaths(ctx context.Context, path []cmdb.Resource, sourceM
 
 			results = append(results, PathResourcesResult{
 				Timestamp:  timestamp,
-				TargetType: targetResourceType,
+				TargetType: targetType,
 				Path:       pathNodes,
 			})
 		}

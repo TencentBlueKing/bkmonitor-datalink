@@ -21,12 +21,16 @@ type CMDB interface {
 	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, []MatchersWithTimestamp, error)
 
 	// QueryPathResources 查询指定时间点的路径上的所有资源（instant 查询）
-	// pathResource: 指定的资源路径，如 []Resource{"pod", "node", "system"}
+	// sourceType: 源资源类型
+	// targetTypes: 目标资源类型列表
+	// pathResources: 可选，指定的路径列表（支持多条路径），如果为空则自动查找所有路径
 	// matcher: 节点的匹配条件
-	QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, matcher Matcher, pathResource []Resource) ([]PathResourcesResult, error)
+	QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, sourceType Resource, targetTypes []Resource, pathResources [][]Resource, matcher Matcher) ([]PathResourcesResult, error)
 
 	// QueryPathResourcesRange 查询指定时间段的路径上的所有资源（query_range 查询）
-	// pathResource: 指定的资源路径，如 []Resource{"pod", "node", "system"}
+	// sourceType: 源资源类型
+	// targetTypes: 目标资源类型列表
+	// pathResources: 可选，指定的路径列表（支持多条路径），如果为空则自动查找所有路径
 	// matcher: 节点的匹配条件
-	QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, matcher Matcher, pathResource []Resource) ([]PathResourcesResult, error)
+	QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, sourceType Resource, targetTypes []Resource, pathResources [][]Resource, matcher Matcher) ([]PathResourcesResult, error)
 }

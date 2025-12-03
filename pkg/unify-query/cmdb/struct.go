@@ -144,8 +144,10 @@ type RelationPathResourcesRequest struct {
 	QueryList []struct {
 		Timestamp int64 `json:"timestamp"`
 
-		Matcher      Matcher    `json:"source_info,omitempty"`
-		PathResource []Resource `json:"path_resource,omitempty"`
+		SourceType    Resource     `json:"source_type,omitempty"`    // 源资源类型
+		TargetTypes   []Resource   `json:"target_types,omitempty"`   // 目标资源类型列表
+		PathResources [][]Resource `json:"path_resources,omitempty"` // 可选：指定的路径列表（支持多条路径）
+		Matcher       Matcher      `json:"matcher,omitempty"`        // 节点的匹配条件
 
 		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
@@ -172,8 +174,10 @@ type RelationPathResourcesRangeRequest struct {
 		EndTs   int64  `json:"end_time"`
 		Step    string `json:"step"`
 
-		Matcher      Matcher    `json:"source_info,omitempty"`
-		PathResource []Resource `json:"path_resource,omitempty"`
+		SourceType    Resource     `json:"source_type,omitempty"`    // 源资源类型
+		TargetTypes   []Resource   `json:"target_types,omitempty"`   // 目标资源类型列表
+		PathResources [][]Resource `json:"path_resources,omitempty"` // 可选：指定的路径列表（支持多条路径）
+		Matcher       Matcher      `json:"matcher,omitempty"`        // 节点的匹配条件
 
 		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`

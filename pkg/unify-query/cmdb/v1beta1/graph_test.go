@@ -1094,7 +1094,7 @@ func BenchmarkGraphQuery_MemoryUsage_Comparison(b *testing.B) {
 	})
 }
 
-func TestTimeGraph_FindPaths(t *testing.T) {
+func TestTimeGraph_FindShortestPath(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	tg := NewTimeGraph()
 
@@ -1129,8 +1129,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 
@@ -1154,8 +1153,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 
 		// 应该为每个时间戳返回结果
@@ -1174,8 +1172,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"namespace": "blueking",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 
@@ -1193,8 +1190,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "", "", partialMatcher)
 		assert.NoError(t, err)
 		assert.Nil(t, results)
 	})
@@ -1205,8 +1201,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "nonexistent-pod",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.Nil(t, results)
 	})
@@ -1215,8 +1210,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 		// 空匹配条件应该返回该资源类型的所有节点
 		partialMatcher := cmdb.Matcher{}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		// 如果存在 pod 节点，应该能找到路径
 		if len(results) > 0 {
@@ -1232,8 +1226,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 
@@ -1255,8 +1248,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 
@@ -1299,8 +1291,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"namespace": "blueking",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 
@@ -1323,8 +1314,7 @@ func TestTimeGraph_FindPaths(t *testing.T) {
 			"pod":       "test-pod-1",
 		}
 
-		path := []cmdb.Resource{"pod", "node", "system"}
-		results, err := tg.FindPaths(ctx, path, partialMatcher)
+		results, err := tg.FindShortestPath(ctx, "pod", "system", partialMatcher)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, results)
 

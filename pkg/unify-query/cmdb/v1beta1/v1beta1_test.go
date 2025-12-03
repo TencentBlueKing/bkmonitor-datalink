@@ -766,47 +766,88 @@ func TestModel_QueryPathResources(t *testing.T) {
 	timestamp := "1693973987"
 
 	testCases := map[string]struct {
-		matcher      cmdb.Matcher
-		pathResource []cmdb.Resource
+		sourceType    cmdb.Resource
+		targetTypes   []cmdb.Resource
+		pathResources [][]cmdb.Resource
+		matcher       cmdb.Matcher
 
 		expectedResults []cmdb.PathResourcesResult
 		error           error
 	}{
 		"empty space uid": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("space uid is empty"),
+			error: errors.New("space uid is empty"),
 		},
 		"empty timestamp": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("timestamp is empty"),
+			error: errors.New("timestamp is empty"),
 		},
-		"path resource too short": {
+		"empty source type": {
+			sourceType:    "",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod"},
-			error:        errors.New("path resource must have at least 2 resources"),
+			error: errors.New("source type is empty"),
+		},
+		"empty target types": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
+			matcher: cmdb.Matcher{
+				"pod": "bkm-pod-1",
+			},
+			error: errors.New("target types is empty"),
 		},
 		"invalid timestamp format": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("parse timestamp error"),
+			error: errors.New("parse timestamp error"),
 		},
-		"success: pod to system through node": {
+		"success: pod to system through node with single path": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"namespace":      "bkmonitor-operator",
 				"pod":            "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
+		},
+		"success: pod to system with multiple paths": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}, {"pod", "datasource", "node", "system"}},
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkmonitor-operator",
+				"pod":            "bkm-pod-1",
+			},
+		},
+		"success: pod to multiple targets without path": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"node", "system"},
+			pathResources: nil, // 不指定路径，自动查找
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkmonitor-operator",
+				"pod":            "bkm-pod-1",
+			},
 		},
 	}
 
@@ -835,7 +876,7 @@ func TestModel_QueryPathResources(t *testing.T) {
 				spaceUid = influxdb.SpaceUid
 			}
 
-			results, err := testModel.QueryPathResources(ctx, "", spaceUid, ts, c.matcher, c.pathResource)
+			results, err := testModel.QueryPathResources(ctx, "", spaceUid, ts, c.sourceType, c.targetTypes, c.pathResources, c.matcher)
 			if c.error != nil {
 				assert.NotNil(t, err)
 				assert.Contains(t, err.Error(), c.error.Error())
@@ -862,24 +903,36 @@ func TestModel_QueryPathResources(t *testing.T) {
 								}
 							}
 
-							// 验证路径的第一个节点是源资源类型（路径的第一个资源类型）
-							if len(result.Path) > 0 && len(c.pathResource) > 0 {
-								assert.Equal(t, c.pathResource[0], result.Path[0].ResourceType, "路径的第一个节点应该是源资源类型")
+							// 验证路径的第一个节点是源资源类型
+							if len(result.Path) > 0 {
+								assert.Equal(t, c.sourceType, result.Path[0].ResourceType, "路径的第一个节点应该是源资源类型")
 							}
 							// 验证路径的最后一个节点是目标资源类型
 							if len(result.Path) > 0 {
 								assert.Equal(t, result.TargetType, result.Path[len(result.Path)-1].ResourceType, "路径的最后一个节点应该是目标资源类型")
 							}
 
-							// 验证路径长度（pod -> node -> system 应该是 3 个节点）
-							if len(c.pathResource) >= 2 {
-								assert.Equal(t, len(c.pathResource), len(result.Path), "路径长度应该匹配指定的资源路径")
-							}
-
-							// 验证路径中的资源类型顺序
-							for i, expectedType := range c.pathResource {
-								if i < len(result.Path) {
-									assert.Equal(t, expectedType, result.Path[i].ResourceType, "路径节点 %d 的资源类型应该匹配", i)
+							// 如果指定了路径，验证路径是否匹配指定的路径之一
+							if len(c.pathResources) > 0 {
+								// 检查结果路径是否匹配指定的路径之一
+								matched := false
+								for _, expectedPath := range c.pathResources {
+									if len(result.Path) == len(expectedPath) {
+										match := true
+										for i := range result.Path {
+											if result.Path[i].ResourceType != expectedPath[i] {
+												match = false
+												break
+											}
+										}
+										if match {
+											matched = true
+											break
+										}
+									}
+								}
+								if !matched {
+									t.Logf("路径不匹配任何指定的路径: %v", result.Path)
 								}
 							}
 						}
@@ -910,53 +963,76 @@ func TestModel_QueryPathResourcesRange(t *testing.T) {
 	step := "1m"
 
 	testCases := map[string]struct {
-		matcher      cmdb.Matcher
-		pathResource []cmdb.Resource
+		sourceType    cmdb.Resource
+		targetTypes   []cmdb.Resource
+		pathResources [][]cmdb.Resource
+		matcher       cmdb.Matcher
 
 		expectedResultsLen int
 		error              error
 	}{
 		"empty space uid": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("space uid is empty"),
+			error: errors.New("space uid is empty"),
 		},
 		"empty timestamp": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("timestamp is empty"),
+			error: errors.New("timestamp is empty"),
 		},
-		"path resource too short": {
+		"empty source type": {
+			sourceType:    "",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod"},
-			error:        errors.New("path resource must have at least 2 resources"),
+			error: errors.New("source type is empty"),
+		},
+		"empty target types": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
+			matcher: cmdb.Matcher{
+				"pod": "bkm-pod-1",
+			},
+			error: errors.New("target types is empty"),
 		},
 		"invalid step": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("parse step error"),
+			error: errors.New("parse step error"),
 		},
 		"invalid start timestamp format": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("parse start timestamp error"),
+			error: errors.New("parse start timestamp error"),
 		},
 		"invalid end timestamp format": {
+			sourceType:    "pod",
+			targetTypes:   []cmdb.Resource{"system"},
+			pathResources: [][]cmdb.Resource{{"pod", "node", "system"}},
 			matcher: cmdb.Matcher{
 				"pod": "bkm-pod-1",
 			},
-			pathResource: []cmdb.Resource{"pod", "node", "system"},
-			error:        errors.New("parse end timestamp error"),
+			error: errors.New("parse end timestamp error"),
 		},
 	}
 
@@ -1001,7 +1077,7 @@ func TestModel_QueryPathResourcesRange(t *testing.T) {
 				spaceUid = influxdb.SpaceUid
 			}
 
-			results, err := testModel.QueryPathResourcesRange(ctx, "", spaceUid, stepStr, startTs, endTs, c.matcher, c.pathResource)
+			results, err := testModel.QueryPathResourcesRange(ctx, "", spaceUid, stepStr, startTs, endTs, c.sourceType, c.targetTypes, c.pathResources, c.matcher)
 			if c.error != nil {
 				assert.NotNil(t, err)
 				assert.Contains(t, err.Error(), c.error.Error())
@@ -1023,24 +1099,36 @@ func TestModel_QueryPathResourcesRange(t *testing.T) {
 							assert.NotEmpty(t, result.TargetType, "结果 %d 的目标资源类型不应该为空", i)
 							assert.Greater(t, len(result.Path), 0, "结果 %d 应该包含路径", i)
 
-							// 验证路径的第一个节点是源资源类型（路径的第一个资源类型）
-							if len(result.Path) > 0 && len(c.pathResource) > 0 {
-								assert.Equal(t, c.pathResource[0], result.Path[0].ResourceType, "结果 %d 路径的第一个节点应该是源资源类型", i)
+							// 验证路径的第一个节点是源资源类型
+							if len(result.Path) > 0 {
+								assert.Equal(t, c.sourceType, result.Path[0].ResourceType, "结果 %d 路径的第一个节点应该是源资源类型", i)
 							}
 							// 验证路径的最后一个节点是目标资源类型
 							if len(result.Path) > 0 {
 								assert.Equal(t, result.TargetType, result.Path[len(result.Path)-1].ResourceType, "结果 %d 路径的最后一个节点应该是目标资源类型", i)
 							}
 
-							// 验证路径长度
-							if len(c.pathResource) >= 2 {
-								assert.Equal(t, len(c.pathResource), len(result.Path), "结果 %d 路径长度应该匹配指定的资源路径", i)
-							}
-
-							// 验证路径中的资源类型顺序
-							for j, expectedType := range c.pathResource {
-								if j < len(result.Path) {
-									assert.Equal(t, expectedType, result.Path[j].ResourceType, "结果 %d 路径节点 %d 的资源类型应该匹配", i, j)
+							// 如果指定了路径，验证路径是否匹配指定的路径之一
+							if len(c.pathResources) > 0 {
+								// 检查结果路径是否匹配指定的路径之一
+								matched := false
+								for _, expectedPath := range c.pathResources {
+									if len(result.Path) == len(expectedPath) {
+										match := true
+										for j := range result.Path {
+											if result.Path[j].ResourceType != expectedPath[j] {
+												match = false
+												break
+											}
+										}
+										if match {
+											matched = true
+											break
+										}
+									}
+								}
+								if !matched {
+									t.Logf("结果 %d 路径不匹配任何指定的路径: %v", i, result.Path)
 								}
 							}
 

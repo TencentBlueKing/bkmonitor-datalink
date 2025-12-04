@@ -59,11 +59,12 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 	var elasticErr *elastic.Error
 	if errors.As(err, &elasticErr) {
 		return handleESSpecificError(elasticErr)
+	} else {
+		if errors.Is(err, io.EOF) {
+			return nil
+		} else {
+			// 非ES特定报错(bkbase会出现这种情况)，统一走curl的错误处理
+			return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
+		}
 	}
-
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-
-	return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
 }

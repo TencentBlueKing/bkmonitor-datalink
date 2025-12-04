@@ -18,6 +18,7 @@ import (
 	ristretto "github.com/dgraph-io/ristretto/v2"
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -62,9 +63,11 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 
 	for _, a := range alias {
 		if mapping, ok := m.cache.Get(a); ok {
+			log.Infof(ctx, `[fieldMap cache] got alias: %s from cache`, a)
 			hitAlias = append(hitAlias, a)
 			result.Set(a, mapping)
 		} else {
+			log.Infof(ctx, `[fieldMap cache] alias: %s missing in cache`, a)
 			missingAlias = append(missingAlias, a)
 		}
 	}

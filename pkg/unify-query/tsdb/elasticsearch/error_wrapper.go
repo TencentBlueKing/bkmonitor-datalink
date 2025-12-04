@@ -29,22 +29,26 @@ func handleESSpecificError(elasticErr *elastic.Error) error {
 	}
 	var msgBuilder strings.Builder
 
+	if elasticErr.Details == nil {
+		return elasticErr
+	}
+
+	hasValidRootCause := elasticErr.Details.RootCause != nil && len(elasticErr.Details.RootCause) > 0
 	hasValidCausedBy := elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0
+	existValidErr := hasValidRootCause || hasValidCausedBy
 
-	if hasValidCausedBy {
-		if elasticErr.Details != nil {
-			if len(elasticErr.Details.RootCause) > 0 {
-				msgBuilder.WriteString("root cause: \n")
-				for _, rc := range elasticErr.Details.RootCause {
-					msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
-				}
+	if existValidErr {
+		if hasValidRootCause {
+			msgBuilder.WriteString("root cause: \n")
+			for _, rc := range elasticErr.Details.RootCause {
+				msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
 			}
+		}
 
-			if elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0 {
-				msgBuilder.WriteString("caused by: \n")
-				for k, v := range elasticErr.Details.CausedBy {
-					msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
-				}
+		if hasValidCausedBy {
+			msgBuilder.WriteString("caused by: \n")
+			for k, v := range elasticErr.Details.CausedBy {
+				msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
 			}
 		}
 	} else {

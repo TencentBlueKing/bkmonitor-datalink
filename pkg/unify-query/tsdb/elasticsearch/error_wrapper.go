@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,30 +28,20 @@ func handleESSpecificError(elasticErr *elastic.Error) error {
 	}
 	var msgBuilder strings.Builder
 
-	hasValidRootCause := elasticErr.Details.RootCause != nil && len(elasticErr.Details.RootCause) > 0
-	hasValidCausedBy := elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0
-	existValidErr := hasValidRootCause || hasValidCausedBy
-
-	if existValidErr {
-		if hasValidRootCause {
+	if elasticErr.Details != nil {
+		if len(elasticErr.Details.RootCause) > 0 {
 			msgBuilder.WriteString("root cause: \n")
 			for _, rc := range elasticErr.Details.RootCause {
 				msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
 			}
 		}
 
-		if hasValidCausedBy {
+		if elasticErr.Details.CausedBy != nil {
 			msgBuilder.WriteString("caused by: \n")
 			for k, v := range elasticErr.Details.CausedBy {
 				msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
 			}
 		}
-	} else {
-		rawBytes, err := json.Marshal(elasticErr)
-		if err != nil {
-			return elasticErr
-		}
-		msgBuilder.WriteString(string(rawBytes))
 	}
 
 	return errors.New(msgBuilder.String())

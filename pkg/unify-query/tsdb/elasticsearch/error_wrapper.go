@@ -29,10 +29,6 @@ func handleESSpecificError(elasticErr *elastic.Error) error {
 	}
 	var msgBuilder strings.Builder
 
-	if elasticErr.Details == nil {
-		return elasticErr
-	}
-
 	hasValidRootCause := elasticErr.Details.RootCause != nil && len(elasticErr.Details.RootCause) > 0
 	hasValidCausedBy := elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0
 	existValidErr := hasValidRootCause || hasValidCausedBy

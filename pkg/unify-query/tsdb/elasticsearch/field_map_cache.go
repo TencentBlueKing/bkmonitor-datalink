@@ -39,6 +39,19 @@ func (m *FieldMapCache) Close() error {
 	return nil
 }
 
+func (m *FieldMapCache) cacheAndMergeResult(ctx context.Context, aliases []string, fetchedFieldMap metadata.FieldsMap, result metadata.FieldsMap) {
+	ttl := viper.GetDuration(MappingCacheTTLPath)
+
+	for _, alias := range aliases {
+		m.cache.Set(alias, fetchedFieldMap, ttl)
+		log.Infof(ctx, `[fieldMap cache] set alias: %s fieldsMap to cache (fields count: %d)`, alias, len(fetchedFieldMap))
+	}
+
+	for fieldName, fieldOption := range fetchedFieldMap {
+		result.Set(fieldName, fieldOption)
+	}
+}
+
 func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchFieldOptionCallback func(missingAlias []string) (metadata.FieldsMap, error)) (metadata.FieldsMap, error) {
 	var (
 		err  error
@@ -62,10 +75,12 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 
 	for _, a := range alias {
 		if value, found := m.cache.Get(a); found {
-			if mapping, ok := value.(metadata.FieldOption); ok {
+			if aliasFieldsMap, ok := value.(metadata.FieldsMap); ok {
 				log.Infof(ctx, `[fieldMap cache] got alias: %s from cache`, a)
 				hitAlias = append(hitAlias, a)
-				result.Set(a, mapping)
+				for fieldName, fieldOption := range aliasFieldsMap {
+					result.Set(fieldName, fieldOption)
+				}
 			} else {
 				log.Warnf(ctx, `[fieldMap cache] alias: %s type assertion failed`, a)
 				missingAlias = append(missingAlias, a)
@@ -85,11 +100,7 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 			return nil, err
 		}
 
-		ttl := viper.GetDuration(MappingCacheTTLPath)
-		for a, fieldOptions := range fetchedFieldMap {
-			result.Set(a, fieldOptions)
-			m.cache.Set(a, fieldOptions, ttl)
-		}
+		m.cacheAndMergeResult(ctx, missingAlias, fetchedFieldMap, result)
 	}
 
 	return result, nil

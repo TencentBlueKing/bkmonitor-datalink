@@ -30,16 +30,16 @@ func TestFieldMapCache(t *testing.T) {
 	tests := []struct {
 		name         string
 		alias        []string
-		preSetCache  map[string]metadata.FieldOption
+		preSetCache  metadata.FieldsMap
 		expectFetch  bool
-		expectFields map[string]metadata.FieldOption
+		expectFields metadata.FieldsMap
 	}{
 		{
 			name:        "缓存未命中",
 			alias:       []string{"test_alias"},
 			expectFetch: true,
-			expectFields: map[string]metadata.FieldOption{
-				"test_alias": {
+			expectFields: metadata.FieldsMap{
+				"field1": {
 					FieldName: "field_test_alias",
 					FieldType: "keyword",
 					IsAgg:     false,
@@ -49,16 +49,16 @@ func TestFieldMapCache(t *testing.T) {
 		{
 			name:  "缓存命中",
 			alias: []string{"cached_alias"},
-			preSetCache: map[string]metadata.FieldOption{
-				"cached_alias": {
+			preSetCache: metadata.FieldsMap{
+				"field1": {
 					FieldName: "cached_field",
 					FieldType: "text",
 					IsAgg:     true,
 				},
 			},
 			expectFetch: false,
-			expectFields: map[string]metadata.FieldOption{
-				"cached_alias": {
+			expectFields: metadata.FieldsMap{
+				"field1": {
 					FieldName: "cached_field",
 					FieldType: "text",
 					IsAgg:     true,
@@ -66,26 +66,38 @@ func TestFieldMapCache(t *testing.T) {
 			},
 		},
 		{
-			name:  "部分缓存命中",
-			alias: []string{"cached_alias", "uncached_alias"},
-			preSetCache: map[string]metadata.FieldOption{
-				"cached_alias": {
-					FieldName: "cached_field",
-					FieldType: "text",
-					IsAgg:     true,
-				},
-			},
+			name:        "多alias部分缓存命中",
+			alias:       []string{"cached_alias", "uncached_alias"},
 			expectFetch: true,
-			expectFields: map[string]metadata.FieldOption{
-				"cached_alias": {
-					FieldName: "cached_field",
-					FieldType: "text",
-					IsAgg:     true,
+			expectFields: metadata.FieldsMap{
+				"field1": {
+					FieldName: "field_cached_alias",
+					FieldType: "keyword",
+					IsAgg:     false,
 				},
-				"uncached_alias": {
+				"field2": {
 					FieldName: "field_uncached_alias",
 					FieldType: "keyword",
 					IsAgg:     false,
+				},
+			},
+		},
+		{
+			name:  "test",
+			alias: []string{"bkmonitor_event_20251204"},
+			preSetCache: metadata.FieldsMap{
+				"event_field": {
+					FieldName: "event_field",
+					FieldType: "keyword",
+					IsAgg:     true,
+				},
+			},
+			expectFetch: false,
+			expectFields: metadata.FieldsMap{
+				"event_field": {
+					FieldName: "event_field",
+					FieldType: "keyword",
+					IsAgg:     true,
 				},
 			},
 		},
@@ -95,29 +107,26 @@ func TestFieldMapCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			cache := &FieldMapCache{}
-			cache.cache = cache.New(time.Minute, 30*time.Second)
+			fieldMapCache := &FieldMapCache{}
+			fieldMapCache.cache = cache.New(time.Minute, 30*time.Second)
 
 			fetchCount := 0
 			fetchCallback := func(missingAlias []string) (metadata.FieldsMap, error) {
 				fetchCount++
 				result := make(metadata.FieldsMap)
-				for _, alias := range missingAlias {
-					result.Set(alias, metadata.FieldOption{
-						FieldName: "field_" + alias,
-						FieldType: "keyword",
-						IsAgg:     false,
-					})
+				for fieldName, fieldOption := range tt.expectFields {
+					result.Set(fieldName, fieldOption)
 				}
 				return result, nil
 			}
 
-			for alias, fieldOption := range tt.preSetCache {
-				cache.cache.SetWithTTL(alias, fieldOption, 1, time.Minute)
-				cache.cache.Wait()
+			for _, alias := range tt.alias {
+				if tt.preSetCache != nil {
+					fieldMapCache.cache.Set(alias, tt.preSetCache, time.Minute)
+				}
 			}
 
-			result, err := cache.GetFieldsMap(ctx, tt.alias, fetchCallback)
+			result, err := fieldMapCache.GetFieldsMap(ctx, tt.alias, fetchCallback)
 			assert.NoError(t, err)
 
 			if tt.expectFetch {
@@ -126,10 +135,10 @@ func TestFieldMapCache(t *testing.T) {
 				assert.Equal(t, 0, fetchCount, "期望fetch回调不被调用")
 			}
 
-			for expectedAlias, expectedOption := range tt.expectFields {
-				actualOption, exists := result[expectedAlias]
-				assert.True(t, exists)
-				assert.Equal(t, expectedOption, actualOption)
+			for expectedFieldName, expectedOption := range tt.expectFields {
+				actualOption, exists := result[expectedFieldName]
+				assert.True(t, exists, "期望字段 %s 存在", expectedFieldName)
+				assert.Equal(t, expectedOption, actualOption, "字段 %s 的配置不匹配", expectedFieldName)
 			}
 		})
 	}

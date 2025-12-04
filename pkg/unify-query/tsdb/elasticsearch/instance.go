@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/storage"
@@ -173,7 +174,10 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 
 	cache := GetMappingCache()
 
+	log.Infof(ctx, "[fieldMap cache] get fields map from cache: %v", aliases)
+
 	return cache.GetFieldsMap(ctx, aliases, func(missingAlias []string) (metadata.FieldsMap, error) {
+		log.Infof(ctx, "[fieldMap cache] fetch missing alias mapping: %v", missingAlias)
 		span.Set("missing-alias", missingAlias)
 		return fetchFieldsMap(ctx, fieldAlias, missingAlias, cli, span, mappings, settings)
 	})

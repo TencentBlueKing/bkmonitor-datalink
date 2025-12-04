@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,20 +29,30 @@ func handleESSpecificError(elasticErr *elastic.Error) error {
 	}
 	var msgBuilder strings.Builder
 
-	if elasticErr.Details != nil {
-		if len(elasticErr.Details.RootCause) > 0 {
-			msgBuilder.WriteString("root cause: \n")
-			for _, rc := range elasticErr.Details.RootCause {
-				msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
-			}
-		}
+	hasValidCausedBy := elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0
 
-		if elasticErr.Details.CausedBy != nil {
-			msgBuilder.WriteString("caused by: \n")
-			for k, v := range elasticErr.Details.CausedBy {
-				msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
+	if hasValidCausedBy {
+		if elasticErr.Details != nil {
+			if len(elasticErr.Details.RootCause) > 0 {
+				msgBuilder.WriteString("root cause: \n")
+				for _, rc := range elasticErr.Details.RootCause {
+					msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
+				}
+			}
+
+			if elasticErr.Details.CausedBy != nil && len(elasticErr.Details.CausedBy) > 0 {
+				msgBuilder.WriteString("caused by: \n")
+				for k, v := range elasticErr.Details.CausedBy {
+					msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
+				}
 			}
 		}
+	} else {
+		rawBytes, err := json.Marshal(elasticErr)
+		if err != nil {
+			return elasticErr
+		}
+		msgBuilder.WriteString(string(rawBytes))
 	}
 
 	return errors.New(msgBuilder.String())
@@ -58,32 +69,12 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 
 	var elasticErr *elastic.Error
 	if errors.As(err, &elasticErr) {
-		return removeCL(handleESSpecificError(elasticErr))
+		return handleESSpecificError(elasticErr)
 	}
 
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
 
-	err = removeCL(err)
-
 	return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
-}
-
-func removeCL(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errString := err.Error()
-
-	cleaned := strings.ReplaceAll(errString, "\r\n", " ")
-	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
-	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
-
-	if cleaned == errString {
-		return err
-	}
-
-	return errors.New(cleaned)
 }

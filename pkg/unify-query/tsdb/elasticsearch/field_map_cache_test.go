@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	ristretto "github.com/dgraph-io/ristretto/v2"
+	"github.com/patrickmn/go-cache"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
@@ -24,10 +24,8 @@ import (
 )
 
 func TestFieldMapCache(t *testing.T) {
-	viper.Set(MappingCacheMaxCostPath, 1000)
-	viper.Set(MappingCacheNumCountersPath, 10000)
-	viper.Set(MappingCacheBufferItemsPath, 64)
 	viper.Set(MappingCacheTTLPath, "1m")
+	viper.Set(MappingCacheCleanupPath, "30s")
 
 	tests := []struct {
 		name         string
@@ -98,14 +96,7 @@ func TestFieldMapCache(t *testing.T) {
 			ctx := context.Background()
 
 			cache := &FieldMapCache{}
-			c, err := ristretto.NewCache(&ristretto.Config[string, metadata.FieldOption]{
-				MaxCost:     1000,
-				NumCounters: 10000,
-				BufferItems: 64,
-			})
-			assert.NoError(t, err)
-			cache.cache = c
-			defer c.Close()
+			cache.cache = cache.New(time.Minute, 30*time.Second)
 
 			fetchCount := 0
 			fetchCallback := func(missingAlias []string) (metadata.FieldsMap, error) {

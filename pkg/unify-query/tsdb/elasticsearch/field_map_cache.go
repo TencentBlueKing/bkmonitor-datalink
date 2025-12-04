@@ -15,7 +15,7 @@ import (
 	"context"
 	"sync"
 
-	ristretto "github.com/dgraph-io/ristretto/v2"
+	"github.com/patrickmn/go-cache"
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -29,13 +29,12 @@ var (
 )
 
 type FieldMapCache struct {
-	cache *ristretto.Cache[string, metadata.FieldOption]
+	cache *cache.Cache
 }
 
-// Close 关闭缓存并释放资源
 func (m *FieldMapCache) Close() error {
 	if m.cache != nil {
-		m.cache.Close()
+		m.cache.Flush()
 	}
 	return nil
 }
@@ -62,10 +61,15 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 	)
 
 	for _, a := range alias {
-		if mapping, ok := m.cache.Get(a); ok {
-			log.Infof(ctx, `[fieldMap cache] got alias: %s from cache`, a)
-			hitAlias = append(hitAlias, a)
-			result.Set(a, mapping)
+		if value, found := m.cache.Get(a); found {
+			if mapping, ok := value.(metadata.FieldOption); ok {
+				log.Infof(ctx, `[fieldMap cache] got alias: %s from cache`, a)
+				hitAlias = append(hitAlias, a)
+				result.Set(a, mapping)
+			} else {
+				log.Warnf(ctx, `[fieldMap cache] alias: %s type assertion failed`, a)
+				missingAlias = append(missingAlias, a)
+			}
 		} else {
 			log.Infof(ctx, `[fieldMap cache] alias: %s missing in cache`, a)
 			missingAlias = append(missingAlias, a)
@@ -81,12 +85,11 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 			return nil, err
 		}
 
+		ttl := viper.GetDuration(MappingCacheTTLPath)
 		for a, fieldOptions := range fetchedFieldMap {
 			result.Set(a, fieldOptions)
-			m.cache.SetWithTTL(a, fieldOptions, 1, viper.GetDuration(MappingCacheTTLPath))
+			m.cache.Set(a, fieldOptions, ttl)
 		}
-		// 确保缓存操作完成
-		m.cache.Wait()
 	}
 
 	return result, nil
@@ -94,16 +97,11 @@ func (m *FieldMapCache) GetFieldsMap(ctx context.Context, alias []string, fetchF
 
 func GetMappingCache() *FieldMapCache {
 	once.Do(func() {
-		c, err := ristretto.NewCache(&ristretto.Config[string, metadata.FieldOption]{
-			MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
-			NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
-			BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
-		})
-		if err != nil {
-			panic(err)
-		}
+		defaultExpiration := viper.GetDuration(MappingCacheTTLPath)
+		cleanupInterval := viper.GetDuration(MappingCacheCleanupPath)
+
 		fieldMapCache = &FieldMapCache{
-			cache: c,
+			cache: cache.New(defaultExpiration, cleanupInterval),
 		}
 	})
 

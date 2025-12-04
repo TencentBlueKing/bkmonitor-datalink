@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -174,6 +175,7 @@ func TestInstance_DirectQuery(t *testing.T) {
 }
 
 func TestInstance_QueryLabelValues(t *testing.T) {
+	ctx := t.Context()
 	testCases := map[string]struct {
 		name     string
 		expected string
@@ -189,7 +191,6 @@ func TestInstance_QueryLabelValues(t *testing.T) {
 	}
 
 	mock.Init()
-	ctx := metadata.InitHashID(context.Background())
 
 	mock.Vm.Set(map[string]any{
 		`query_range:17301804581730184058360count({__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}) by (pod)`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":14,"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-5vsjr"},"values":[[1730181538,"1"],[1730181898,"1"],[1730182258,"1"],[1730182618,"1"],[1730182978,"1"],[1730183338,"1"],[1730183698,"1"],[1730184058,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-m9w6t"},"values":[[1730181538,"1"],[1730181898,"1"],[1730182258,"1"],[1730182618,"1"],[1730182978,"1"],[1730183338,"1"],[1730183698,"1"],[1730184058,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-nmx72"},"values":[[1730181538,"1"],[1730181898,"1"],[1730182258,"1"],[1730182618,"1"],[1730182978,"1"],[1730183338,"1"],[1730183698,"1"],[1730184058,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-6459767d5f-qq8nq"},"values":[[1730181538,"1"],[1730181898,"1"],[1730182258,"1"],[1730182618,"1"],[1730182978,"1"],[1730183338,"1"],[1730183698,"1"],[1730184058,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-7hpc9"},"values":[[1730180458,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-dpkwm"},"values":[[1730180458,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-x2wfd"},"values":[[1730180458,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-778b5bdf95-xpq5z"},"values":[[1730180458,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-6lfvd"},"values":[[1730180818,"1"],[1730181178,"1"],[1730181538,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-dz9t7"},"values":[[1730180818,"1"],[1730181178,"1"],[1730181538,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-nlzmc"},"values":[[1730180818,"1"],[1730181178,"1"],[1730181538,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-85c54f79d8-qzqfz"},"values":[[1730180818,"1"],[1730181178,"1"],[1730181538,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-test-66f7ccb78d-jf4m2"},"values":[[1730180458,"1"],[1730180818,"1"],[1730181178,"1"],[1730181538,"1"]]},{"metric":{"pod":"bk-datalink-unify-query-test-8445575f5d-mrppp"},"values":[[1730180458,"1"]]}]},"stats":{"seriesFetched":"14"}}],"select_fields_order":[],"sql":"count ({__name__=\"container_cpu_usage_seconds_total_value\", result_table_id=\"2_bcs_prom_computation_result_table_00000\", container=\"unify-query\"}) by(pod)","total_record_size":13920,"timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","result_table_ids":["2_bcs_prom_computation_result_table_00000"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
@@ -198,6 +199,7 @@ func TestInstance_QueryLabelValues(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
 			start := time.Unix(c.start, 0)
 			end := time.Unix(c.end, 0)
 

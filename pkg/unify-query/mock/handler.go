@@ -91,6 +91,7 @@ var (
 	BkSQL    = &bkSQLResultData{}
 	InfluxDB = &influxdbResultData{}
 	Es       = &elasticSearchResultData{}
+	Es1      = &elasticSearchResultData{}
 )
 
 type resultData struct {
@@ -209,7 +210,6 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
-
 		d, ok := Es.Get(string(body))
 		if !ok {
 			return w, metadata.NewMessage(

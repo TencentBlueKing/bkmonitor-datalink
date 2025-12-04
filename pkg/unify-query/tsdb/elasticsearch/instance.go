@@ -217,7 +217,7 @@ func fetchFieldsMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
 		fieldsMap = iof.FieldsMap()
-		return
+		return fieldsMap, err
 	}
 
 	span.Set("mapping-length", len(mappings))
@@ -237,7 +237,7 @@ func fetchFieldsMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases
 		}
 	}
 	fieldsMap = iof.FieldsMap()
-	return
+	return fieldsMap, err
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {

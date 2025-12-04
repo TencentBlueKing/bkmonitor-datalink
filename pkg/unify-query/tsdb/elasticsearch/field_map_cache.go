@@ -15,10 +15,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	ristretto "github.com/dgraph-io/ristretto/v2"
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -96,7 +96,6 @@ func GetMappingCache() *FieldMapCache {
 			NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
 			BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
 		})
-
 		if err != nil {
 			panic(err)
 		}

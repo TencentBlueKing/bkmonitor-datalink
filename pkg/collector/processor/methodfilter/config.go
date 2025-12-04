@@ -22,14 +22,14 @@ type DropSpanAction struct {
 }
 
 type Rule struct {
-	MatchType    string      `config:"match_type" mapstructure:"match_type"`
 	PredicateKey string      `config:"predicate_key" mapstructure:"predicate_key"`
 	Kind         string      `config:"kind" mapstructure:"kind"`
-	MatchConfig  MatchConfig `config:"rule" mapstructure:"rule"`
+	MatchConfig  MatchConfig `config:"match" mapstructure:"match"`
 }
 
 type MatchConfig struct {
-	Regex string `config:"regex" mapstructure:"regex"`
+	Op    string `config:"op" mapstructure:"op"`
+	Value string `config:"value" mapstructure:"value"`
 }
 
 type ConfigHandler struct {

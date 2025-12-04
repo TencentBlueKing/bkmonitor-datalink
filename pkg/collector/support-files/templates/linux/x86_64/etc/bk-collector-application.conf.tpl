@@ -378,11 +378,11 @@ default:
           drop_span:
             rules:
               {%- for item in method_filter_config.get("drop_span", {}).get("rules", []) %}
-              - match_type: '{{ item.match_type }}'
-                predicate_key: '{{ item.predicate_key }}'
+              - predicate_key: '{{ item.predicate_key }}'
                 kind: '{{ item.span_kind }}'
-                rule:
-                  regex: '{{ item.rule.regex }}'
+                match:
+                  op: '{{ item.match.op }}'
+                  value: '{{ item.match.value }}'
               {%- endfor %}
 {%- endif %}
 

@@ -107,7 +107,7 @@ func (p *methodFilter) dropSpanAction(record *define.Record) {
 					continue
 				}
 
-				if !opmatch.Match(val, rule.MatchConfig.Regex, string(opmatch.OpReg)) {
+				if !opmatch.Match(val, rule.MatchConfig.Value, rule.MatchConfig.Op) {
 					continue
 				}
 				return true

@@ -15,11 +15,11 @@ processor:
     config:
       drop_span:
         rules:
-          - match_type: "regex"
-            predicate_key: "span_name"
+          - predicate_key: "span_name"
             kind: "SPAN_KIND_SERVER"
-            rule:
-              regex: GET:/benchmark/[^/]+
+            match:
+              op: "reg"
+              value: GET:/benchmark/[^/]+
 */
 
 package methodfilter

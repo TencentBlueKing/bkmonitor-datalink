@@ -84,7 +84,7 @@ func (m *Message) Error(ctx context.Context, err error) error {
 
 	newErr := errors.New(s)
 	if err != nil {
-		newErr = errors.WithMessage(err, newErr.Error())
+		newErr = errors.Wrap(err, newErr.Error())
 	}
 	log.Errorf(ctx, "%s", newErr.Error())
 	return newErr

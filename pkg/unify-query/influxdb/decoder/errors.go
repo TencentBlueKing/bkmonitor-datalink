@@ -13,4 +13,6 @@ import (
 	"errors"
 )
 
+// ErrDecoderNotFound 解码器未找到的错误
+// 当请求的解码器类型不存在或未注册时返回此错误
 var ErrDecoderNotFound = errors.New("decoder not found")

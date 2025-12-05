@@ -19,6 +19,7 @@ import (
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
 	pl "github.com/prometheus/prometheus/promql"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -508,4 +509,360 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
+}
+
+// buildTimeGraphFromRelations 从关系路径构建 TimeGraph
+func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUid string, start, end time.Time, step time.Duration, sourceInfo cmdb.Matcher, relations []cmdb.Relation) (*TimeGraph, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
+	defer span.End(&err)
+
+	tg := NewTimeGraph()
+
+	instance := prometheus.GetTsDbInstance(ctx, &metadata.Query{
+		StorageType: metadata.VictoriaMetricsStorageType,
+	})
+
+	for _, relation := range relations {
+		ctx = metadata.InitHashID(ctx)
+		metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
+
+		queryTs, err := tg.MakeQueryTs(ctx, spaceUid, sourceInfo, start, end, step, relation)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "make query ts error for relation %v", relation)
+		}
+
+		queryRef, err := queryTs.ToQueryReference(ctx)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "to query reference error")
+		}
+		metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
+
+		expr, err := queryTs.ToPromExpr(ctx, nil)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "to prom expr error")
+		}
+		stmt := expr.String()
+
+		qb := metadata.GetQueryParams(ctx)
+		var matrix pl.Matrix
+		if start == end {
+			// instant 查询
+			vector, err := instance.DirectQuery(ctx, stmt, qb.End)
+			if err != nil {
+				return nil, errors.WithMessagef(err, "direct query error")
+			}
+			matrix = vectorToMatrix(vector)
+		} else {
+			// range 查询
+			matrix, _, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
+			if err != nil {
+				return nil, errors.WithMessagef(err, "direct query range error")
+			}
+		}
+
+		// 将查询结果添加到 TimeGraph
+		for _, series := range matrix {
+			info := make(map[string]string, len(series.Metric))
+			for _, m := range series.Metric {
+				info[m.Name] = m.Value
+			}
+
+			timestamps := make([]int64, len(series.Points))
+			for i, point := range series.Points {
+				timestamps[i] = point.T
+			}
+
+			source, target, _ := relation.Info()
+			err = tg.AddTimeRelation(ctx, source, target, info, timestamps...)
+			if err != nil {
+				return nil, errors.WithMessagef(err, "add time relation error")
+			}
+		}
+	}
+
+	return tg, nil
+}
+
+// buildRelationsFromPaths 从路径列表中提取所有关系并去重
+func (r *model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation {
+	// 使用 map 去重关系
+	relationMap := make(map[cmdb.Relation]struct{})
+
+	for _, path := range paths {
+		if len(path) < 2 {
+			continue
+		}
+		// 从路径中提取所有相邻的关系
+		for i := 0; i < len(path)-1; i++ {
+			relation := cmdb.Relation{
+				V: [2]cmdb.Resource{path[i], path[i+1]},
+			}
+			relationMap[relation] = struct{}{}
+		}
+	}
+
+	// 转换为切片
+	allRelations := make([]cmdb.Relation, 0, len(relationMap))
+	for relation := range relationMap {
+		allRelations = append(allRelations, relation)
+	}
+
+	return allRelations
+}
+
+// QueryPathResources 查询指定时间点的路径上的所有资源（instant 查询）
+// 参数:
+//   - sourceType: 源资源类型
+//   - targetTypes: 目标资源类型列表
+//   - pathResources: 可选，指定的路径列表（支持多条路径），如果为空则自动查找所有路径
+//   - matcher: 节点的匹配条件
+//   - ts: 时间戳
+func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUid string, ts string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "query-path-resources")
+	defer span.End(&err)
+
+	span.Set("source_type", sourceType)
+	span.Set("target_types", targetTypes)
+	span.Set("path_resources", pathResources)
+	span.Set("space_uid", spaceUid)
+	span.Set("timestamp", ts)
+
+	if spaceUid == "" {
+		err = errors.New("space uid is empty")
+		return nil, err
+	}
+
+	if ts == "" {
+		err = errors.New("timestamp is empty")
+		return nil, err
+	}
+
+	if sourceType == "" {
+		err = errors.New("source type is empty")
+		return nil, err
+	}
+
+	if len(targetTypes) == 0 {
+		err = errors.New("target types is empty")
+		return nil, err
+	}
+
+	// 解析时间戳
+	timestamp, err := cast.ToInt64E(ts)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "parse timestamp error")
+	}
+	queryTime := time.Unix(timestamp, 0)
+
+	// 1. 确定要查询的路径列表
+	var allPaths [][]cmdb.Resource
+
+	if len(pathResources) > 0 {
+		// 如果指定了路径，使用指定的路径（支持多条路径）
+		for _, path := range pathResources {
+			if len(path) >= 2 {
+				allPaths = append(allPaths, path)
+			}
+		}
+	} else {
+		// 如果没有指定路径，使用 sourceType 和 targetTypes 查找所有路径
+		for _, targetType := range targetTypes {
+			paths, err := r.getPaths(ctx, sourceType, targetType, nil)
+			if err != nil {
+				// 如果找不到路径，记录日志但继续处理其他目标类型
+				metadata.NewMessage(
+					metadata.MsgQueryRelation,
+					"找不到路径: %s => %s, error: %v",
+					sourceType, targetType, err,
+				).Warn(ctx)
+				continue
+			}
+			// 将字符串路径转换为 Resource 路径
+			for _, pathStr := range paths {
+				path := make([]cmdb.Resource, 0, len(pathStr))
+				for _, s := range pathStr {
+					path = append(path, cmdb.Resource(s))
+				}
+				allPaths = append(allPaths, path)
+			}
+		}
+	}
+
+	if len(allPaths) == 0 {
+		return nil, errors.New("no paths found")
+	}
+
+	// 2. 从所有路径中提取关系并去重
+	allRelations := r.buildRelationsFromPaths(allPaths)
+
+	// 3. 构建 TimeGraph（instant 查询，start 和 end 相同）
+	step := time.Minute * 5 // 默认步长
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, queryTime, queryTime, step, matcher, allRelations)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "build time graph error")
+	}
+	defer tg.Clean(ctx)
+
+	// 4. 对每个目标类型调用 FindShortestPath，收集所有结果
+	var allResults []cmdb.PathResourcesResult
+	for _, targetType := range targetTypes {
+		results, err := tg.FindShortestPath(ctx, sourceType, targetType, matcher)
+		if err != nil {
+			// 如果某个目标类型查找失败，记录日志但继续处理其他目标类型
+			metadata.NewMessage(
+				metadata.MsgQueryRelation,
+				"查找路径失败: %s => %s, error: %v",
+				sourceType, targetType, err,
+			).Warn(ctx)
+			continue
+		}
+
+		// 转换为 cmdb.PathResourcesResult
+		for _, result := range results {
+			allResults = append(allResults, cmdb.PathResourcesResult{
+				Timestamp:  result.Timestamp,
+				TargetType: result.TargetType,
+				Path:       result.Path,
+			})
+		}
+	}
+
+	return allResults, nil
+}
+
+// QueryPathResourcesRange 查询指定时间段的路径上的所有资源（query_range 查询）
+// 参数:
+//   - sourceType: 源资源类型
+//   - targetTypes: 目标资源类型列表
+//   - pathResources: 可选，指定的路径列表（支持多条路径），如果为空则自动查找所有路径
+//   - matcher: 节点的匹配条件
+//   - startTs, endTs: 时间范围
+//   - step: 查询步长
+func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "query-path-resources-range")
+	defer span.End(&err)
+
+	span.Set("source_type", sourceType)
+	span.Set("target_types", targetTypes)
+	span.Set("path_resources", pathResources)
+	span.Set("space_uid", spaceUid)
+	span.Set("start_ts", startTs)
+	span.Set("end_ts", endTs)
+	span.Set("step", step)
+
+	if spaceUid == "" {
+		err = errors.New("space uid is empty")
+		return nil, err
+	}
+
+	if startTs == "" || endTs == "" {
+		err = errors.New("timestamp is empty")
+		return nil, err
+	}
+
+	if sourceType == "" {
+		err = errors.New("source type is empty")
+		return nil, err
+	}
+
+	if len(targetTypes) == 0 {
+		err = errors.New("target types is empty")
+		return nil, err
+	}
+
+	// 解析时间范围
+	start, err := cast.ToInt64E(startTs)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "parse start timestamp error")
+	}
+	end, err := cast.ToInt64E(endTs)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "parse end timestamp error")
+	}
+
+	startTime := time.Unix(start, 0)
+	endTime := time.Unix(end, 0)
+
+	// 解析步长
+	stepDuration, err := time.ParseDuration(step)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "parse step error")
+	}
+
+	// 1. 确定要查询的路径列表
+	var allPaths [][]cmdb.Resource
+
+	if len(pathResources) > 0 {
+		// 如果指定了路径，使用指定的路径（支持多条路径）
+		for _, path := range pathResources {
+			if len(path) >= 2 {
+				allPaths = append(allPaths, path)
+			}
+		}
+	} else {
+		// 如果没有指定路径，使用 sourceType 和 targetTypes 查找所有路径
+		for _, targetType := range targetTypes {
+			paths, err := r.getPaths(ctx, sourceType, targetType, nil)
+			if err != nil {
+				// 如果找不到路径，记录日志但继续处理其他目标类型
+				metadata.NewMessage(
+					metadata.MsgQueryRelation,
+					"找不到路径: %s => %s, error: %v",
+					sourceType, targetType, err,
+				).Warn(ctx)
+				continue
+			}
+			// 将字符串路径转换为 Resource 路径
+			for _, pathStr := range paths {
+				path := make([]cmdb.Resource, 0, len(pathStr))
+				for _, s := range pathStr {
+					path = append(path, cmdb.Resource(s))
+				}
+				allPaths = append(allPaths, path)
+			}
+		}
+	}
+
+	if len(allPaths) == 0 {
+		return nil, errors.New("no paths found")
+	}
+
+	// 2. 从所有路径中提取关系并去重
+	allRelations := r.buildRelationsFromPaths(allPaths)
+
+	// 3. 构建 TimeGraph
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUid, startTime, endTime, stepDuration, matcher, allRelations)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "build time graph error")
+	}
+	defer tg.Clean(ctx)
+
+	// 4. 对每个目标类型调用 FindShortestPath，收集所有结果
+	var allResults []cmdb.PathResourcesResult
+	for _, targetType := range targetTypes {
+		results, err := tg.FindShortestPath(ctx, sourceType, targetType, matcher)
+		if err != nil {
+			// 如果某个目标类型查找失败，记录日志但继续处理其他目标类型
+			metadata.NewMessage(
+				metadata.MsgQueryRelation,
+				"查找路径失败: %s => %s, error: %v",
+				sourceType, targetType, err,
+			).Warn(ctx)
+			continue
+		}
+
+		// 转换为 cmdb.PathResourcesResult
+		for _, result := range results {
+			allResults = append(allResults, cmdb.PathResourcesResult{
+				Timestamp:  result.Timestamp,
+				TargetType: result.TargetType,
+				Path:       result.Path,
+			})
+		}
+	}
+
+	return allResults, nil
 }

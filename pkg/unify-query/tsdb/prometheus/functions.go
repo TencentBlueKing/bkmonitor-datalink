@@ -13,10 +13,24 @@ import (
 	"math"
 )
 
+// intMathCeil 计算 a 除以 b 的向上取整结果
+// 参数:
+//   - a: 被除数
+//   - b: 除数
+//
+// 返回: a/b 的向上取整值（int64 类型）
+// 示例: intMathCeil(10, 3) = 4, intMathCeil(10, 2) = 5
 func intMathCeil(a, b int64) int64 {
 	return int64(math.Ceil(float64(a) / float64(b)))
 }
 
+// intMathFloor 计算 a 除以 b 的向下取整结果
+// 参数:
+//   - a: 被除数
+//   - b: 除数，如果为 0 则直接返回 a（避免除零错误）
+//
+// 返回: a/b 的向下取整值（int64 类型），如果 b 为 0 则返回 a
+// 示例: intMathFloor(10, 3) = 3, intMathFloor(10, 2) = 5, intMathFloor(10, 0) = 10
 func intMathFloor(a, b int64) int64 {
 	if b == 0 {
 		return a

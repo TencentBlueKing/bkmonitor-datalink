@@ -9,9 +9,10 @@
 
 package promql
 
-// ConditionField
+// ConditionField 表示一个查询条件字段
+// 用于构建 WHERE 子句中的单个条件
 type ConditionField struct {
-	DimensionName string   `json:"field_name"`
-	Value         []string `json:"value"`
-	Operator      string   `json:"op"`
+	DimensionName string   `json:"field_name"` // 维度/字段名称
+	Value         []string `json:"value"`      // 字段值列表，支持多值匹配
+	Operator      string   `json:"op"`         // 操作符，如 "=", "!=", "=~", "!~", ">", "<" 等
 }

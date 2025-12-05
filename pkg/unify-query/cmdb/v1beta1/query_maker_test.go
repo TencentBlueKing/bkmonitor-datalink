@@ -50,7 +50,7 @@ func TestMakeQuery(t *testing.T) {
 			expandMatch: map[string]string{
 				"version": "3.9.3269",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, pod, container, version) (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"})`,
+			promQL: `count by (bcs_cluster_id, container, namespace, pod, version) (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"})`,
 		},
 		{
 			name: "level1 and 1m",
@@ -93,7 +93,7 @@ func TestMakeQuery(t *testing.T) {
 				"version": "3.9.3269",
 			},
 			step:   "1m",
-			promQL: `count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod, container) group_left () (count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}[1m])))))`,
+			promQL: `count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, container, namespace, pod) group_left () (count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}[1m])))))`,
 		},
 		{
 			name:       "level 2 with expand show",
@@ -115,7 +115,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `(count by (host_id) (bkmonitor:host_with_system_relation{bk_target_ip!="",host_id!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (host_id) group_left (version, env_name, env_type, service_version, service_type) bkmonitor:host_info_relation{host_id!=""}`,
+			promQL: `(count by (host_id) (bkmonitor:host_with_system_relation{bk_target_ip!="",host_id!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (host_id) group_left (env_name, env_type, service_type, service_version, version) bkmonitor:host_info_relation{host_id!=""}`,
 		},
 		{
 			name: "level 2 and 1m with expand info and expand show",
@@ -125,7 +125,7 @@ func TestMakeQuery(t *testing.T) {
 			},
 			expandShow: true,
 			step:       "1m",
-			promQL:     `(count by (bcs_cluster_id, namespace, pod, container) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node="node_1",pod!=""}[1m]))))) * on (bcs_cluster_id, namespace, pod, container) group_left (version) count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m])`,
+			promQL:     `(count by (bcs_cluster_id, container, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node="node_1",pod!=""}[1m]))))) * on (bcs_cluster_id, container, namespace, pod) group_left (version) count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m])`,
 		},
 		{
 			name: "level 2 with expand info",
@@ -136,7 +136,7 @@ func TestMakeQuery(t *testing.T) {
 			expandMatch: map[string]string{
 				"version": "3.9.3269",
 			},
-			promQL: `count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""} * on (bcs_cluster_id, namespace, pod, container) group_left () (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}))))`,
+			promQL: `count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""} * on (bcs_cluster_id, container, namespace, pod) group_left () (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}))))`,
 		},
 		{
 			name: "level3",
@@ -145,7 +145,7 @@ func TestMakeQuery(t *testing.T) {
 				"node":           "node1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id="cluster1",deployment!="",namespace!="",replicaset!=""} * on (bcs_cluster_id, namespace, replicaset) group_left () (count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace!="",pod!="",replicaset!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace!="",node="node1",pod!=""})))))`,
+			promQL: `count by (bcs_cluster_id, deployment, namespace) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id="cluster1",deployment!="",namespace!="",replicaset!=""} * on (bcs_cluster_id, namespace, replicaset) group_left () (count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace!="",pod!="",replicaset!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace!="",node="node1",pod!=""})))))`,
 		},
 		{
 			name: "level 3 with expand info",
@@ -156,7 +156,7 @@ func TestMakeQuery(t *testing.T) {
 			expandMatch: map[string]string{
 				"version": "3.9.3269",
 			},
-			promQL: `count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""} * on (bcs_cluster_id, namespace, pod, container) group_left () (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}))))))`,
+			promQL: `count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""} * on (bcs_cluster_id, container, namespace, pod) group_left () (bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}))))))`,
 		},
 		{
 			name: "level4",
@@ -164,7 +164,7 @@ func TestMakeQuery(t *testing.T) {
 			indexMatcher: map[string]string{
 				"bk_target_ip": "127.0.0.1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id!="",deployment!="",namespace!="",replicaset!=""} * on (bcs_cluster_id, namespace, replicaset) group_left () (count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id!="",namespace!="",pod!="",replicaset!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip="127.0.0.1",node!=""})))))))`,
+			promQL: `count by (bcs_cluster_id, deployment, namespace) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id!="",deployment!="",namespace!="",replicaset!=""} * on (bcs_cluster_id, namespace, replicaset) group_left () (count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id!="",namespace!="",pod!="",replicaset!=""} * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip="127.0.0.1",node!=""})))))))`,
 		},
 	}
 

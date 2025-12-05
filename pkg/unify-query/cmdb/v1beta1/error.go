@@ -7,15 +7,10 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package api
+package v1beta1
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
+var (
+	ErrIndexNotMatchIndex = "%s not match index"
+	ErrEmptyMatcher       = "matcher is empty"
+	ErrEmptyResource      = "resource is empty"
 )
-
-func RegisterRelation(registerHandler *endpoint.RegisterHandler) {
-	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
-	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-	registerHandler.Register("POST", RelationPathResources, HandlerAPIRelationPathResources)
-	registerHandler.Register("POST", RelationPathResourcesRange, HandlerAPIRelationPathResourcesRange)
-}

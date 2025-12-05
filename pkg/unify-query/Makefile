@@ -56,3 +56,7 @@ imports: addlicense
 .PHONY: race
 race:
 	go test -race -timeout 1m -parallel 8  ./...
+
+.PHONY: benchmark
+benchmark:
+	go test -bench=. -benchmem ./$(filter-out $@,$(MAKECMDGOALS))

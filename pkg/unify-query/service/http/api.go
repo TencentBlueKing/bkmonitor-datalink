@@ -149,7 +149,7 @@ func HandlerTagKeys(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), c.Request.Header, string(paramsStr),
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)

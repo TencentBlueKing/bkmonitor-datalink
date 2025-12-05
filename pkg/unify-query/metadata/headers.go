@@ -12,6 +12,16 @@ package metadata
 import "context"
 
 // Headers 统一注入请求 header 头信息
+// 从上下文中获取用户信息，并将用户相关的标识信息注入到 HTTP 请求头中
+// 参数:
+//   - ctx: 上下文对象，包含用户信息
+//   - headers: 现有的请求头映射，如果为 nil 则创建新的映射
+//
+// 返回: 注入用户信息后的请求头映射
+// 注入的 header 包括:
+//   - BkQuerySourceHeader: 查询来源标识（用户 Key）
+//   - SpaceUIDHeader: 空间 UID
+//   - TenantIDHeader: 租户 ID
 func Headers(ctx context.Context, headers map[string]string) map[string]string {
 	if headers == nil {
 		headers = make(map[string]string)

@@ -14,13 +14,32 @@ import (
 	"io"
 )
 
+// Decoder 定义了解码器接口
+// 用于将不同格式的响应数据解码为统一的 Response 结构
 type Decoder interface {
+	// Decode 从 reader 中读取数据并解码到 resp 中
+	// 参数:
+	//   - ctx: 上下文对象
+	//   - reader: 数据读取器
+	//   - resp: 目标响应对象，解码后的数据将填充到此对象中
+	// 返回:
+	//   - int: 读取的字节数
+	//   - error: 解码过程中的错误，如果成功则为 nil
 	Decode(ctx context.Context, reader io.Reader, resp *Response) (int, error)
 }
 
+// decoders 存储所有已注册的解码器
+// key 为解码器的名称（通常是 MIME 类型，如 "application/json"）
+// value 为对应的解码器实现
 var decoders = make(map[string]Decoder)
 
-// GetDecoder
+// GetDecoder 根据名称获取对应的解码器
+// 参数:
+//   - name: 解码器名称（通常是 MIME 类型），如果为空则默认使用 "application/json"
+//
+// 返回:
+//   - Decoder: 找到的解码器实例
+//   - error: 如果解码器不存在则返回 ErrDecoderNotFound
 func GetDecoder(name string) (Decoder, error) {
 	if name == "" {
 		name = "application/json"

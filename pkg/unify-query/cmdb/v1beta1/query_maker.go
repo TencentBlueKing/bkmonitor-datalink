@@ -11,7 +11,6 @@ package v1beta1
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -45,7 +44,7 @@ func (q *QueryFactory) pathParser(p []string) (cmdb.Path, error) {
 
 	path := make(cmdb.Path, 0, len(p)-1)
 	for i := 0; i < len(p)-1; i++ {
-		v := []cmdb.Resource{cmdb.Resource(p[i]), cmdb.Resource(p[i+1])}
+		v := [2]cmdb.Resource{cmdb.Resource(p[i]), cmdb.Resource(p[i+1])}
 		path = append(path, cmdb.Relation{
 			V: v,
 		})
@@ -182,20 +181,14 @@ func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expa
 }
 
 func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*structured.Query, err error) {
-	if len(path.V) != 2 {
+	source, target, metric := path.Info()
+	if metric == "" {
 		return queries, err
 	}
-
-	source, target := path.V[0], path.V[1]
-
-	resources := []string{string(source), string(target)}
-	sort.Strings(resources)
-	field := fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
-
 	ref := string(rune(ascii + q.index))
 
 	query := &structured.Query{
-		FieldName:     field,
+		FieldName:     metric,
 		ReferenceName: ref,
 		Step:          q.Step,
 	}

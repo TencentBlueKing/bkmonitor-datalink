@@ -9,7 +9,11 @@
 
 package v1beta1
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+import (
+	"sort"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+)
 
 var configData = &Config{
 	Resource: []ResourceConf{
@@ -192,157 +196,190 @@ var configData = &Config{
 	},
 	Relation: []RelationConf{
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"node", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"node", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"job", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"container", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "replicaset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "statefulset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"deamonset", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"deployment", "replicaset",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"pod", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"datasource", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"datasource", "node",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"ingress", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"k8s_address", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"domain", "service",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service_instance", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service_instance", "pod",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"apm_service", "apm_service_instance",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"bklogconfig", "datasource",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"business", "set",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"module", "set",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"host", "module",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"host", "system",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "host",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "container",
 			},
 		},
 		{
-			Resources: []cmdb.Resource{
+			Resources: [2]cmdb.Resource{
 				"app_version", "git_commit",
 			},
 		},
 	},
 }
 
-var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+var (
+	resourceConfig = make(map[cmdb.Resource]ResourceConf)
+	relations      []cmdb.Relation
+)
 
 func init() {
 	for _, c := range configData.Resource {
 		resourceConfig[c.Name] = c
 	}
+	relations = make([]cmdb.Relation, 0, len(configData.Relation))
+	for _, r := range configData.Relation {
+		relations = append(relations, cmdb.Relation{V: r.Resources})
+	}
 }
 
+// ResourcesIndex 获取指定资源的索引字段列表
+// 索引字段是用于唯一标识资源实例的关键维度
+// 参数:
+//   - resources: 资源类型列表，可以传入多个资源类型
+//
+// 返回: 合并后的索引字段列表（已排序）
+// 示例: ResourcesIndex("pod", "container") 返回 ["bcs_cluster_id", "container", "namespace", "pod"]
 func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 	var index cmdb.Index
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Index...)
 	}
+	sort.Strings(index)
 	return index
 }
 
+// ResourcesInfo 获取指定资源的信息字段列表
+// 信息字段是资源的扩展属性，用于展示额外的资源信息
+// 参数:
+//   - resources: 资源类型列表，可以传入多个资源类型
+//
+// 返回: 合并后的信息字段列表（已排序）
+// 示例: ResourcesInfo("container") 返回 ["version"]
 func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 	var index []string
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Info...)
 	}
+	sort.Strings(index)
 	return index
 }
 
+// AllResources 获取所有资源的配置信息
+// 返回: 资源类型到资源配置的映射表
+// 用于查询系统中所有已配置的资源类型及其配置信息
 func AllResources() map[cmdb.Resource]ResourceConf {
 	return resourceConfig
+}
+
+// AllRelations 获取所有资源关系列表
+// 返回: 资源关系列表，每个关系表示两个资源类型之间的关联
+// 用于查询系统中所有已配置的资源关系
+func AllRelations() []cmdb.Relation {
+	return relations
 }

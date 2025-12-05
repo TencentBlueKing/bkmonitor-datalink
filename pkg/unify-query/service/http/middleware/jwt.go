@@ -167,8 +167,9 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 			}
 		}()
 
-		// 如果未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
+		// 如果未传 jwtToken，则进行报错
 		if tokenString == "" {
+			err = jwt.ErrTokenMalformed
 			return
 		}
 

@@ -82,15 +82,17 @@
 
 ---
 
-### 6. [API 文档](./api/relation.md)
-**适合人群**：API 使用者
+### 6. [API 文档](./api/api.md)
+**适合人群**：API 使用者、前端开发者
 
 **内容概览**：
-- 关系查询 API
-- 多资源查询 API
+- 所有 API 接口详细说明
 - 请求和响应格式
+- 参数说明和示例
+- 错误码说明
 
-**快速链接**：[查看 API 文档](./api/relation.md)
+**快速链接**：[查看完整 API 文档](./api/api.md)
+
 
 ---
 
@@ -146,7 +148,7 @@
 
 1. [架构设计文档](./architecture.md) - 了解系统架构
 2. [故障排查指南](./troubleshooting.md) - 问题排查方法
-3. [API 文档](./api/relation.md) - API 使用说明
+3. [API 文档](./api/api.md) - API 使用说明
 
 ---
 

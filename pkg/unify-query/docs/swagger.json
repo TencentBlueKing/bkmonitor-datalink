@@ -109,6 +109,61 @@
                 "produces": [
                     "application/json"
                 ],
+                "summary": "query ts monitor check by ts",
+                "operationId": "check_query_ts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/structured.QueryTs"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.CheckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/check/query/ts/promql": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
                 "summary": "query promql monitor check by ts",
                 "operationId": "check_query_promql",
                 "parameters": [
@@ -573,7 +628,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -641,7 +696,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -706,7 +761,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -771,7 +826,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -839,7 +894,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -848,6 +903,71 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/http.TagValuesData"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/query/ts/info/time_series": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "info time series",
+                "operationId": "info_time_series",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "username:goodman",
+                        "description": "来源",
+                        "name": "Bk-Query-Source",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "是否跳过空间验证",
+                        "name": "X-Bk-Scope-Skip-Space",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.Params"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.SeriesData"
+                            }
                         }
                     },
                     "400": {
@@ -901,7 +1021,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/infos.Params"
+                            "$ref": "#/definitions/http.Params"
                         }
                     }
                 ],
@@ -1279,6 +1399,59 @@
                 }
             }
         },
+        "http.Params": {
+            "type": "object",
+            "properties": {
+                "conditions": {
+                    "$ref": "#/definitions/structured.Conditions"
+                },
+                "data_source": {
+                    "type": "string"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "is_regexp": {
+                    "description": "IsRegexp 指标是否使用正则查询",
+                    "type": "boolean",
+                    "example": false
+                },
+                "keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "slimit": {
+                    "type": "integer"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "table_id": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string",
+                    "example": "Asia/Shanghai"
+                },
+                "tsdb_map": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/query.TsDBV2"
+                        }
+                    }
+                }
+            }
+        },
         "http.PromData": {
             "type": "object",
             "properties": {
@@ -1384,48 +1557,10 @@
                 }
             }
         },
-        "infos.Params": {
+        "metadata.FieldAlias": {
             "type": "object",
-            "properties": {
-                "conditions": {
-                    "$ref": "#/definitions/structured.Conditions"
-                },
-                "data_source": {
-                    "type": "string"
-                },
-                "end_time": {
-                    "type": "string"
-                },
-                "is_regexp": {
-                    "description": "IsRegexp 指标是否使用正则查询",
-                    "type": "boolean",
-                    "example": false
-                },
-                "keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "limit": {
-                    "type": "integer"
-                },
-                "metric_name": {
-                    "type": "string"
-                },
-                "slimit": {
-                    "type": "integer"
-                },
-                "start_time": {
-                    "type": "string"
-                },
-                "table_id": {
-                    "type": "string"
-                },
-                "timezone": {
-                    "type": "string",
-                    "example": "Asia/Shanghai"
-                }
+            "additionalProperties": {
+                "type": "string"
             }
         },
         "metadata.Status": {
@@ -1435,6 +1570,133 @@
                     "type": "string"
                 },
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "metadata.TimeField": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
+        "query.Filter": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "query.Record": {
+            "type": "object",
+            "properties": {
+                "enable_time": {
+                    "type": "integer"
+                },
+                "storage_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "query.TsDBV2": {
+            "type": "object",
+            "properties": {
+                "cluster_name": {
+                    "type": "string"
+                },
+                "cmdb_level_vm_rt": {
+                    "type": "string"
+                },
+                "data_label": {
+                    "type": "string"
+                },
+                "db": {
+                    "type": "string"
+                },
+                "expand_metric_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "field": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "field_alias": {
+                    "$ref": "#/definitions/metadata.FieldAlias"
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/query.Filter"
+                    }
+                },
+                "measurement": {
+                    "type": "string"
+                },
+                "measurement_type": {
+                    "type": "string"
+                },
+                "metric_name": {
+                    "description": "补充检索的元信息",
+                    "type": "string"
+                },
+                "need_add_time": {
+                    "description": "NeedAddTime",
+                    "type": "boolean"
+                },
+                "segmented_enable": {
+                    "type": "boolean"
+                },
+                "source_type": {
+                    "description": "SourceType 数据来源",
+                    "type": "string"
+                },
+                "storage_cluster_records": {
+                    "description": "StorageClusterRecords",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/query.Record"
+                    }
+                },
+                "storage_id": {
+                    "description": "将存储信息合并在 TsDB 中",
+                    "type": "string"
+                },
+                "storage_name": {
+                    "type": "string"
+                },
+                "storage_type": {
+                    "type": "string"
+                },
+                "table_id": {
+                    "type": "string"
+                },
+                "tags_key": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "time_field": {
+                    "description": "timeField",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/metadata.TimeField"
+                        }
+                    ]
+                },
+                "vm_rt": {
                     "type": "string"
                 }
             }
@@ -1576,6 +1838,9 @@
                 },
                 "not_align_influxdb": {
                     "description": "不与influxdb对齐",
+                    "type": "boolean"
+                },
+                "not_time_align": {
                     "type": "boolean"
                 },
                 "promql": {

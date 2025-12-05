@@ -342,7 +342,7 @@ type Instance interface {
 
 ### A. 相关文档
 
-- [API 文档](./api/relation.md)
+- [API 文档](./api/api.md)
 - [PromQL 文档](./promql/promql.md)
 - [LTTB 降采样](./lttb/lttb.md)
 

@@ -108,7 +108,7 @@ func (i *Instance) DirectQueryRange(
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		).Error(ctx, result.Err)
 	}
 
 	for _, err = range result.Warnings {

@@ -58,3 +58,14 @@ func GetUser(ctx context.Context) *User {
 func (u *User) IsSkipSpace() bool {
 	return u.SkipSpace != ""
 }
+
+func GetBkBizID(ctx context.Context) string {
+	user := GetUser(ctx)
+	bizPrefix := "bkcc__"
+
+	if strings.HasPrefix(user.SpaceUID, bizPrefix) {
+		return strings.TrimPrefix(user.SpaceUID, bizPrefix)
+	} else {
+		return ""
+	}
+}

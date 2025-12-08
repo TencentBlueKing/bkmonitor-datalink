@@ -12,7 +12,6 @@
 package jsonx
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 )

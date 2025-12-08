@@ -19,6 +19,7 @@ import (
 // Encoder 接口定义
 type Encoder interface {
 	Encode(v any) error
+	SetEscapeHTML(on bool)
 }
 
 func Marshal(v any) ([]byte, error) {
@@ -30,5 +31,14 @@ func Unmarshal(data []byte, v any) error {
 }
 
 func NewEncoder(w io.Writer) Encoder {
-	return json.NewEncoder(w)
+	return &encoderWrapper{json.NewEncoder(w)}
+}
+
+// encoderWrapper 包装标准库的 Encoder
+type encoderWrapper struct {
+	*json.Encoder
+}
+
+func (e *encoderWrapper) SetEscapeHTML(on bool) {
+	e.Encoder.SetEscapeHTML(on)
 }

@@ -31,6 +31,22 @@ func Unmarshal(data []byte, v any) error {
 	return sonicAPI.Unmarshal(data, v)
 }
 
-func NewEncoder(w io.Writer) sonic.Encoder {
-	return sonicAPI.NewEncoder(w)
+func NewEncoder(w io.Writer) Encoder {
+	return &sonicEncoderWrapper{sonicAPI.NewEncoder(w)}
+}
+
+// Encoder 接口定义
+type Encoder interface {
+	Encode(v any) error
+	SetEscapeHTML(on bool)
+}
+
+// sonicEncoderWrapper 包装 sonic 的 Encoder
+type sonicEncoderWrapper struct {
+	sonic.Encoder
+}
+
+func (e *sonicEncoderWrapper) SetEscapeHTML(on bool) {
+	// sonic 的 Encoder 不支持 SetEscapeHTML，使用配置控制
+	// 这里保持空实现，因为 sonic 的配置在初始化时已设置
 }

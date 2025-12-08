@@ -23,11 +23,13 @@ type Number struct {
 // Encoder 接口定义（与 sonic.Encoder 兼容）
 type Encoder interface {
 	Encode(v any) error
+	SetEscapeHTML(on bool)
 }
 
 // Decoder 接口定义（与 sonic.Decoder 兼容）
 type Decoder interface {
 	Decode(v any) error
+	UseNumber()
 }
 
 func Marshal(v any) ([]byte, error) {
@@ -39,9 +41,27 @@ func Unmarshal(data []byte, v any) error {
 }
 
 func NewEncoder(w io.Writer) Encoder {
-	return json.NewEncoder(w)
+	return &encoderWrapper{json.NewEncoder(w)}
 }
 
 func NewDecoder(r io.Reader) Decoder {
-	return json.NewDecoder(r)
+	return &decoderWrapper{json.NewDecoder(r)}
+}
+
+// encoderWrapper 包装标准库的 Encoder
+type encoderWrapper struct {
+	*json.Encoder
+}
+
+func (e *encoderWrapper) SetEscapeHTML(on bool) {
+	e.Encoder.SetEscapeHTML(on)
+}
+
+// decoderWrapper 包装标准库的 Decoder
+type decoderWrapper struct {
+	*json.Decoder
+}
+
+func (d *decoderWrapper) UseNumber() {
+	d.Decoder.UseNumber()
 }

@@ -11,6 +11,7 @@ package json
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,7 +42,8 @@ func ParseObject(prefix, intput string) (map[string]any, error) {
 	oldData := make(map[string]any)
 	newData := make(map[string]any)
 
-	decoder := NewDecoder(strings.NewReader(intput))
+	// 使用标准库的 json.Decoder，因为需要 UseNumber() 功能
+	decoder := json.NewDecoder(strings.NewReader(intput))
 	decoder.UseNumber()
 	err := decoder.Decode(&oldData)
 	if err != nil {
@@ -81,7 +83,8 @@ func MarshalListMap(data []map[string]any) string {
 			case map[string]any, []any:
 				// 对于复杂类型，使用 JSON 序列化，不转义 HTML
 				var buf bytes.Buffer
-				encoder := NewEncoder(&buf)
+				// 使用标准库的 json.Encoder，因为需要 SetEscapeHTML() 功能
+				encoder := json.NewEncoder(&buf)
 				encoder.SetEscapeHTML(false)
 				if err := encoder.Encode(v); err == nil {
 					// 移除编码器添加的换行符

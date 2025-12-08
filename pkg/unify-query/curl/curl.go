@@ -12,6 +12,7 @@ package curl
 import (
 	"bytes"
 	"context"
+	encodingJson "encoding/json"
 	"io"
 	"net/http"
 	"sync"
@@ -19,7 +20,6 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -136,7 +136,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		}
 		size = buf.Len()
 
-		decoder := json.NewDecoder(buf)
+		// 使用标准库的 json.Decoder，因为需要 UseNumber() 功能
+		// sonic 的 Decoder 不支持 UseNumber()，会导致大整数精度丢失
+		decoder := encodingJson.NewDecoder(buf)
 		decoder.UseNumber()
 		err = decoder.Decode(&res)
 		return size, err

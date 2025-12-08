@@ -9,18 +9,24 @@
 
 //go:build jsonsonic
 
-package jsonx
+package json
 
 import (
+	"encoding/json"
 	"io"
 
 	"github.com/bytedance/sonic"
 )
 
+type Number struct {
+	json.Number
+}
+
 var sonicAPI = sonic.Config{
 	EscapeHTML:       true, // 安全性
 	CompactMarshaler: true, // 兼容性
 	CopyString:       true, // 正确性
+	SortMapKeys:      true, // 确保序列化结果稳定
 }.Froze()
 
 func Marshal(v any) ([]byte, error) {
@@ -31,22 +37,10 @@ func Unmarshal(data []byte, v any) error {
 	return sonicAPI.Unmarshal(data, v)
 }
 
-func MarshalString(v any) (string, error) {
-	return sonicAPI.MarshalToString(v)
+func NewEncoder(w io.Writer) sonic.Encoder {
+	return sonicAPI.NewEncoder(w)
 }
 
-func UnmarshalString(data string, v any) error {
-	return sonicAPI.UnmarshalFromString(data, v)
-}
-
-func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
-	return sonicAPI.MarshalIndent(v, prefix, indent)
-}
-
-func Decode(body io.Reader, v any) error {
-	return sonicAPI.NewDecoder(body).Decode(v)
-}
-
-func Encode(buf io.Writer, v any) error {
-	return sonicAPI.NewEncoder(buf).Encode(v)
+func NewDecoder(r io.Reader) sonic.Decoder {
+	return sonicAPI.NewDecoder(r)
 }

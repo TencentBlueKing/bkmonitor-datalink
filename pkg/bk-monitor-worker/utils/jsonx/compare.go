@@ -10,17 +10,16 @@
 package jsonx
 
 import (
-	"github.com/bytedance/sonic"
 	jd "github.com/josephburnett/jd/lib"
 	"github.com/pkg/errors"
 )
 
 func CompareObjects(objA, objB any) (bool, error) {
-	jStrA, err := sonic.MarshalString(objA)
+	jStrA, err := MarshalString(objA)
 	if err != nil {
 		return false, errors.Wrapf(err, "marshal obj [%#v] failed", objA)
 	}
-	jStrB, err := sonic.MarshalString(objB)
+	jStrB, err := MarshalString(objB)
 	if err != nil {
 		return false, errors.Wrapf(err, "marshal obj [%#v] failed", objB)
 	}

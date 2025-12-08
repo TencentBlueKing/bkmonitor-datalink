@@ -9,7 +9,7 @@
 
 //go:build jsonsonic
 
-package jsonx
+package json
 
 import (
 	"io"
@@ -31,22 +31,6 @@ func Unmarshal(data []byte, v any) error {
 	return sonicAPI.Unmarshal(data, v)
 }
 
-func MarshalString(v any) (string, error) {
-	return sonicAPI.MarshalToString(v)
-}
-
-func UnmarshalString(data string, v any) error {
-	return sonicAPI.UnmarshalFromString(data, v)
-}
-
-func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
-	return sonicAPI.MarshalIndent(v, prefix, indent)
-}
-
-func Decode(body io.Reader, v any) error {
-	return sonicAPI.NewDecoder(body).Decode(v)
-}
-
-func Encode(buf io.Writer, v any) error {
-	return sonicAPI.NewEncoder(buf).Encode(v)
+func NewEncoder(w io.Writer) sonic.Encoder {
+	return sonicAPI.NewEncoder(w)
 }

@@ -2,6 +2,8 @@
 
 SERVICENAME=bk-monitor-worker
 WORKSPACE=$(shell pwd)
+JSON_LIB ?= jsonsonic
+BUILDTAGS ?= $(JSON_LIB)
 
 ifdef VERSION
     VERSION=${VERSION}
@@ -29,14 +31,14 @@ LDFLAGS="-X github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/
 
 # build service
 build: tidy
-	go build -ldflags ${LDFLAGS} -o ${RELEASEPATH}/${SERVICENAME} ./bmw.go
+	go build -tags "$(BUILDTAGS)" -ldflags ${LDFLAGS} -o ${RELEASEPATH}/${SERVICENAME} ./bmw.go
 
 build-linux: tidy
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags ${LDFLAGS} -o ${RELEASEPATH}/${SERVICENAME} ./bmw.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "$(BUILDTAGS)" -ldflags ${LDFLAGS} -o ${RELEASEPATH}/${SERVICENAME} ./bmw.go
 
 # test
 test:
-	go test -v ./...  -cover -count=1 -vet=off
+	go test -tags "$(BUILDTAGS)" -v ./...  -cover -count=1 -vet=off
 
 tidy:
 	go mod tidy

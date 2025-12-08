@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/bytedance/sonic"
 	"github.com/xdg-go/scram"
 	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 )
 
@@ -164,7 +164,7 @@ func (c consumeHandler) sendSpans(message []byte) {
 	var res []window.StandardSpan
 
 	var msg window.OriginMessage
-	if err := sonic.Unmarshal(message, &msg); err != nil {
+	if err := jsonx.Unmarshal(message, &msg); err != nil {
 		logger.Errorf("kafka received a abnormal message! dataId: %s error: %s message: %s", c.dataId, err, message)
 		return
 	}

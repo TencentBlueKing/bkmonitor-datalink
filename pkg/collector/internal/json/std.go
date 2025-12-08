@@ -7,28 +7,28 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build !jsonsonic
+
 package json
 
 import (
+	"encoding/json"
 	"io"
-
-	"github.com/bytedance/sonic"
 )
 
-var sonicAPI = sonic.Config{
-	EscapeHTML:       true, // 安全性
-	CompactMarshaler: true, // 兼容性
-	CopyString:       true, // 正确性
-}.Froze()
+// Encoder 接口定义
+type Encoder interface {
+	Encode(v any) error
+}
 
 func Marshal(v any) ([]byte, error) {
-	return sonicAPI.Marshal(v)
+	return json.Marshal(v)
 }
 
 func Unmarshal(data []byte, v any) error {
-	return sonicAPI.Unmarshal(data, v)
+	return json.Unmarshal(data, v)
 }
 
-func NewEncoder(w io.Writer) sonic.Encoder {
-	return sonicAPI.NewEncoder(w)
+func NewEncoder(w io.Writer) Encoder {
+	return json.NewEncoder(w)
 }

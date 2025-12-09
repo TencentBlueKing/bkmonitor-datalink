@@ -7,38 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package json
+//go:build jsonsonic
+
+package window
 
 import (
-	"encoding/json"
-	"io"
+	"reflect"
 
 	"github.com/bytedance/sonic"
 )
 
-type Number struct {
-	json.Number
-}
-
-var sonicAPI = sonic.Config{
-	EscapeHTML:       true, // 安全性
-	CompactMarshaler: true, // 兼容性
-	CopyString:       true, // 正确性
-	SortMapKeys:      true, // 确保序列化结果稳定
-}.Froze()
-
-func Marshal(v any) ([]byte, error) {
-	return sonicAPI.Marshal(v)
-}
-
-func Unmarshal(data []byte, v any) error {
-	return sonicAPI.Unmarshal(data, v)
-}
-
-func NewEncoder(w io.Writer) sonic.Encoder {
-	return sonicAPI.NewEncoder(w)
-}
-
-func NewDecoder(r io.Reader) sonic.Decoder {
-	return sonicAPI.NewDecoder(r)
+func pretouchJSON() {
+	var v OriginMessage
+	err := sonic.Pretouch(reflect.TypeOf(v))
+	if err != nil {
+		logger.Errorf("pretouch json failed: %v", err)
+	}
 }

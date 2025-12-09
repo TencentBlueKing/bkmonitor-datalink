@@ -9,7 +9,7 @@
 
 //go:build jsonsonic
 
-package jsonx
+package json
 
 import (
 	"io"
@@ -31,22 +31,22 @@ func Unmarshal(data []byte, v any) error {
 	return sonicAPI.Unmarshal(data, v)
 }
 
-func MarshalString(v any) (string, error) {
-	return sonicAPI.MarshalToString(v)
+func NewEncoder(w io.Writer) Encoder {
+	return &sonicEncoderWrapper{sonicAPI.NewEncoder(w)}
 }
 
-func UnmarshalString(data string, v any) error {
-	return sonicAPI.UnmarshalFromString(data, v)
+// Encoder 接口定义
+type Encoder interface {
+	Encode(v any) error
+	SetEscapeHTML(on bool)
 }
 
-func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
-	return sonicAPI.MarshalIndent(v, prefix, indent)
+// sonicEncoderWrapper 包装 sonic 的 Encoder
+type sonicEncoderWrapper struct {
+	sonic.Encoder
 }
 
-func Decode(body io.Reader, v any) error {
-	return sonicAPI.NewDecoder(body).Decode(v)
-}
-
-func Encode(buf io.Writer, v any) error {
-	return sonicAPI.NewEncoder(buf).Encode(v)
+func (e *sonicEncoderWrapper) SetEscapeHTML(on bool) {
+	// sonic 的 Encoder 不支持 SetEscapeHTML，使用配置控制
+	// 这里保持空实现，因为 sonic 的配置在初始化时已设置
 }

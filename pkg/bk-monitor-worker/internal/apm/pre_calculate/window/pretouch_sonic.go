@@ -21,6 +21,6 @@ func pretouchJSON() {
 	var v OriginMessage
 	err := sonic.Pretouch(reflect.TypeOf(v))
 	if err != nil {
-		panic(err)
+		logger.Errorf("pretouch json failed: %v", err)
 	}
 }

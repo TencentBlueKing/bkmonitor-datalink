@@ -38,7 +38,7 @@ import (
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}  []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/field_keys [post]
@@ -119,7 +119,7 @@ func HandlerFieldKeys(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}   []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_keys [post]
@@ -199,7 +199,7 @@ func HandlerTagKeys(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  TagValuesData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_values [post]
@@ -305,7 +305,7 @@ func HandlerTagValues(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/time_series [post]
@@ -352,7 +352,7 @@ func HandlerTimeSeries(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/series [post]
@@ -486,7 +486,7 @@ func HandlerSeries(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}   []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/label/{label_name}/values [get]
@@ -582,7 +582,7 @@ func HandlerLabelValues(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/field_map [post]

@@ -156,6 +156,42 @@ definitions:
       trace_id:
         type: string
     type: object
+  http.Params:
+    properties:
+      conditions:
+        $ref: '#/definitions/structured.Conditions'
+      data_source:
+        type: string
+      end_time:
+        type: string
+      is_regexp:
+        description: IsRegexp 指标是否使用正则查询
+        example: false
+        type: boolean
+      keys:
+        items:
+          type: string
+        type: array
+      limit:
+        type: integer
+      metric_name:
+        type: string
+      slimit:
+        type: integer
+      start_time:
+        type: string
+      table_id:
+        type: string
+      timezone:
+        example: Asia/Shanghai
+        type: string
+      tsdb_map:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/query.TsDBV2'
+          type: array
+        type: object
+    type: object
   http.PromData:
     properties:
       is_partial:
@@ -225,41 +261,99 @@ definitions:
           type: array
         type: object
     type: object
-  infos.Params:
-    properties:
-      conditions:
-        $ref: '#/definitions/structured.Conditions'
-      data_source:
-        type: string
-      end_time:
-        type: string
-      is_regexp:
-        description: IsRegexp 指标是否使用正则查询
-        example: false
-        type: boolean
-      keys:
-        items:
-          type: string
-        type: array
-      limit:
-        type: integer
-      metric_name:
-        type: string
-      slimit:
-        type: integer
-      start_time:
-        type: string
-      table_id:
-        type: string
-      timezone:
-        example: Asia/Shanghai
-        type: string
+  metadata.FieldAlias:
+    additionalProperties:
+      type: string
     type: object
   metadata.Status:
     properties:
       code:
         type: string
       message:
+        type: string
+    type: object
+  metadata.TimeField:
+    properties:
+      name:
+        type: string
+      type:
+        type: string
+      unit:
+        type: string
+    type: object
+  query.Filter:
+    additionalProperties:
+      type: string
+    type: object
+  query.Record:
+    properties:
+      enable_time:
+        type: integer
+      storage_id:
+        type: string
+    type: object
+  query.TsDBV2:
+    properties:
+      cluster_name:
+        type: string
+      cmdb_level_vm_rt:
+        type: string
+      data_label:
+        type: string
+      db:
+        type: string
+      expand_metric_names:
+        items:
+          type: string
+        type: array
+      field:
+        items:
+          type: string
+        type: array
+      field_alias:
+        $ref: '#/definitions/metadata.FieldAlias'
+      filters:
+        items:
+          $ref: '#/definitions/query.Filter'
+        type: array
+      measurement:
+        type: string
+      measurement_type:
+        type: string
+      metric_name:
+        description: 补充检索的元信息
+        type: string
+      need_add_time:
+        description: NeedAddTime
+        type: boolean
+      segmented_enable:
+        type: boolean
+      source_type:
+        description: SourceType 数据来源
+        type: string
+      storage_cluster_records:
+        description: StorageClusterRecords
+        items:
+          $ref: '#/definitions/query.Record'
+        type: array
+      storage_id:
+        description: 将存储信息合并在 TsDB 中
+        type: string
+      storage_name:
+        type: string
+      storage_type:
+        type: string
+      table_id:
+        type: string
+      tags_key:
+        items:
+          type: string
+        type: array
+      time_field:
+        allOf:
+        - $ref: '#/definitions/metadata.TimeField'
+        description: timeField
+      vm_rt:
         type: string
     type: object
   structured.AggregateMethod:
@@ -361,6 +455,8 @@ definitions:
         type: string
       not_align_influxdb:
         description: 不与influxdb对齐
+        type: boolean
+      not_time_align:
         type: boolean
       promql:
         type: string
@@ -467,6 +563,43 @@ paths:
             $ref: '#/definitions/api.ErrResponse'
       summary: query relation multi resource
   /check/query/ts:
+    post:
+      operationId: check_query_ts
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.CheckResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query ts monitor check by ts
+  /check/query/ts/promql:
     post:
       operationId: check_query_promql
       parameters:
@@ -784,7 +917,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:
@@ -830,7 +963,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:
@@ -874,7 +1007,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:
@@ -918,7 +1051,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:
@@ -964,7 +1097,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:
@@ -977,6 +1110,50 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrResponse'
       summary: info tag values
+  /query/ts/info/time_series:
+    post:
+      operationId: info_time_series
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/http.Params'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/http.SeriesData'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: info time series
   /query/ts/label/{label_name}/values:
     get:
       operationId: info_label_values
@@ -1006,7 +1183,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/infos.Params'
+          $ref: '#/definitions/http.Params'
       produces:
       - application/json
       responses:

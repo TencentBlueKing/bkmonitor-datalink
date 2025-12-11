@@ -1590,6 +1590,31 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			promql:        `count(a)`,
 			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_2","db":"100915_bklog_pub_svrlog_pangusvr_other_9_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_2:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
+		"add dimensions": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "multi_doris",
+						FieldName:     "kube_pod_info",
+						ReferenceName: "a",
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge:   "a",
+				Start:         "1718865258",
+				End:           "1718868858",
+				Step:          "1m",
+				AddDimensions: []string{"new_dim"},
+			},
+			isDirectQuery: false,
+			promql:        `count by (new_dim) (a)`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_2","db":"100915_bklog_pub_svrlog_pangusvr_other_9_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_2:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var (

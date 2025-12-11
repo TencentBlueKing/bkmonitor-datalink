@@ -11,3 +11,29 @@ package structured
 
 // Dimensions 维度组合
 type Dimensions []string
+
+func MergeDimensions(original []string, addDimensions []string) []string {
+	if len(addDimensions) == 0 {
+		return original
+	}
+
+	seen := make(map[string]bool)
+	var result []string
+
+	// 先添加原有维度
+	for _, dim := range original {
+		if !seen[dim] {
+			seen[dim] = true
+			result = append(result, dim)
+		}
+	}
+
+	for _, dim := range addDimensions {
+		if !seen[dim] {
+			seen[dim] = true
+			result = append(result, dim)
+		}
+	}
+
+	return result
+}

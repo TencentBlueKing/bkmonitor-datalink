@@ -122,6 +122,10 @@ func TestAPIHandler(t *testing.T) {
 			"BCS-K8S-00000",
 		},
 
+		`label_values:17298630851729859485resource.cluster_id{namespace="kube-system", result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"}`: []string{
+			"BCS-K8S-00000",
+		},
+
 		// above 1d bcs_cluster_id
 		`label_values:17298630851730035885bcs_cluster_id{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
 			"BCS-K8S-00000",
@@ -311,6 +315,18 @@ func TestAPIHandler(t *testing.T) {
 				},
 			},
 			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
+		},
+		"test label values with escaped dot in path parameter": {
+			handler: HandlerLabelValues,
+			method:  http.MethodGet,
+			url:     fmt.Sprintf(`query/ts/label/resource__bk_46__cluster_id/values?match[]=kube_pod_info{namespace="kube-system"}&start=%d&end=%d&limit=2`, start.Unix(), end.Unix()),
+			params: gin.Params{
+				{
+					Key:   "label_name",
+					Value: "resource__bk_46__cluster_id",
+				},
+			},
+			expected: `{"values":{"resource.cluster_id":["BCS-K8S-00000"]}}`,
 		},
 		"test label values in vm 2": {
 			handler: HandlerLabelValues,

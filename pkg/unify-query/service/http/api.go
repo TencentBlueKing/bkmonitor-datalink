@@ -515,6 +515,7 @@ func HandlerLabelValues(c *gin.Context) {
 	}()
 
 	labelName := c.Param("label_name")
+	labelName = metadata.GetFieldFormat(ctx).DecodeFunc()(labelName)
 	start := c.Query("start")
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")

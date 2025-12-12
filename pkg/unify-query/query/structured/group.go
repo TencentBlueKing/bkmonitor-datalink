@@ -9,31 +9,23 @@
 
 package structured
 
+import (
+	"sort"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+)
+
 // Dimensions 维度组合
 type Dimensions []string
 
 func MergeDimensions(original []string, addDimensions []string) []string {
-	if len(addDimensions) == 0 {
-		return original
-	}
-
-	seen := make(map[string]bool)
-	var result []string
-
-	// 先添加原有维度
-	for _, dim := range original {
-		if !seen[dim] {
-			seen[dim] = true
-			result = append(result, dim)
-		}
-	}
+	s := set.New[string](original...)
 
 	for _, dim := range addDimensions {
-		if !seen[dim] {
-			seen[dim] = true
-			result = append(result, dim)
-		}
+		s.Add(dim)
 	}
+	result := s.ToArray()
 
+	sort.Strings(result)
 	return result
 }

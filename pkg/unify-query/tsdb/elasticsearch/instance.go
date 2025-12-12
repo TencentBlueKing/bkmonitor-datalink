@@ -339,8 +339,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					"es 查询发生 panic index: %+v, panic: %v",
 					qo.indexes, r,
 				).Error(ctx, nil)
-				span.Set("query-panic", true)
-				span.Set("panic-details", fmt.Sprintf("%v", r))
 			}
 		}()
 

@@ -332,6 +332,18 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	opt := qb.ResultTableOption
 	var res *elastic.SearchResult
 	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = metadata.NewMessage(
+					metadata.MsgQueryES,
+					"es 查询发生 panic index: %+v, panic: %v",
+					qo.indexes, r,
+				).Error(ctx, errors.New(fmt.Sprintf("elasticsearch query panic: %v", r)))
+				span.Set("query-panic", true)
+				span.Set("panic-details", fmt.Sprintf("%v", r))
+			}
+		}()
+
 		if opt != nil {
 			if opt.ScrollID != "" {
 				span.Set("query-scroll-id", opt.ScrollID)

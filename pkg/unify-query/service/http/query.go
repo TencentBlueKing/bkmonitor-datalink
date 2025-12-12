@@ -887,6 +887,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.DownSampleRange = queryPromQL.DownSampleRange
 	query.Reference = queryPromQL.Reference
 	query.NotTimeAlign = queryPromQL.NotTimeAlign
+	query.AddDimensions = queryPromQL.AddDimensions
 
 	if queryPromQL.Match != "" {
 		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)
@@ -916,6 +917,22 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		for aggIdx, agg := range q.AggregateMethodList {
 			for i, d := range agg.Dimensions {
 				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
+			}
+		}
+
+		// 应用 add_dimensions 到每个聚合方法
+		if len(queryPromQL.AddDimensions) > 0 {
+			// 对 add_dimensions 也进行 decode
+			decodedAddDimensions := make([]string, 0, len(queryPromQL.AddDimensions))
+			for _, dim := range queryPromQL.AddDimensions {
+				decodedAddDimensions = append(decodedAddDimensions, decodeFunc(dim))
+			}
+
+			for aggIdx := range q.AggregateMethodList {
+				q.AggregateMethodList[aggIdx].Dimensions = structured.MergeDimensions(
+					q.AggregateMethodList[aggIdx].Dimensions,
+					decodedAddDimensions,
+				)
 			}
 		}
 

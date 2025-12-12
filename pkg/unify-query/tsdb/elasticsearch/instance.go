@@ -338,7 +338,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					metadata.MsgQueryES,
 					"es 查询发生 panic index: %+v, panic: %v",
 					qo.indexes, r,
-				).Error(ctx, errors.New(fmt.Sprintf("elasticsearch query panic: %v", r)))
+				).Error(ctx, nil)
 				span.Set("query-panic", true)
 				span.Set("panic-details", fmt.Sprintf("%v", r))
 			}

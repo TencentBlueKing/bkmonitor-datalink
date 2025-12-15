@@ -4,9 +4,9 @@ go 1.16
 
 require (
 	github.com/Microsoft/go-winio v0.5.0
-	github.com/containerd/containerd v1.5.5
+	github.com/containerd/containerd v1.7.27
 	github.com/containerd/typeurl v1.0.2
-	github.com/docker/docker v20.10.8+incompatible
+	github.com/docker/docker v27.1.1+incompatible
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/go-logr/logr v0.4.0
 	github.com/google/go-cmp v0.5.6 // indirect

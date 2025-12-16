@@ -1052,6 +1052,11 @@ func (b *Backend) Ping(timeout time.Duration) (time.Duration, string, error) {
 		req.URL.RawQuery = params.Encode()
 	}
 
+	// 尝试设置认证信息
+	// 对于未配置 USERNAME 和 PASSWORD 的情况，SetAuth 会直接返回 nil，不影响 Ping 的发送
+	// 对于配置了 USERNAME 和 PASSWORD 的情况，SetAuth 会设置相应的认证头部信息
+	b.auth.SetAuth(req)
+
 	resp, err := b.client.Do(req)
 	if err != nil {
 		flowLog.Errorf("do ping failed,error:%s", err)

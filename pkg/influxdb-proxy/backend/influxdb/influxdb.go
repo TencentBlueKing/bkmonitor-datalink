@@ -1040,11 +1040,11 @@ func (b *Backend) Ping(timeout time.Duration) (time.Duration, string, error) {
 		req.URL.RawQuery = params.Encode()
 	}
 
-	// 设置认证信息
-	err = b.auth.SetAuth(req)
-	if err != nil {
-		flowLog.Errorf("authorization header set failed,but still send message to backend,error:%s", err)
-	}
+	// 尝试设置认证信息
+	// USERNAME PASSWORD 存在的情况会正常在请求头中设置认证信息
+	// USERNAME PASSWORD 不存在则不会在请求头中设置对应的认证信息
+	// 错误信息交由SetAuth内部日志处理
+	b.auth.SetAuth(req)
 
 	resp, err := b.client.Do(req)
 	if err != nil {

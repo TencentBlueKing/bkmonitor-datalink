@@ -11,6 +11,7 @@ package prometheus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
@@ -38,10 +39,13 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
+			qryString, _ := json.Marshal(qry)
+
 			err = metadata.NewMessage(
 				metadata.MsgQueryTs,
-				"查询实例构建异常",
-			).Error(ctx, nil)
+				"查询实例构建异常 %s",
+				string(qryString),
+			).Error(ctx, err)
 		}
 		span.End(&err)
 	}()

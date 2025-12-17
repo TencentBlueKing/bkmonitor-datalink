@@ -365,7 +365,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
 
 	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
-	//if f.query.StorageType == "bkdata" {
+	// if f.query.StorageType == "bkdata" {
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
 		return "", err

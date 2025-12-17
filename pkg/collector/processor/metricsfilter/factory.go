@@ -17,8 +17,10 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/opmatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -140,18 +142,34 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 func (p *metricsFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordMetrics:
-		for _, name := range config.Drop.Metrics {
-			pdMetrics := record.Data.(pmetric.Metrics)
-			pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-				resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
-					scopeMetrics.Metrics().RemoveIf(func(metric pmetric.Metric) bool {
-						return metric.Name() == name
-					})
-					return scopeMetrics.Metrics().Len() == 0
+		action := config.Drop
+		pdMetrics := record.Data.(pmetric.Metrics)
+		pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
+			rs := resourceMetrics.Resource().Attributes()
+			resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
+				scopeMetrics.Metrics().RemoveIf(func(metric pmetric.Metric) bool {
+					ruleMatch := true
+					if len(action.Rules) > 0 {
+						for _, rule := range action.Rules {
+							ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
+							switch ff {
+							// TODO(aivan): 目前 predicateKey 暂时只支持 resource 后续可能会扩展
+							case fields.FieldFromResource:
+								rv, ok := rs.Get(pk)
+								if !ok || !opmatch.Match(rv.AsString(), rule.MatchConfig.Value, rule.MatchConfig.Op) {
+									ruleMatch = false
+								}
+							default:
+								logger.Errorf("unsupported field %s", rule.PredicateKey)
+							}
+						}
+					}
+					return action.MetricMatch(metric.Name()) && ruleMatch
 				})
-				return resourceMetrics.ScopeMetrics().Len() == 0
+				return scopeMetrics.Metrics().Len() == 0
 			})
-		}
+			return resourceMetrics.ScopeMetrics().Len() == 0
+		})
 	}
 }
 

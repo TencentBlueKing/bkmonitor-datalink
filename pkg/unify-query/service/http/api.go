@@ -21,6 +21,7 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -501,6 +502,8 @@ func HandlerLabelValues(c *gin.Context) {
 			Values: make(map[string][]string),
 		}
 
+		maxLimit int
+
 		err error
 	)
 
@@ -520,6 +523,15 @@ func HandlerLabelValues(c *gin.Context) {
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
+	if limit == "" {
+		maxLimit = viper.GetInt(LabelValuesMaxLimitConfigPath)
+	} else {
+		maxLimit, err = strconv.Atoi(limit)
+		if err != nil {
+			err = fmt.Errorf("limit 参数错误: %w", err)
+			return
+		}
+	}
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)
@@ -559,10 +571,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	limitNum, _ := strconv.Atoi(limit)
 	qb := metadata.GetQueryParams(ctx)
-
-	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, limitNum, matcher...)
+	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, maxLimit, matcher...)
 	if err != nil {
 		return
 	}

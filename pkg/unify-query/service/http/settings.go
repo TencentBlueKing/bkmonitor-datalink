@@ -79,6 +79,8 @@ const (
 	JwtPublicKeyConfigPath       = "jwt.public_key"
 	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
 	JwtEnabledConfigPath         = "jwt.enabled"
+
+	LabelValuesMaxLimitConfigPath = "http.label_values.max_limit"
 )
 
 var (

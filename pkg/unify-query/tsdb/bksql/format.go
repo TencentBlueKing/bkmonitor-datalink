@@ -365,7 +365,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
 
 	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
-
+	//if f.query.StorageType == "bkdata" {
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
 		return "", err
@@ -373,6 +373,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	if theDateFilter != "" {
 		s = append(s, theDateFilter)
 	}
+	//}
 
 	// QueryString to sql
 	if f.query.QueryString != "" && f.query.QueryString != "*" {
@@ -464,7 +465,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	_, span = trace.NewSpan(f.ctx, "make-sql")
 	defer span.End(&err)
 
-	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
+	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.SelectDistinct, f.query.Aggregates, f.orders)
 	if err != nil {
 		return sql, err
 	}
@@ -480,7 +481,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
+	sqlBuilder.WriteString(lo.Ternary(len(f.query.SelectDistinct) > 0, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 
 	whereString, err := f.BuildWhere()

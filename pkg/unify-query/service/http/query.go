@@ -858,10 +858,11 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}
 
 	return &structured.QueryPromQL{
-		PromQL: promQL,
-		Start:  query.Start,
-		End:    query.End,
-		Step:   query.Step,
+		PromQL:        promQL,
+		Start:         query.Start,
+		End:           query.End,
+		Step:          query.Step,
+		AddDimensions: query.AddDimensions,
 	}, nil
 }
 

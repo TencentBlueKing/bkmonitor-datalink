@@ -654,6 +654,37 @@ processor:
 			wantValue: "math_all_callee_server",
 		},
 		{
+			name: "missing callee_server but callee_service mismatch",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_service": "my.service5x",
+					"callee_method":  "my.method5",
+					"code":           "4836",
+					"code_type":      "success",
+				},
+			},
+			wantValue: "success",
+		},
+		{
+			name: "missing callee_server and callee_service",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_method": "my.method5",
+					"code":          "4836",
+					"code_type":     "success",
+				},
+			},
+			wantValue: "success",
+		},
+		{
 			name: "callee rule err_200~300",
 			args: relabelBasedArgs{
 				metric: "rpc_server_handled_total",

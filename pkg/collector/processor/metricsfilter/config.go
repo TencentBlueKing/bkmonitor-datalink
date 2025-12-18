@@ -211,7 +211,8 @@ func (rs *RelabelRules) MatchLabels(labels promlabels.Labels) bool {
 	for _, rule := range rs.Rules {
 		label, ok := labels.Get(rule.Label)
 		if !ok {
-			return false
+			// 当 label 不存在时，也认为符合匹配全部。
+			return rule.Op == opSkip
 		}
 		if !rule.Match(label.GetValue()) {
 			return false
@@ -240,7 +241,7 @@ func (rs *RelabelRules) MatchMap(m pcommon.Map) bool {
 	for _, rule := range rs.Rules {
 		label, ok := m.Get(rule.Label)
 		if !ok {
-			return false
+			return rule.Op == opSkip
 		}
 		if !rule.Match(label.AsString()) {
 			return false

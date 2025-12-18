@@ -10,6 +10,7 @@
 package metricsfilter
 
 import (
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -60,6 +61,35 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
 	}, nil
+}
+
+func upsertLabels(labels *[]*dto.LabelPair, name, value string) {
+	if labels == nil {
+		return
+	}
+	// explicit copy to avoid address reuse issues
+	val := value
+	nm := name
+	for i := 0; i < len(*labels); i++ {
+		if (*labels)[i].GetName() == name {
+			(*labels)[i].Value = &val
+			return
+		}
+	}
+	*labels = append(*labels, &dto.LabelPair{
+		Name: &nm, Value: &val,
+	})
+}
+
+func buildPushGatewayAttrs(pd *define.PushGatewayData, metric *dto.Metric) pcommon.Map {
+	attrs := pcommon.NewMap()
+	for k, v := range pd.Labels {
+		attrs.UpsertString(k, v)
+	}
+	for _, label := range metric.Label {
+		attrs.UpsertString(label.GetName(), label.GetValue())
+	}
+	return attrs
 }
 
 type metricsFilter struct {
@@ -181,6 +211,34 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				handle(&rwData.Timeseries[i], action)
 			}
 		}
+	case define.RecordPushGateway:
+		handle := func(pd *define.PushGatewayData, metric *dto.Metric, action RelabelAction) {
+			attrs := buildPushGatewayAttrs(pd, metric)
+			if !action.MatchMap(attrs) {
+				return
+			}
+
+			target := action.Target
+			switch target.Action {
+			case relabelUpsert:
+				upsertLabels(&metric.Label, target.Label, target.Value)
+			}
+		}
+
+		for _, action := range config.Relabel {
+			pd := record.Data.(*define.PushGatewayData)
+			name := *pd.MetricFamilies.Name
+			if *pd.MetricFamilies.Type == dto.MetricType_HISTOGRAM {
+				name += "_bucket"
+			}
+			if !action.IsMetricIn(name) {
+				continue
+			}
+
+			for _, metric := range pd.MetricFamilies.Metric {
+				handle(pd, metric, action)
+			}
+		}
 	}
 }
 
@@ -250,6 +308,47 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 			rwData := record.Data.(*define.RemoteWriteData)
 			for i := 0; i < len(rwData.Timeseries); i++ {
 				handle(&rwData.Timeseries[i], action)
+			}
+		}
+	case define.RecordPushGateway:
+		handle := func(pd *define.PushGatewayData, metric *dto.Metric, action CodeRelabelAction) {
+			attrs := buildPushGatewayAttrs(pd, metric)
+			if !action.MatchMap(attrs) {
+				return
+			}
+
+			for _, service := range action.Services {
+				if !service.MatchMap(attrs) {
+					continue
+				}
+				for _, code := range service.Codes {
+					if !code.MatchMap(attrs) {
+						continue
+					}
+					target := code.Target
+					switch target.Action {
+					case relabelUpsert:
+						upsertLabels(&metric.Label, target.Label, target.Value)
+						return // 每个指标只可能命中一次
+					}
+				}
+			}
+		}
+
+		for _, action := range config.CodeRelabel {
+			pd := record.Data.(*define.PushGatewayData)
+
+			name := *pd.MetricFamilies.Name
+			if *pd.MetricFamilies.Type == dto.MetricType_HISTOGRAM {
+				// PushGateway Histogram 类型指标需补充后缀进行匹配，避免因指标名不完整导致无法命中。
+				name += "_bucket"
+			}
+			if !action.IsMetricIn(name) {
+				continue
+			}
+
+			for _, metric := range pd.MetricFamilies.Metric {
+				handle(pd, metric, action)
 			}
 		}
 	}

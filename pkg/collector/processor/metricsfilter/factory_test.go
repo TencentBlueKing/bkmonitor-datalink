@@ -10,9 +10,12 @@
 package metricsfilter
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -96,6 +99,29 @@ func makeMetricsRecordWith(name string, n int, rs, attrs map[string]string) pmet
 		},
 	}
 	return generator.NewMetricsGenerator(opts).Generate()
+}
+
+func makePushGatewayData(t *testing.T, name string, rs, attrs map[string]string) define.PushGatewayData {
+	sb := new(strings.Builder)
+	sb.WriteString(fmt.Sprintf("# HELP %s help\n", name))
+	sb.WriteString(fmt.Sprintf("# TYPE %s counter\n", name))
+	sb.WriteString(name)
+	sb.WriteString("{")
+
+	var pairs []string
+	for k, v := range attrs {
+		pairs = append(pairs, fmt.Sprintf(`%s="%s"`, k, v))
+	}
+	sb.WriteString(strings.Join(pairs, ","))
+	sb.WriteString("} 1\n")
+
+	parser := expfmt.TextParser{}
+	mfs, err := parser.TextToMetricFamilies(strings.NewReader(sb.String()))
+	if err != nil {
+		t.Fatalf("failed to parse metrics: %v", err)
+	}
+
+	return define.PushGatewayData{MetricFamilies: mfs[name], Labels: rs}
 }
 
 func TestMetricsNoAction(t *testing.T) {
@@ -235,6 +261,28 @@ func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedC
 				v := labels["code_type"]
 				if len(tt.wantValue) > 0 {
 					assert.Equal(t, tt.wantValue, v.GetValue())
+				}
+			}
+		})
+
+		t.Run("PushGateway_"+tt.name, func(t *testing.T) {
+			pd := makePushGatewayData(t, tt.args.metric, tt.args.rs, tt.args.attrs)
+			record := define.Record{
+				RecordType: define.RecordPushGateway,
+				Data:       &pd,
+			}
+			testkits.MustProcess(t, factory, record)
+			mf := record.Data.(*define.PushGatewayData).MetricFamilies
+			for _, metric := range mf.Metric {
+				var found bool
+				for _, label := range metric.Label {
+					if label.GetName() == "code_type" {
+						assert.Equal(t, tt.wantValue, label.GetValue())
+						found = true
+					}
+				}
+				if len(tt.wantValue) > 0 {
+					assert.True(t, found)
 				}
 			}
 		})
@@ -416,6 +464,23 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "fatal"
+          - name: "*;my.service5;*"
+            codes: 
+            - rule: "4836"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "math_all_callee_server"
+        - metrics: ["rpc_server_handled_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes: 
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
 `
 	)
 
@@ -557,7 +622,146 @@ processor:
 			},
 			wantValue: "noprefix",
 		},
+		{
+			name: "missing callee_server",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_service": "my.service5",
+					"callee_method":  "my.method5",
+					"code":           "4836",
+				},
+			},
+			wantValue: "math_all_callee_server",
+		},
+		{
+			name: "math all callee_server",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_server":  "any.server",
+					"callee_service": "my.service5",
+					"callee_method":  "my.method5",
+					"code":           "4836",
+				},
+			},
+			wantValue: "math_all_callee_server",
+		},
+		{
+			name: "callee rule err_200~300",
+			args: relabelBasedArgs{
+				metric: "rpc_server_handled_total",
+				rs: map[string]string{
+					"service_name": "my.service.name",
+				},
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service",
+					"callee_method":  "my.method",
+					"code":           "err_200",
+				},
+			},
+			wantValue: "success",
+		},
 	}
 
 	testRelabelBasedFactory(t, content, tests)
+}
+
+func makePushGatewayDataFromText(t *testing.T) []define.Record {
+	content := `
+# HELP rpc_client_handled_seconds Histogram of response latency (seconds) of the RPC until it is finished by the application.
+# TYPE rpc_client_handled_seconds histogram
+rpc_client_handled_seconds_bucket{callee_method="/200",callee_service="trpc.example.greeter.http",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc",le="0.005"} 15
+rpc_client_handled_seconds_bucket{callee_method="/200",callee_service="trpc.example.greeter.http",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc",le="+Inf"} 15
+rpc_client_handled_seconds_sum{callee_method="/200",callee_service="trpc.example.greeter.http",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 0.022185792000000003
+# HELP rpc_client_handled_total Total number of RPCs completed by the client, regardless of success or failure.
+# TYPE rpc_client_handled_total counter
+rpc_client_handled_total{callee_method="/200",callee_service="trpc.example.greeter.http",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 15
+# HELP rpc_server_handled_seconds Histogram of response latency (seconds) of RPC that had been application-level handled by the server.
+# TYPE rpc_server_handled_seconds histogram
+rpc_server_handled_seconds_bucket{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc",le="0.005"} 25
+rpc_server_handled_seconds_bucket{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc",le="+Inf"} 25
+rpc_server_handled_seconds_sum{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 0.027845586
+rpc_server_handled_seconds_count{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 25
+# HELP rpc_server_handled_total Total number of RPCs completed on the server, regardless of success or failure.
+# TYPE rpc_server_handled_total counter
+rpc_server_handled_total{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 25
+`
+
+	parser := expfmt.TextParser{}
+	mfs, err := parser.TextToMetricFamilies(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("failed to parse metrics: %v", err)
+	}
+
+	var records []define.Record
+	for _, mf := range mfs {
+		records = append(records, define.Record{
+			RecordType: define.RecordPushGateway,
+			Data: &define.PushGatewayData{
+				MetricFamilies: mf,
+				Labels: map[string]string{
+					"service_name": "example.greeter",
+				},
+			},
+		})
+	}
+	return records
+}
+
+func TestRelabelActionPushGatewayData(t *testing.T) {
+	content := `
+processor:
+  - name: "metrics_filter/code_relabel"
+    config:
+      code_relabel:
+        - metrics:
+          - "rpc_server_handled_total"
+          - "rpc_server_handled_seconds_bucket" 
+          - "rpc_server_handled_seconds_count" 
+          - "rpc_server_handled_seconds_sum"
+          source: "example.greeter"
+          services:
+          - name: "*;*;SayHello"
+            codes: 
+            - rule: "0"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success_rpc"
+        - metrics:
+          - "rpc_client_handled_total"
+          - "rpc_client_handled_seconds_bucket" 
+          - "rpc_client_handled_seconds_count" 
+          - "rpc_client_handled_seconds_sum"
+          source: "example.greeter"
+          services:
+          - name: "*;*;/200"
+            codes: 
+            - rule: "0"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success_rpc"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	for _, record := range makePushGatewayDataFromText(t) {
+		testkits.MustProcess(t, factory, record)
+		pd := record.Data.(*define.PushGatewayData)
+		for _, m := range pd.MetricFamilies.Metric {
+			for _, label := range m.Label {
+				if label.GetName() == "code_type" {
+					assert.Equal(t, "success_rpc", label.GetValue())
+				}
+			}
+		}
+	}
 }

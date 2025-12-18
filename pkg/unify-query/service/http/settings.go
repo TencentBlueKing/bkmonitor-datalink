@@ -80,6 +80,7 @@ const (
 	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
 	JwtEnabledConfigPath         = "jwt.enabled"
 
+	// LabelValuesMaxLimitConfigPath 用来限制 label_values 接口返回值的最大数量。其他的会走 bkbase 默认返回100
 	LabelValuesMaxLimitConfigPath = "http.label_values.max_limit"
 )
 

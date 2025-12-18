@@ -250,7 +250,17 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	}
 
 	if len(selectFields) == 0 {
-		selectFields = append(selectFields, SelectAll)
+		if len(d.keepColumns) > 0 {
+			selectFields = append(selectFields, lo.Map(d.keepColumns, func(item string, index int) string {
+				field, as := d.dimTransform(item)
+				if as != "" {
+					return fmt.Sprintf("%s AS `%s`", field, as)
+				}
+				return field
+			})...)
+		} else {
+			selectFields = append(selectFields, SelectAll)
+		}
 
 		if valueField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))

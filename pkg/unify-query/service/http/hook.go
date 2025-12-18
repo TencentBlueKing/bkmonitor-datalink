@@ -81,7 +81,7 @@ func setDefaultConfig() {
 	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
 
 	// label values
-	viper.SetDefault(LabelValuesMaxLimitConfigPath, 10000)
+	viper.SetDefault(LabelValuesMaxLimitConfigPath, 1e4)
 }
 
 // LoadConfig

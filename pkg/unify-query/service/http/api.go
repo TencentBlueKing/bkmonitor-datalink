@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -21,6 +20,7 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -526,9 +526,8 @@ func HandlerLabelValues(c *gin.Context) {
 	if limit == "" {
 		maxLimit = viper.GetInt(LabelValuesMaxLimitConfigPath)
 	} else {
-		maxLimit, err = strconv.Atoi(limit)
+		maxLimit, err = cast.ToIntE(limit)
 		if err != nil {
-			err = fmt.Errorf("limit 参数错误: %w", err)
 			return
 		}
 	}

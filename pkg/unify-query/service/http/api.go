@@ -502,7 +502,7 @@ func HandlerLabelValues(c *gin.Context) {
 			Values: make(map[string][]string),
 		}
 
-		maxLimit int
+		queryLimit int
 
 		err error
 	)
@@ -524,9 +524,9 @@ func HandlerLabelValues(c *gin.Context) {
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
 	if limit == "" {
-		maxLimit = viper.GetInt(LabelValuesMaxLimitConfigPath)
+		queryLimit = viper.GetInt(LabelValuesDefaultLimitConfigPath)
 	} else {
-		maxLimit, err = cast.ToIntE(limit)
+		queryLimit, err = cast.ToIntE(limit)
 		if err != nil {
 			return
 		}
@@ -571,7 +571,7 @@ func HandlerLabelValues(c *gin.Context) {
 	}
 
 	qb := metadata.GetQueryParams(ctx)
-	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, maxLimit, matcher...)
+	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, queryLimit, matcher...)
 	if err != nil {
 		return
 	}

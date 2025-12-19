@@ -297,6 +297,12 @@ func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr e
 		ReferenceNameLabelMatcher: make(map[string][]*labels.Matcher),
 	}
 	for _, ql := range q.QueryList {
+		if len(q.AddDimensions) > 0 {
+			for i := range ql.AggregateMethodList {
+				ql.AggregateMethodList[i].Dimensions = MergeDimensions(ql.AggregateMethodList[i].Dimensions, q.AddDimensions)
+			}
+		}
+
 		// 保留查询条件
 		matcher, _, err := ql.Conditions.ToProm()
 		if err != nil {

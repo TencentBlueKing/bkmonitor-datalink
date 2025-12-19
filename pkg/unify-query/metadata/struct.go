@@ -196,8 +196,8 @@ type Query struct {
 
 	DryRun bool `json:"dry_run,omitempty"`
 
-	// sql 使用SELECT DISTINCT 语法
-	IsDistinct bool `json:"is_distinct,omitempty"`
+	// SelectDistinct 记录sql中的 select distinct 字段列表
+	SelectDistinct []string `json:"select_distinct,omitempty"`
 
 	// 是否启用合并特性，该特性会合并同一存储集群的不同表，但是在 sql 语法的情况下，如果字段不同会导致错乱，所以开放给到输入方控制，需要确保字段完全一样的情况下才使用
 	IsMergeDB bool `json:"is_merge_db"`

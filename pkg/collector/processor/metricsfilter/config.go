@@ -211,6 +211,10 @@ func (rs *RelabelRules) MatchLabels(labels promlabels.Labels) bool {
 	for _, rule := range rs.Rules {
 		label, ok := labels.Get(rule.Label)
 		if !ok {
+			// 当 label 不存在时且规则为跳过时，也认为符合匹配全部值，进行下一条规则匹配。
+			if rule.Op == opSkip {
+				continue
+			}
 			return false
 		}
 		if !rule.Match(label.GetValue()) {
@@ -240,6 +244,10 @@ func (rs *RelabelRules) MatchMap(m pcommon.Map) bool {
 	for _, rule := range rs.Rules {
 		label, ok := m.Get(rule.Label)
 		if !ok {
+			// 当 label 不存在时且规则为跳过时，也认为符合匹配全部值，进行下一条规则匹配。
+			if rule.Op == opSkip {
+				continue
+			}
 			return false
 		}
 		if !rule.Match(label.AsString()) {

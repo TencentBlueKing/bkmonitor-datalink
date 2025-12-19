@@ -79,6 +79,9 @@ func setDefaultConfig() {
 	viper.SetDefault(ScrollSliceLimitConfigPath, 10000)
 	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
 	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
+
+	// label values
+	viper.SetDefault(LabelValuesDefaultLimitConfigPath, 1e4)
 }
 
 // LoadConfig

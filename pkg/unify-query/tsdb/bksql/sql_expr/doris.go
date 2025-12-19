@@ -68,8 +68,6 @@ type DorisSQLExpr struct {
 	timeField  string
 	valueField string
 
-	keepColumns []string
-
 	ignoreFieldSet *set.Set[string]
 	fieldsMap      metadata.FieldsMap
 	fieldAlias     metadata.FieldAlias
@@ -151,7 +149,7 @@ func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string,
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
+func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	// 默认需要支持
 	d.ignoreFieldSet.Add([]string{
 		strings.ToUpper(Value),
@@ -239,6 +237,16 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 		// 只有时间聚合的条件下，才可以使用时间聚合排序
 		dimensionSet.Add(FieldTime)
+	}
+
+	if len(selectDistinct) > 0 {
+		selectFields = append(selectFields, lo.Map(selectDistinct, func(item string, index int) string {
+			field, as := d.dimTransform(item)
+			if as != "" {
+				return fmt.Sprintf("%s AS `%s`", field, as)
+			}
+			return field
+		})...)
 	}
 
 	if len(selectFields) == 0 {

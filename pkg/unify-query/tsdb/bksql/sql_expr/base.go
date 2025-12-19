@@ -67,7 +67,7 @@ type SQLExpr interface {
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
-	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
+	ParserAggregatesAndOrders(selectDistinct []string, aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 String 语句
 	ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (string, error)
 	// DescribeTableSQL 返回当前表结构
@@ -165,7 +165,7 @@ func (d *DefaultSQLExpr) ParserQueryString(ctx context.Context, _ string) (strin
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
+func (d *DefaultSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
 		return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err

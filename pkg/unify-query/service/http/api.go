@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -21,6 +20,8 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -501,6 +502,8 @@ func HandlerLabelValues(c *gin.Context) {
 			Values: make(map[string][]string),
 		}
 
+		queryLimit int
+
 		err error
 	)
 
@@ -520,6 +523,14 @@ func HandlerLabelValues(c *gin.Context) {
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
+	if limit == "" {
+		queryLimit = viper.GetInt(LabelValuesDefaultLimitConfigPath)
+	} else {
+		queryLimit, err = cast.ToIntE(limit)
+		if err != nil {
+			return
+		}
+	}
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)
@@ -559,10 +570,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	limitNum, _ := strconv.Atoi(limit)
 	qb := metadata.GetQueryParams(ctx)
-
-	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, limitNum, matcher...)
+	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, queryLimit, matcher...)
 	if err != nil {
 		return
 	}

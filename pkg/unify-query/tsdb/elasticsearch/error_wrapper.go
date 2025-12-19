@@ -22,6 +22,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+var (
+	test = "test"
+)
+
 func handleESSpecificError(elasticErr *elastic.Error) error {
 	if elasticErr.Details == nil {
 		return elasticErr

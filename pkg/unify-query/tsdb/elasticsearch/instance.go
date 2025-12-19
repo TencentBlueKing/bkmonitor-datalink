@@ -376,7 +376,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}()
 	if err != nil {
-		return nil, processOnESErr(ctx, qo.conn.Address, err)
+		return nil, handleESError(ctx, qo.conn.Address, err)
 	}
 	if res.Error != nil {
 		err = metadata.NewMessage(

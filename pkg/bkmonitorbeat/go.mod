@@ -51,6 +51,7 @@ require (
 	github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3
 	github.com/nxadm/tail v1.4.11
 	github.com/prometheus/client_golang v1.18.0
+	github.com/tjfoc/gmsm v1.4.1
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 )
 

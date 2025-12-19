@@ -10,11 +10,13 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/tjfoc/gmsm/gmtls"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -233,57 +236,118 @@ func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTP
 	return true
 }
 
-// NewClient proxyMap代理配置 key: host value: proxy ip, 如{"example.com": "127.0.0.1"}
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
+}
+
 var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) Client {
+	transport := &http.Transport{
+		MaxResponseHeaderBytes: int64(conf.BufferSize),
+		DisableKeepAlives:      true,
+		// If DialTLSContext is set, the Dial and DialContext hooks are not used for HTTPS
+		// 需要在内部实现原有的 Proxy 以及 DialContext 逻辑
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialConn := func() (net.Conn, error) {
+				defaultDialer := &net.Dialer{
+					Timeout: conf.Timeout,
+				}
+				// 代理不存在的情况
+				if conf.Proxy == "" {
+					network = "tcp"
+					switch conf.TargetIPType {
+					case configs.IPv4:
+						network = "tcp4"
+					case configs.IPv6:
+						network = "tcp6"
+					}
+					logger.Debugf("http dial with network: %s", network)
+					// 存在映射关系，并且能够正常解析出 HOST PORT 以及映射的 IP条件下进行 addr 的替换
+					// 否则就使用原始的 addr 进行连接
+					if len(proxyMap) > 0 {
+						host, port, err := net.SplitHostPort(addr)
+						if err == nil {
+							if proxyIP, ok := proxyMap[host]; ok {
+								addr = net.JoinHostPort(proxyIP, port)
+							}
+						}
+					}
+					return defaultDialer.DialContext(ctx, network, addr)
+				}
+				// 代理存在的情况
+				proxyURL, err := url.Parse(conf.Proxy)
+				if err != nil {
+					return nil, err
+				}
+				proxyConn, err := defaultDialer.DialContext(ctx, network, proxyURL.Host)
+				if err != nil {
+					return nil, err
+				}
+				host, _, _ := net.SplitHostPort(addr)
+				connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", addr, host)
+				_, err = proxyConn.Write([]byte(connectReq))
+				if err != nil {
+					proxyConn.Close()
+					return nil, err
+				}
+				br := bufio.NewReader(proxyConn)
+				resp, err := http.ReadResponse(br, nil)
+				if err != nil {
+					proxyConn.Close()
+					return nil, err
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != 200 {
+					proxyConn.Close()
+					return nil, fmt.Errorf("proxy connect failed with status: %s", resp.Status)
+				}
+				return &bufferedConn{Conn: proxyConn, reader: br}, nil
+			}
+			// 尝试使用正常的 TLS 连接
+			connOne, err := dialConn()
+			if err != nil {
+				return nil, err
+			}
+			tlsConn := tls.Client(connOne, &tls.Config{
+				InsecureSkipVerify: conf.InsecureSkipVerify,
+				Renegotiation:      tls.RenegotiateFreelyAsClient,
+			})
+			tlsHandShakeErr := tlsConn.Handshake()
+			if tlsHandShakeErr == nil {
+				return tlsConn, nil // 标准TLS握手成功，返回连接
+			}
+			connOne.Close()
+			// 标准TLS握手失败，尝试国密TLS
+			connTwo, err := dialConn()
+			if err != nil {
+				return nil, err
+			}
+			gmTlsConn := gmtls.Client(connTwo, &gmtls.Config{
+				GMSupport:          &gmtls.GMSupport{},
+				InsecureSkipVerify: conf.InsecureSkipVerify,
+				Renegotiation:      gmtls.RenegotiateFreelyAsClient,
+			})
+			gmTlsHandShakeErr := gmTlsConn.Handshake()
+			if gmTlsHandShakeErr == nil {
+				return gmTlsConn, nil // 国密TLS握手成功，返回连接
+			}
+			connTwo.Close()
+			// 两种TLS握手均失败，返回标准TLS的错误信息
+			return nil, fmt.Errorf("tls handshake failed, tls error: %v, gmTLS error: %v", tlsHandShakeErr, gmTlsHandShakeErr)
+		},
+	}
 	cj, err := cookiejar.New(nil)
 	if err != nil {
 		logger.Errorf("create cookiejar failed: %v", err)
 	}
-	dialer := net.Dialer{
-		Timeout: conf.Timeout,
-	}
-	transport := &http.Transport{
-		MaxResponseHeaderBytes: int64(conf.BufferSize),
-		DisableKeepAlives:      true,
-		TLSClientConfig: &tls.Config{
-			// 跳过https证书检查
-			InsecureSkipVerify: conf.InsecureSkipVerify,
-			Renegotiation:      tls.RenegotiateFreelyAsClient,
-		},
-		Proxy: func(_ *http.Request) (*url.URL, error) {
-			if conf.Proxy != "" {
-				return url.Parse(conf.Proxy)
-			}
-			return nil, nil
-		},
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			network = "tcp"
-			switch conf.TargetIPType {
-			case configs.IPv4:
-				network = "tcp4"
-			case configs.IPv6:
-				network = "tcp6"
-			}
-			logger.Debugf("http dial with network: %s", network)
-			// 指定ip时按照ip请求
-			if len(proxyMap) > 0 {
-				host, port, err := net.SplitHostPort(addr)
-				if err != nil {
-					logger.Errorf("parse addr %s failed: %v", addr, err)
-					host = addr
-				}
-				// 当跳转时host可能变化，此时不需要代理
-				if proxyIP, ok := proxyMap[host]; ok {
-					addr = net.JoinHostPort(proxyIP, port)
-				}
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-	}
 	client := &http.Client{
 		Transport: transport,
-		Jar:       cj,
 		Timeout:   conf.GetTimeout(),
+		Jar:       cj,
 	}
 	return client
 }

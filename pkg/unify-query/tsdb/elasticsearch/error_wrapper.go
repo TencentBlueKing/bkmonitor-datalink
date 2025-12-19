@@ -27,7 +27,7 @@ const (
 	TypeField   = "type"
 	IndexField  = "index"
 
-	ThreeThirdErrType = "three_thirds_error"
+	ThirdPartyErrType = "third_party_error"
 
 	MsgLengthLimit = 500
 )
@@ -78,7 +78,7 @@ func handleESError(ctx context.Context, url string, err error) error {
 
 	} else {
 		msgBuilder.WriteString(": [")
-		msgBuilder.WriteString(ThreeThirdErrType)
+		msgBuilder.WriteString(ThirdPartyErrType)
 		msgBuilder.WriteString("] ")
 		errMsg := err.Error()
 		msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
@@ -89,12 +89,18 @@ func handleESError(ctx context.Context, url string, err error) error {
 }
 
 func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg string) {
+	if esErr.Details == nil {
+		return
+	}
 	indices = deepestIndex(esErr)
 	reasonMsg, typeMsg = deepestCausedBy(esErr.Details.CausedBy)
 	return
 }
 
 func deepestCausedBy(cause map[string]interface{}) (reasonMsg string, typeMsg string) {
+	if cause == nil {
+		return
+	}
 	for cause != nil {
 		next, ok := cause[CausedByField].(map[string]interface{})
 		if !ok {
@@ -108,6 +114,9 @@ func deepestCausedBy(cause map[string]interface{}) (reasonMsg string, typeMsg st
 }
 
 func deepestIndex(esErr elastic.Error) (indices []string) {
+	if esErr.Details == nil {
+		return
+	}
 	failedShards := esErr.Details.FailedShards
 	for _, shardInfo := range failedShards {
 		if index, ok := shardInfo[IndexField].(string); ok {

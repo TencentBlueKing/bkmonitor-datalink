@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_handleESSpecificError(t *testing.T) {
+func Test_handleESError(t *testing.T) {
 	tests := []struct {
 		name string
 
@@ -39,10 +39,15 @@ func Test_handleESSpecificError(t *testing.T) {
 		},
 
 		{
-			name:           "should return timeout error message for context deadline exceeded",
-			err:            context.Canceled,
-			expectedErrMsg: "查询  超时: context canceled",
-		},
+		name:           "should return timeout error message for context deadline exceeded",
+		err:            context.Canceled,
+		expectedErrMsg: "查询  超时: context canceled",
+	},
+	{
+		name:           "should handle nil esErr.Details gracefully",
+		errMsg:         `{"error":null,"status":500}`,
+		expectedErrMsg: "Elasticsearch error",
+	},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

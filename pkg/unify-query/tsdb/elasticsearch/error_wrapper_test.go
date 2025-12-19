@@ -39,15 +39,20 @@ func Test_handleESError(t *testing.T) {
 		},
 
 		{
-		name:           "should return timeout error message for context deadline exceeded",
-		err:            context.Canceled,
-		expectedErrMsg: "查询  超时: context canceled",
-	},
-	{
-		name:           "should handle nil esErr.Details gracefully",
-		errMsg:         `{"error":null,"status":500}`,
-		expectedErrMsg: "Elasticsearch error",
-	},
+			name:           "should return timeout error message for context deadline exceeded",
+			err:            context.Canceled,
+			expectedErrMsg: "查询  超时: context canceled",
+		},
+		{
+			name:           "should handle nil esErr.Details gracefully",
+			errMsg:         `{"error":null,"status":500}`,
+			expectedErrMsg: "Elasticsearch error",
+		},
+		{
+			name:           "process on es mapping return 404",
+			errMsg:         `{"error":{"root_cause":[{"type":"index_not_found_exception","reason":"no such index [2_bkapigateway_apigateway_container]","index_uuid":"_na_","resource.type":"index_or_alias","resource.id":"2_bkapigateway_apigateway_container","index":"2_bkapigateway_apigateway_container"}],"type":"index_not_found_exception","reason":"no such index [2_bkapigateway_apigateway_container]","index_uuid":"_na_","resource.type":"index_or_alias","resource.id":"2_bkapigateway_apigateway_container","index":"2_bkapigateway_apigateway_container"},"status":404}`,
+			expectedErrMsg: "Elasticsearch error: [index_not_found_exception] no such index [2_bkapigateway_apigateway_container]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

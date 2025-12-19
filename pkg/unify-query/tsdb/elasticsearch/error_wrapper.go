@@ -92,37 +92,55 @@ func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg s
 	if esErr.Details == nil {
 		return
 	}
-	indices = deepestIndex(esErr)
-	reasonMsg, typeMsg = deepestCausedBy(esErr.Details.CausedBy)
+	indices = extractIndices(esErr.Details.FailedShards)
+
+	// 优先使用 caused_by
+	if esErr.Details.CausedBy != nil {
+		reasonMsg, typeMsg = extractReasonAndType(esErr.Details.CausedBy, true)
+	}
+	if reasonMsg == "" && typeMsg == "" && len(esErr.Details.RootCause) > 0 {
+		reasonMsg, typeMsg = extractFromErrorDetails(esErr.Details.RootCause[0])
+	}
 	return
 }
 
-func deepestCausedBy(cause map[string]interface{}) (reasonMsg string, typeMsg string) {
+func extractReasonAndType(cause map[string]interface{}, recursive bool) (reasonMsg string, typeMsg string) {
 	if cause == nil {
 		return
 	}
-	for cause != nil {
-		next, ok := cause[CausedByField].(map[string]interface{})
-		if !ok {
-			break
+
+	if recursive {
+		for {
+			next, ok := cause[CausedByField].(map[string]interface{})
+			if !ok {
+				break
+			}
+			cause = next
 		}
-		cause = next
 	}
+
 	reasonMsg, _ = cause[ReasonField].(string)
 	typeMsg, _ = cause[TypeField].(string)
 	return
 }
 
-func deepestIndex(esErr elastic.Error) (indices []string) {
-	if esErr.Details == nil {
+func extractFromErrorDetails(details *elastic.ErrorDetails) (reasonMsg string, typeMsg string) {
+	if details == nil {
 		return
 	}
-	failedShards := esErr.Details.FailedShards
+	return details.Reason, details.Type
+}
+
+func extractIndices(failedShards []map[string]interface{}) []string {
+	if len(failedShards) == 0 {
+		return nil
+	}
+
+	var indices []string
 	for _, shardInfo := range failedShards {
 		if index, ok := shardInfo[IndexField].(string); ok {
 			indices = append(indices, index)
 		}
 	}
-
-	return
+	return indices
 }

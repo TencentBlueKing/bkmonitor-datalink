@@ -375,6 +375,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
+
+	// 检查es是否有响应错误
 	if err == nil && res.Error != nil {
 		err = &elastic.Error{
 			Status:  res.Status,

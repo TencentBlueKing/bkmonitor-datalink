@@ -110,6 +110,7 @@ func extractReasonAndType(cause map[string]any, recursive bool) (reasonMsg strin
 	}
 
 	if recursive {
+		// 一直往下找最深的 caused_by(优先返回最深的)
 		for {
 			next, ok := cause[CausedByField].(map[string]any)
 			if !ok {

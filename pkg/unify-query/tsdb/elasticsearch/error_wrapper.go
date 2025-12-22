@@ -15,9 +15,10 @@ import (
 	"io"
 	"strings"
 
+	elastic "github.com/olivere/elastic/v7"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/olivere/elastic/v7"
 )
 
 const (
@@ -84,8 +85,7 @@ func handleESError(ctx context.Context, url string, err error) error {
 		msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
 	}
 
-	return errors.New(msgBuilder.String())
-
+	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
 }
 
 func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg string) {
@@ -104,14 +104,14 @@ func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg s
 	return
 }
 
-func extractReasonAndType(cause map[string]interface{}, recursive bool) (reasonMsg string, typeMsg string) {
+func extractReasonAndType(cause map[string]any, recursive bool) (reasonMsg string, typeMsg string) {
 	if cause == nil {
 		return
 	}
 
 	if recursive {
 		for {
-			next, ok := cause[CausedByField].(map[string]interface{})
+			next, ok := cause[CausedByField].(map[string]any)
 			if !ok {
 				break
 			}
@@ -131,7 +131,7 @@ func extractFromErrorDetails(details *elastic.ErrorDetails) (reasonMsg string, t
 	return details.Reason, details.Type
 }
 
-func extractIndices(failedShards []map[string]interface{}) []string {
+func extractIndices(failedShards []map[string]any) []string {
 	if len(failedShards) == 0 {
 		return nil
 	}

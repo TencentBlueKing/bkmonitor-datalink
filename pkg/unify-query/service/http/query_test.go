@@ -3952,222 +3952,222 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						},
 					},
 				},
-		MetricMerge: "a",
-		},
-	},
-	"promql with add_dimensions basic": {
-		queryStruct: false,
-		promql: &structured.QueryPromQL{
-			PromQL:        `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
-			AddDimensions: []string{"cluster_id", "env"},
-		},
-		query: &structured.QueryTs{
-			QueryList: []*structured.Query{
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "container_cpu_usage_seconds_total",
-					TimeAggregation: structured.TimeAggregation{
-						Function:  "rate",
-						Window:    "1m0s",
-						NodeIndex: 2,
-					},
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"cluster_id", "env", "namespace", "pod"},
-						},
-					},
-					ReferenceName: "a",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
-							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
-							},
-						},
-					},
-				},
+				MetricMerge: "a",
 			},
-			MetricMerge:   "a",
-			AddDimensions: []string{"cluster_id", "env"},
 		},
-	},
-	"promql with add_dimensions merge with existing": {
-		queryStruct: false,
-		promql: &structured.QueryPromQL{
-			PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
-			AddDimensions: []string{"namespace", "pod", "cluster_id"},
-		},
-		query: &structured.QueryTs{
-			QueryList: []*structured.Query{
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "container_cpu_usage_seconds_total",
-					TimeAggregation: structured.TimeAggregation{
-						Function:  "rate",
-						Window:    "1m0s",
-						NodeIndex: 2,
-					},
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"cluster_id", "namespace", "pod"},
-						},
-					},
-					ReferenceName: "a",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
-							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
-							},
-						},
-					},
-				},
+		"promql with add_dimensions basic": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:        `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
+				AddDimensions: []string{"cluster_id", "env"},
 			},
-			MetricMerge:   "a",
-			AddDimensions: []string{"namespace", "pod", "cluster_id"},
-		},
-	},
-	"promql with add_dimensions multiple queries": {
-		queryStruct: false,
-		promql: &structured.QueryPromQL{
-			PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m])) / sum by (pod) (kube_pod_container_resource_limits_cpu_cores{namespace="default"})`,
-			AddDimensions: []string{"cluster_id", "env"},
-		},
-		query: &structured.QueryTs{
-			QueryList: []*structured.Query{
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "container_cpu_usage_seconds_total",
-					TimeAggregation: structured.TimeAggregation{
-						Function:  "rate",
-						Window:    "1m0s",
-						NodeIndex: 2,
-					},
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"cluster_id", "env", "namespace"},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
-					},
-					ReferenceName: "a",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
+						AggregateMethodList: []structured.AggregateMethod{
 							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
+								Method:     "sum",
+								Dimensions: []string{"cluster_id", "env", "namespace", "pod"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
 							},
 						},
 					},
 				},
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "kube_pod_container_resource_limits_cpu_cores",
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"cluster_id", "env", "pod"},
-						},
-					},
-					ReferenceName: "b",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
-							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
-							},
-						},
-					},
-				},
+				MetricMerge:   "a",
+				AddDimensions: []string{"cluster_id", "env"},
 			},
-			MetricMerge:   "a / b",
-			AddDimensions: []string{"cluster_id", "env"},
 		},
-	},
-	"struct to promql with add_dimensions": {
-		queryStruct: true,
-		query: &structured.QueryTs{
-			QueryList: []*structured.Query{
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "container_cpu_usage_seconds_total",
-					TimeAggregation: structured.TimeAggregation{
-						Function:  "rate",
-						Window:    "1m0s",
-						NodeIndex: 2,
-					},
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"cluster_id", "env", "namespace"},
+		"promql with add_dimensions merge with existing": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
+				AddDimensions: []string{"namespace", "pod", "cluster_id"},
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
-					},
-					ReferenceName: "a",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
+						AggregateMethodList: []structured.AggregateMethod{
 							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
+								Method:     "sum",
+								Dimensions: []string{"cluster_id", "namespace", "pod"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
 							},
 						},
 					},
 				},
+				MetricMerge:   "a",
+				AddDimensions: []string{"namespace", "pod", "cluster_id"},
 			},
-			MetricMerge:   "a",
-			AddDimensions: []string{"cluster_id", "env"},
 		},
-	promql: &structured.QueryPromQL{
-		PromQL:        `sum by (cluster_id, env, namespace) (rate(bkmonitor:container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
-		AddDimensions: []string{"cluster_id", "env"},
-	},
-	},
-	"promql with add_dimensions empty list": {
-		queryStruct: false,
-		promql: &structured.QueryPromQL{
-			PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
-			AddDimensions: []string{},
-		},
-		query: &structured.QueryTs{
-			QueryList: []*structured.Query{
-				{
-					DataSource: "bkmonitor",
-					FieldName:  "container_cpu_usage_seconds_total",
-					TimeAggregation: structured.TimeAggregation{
-						Function:  "rate",
-						Window:    "1m0s",
-						NodeIndex: 2,
-					},
-					AggregateMethodList: []structured.AggregateMethod{
-						{
-							Method:     "sum",
-							Dimensions: []string{"namespace"},
+		"promql with add_dimensions multiple queries": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m])) / sum by (pod) (kube_pod_container_resource_limits_cpu_cores{namespace="default"})`,
+				AddDimensions: []string{"cluster_id", "env"},
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"cluster_id", "env", "namespace"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
+							},
 						},
 					},
-					ReferenceName: "a",
-					Conditions: structured.Conditions{
-						FieldList: []structured.ConditionField{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "kube_pod_container_resource_limits_cpu_cores",
+						AggregateMethodList: []structured.AggregateMethod{
 							{
-								DimensionName: "namespace",
-								Operator:      structured.ConditionEqual,
-								Value:         []string{"default"},
+								Method:     "sum",
+								Dimensions: []string{"cluster_id", "env", "pod"},
+							},
+						},
+						ReferenceName: "b",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
 							},
 						},
 					},
 				},
+				MetricMerge:   "a / b",
+				AddDimensions: []string{"cluster_id", "env"},
 			},
-			MetricMerge:   "a",
-			AddDimensions: []string{},
 		},
-	},
-}
+		"struct to promql with add_dimensions": {
+			queryStruct: true,
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"cluster_id", "env", "namespace"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
+							},
+						},
+					},
+				},
+				MetricMerge:   "a",
+				AddDimensions: []string{"cluster_id", "env"},
+			},
+			promql: &structured.QueryPromQL{
+				PromQL:        `sum by (cluster_id, env, namespace) (rate(bkmonitor:container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
+				AddDimensions: []string{"cluster_id", "env"},
+			},
+		},
+		"promql with add_dimensions empty list": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:        `sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace="default"}[1m]))`,
+				AddDimensions: []string{},
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"namespace"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"default"},
+								},
+							},
+						},
+					},
+				},
+				MetricMerge:   "a",
+				AddDimensions: []string{},
+			},
+		},
+	}
 
-for n, c := range testCase {
+	for n, c := range testCase {
 		t.Run(n, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()

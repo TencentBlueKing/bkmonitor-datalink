@@ -379,11 +379,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		return nil, handleESError(ctx, qo.conn.Address, err)
 	}
 	if res.Error != nil {
-		err = metadata.NewMessage(
-			metadata.MsgQueryES,
-			"es 查询失败 index: %+v",
-			qo.indexes,
-		).Error(ctx, errors.New(res.Error.Reason))
+		err = handleESError(ctx, qo.conn.Address, errors.New(res.Error.Reason))
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)

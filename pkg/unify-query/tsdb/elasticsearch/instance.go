@@ -375,11 +375,14 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
+	if err == nil && res.Error != nil {
+		err = &elastic.Error{
+			Status:  res.Status,
+			Details: res.Error,
+		}
+	}
 	if err != nil {
 		return nil, handleESError(ctx, qo.conn.Address, err)
-	}
-	if res.Error != nil {
-		err = handleESError(ctx, qo.conn.Address, errors.New(res.Error.Reason))
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)

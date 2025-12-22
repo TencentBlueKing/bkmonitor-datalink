@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 
@@ -62,20 +63,33 @@ func Test_handleESError(t *testing.T) {
 			errMsg:         `{"error":{"root_cause":[{"type":"index_not_found_exception","reason":"no such index [2_bkapigateway_apigateway_container]","index_uuid":"_na_","resource.type":"index_or_alias","resource.id":"2_bkapigateway_apigateway_container","index":"2_bkapigateway_apigateway_container"}],"type":"index_not_found_exception","reason":"no such index [2_bkapigateway_apigateway_container]","index_uuid":"_na_","resource.type":"index_or_alias","resource.id":"2_bkapigateway_apigateway_container","index":"2_bkapigateway_apigateway_container"},"status":404}`,
 			expectedErrMsg: "es 查询失败: Elasticsearch error: [index_not_found_exception] no such index [2_bkapigateway_apigateway_container]",
 		},
+		{
+			name:           " process on third party error",
+			errMsg:         "a third party error occurred",
+			expectedErrMsg: "es 查询失败: Elasticsearch error: [third_party_error] a third party error occurred",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var testErr error = tt.err
 			if tt.errMsg != "" {
 				var esErr elastic.Error
+				var thirdPartyErr error
 				err := json.Unmarshal([]byte(tt.errMsg), &esErr)
-				assert.NoError(t, err)
-				testErr = &esErr
-			}
-			resultErr := handleESError(t.Context(), tt.esAddr, testErr)
-			if resultErr != nil {
-				if tt.expectedErrMsg != "" {
-					assert.EqualError(t, resultErr, tt.expectedErrMsg)
+				if err != nil {
+					thirdPartyErr = errors.New(tt.errMsg)
+					resultErr := handleESError(t.Context(), tt.esAddr, thirdPartyErr)
+					if resultErr != nil {
+						if tt.expectedErrMsg != "" {
+							assert.EqualError(t, resultErr, tt.expectedErrMsg)
+						}
+					}
+				} else {
+					resultErr := handleESError(t.Context(), tt.esAddr, err)
+					if resultErr != nil {
+						if tt.expectedErrMsg != "" {
+							assert.EqualError(t, resultErr, tt.expectedErrMsg)
+						}
+					}
 				}
 			}
 		})

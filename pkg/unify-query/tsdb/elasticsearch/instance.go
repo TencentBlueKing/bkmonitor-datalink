@@ -375,15 +375,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
-	if err != nil {
-		return nil, processOnESErr(ctx, qo.conn.Address, err)
+
+	// 检查es是否有响应错误
+	if err == nil && res.Error != nil {
+		err = &elastic.Error{
+			Status:  res.Status,
+			Details: res.Error,
+		}
 	}
-	if res.Error != nil {
-		err = metadata.NewMessage(
-			metadata.MsgQueryES,
-			"es 查询失败 index: %+v",
-			qo.indexes,
-		).Error(ctx, errors.New(res.Error.Reason))
+	if err != nil {
+		return nil, handleESError(ctx, qo.conn.Address, err)
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)

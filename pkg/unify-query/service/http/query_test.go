@@ -1378,6 +1378,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 	end := "1723595000"
 
 	mock.Es.Set(map[string]any{
+		// ES error with nested caused_by structure to test error handling
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10}`: `{"error":{"root_cause":[{"type":"illegal_argument_exception","reason":"Failed to parse field [dtEventTimeStamp]"}],"type":"search_phase_execution_exception","reason":"all shards failed","phase":"query","grouped":true,"failed_shards":[{"shard":0,"index":"v2_2_bklog_test_20240814_0","node":"node1","reason":{"type":"query_shard_exception","reason":"failed to create query","index":"v2_2_bklog_test_20240814_0","caused_by":{"type":"illegal_argument_exception","reason":"Failed to parse field [dtEventTimeStamp]","caused_by":{"type":"number_format_exception","reason":"For input string: \"invalid\""}}}}]},"status":400}`,
+
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":301,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c726c895a380ba1a9df04ba4a977b29b","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"fa209967d4a8c5d21b3e4f67d2cd579e","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"dc888e9a3789976aa11483626fc61a4f","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c2dae031f095fa4b9deccf81964c7837","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8a916e558c71d4226f1d7f3279cf0fdd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"f6950fef394e813999d7316cdbf0de4d","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"328d487e284703b1d0bb8017dba46124","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bd8a8ef60e94ade63c55c8773170d458","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c8401bb4ec021b038cb374593b8adce3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
 
 		// nested query + query string 测试 + highlight
@@ -1466,11 +1469,29 @@ func TestQueryRawWithInstance(t *testing.T) {
 	})
 
 	tcs := map[string]struct {
-		queryTs  *structured.QueryTs
-		total    int64
-		expected string
-		options  string
+		queryTs     *structured.QueryTs
+		total       int64
+		expected    string
+		options     string
+		expectError bool
+		errorMsg    string
 	}{
+		"query es with nested caused_by error": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+					},
+				},
+				Limit: 10,
+				Start: start,
+				End:   end,
+			},
+			expectError: true,
+			errorMsg:    "查询原始数据报错: query error: 原始数据查询异常: es 查询失败: Elasticsearch error from http://127.0.0.1:93002: [illegal_argument_exception] Failed to parse field [dtEventTimeStamp] (indices: v2_2_bklog_test_20240814_0) ",
+		},
 		"query collections.attributes.db.statement": {
 			queryTs: &structured.QueryTs{
 				SpaceUid: spaceUid,
@@ -2371,6 +2392,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
 			total, list, options, err := queryRawWithInstance(ctx, c.queryTs)
+
+			if c.expectError {
+				assert.NotNil(t, err, "Expected an error but got nil")
+				if err != nil && c.errorMsg != "" {
+					assert.Equal(t, c.errorMsg, err.Error(), "Error message should match exactly")
+				}
+				return
+			}
+
 			assert.Nil(t, err)
 			if err != nil {
 				return

@@ -1,0 +1,9 @@
+# Mock Data Generator Dependencies
+# Install with: pip install -r requirements.txt
+
+# Required dependencies
+requests>=2.22.0,<3.0.0
+
+# Optional dependencies
+# python-dotenv is optional but recommended for .env file support
+python-dotenv>=0.20.0,<1.0.0

@@ -149,19 +149,20 @@ func (p *metricsFilter) dropAction(record *define.Record, config Config) {
 			resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
 				scopeMetrics.Metrics().RemoveIf(func(metric pmetric.Metric) bool {
 					ruleMatch := true
-					if len(action.Rules) > 0 {
-						for _, rule := range action.Rules {
-							ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
-							switch ff {
-							// TODO(aivan): 目前 predicateKey 暂时只支持 resource 后续可能会扩展
-							case fields.FieldFromResource:
-								rv, ok := rs.Get(pk)
-								if !ok || !opmatch.Match(rv.AsString(), rule.MatchConfig.Value, rule.MatchConfig.Op) {
-									ruleMatch = false
-								}
-							default:
-								logger.Errorf("unsupported field %s", rule.PredicateKey)
+					for _, rule := range action.Rules {
+						ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
+						switch ff {
+						// TODO(aivan): 目前 predicateKey 暂时只支持 resource 后续可能会扩展
+						case fields.FieldFromResource:
+							rv, ok := rs.Get(pk)
+							if !ok || !opmatch.Match(rv.AsString(), rule.MatchConfig.Value, rule.MatchConfig.Op) {
+								ruleMatch = false
+								break
 							}
+						default:
+							logger.Warnf("unsupported field %s", rule.PredicateKey)
+							ruleMatch = false
+							break
 						}
 					}
 					return action.MetricMatch(metric.Name()) && ruleMatch

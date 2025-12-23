@@ -87,6 +87,10 @@ func NewPerformanceDiskProcessor(ctx context.Context, name string) *PerformanceD
 				etl.ExtractByJMESPath("usage.device"), etl.TransformNilString,
 			),
 			etl.NewSimpleField(
+				"mountpoint",
+				etl.ExtractByJMESPath("usage.mountpoint"), etl.TransformNilString,
+			),
+			etl.NewSimpleField(
 				"device_type",
 				etl.ExtractByJMESPath("usage.fstype"), etl.TransformNilString,
 			),

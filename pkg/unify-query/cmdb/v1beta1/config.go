@@ -147,19 +147,19 @@ var configData = &Config{
 		{
 			Name: "business",
 			Index: cmdb.Index{
-				"biz_id",
+				"bk_biz_id",
 			},
 		},
 		{
 			Name: "set",
 			Index: cmdb.Index{
-				"set_id",
+				"bk_set_id",
 			},
 		},
 		{
 			Name: "module",
 			Index: cmdb.Index{
-				"module_id",
+				"bk_module_id",
 			},
 		},
 		{
@@ -179,7 +179,7 @@ var configData = &Config{
 		{
 			Name: "host",
 			Index: cmdb.Index{
-				"host_id",
+				"bk_host_id",
 			},
 			Info: cmdb.Index{
 				"version",

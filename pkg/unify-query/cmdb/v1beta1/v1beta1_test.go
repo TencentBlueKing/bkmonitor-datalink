@@ -572,7 +572,7 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 
 	mock.Vm.Set(map[string]any{
 		// host info
-		"query_range:1693973987169397440760count by (host_id, version, env_name, env_type, service_version, service_type) (count_over_time(a[1m]))": victoriaMetrics.Data{
+		"query_range:1693973987169397440760count by (bk_host_id, version, env_name, env_type, service_version, service_type) (count_over_time(a[1m]))": victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -631,13 +631,13 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		"host info": {
 			source: "host",
 			indexMatcher: cmdb.Matcher{
-				"host_id": "12345",
+				"bk_host_id": "12345",
 			},
 			targetInfoShow: true,
 			expectedPath:   []string{"host"},
 			expectedSource: "host",
 			expectedSourceInfo: map[string]string{
-				"host_id": "12345",
+				"bk_host_id": "12345",
 			},
 			expectedTarget: "host",
 			expectedTargetList: []cmdb.MatchersWithTimestamp{

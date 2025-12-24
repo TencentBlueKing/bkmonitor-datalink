@@ -76,7 +76,8 @@ to quickly create a Cobra application.`,
 			KeyFile:    keyFile,
 			SkipVerify: skipVerify,
 		}
-		err = consul.Init(address, prefix, tlsConfig)
+		aclToken := common.Config.GetString(common.ConfigKeyConsulACLToken)
+		err = consul.Init(address, prefix, tlsConfig, aclToken)
 		if err != nil {
 			logging.StdLogger.Errorf("consul init failed,error:%s", err)
 			return

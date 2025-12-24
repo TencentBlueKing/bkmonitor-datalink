@@ -45,4 +45,5 @@ const (
 	ConfigKeyConsulCertFile          = "consul.cert_file_path"
 	ConfigKeyConsulKeyFile           = "consul.key_file_path"
 	ConfigKeyConsulSkipVerify        = "consul.skip_verify"
+	ConfigKeyConsulACLToken          = "consul.auth.acl_token"
 )

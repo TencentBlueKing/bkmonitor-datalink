@@ -316,6 +316,7 @@ func (httpService *Service) InitService() error {
 	httpService.address = listen + ":" + port
 	address := common.Config.GetString(common.ConfigKeyConsulAddress)
 	prefix := common.Config.GetString(common.ConfigKeyConsulPrefix)
+	aclToken := common.Config.GetString(common.ConfigKeyConsulACLToken)
 	caCertFile := common.Config.GetString(common.ConfigKeyConsulCACertFile)
 	certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
 	keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
@@ -326,7 +327,7 @@ func (httpService *Service) InitService() error {
 		KeyFile:    keyFile,
 		SkipVerify: skipVerify,
 	}
-	err = consul.Init(address, prefix, tlsConfig)
+	err = consul.Init(address, prefix, tlsConfig, aclToken)
 	if err != nil {
 		flowLog.Errorf("consul init failed")
 		return err

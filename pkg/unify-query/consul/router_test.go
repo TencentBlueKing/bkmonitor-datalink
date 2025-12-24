@@ -25,7 +25,7 @@ func TestBCS_Info(t *testing.T) {
 	log.InitTestLogger()
 	_ = SetInstance(
 		context.Background(), "", "test-unify", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", nil,
+		[]string{}, "127.0.0.1", 10205, "30s", nil, "",
 	)
 	BCSInfoPath = "test/metadata/v1/default/project_id"
 	kv := api.KVPairs{

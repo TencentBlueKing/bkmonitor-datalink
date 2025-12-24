@@ -51,7 +51,7 @@ func (t *TestSuite) TestRelease() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -71,7 +71,7 @@ func (t *TestSuite) TestGetDBsName() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -96,7 +96,7 @@ func (t *TestSuite) TestGetTablesName() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -122,7 +122,7 @@ func (t *TestSuite) TestGetClustersName() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -148,7 +148,7 @@ func (t *TestSuite) TestGetHostsName() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -174,7 +174,7 @@ func (t *TestSuite) TestGetRouteInfo() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -204,7 +204,7 @@ func (t *TestSuite) TestGetClusterInfo() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -236,7 +236,7 @@ func (t *TestSuite) TestGetHostInfo() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -285,7 +285,7 @@ func (t *TestSuite) TestGetAllRoutesData() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -346,7 +346,7 @@ func (t *TestSuite) TestGetAllClustersData() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -420,7 +420,7 @@ func (t *TestSuite) TestGetAllHostsData() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -448,7 +448,7 @@ func (t *TestSuite) TestInitCluster() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -490,7 +490,7 @@ func (t *TestSuite) TestInitHost() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -535,7 +535,7 @@ func (t *TestSuite) TestInitRoutes() {
 	t.stub.StubFunc(&consul.GetConsulClient, mockClient, nil)
 	defer t.stub.Reset()
 	// 测试
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -585,7 +585,7 @@ func (t *TestSuite) TestDeleteHost() {
 
 	hostPath := consul.HostBasePath
 
-	err := consul.Init("127.0.0.1:8500", totalPrefix, nil)
+	err := consul.Init("127.0.0.1:8500", totalPrefix, nil, "")
 	if err != nil {
 		t.Error(err)
 	}

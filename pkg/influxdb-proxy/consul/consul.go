@@ -37,12 +37,12 @@ var TotalPrefix string
 var LockPath string
 
 // GetConsulClient :
-var GetConsulClient = func(address string, tlsConfig *config.TlsConfig) (base.ConsulClient, error) {
-	return base.NewBasicClient(address, tlsConfig)
+var GetConsulClient = func(address string, aclToken string, tlsConfig *config.TlsConfig) (base.ConsulClient, error) {
+	return base.NewBasicClient(address, aclToken, tlsConfig)
 }
 
 // Init 初始化操作，在调用consul包其他函数前应执行该函数
-var Init = func(address string, prefix string, tlsConfig *config.TlsConfig) error {
+var Init = func(address string, prefix string, tlsConfig *config.TlsConfig, aclToken string) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -58,7 +58,7 @@ var Init = func(address string, prefix string, tlsConfig *config.TlsConfig) erro
 	initHostPath()
 	initClusterPath()
 	initTagPath()
-	consulClient, err = GetConsulClient(address, tlsConfig)
+	consulClient, err = GetConsulClient(address, aclToken, tlsConfig)
 	if err != nil {
 		flowLog.Errorf("create consul client failed,error:%s", err)
 		return err
@@ -68,7 +68,7 @@ var Init = func(address string, prefix string, tlsConfig *config.TlsConfig) erro
 }
 
 // Reload 重启consul，通常是因为处理http的reload
-var Reload = func(address string, prefix string, tlsConfig *config.TlsConfig) error {
+var Reload = func(address string, prefix string, tlsConfig *config.TlsConfig, aclToken string) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -78,7 +78,7 @@ var Reload = func(address string, prefix string, tlsConfig *config.TlsConfig) er
 	if err != nil {
 		return err
 	}
-	err = Init(address, prefix, tlsConfig)
+	err = Init(address, prefix, tlsConfig, aclToken)
 	if err != nil {
 		return err
 	}

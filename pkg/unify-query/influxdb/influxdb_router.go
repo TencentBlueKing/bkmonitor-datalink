@@ -155,6 +155,12 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 				log.Warnf(ctx, "do ping failed, error: %s", err)
 				continue
 			}
+			// 对于配置了账号密码的情况
+			// 此处用于兼容 influxdb 的 basic auth 认证
+			if v.Username != "" && v.Password != "" {
+				req.SetBasicAuth(v.Username, v.Password)
+			}
+
 			// 状态码 204 变更 read 跳出循环
 			// 否则持续走完 PingCount 结束
 			if resp.StatusCode == http.StatusNoContent {

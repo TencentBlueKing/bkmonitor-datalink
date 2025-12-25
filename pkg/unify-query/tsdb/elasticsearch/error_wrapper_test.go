@@ -68,6 +68,16 @@ func Test_handleESError(t *testing.T) {
 			errMsg:         "a third party error occurred",
 			expectedErrMsg: "es 查询失败: Elasticsearch error: [third_party_error] a third party error occurred",
 		},
+		{
+			name:           "process on bkbase return err",
+			errMsg:         `{"error":{"reason":"结果表  表名不符合规范","type":"结果表不存在","root_cause":[{"reason":"结果表  表名不符合规范","type":"结果表不存在"}]},"status":1532001}`,
+			expectedErrMsg: `es 查询失败: Elasticsearch error: [结果表不存在] 结果表  表名不符合规范`,
+		},
+		{
+			name:           "process on bkbase return rt not exist",
+			errMsg:         `{"error":{"reason":"结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确","type":"结果表不存在","root_cause":[{"reason":"结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确","type":"结果表不存在"}]},"status":1532001}`,
+			expectedErrMsg: `es 查询失败: Elasticsearch error: [结果表不存在] 结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -84,7 +94,7 @@ func Test_handleESError(t *testing.T) {
 						}
 					}
 				} else {
-					resultErr := handleESError(t.Context(), tt.esAddr, err)
+					resultErr := handleESError(t.Context(), tt.esAddr, &esErr)
 					if resultErr != nil {
 						if tt.expectedErrMsg != "" {
 							assert.EqualError(t, resultErr, tt.expectedErrMsg)

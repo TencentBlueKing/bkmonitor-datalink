@@ -384,7 +384,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 	if err != nil {
-		return nil, handleESError(ctx, qo.conn.Address, err)
+		err = handleESError(ctx, qo.conn.Address, err)
+		return nil, err
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)

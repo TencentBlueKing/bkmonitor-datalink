@@ -5123,3 +5123,89 @@ func getVal(m map[string]any, k string) string {
 
 	return ""
 }
+
+// TestMultiRTSearchAfterProblem 测试多 RT 场景下 SearchAfter 的问题
+//
+// 问题描述：
+// 当一个 tableID（如 multi_es）路由到多个 RT 时：
+// - multi_es -> result_table.es + result_table.es_with_time_filed
+// - 每个 RT 独立查询 ES，各自返回数据并设置 SearchAfter
+// - 合并排序后只返回 limit 条数据
+// - 被裁剪的 RT 的 SearchAfter 是基于 ES 返回的最后一条数据，而非实际被消费的数据
+// - 这会导致下次查询时跳过未被消费的数据（数据丢失）
+//
+// 示例：
+// - RT1 (result_table.es) 返回: doc1(sort=10003), doc2(sort=10002)
+// - RT2 (result_table.es_with_time_filed) 返回: doc3(sort=10003), doc4(sort=10002)
+// - 合并排序后: doc1, doc3, doc2, doc4
+// - limit=2 后返回: doc1, doc3
+// - 当前 SearchAfter: RT1=[10002], RT2=[10002]（错误！基于 ES 返回的最后一条）
+// - 正确 SearchAfter: RT1=[10003], RT2=[10003]（基于实际被消费的最后一条）
+func TestMultiRTSearchAfterProblem(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	// 使用唯一的时间范围
+	startTime := "1735570000"
+	endTime := "1735570100"
+
+	// 设置 mock 数据
+	// multi_es 包含 2 个 RT: result_table.es 和 result_table.es_with_time_filed
+	mock.Es.Set(map[string]any{
+		// RT1: result_table.es 的查询（使用 dtEventTimeStamp 字段）
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"hits":{"total":{"value":10},"hits":[{"_index":"es_index","_id":"doc1","_source":{"dtEventTimeStamp":"1735570003"},"sort":[1735570003]},{"_index":"es_index","_id":"doc2","_source":{"dtEventTimeStamp":"1735570002"},"sort":[1735570002]}]}}`,
+		// RT2: result_table.es_with_time_filed 的查询（使用 end_time 字段过滤，但排序字段仍是 dtEventTimeStamp）
+		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1735570000000000,"include_lower":true,"include_upper":true,"to":1735570100000000}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"hits":{"total":{"value":10},"hits":[{"_index":"es_index","_id":"doc3","_source":{"end_time":"1735570003000000","dtEventTimeStamp":"1735570003"},"sort":[1735570003]},{"_index":"es_index","_id":"doc4","_source":{"end_time":"1735570002000000","dtEventTimeStamp":"1735570002"},"sort":[1735570002]}]}}`,
+	})
+
+	// 使用 multi_es，它包含 2 个 RT
+	queryTs := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource: structured.BkLog,
+				TableID:    "multi_es", // 使用多 RT 数据标签
+			},
+		},
+		OrderBy: structured.OrderBy{"-dtEventTimeStamp"},
+		Limit:   2,
+		Start:   startTime,
+		End:     endTime,
+	}
+
+	_, list, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
+	assert.Nil(t, err, "query should not return error")
+
+	// 打印返回的数据
+	t.Logf("Returned %d documents:", len(list))
+	for i, item := range list {
+		docID, _ := item["__doc_id"].(string)
+		resultTable, _ := item["__result_table"].(string)
+		t.Logf("  list[%d]: doc_id=%s, resultTable=%s", i, docID, resultTable)
+	}
+
+	// 打印返回的 ResultTableOptions
+	t.Logf("ResultTableOptions (%d entries):", len(resultTableOptions))
+	for k, v := range resultTableOptions {
+		t.Logf("  Key: %s, SearchAfter: %v", k, v.SearchAfter)
+	}
+
+	// 验证：应该有 2 个 RT 的 option
+	assert.Equal(t, 2, len(resultTableOptions), "should have 2 ResultTableOptions for 2 RTs")
+
+	// 返回的数据是 doc1 和 doc3，它们的 sort 值都是 1735570003
+	// 所以两个 RT 的 SearchAfter 应该都是 [1735570003]
+	// 但当前实现返回的是 [1735570002]（ES 返回的最后一条数据的 sort 值）
+	for k, v := range resultTableOptions {
+		if len(v.SearchAfter) > 0 {
+			searchAfterValue, _ := v.SearchAfter[0].(float64)
+			t.Logf("RT %s: SearchAfter=%v (value=%v)", k, v.SearchAfter, searchAfterValue)
+
+			// BUG: SearchAfter 应该是 1735570003（实际被消费的数据），而不是 1735570002（ES 返回的最后一条）
+			// 如果这个断言失败，说明 bug 存在
+			assert.Equal(t, float64(1735570003), searchAfterValue,
+				"BUG: SearchAfter should be 1735570003 (consumed data), not 1735570002 (ES returned last data)")
+		}
+	}
+}

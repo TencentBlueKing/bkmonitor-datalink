@@ -2,8 +2,6 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query
 
 go 1.24.0
 
-toolchain go1.24.4
-
 require (
 	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000

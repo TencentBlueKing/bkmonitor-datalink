@@ -5139,56 +5139,165 @@ func getVal(m map[string]any, k string) string {
 	return ""
 }
 
+// TestMultiRTSearchAfterProblem 测试多 RT 场景下 SearchAfter 不被错误覆盖
+//
+// 场景说明：
+//   - RT1 (result_table.es): 数据量大，有 6 条数据
+//   - RT2 (result_table.es_with_time_filed): 数据量小，只有 2 条数据
+//   - 每次查询 limit=2，按时间倒序排序
+//
+// 数据分布（时间戳倒序）：
+//
+//	RT1: doc1(ts=10) -> doc2(ts=9) -> doc3(ts=8) -> doc4(ts=7) -> doc5(ts=6) -> doc6(ts=5)
+//	RT2: doc_a(ts=8) -> doc_b(ts=7) -> (无更多数据)
+//
+// 翻页流程：
+//
+//	第1次查询: RT1 返回 [doc1, doc2], RT2 返回 [doc_a, doc_b]
+//	第2次查询: RT1 返回 [doc3, doc4], RT2 返回 [] (数据已查完)
+//	第3次查询: RT1 返回 [doc5, doc6], RT2 返回 [] (继续保持空)
+//
+// BUG 场景：
+//
+//	第2次查询后，RT2 返回 0 条数据，如果 SearchAfter 被错误清空，
+//	第3次查询时 RT2 会重新从头查询，导致 doc_a, doc_b 重复返回
 func TestMultiRTSearchAfterProblem(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
 
-	startTime := "1735570000"
-	endTime := "1735570100"
+	const (
+		startTime = "1735570000"
+		endTime   = "1735570100"
+
+		doc1ID, doc1Sort = "doc1", 1735570010 // 第1次查询返回
+		doc2ID, doc2Sort = "doc2", 1735570009 // 第1次查询返回
+		doc3ID, doc3Sort = "doc3", 1735570008 // 第2次查询返回
+		doc4ID, doc4Sort = "doc4", 1735570007 // 第2次查询返回
+		doc5ID, doc5Sort = "doc5", 1735570006 // 第3次查询返回
+		doc6ID, doc6Sort = "doc6", 1735570005 // 第3次查询返回
+
+		docAID, docASort = "doc_a", 1735570008 // 第1次查询返回
+		docBID, docBSort = "doc_b", 1735570007 // 第1次查询返回
+	)
+
+	expectedQuery1Docs := []string{doc1ID, doc2ID, docAID, docBID}
+	expectedQuery2Docs := []string{doc3ID, doc4ID}
+	expectedQuery3Docs := []string{doc5ID, doc6ID}
+	expectedTotalDocs := 8
+
+	expectedRT1SearchAfterQuery1 := float64(doc2Sort) // 第1次查询后：doc2 的 sort 值
+	expectedRT2SearchAfterQuery1 := float64(docBSort) // 第1次查询后：doc_b 的 sort 值
+	expectedRT1SearchAfterQuery2 := float64(doc4Sort) // 第2次查询后：doc4 的 sort 值
+	expectedRT2SearchAfterQuery2 := float64(docBSort) // 第2次查询后：应保持不变！（核心验证点）
 
 	mock.Es.Set(map[string]any{
-		// RT1: result_table.es 的查询（使用 dtEventTimeStamp 字段）
-		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"hits":{"total":{"value":10},"hits":[{"_index":"es_index","_id":"doc1","_source":{"dtEventTimeStamp":"1735570003"},"sort":[1735570003]},{"_index":"es_index","_id":"doc2","_source":{"dtEventTimeStamp":"1735570002"},"sort":[1735570002]}]}}`,
-		// RT2: result_table.es_with_time_filed 的查询（使用 end_time 字段过滤，但排序字段仍是 dtEventTimeStamp）
-		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1735570000000000,"include_lower":true,"include_upper":true,"to":1735570100000000}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"hits":{"total":{"value":10},"hits":[{"_index":"es_index","_id":"doc3","_source":{"end_time":"1735570003000000","dtEventTimeStamp":"1735570003"},"sort":[1735570003]},{"_index":"es_index","_id":"doc4","_source":{"end_time":"1735570002000000","dtEventTimeStamp":"1735570002"},"sort":[1735570002]}]}}`,
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: fmt.Sprintf(
+			`{"hits":{"total":{"value":6},"hits":[{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]},{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]}]}}`,
+			doc1ID, doc1Sort, doc1Sort, doc2ID, doc2Sort, doc2Sort),
+
+		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1735570000000000,"include_lower":true,"include_upper":true,"to":1735570100000000}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: fmt.Sprintf(
+			`{"hits":{"total":{"value":2},"hits":[{"_index":"es_index","_id":"%s","_source":{"end_time":"%d000000","dtEventTimeStamp":"%d"},"sort":[%d]},{"_index":"es_index","_id":"%s","_source":{"end_time":"%d000000","dtEventTimeStamp":"%d"},"sort":[%d]}]}}`,
+			docAID, docASort, docASort, docASort, docBID, docBSort, docBSort, docBSort),
+
+		fmt.Sprintf(`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"search_after":[%d],"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`, doc2Sort): fmt.Sprintf(
+			`{"hits":{"total":{"value":6},"hits":[{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]},{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]}]}}`,
+			doc3ID, doc3Sort, doc3Sort, doc4ID, doc4Sort, doc4Sort),
+
+		fmt.Sprintf(`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1735570000000000,"include_lower":true,"include_upper":true,"to":1735570100000000}}}}},"search_after":[%d],"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`, docBSort): `{"hits":{"total":{"value":2},"hits":[]}}`,
+
+		fmt.Sprintf(`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"search_after":[%d],"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`, doc4Sort): fmt.Sprintf(
+			`{"hits":{"total":{"value":6},"hits":[{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]},{"_index":"es_index","_id":"%s","_source":{"dtEventTimeStamp":"%d"},"sort":[%d]}]}}`,
+			doc5ID, doc5Sort, doc5Sort, doc6ID, doc6Sort, doc6Sort),
+
+		// BUG 场景：如果 RT2 的 SearchAfter 被错误清空，会发送这个请求导致重复数据
+		fmt.Sprintf(`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1735570000000000,"include_lower":true,"include_upper":true,"to":1735570100000000}}}}},"search_after":[%d],"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`, docASort): fmt.Sprintf(
+			`{"hits":{"total":{"value":2},"hits":[{"_index":"es_index","_id":"%s","_source":{"end_time":"%d000000","dtEventTimeStamp":"%d"},"sort":[%d]},{"_index":"es_index","_id":"%s","_source":{"end_time":"%d000000","dtEventTimeStamp":"%d"},"sort":[%d]}]}}`,
+			docAID, docASort, docASort, docASort, docBID, docBSort, docBSort, docBSort),
 	})
 
-	// 使用 multi_es，它包含 2 个 RT
-	queryTs := &structured.QueryTs{
-		SpaceUid: influxdb.SpaceUid,
-		QueryList: []*structured.Query{
-			{
-				DataSource: structured.BkLog,
-				TableID:    "multi_es", // 使用多 RT 数据标签
+	t.Run("多RT翻页时返回空数据的RT应保持SearchAfter不变", func(t *testing.T) {
+		queryTs := &structured.QueryTs{
+			SpaceUid: influxdb.SpaceUid,
+			QueryList: []*structured.Query{
+				{DataSource: structured.BkLog, TableID: "multi_es"},
 			},
-		},
-		OrderBy: structured.OrderBy{"-dtEventTimeStamp"},
-		Limit:   2,
-		Start:   startTime,
-		End:     endTime,
-	}
-
-	_, _, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
-	assert.Nil(t, err, "query should not return error")
-	assert.Equal(t, 2, len(resultTableOptions), "should have 2 ResultTableOptions for 2 RTs")
-
-	for k, v := range resultTableOptions {
-		if len(v.SearchAfter) > 0 {
-			// SearchAfter 的值可能是 int64 或 float64，取决于实现
-			var searchAfterValue float64
-			switch val := v.SearchAfter[0].(type) {
-			case float64:
-				searchAfterValue = val
-			case int64:
-				searchAfterValue = float64(val)
-			case int:
-				searchAfterValue = float64(val)
-			}
-			t.Logf("RT %s: SearchAfter=%v (value=%v, type=%T)", k, v.SearchAfter, searchAfterValue, v.SearchAfter[0])
-			assert.Equal(t, float64(1735570003), searchAfterValue,
-				"BUG: SearchAfter should be 1735570003 (consumed data), not 1735570002 (ES returned last data)")
+			OrderBy:       structured.OrderBy{"-dtEventTimeStamp"},
+			Limit:         2,
+			Start:         startTime,
+			End:           endTime,
+			IsSearchAfter: true,
 		}
 
+		// ==================== 第1次查询 ====================
+		_, list1, options1, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		// 验证返回的文档
+		docIDs1 := extractDocIDs(list1)
+		assert.ElementsMatch(t, expectedQuery1Docs, docIDs1, "第1次查询返回的文档不符合预期")
+
+		// 获取 RT keys
+		var rt1Key, rt2Key string
+		for k := range options1 {
+			if strings.HasPrefix(k, "result_table.es|") {
+				rt1Key = k
+			} else if strings.HasPrefix(k, "result_table.es_with_time_filed|") {
+				rt2Key = k
+			}
+		}
+		assert.NotEmpty(t, rt1Key)
+		assert.NotEmpty(t, rt2Key)
+
+		// 验证 SearchAfter
+		assert.Equal(t, expectedRT1SearchAfterQuery1, options1[rt1Key].SearchAfter[0], "RT1 第1次查询后 SearchAfter 错误")
+		assert.Equal(t, expectedRT2SearchAfterQuery1, options1[rt2Key].SearchAfter[0], "RT2 第1次查询后 SearchAfter 错误")
+
+		// ==================== 第2次查询 ====================
+		queryTs.ResultTableOptions = options1
+		_, list2, options2, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		// 验证返回的文档
+		docIDs2 := extractDocIDs(list2)
+		assert.ElementsMatch(t, expectedQuery2Docs, docIDs2, "第2次查询返回的文档不符合预期")
+
+		// 验证 SearchAfter
+		assert.Equal(t, expectedRT1SearchAfterQuery2, options2[rt1Key].SearchAfter[0], "RT1 第2次查询后 SearchAfter 错误")
+		// 核心断言：RT2 返回 0 条数据后，SearchAfter 应保持不变
+		assert.Equal(t, expectedRT2SearchAfterQuery2, options2[rt2Key].SearchAfter[0],
+			"BUG: RT2 返回空数据后 SearchAfter 被错误修改，期望保持 %v", expectedRT2SearchAfterQuery2)
+
+		// ==================== 第3次查询 ====================
+		queryTs.ResultTableOptions = options2
+		_, list3, options3, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		// 验证返回的文档
+		docIDs3 := extractDocIDs(list3)
+		assert.ElementsMatch(t, expectedQuery3Docs, docIDs3, "第3次查询返回的文档不符合预期")
+
+		// 验证无重复数据
+		allDocIDs := append(append(docIDs1, docIDs2...), docIDs3...)
+		uniqueDocIDs := make(map[string]bool)
+		for _, id := range allDocIDs {
+			assert.False(t, uniqueDocIDs[id], "出现重复文档 %s", id)
+			uniqueDocIDs[id] = true
+		}
+		assert.Equal(t, expectedTotalDocs, len(uniqueDocIDs), "总文档数不符合预期")
+
+		// 验证 RT2 的 SearchAfter 始终保持不变
+		assert.Equal(t, expectedRT2SearchAfterQuery1, options3[rt2Key].SearchAfter[0],
+			"RT2 的 SearchAfter 在多次查询后应始终保持不变")
+	})
+}
+
+func extractDocIDs(list []map[string]any) []string {
+	ids := make([]string, 0, len(list))
+	for _, doc := range list {
+		if id, ok := doc["__doc_id"].(string); ok {
+			ids = append(ids, id)
+		}
 	}
+	return ids
 }

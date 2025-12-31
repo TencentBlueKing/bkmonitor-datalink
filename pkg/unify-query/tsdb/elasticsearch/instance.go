@@ -676,6 +676,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		From:      &query.From,
 	}
 
+	if query.ResultTableOption != nil && len(query.ResultTableOption.SearchAfter) > 0 {
+		option.SearchAfter = query.ResultTableOption.SearchAfter
+	}
+
 	if sr != nil {
 		if sr.Hits != nil {
 

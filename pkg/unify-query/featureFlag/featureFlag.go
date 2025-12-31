@@ -74,7 +74,7 @@ func IntVariation(ctx context.Context, user ffuser.User, flagKey string, default
 
 // BoolVariation
 func BoolVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue bool) bool {
-	res, err := ffclient.BoolVariation(flagKey, user, defaultValue)
+	res, err := ffclient.BoolVariation(flagKey, user, defaultValue) //gzl：todo 特性开关使用
 	if err != nil {
 		return defaultValue
 	}

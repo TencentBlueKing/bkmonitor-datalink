@@ -1,0 +1,19 @@
+数据结构：redis string
+   key:"black_list"
+   value:(json格式)
+       {
+        "ForbiddenVM"[
+        ["vm_1","vm_2"],
+        ["vm_3","vm_4"]
+        ]
+       }
+
+//-----1、添加规则-----
+   Set方法 func(ctx, testKey, testField, testValue) 设置多条规则
+      eg：
+       -- Set(ctx, "forbiddenVMRTList", "VMRT1", "vm_1 vm_2")
+
+//-----2、读取规则------
+   Get方法 func(ctx context.Context, key string) (map[string]string, error) 获取多条规则
+        eg：
+        -- HGetAll(ctx, "forbiddenVMRTList")

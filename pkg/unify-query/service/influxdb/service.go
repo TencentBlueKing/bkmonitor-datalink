@@ -89,7 +89,7 @@ func (s *Service) Reload(ctx context.Context) {
 		log.Errorf(context.TODO(), "start loop reload downsampled info failed,err:%s", err)
 	}
 
-	err = s.reloadInfluxDBRouter(s.ctx)
+	err = s.reloadInfluxDBRouter(s.ctx) ////todo:gzl step 1 (ReloadRouter)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload influxdb router failed,err:%s", err)
 	}
@@ -243,57 +243,83 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 }
 
 // reloadInfluxDBRouter 重新加载 InfluxDBRouter
+// 该方法负责初始化和管理InfluxDB路由器的连接、状态维护和动态重载功能
+// 主要功能包括：
+// 1. 配置gRPC连接选项并初始化路由器
+// 2. 启动定期ping检查以维护主机状态
+// 3. 监听路由变更事件并动态重载路由配置
+//
+// 参数:
+//
+//	ctx context.Context - 上下文对象，用于控制goroutine的生命周期
+//
+// 返回值:
+//
+//	error - 如果初始化过程中出现错误则返回错误信息，否则返回nil
 func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
+	// 配置gRPC连接选项
 	dialOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()), // 使用不安全连接（开发环境）
+		grpc.WithBlock(), // 阻塞直到连接建立
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize),
-			grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize),
+			grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize), // 设置最大接收消息大小
+			grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize), // 设置最大发送消息大小
 		),
 	}
 
+	// 获取InfluxDB路由器实例
 	ir := inner.GetInfluxDBRouter()
-	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts)
+
+	// 重新加载路由器配置，连接到Redis等后端存储
+	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts) //todo:gzl step 2 (ReloadRouter)
 	if err != nil {
 		return err
 	}
 
+	// 启动第一个goroutine：定期ping检查，维护InfluxDB主机状态
 	s.wg.Add(1)
 	go func() {
-		ticker := time.NewTicker(PingPeriod)
-		defer ticker.Stop()
-		defer s.wg.Done()
+		ticker := time.NewTicker(PingPeriod) // 创建定时器，按PingPeriod间隔执行
+		defer ticker.Stop()                  // 确保定时器被正确释放
+		defer s.wg.Done()                    // 确保WaitGroup计数器减一
+
 		for {
 			select {
-			case <-ctx.Done():
+			case <-ctx.Done(): // 监听上下文取消信号
 				log.Warnf(ctx, "maintain influxdb host status info loop exit")
 				return
-			case <-ticker.C:
+			case <-ticker.C: // 定时器触发
+				// 执行ping操作，检查InfluxDB主机连通性
 				ir.Ping(ctx, PingTimeout, PingCount)
 				log.Debugf(ctx, "finish to Ping goroutine.")
 			}
 		}
 	}()
 
+	// 订阅路由变更事件
 	ch := ir.RouterSubscribe(ctx)
+
+	// 启动第二个goroutine：处理路由订阅和定时重载
 	s.wg.Add(1)
 	go func() {
-		ticker := time.NewTicker(RouterInterval)
+		ticker := time.NewTicker(RouterInterval) // 创建路由重载定时器
 		defer ticker.Stop()
 		defer s.wg.Done()
+
 		for {
 			select {
-			case <-ctx.Done():
+			case <-ctx.Done(): // 监听上下文取消信号
 				log.Warnf(ctx, "space router loop exit")
 				return
-				// 订阅 redis
+				// 定时重载：定期重新加载所有路由键
 			case <-ticker.C:
 				err = ir.ReloadAllKey(ctx)
 				if err != nil {
 					log.Errorf(ctx, "%s", err.Error())
 				}
 				log.Infof(ctx, "ir reload all key time ticker reload")
+
+			// 事件驱动重载：监听订阅消息，按需重载特定路由
 			case msg := <-ch:
 				ir.ReloadByKey(ctx, msg.Payload)
 				log.Debugf(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)

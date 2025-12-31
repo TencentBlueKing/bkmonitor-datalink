@@ -181,3 +181,82 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestGetVmRtFeatureFlag(t *testing.T) {
+	ctx := context.Background()
+
+	log.InitTestLogger()
+	metadata.InitMetadata()
+	MockFeatureFlag(ctx, `{
+		"exclusion-vm-rt": {
+			"variations": {
+	  			"Default": false,
+	  			"true": true,
+	  			"false": false
+	  		},
+			"targeting": [{
+	  			"query": "tableID in [\"vm\", \"vm_1\", \"vm_2\", \"vm_3\", \"vm_4\"]",
+	  			"variation": "true"
+	  		}],
+	  		"defaultRule": {
+	  			"variation": "Default"
+	  		}
+		}
+	}`)
+
+	for name, c := range map[string]struct {
+		TableID  string
+		Expected bool
+	}{
+		"排除VM结果表查询 - vm表": {
+			TableID:  "vm",
+			Expected: true,
+		},
+		"排除VM结果表查询 - vm_1表": {
+			TableID:  "vm_1",
+			Expected: true,
+		},
+		"排除VM结果表查询 - vm_2表": {
+			TableID:  "vm_2",
+			Expected: true,
+		},
+		"排除VM结果表查询 - vm_3表": {
+			TableID:  "vm_3",
+			Expected: true,
+		},
+		"排除VM结果表查询 - vm_4表": {
+			TableID:  "vm_4",
+			Expected: true,
+		},
+		"不排除非VM结果表查询 - 普通表": {
+			TableID:  "normal_table",
+			Expected: false,
+		},
+		"不排除非VM结果表查询 - 其他表": {
+			TableID:  "other_table",
+			Expected: false,
+		},
+		"不排除非VM结果表查询 - 空表ID": {
+			TableID:  "",
+			Expected: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			defer cancel()
+
+			// gzl 设置用户信息
+			metadata.SetUser(ctx, &metadata.User{
+				HashID:   "test_user",
+				Name:     "测试用户",
+				Source:   "test",
+				SpaceUID: "test_space",
+			})
+
+			// gzl 调用GetVmRtFeatureFlag方法进行测试
+			actual := GetVmRtFeatureFlag(ctx, c.TableID)
+			assert.Equal(t, c.Expected, actual, "表ID: %s, 期望排除状态: %v", c.TableID, c.Expected)
+		})
+	}
+}

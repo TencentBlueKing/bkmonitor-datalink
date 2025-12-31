@@ -711,10 +711,10 @@ func TestPromQLQueryHandler(t *testing.T) {
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
 				{
-					Metric: map[string]string{
+					Metric: map[string]string{ //gzl：指标
 						"bcs_cluster_id": "BCS-K8S-00000",
 					},
-					Values: []victoriaMetrics.Value{
+					Values: []victoriaMetrics.Value{ //gzl：值
 						{
 							1741056443, "2042",
 						},

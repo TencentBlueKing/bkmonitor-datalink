@@ -650,7 +650,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	return resp, err
 }
 
-// queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
+// queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt（statement 查询语句）todo：gzl step 3
 func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
 	var (
 		lookBackDelta time.Duration
@@ -753,7 +753,11 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	return instance, stmt, err
 }
 
+// gzl:结构化查询接口
+// gzl:HandlerQueryTs - 处理 /query/ts 接口
+// gzl:功能：结构化时序数据查询 todo：gzl step 2
 func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any, error) {
+	//gzl：1. 初始化阶段
 	var (
 		err error
 
@@ -761,18 +765,18 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		stmt     string
 
 		res       any
-		resp      = NewPromData(query.ResultColumns)
+		resp      = NewPromData(query.ResultColumns) //gzl：初始化响应数据结构 PromData
 		isPartial bool
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-ts")
+	ctx, span := trace.NewSpan(ctx, "query-ts") //gzl：用于追踪查询请求的执行过程
 	defer func() {
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)
 	}()
 
-	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
+	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query) //gzl：将查询结构转换为数据库实例和PromQL语句 todo：gzl step 3
 	if err != nil {
 		return nil, err
 	}
@@ -782,9 +786,10 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
 
-	if query.Instant {
+	//gzl：2. 查询执行阶段
+	if query.Instant { //gzl：瞬时数据查询
 		res, err = instance.DirectQuery(ctx, stmt, qb.End)
-	} else {
+	} else { //gzl：范围数据查询
 		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
 	}
 	if err != nil {
@@ -802,15 +807,16 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
+	//gzl：3. 结果处理阶段
 	switch v := res.(type) {
-	case promPromql.Matrix:
+	case promPromql.Matrix: //gzl：多个时间序列
 		for index, series := range v {
 			tables.Add(promql.NewTable(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
-	case promPromql.Vector:
+	case promPromql.Vector: //gzl：单点样本数据
 		for index, series := range v {
 			// 层级需要转换
 			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))

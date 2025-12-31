@@ -388,7 +388,8 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 // @Success  200                   	{object}  PromData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts [post]
-func HandlerQueryTs(c *gin.Context) {
+func HandlerQueryTs(c *gin.Context) { //gzl：处理结构体查询请求
+	//gzl：1. 初始化阶段
 	var (
 		ctx = c.Request.Context()
 
@@ -399,7 +400,9 @@ func HandlerQueryTs(c *gin.Context) {
 
 		err error
 	)
-
+	//gzl：2. 链路追踪设置
+	//创建分布式追踪span
+	//记录请求URL、请求头、用户信息等关键元数据
 	ctx, span := trace.NewSpan(ctx, "handler-query-ts")
 	defer span.End(&err)
 
@@ -410,6 +413,9 @@ func HandlerQueryTs(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-tenant-id", user.TenantID)
 
+	//gzl：3. 请求体解析
+	//解析JSON格式的请求体到structured.QueryTs结构体
+	//处理JSON解析异常，返回错误响应
 	// 解析请求 body
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
@@ -421,6 +427,7 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
+	//gzl：4. 空间UID处理
 	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -435,18 +442,25 @@ func HandlerQueryTs(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
-	res, err := queryTsWithPromEngine(ctx, query)
+	//gzl：5. 查询执行
+	//·调用核心查询引擎queryTsWithPromEngine
+	//·传入上下文和结构化查询参数
+	//·执行实际的时序数据查询逻辑
+	res, err := queryTsWithPromEngine(ctx, query) //todo：gzl step 1
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
+	//gzl：6. 响应返回
+	//·记录响应数据大小
+	//·返回成功的JSON响应给客户端
 	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 
 	resp.success(ctx, res)
 }
 
-// HandlerQueryPromQL
+// HandlerQueryPromQL gzl：处理 PromQL 查询请求
 // @Summary  query monitor by promql
 // @ID       query_promql
 // @Produce  json
@@ -458,7 +472,7 @@ func HandlerQueryTs(c *gin.Context) {
 // @Success  200                   	{object}  PromData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/promql [post]
-func HandlerQueryPromQL(c *gin.Context) {
+func HandlerQueryPromQL(c *gin.Context) { //gzl：通过PromQL语法查询监控数据
 	var (
 		ctx = c.Request.Context()
 
@@ -507,6 +521,9 @@ func HandlerQueryPromQL(c *gin.Context) {
 		return
 	}
 
+	//2、语法转换
+	//·调用 promQLToStruct 函数将PromQL语法转换为结构化查询（HandlerQueryTs）
+	//·进行语法验证和错误处理
 	// promql to struct
 	query, err := promQLToStruct(ctx, queryPromQL)
 	if err != nil {
@@ -517,6 +534,9 @@ func HandlerQueryPromQL(c *gin.Context) {
 		return
 	}
 
+	//3、查询执行
+	//·调用 queryTsWithPromEngine 函数执行实际的时序数据查询
+	//·该函数支持多种时序数据库后端（InfluxDB、Prometheus等）
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)

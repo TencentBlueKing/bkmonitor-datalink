@@ -83,3 +83,5 @@ type QueryRouter struct {
 	BcsClusterId       string `json:"bcs_cluster_id"`
 	IsInfluxdbDisabled bool   `json:"is_influxdb_disabled"`
 }
+
+type BlackListInfo [][]string

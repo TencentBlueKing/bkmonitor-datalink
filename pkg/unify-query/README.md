@@ -417,5 +417,3 @@ make debug
 - `POST /query/ts/info/tag_keys` - 查询维度列表
 - `POST /query/ts/info/tag_values` - 查询维度值
 - `POST /api/v1/relation/multi_resource` - 查询关系多源
-
-更多接口详情请查看 Swagger 文档。

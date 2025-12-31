@@ -216,6 +216,7 @@ func TestConflict(t *testing.T) {
 			queryRef: metadata.QueryReference{
 				"a": {
 					{
+
 						QueryList: []*metadata.Query{
 							{
 								TableID: "result_table.vm",

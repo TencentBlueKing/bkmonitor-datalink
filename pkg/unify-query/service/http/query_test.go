@@ -1675,7 +1675,12 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":1},{"__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":1},{"__data_label":"bkbase_es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":2},{"__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":2},{"__data_label":"bkbase_es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"3"}]`,
-			options:  `{"result_table.bk_base_es|0":{"from":0,"search_after":["1","5"]},"result_table.es|3":{"from":0,"search_after":["1","5"]}}`,
+			// 修复后的 search_after: 基于实际被消费的最后一条数据
+			// OrderBy 是 ["a", "b", "__result_table"]，所以 SearchAfter 应该包含 3 个值
+			// RT1 (es) 的最后一条: doc2(es), sort=[1, 2, "result_table.es"]
+			// RT2 (bkbase_es) 的最后一条: doc3(bkbase_es), sort=[1, 3, "result_table.bk_base_es"]
+			// 注意：a 和 b 的值会被转换为数字类型
+			options: `{"result_table.bk_base_es|0":{"from":0,"search_after":[1,3,"result_table.bk_base_es"]},"result_table.es|3":{"from":0,"search_after":[1,2,"result_table.es"]}}`,
 		},
 		"query es with multi rt and one from 5 - 10": {
 			queryTs: &structured.QueryTs{
@@ -1707,7 +1712,11 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":4},{"__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":4},{"__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
-			options:  `{"result_table.bk_base_es|0":{"from":0,"search_after":["2","5"]},"result_table.es|3":{"from":0,"search_after":["2","5"]}}`,
+			// 修复后的 search_after: 基于实际被消费的最后一条数据
+			// OrderBy 是 ["a", "b", "__result_table"]，所以 SearchAfter 应该包含 3 个值
+			// RT1 (es) 的最后一条: doc5(es), sort=[1, 5, "result_table.es"]
+			// RT2 (bkbase_es) 的最后一条: doc5(bkbase_es), sort=[1, 5, "result_table.bk_base_es"]
+			options: `{"result_table.bk_base_es|0":{"from":0,"search_after":[1,5,"result_table.bk_base_es"]},"result_table.es|3":{"from":0,"search_after":[1,5,"result_table.es"]}}`,
 		},
 		"query_bk_base_es_1 to 1": {
 			queryTs: &structured.QueryTs{
@@ -2273,7 +2282,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es","time":"10002"},{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es_with_time_filed","time":"10002"}]`,
-			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
+			// 修复后的 search_after: 基于实际被消费的最后一条数据
+			// OrderBy 是 ["-time", "__result_table"]
+			options: `{"result_table.es_with_time_filed|3":{"from":0,"search_after":[10002,"result_table.es_with_time_filed"]},"result_table.es|3":{"from":0,"search_after":[10002,"result_table.es"]}}`,
 		},
 		"query raw multi query from + size": {
 			queryTs: &structured.QueryTs{
@@ -2295,7 +2306,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es","time":"10002"},{"__data_label":"es","__doc_id":"10001","__index":"","__result_table":"result_table.es_with_time_filed","time":"10001"}]`,
-			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
+			// 修复后的 search_after: 基于实际被消费的最后一条数据
+			// OrderBy 是 ["-time", "__result_table"]
+			options: `{"result_table.es_with_time_filed|3":{"from":0,"search_after":[10001,"result_table.es_with_time_filed"]},"result_table.es|3":{"from":0,"search_after":[10002,"result_table.es"]}}`,
 		},
 		"query raw multi query from + size 数量刚好结束": {
 			queryTs: &structured.QueryTs{
@@ -2339,7 +2352,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[{"__data_label":"es","__doc_id":"00001","__index":"","__result_table":"result_table.es_with_time_filed","time":"00001"}]`,
-			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
+			// 修复后的 search_after: 基于实际被消费的最后一条数据
+			// OrderBy 是 ["-time", "__result_table"]，只有 es_with_time_filed 有数据
+			options: `{"result_table.es_with_time_filed|3":{"from":0,"search_after":[1,"result_table.es_with_time_filed"]},"result_table.es|3":{"from":0}}`,
 		},
 		"query object field is null": {
 			queryTs: &structured.QueryTs{
@@ -5124,34 +5139,14 @@ func getVal(m map[string]any, k string) string {
 	return ""
 }
 
-// TestMultiRTSearchAfterProblem 测试多 RT 场景下 SearchAfter 的问题
-//
-// 问题描述：
-// 当一个 tableID（如 multi_es）路由到多个 RT 时：
-// - multi_es -> result_table.es + result_table.es_with_time_filed
-// - 每个 RT 独立查询 ES，各自返回数据并设置 SearchAfter
-// - 合并排序后只返回 limit 条数据
-// - 被裁剪的 RT 的 SearchAfter 是基于 ES 返回的最后一条数据，而非实际被消费的数据
-// - 这会导致下次查询时跳过未被消费的数据（数据丢失）
-//
-// 示例：
-// - RT1 (result_table.es) 返回: doc1(sort=10003), doc2(sort=10002)
-// - RT2 (result_table.es_with_time_filed) 返回: doc3(sort=10003), doc4(sort=10002)
-// - 合并排序后: doc1, doc3, doc2, doc4
-// - limit=2 后返回: doc1, doc3
-// - 当前 SearchAfter: RT1=[10002], RT2=[10002]（错误！基于 ES 返回的最后一条）
-// - 正确 SearchAfter: RT1=[10003], RT2=[10003]（基于实际被消费的最后一条）
 func TestMultiRTSearchAfterProblem(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
 
-	// 使用唯一的时间范围
 	startTime := "1735570000"
 	endTime := "1735570100"
 
-	// 设置 mock 数据
-	// multi_es 包含 2 个 RT: result_table.es 和 result_table.es_with_time_filed
 	mock.Es.Set(map[string]any{
 		// RT1: result_table.es 的查询（使用 dtEventTimeStamp 字段）
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1735570000,"include_lower":true,"include_upper":true,"to":1735570100}}}}},"size":2,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"hits":{"total":{"value":10},"hits":[{"_index":"es_index","_id":"doc1","_source":{"dtEventTimeStamp":"1735570003"},"sort":[1735570003]},{"_index":"es_index","_id":"doc2","_source":{"dtEventTimeStamp":"1735570002"},"sort":[1735570002]}]}}`,
@@ -5174,38 +5169,26 @@ func TestMultiRTSearchAfterProblem(t *testing.T) {
 		End:     endTime,
 	}
 
-	_, list, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
+	_, _, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
 	assert.Nil(t, err, "query should not return error")
-
-	// 打印返回的数据
-	t.Logf("Returned %d documents:", len(list))
-	for i, item := range list {
-		docID, _ := item["__doc_id"].(string)
-		resultTable, _ := item["__result_table"].(string)
-		t.Logf("  list[%d]: doc_id=%s, resultTable=%s", i, docID, resultTable)
-	}
-
-	// 打印返回的 ResultTableOptions
-	t.Logf("ResultTableOptions (%d entries):", len(resultTableOptions))
-	for k, v := range resultTableOptions {
-		t.Logf("  Key: %s, SearchAfter: %v", k, v.SearchAfter)
-	}
-
-	// 验证：应该有 2 个 RT 的 option
 	assert.Equal(t, 2, len(resultTableOptions), "should have 2 ResultTableOptions for 2 RTs")
 
-	// 返回的数据是 doc1 和 doc3，它们的 sort 值都是 1735570003
-	// 所以两个 RT 的 SearchAfter 应该都是 [1735570003]
-	// 但当前实现返回的是 [1735570002]（ES 返回的最后一条数据的 sort 值）
 	for k, v := range resultTableOptions {
 		if len(v.SearchAfter) > 0 {
-			searchAfterValue, _ := v.SearchAfter[0].(float64)
-			t.Logf("RT %s: SearchAfter=%v (value=%v)", k, v.SearchAfter, searchAfterValue)
-
-			// BUG: SearchAfter 应该是 1735570003（实际被消费的数据），而不是 1735570002（ES 返回的最后一条）
-			// 如果这个断言失败，说明 bug 存在
+			// SearchAfter 的值可能是 int64 或 float64，取决于实现
+			var searchAfterValue float64
+			switch val := v.SearchAfter[0].(type) {
+			case float64:
+				searchAfterValue = val
+			case int64:
+				searchAfterValue = float64(val)
+			case int:
+				searchAfterValue = float64(val)
+			}
+			t.Logf("RT %s: SearchAfter=%v (value=%v, type=%T)", k, v.SearchAfter, searchAfterValue, v.SearchAfter[0])
 			assert.Equal(t, float64(1735570003), searchAfterValue,
 				"BUG: SearchAfter should be 1735570003 (consumed data), not 1735570002 (ES returned last data)")
 		}
+
 	}
 }

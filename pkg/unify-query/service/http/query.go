@@ -249,6 +249,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						} else {
 							data = make([]map[string]any, 0)
 						}
+
+						updateSearchAfterByConsumedData(data, resultTableOptions, queryTs.OrderBy.Orders())
 					}
 				}
 			}
@@ -1054,4 +1056,55 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 		return nil, err
 	}
 	return resp, nil
+}
+
+func updateSearchAfterByConsumedData(data []map[string]any, resultTableOptions metadata.ResultTableOptions, orders metadata.Orders) {
+	if len(data) == 0 || len(orders) == 0 {
+		return
+	}
+
+	foundRTs := make(map[string]bool)
+
+	for i := len(data) - 1; i >= 0; i-- {
+		item := data[i]
+		if item == nil {
+			continue
+		}
+
+		tableUUID, ok := item[metadata.KeyTableUUID].(string)
+		if !ok || tableUUID == "" {
+			continue
+		}
+
+		if foundRTs[tableUUID] {
+			continue
+		}
+
+		foundRTs[tableUUID] = true
+
+		searchAfter := make([]any, 0, len(orders))
+		// 基于 orders 顺序构建 searchAfter
+		for _, order := range orders {
+			if value, exists := item[order.Name]; exists {
+				searchAfter = append(searchAfter, convertToSearchAfterValue(value))
+			}
+		}
+
+		if len(searchAfter) > 0 {
+			if option := resultTableOptions.GetOption(tableUUID); option != nil {
+				// 回写 searchAfter
+				option.SearchAfter = searchAfter
+			}
+		}
+	}
+}
+
+func convertToSearchAfterValue(value any) any {
+	if i, err := cast.ToInt64E(value); err == nil {
+		return i
+	}
+	if f, err := cast.ToFloat64E(value); err == nil {
+		return f
+	}
+	return value
 }

@@ -58,6 +58,7 @@ type Router struct {
 	endpointSet     *endpointSet
 
 	hostStatusInfo influxdb.HostStatusInfo
+	blackListInfo  influxdb.BlackListInfo // 黑名单信息
 }
 
 // MockRouter mock 路由信息
@@ -396,11 +397,12 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 
 func (r *Router) loadRouter(ctx context.Context, key string) error {
 	var (
-		clusterInfo influxdb.ClusterInfo
-		hostInfo    influxdb.HostInfo
-		tagInfo     influxdb.TagInfo
-		proxyInfo   influxdb.ProxyInfo
-		err         error
+		clusterInfo   influxdb.ClusterInfo
+		hostInfo      influxdb.HostInfo
+		tagInfo       influxdb.TagInfo
+		proxyInfo     influxdb.ProxyInfo
+		blackListInfo influxdb.BlackListInfo
+		err           error
 	)
 
 	if r.router == nil {
@@ -434,6 +436,12 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		proxyInfo, err = r.router.GetProxyInfo(ctx)
 		if err == nil {
 			r.proxyInfo = proxyInfo
+		}
+
+	case influxdb.BlackListKey:
+		blackListInfo, err = r.router.GetBlackListInfo(ctx)
+		if err == nil {
+			r.blackListInfo = blackListInfo
 		}
 	}
 	return err
@@ -543,4 +551,48 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 	}
 
 	return hostList, nil
+}
+
+// CheckVmRt 实现黑名单检查逻辑
+func (r *Router) CheckVmRt(vmResultTable []string) (bool, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	var forbiddenVmRt [][]string
+	if r.blackListInfo.ForbiddenVmRt != nil {
+		forbiddenVmRt = r.blackListInfo.ForbiddenVmRt
+	} else {
+		return false, fmt.Errorf("forbiddenVmRt is empty")
+	}
+
+	vmTableSet := make(map[string]bool) // 使用map优化查找效率，将O(n)查找变为O(1)
+	for _, vmTable := range vmResultTable {
+		vmTableSet[vmTable] = true
+	}
+
+	// 遍历该配置下的所有禁止规则
+	for _, rule := range forbiddenVmRt {
+		if len(rule) == 0 {
+			continue
+		}
+
+		// 计算当前规则和结果表的交集大小
+		intersectionCount := 0
+		for _, ruleTable := range rule {
+			if vmTableSet[ruleTable] {
+				intersectionCount++
+				// 如果已经达到2个匹配，提前退出当前规则检查
+				if intersectionCount >= 2 {
+					break
+				}
+			}
+		}
+		// 如果交集大小>=2，说明违反了规则
+		// 规则要求：如果规则中的VM结果表在输入列表中出现>=2个，则违反规则
+		if intersectionCount >= 2 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

@@ -36,10 +36,11 @@ const (
 
 	BkAppToSpaceKey        = "bk_app_to_space"
 	BkAppToSpaceChannelKey = "bk_app_to_space:channel"
+	BlackListKey           = "black_list"
 )
 
 var (
-	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey}
+	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, BlackListKey}
 	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppToSpaceKey}
 	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, ResultTableDetailChannelDeleteKey, BkAppToSpaceChannelKey}
 )
@@ -62,6 +63,7 @@ type Router interface {
 	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
 	GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error)
 	IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV)
+	GetBlackListInfo(ctx context.Context) (BlackListInfo, error)
 }
 
 type GenericKV struct {
@@ -406,4 +408,25 @@ func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 		err = fmt.Errorf("invalid generic type(%s) ", typeKey)
 	}
 	return
+}
+
+func (r *router) GetBlackListInfo(ctx context.Context) (BlackListInfo, error) {
+	key := r.key(BlackListKey)
+	res, err := r.client.Get(ctx, key).Result()
+	var blackListinfo BlackListInfo
+	// 先尝试直接解析为 [][]string
+	err = json.Unmarshal([]byte(res), &blackListinfo)
+	if err == nil {
+		return blackListinfo, nil
+	}
+	// 如果直接解析失败，尝试解析为对象格式，提取 forbidden_vm_rt 字段
+	var temp struct {
+		ForbiddenVmRt [][]string `json:"forbidden_vm_rt"`
+	}
+	err = json.Unmarshal([]byte(res), &temp)
+	if err != nil {
+		return BlackListInfo{}, err
+	}
+	blackListinfo = temp.ForbiddenVmRt
+	return blackListinfo, nil
 }

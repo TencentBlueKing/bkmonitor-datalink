@@ -189,11 +189,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.ResultTableOptions = q.ResultTableOptions
 		}
 
-		// IsSearchAfter 复用，用于滚动查询时过滤已完成的 RT
-		if q.IsSearchAfter {
-			query.IsSearchAfter = q.IsSearchAfter
-		}
-
 		if q.Scroll != "" {
 			query.Scroll = q.Scroll
 			q.IsMultiFrom = false
@@ -463,8 +458,6 @@ type Query struct {
 	// DryRun
 	DryRun    bool `json:"-"`
 	IsMergeDB bool `json:"-"`
-	// IsSearchAfter 是否启用 SearchAfter 查询，用于滚动查询时过滤已完成的 RT
-	IsSearchAfter bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -717,13 +710,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			query.Timezone = qp.Timezone
 			query.StorageID = storageID
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
-
-			// SearchAfter 滚动查询模式下，如果 ResultTableOptions 非空但不包含当前 RT，则跳过该 RT
-			// 这表示该 RT 的数据已经查询完毕（调用方已将其从 options 中移除）
-			if q.IsSearchAfter && len(q.ResultTableOptions) > 0 && query.ResultTableOption == nil {
-				span.Set(fmt.Sprintf("skip_finished_rt_%s", query.TableUUID()), true)
-				continue
-			}
 
 			// 如果没有指定查询类型，则通过 storageID 获取
 			if query.StorageType == "" {

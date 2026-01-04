@@ -300,10 +300,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		qb := metadata.GetQueryParams(ctx)
 		queryRef.Range("", func(qry *metadata.Query) {
-			// 验证 searchAfter 是否完成
-			// 如果 ResultTableOption 存在但 SearchAfter 为空，表示该 RT 数据已查询完毕
+			// SearchAfter 模式下，跳过已完成的 RT
+			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if qry.ResultTableOption != nil && len(qry.ResultTableOption.SearchAfter) == 0 {
+				if qry.ResultTableOption == nil || len(qry.ResultTableOption.SearchAfter) == 0 {
 					return
 				}
 			}

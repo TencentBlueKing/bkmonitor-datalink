@@ -69,7 +69,7 @@ func (i *BkAPI) Headers(headers map[string]string) map[string]string {
 func (i *BkAPI) Url(path string) string {
 	url := i.address
 	if path != "" {
-		url = fmt.Sprintf("%s/%s/", i.address, path)
+		url = fmt.Sprintf("%s/%s", i.address, path)
 	}
 	return url
 }

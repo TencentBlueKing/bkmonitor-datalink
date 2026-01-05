@@ -234,7 +234,7 @@ func (n *LogicNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = node
 	case *gen.ModifierContext:
 		switch strings.ToUpper(ctx.GetText()) {
-		case "NOT", "-":
+		case "NOT", "-", "!":
 			n.reverseOp = true
 		case "+":
 			n.mustOp = true
@@ -613,7 +613,7 @@ func (n *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 		n.isQuoted = true
 	case *gen.ModifierContext:
 		switch strings.ToUpper(ctx.GetText()) {
-		case "NOT", "-":
+		case "NOT", "-", "!":
 			n.reverseOp = true
 		case "+":
 			n.mustOp = true

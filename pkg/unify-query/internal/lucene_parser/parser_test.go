@@ -199,6 +199,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"match_phrase":{"log":{"query":"a"}}},{"match_phrase":{"log":{"query":"b"}}}]}}}}`,
 			sql:   "NOT (`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b')",
 		},
+		{
+			name:  "gantanhao",
+			input: `!"WorldAttrPool free num (15) less than"`,
+			dsl:   `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"WorldAttrPool free num (15) less than\""}}}}`,
+			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
+		},
 	}
 
 	mock.Init()
@@ -1013,8 +1019,8 @@ func TestLuceneParser(t *testing.T) {
 		// 注意: a ! b 中的 ! 会被当作普通文本处理，解析为 a OR b
 		"lucene_operator_exclamation_with_spaces": {
 			q:   `a ! b`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}]}}`,
-			sql: "`log` MATCH_PHRASE 'a' OR `log` MATCH_PHRASE 'b'",
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}}}}`,
+			sql: "`log` MATCH_PHRASE 'a' AND `log` NOT MATCH_PHRASE 'b' OR `log` NOT MATCH_PHRASE 'b'",
 		},
 		// 注意: +guinea pig 会被解析为 pig AND guinea OR guinea
 		"lucene_guinea_pig_plus": {
@@ -1030,8 +1036,8 @@ func TestLuceneParser(t *testing.T) {
 		// 注意: !guinea 会被解析器处理为 guinea (感叹号被忽略)
 		"lucene_guinea_pig_exclamation": {
 			q:   `!guinea pig`,
-			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}]}}`,
-			sql: "`log` MATCH_PHRASE 'guinea' OR `log` MATCH_PHRASE 'pig'",
+			es:  `{"bool":{"must":{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"guinea"}}}},"should":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"pig"}}}}`,
+			sql: "`log` MATCH_PHRASE 'pig' AND `log` NOT MATCH_PHRASE 'guinea' OR `log` NOT MATCH_PHRASE 'guinea'",
 		},
 		"lucene_guinea_wildcard_star": {
 			q:   `guinea* pig`,

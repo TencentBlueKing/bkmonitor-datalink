@@ -176,7 +176,7 @@ const (
 
 const (
 	EsUrl     = EsUrlDomain
-	BkBaseUrl = BkBaseUrlDomain + "/bk_data/query_sync"
+	BkBaseUrl = BkBaseUrlDomain + "/bk_data/query_sync/"
 )
 
 var FieldType = map[string]string{

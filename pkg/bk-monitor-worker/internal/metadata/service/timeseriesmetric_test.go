@@ -358,8 +358,9 @@ func TestCreateAndUpdateMetricsTogether(t *testing.T) {
 	assert.Equal(t, int64(4), finalCount)
 }
 
-// TestEmptyMetricListSetsAllToInactive 测试当返回的指标列表为空时，所有已存在的指标应该设置为非活跃
-func TestEmptyMetricListSetsAllToInactive(t *testing.T) {
+// TestEmptyMetricListSkipsUpdate 测试当返回的指标列表为空时，应该跳过更新以避免误操作
+// 这是为了防止上游异常、限流或拉取失败时，误将所有指标标记为不活跃
+func TestEmptyMetricListSkipsUpdate(t *testing.T) {
 	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
 	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
 		{
@@ -386,7 +387,7 @@ func TestEmptyMetricListSetsAllToInactive(t *testing.T) {
 	})
 	defer cleanup()
 
-	// 返回空列表
+	// 返回空列表（模拟上游异常）
 	metricInfoList := []map[string]any{}
 
 	// 验证更新前所有指标的状态
@@ -402,24 +403,25 @@ func TestEmptyMetricListSetsAllToInactive(t *testing.T) {
 	assert.True(t, metric2Before.IsActive, "metric2 should be true before update")
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err = svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	needPush, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
 	require.NoError(t, err)
+	assert.False(t, needPush, "should not need to push when skipping update")
 
-	// 验证所有指标都更新为 False
+	// 验证所有指标状态保持不变（没有被误标记为 inactive）
 	var metric1After customreport.TimeSeriesMetric
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric1").One(&metric1After)
 	require.NoError(t, err)
-	assert.False(t, metric1After.IsActive, "metric1 should be updated to false")
+	assert.True(t, metric1After.IsActive, "metric1 should remain true (not updated)")
 
 	var metric2After customreport.TimeSeriesMetric
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric2").One(&metric2After)
 	require.NoError(t, err)
-	assert.False(t, metric2After.IsActive, "metric2 should be updated to false")
+	assert.True(t, metric2After.IsActive, "metric2 should remain true (not updated)")
 
 	var metric3 customreport.TimeSeriesMetric
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric3").One(&metric3)
 	require.NoError(t, err)
-	assert.False(t, metric3.IsActive, "metric3 should remain false")
+	assert.False(t, metric3.IsActive, "metric3 should remain false (not updated)")
 }
 
 // TestBulkRefreshTSMetrics_UpdateScenario 原有的测试用例，保留用于兼容性

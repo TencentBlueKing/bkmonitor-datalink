@@ -7,46 +7,38 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build jsonsonic
+//go:build !jsonsonic
 
-package jsonx
+package json
 
 import (
+	"encoding/json"
 	"io"
-
-	"github.com/bytedance/sonic"
 )
 
-var sonicAPI = sonic.Config{
-	EscapeHTML:       true, // 安全性
-	CompactMarshaler: true, // 兼容性
-	CopyString:       true, // 正确性
-}.Froze()
+// Encoder 接口定义
+type Encoder interface {
+	Encode(v any) error
+	SetEscapeHTML(on bool)
+}
 
 func Marshal(v any) ([]byte, error) {
-	return sonicAPI.Marshal(v)
+	return json.Marshal(v)
 }
 
 func Unmarshal(data []byte, v any) error {
-	return sonicAPI.Unmarshal(data, v)
+	return json.Unmarshal(data, v)
 }
 
-func MarshalString(v any) (string, error) {
-	return sonicAPI.MarshalToString(v)
+func NewEncoder(w io.Writer) Encoder {
+	return &encoderWrapper{json.NewEncoder(w)}
 }
 
-func UnmarshalString(data string, v any) error {
-	return sonicAPI.UnmarshalFromString(data, v)
+// encoderWrapper 包装标准库的 Encoder
+type encoderWrapper struct {
+	*json.Encoder
 }
 
-func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
-	return sonicAPI.MarshalIndent(v, prefix, indent)
-}
-
-func Decode(body io.Reader, v any) error {
-	return sonicAPI.NewDecoder(body).Decode(v)
-}
-
-func Encode(buf io.Writer, v any) error {
-	return sonicAPI.NewEncoder(buf).Encode(v)
+func (e *encoderWrapper) SetEscapeHTML(on bool) {
+	e.Encoder.SetEscapeHTML(on)
 }

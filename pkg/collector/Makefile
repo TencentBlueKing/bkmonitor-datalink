@@ -4,6 +4,8 @@ SHELL := bash
 # 可继承自顶层 Makefile
 RELEASE_PATH ?= $(PWD)/dist
 VERSION := $(shell cat VERSION)
+JSON_LIB ?= jsonsonic
+BUILDTAGS ?= $(JSON_LIB)
 
 # 构建二进制
 BIN = $(RELEASE_PATH)/bk-collector
@@ -37,9 +39,9 @@ encode:
 .PHONY: build
 build:
 	cd $(RELEASE_PATH) && ls -lh && rm -rf *
-	./control.sh package linux amd64 x86_64 $(VERSION) $(RELEASE_PATH)
+	JSON_LIB=$(JSON_LIB) ./control.sh package linux amd64 x86_64 $(VERSION) $(RELEASE_PATH)
 	cd $(RELEASE_PATH) && ls -lh && tar -zcvf bk-collector-$(VERSION).tgz --remove-files -C . * && cp bk-collector-$(VERSION).tgz bk-collector.tgz
-	./control.sh sidecar $(VERSION) $(RELEASE_PATH) && ls -lh $(RELEASE_PATH)
+	JSON_LIB=$(JSON_LIB) ./control.sh sidecar $(VERSION) $(RELEASE_PATH) && ls -lh $(RELEASE_PATH)
 
 .PHONY: mod
 mod:
@@ -49,7 +51,7 @@ mod:
 .PHONY: bin
 bin:
 	GOOS=linux GOARCH=amd64 \
-	$(GO) build -ldflags " \
+	$(GO) build -tags "$(BUILDTAGS)" -ldflags " \
 	-s -w \
 	-X main.version=$(VERSION) \
 	-X main.buildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \

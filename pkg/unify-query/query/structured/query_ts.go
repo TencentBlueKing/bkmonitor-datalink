@@ -106,6 +106,9 @@ type QueryTs struct {
 
 	// IsMergeDB 是否启用合并 db 特性
 	IsMergeDB bool `json:"is_merge_db,omitempty"`
+
+	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+	AddDimensions []string `json:"add_dimensions,omitempty"`
 }
 
 // StepParse 解析step
@@ -207,6 +210,14 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
 		}
+
+		// 应用 add_dimensions 到每个聚合方法
+		if len(q.AddDimensions) > 0 {
+			for i := range query.AggregateMethodList {
+				query.AggregateMethodList[i].Dimensions = MergeDimensions(query.AggregateMethodList[i].Dimensions, q.AddDimensions)
+			}
+		}
+
 		tsDBs := q.TsDBMap[query.ReferenceName]
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, tsDBs)
 		if err != nil {
@@ -286,6 +297,12 @@ func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr e
 		ReferenceNameLabelMatcher: make(map[string][]*labels.Matcher),
 	}
 	for _, ql := range q.QueryList {
+		if len(q.AddDimensions) > 0 {
+			for i := range ql.AggregateMethodList {
+				ql.AggregateMethodList[i].Dimensions = MergeDimensions(ql.AggregateMethodList[i].Dimensions, q.AddDimensions)
+			}
+		}
+
 		// 保留查询条件
 		matcher, _, err := ql.Conditions.ToProm()
 		if err != nil {

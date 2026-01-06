@@ -332,6 +332,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	opt := qb.ResultTableOption
 	var res *elastic.SearchResult
 	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = metadata.NewMessage(
+					metadata.MsgQueryES,
+					"es 查询发生 panic index: %+v, panic: %v",
+					qo.indexes, r,
+				).Error(ctx, nil)
+			}
+		}()
+
 		if opt != nil {
 			if opt.ScrollID != "" {
 				span.Set("query-scroll-id", opt.ScrollID)
@@ -365,15 +375,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
-	if err != nil {
-		return nil, processOnESErr(ctx, qo.conn.Address, err)
+
+	// 检查es是否有响应错误
+	if err == nil && res.Error != nil {
+		err = &elastic.Error{
+			Status:  res.Status,
+			Details: res.Error,
+		}
 	}
-	if res.Error != nil {
-		err = metadata.NewMessage(
-			metadata.MsgQueryES,
-			"es 查询失败 index: %+v",
-			qo.indexes,
-		).Error(ctx, errors.New(res.Error.Reason))
+	if err != nil {
+		err = handleESError(ctx, qo.conn.Address, err)
+		return nil, err
 	}
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)
@@ -418,7 +430,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 
 	span.Set("time-series-length", len(qr.Timeseries))
 
-	return remote.FromQueryResult(false, qr)
+	return remote.FromQueryResult(true, qr)
 }
 
 func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {

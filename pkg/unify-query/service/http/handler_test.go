@@ -122,6 +122,10 @@ func TestAPIHandler(t *testing.T) {
 			"BCS-K8S-00000",
 		},
 
+		`label_values:17298630851729859485resource.cluster_id{namespace="kube-system", result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"}`: []string{
+			"BCS-K8S-00000",
+		},
+
 		// above 1d bcs_cluster_id
 		`label_values:17298630851730035885bcs_cluster_id{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
 			"BCS-K8S-00000",
@@ -311,6 +315,18 @@ func TestAPIHandler(t *testing.T) {
 				},
 			},
 			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
+		},
+		"test label values with escaped dot in path parameter": {
+			handler: HandlerLabelValues,
+			method:  http.MethodGet,
+			url:     fmt.Sprintf(`query/ts/label/resource__bk_46__cluster_id/values?match[]=kube_pod_info{namespace="kube-system"}&start=%d&end=%d&limit=2`, start.Unix(), end.Unix()),
+			params: gin.Params{
+				{
+					Key:   "label_name",
+					Value: "resource__bk_46__cluster_id",
+				},
+			},
+			expected: `{"values":{"resource.cluster_id":["BCS-K8S-00000"]}}`,
 		},
 		"test label values in vm 2": {
 			handler: HandlerLabelValues,
@@ -534,6 +550,24 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
 		},
+		"test field map in ": {
+			handler: HandlerFieldMap,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				TsDBMap: map[string]structured.TsDBs{
+					"a": []*query.TsDBV2{
+						{
+							TableID:     "result_table.unify_query",
+							DataLabel:   "es",
+							StorageID:   "3",
+							StorageType: "elasticsearch",
+							DB:          "unify_query",
+						},
+					},
+				},
+			},
+			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}]}`,
+		},
 		"test field map in es direct": {
 			handler: HandlerFieldMap,
 			method:  http.MethodPost,
@@ -614,6 +648,50 @@ func TestQueryRawWithHandler(t *testing.T) {
 			}
 
 			HandlerQueryRaw(ginC)
+			b := w.body()
+			assert.Equal(t, c.expected, b)
+		})
+	}
+}
+
+func TestQueryReferenceWithHandler(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	mock.Es.Set(map[string]any{
+		// 多个point
+		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}}]}},"size":0}`:                                                                                               `{"took":620,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.6.4","doc_count":48,"_value":{"value":48}},{"key":"10.0.6.18","doc_count":24,"_value":{"value":24}},{"key":"10.0.6.33","doc_count":53,"_value":{"value":53}},{"key":"10.0.6.18","doc_count":24,"_value":{"value":24}},{"key":"10.0.7.93","doc_count":13961116,"_value":{"value":13961116}}]}}}`,
+		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test"}}]}},"size":0}`: `{"took":6,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.6.33","doc_count":42768,"_value":{"value":42768}}]}}}`,
+	})
+	mock.Es1.Set(map[string]any{
+		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}}]}},"size":0}`: `{"took":6,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.6.33","doc_count":42768,"_value":{"value":42768}}]}}}`,
+	})
+
+	testCases := map[string]struct {
+		body     string
+		expected string
+	}{
+		"metrics merge issue": {
+			body:     `{"query_list":[{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"*","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es","field_name":"serverIp","limit":20},{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"test","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es_1","field_name":"serverIp","limit":20}],"metric_merge":"a","order_by":["-_value"],"step":"1d","space_uid":"bkcc__2","start_time":"1761980445276","end_time":"1764572445277","down_sample_range":"","timezone":"Asia/Shanghai","bk_biz_id":2}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.18"],"values":[[1761980445276,24]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.33"],"values":[[1761980445276,42821]]},{"name":"_result2","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.4"],"values":[[1761980445276,48]]},{"name":"_result3","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.7.93"],"values":[[1761980445276,13961116]]}],"is_partial":false}`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			body := bytes.NewBufferString(c.body)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", body)
+			w := &Writer{}
+			ginC := &gin.Context{
+				Request: req,
+				Writer:  w,
+			}
+
+			HandlerQueryReference(ginC)
 			b := w.body()
 			assert.Equal(t, c.expected, b)
 		})

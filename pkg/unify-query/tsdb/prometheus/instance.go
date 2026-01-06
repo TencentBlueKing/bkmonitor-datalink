@@ -98,32 +98,20 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		return nil, false, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		return nil, false, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, false, result.Err
 	}
 
 	for _, err = range result.Warnings {
-		return nil, false, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, false, err
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		return nil, false, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, false, err
 	}
 
 	return matrix, false, nil
@@ -148,31 +136,19 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, result.Err)
+		return nil, err
 	}
 	for _, err = range result.Warnings {
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, err
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryTs,
-			"Prometheus查询引擎执行查询失败",
-		).Error(ctx, err)
+		return nil, err
 	}
 
 	return vector, nil

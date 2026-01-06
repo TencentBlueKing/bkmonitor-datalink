@@ -300,6 +300,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		qb := metadata.GetQueryParams(ctx)
 		queryRef.Range("", func(qry *metadata.Query) {
+			// SearchAfter 模式下，跳过已完成的 RT
+			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
+			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
+				if qry.ResultTableOption == nil || len(qry.ResultTableOption.SearchAfter) == 0 {
+					return
+				}
+			}
+
 			sendWg.Add(1)
 
 			labelMap := function.LabelMap(ctx, qry)
@@ -858,10 +866,11 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}
 
 	return &structured.QueryPromQL{
-		PromQL: promQL,
-		Start:  query.Start,
-		End:    query.End,
-		Step:   query.Step,
+		PromQL:        promQL,
+		Start:         query.Start,
+		End:           query.End,
+		Step:          query.Step,
+		AddDimensions: query.AddDimensions,
 	}, nil
 }
 
@@ -887,6 +896,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.DownSampleRange = queryPromQL.DownSampleRange
 	query.Reference = queryPromQL.Reference
 	query.NotTimeAlign = queryPromQL.NotTimeAlign
+	query.AddDimensions = queryPromQL.AddDimensions
 
 	if queryPromQL.Match != "" {
 		matchers, err = promql_parser.ParseMetricSelector(ctx, queryPromQL.Match)
@@ -916,6 +926,22 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		for aggIdx, agg := range q.AggregateMethodList {
 			for i, d := range agg.Dimensions {
 				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
+			}
+		}
+
+		// 应用 add_dimensions 到每个聚合方法
+		if len(queryPromQL.AddDimensions) > 0 {
+			// 对 add_dimensions 也进行 decode
+			decodedAddDimensions := make([]string, 0, len(queryPromQL.AddDimensions))
+			for _, dim := range queryPromQL.AddDimensions {
+				decodedAddDimensions = append(decodedAddDimensions, decodeFunc(dim))
+			}
+
+			for aggIdx := range q.AggregateMethodList {
+				q.AggregateMethodList[aggIdx].Dimensions = structured.MergeDimensions(
+					q.AggregateMethodList[aggIdx].Dimensions,
+					decodedAddDimensions,
+				)
 			}
 		}
 

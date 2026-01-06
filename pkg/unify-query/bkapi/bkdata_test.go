@@ -39,15 +39,15 @@ func TestGetDataUrl(t *testing.T) {
 	}{
 		"test-1": {
 			spaceUid: "default",
-			url:      `http://127.0.0.1:12001/bk_data/query_sync`,
+			url:      `http://127.0.0.1:12001/bk_data/query_sync/`,
 		},
 		"test-2": {
 			spaceUid: "bkcc__test",
-			url:      `http://127.0.0.1:12001/bk_data/test/query_sync`,
+			url:      `http://127.0.0.1:12001/bk_data/test/query_sync/`,
 		},
 		"test-3": {
 			spaceUid: "bkci__test",
-			url:      `http://127.0.0.1:12001/bk_data/query_sync`,
+			url:      `http://127.0.0.1:12001/bk_data/query_sync/`,
 		},
 	}
 

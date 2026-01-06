@@ -7,19 +7,10 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-/*
-# Method Filter: method 过滤器
+//go:build !jsonsonic
 
-processor:
-  - name: "method_filter/drop_span"
-    config:
-      drop_span:
-        rules:
-          - predicate_key: "span_name"
-            kind: "SPAN_KIND_SERVER"
-            match:
-              op: "reg"
-              value: GET:/benchmark/[^/]+
-*/
+package window
 
-package methodfilter
+func pretouchJSON() {
+	// 标准库不需要预热
+}

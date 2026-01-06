@@ -12,7 +12,6 @@ package elasticsearch
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
@@ -22,33 +21,24 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func handleESSpecificError(elasticErr *elastic.Error) error {
-	if elasticErr.Details == nil {
-		return elasticErr
-	}
-	var msgBuilder strings.Builder
+const (
+	CausedByField = "caused_by"
 
-	if elasticErr.Details != nil {
-		if len(elasticErr.Details.RootCause) > 0 {
-			msgBuilder.WriteString("root cause: \n")
-			for _, rc := range elasticErr.Details.RootCause {
-				msgBuilder.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
-			}
-		}
+	ReasonField = "reason"
+	TypeField   = "type"
+	IndexField  = "index"
 
-		if elasticErr.Details.CausedBy != nil {
-			msgBuilder.WriteString("caused by: \n")
-			for k, v := range elasticErr.Details.CausedBy {
-				msgBuilder.WriteString(fmt.Sprintf("%s: %v \n", k, v))
-			}
-		}
-	}
+	ThirdPartyErrType = "third_party_error"
 
-	return errors.New(msgBuilder.String())
-}
+	MsgLengthLimit = 500
+)
 
-func processOnESErr(ctx context.Context, url string, err error) error {
+func handleESError(ctx context.Context, url string, err error) error {
 	if err == nil {
+		return err
+	}
+
+	if errors.Is(err, io.EOF) {
 		return nil
 	}
 
@@ -56,14 +46,102 @@ func processOnESErr(ctx context.Context, url string, err error) error {
 		return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
 	}
 
-	var elasticErr *elastic.Error
-	if errors.As(err, &elasticErr) {
-		return handleESSpecificError(elasticErr)
+	var (
+		msgBuilder strings.Builder
+		esErr      *elastic.Error
+	)
+
+	msgLimit := func(msgLen int) int {
+		return min(msgLen, MsgLengthLimit)
 	}
 
-	if errors.Is(err, io.EOF) {
+	msgBuilder.WriteString("Elasticsearch error")
+	if url != "" {
+		msgBuilder.WriteString(" from ")
+		msgBuilder.WriteString(url)
+	}
+	if errors.As(err, &esErr) {
+		indices, reasonMsg, typeMsg := deepest(*esErr)
+		if typeMsg != "" {
+			msgBuilder.WriteString(": [")
+			msgBuilder.WriteString(typeMsg)
+			msgBuilder.WriteString("] ")
+		}
+		if reasonMsg != "" {
+			msgBuilder.WriteString(reasonMsg[:msgLimit(len(reasonMsg))])
+		}
+
+		if len(indices) > 0 {
+			msgBuilder.WriteString(" (indices: ")
+			msgBuilder.WriteString(strings.Join(indices, ", "))
+			msgBuilder.WriteString(")")
+		}
+
+	} else {
+		msgBuilder.WriteString(": [")
+		msgBuilder.WriteString(ThirdPartyErrType)
+		msgBuilder.WriteString("] ")
+		errMsg := err.Error()
+		msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
+	}
+
+	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
+}
+
+func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg string) {
+	if esErr.Details == nil {
+		return
+	}
+	indices = extractIndices(esErr.Details.FailedShards)
+
+	// 优先使用 caused_by
+	if esErr.Details.CausedBy != nil {
+		reasonMsg, typeMsg = extractReasonAndType(esErr.Details.CausedBy, true)
+	}
+	if reasonMsg == "" && typeMsg == "" && len(esErr.Details.RootCause) > 0 {
+		reasonMsg, typeMsg = extractFromErrorDetails(esErr.Details.RootCause[0])
+	}
+	return
+}
+
+func extractReasonAndType(cause map[string]any, recursive bool) (reasonMsg string, typeMsg string) {
+	if cause == nil {
+		return
+	}
+
+	if recursive {
+		// 一直往下找最深的 caused_by(优先返回最深的)
+		for {
+			next, ok := cause[CausedByField].(map[string]any)
+			if !ok {
+				break
+			}
+			cause = next
+		}
+	}
+
+	reasonMsg, _ = cause[ReasonField].(string)
+	typeMsg, _ = cause[TypeField].(string)
+	return
+}
+
+func extractFromErrorDetails(details *elastic.ErrorDetails) (reasonMsg string, typeMsg string) {
+	if details == nil {
+		return
+	}
+	return details.Reason, details.Type
+}
+
+func extractIndices(failedShards []map[string]any) []string {
+	if len(failedShards) == 0 {
 		return nil
 	}
 
-	return curl.HandleClientError(ctx, metadata.MsgQueryES, url, err)
+	var indices []string
+	for _, shardInfo := range failedShards {
+		if index, ok := shardInfo[IndexField].(string); ok {
+			indices = append(indices, index)
+		}
+	}
+	return indices
 }

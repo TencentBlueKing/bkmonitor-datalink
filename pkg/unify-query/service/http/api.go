@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -21,6 +20,8 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -38,7 +39,7 @@ import (
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}  []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/field_keys [post]
@@ -119,7 +120,7 @@ func HandlerFieldKeys(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}   []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_keys [post]
@@ -199,7 +200,7 @@ func HandlerTagKeys(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  TagValuesData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_values [post]
@@ -305,7 +306,7 @@ func HandlerTagValues(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/time_series [post]
@@ -352,7 +353,7 @@ func HandlerTimeSeries(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/series [post]
@@ -486,7 +487,7 @@ func HandlerSeries(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{array}   []string
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/label/{label_name}/values [get]
@@ -500,6 +501,8 @@ func HandlerLabelValues(c *gin.Context) {
 		data = TagValuesData{
 			Values: make(map[string][]string),
 		}
+
+		queryLimit int
 
 		err error
 	)
@@ -515,10 +518,19 @@ func HandlerLabelValues(c *gin.Context) {
 	}()
 
 	labelName := c.Param("label_name")
+	labelName = metadata.GetFieldFormat(ctx).DecodeFunc()(labelName)
 	start := c.Query("start")
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 	limit := c.Query("limit")
+	if limit == "" {
+		queryLimit = viper.GetInt(LabelValuesDefaultLimitConfigPath)
+	} else {
+		queryLimit, err = cast.ToIntE(limit)
+		if err != nil {
+			return
+		}
+	}
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)
@@ -558,10 +570,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	limitNum, _ := strconv.Atoi(limit)
 	qb := metadata.GetQueryParams(ctx)
-
-	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, limitNum, matcher...)
+	result, err := instance.DirectLabelValues(ctx, labelName, qb.Start, qb.End, queryLimit, matcher...)
 	if err != nil {
 		return
 	}
@@ -582,7 +592,7 @@ func HandlerLabelValues(c *gin.Context) {
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
-// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Param    data                  	body      Params 		  			true   "json data"
 // @Success  200                   	{object}  SeriesDataList
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/field_map [post]

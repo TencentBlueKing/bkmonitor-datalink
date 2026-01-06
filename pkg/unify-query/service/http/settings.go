@@ -79,6 +79,9 @@ const (
 	JwtPublicKeyConfigPath       = "jwt.public_key"
 	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
 	JwtEnabledConfigPath         = "jwt.enabled"
+
+	// LabelValuesDefaultLimitConfigPath label_values 接口返回值的默认数量，如果为空则使用该值，因为如果为空传到后端的话，bksql 会默认补上 100
+	LabelValuesDefaultLimitConfigPath = "http.label_values.default_limit"
 )
 
 var (

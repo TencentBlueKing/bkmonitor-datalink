@@ -45,6 +45,9 @@ type QueryPromQL struct {
 	LookBackDelta string `json:"look_back_delta"`
 	// 瞬时数据
 	Instant bool `json:"instant"`
+
+	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+	AddDimensions []string `json:"add_dimensions,omitempty"`
 }
 
 // refMgr

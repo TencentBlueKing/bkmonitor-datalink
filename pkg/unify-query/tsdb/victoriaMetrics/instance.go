@@ -465,6 +465,7 @@ func (i *Instance) DirectQueryRange(
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
 	paramsQueryRange := &ParamsQueryRange{
+		BkBizID:          metadata.GetBkBizID(ctx),
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
@@ -529,6 +530,7 @@ func (i *Instance) DirectQuery(
 	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
 
 	paramsQuery := &ParamsQuery{
+		BkBizID:          metadata.GetBkBizID(ctx),
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQuery,
 		APIParams: struct {
@@ -578,6 +580,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	}
 
 	paramsQuery := &ParamsSeries{
+		BkBizID:          metadata.GetBkBizID(ctx),
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APISeries,
 		APIParams: struct {
@@ -632,6 +635,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	}
 
 	paramsQuery := &ParamsSeries{
+		BkBizID:          metadata.GetBkBizID(ctx),
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APILabelNames,
 		APIParams: struct {
@@ -700,6 +704,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		span.Set("query-storage-name", query.StorageName)
 
 		paramsQueryRange := &ParamsQueryRange{
+			BkBizID:          metadata.GetBkBizID(ctx),
 			InfluxCompatible: i.influxCompatible,
 			APIType:          APIQueryRange,
 			APIParams: struct {
@@ -789,6 +794,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	}
 
 	paramsQuery := &ParamsLabelValues{
+		BkBizID:          metadata.GetBkBizID(ctx),
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APILabelValues,
 		APIParams: struct {

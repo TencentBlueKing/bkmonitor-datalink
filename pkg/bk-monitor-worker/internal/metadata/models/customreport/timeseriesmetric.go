@@ -28,6 +28,7 @@ type TimeSeriesMetric struct {
 	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time"`
 	LastIndex      uint      `json:"last_index"`
 	Label          string    `json:"label" gorm:"size:255"`
+	IsActive       bool      `json:"is_active" gorm:"column:is_active;default:true"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

@@ -227,6 +227,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]any, er
 					"field_name":       memStr,
 					"tag_value_list":   dimensionInfo,
 					"last_modify_time": m.Score,
+					"is_active":        true, // 只要从Redis中能够获取到，即为活跃指标
 				},
 			)
 		}

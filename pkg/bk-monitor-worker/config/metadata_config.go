@@ -73,6 +73,8 @@ var (
 	GlobalIPV6SupportBizList []int
 	// GlobalHostDisableMonitorStates 主机不监控字段列表
 	GlobalHostDisableMonitorStates []string
+	// GlobalEnableTsMetricFilterByIsActive 是否启用is_active方式过滤指标
+	GlobalEnableTsMetricFilterByIsActive bool
 
 	// PingServerEnablePingAlarm 全局 Ping 告警开关
 	PingServerEnablePingAlarm bool
@@ -163,6 +165,7 @@ func initMetadataVariables() {
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
 	GlobalFetchTimeSeriesMetricIntervalSeconds = GetValue("taskConfig.metadata.global.fetchTimeSeriesMetricIntervalSeconds", 7200)
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
+	GlobalEnableTsMetricFilterByIsActive = GetValue("taskConfig.metadata.global.enableTsMetricFilterByIsActive", false)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
 	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")

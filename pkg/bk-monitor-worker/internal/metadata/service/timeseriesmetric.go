@@ -69,6 +69,17 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 	needUpdateMetricFieldNameSet := metricFieldNameSet.Difference(needCreateMetricFieldNameSet)
 	needUpdateMetricFieldNames := needUpdateMetricFieldNameSet.ToSlice()
 
+	// 处理不在返回结果中的指标，将它们标记为不活跃
+	// 获取所有已存在但不在本次返回结果中的指标
+	inactiveMetricFieldNameSet := existFieldNameSet.Difference(metricFieldNameSet)
+	inactiveMetricFieldNames := inactiveMetricFieldNameSet.ToSlice()
+	if len(inactiveMetricFieldNames) > 0 {
+		if err := s.BulkMarkMetricsInactive(groupId, inactiveMetricFieldNames); err != nil {
+			logger.Errorf("BulkRefreshTSMetrics: mark inactive metrics [%v] for group_id [%v] failed, %v", inactiveMetricFieldNames, groupId, err)
+			// 不返回错误，继续执行其他逻辑
+		}
+	}
+
 	// 针对创建时和白名单模式有更新时，推送路由数据
 	needPush := false
 	var err error
@@ -123,6 +134,7 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 			FieldName:      name,
 			TagList:        tagListStr,
 			LastModifyTime: time.Now(),
+			IsActive:       isActive, // 同步 is_active 字段
 		}
 
 		if err := tsm.Create(db); err != nil {
@@ -207,12 +219,23 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 			}
 			tsm.TagList = tagListStr
 		}
+		// 检查 is_active 字段是否需要更新
+		needUpdateIsActive := false
+		if tsm.IsActive != isActive {
+			isNeedUpdate = true
+			needUpdateIsActive = true
+			tsm.IsActive = isActive
+		}
 		if isNeedUpdate {
-			if err := tsm.Update(db, customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime); err != nil {
-				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, err)
+			updateFields := []customreport.TimeSeriesMetricDBSchemaField{customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime}
+			if needUpdateIsActive {
+				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.IsActive)
+			}
+			if err := tsm.Update(db, updateFields...); err != nil {
+				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
 				continue
 			}
-			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
+			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
 		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
@@ -224,6 +247,34 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 	}
 	// 自动发现且有更新时需要推送路由数据
 	return updated && isAutoDiscovery, nil
+}
+
+// BulkMarkMetricsInactive 批量标记指标为不活跃（不在 Redis 返回结果中的指标）
+func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames []string) error {
+	if len(metricNames) == 0 {
+		return nil
+	}
+	db := mysql.GetDBSession().DB
+	var tsmList []customreport.TimeSeriesMetric
+	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
+		var tempList []customreport.TimeSeriesMetric
+		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunkMetricNameList...).GroupIDEq(groupId).All(&tempList); err != nil {
+			return errors.Wrapf(err, "BulkMarkMetricsInactive: query TimeSeriesMetric with group_id [%v], field_name [%v] failed", groupId, chunkMetricNameList)
+		}
+		tsmList = append(tsmList, tempList...)
+	}
+	// 批量更新为不活跃
+	for _, tsm := range tsmList {
+		if tsm.IsActive {
+			tsm.IsActive = false
+			if err := tsm.Update(db, customreport.TimeSeriesMetricDBSchema.IsActive); err != nil {
+				logger.Errorf("BulkMarkMetricsInactive: update TimeSeriesMetric group_id [%v] field_name [%s] to inactive failed, %v", tsm.GroupID, tsm.FieldName, err)
+				continue
+			}
+			logger.Infof("BulkMarkMetricsInactive: marked TimeSeriesMetric group_id [%v] field_name [%s] as inactive", tsm.GroupID, tsm.FieldName)
+		}
+	}
+	return nil
 }
 
 // 获取 tags

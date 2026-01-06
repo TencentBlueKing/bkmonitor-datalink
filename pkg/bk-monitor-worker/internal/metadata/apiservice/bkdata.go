@@ -80,6 +80,7 @@ func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string
 			"field_name":       data["name"],
 			"last_modify_time": lastModifyTime / 1000,
 			"tag_value_list":   tagValueList,
+			"is_active":        true, // 只要从Bkdata 指标发现服务中能够获取到，即为活跃指标
 		}
 		MetricsDimension = append(MetricsDimension, item)
 	}

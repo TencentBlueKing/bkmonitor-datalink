@@ -17,7 +17,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestVmExpand(t *testing.T) {
@@ -188,6 +190,124 @@ func TestVmExpand(t *testing.T) {
 			}
 
 			assert.Equal(t, c.VmExpand, VmExpand)
+		})
+	}
+}
+
+// black_list冲突测试
+func TestConflict(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+	influxdbRouter := influxdb.GetInfluxDBRouter() // 获取InfluxDB Router实例，
+	if influxdbRouter == nil {
+		t.Errorf("influxdb router is nil")
+	}
+	// 调用ReloadRouter初始化router字段
+	err := influxdbRouter.ReloadRouter(ctx, "bkmonitorv3:influxdb", nil)
+	if err != nil {
+		t.Errorf("reload router failed, error:%s", err)
+	}
+	for name, c := range map[string]struct {
+		queryRef   metadata.QueryReference
+		isConflict bool
+	}{
+		//gzl：测试用例1 匹配黑名单规则 isConflict为false
+		"default-1": {
+			queryRef: metadata.QueryReference{
+				"a": {
+					{
+
+						QueryList: []*metadata.Query{
+							{
+								TableID: "result_table.vm",
+								VmRt:    "vmrt_1",
+								Field:   "container_cpu_usage_seconds",
+							},
+							{
+								TableID: "result_table.vm_1",
+								VmRt:    "vmrt_3",
+								Field:   "container_cpu_usage_seconds",
+							},
+							{
+								TableID: "result_table.vm_3",
+								VmRt:    "vmrt_5",
+								Field:   "container_cpu_usage_seconds",
+							},
+						},
+					},
+				},
+				"b": {
+					{
+						QueryList: []*metadata.Query{
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "vmrt_1",
+								MetricNames: []string{"kube_pod_container_resource_requests"},
+							},
+							{
+								TableID:     "result_table.vm_3",
+								VmRt:        "vmrt_3",
+								MetricNames: []string{"kube_pod_container_resource_requests"},
+							},
+						},
+					},
+				},
+			},
+			isConflict: false,
+		},
+		//gzl：测试用例2 不匹配黑名单规则 isConflict为true
+		"default-2": {
+			queryRef: metadata.QueryReference{
+				"a": {
+					{
+						QueryList: []*metadata.Query{
+							{
+								TableID: "result_table.vm_1",
+								VmRt:    "vmrt_1",
+								Field:   "container_cpu_usage_seconds",
+							},
+							{
+								TableID: "result_table.vm_2",
+								VmRt:    "vmrt_2",
+								Field:   "container_cpu_usage_seconds",
+							},
+							{
+								TableID: "result_table.vm_3",
+								VmRt:    "vmrt_3",
+								Field:   "container_cpu_usage_seconds",
+							},
+						},
+					},
+				},
+				"b": {
+					{
+						QueryList: []*metadata.Query{
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "vmrt_1",
+								MetricNames: []string{"kube_pod_container_resource_requests"},
+							},
+							{
+								TableID:     "result_table.vm_2",
+								VmRt:        "vmrt_2",
+								MetricNames: []string{"kube_pod_container_resource_requests"},
+							},
+						},
+					},
+				},
+			},
+			isConflict: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			VmExpand := ToVmExpand(ctx, c.queryRef)
+			isConflict, err := influxdbRouter.CheckVmRt(VmExpand.ResultTableList) // vm rt 黑名单规则检查
+			if err != nil {
+				t.Errorf("check vm rt failed, error:%s", err)
+			}
+			assert.Equal(t, c.isConflict, isConflict)
+
 		})
 	}
 }

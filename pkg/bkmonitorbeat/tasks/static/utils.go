@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"net"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -232,6 +233,15 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 		if virtualInterfaces.Exist(inter.Name) {
 			if _, ok := whiteList[inter.Name]; !ok {
 				continue
+			}
+		}
+
+		// 排除黑名单网卡
+		if cfg != nil && len(cfg.VirtualIfaceBlacklist) > 0 {
+			for _, pattern := range cfg.VirtualIfaceBlacklist {
+				if strings.Contains(inter.Name, pattern) {
+					continue
+				}
 			}
 		}
 

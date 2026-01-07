@@ -2421,3 +2421,188 @@ func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
 		"1001_test.__default__": {"field1", "field2", "field3", "field4"},
 	}, actualData, "composeTableIdFields should return the expected data")
 }
+
+// setupFilterTestData 设置测试数据用于 filterTsInfo 测试
+func setupFilterTsInfoTestData(t *testing.T, groupID uint) func() {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理旧数据
+	db.Delete(&customreport.TimeSeriesGroup{}, "time_series_group_id = ?", groupID)
+	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", groupID)
+
+	// 创建 TimeSeriesGroup
+	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
+	tsGroup := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			TableID:  tableID,
+			BkDataID: 50000 + groupID,
+			BkBizID:  1001,
+			Label:    "test_label",
+		},
+		TimeSeriesGroupID:   groupID,
+		BkTenantId:          tenant.DefaultTenantId,
+		TimeSeriesGroupName: fmt.Sprintf("test_filter_group_%d", groupID),
+	}
+	err := db.Create(&tsGroup).Error
+	assert.NoError(t, err)
+
+	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
+
+	// 创建测试指标
+	// 1. 活跃指标（is_active=true，最近更新）
+	activeMetric := customreport.TimeSeriesMetric{
+		GroupID:        groupID,
+		TableID:        tableID + ".active_metric",
+		FieldName:      "active_metric",
+		TagList:        tagListStr,
+		LastModifyTime: time.Now(),
+		IsActive:       true,
+	}
+
+	// 2. 非活跃指标（is_active=false，最近更新）
+	inactiveMetric := customreport.TimeSeriesMetric{
+		GroupID:        groupID,
+		TableID:        tableID + ".inactive_metric",
+		FieldName:      "inactive_metric",
+		TagList:        tagListStr,
+		LastModifyTime: time.Now(),
+		IsActive:       false,
+	}
+
+	// 3. 过期指标（is_active=true，但是很久没更新）
+	expiredMetric := customreport.TimeSeriesMetric{
+		GroupID:        groupID,
+		TableID:        tableID + ".expired_metric",
+		FieldName:      "expired_metric",
+		TagList:        tagListStr,
+		LastModifyTime: time.Now().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds+3600) * time.Second),
+		IsActive:       true,
+	}
+
+	// 使用原生 SQL 插入数据以确保字段值正确
+	for _, metric := range []customreport.TimeSeriesMetric{activeMetric, inactiveMetric, expiredMetric} {
+		err := db.Exec(`
+			INSERT INTO metadata_timeseriesmetric 
+			(group_id, table_id, field_name, tag_list, last_modify_time, last_index, label, is_active)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, metric.GroupID, metric.TableID, metric.FieldName, metric.TagList,
+			metric.LastModifyTime, 0, "", metric.IsActive).Error
+		assert.NoError(t, err)
+	}
+
+	// 返回清理函数
+	return func() {
+		db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", groupID)
+		db.Delete(&customreport.TimeSeriesGroup{}, "time_series_group_id = ?", groupID)
+	}
+}
+
+// TestFilterTsInfoWithIsActiveEnabled 测试启用 is_active 过滤时的行为
+func TestFilterTsInfoWithIsActiveEnabled(t *testing.T) {
+	groupID := uint(300)
+	cleanup := setupFilterTsInfoTestData(t, groupID)
+	defer cleanup()
+
+	// 保存原始配置
+	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
+	defer func() {
+		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
+	}()
+
+	// 启用 is_active 过滤
+	cfg.GlobalEnableTsMetricFilterByIsActive = true
+
+	spacePusher := &SpacePusher{}
+	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
+	tsInfo, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	assert.NoError(t, err)
+	assert.NotNil(t, tsInfo)
+
+	// 验证结果: 只应该包含 is_active=true 的指标
+	fieldNames := tsInfo.GroupIdFieldsMap[groupID]
+	assert.Contains(t, fieldNames, "active_metric", "should contain active metric")
+	assert.Contains(t, fieldNames, "expired_metric", "should contain expired but active metric")
+	assert.NotContains(t, fieldNames, "inactive_metric", "should not contain inactive metric")
+	assert.Equal(t, 2, len(fieldNames), "should have exactly 2 active metrics")
+}
+
+// TestFilterTsInfoWithIsActiveDisabled 测试禁用 is_active 过滤时的行为（原有逻辑）
+func TestFilterTsInfoWithIsActiveDisabled(t *testing.T) {
+	groupID := uint(301)
+	cleanup := setupFilterTsInfoTestData(t, groupID)
+	defer cleanup()
+
+	// 保存原始配置
+	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
+	defer func() {
+		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
+	}()
+
+	// 禁用 is_active 过滤
+	cfg.GlobalEnableTsMetricFilterByIsActive = false
+
+	spacePusher := &SpacePusher{}
+	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
+	tsInfo, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	assert.NoError(t, err)
+	assert.NotNil(t, tsInfo)
+
+	// 验证结果: 只应该包含最近更新的指标（不管 is_active 状态）
+	fieldNames := tsInfo.GroupIdFieldsMap[groupID]
+	assert.Contains(t, fieldNames, "active_metric", "should contain recently updated active metric")
+	assert.Contains(t, fieldNames, "inactive_metric", "should contain recently updated inactive metric")
+	assert.NotContains(t, fieldNames, "expired_metric", "should not contain expired metric")
+	assert.Equal(t, 2, len(fieldNames), "should have exactly 2 recently updated metrics")
+}
+
+// TestFilterTsInfoBehaviorComparison 测试两种模式的行为差异
+func TestFilterTsInfoBehaviorComparison(t *testing.T) {
+	groupID := uint(302)
+	cleanup := setupFilterTsInfoTestData(t, groupID)
+	defer cleanup()
+
+	// 保存原始配置
+	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
+	defer func() {
+		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
+	}()
+
+	spacePusher := &SpacePusher{}
+	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
+
+	// 测试模式 1: is_active 过滤
+	cfg.GlobalEnableTsMetricFilterByIsActive = true
+	tsInfoIsActive, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	assert.NoError(t, err)
+	assert.NotNil(t, tsInfoIsActive)
+
+	// 测试模式 2: last_modify_time 过滤
+	cfg.GlobalEnableTsMetricFilterByIsActive = false
+	tsInfoLastModifyTime, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	assert.NoError(t, err)
+	assert.NotNil(t, tsInfoLastModifyTime)
+
+	// 比较两种模式的结果
+	isActiveFields := tsInfoIsActive.GroupIdFieldsMap[groupID]
+	lastModifyTimeFields := tsInfoLastModifyTime.GroupIdFieldsMap[groupID]
+
+	t.Logf("is_active mode returned fields: %v", isActiveFields)
+	t.Logf("last_modify_time mode returned fields: %v", lastModifyTimeFields)
+
+	// 验证 is_active 模式的结果
+	assert.Equal(t, 2, len(isActiveFields), "is_active mode should return 2 metrics")
+	assert.Contains(t, isActiveFields, "active_metric", "is_active mode should contain active_metric")
+	assert.Contains(t, isActiveFields, "expired_metric", "is_active mode should contain expired_metric (still active)")
+	assert.NotContains(t, isActiveFields, "inactive_metric", "is_active mode should not contain inactive_metric")
+
+	// 验证 last_modify_time 模式的结果
+	assert.Equal(t, 2, len(lastModifyTimeFields), "last_modify_time mode should return 2 metrics")
+	assert.Contains(t, lastModifyTimeFields, "active_metric", "last_modify_time mode should contain active_metric")
+	assert.Contains(t, lastModifyTimeFields, "inactive_metric", "last_modify_time mode should contain inactive_metric (recently updated)")
+	assert.NotContains(t, lastModifyTimeFields, "expired_metric", "last_modify_time mode should not contain expired_metric")
+
+	// 两种模式应该返回不同的指标集合
+	assert.NotEqual(t, isActiveFields, lastModifyTimeFields,
+		"two filter modes should return different sets of metrics")
+}

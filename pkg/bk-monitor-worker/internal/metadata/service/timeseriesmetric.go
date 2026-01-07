@@ -39,6 +39,12 @@ func NewTimeSeriesMetricSvcSvc(obj *customreport.TimeSeriesMetric) TimeSeriesMet
 
 // BulkRefreshTSMetrics 更新或创建时序指标数据
 func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
+	// 当 metricInfoList 为空时，可能是上游异常、限流或拉取失败，跳过更新操作以避免误将所有指标标记为不活跃
+	if len(metricInfoList) == 0 {
+		logger.Warnf("BulkRefreshTSMetrics: metricInfoList is empty for group_id [%v], skip update to avoid marking all metrics as inactive due to potential upstream issues", groupId)
+		return false, nil
+	}
+
 	// 获取需要批量处理的指标名
 	metricFieldNameSet := mapset.NewSet[string]()
 	metricsMap := make(map[string]map[string]any)
@@ -68,6 +74,17 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 	// 获取已经存在的指标名，然后进行批量更新
 	needUpdateMetricFieldNameSet := metricFieldNameSet.Difference(needCreateMetricFieldNameSet)
 	needUpdateMetricFieldNames := needUpdateMetricFieldNameSet.ToSlice()
+
+	// 处理不在返回结果中的指标，将它们标记为不活跃
+	// 获取所有已存在但不在本次返回结果中的指标
+	inactiveMetricFieldNameSet := existFieldNameSet.Difference(metricFieldNameSet)
+	inactiveMetricFieldNames := inactiveMetricFieldNameSet.ToSlice()
+	if len(inactiveMetricFieldNames) > 0 {
+		if err := s.BulkMarkMetricsInactive(groupId, inactiveMetricFieldNames); err != nil {
+			logger.Errorf("BulkRefreshTSMetrics: mark inactive metrics [%v] for group_id [%v] failed, %v", inactiveMetricFieldNames, groupId, err)
+			// 不返回错误，继续执行其他逻辑
+		}
+	}
 
 	// 针对创建时和白名单模式有更新时，推送路由数据
 	needPush := false
@@ -123,6 +140,7 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 			FieldName:      name,
 			TagList:        tagListStr,
 			LastModifyTime: time.Now(),
+			IsActive:       isActive, // 同步 is_active 字段
 		}
 
 		if err := tsm.Create(db); err != nil {
@@ -207,12 +225,23 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 			}
 			tsm.TagList = tagListStr
 		}
+		// 检查 is_active 字段是否需要更新
+		needUpdateIsActive := false
+		if tsm.IsActive != isActive {
+			isNeedUpdate = true
+			needUpdateIsActive = true
+			tsm.IsActive = isActive
+		}
 		if isNeedUpdate {
-			if err := tsm.Update(db, customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime); err != nil {
-				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, err)
+			updateFields := []customreport.TimeSeriesMetricDBSchemaField{customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime}
+			if needUpdateIsActive {
+				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.IsActive)
+			}
+			if err := tsm.Update(db, updateFields...); err != nil {
+				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
 				continue
 			}
-			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
+			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
 		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
@@ -224,6 +253,29 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 	}
 	// 自动发现且有更新时需要推送路由数据
 	return updated && isAutoDiscovery, nil
+}
+
+// BulkMarkMetricsInactive 批量标记指标为不活跃（不在 Redis 返回结果中的指标）
+func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames []string) error {
+	if len(metricNames) == 0 {
+		return nil
+	}
+	db := mysql.GetDBSession().DB
+	// 使用批量 SQL 更新，按 chunk 分批处理以避免 SQL 参数过多
+	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
+		// 批量更新：UPDATE metadata_timeseriesmetric SET is_active=false WHERE group_id=? AND field_name IN (...) AND is_active=true
+		updater := customreport.NewTimeSeriesMetricQuerySet(db).
+			GroupIDEq(groupId).
+			FieldNameIn(chunkMetricNameList...).
+			IsActiveEq(true).
+			GetUpdater()
+
+		if err := updater.SetIsActive(false).Update(); err != nil {
+			return errors.Wrapf(err, "BulkMarkMetricsInactive: batch update TimeSeriesMetric with group_id [%v], field_name [%v] to inactive failed", groupId, chunkMetricNameList)
+		}
+		logger.Infof("BulkMarkMetricsInactive: marked %d TimeSeriesMetrics as inactive for group_id [%v], field_names [%v]", len(chunkMetricNameList), groupId, chunkMetricNameList)
+	}
+	return nil
 }
 
 // 获取 tags

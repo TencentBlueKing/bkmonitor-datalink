@@ -1484,8 +1484,10 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 		tsGroupTableId = append(tsGroupTableId, group.TableID)
 	}
 
-	// NOTE: 针对自定义时序，过滤掉历史废弃的指标，时间在`TIME_SERIES_METRIC_EXPIRED_SECONDS`的为有效数据
-	// 其它类型直接获取所有指标和维度
+	// NOTE: 针对自定义时序，过滤掉历史废弃的指标
+	// 根据特性开关决定过滤方式:
+	// 1. 启用 is_active 字段时: 只查询 is_active=true 的指标
+	// 2. 使用原有方式时: 查询时间在 TIME_SERIES_METRIC_EXPIRED_SECONDS 内的指标
 	beginTime := time.Now().UTC().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds) * time.Second)
 
 	// 分批查询 TimeSeriesMetric（优化部分
@@ -1495,8 +1497,13 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 		// 分批查询配置
 		queryConfig := GetDefaultRTFBatchConfig()
 
-		logger.Infof("filterTsInfo: Starting batch query for TimeSeriesMetric records, target groups: %d, batch size: %d records per batch",
-			len(tsGroupIdList), queryConfig.BatchSize)
+		filterMode := "last_modify_time"
+		if cfg.GlobalEnableTsMetricFilterByIsActive {
+			filterMode = "is_active"
+		}
+
+		logger.Infof("filterTsInfo: Starting batch query for TimeSeriesMetric records, target groups: %d, batch size: %d records per batch, filter_mode: %s",
+			len(tsGroupIdList), queryConfig.BatchSize, filterMode)
 
 		// 记录查询开始时间
 		startTime := time.Now()
@@ -1513,9 +1520,17 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 			query := customreport.NewTimeSeriesMetricQuerySet(db).
 				Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).
 				GroupIDIn(tsGroupIdList...).
-				LastModifyTimeGte(beginTime).
 				Limit(queryConfig.BatchSize).
 				Offset(offset)
+
+			// 根据特性开关添加不同的过滤条件
+			if cfg.GlobalEnableTsMetricFilterByIsActive {
+				// 启用 is_active 字段过滤: 只查询活跃的指标
+				query = query.IsActiveEq(true)
+			} else {
+				// 使用原有方式: 根据最后修改时间过滤
+				query = query.LastModifyTimeGte(beginTime)
+			}
 
 			if err := query.All(&batchTsmList); err != nil {
 				logger.Errorf("filterTsInfo: Failed to query TimeSeriesMetric batch %d (offset: %d): %v", batchNum, offset, err)

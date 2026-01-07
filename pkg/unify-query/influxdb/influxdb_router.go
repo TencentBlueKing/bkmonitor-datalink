@@ -58,6 +58,7 @@ type Router struct {
 	endpointSet     *endpointSet
 
 	hostStatusInfo influxdb.HostStatusInfo
+	blackListInfo  influxdb.BlackListInfo // 黑名单信息
 }
 
 // MockRouter mock 路由信息
@@ -396,11 +397,12 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 
 func (r *Router) loadRouter(ctx context.Context, key string) error {
 	var (
-		clusterInfo influxdb.ClusterInfo
-		hostInfo    influxdb.HostInfo
-		tagInfo     influxdb.TagInfo
-		proxyInfo   influxdb.ProxyInfo
-		err         error
+		clusterInfo   influxdb.ClusterInfo
+		hostInfo      influxdb.HostInfo
+		tagInfo       influxdb.TagInfo
+		proxyInfo     influxdb.ProxyInfo
+		blackListInfo influxdb.BlackListInfo
+		err           error
 	)
 
 	if r.router == nil {
@@ -434,6 +436,12 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		proxyInfo, err = r.router.GetProxyInfo(ctx)
 		if err == nil {
 			r.proxyInfo = proxyInfo
+		}
+
+	case influxdb.BlackListKey:
+		blackListInfo, err = r.router.GetBlackListInfo(ctx)
+		if err == nil {
+			r.blackListInfo = blackListInfo
 		}
 	}
 	return err
@@ -543,4 +551,44 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 	}
 
 	return hostList, nil
+}
+
+// CheckVmRt 实现黑名单检查逻辑
+func (r *Router) CheckVmRt(vmResultTable []string) bool {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	var forbiddenVmRt [][]string
+
+	if r.blackListInfo.ForbiddenVmRt == nil {
+		return false
+	}
+	forbiddenVmRt = r.blackListInfo.ForbiddenVmRt
+
+	vmTableSet := make(map[string]struct{}) //[vm1, vm2, vm3, vm4, vm5]
+	for _, vmTable := range vmResultTable {
+		vmTableSet[vmTable] = struct{}{}
+	}
+
+	// 遍历该配置下的所有禁止规则
+	for _, ruleTable := range forbiddenVmRt { //[[vm1, vm2], [vm3, vm4, vm5]]]
+		if len(ruleTable) == 0 {
+			continue
+		}
+
+		// 检查当前规则是否全匹配
+		allMatched := true
+		for _, rule := range ruleTable { // [vm1, vm2]
+			if _, ok := vmTableSet[rule]; !ok {
+				allMatched = false // 如果规则中有任何一个表不在输入列表中，则不匹配
+				break
+			}
+		}
+		if allMatched { // 如果某一条规则全匹配，说明违反了规则
+			return true
+		}
+	}
+
+	// 如果所有规则都不全匹配，则不违反规则
+	return false
 }

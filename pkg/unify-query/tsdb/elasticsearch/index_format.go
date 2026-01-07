@@ -25,6 +25,13 @@ const (
 	FormatPropertiesType       = "type"
 	FormatPropertiesDocValue   = "doc_values"
 	FormatPropertiesNormalizer = "normalizer"
+
+	// Analyzer configuration keys
+	AnalyzerKeyTokenizeOnChars = "tokenize_on_chars"
+	AnalyzerKeyFilter          = "filter"
+
+	// Analyzer filter constants
+	AnalyzerFilterLowercase = "lowercase"
 )
 
 type IndexOptionFormat struct {
@@ -149,18 +156,48 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 
 	fieldMap.IsAnalyzed = fieldMap.FieldType == Text
 
-	if v, ok := data["normalizer"].(bool); ok {
-		fieldMap.IsCaseSensitive = v
-	}
-
+	// 根据分析器中的 filter 判断大小写敏感性
+	// 如果 filter 中包含 "lowercase"，则为大小写不敏感
 	if name, ok := data["analyzer"].(string); ok {
 		analyzer := f.analyzer[name]
 		if analyzer != nil {
-			if toc, ok := analyzer["tokenize_on_chars"].([]string); ok {
+			toc := toStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
+			if len(toc) > 0 {
 				fieldMap.TokenizeOnChars = toc
+			}
+
+			if hasLowercaseFilter(analyzer[AnalyzerKeyFilter]) {
+				fieldMap.IsCaseSensitive = true
 			}
 		}
 	}
 
 	return fieldMap
+}
+
+func toStringSlice(v any) []string {
+	switch vv := v.(type) {
+	case []string:
+		return append([]string(nil), vv...)
+	case []any:
+		res := make([]string, 0, len(vv))
+		for _, item := range vv {
+			if s, ok := item.(string); ok {
+				res = append(res, s)
+			}
+		}
+		return res
+	default:
+		return nil
+	}
+}
+
+func hasLowercaseFilter(filter any) bool {
+	for _, item := range toStringSlice(filter) {
+		if item == AnalyzerFilterLowercase {
+			return true
+		}
+	}
+
+	return false
 }

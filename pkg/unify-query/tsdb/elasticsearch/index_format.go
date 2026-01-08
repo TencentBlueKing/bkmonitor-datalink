@@ -56,7 +56,15 @@ func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 	// 解析 settings 里面的 analysis
-	if analysis, ok := settings["analysis"].(map[string]any); ok {
+	// 支持两种结构：直接 settings["analysis"] 或 settings["index"]["analysis"]
+	var analysis map[string]any
+	if a, ok := settings["analysis"].(map[string]any); ok {
+		analysis = a
+	} else if index, ok := settings["index"].(map[string]any); ok {
+		analysis, _ = index["analysis"].(map[string]any)
+	}
+
+	if analysis != nil {
 		tokenizer, _ := analysis["tokenizer"].(map[string]any)
 		analyzer, _ := analysis["analyzer"].(map[string]any)
 

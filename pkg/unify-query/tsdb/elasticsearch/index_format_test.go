@@ -85,6 +85,44 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			},
 			fieldMap: `{"case_sensitivity_test":{"alias_name":"","field_name":"case_sensitivity_test","field_type":"text","origin_field":"case_sensitivity_test","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
 		},
+		{
+			name: "nested_index_structure",
+			settings: map[string]any{
+				"index": map[string]any{
+					"analysis": map[string]any{
+						"analyzer": map[string]any{
+							"analyzer_42baef3b": map[string]any{
+								"filter":    []any{},
+								"type":      "custom",
+								"tokenizer": "tokenizer_log_data",
+							},
+						},
+						"tokenizer": map[string]any{
+							"tokenizer_log_data": map[string]any{
+								"type": "char_group",
+								"tokenize_on_chars": []string{
+									"@", "&", "(", ")", "=", "'", "\"", ",", ";", ":",
+									"<", ">", "[", "]", "{", "}", "/", " ", "\n", "\t", "\r", "\\",
+								},
+							},
+						},
+					},
+				},
+			},
+			mappings: map[string]any{
+				"properties": map[string]any{
+					"log": map[string]any{
+						"type":     "text",
+						"norms":    false,
+						"analyzer": "analyzer_42baef3b",
+					},
+					"path": map[string]any{
+						"type": "keyword",
+					},
+				},
+			},
+			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["@","&","(",")","=","'","\"",",",";",":","<",">","[","]","{","}","/"," ","\n","\t","\r","\\"]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+		},
 	}
 
 	for _, c := range testCases {
@@ -96,7 +134,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 
 			actual, _ := json.Marshal(fieldMap)
 
-			assert.Equal(t, c.fieldMap, string(actual))
+			assert.JSONEq(t, c.fieldMap, string(actual))
 		})
 	}
 }

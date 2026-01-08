@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -161,43 +162,17 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	if name, ok := data["analyzer"].(string); ok {
 		analyzer := f.analyzer[name]
 		if analyzer != nil {
-			toc := toStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
+			toc := cast.ToStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
 			if len(toc) > 0 {
 				fieldMap.TokenizeOnChars = toc
 			}
 
-			if hasLowercaseFilter(analyzer[AnalyzerKeyFilter]) {
+			if lo.Contains(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]), AnalyzerFilterLowercase) {
 				fieldMap.IsCaseSensitive = true
 			}
+
 		}
 	}
 
 	return fieldMap
-}
-
-func toStringSlice(v any) []string {
-	switch vv := v.(type) {
-	case []string:
-		return append([]string(nil), vv...)
-	case []any:
-		res := make([]string, 0, len(vv))
-		for _, item := range vv {
-			if s, ok := item.(string); ok {
-				res = append(res, s)
-			}
-		}
-		return res
-	default:
-		return nil
-	}
-}
-
-func hasLowercaseFilter(filter any) bool {
-	for _, item := range toStringSlice(filter) {
-		if item == AnalyzerFilterLowercase {
-			return true
-		}
-	}
-
-	return false
 }

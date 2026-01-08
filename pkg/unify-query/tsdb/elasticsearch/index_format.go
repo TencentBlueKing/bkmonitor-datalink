@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -25,6 +26,13 @@ const (
 	FormatPropertiesType       = "type"
 	FormatPropertiesDocValue   = "doc_values"
 	FormatPropertiesNormalizer = "normalizer"
+
+	// Analyzer configuration keys
+	AnalyzerKeyTokenizeOnChars = "tokenize_on_chars"
+	AnalyzerKeyFilter          = "filter"
+
+	// Analyzer filter constants
+	AnalyzerFilterLowercase = "lowercase"
 )
 
 type IndexOptionFormat struct {
@@ -48,7 +56,15 @@ func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 	// 解析 settings 里面的 analysis
-	if analysis, ok := settings["analysis"].(map[string]any); ok {
+	// 支持两种结构：直接 settings["analysis"] 或 settings["index"]["analysis"]
+	var analysis map[string]any
+	if a, ok := settings["analysis"].(map[string]any); ok {
+		analysis = a
+	} else if index, ok := settings["index"].(map[string]any); ok {
+		analysis, _ = index["analysis"].(map[string]any)
+	}
+
+	if analysis != nil {
 		tokenizer, _ := analysis["tokenizer"].(map[string]any)
 		analyzer, _ := analysis["analyzer"].(map[string]any)
 
@@ -149,16 +165,20 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 
 	fieldMap.IsAnalyzed = fieldMap.FieldType == Text
 
-	if v, ok := data["normalizer"].(bool); ok {
-		fieldMap.IsCaseSensitive = v
-	}
-
+	// 根据分析器中的 filter 判断大小写敏感性
+	// 如果 filter 中不包含 "lowercase"，则为大小写敏感
 	if name, ok := data["analyzer"].(string); ok {
 		analyzer := f.analyzer[name]
 		if analyzer != nil {
-			if toc, ok := analyzer["tokenize_on_chars"].([]string); ok {
+			toc := cast.ToStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
+			if len(toc) > 0 {
 				fieldMap.TokenizeOnChars = toc
 			}
+
+			if !lo.Contains(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]), AnalyzerFilterLowercase) {
+				fieldMap.IsCaseSensitive = true
+			}
+
 		}
 	}
 

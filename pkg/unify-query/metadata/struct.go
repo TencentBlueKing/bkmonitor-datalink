@@ -230,8 +230,9 @@ func (q *Query) VMExpand() *VmExpand {
 }
 
 type HighLight struct {
-	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
-	Enable            bool `json:"enable,omitempty"`
+	MaxAnalyzedOffset int       `json:"max_analyzed_offset,omitempty"`
+	Enable            bool      `json:"enable,omitempty"`
+	FieldsMap         FieldsMap `json:"-"` // 用于高亮时判断字段的大小写敏感性
 }
 
 type Collapse struct {

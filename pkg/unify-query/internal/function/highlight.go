@@ -29,6 +29,7 @@ const (
 
 type HighLightFactory struct {
 	labelMap          map[string][]LabelMapValue
+	fieldsMap         metadata.FieldsMap
 	maxAnalyzedOffset int
 }
 
@@ -92,9 +93,10 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	return labelMap
 }
 
-func NewHighLightFactory(labelMap map[string][]LabelMapValue, maxAnalyzedOffset int) *HighLightFactory {
+func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata.FieldsMap, maxAnalyzedOffset int) *HighLightFactory {
 	return &HighLightFactory{
 		labelMap:          labelMap,
+		fieldsMap:         fieldsMap,
 		maxAnalyzedOffset: maxAnalyzedOffset,
 	}
 }
@@ -112,7 +114,16 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 		// 获取使用字段查询的值
 		keywords = append(keywords, h.labelMap[key]...)
 
-		if highlightedValue := h.processField(value, keywords); highlightedValue != nil {
+		// 从 fieldsMap 中获取字段的大小写敏感性配置
+		isCaseSensitive := false
+		if h.fieldsMap != nil {
+			fieldOption := h.fieldsMap.Field(key)
+			if fieldOption.Existed() {
+				isCaseSensitive = fieldOption.IsCaseSensitive
+			}
+		}
+
+		if highlightedValue := h.processField(value, keywords, isCaseSensitive); highlightedValue != nil {
 			newData[key] = highlightedValue
 		}
 	}
@@ -120,19 +131,19 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 	return newData
 }
 
-func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue) any {
+func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue, isCaseSensitive bool) any {
 	if len(keywords) == 0 {
 		return nil
 	}
 
 	newValue := cast.ToString(fieldValue)
-	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
+	if highlighted := h.highlightString(newValue, keywords, isCaseSensitive); highlighted != newValue {
 		return []string{highlighted}
 	}
 	return nil
 }
 
-func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue) string {
+func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue, isCaseSensitive bool) string {
 	if text == "" || len(keywords) == 0 {
 		return text
 	}
@@ -148,8 +159,11 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	for _, kw := range keywords {
 		switch kw.Operator {
 		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains:
-			// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
-			value := strings.ToLower(kw.Value)
+			value := kw.Value
+			// 如果大小写不敏感，则统一转换为小写进行去重
+			if !isCaseSensitive {
+				value = strings.ToLower(value)
+			}
 			if value == "" {
 				continue
 			}
@@ -157,8 +171,14 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 			check := func() bool {
 				// 检查是否已经叠加
 				for _, newKeyword := range newKeywords {
-					if strings.Contains(newKeyword.Value, value) {
-						return true
+					if isCaseSensitive {
+						if strings.Contains(newKeyword.Value, value) {
+							return true
+						}
+					} else {
+						if strings.Contains(strings.ToLower(newKeyword.Value), strings.ToLower(value)) {
+							return true
+						}
 					}
 				}
 				return false
@@ -175,9 +195,19 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	for _, kw := range newKeywords {
 		var re *regexp.Regexp
 		if kw.Operator == metadata.ConditionRegEqual {
-			re = regexp.MustCompile(kw.Value)
+			if isCaseSensitive {
+				re = regexp.MustCompile(kw.Value)
+			} else {
+				re = regexp.MustCompile(`(?i)` + kw.Value)
+			}
 		} else {
-			re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
+			if isCaseSensitive {
+				// 大小写敏感：精确匹配
+				re = regexp.MustCompile(regexp.QuoteMeta(kw.Value))
+			} else {
+				// 大小写不敏感：忽略大小写匹配
+				re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
+			}
 		}
 		matchs := re.FindAllString(analyzablePart, -1)
 

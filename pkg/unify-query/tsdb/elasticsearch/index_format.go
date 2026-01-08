@@ -158,7 +158,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	fieldMap.IsAnalyzed = fieldMap.FieldType == Text
 
 	// 根据分析器中的 filter 判断大小写敏感性
-	// 如果 filter 中包含 "lowercase"，则为大小写不敏感
+	// 如果 filter 中不包含 "lowercase"，则为大小写敏感
 	if name, ok := data["analyzer"].(string); ok {
 		analyzer := f.analyzer[name]
 		if analyzer != nil {
@@ -167,7 +167,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 				fieldMap.TokenizeOnChars = toc
 			}
 
-			if lo.Contains(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]), AnalyzerFilterLowercase) {
+			if !lo.Contains(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]), AnalyzerFilterLowercase) {
 				fieldMap.IsCaseSensitive = true
 			}
 

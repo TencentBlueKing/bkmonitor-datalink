@@ -160,7 +160,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		message strings.Builder
 		lock    sync.Mutex
 
-		allLabelMap = make(map[string][]function.LabelMapValue)
+		allLabelMap  = make(map[string][]function.LabelMapValue)
 		allFieldsMap = make(metadata.FieldsMap)
 
 		queryRef metadata.QueryReference

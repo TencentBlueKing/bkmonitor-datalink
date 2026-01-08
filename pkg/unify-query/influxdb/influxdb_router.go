@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -58,6 +59,7 @@ type Router struct {
 	endpointSet     *endpointSet
 
 	hostStatusInfo influxdb.HostStatusInfo
+	blackListInfo  influxdb.BlackListInfo // 黑名单信息
 }
 
 // MockRouter mock 路由信息
@@ -396,11 +398,12 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 
 func (r *Router) loadRouter(ctx context.Context, key string) error {
 	var (
-		clusterInfo influxdb.ClusterInfo
-		hostInfo    influxdb.HostInfo
-		tagInfo     influxdb.TagInfo
-		proxyInfo   influxdb.ProxyInfo
-		err         error
+		clusterInfo   influxdb.ClusterInfo
+		hostInfo      influxdb.HostInfo
+		tagInfo       influxdb.TagInfo
+		proxyInfo     influxdb.ProxyInfo
+		blackListInfo influxdb.BlackListInfo
+		err           error
 	)
 
 	if r.router == nil {
@@ -434,6 +437,12 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		proxyInfo, err = r.router.GetProxyInfo(ctx)
 		if err == nil {
 			r.proxyInfo = proxyInfo
+		}
+
+	case influxdb.BlackListKey:
+		blackListInfo, err = r.router.GetBlackListInfo(ctx)
+		if err == nil {
+			r.blackListInfo = blackListInfo
 		}
 	}
 	return err
@@ -543,4 +552,42 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 	}
 
 	return hostList, nil
+}
+
+// CheckVmRt 实现黑名单检查逻辑
+func (r *Router) CheckVmRt(vmResultTable []string) bool {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	// 如果没有配置黑名单，则直接返回false
+	if len(r.blackListInfo.ForbiddenVmRt) == 0 {
+		return false
+	}
+
+	var forbiddenVmRt [][]string
+
+	forbiddenVmRt = r.blackListInfo.ForbiddenVmRt
+
+	vmTableSet := set.New(vmResultTable...)
+
+	// 遍历该配置下的所有禁止规则
+	for _, ruleTable := range forbiddenVmRt {
+		if len(ruleTable) == 0 {
+			continue
+		}
+
+		// 检查当前规则是否全匹配
+		allMatched := true
+		for _, rule := range ruleTable {
+			if !vmTableSet.Existed(rule) {
+				allMatched = false // 如果规则中有任何一个表不在输入列表中，则不匹配
+				break
+			}
+		}
+		if allMatched { // 如果某一条规则全匹配，说明违反了规则
+			return true
+		}
+	}
+
+	// 如果所有规则都不全匹配，则不违反规则
+	return false
 }

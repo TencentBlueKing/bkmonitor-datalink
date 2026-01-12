@@ -95,7 +95,7 @@ func (m *Manager) writeExecution(params *WriteParams, flowLog *logging.Entry) *E
 	batchSize := viper.GetInt(common.ConfigHTTPBatchsize)
 	wg := &sync.WaitGroup{}
 	flowLog.Debugf("start write")
-	pointsChannel := make(chan common.Points)
+	pointsChannel := make(chan common.Points, 1000)
 	sem := make(chan struct{}, 100)
 
 	wg.Add(1)
@@ -179,9 +179,6 @@ func (m *Manager) writeExecution(params *WriteParams, flowLog *logging.Entry) *E
 		flowLog.Warnf("get wrong status code after write data,response:%s", stackedResp)
 		result := NewExecuteResult(stackedResp.Result, stackedResp.Code, nil)
 		return result
-	}
-	if clusterResp != nil {
-		return NewExecuteResult(clusterResp.Result, clusterResp.Code, nil)
 	}
 	return NewExecuteResult(clusterResp.Result, clusterResp.Code, nil)
 }

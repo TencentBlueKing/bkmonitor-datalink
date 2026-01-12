@@ -649,6 +649,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	// 按 order_by 对结果进行排序
+	// Prometheus 引擎会按 labels 字典序排序，这里需要按用户指定的 order_by 重新排序
+	if len(queryTs.OrderBy) > 0 {
+		for _, order := range queryTs.OrderBy {
+			// 目前只支持 _value 排序
+			if order == promql.ResultColumnValue {
+				tables.SortByValue(true)
+				break
+			} else if order == "-"+promql.ResultColumnValue {
+				tables.SortByValue(false)
+				break
+			}
+		}
+	}
+
 	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
@@ -836,6 +851,21 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
+
+	// 按 order_by 对结果进行排序
+	// Prometheus 引擎会按 labels 字典序排序，这里需要按用户指定的 order_by 重新排序
+	if len(query.OrderBy) > 0 {
+		for _, order := range query.OrderBy {
+			// 目前只支持 _value 排序
+			if order == promql.ResultColumnValue {
+				tables.SortByValue(true)
+				break
+			} else if order == "-"+promql.ResultColumnValue {
+				tables.SortByValue(false)
+				break
+			}
+		}
+	}
 
 	resp.IsPartial = isPartial
 	err = resp.Fill(tables)

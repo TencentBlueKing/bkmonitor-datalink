@@ -12,10 +12,12 @@ package promql
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
 	prom "github.com/prometheus/prometheus/promql"
+	"github.com/spf13/cast"
 )
 
 // Table :
@@ -33,7 +35,7 @@ type Table struct {
 func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(string) string) *Table {
 	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
-	t.Headers = []string{"_time", "_value"}
+	t.Headers = []string{ResultColumnTime, ResultColumnValue}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
@@ -66,7 +68,7 @@ func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(strin
 func NewTable(index int, series prom.Series, queryRawFormat func(string) string) *Table {
 	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
-	t.Headers = []string{"_time", "_value"}
+	t.Headers = []string{ResultColumnTime, ResultColumnValue}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
@@ -146,4 +148,36 @@ func (t *Tables) Add(table *Table) {
 func (t *Tables) Clear() error {
 	t.Tables = make([]*Table, 0)
 	return nil
+}
+
+// SortByValue 按照 _value 对 Tables 进行排序
+// asc: true 为升序，false 为降序
+func (t *Tables) SortByValue(asc bool) {
+	if len(t.Tables) == 0 {
+		return
+	}
+
+	sort.SliceStable(t.Tables, func(i, j int) bool {
+		vi := t.Tables[i].getLastValue()
+		vj := t.Tables[j].getLastValue()
+		if asc {
+			return vi < vj
+		}
+		return vi > vj
+	})
+}
+
+// getLastValue 获取 Table 中最后一个数据点的 _value 值
+// 用于排序比较
+func (t *Table) getLastValue() float64 {
+	if len(t.Data) == 0 {
+		return 0
+	}
+	// Data 的格式是 [[_time, _value], ...]
+	lastRow := t.Data[len(t.Data)-1]
+	if len(lastRow) < 2 {
+		return 0
+	}
+	// _value 在第二个位置
+	return cast.ToFloat64(lastRow[1])
 }

@@ -90,11 +90,13 @@ func (m *Manager) writeExecution(params *WriteParams, flowLog *logging.Entry) *E
 	var stackedError error
 	var clusterResp *cluster.Response
 	var stackedResp *cluster.Response
+	var mu sync.Mutex
 
 	batchSize := viper.GetInt(common.ConfigHTTPBatchsize)
 	wg := &sync.WaitGroup{}
 	flowLog.Debugf("start write")
-	pointsChannel := make(chan common.Points)
+	pointsChannel := make(chan common.Points, 1000)
+	sem := make(chan struct{}, 100)
 
 	wg.Add(1)
 	go func() {
@@ -118,28 +120,38 @@ func (m *Manager) writeExecution(params *WriteParams, flowLog *logging.Entry) *E
 				dbCluster, err := GetRouteCluster(flow, route)
 				if err != nil {
 					flowLog.Errorf("failed to get cluster for->[%s]", err)
+					mu.Lock()
 					stackedError = ErrMatchClusterByRouteFailed
-					return
+					mu.Unlock()
+					continue
 				}
 				_ = WriteClusterSendCountInc(dbCluster.GetName(), db)
+				sem <- struct{}{}
 				wg.Add(1)
-				go func(route string, points common.Points) {
+				go func(route string, points common.Points, dbCluster cluster.Cluster) {
 					defer wg.Done()
+					defer func() { <-sem }() // 释放信号量
 					tagNames := m.tagMap[route]
 					params := cluster.NewWriteParams(db, consistency, precision, rp, points, allPoints, tagNames)
-					clusterResp, err = dbCluster.Write(flow, params, header)
+					localResp, err := dbCluster.Write(flow, params, header)
+					mu.Lock()
+					defer mu.Unlock()
 					if err != nil {
 						flowLog.Errorf("write to cluster->[%s],failed,error:%s", dbCluster.GetName(), err)
 						stackedError = ErrClusterWriteFailed
 						_ = WriteClusterFailedCountInc(dbCluster.GetName(), db)
 						return
 					}
-					if clusterResp.Code >= 300 {
-						flowLog.Warnf("write to cluster->[%s] get wrong status code,response:%s", dbCluster.GetName(), clusterResp)
-						stackedResp = clusterResp
+					if localResp.Code >= 300 {
+						flowLog.Warnf("write to cluster->[%s] get wrong status code,response:%s", dbCluster.GetName(), localResp)
+						stackedResp = localResp
 					}
 					_ = WriteClusterSuccessCountInc(dbCluster.GetName(), db)
-				}(route, points)
+					// 保留一个成功响应作为默认值 (如果还没有的话)
+					if clusterResp == nil && localResp.Code < 300 {
+						clusterResp = localResp
+					}
+				}(route, points, dbCluster)
 			}
 		}
 	}()
@@ -147,13 +159,17 @@ func (m *Manager) writeExecution(params *WriteParams, flowLog *logging.Entry) *E
 	err := AnaylizeTagData(flow, pointsChannel, db, batchSize, allPoints, flowLog)
 	if err != nil {
 		flowLog.Errorf("anaylize tag data failed,error:%s", err)
+		mu.Lock()
 		stackedError = err
+		mu.Unlock()
 	}
 
 	close(pointsChannel)
 	flowLog.Debugf("wait for write done")
 	defer flowLog.Debugf("write done")
 	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
 	if stackedError != nil {
 		flowLog.Errorf("write failed for->[%s]", stackedError.Error())
 		result := NewExecuteResult(fmt.Sprintf(errTemplate, stackedError.Error()), innerFail, stackedError)

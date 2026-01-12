@@ -121,7 +121,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["@","&","(",")","=","'","\"",",",";",":","<",">","[","]","{","}","/"," ","\n","\t","\r","\\"]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["@","&","(",")","=","'","\"",",",";",":","<",">","[","]","{","}","/"," ","\n","\t","\r","\\"]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 	}
 

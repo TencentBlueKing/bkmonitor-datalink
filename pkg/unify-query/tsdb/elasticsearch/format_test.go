@@ -679,7 +679,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"origin_field":"nested1","tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "test old es version mapping",
@@ -702,7 +702,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"origin_field":"keyword","tokenize_on_chars":[]},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":[]},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"origin_field":"nested1","tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "analyzer",

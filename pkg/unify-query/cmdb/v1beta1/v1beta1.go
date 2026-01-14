@@ -412,7 +412,10 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	qb := metadata.GetQueryParams(ctx)
 
 	if qb.IsDirectQuery() {
-		vmExpand := query.ToVmExpand(ctx, queryReference)
+		vmExpand, err := query.ToVmExpand(ctx, queryReference)
+		if err != nil {
+			return nil, err
+		}
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{

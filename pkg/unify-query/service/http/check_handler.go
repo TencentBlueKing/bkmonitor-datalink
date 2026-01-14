@@ -167,7 +167,11 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	// vm query
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否查询 vm
-		vmExpand := query.ToVmExpand(ctx, qr)
+		vmExpand, err := query.ToVmExpand(ctx, qr)
+		if err != nil {
+			r.Error("query.ToVmExpand", err)
+			return
+		}
 
 		r.Step("query instance", metadata.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)

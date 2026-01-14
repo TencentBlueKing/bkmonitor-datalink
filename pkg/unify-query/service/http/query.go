@@ -724,7 +724,10 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
-		vmExpand := query.ToVmExpand(ctx, queryRef)
+		vmExpand, err := query.ToVmExpand(ctx, queryRef)
+		if err != nil {
+			return instance, stmt, err
+		}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试

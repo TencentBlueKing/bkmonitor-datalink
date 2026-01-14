@@ -268,7 +268,7 @@ func TestConflict(t *testing.T) {
 			},
 			err: nil,
 		},
-		//gzl：测试用例2 匹配黑名单规则
+		//测试用例2 匹配黑名单规则
 		"default-2": { //[vmrt1,vmrt3,vmrt4,vmrt5]
 			queryRef: metadata.QueryReference{
 				"a": {

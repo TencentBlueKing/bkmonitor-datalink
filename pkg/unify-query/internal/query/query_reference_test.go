@@ -314,7 +314,7 @@ func TestConflict(t *testing.T) {
 					},
 				},
 			},
-			err: fmt.Errorf("vm Cluster conflict"),
+			err: fmt.Errorf("vm cluster %v is blocked by rule %v", []string{"vm_cluster_1", "vm_cluster_3", "vm_cluster_4", "vm_cluster_5"}, []string{"vm_cluster_3", "vm_cluster_4", "vm_cluster_5"}),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -323,7 +323,7 @@ func TestConflict(t *testing.T) {
 			if redisClient == nil {
 				t.Fatalf("redis client is nil")
 			}
-
+			_ = redisClient.ConfigSet(ctx, "save", "").Err() // 测试时临时禁用redis RDB持久化功能
 			// 将黑名单信息序列化并写入 Redis
 			blackListData, err := json.Marshal(blackListInfo)
 			if err != nil {

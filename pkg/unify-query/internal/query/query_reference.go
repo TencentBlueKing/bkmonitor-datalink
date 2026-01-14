@@ -56,10 +56,9 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) (*metadata.VmEx
 	influxdbRouter := influxdb.GetInfluxDBRouter() // 获取InfluxDB Router实例
 
 	// 黑名单信息已通过 influxdb.Service 的订阅机制自动更新，直接使用内存中已缓存的黑名单信息进行检查
-	isConflict := influxdbRouter.IsQueryBlocked(vmClusterNames)
-
-	if isConflict {
-		return nil, fmt.Errorf("vm Cluster conflict")
+	err := influxdbRouter.CheckVmBlocked(vmClusterNames)
+	if err != nil {
+		return nil, err
 	}
 
 	if vmResultTable.Size() == 0 {

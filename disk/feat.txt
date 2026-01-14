@@ -1,0 +1,8 @@
+
+feat/vmCluster_blacklist/#1010158081129999024 未提交
+1.  influxdb_router.go                                       黑名单检查逻辑函数名称修改为：IsQueryBlocked
+2.  pkg/utils/router/influxdb/influxdb.go                    增加"如果key不存在，返回空结构体"的判断逻辑
+3.  pkg/unify-query/influxdb/influxdb_router.go              去掉中间变量forbiddenVmCluster的声明
+4.  pkg/unify-query/influxdb/influxdb_router.go              不使用trace打点
+5.  pkg/unify-query/internal/query/query_reference_test.go   不再使用反射和 unsafe 操作
+

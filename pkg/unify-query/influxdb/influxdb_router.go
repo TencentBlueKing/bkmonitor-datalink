@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -553,13 +554,17 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 	return hostList, nil
 }
 
-// CheckVmRt 实现黑名单检查逻辑
-func (r *Router) IsQueryBlocked(vmClusterNames *set.Set[string]) bool {
+// CheckVmBlocked 实现黑名单检查逻辑
+func (r *Router) CheckVmBlocked(vmClusterNames *set.Set[string]) error {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
-	// 如果没有配置黑名单，则直接返回false
+	// 如果没有输入vmClusterNames，则直接返回nil
+	if vmClusterNames == nil {
+		return nil
+	}
+	// 如果没有配置黑名单，则直接返回nil
 	if len(r.blackListInfo.ForbiddenVmCluster) == 0 {
-		return false
+		return nil
 	}
 	// 遍历该配置下的所有禁止规则
 	for _, ruleTable := range r.blackListInfo.ForbiddenVmCluster {
@@ -576,10 +581,12 @@ func (r *Router) IsQueryBlocked(vmClusterNames *set.Set[string]) bool {
 			}
 		}
 		if allMatched { // 如果某一条规则全匹配，说明违反了规则
-			return true
+			vmClusters := vmClusterNames.ToArray()
+			sort.Strings(vmClusters) // 将set转换为排序后的数组
+			return fmt.Errorf("vm cluster %v is blocked by rule %v", vmClusters, ruleTable)
 		}
 	}
 
 	// 如果所有规则都不全匹配，则不违反规则
-	return false
+	return nil
 }

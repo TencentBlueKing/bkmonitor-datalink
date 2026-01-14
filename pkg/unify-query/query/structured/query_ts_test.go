@@ -1646,7 +1646,8 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			assert.JSONEq(t, tc.refString, string(refJson))
 
-			vmExpand = query.ToVmExpand(ctx, ref)
+			vmExpand, err = query.ToVmExpand(ctx, ref)
+			assert.Nil(t, err)
 			isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()
 
 			assert.Equal(t, tc.isDirectQuery, isDirectQuery)

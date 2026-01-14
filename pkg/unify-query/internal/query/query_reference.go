@@ -15,11 +15,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExpand {
+func ToVmExpand(ctx context.Context, qr metadata.QueryReference) (*metadata.VmExpand, error) {
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	metricFilterCondition := make(map[string]string)
@@ -52,8 +53,17 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 		}
 	}
 
+	influxdbRouter := influxdb.GetInfluxDBRouter() // 获取InfluxDB Router实例
+
+	// 黑名单信息已通过 influxdb.Service 的订阅机制自动更新，直接使用内存中已缓存的黑名单信息进行检查
+	isConflict := influxdbRouter.IsCheckVmBlock(ctx, vmClusterNames)
+
+	if isConflict {
+		return nil, fmt.Errorf("vm Cluster conflict")
+	}
+
 	if vmResultTable.Size() == 0 {
-		return nil
+		return nil, nil
 	}
 
 	vmExpand := &metadata.VmExpand{
@@ -67,5 +77,5 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 		vmExpand.ClusterName = vmClusterNames.First()
 	}
 
-	return vmExpand
+	return vmExpand, nil
 }

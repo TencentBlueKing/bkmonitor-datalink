@@ -323,7 +323,6 @@ func TestConflict(t *testing.T) {
 			if redisClient == nil {
 				t.Fatalf("redis client is nil")
 			}
-			_ = redisClient.ConfigSet(ctx, "save", "").Err() // 测试时临时禁用redis RDB持久化功能
 			// 将黑名单信息序列化并写入 Redis
 			blackListData, err := json.Marshal(blackListInfo)
 			if err != nil {

@@ -423,6 +423,7 @@ func (r *router) GetBlackListInfo(ctx context.Context) (BlackListInfo, error) {
 		return BlackListInfo{}, err
 	}
 	var blackListInfo BlackListInfo
+	//处理json解析错误
 	err = json.Unmarshal([]byte(res), &blackListInfo)
 	if err != nil {
 		return BlackListInfo{}, err

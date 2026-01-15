@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	goRedis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -207,6 +209,22 @@ func TestConflict(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
+
+	// 设置 mock Redis
+	miniRedis, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer miniRedis.Close()
+
+	// 设置 Redis 实例
+	err = redis.SetInstance(ctx, "test", &goRedis.UniversalOptions{
+		Addrs: []string{miniRedis.Addr()},
+	})
+	if err != nil {
+		t.Fatalf("failed to set redis instance: %v", err)
+	}
+	defer redis.Close()
 
 	// 黑名单配置
 	blackListInfo := utilsInfluxdb.BlackListInfo{

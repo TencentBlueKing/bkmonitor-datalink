@@ -10,6 +10,7 @@
 package resourcefilter
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cast"
@@ -56,6 +57,11 @@ type DropAction struct {
 type ReplaceAction struct {
 	Source      string `config:"source" mapstructure:"source"`
 	Destination string `config:"destination" mapstructure:"destination"`
+	// 正则表达式提取配置
+	ExtractPattern string `config:"extract_pattern" mapstructure:"extract_pattern"` // 正则表达式模式
+
+	// 内部字段，不参与配置映射
+	compiledRegex *regexp.Regexp `config:"-" mapstructure:"-"`
 }
 
 type AddAction struct {

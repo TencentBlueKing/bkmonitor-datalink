@@ -10,6 +10,7 @@
 package resourcefilter
 
 import (
+	"regexp"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -212,6 +213,34 @@ func (p *resourceFilter) dropAction(record *define.Record, config Config) {
 	}
 }
 
+// extractByRegex 正则表达式提取（使用action身上的预编译对象）
+func (p *resourceFilter) extractByRegex(value string, action ReplaceAction) string {
+	// 如果还没有预编译，则进行编译
+	if action.compiledRegex == nil && action.ExtractPattern != "" {
+		re, err := regexp.Compile(action.ExtractPattern)
+		if err != nil {
+			logger.Warnf("failed to compile regex pattern '%s': %v", action.ExtractPattern, err)
+			return value
+		}
+		action.compiledRegex = re
+	}
+
+	// 使用预编译的正则表达式进行匹配
+	if action.compiledRegex != nil {
+		matches := action.compiledRegex.FindStringSubmatch(value)
+		if len(matches) > 1 {
+			// 返回第一个捕获组的内容
+			return matches[1]
+		} else if len(matches) == 1 {
+			// 返回整个匹配的内容
+			return matches[0]
+		}
+	}
+
+	// 没有匹配到则使用原始值
+	return value
+}
+
 // replaceAction 替换维度
 func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 	handle := func(rs pcommon.Resource, action ReplaceAction) {
@@ -219,8 +248,14 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 		if !ok {
 			return
 		}
+
 		rs.Attributes().Remove(action.Source)
-		rs.Attributes().Upsert(action.Destination, v)
+		if action.ExtractPattern != "" {
+			extractedValue := p.extractByRegex(v.AsString(), action)
+			rs.Attributes().UpsertString(action.Destination, extractedValue)
+		} else {
+			rs.Attributes().Upsert(action.Destination, v)
+		}
 	}
 
 	switch record.RecordType {

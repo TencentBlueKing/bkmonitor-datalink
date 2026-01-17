@@ -393,6 +393,11 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 	for k, v := range r.endpointSet.endpoints {
 		res += fmt.Sprintf("%s => %s\n", v.protocol, k)
 	}
+	res += fmt.Sprintln("----------------------------------------")
+
+	res += fmt.Sprintln("blackListInfo")
+	s, _ = json.Marshal(r.blackListInfo)
+	res += fmt.Sprintf("%s\n", s)
 
 	return res
 }

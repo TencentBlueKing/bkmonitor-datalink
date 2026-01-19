@@ -33,9 +33,9 @@ const (
 	MsgLengthLimit = 500
 )
 
-func handleESError(ctx context.Context, url string, err error, shardsErrMsg string) error {
-	if err == nil {
-		return err
+func handleESError(ctx context.Context, url string, err error, shardFailures []*elastic.ShardOperationFailedException) error {
+	if err == nil && len(shardFailures) == 0 {
+		return nil
 	}
 
 	if errors.Is(err, io.EOF) {
@@ -60,35 +60,57 @@ func handleESError(ctx context.Context, url string, err error, shardsErrMsg stri
 		msgBuilder.WriteString(" from ")
 		msgBuilder.WriteString(url)
 	}
-	if errors.As(err, &esErr) {
-		indices, reasonMsg, typeMsg := deepest(*esErr)
-		if typeMsg != "" {
+
+	// 处理 ES 错误
+	if err != nil {
+		if errors.As(err, &esErr) {
+			indices, reasonMsg, typeMsg := deepest(*esErr)
+			if typeMsg != "" {
+				msgBuilder.WriteString(": [")
+				msgBuilder.WriteString(typeMsg)
+				msgBuilder.WriteString("] ")
+			}
+			if reasonMsg != "" {
+				msgBuilder.WriteString(reasonMsg[:msgLimit(len(reasonMsg))])
+			}
+			if len(indices) > 0 {
+				msgBuilder.WriteString(" (indices: ")
+				msgBuilder.WriteString(strings.Join(indices, ", "))
+				msgBuilder.WriteString(")")
+			}
+		} else {
 			msgBuilder.WriteString(": [")
-			msgBuilder.WriteString(typeMsg)
+			msgBuilder.WriteString(ThirdPartyErrType)
 			msgBuilder.WriteString("] ")
+			errMsg := err.Error()
+			msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
 		}
-		if reasonMsg != "" {
-			msgBuilder.WriteString(reasonMsg[:msgLimit(len(reasonMsg))])
-		}
-
-		if len(indices) > 0 {
-			msgBuilder.WriteString(" (indices: ")
-			msgBuilder.WriteString(strings.Join(indices, ", "))
-			msgBuilder.WriteString(")")
-		}
-
-	} else {
-		msgBuilder.WriteString(": [")
-		msgBuilder.WriteString(ThirdPartyErrType)
-		msgBuilder.WriteString("] ")
-		errMsg := err.Error()
-		msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
 	}
 
-	// 附加 shard failures 信息
-	if shardsErrMsg != "" {
-		msgBuilder.WriteString("; shard failures: ")
-		msgBuilder.WriteString(shardsErrMsg)
+	// 处理 shard failures
+	if len(shardFailures) > 0 {
+		indices, reasonMsg, typeMsg := extractShardFailuresInfo(shardFailures)
+		if reasonMsg != "" || typeMsg != "" {
+			if err != nil {
+				msgBuilder.WriteString("; ")
+			} else {
+				msgBuilder.WriteString(": ")
+			}
+			msgBuilder.WriteString("shard failures: ")
+			if typeMsg != "" {
+				msgBuilder.WriteString("[")
+				msgBuilder.WriteString(typeMsg)
+				msgBuilder.WriteString("] ")
+			}
+			if reasonMsg != "" {
+				msgBuilder.WriteString(reasonMsg[:msgLimit(len(reasonMsg))])
+			}
+			if len(indices) > 0 {
+				msgBuilder.WriteString(" (indices: ")
+				msgBuilder.WriteString(strings.Join(indices, ", "))
+				msgBuilder.WriteString(")")
+			}
+		}
 	}
 
 	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
@@ -171,32 +193,4 @@ func extractShardFailuresInfo(failures []*elastic.ShardOperationFailedException)
 		}
 	}
 	return
-}
-
-func handleEsShardsErr(failures []*elastic.ShardOperationFailedException) string {
-	if len(failures) == 0 {
-		return ""
-	}
-
-	indices, reasonMsg, typeMsg := extractShardFailuresInfo(failures)
-	if reasonMsg == "" && typeMsg == "" {
-		return ""
-	}
-
-	var msgBuilder strings.Builder
-	if typeMsg != "" {
-		msgBuilder.WriteString("[")
-		msgBuilder.WriteString(typeMsg)
-		msgBuilder.WriteString("] ")
-	}
-	if reasonMsg != "" {
-		msgLimit := min(len(reasonMsg), MsgLengthLimit)
-		msgBuilder.WriteString(reasonMsg[:msgLimit])
-	}
-	if len(indices) > 0 {
-		msgBuilder.WriteString(" (indices: ")
-		msgBuilder.WriteString(strings.Join(indices, ", "))
-		msgBuilder.WriteString(")")
-	}
-	return msgBuilder.String()
 }

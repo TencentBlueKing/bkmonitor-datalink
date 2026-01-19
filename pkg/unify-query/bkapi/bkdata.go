@@ -39,6 +39,9 @@ type BkDataAPI struct {
 
 	uriPath string
 
+	// directAddress 直接使用的完整地址，如果设置则优先使用，不再通过 bk_api.address + bk_data.uri_path 组装
+	directAddress string
+
 	authConfig map[string]string
 
 	clusterMap map[string]string
@@ -74,6 +77,52 @@ func GetBkDataAPI() *BkDataAPI {
 	return defaultBkDataAPI
 }
 
+// GetBkDataAPIWithAddress 创建带自定义直接地址的 BkDataAPI 实例
+// 如果 directAddress 不为空，将直接使用该地址，不再通过 bk_api.address + bk_data.uri_path 组装
+// 如果 directAddress 为空，则使用默认的 GetBkDataAPI() 实例
+func GetBkDataAPIWithAddress(directAddress string) *BkDataAPI {
+	// 如果地址为空，返回默认实例
+	if directAddress == "" {
+		return GetBkDataAPI()
+	}
+
+	// 确保默认实例已初始化（用于获取配置）
+	onceBkDataAPI.Do(func() {
+		clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
+		clusterMap := make(map[string]string)
+
+		for name, su := range clusterSpaceUid {
+			for _, s := range su {
+				if s != "" && name != "" {
+					clusterMap[s] = name
+				}
+			}
+		}
+
+		bkAPI := GetBkAPI()
+		defaultBkDataAPI = &BkDataAPI{
+			bkAPI:   bkAPI,
+			uriPath: viper.GetString(BkDataUriPathConfigPath),
+			authConfig: map[string]string{
+				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
+				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
+				BkUserNameKey:                 AdminUserName,
+				BkAppCodeKey:                  bkAPI.GetCode(),
+			},
+			clusterMap: clusterMap,
+		}
+	})
+
+	// 创建新实例，使用直接地址
+	return &BkDataAPI{
+		bkAPI:         defaultBkDataAPI.bkAPI,
+		uriPath:       defaultBkDataAPI.uriPath,
+		directAddress: directAddress,
+		authConfig:    defaultBkDataAPI.authConfig,
+		clusterMap:    defaultBkDataAPI.clusterMap,
+	}
+}
+
 func (i *BkDataAPI) GetDataAuth() map[string]string {
 	return i.authConfig
 }
@@ -89,11 +138,19 @@ func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
 }
 
 func (i *BkDataAPI) url(path string) string {
-	url := i.bkAPI.Url(i.uriPath)
-	if path != "" {
-		url = fmt.Sprintf("%s/%s/", url, path)
+	var baseUrl string
+	// 如果设置了直接地址，优先使用直接地址
+	if i.directAddress != "" {
+		baseUrl = i.directAddress
+	} else {
+		// 否则使用原来的组装方式：bk_api.address + bk_data.uri_path
+		baseUrl = i.bkAPI.Url(i.uriPath)
 	}
-	return url
+
+	if path != "" {
+		baseUrl = fmt.Sprintf("%s/%s/", baseUrl, path)
+	}
+	return baseUrl
 }
 
 func (i *BkDataAPI) QueryUrlForES(spaceUid string) string {

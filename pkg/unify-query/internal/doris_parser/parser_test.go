@@ -1032,3 +1032,129 @@ func TestOffsetAndLimitMove(t *testing.T) {
 		})
 	}
 }
+
+func TestOffsetGreaterThanOrEqualLimit(t *testing.T) {
+	mock.Init()
+	ctx := context.Background()
+
+	testCases := []struct {
+		name     string
+		q        string
+		expected string
+		limit    int
+		offset   int
+	}{
+		{
+			name:     "OFFSET等于LIMIT-无外层分页",
+			q:        `SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 100`,
+			expected: `SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 100`,
+		},
+		{
+			name:     "OFFSET大于LIMIT-无外层分页",
+			q:        `SELECT * ORDER BY time DESC LIMIT 50 OFFSET 100`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 50 OFFSET 100`,
+		},
+		{
+			name:     "正常分页-OFFSET小于LIMIT",
+			q:        `SELECT * ORDER BY time DESC LIMIT 100 OFFSET 50`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 100 OFFSET 50`,
+		},
+		{
+			name:     "无OFFSET的正常查询",
+			q:        `SELECT * ORDER BY time DESC LIMIT 100`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 100`,
+		},
+		{
+			name:   "外层分页-OFFSET超出范围",
+			q:      `SELECT * FROM t LIMIT 10`,
+			limit:  50,
+			offset: 500, // 外层 offset 超过内层 limit
+			// 应该返回 LIMIT 0，因为外层分页超出范围
+			expected: `SELECT * FROM t LIMIT 0`,
+		},
+		{
+			name:   "外层分页-正常范围",
+			q:      `SELECT * FROM t LIMIT 100 OFFSET 10`,
+			limit:  50,
+			offset: 5,
+			// 应该返回 LIMIT 50 OFFSET 15 (10+5)
+			expected: `SELECT * FROM t LIMIT 50 OFFSET 15`,
+		},
+	}
+
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			opt := &Option{
+				Limit:  c.limit,
+				Offset: c.offset,
+			}
+			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)
+			assert.Nil(t, err)
+			assert.Equal(t, c.expected, sql)
+		})
+	}
+}
+
+func TestLimitNodeGetOffsetAndLimit(t *testing.T) {
+	testCases := []struct {
+		name           string
+		node           LimitNode
+		expectedOffset string
+		expectedLimit  string
+	}{
+		{
+			name: "SQL带OFFSET>=LIMIT且无外层分页-应保持原样",
+			node: LimitNode{
+				offset:       100,
+				limit:        100,
+				ParentOffset: 0,
+				ParentLimit:  0,
+			},
+			expectedOffset: "100",
+			expectedLimit:  "100",
+		},
+		{
+			name: "SQL带OFFSET>LIMIT且无外层分页-应保持原样",
+			node: LimitNode{
+				offset:       200,
+				limit:        100,
+				ParentOffset: 0,
+				ParentLimit:  0,
+			},
+			expectedOffset: "200",
+			expectedLimit:  "100",
+		},
+		{
+			name: "有外层分页且超出范围-应返回LIMIT0",
+			node: LimitNode{
+				offset:       0,
+				limit:        10,
+				ParentOffset: 500,
+				ParentLimit:  50,
+			},
+			expectedOffset: "",
+			expectedLimit:  "0",
+		},
+		{
+			name: "有外层分页但在范围内-正常返回",
+			node: LimitNode{
+				offset:       10,
+				limit:        100,
+				ParentOffset: 5,
+				ParentLimit:  50,
+			},
+			expectedOffset: "15",
+			expectedLimit:  "50",
+		},
+	}
+
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			offset, limit := c.node.getOffsetAndLimit()
+			assert.Equal(t, c.expectedOffset, offset)
+			assert.Equal(t, c.expectedLimit, limit)
+		})
+	}
+}

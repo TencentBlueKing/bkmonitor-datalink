@@ -10,7 +10,6 @@
 package resourcefilter
 
 import (
-	"regexp"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -215,17 +214,6 @@ func (p *resourceFilter) dropAction(record *define.Record, config Config) {
 
 // extractByRegex 正则表达式提取（使用action身上的预编译对象）
 func (p *resourceFilter) extractByRegex(value string, action ReplaceAction) string {
-	// 如果还没有预编译，则进行编译
-	if action.compiledRegex == nil && action.ExtractPattern != "" {
-		re, err := regexp.Compile(action.ExtractPattern)
-		if err != nil {
-			logger.Warnf("failed to compile regex pattern '%s': %v", action.ExtractPattern, err)
-			return value
-		}
-		action.compiledRegex = re
-	}
-
-	// 使用预编译的正则表达式进行匹配
 	if action.compiledRegex != nil {
 		matches := action.compiledRegex.FindStringSubmatch(value)
 		if len(matches) > 1 {

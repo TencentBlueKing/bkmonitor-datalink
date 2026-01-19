@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Config struct {
@@ -48,6 +49,17 @@ func (c *Config) Clean() {
 		keys[i] = fields.TrimResourcePrefix(keys[i]).String()
 	}
 	c.FromCache.keys = keys
+
+	for i := 0; i < len(c.Replace); i++ {
+		if c.Replace[i].ExtractPattern != "" {
+			re, err := regexp.Compile(c.Replace[i].ExtractPattern)
+			if err != nil {
+				logger.Warnf("failed to compile regex pattern '%s': %v", c.Replace[i].ExtractPattern, err)
+			} else {
+				c.Replace[i].compiledRegex = re
+			}
+		}
+	}
 }
 
 type DropAction struct {

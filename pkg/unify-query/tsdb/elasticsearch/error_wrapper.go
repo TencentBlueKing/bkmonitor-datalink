@@ -33,7 +33,7 @@ const (
 	MsgLengthLimit = 500
 )
 
-func handleESError(ctx context.Context, url string, err error) error {
+func handleESError(ctx context.Context, url string, err error, shardFailures []*elastic.ShardOperationFailedException) error {
 	if err == nil {
 		return err
 	}
@@ -85,6 +85,27 @@ func handleESError(ctx context.Context, url string, err error) error {
 		msgBuilder.WriteString(errMsg[:msgLimit(len(errMsg))])
 	}
 
+	// 附加 shard failures 信息
+	if len(shardFailures) > 0 {
+		shardIndices, shardReason, shardType := extractShardFailuresInfo(shardFailures)
+		if shardReason != "" || shardType != "" {
+			msgBuilder.WriteString("; shard failures: ")
+			if shardType != "" {
+				msgBuilder.WriteString("[")
+				msgBuilder.WriteString(shardType)
+				msgBuilder.WriteString("] ")
+			}
+			if shardReason != "" {
+				msgBuilder.WriteString(shardReason[:msgLimit(len(shardReason))])
+			}
+			if len(shardIndices) > 0 {
+				msgBuilder.WriteString(" (indices: ")
+				msgBuilder.WriteString(strings.Join(shardIndices, ", "))
+				msgBuilder.WriteString(")")
+			}
+		}
+	}
+
 	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
 }
 
@@ -100,6 +121,9 @@ func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg s
 	}
 	if reasonMsg == "" && typeMsg == "" && len(esErr.Details.RootCause) > 0 {
 		reasonMsg, typeMsg = extractFromErrorDetails(esErr.Details.RootCause[0])
+	}
+	if reasonMsg == "" && typeMsg == "" {
+		reasonMsg, typeMsg = esErr.Details.Reason, esErr.Details.Type
 	}
 	return
 }
@@ -144,4 +168,22 @@ func extractIndices(failedShards []map[string]any) []string {
 		}
 	}
 	return indices
+}
+
+// extractShardFailuresInfo 从 shard failures 中提取错误信息
+func extractShardFailuresInfo(failures []*elastic.ShardOperationFailedException) (indices []string, reasonMsg string, typeMsg string) {
+	if len(failures) == 0 {
+		return
+	}
+
+	for _, failure := range failures {
+		if failure.Index != "" {
+			indices = append(indices, failure.Index)
+		}
+		// 只从第一个有效的 failure 提取错误原因
+		if reasonMsg == "" && failure.Reason != nil {
+			reasonMsg, typeMsg = extractReasonAndType(failure.Reason, true)
+		}
+	}
+	return
 }

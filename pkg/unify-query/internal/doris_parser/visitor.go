@@ -226,8 +226,9 @@ type LimitNode struct {
 func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	offset := v.offset + v.ParentOffset
 
+	// 只有当存在外层分页控制时，才检查是否超出范围
 	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
-	if v.limit > 0 && offset >= v.limit {
+	if (v.ParentOffset > 0 || v.ParentLimit > 0) && v.limit > 0 && offset >= v.limit {
 		return "", "0"
 	}
 

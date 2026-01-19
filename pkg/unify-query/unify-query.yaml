@@ -84,7 +84,7 @@ metadata:
     raw_suffix: "_raw"
     cmdb_suffix: "_cmdb"
 bk_api:
-  address: http://127.0.0.1:12001 # https://bkapi.sg.crosgame.com
+  address: http://127.0.0.1:12001
   code: bk_code
   secret: bk_secret
 bk_data:

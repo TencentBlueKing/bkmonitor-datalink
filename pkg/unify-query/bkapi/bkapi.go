@@ -53,24 +53,6 @@ func GetBkAPI() *BkAPI {
 	return defaultBkAPI
 }
 
-//// GetBkAPIWithAddress 创建带自定义地址的 BkAPI 实例
-//// 如果 address 为空，则使用配置中的地址
-//func GetBkAPIWithAddress(address string) *BkAPI {
-//	apiAddress := address
-//	if apiAddress == "" {
-//		apiAddress = viper.GetString(BkAPIAddressConfigPath)
-//	}
-//
-//	return &BkAPI{
-//		address: apiAddress,
-//		authConfig: map[string]string{
-//			BkAppCodeKey:  viper.GetString(BkAPICodeConfigPath),
-//			BkSecretKey:   viper.GetString(BkAPISecretConfigPath),
-//			BkUserNameKey: AdminUserName,
-//		},
-//	}
-//}
-
 func (i *BkAPI) GetCode() string {
 	return i.authConfig[BkAppCodeKey]
 }

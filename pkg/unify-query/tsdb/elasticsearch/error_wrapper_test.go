@@ -24,10 +24,10 @@ func Test_handleESError(t *testing.T) {
 	tests := []struct {
 		name string
 
-		errMsg        string
-		err           error
-		esAddr        string
-		shardFailures []*elastic.ShardOperationFailedException
+		errMsg       string
+		err          error
+		esAddr       string
+		shardsErrMsg string
 
 		expectedErrMsg string
 	}{
@@ -81,18 +81,9 @@ func Test_handleESError(t *testing.T) {
 		},
 		// shard failures 附加到 error 的测试用例
 		{
-			name:   "should append shard failures info to error message",
-			errMsg: `{"error":{"type":"search_phase_execution_exception","reason":"all shards failed"},"status":500}`,
-			shardFailures: []*elastic.ShardOperationFailedException{
-				{
-					Shard: 0,
-					Index: "v2_space_4220437_bklog_bcs_k8s_41672_ai_log_std_20260109_0",
-					Reason: map[string]any{
-						"type":   "exception",
-						"reason": "Trying to create too many scroll contexts. Must be less than or equal to: [500]. This limit can be set by changing the [search.max_open_scroll_context] setting.",
-					},
-				},
-			},
+			name:           "should append shard failures info to error message",
+			errMsg:         `{"error":{"type":"search_phase_execution_exception","reason":"all shards failed"},"status":500}`,
+			shardsErrMsg:   "[exception] Trying to create too many scroll contexts. Must be less than or equal to: [500]. This limit can be set by changing the [search.max_open_scroll_context] setting. (indices: v2_space_4220437_bklog_bcs_k8s_41672_ai_log_std_20260109_0)",
 			expectedErrMsg: "es 查询失败: Elasticsearch error: [search_phase_execution_exception] all shards failed; shard failures: [exception] Trying to create too many scroll contexts. Must be less than or equal to: [500]. This limit can be set by changing the [search.max_open_scroll_context] setting. (indices: v2_space_4220437_bklog_bcs_k8s_41672_ai_log_std_20260109_0)",
 		},
 	}
@@ -104,12 +95,12 @@ func Test_handleESError(t *testing.T) {
 				err := json.Unmarshal([]byte(tt.errMsg), &esErr)
 				if err != nil {
 					thirdPartyErr := errors.New(tt.errMsg)
-					resultErr = handleESError(t.Context(), tt.esAddr, thirdPartyErr, tt.shardFailures)
+					resultErr = handleESError(t.Context(), tt.esAddr, thirdPartyErr, tt.shardsErrMsg)
 				} else {
-					resultErr = handleESError(t.Context(), tt.esAddr, &esErr, tt.shardFailures)
+					resultErr = handleESError(t.Context(), tt.esAddr, &esErr, tt.shardsErrMsg)
 				}
 			} else if tt.err != nil {
-				resultErr = handleESError(t.Context(), tt.esAddr, tt.err, tt.shardFailures)
+				resultErr = handleESError(t.Context(), tt.esAddr, tt.err, tt.shardsErrMsg)
 			}
 			if tt.expectedErrMsg == "" {
 				assert.NoError(t, resultErr)

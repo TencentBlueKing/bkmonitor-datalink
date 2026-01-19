@@ -33,7 +33,7 @@ const (
 	MsgLengthLimit = 500
 )
 
-func handleESError(ctx context.Context, url string, err error, shardFailures []*elastic.ShardOperationFailedException) error {
+func handleESError(ctx context.Context, url string, err error, shardsErrMsg string) error {
 	if err == nil {
 		return err
 	}
@@ -86,24 +86,9 @@ func handleESError(ctx context.Context, url string, err error, shardFailures []*
 	}
 
 	// 附加 shard failures 信息
-	if len(shardFailures) > 0 {
-		shardIndices, shardReason, shardType := extractShardFailuresInfo(shardFailures)
-		if shardReason != "" || shardType != "" {
-			msgBuilder.WriteString("; shard failures: ")
-			if shardType != "" {
-				msgBuilder.WriteString("[")
-				msgBuilder.WriteString(shardType)
-				msgBuilder.WriteString("] ")
-			}
-			if shardReason != "" {
-				msgBuilder.WriteString(shardReason[:msgLimit(len(shardReason))])
-			}
-			if len(shardIndices) > 0 {
-				msgBuilder.WriteString(" (indices: ")
-				msgBuilder.WriteString(strings.Join(shardIndices, ", "))
-				msgBuilder.WriteString(")")
-			}
-		}
+	if shardsErrMsg != "" {
+		msgBuilder.WriteString("; shard failures: ")
+		msgBuilder.WriteString(shardsErrMsg)
 	}
 
 	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
@@ -186,4 +171,32 @@ func extractShardFailuresInfo(failures []*elastic.ShardOperationFailedException)
 		}
 	}
 	return
+}
+
+func handleEsShardsErr(failures []*elastic.ShardOperationFailedException) string {
+	if len(failures) == 0 {
+		return ""
+	}
+
+	indices, reasonMsg, typeMsg := extractShardFailuresInfo(failures)
+	if reasonMsg == "" && typeMsg == "" {
+		return ""
+	}
+
+	var msgBuilder strings.Builder
+	if typeMsg != "" {
+		msgBuilder.WriteString("[")
+		msgBuilder.WriteString(typeMsg)
+		msgBuilder.WriteString("] ")
+	}
+	if reasonMsg != "" {
+		msgLimit := min(len(reasonMsg), MsgLengthLimit)
+		msgBuilder.WriteString(reasonMsg[:msgLimit])
+	}
+	if len(indices) > 0 {
+		msgBuilder.WriteString(" (indices: ")
+		msgBuilder.WriteString(strings.Join(indices, ", "))
+		msgBuilder.WriteString(")")
+	}
+	return msgBuilder.String()
 }

@@ -383,13 +383,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			Details: res.Error,
 		}
 	}
-	// 获取 shard failures 信息（用于附加到错误信息中）
-	var shardFailures []*elastic.ShardOperationFailedException
+	// 获取 shard failures 信息（用于附加到错误信息中和记录到 span）
+	var shardsErrMsg string
 	if res.Shards != nil && len(res.Shards.Failures) > 0 {
-		shardFailures = res.Shards.Failures
+		shardsErrMsg = handleEsShardsErr(res.Shards.Failures)
+		if shardsErrMsg != "" {
+			span.Set("shards-error", shardsErrMsg)
+		}
 	}
 	if err != nil {
-		err = handleESError(ctx, qo.conn.Address, err, shardFailures)
+		err = handleESError(ctx, qo.conn.Address, err, shardsErrMsg)
 		return nil, err
 	}
 	if res.Hits != nil {

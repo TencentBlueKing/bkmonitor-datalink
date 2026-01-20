@@ -13,10 +13,20 @@ import (
 	"context"
 )
 
+// CMDB v1 版本接口，返回路径为 []string
 type CMDB interface {
 	// QueryResourceMatcher 获取目标的关键维度和值（instant 查询）
 	QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, ts string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, Matchers, error)
 
 	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询）
 	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, []MatchersWithTimestamp, error)
+}
+
+// CMDBv2 v2 版本接口，返回完整的路径信息 []PathV2
+type CMDBv2 interface {
+	// QueryResourceMatcher 获取目标的关键维度和值（instant 查询）
+	QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, ts string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []PathV2, Resource, Matchers, error)
+
+	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询）
+	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []PathV2, Resource, []MatchersWithTimestamp, error)
 }

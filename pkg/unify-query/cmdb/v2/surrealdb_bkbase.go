@@ -165,7 +165,6 @@ func (c *BKBaseSurrealDBClient) Execute(ctx context.Context, sql string, start, 
 		Body:    requestBody,
 		Timeout: c.config.Timeout,
 	}, &resp)
-
 	if err != nil {
 		return nil, fmt.Errorf("bkbase request failed: %w", err)
 	}

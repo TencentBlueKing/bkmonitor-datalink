@@ -21,11 +21,11 @@ import (
 // E2ETestCase 端到端测试用例
 // 完整测试流程：QueryRequest → SurrealQL → MockResponse → []*LivenessGraph
 type E2ETestCase struct {
-	Name           string             // 测试用例名称
-	QueryRequest   *QueryRequest      // 输入：查询请求
-	ExpectedSQL    string             // 期望：生成的 SurrealQL（完整匹配）
-	MockResponse   []map[string]any   // Mock：SurrealDB 返回的响应
-	ExpectedGraphs []*LivenessGraph   // 期望：解析后的 LivenessGraph 列表（每个起始实体一个图）
+	Name           string           // 测试用例名称
+	QueryRequest   *QueryRequest    // 输入：查询请求
+	ExpectedSQL    string           // 期望：生成的 SurrealQL（完整匹配）
+	MockResponse   []map[string]any // Mock：SurrealDB 返回的响应
+	ExpectedGraphs []*LivenessGraph // 期望：解析后的 LivenessGraph 列表（每个起始实体一个图）
 }
 
 // 测试用例 1: Node 查询（单跳静态关系）- 关系数量可控

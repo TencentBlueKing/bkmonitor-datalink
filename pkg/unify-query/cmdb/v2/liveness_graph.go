@@ -95,15 +95,6 @@ func (g *LivenessGraph) GetOutEdges(resourceID string) []*EdgeLiveness {
 	return edges
 }
 
-func (g *LivenessGraph) ExtractTargetMatchers(targetType ResourceType) cmdb.Matchers {
-	matchersMap := g.ExtractTargetMatchersWithID(targetType)
-	result := make(cmdb.Matchers, 0, len(matchersMap))
-	for _, matcher := range matchersMap {
-		result = append(result, matcher)
-	}
-	return result
-}
-
 func (g *LivenessGraph) ExtractTargetMatchersWithID(targetType ResourceType) map[string]cmdb.Matcher {
 	result := make(map[string]cmdb.Matcher)
 	if g == nil || len(g.Nodes) == 0 {

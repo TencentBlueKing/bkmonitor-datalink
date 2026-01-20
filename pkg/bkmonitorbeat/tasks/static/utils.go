@@ -222,6 +222,8 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 
 	whiteList := make(map[string]struct{})
 	if cfg != nil && len(cfg.VirtualIfaceWhitelist) > 0 {
+		logger.Debug("VirtualIfaceWhitelist: %v", cfg.VirtualIfaceWhitelist)
+
 		for _, iface := range cfg.VirtualIfaceWhitelist {
 			whiteList[iface] = struct{}{}
 		}
@@ -234,12 +236,18 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 			if _, ok := whiteList[inter.Name]; !ok {
 				continue
 			}
+
+			logger.Debug("Hit whitelist: %s", inter.Name)
 		}
 
 		// 排除黑名单网卡
 		if cfg != nil && len(cfg.VirtualIfaceBlacklist) > 0 {
+			logger.Debug("VirtualIfaceBlacklist: %v", cfg.VirtualIfaceBlacklist)
+
 			for _, pattern := range cfg.VirtualIfaceBlacklist {
 				if strings.Contains(inter.Name, pattern) {
+					logger.Debug("Hit blacklist: %s", inter.Name)
+
 					continue
 				}
 			}

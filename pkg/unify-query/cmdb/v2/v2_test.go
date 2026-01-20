@@ -535,3 +535,500 @@ func matchersEqual(a, b cmdb.Matcher) bool {
 	}
 	return true
 }
+
+func TestBuildTargetMatchersTimeSeries(t *testing.T) {
+	testCases := []struct {
+		Name       string
+		Graphs     []*LivenessGraph
+		TargetType ResourceType
+		Start      int64
+		End        int64
+		StepMs     int64
+		Expected   []cmdb.MatchersWithTimestamp
+	}{
+		{
+			Name:       "EmptyGraphs",
+			Graphs:     nil,
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        100000,
+			StepMs:     50000,
+			Expected:   nil,
+		},
+		{
+			Name:       "EmptyGraphsList",
+			Graphs:     []*LivenessGraph{},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        100000,
+			StepMs:     50000,
+			Expected:   nil,
+		},
+		{
+			Name: "NoTargetTypeNodes",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"node:node-1": {
+							ResourceID:   "node:node-1",
+							ResourceType: ResourceTypeNode,
+							Labels:       map[string]string{"node": "node-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        100000,
+			StepMs:     50000,
+			Expected:   nil,
+		},
+		{
+			Name: "SingleNodeAlwaysActive",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1", "namespace": "default"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 300000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1", "namespace": "default"}}},
+				{Timestamp: 100000, Matchers: cmdb.Matchers{{"pod": "nginx-1", "namespace": "default"}}},
+				{Timestamp: 200000, Matchers: cmdb.Matchers{{"pod": "nginx-1", "namespace": "default"}}},
+			},
+		},
+		{
+			Name: "SingleNodeNeverActive",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 500000, End: 600000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected:   nil,
+		},
+		{
+			Name: "SingleNodePartialActive_StartOnly",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 50000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "SingleNodePartialActive_EndOnly",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 150000, End: 250000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 200000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "MultiplePeriods_SameNode",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods: []*VisiblePeriod{
+								{Start: 0, End: 50000},
+								{Start: 150000, End: 250000},
+							},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 200000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "MultipleNodes_DifferentActiveRanges",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 100000}},
+						},
+						"pod:nginx-2": {
+							ResourceID:   "pod:nginx-2",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-2"},
+							RawPeriods:   []*VisiblePeriod{{Start: 100000, End: 200000}},
+						},
+						"pod:nginx-3": {
+							ResourceID:   "pod:nginx-3",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-3"},
+							RawPeriods:   []*VisiblePeriod{{Start: 200000, End: 300000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        300000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 100000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}, {"pod": "nginx-2"}}},
+				{Timestamp: 200000, Matchers: cmdb.Matchers{{"pod": "nginx-2"}, {"pod": "nginx-3"}}},
+				{Timestamp: 300000, Matchers: cmdb.Matchers{{"pod": "nginx-3"}}},
+			},
+		},
+		{
+			Name: "MultipleGraphs_SameNode",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 100000}},
+						},
+					},
+				},
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 200000, End: 300000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        300000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 100000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 200000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 300000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "BoundaryCondition_ExactMatch",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 100000, End: 100000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        200000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 100000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "SingleTimestamp",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 100000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      50000,
+			End:        50000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 50000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "MixedResourceTypes",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200000}},
+						},
+						"node:node-1": {
+							ResourceID:   "node:node-1",
+							ResourceType: ResourceTypeNode,
+							Labels:       map[string]string{"node": "node-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200000}},
+						},
+						"service:svc-1": {
+							ResourceID:   "service:svc-1",
+							ResourceType: ResourceTypeService,
+							Labels:       map[string]string{"service": "svc-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        100000,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 100000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+		{
+			Name: "EmptyLabels",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 100000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        0,
+			StepMs:     100000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{}}},
+			},
+		},
+		{
+			Name: "EmptyRawPeriods",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   nil,
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        100000,
+			StepMs:     100000,
+			Expected:   nil,
+		},
+		{
+			Name: "LargeStep_SkipTimestamps",
+			Graphs: []*LivenessGraph{
+				{
+					Nodes: map[string]*NodeLiveness{
+						"pod:nginx-1": {
+							ResourceID:   "pod:nginx-1",
+							ResourceType: ResourceTypePod,
+							Labels:       map[string]string{"pod": "nginx-1"},
+							RawPeriods:   []*VisiblePeriod{{Start: 0, End: 1000000}},
+						},
+					},
+				},
+			},
+			TargetType: ResourceTypePod,
+			Start:      0,
+			End:        500000,
+			StepMs:     500000,
+			Expected: []cmdb.MatchersWithTimestamp{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+				{Timestamp: 500000, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			result := buildTargetMatchersTimeSeries(tc.Graphs, tc.TargetType, tc.Start, tc.End, tc.StepMs)
+
+			if tc.Expected == nil {
+				assert.Nil(t, result, "expected nil result")
+				return
+			}
+
+			require.NotNil(t, result, "result should not be nil")
+			require.Equal(t, len(tc.Expected), len(result), "time series length mismatch")
+
+			for i, expected := range tc.Expected {
+				actual := result[i]
+				assert.Equal(t, expected.Timestamp, actual.Timestamp, "timestamp mismatch at index %d", i)
+				require.Equal(t, len(expected.Matchers), len(actual.Matchers),
+					"matchers count mismatch at timestamp %d", expected.Timestamp)
+
+				for _, expectedMatcher := range expected.Matchers {
+					found := false
+					for _, actualMatcher := range actual.Matchers {
+						if matchersEqual(expectedMatcher, actualMatcher) {
+							found = true
+							break
+						}
+					}
+					assert.True(t, found, "expected matcher not found at timestamp %d: %v",
+						expected.Timestamp, expectedMatcher)
+				}
+			}
+		})
+	}
+}
+
+func TestIsActiveAt(t *testing.T) {
+	testCases := []struct {
+		Name     string
+		Periods  []*VisiblePeriod
+		Ts       int64
+		Expected bool
+	}{
+		{
+			Name:     "NilPeriods",
+			Periods:  nil,
+			Ts:       100,
+			Expected: false,
+		},
+		{
+			Name:     "EmptyPeriods",
+			Periods:  []*VisiblePeriod{},
+			Ts:       100,
+			Expected: false,
+		},
+		{
+			Name:     "WithinSinglePeriod",
+			Periods:  []*VisiblePeriod{{Start: 0, End: 200}},
+			Ts:       100,
+			Expected: true,
+		},
+		{
+			Name:     "AtPeriodStart",
+			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
+			Ts:       100,
+			Expected: true,
+		},
+		{
+			Name:     "AtPeriodEnd",
+			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
+			Ts:       200,
+			Expected: true,
+		},
+		{
+			Name:     "BeforePeriod",
+			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
+			Ts:       50,
+			Expected: false,
+		},
+		{
+			Name:     "AfterPeriod",
+			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
+			Ts:       250,
+			Expected: false,
+		},
+		{
+			Name: "WithinSecondPeriod",
+			Periods: []*VisiblePeriod{
+				{Start: 0, End: 100},
+				{Start: 200, End: 300},
+			},
+			Ts:       250,
+			Expected: true,
+		},
+		{
+			Name: "BetweenPeriods",
+			Periods: []*VisiblePeriod{
+				{Start: 0, End: 100},
+				{Start: 200, End: 300},
+			},
+			Ts:       150,
+			Expected: false,
+		},
+		{
+			Name:     "ExactPointPeriod",
+			Periods:  []*VisiblePeriod{{Start: 100, End: 100}},
+			Ts:       100,
+			Expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			result := isActiveAt(tc.Periods, tc.Ts)
+			assert.Equal(t, tc.Expected, result)
+		})
+	}
+}

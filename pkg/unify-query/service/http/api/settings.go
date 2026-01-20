@@ -10,13 +10,17 @@
 package api
 
 const (
-	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
-	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
-	RelationMaxRoutingConfigPath         = "api.relation.max_routing"
+	RelationMultiResourceConfigPath        = "api.relation.multi_resource"
+	RelationMultiResourceRangeConfigPath   = "api.relation.mutil_resource_range"
+	RelationMaxRoutingConfigPath           = "api.relation.max_routing"
+	RelationMultiResourceV2ConfigPath      = "api.relation.multi_resource_v2"
+	RelationMultiResourceRangeV2ConfigPath = "api.relation.multi_resource_range_v2"
 )
 
 var (
-	RelationMultiResource      string
-	RelationMultiResourceRange string
-	RelationMaxRouting         int
+	RelationMultiResource        string
+	RelationMultiResourceRange   string
+	RelationMaxRouting           int
+	RelationMultiResourceV2      string
+	RelationMultiResourceRangeV2 string
 )

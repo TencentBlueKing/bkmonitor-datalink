@@ -16,4 +16,6 @@ import (
 func RegisterRelation(registerHandler *endpoint.RegisterHandler) {
 	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
 	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
+	registerHandler.Register("POST", RelationMultiResourceV2, HandlerAPIRelationMultiResourceV2)
+	registerHandler.Register("POST", RelationMultiResourceRangeV2, HandlerAPIRelationMultiResourceRangeV2)
 }

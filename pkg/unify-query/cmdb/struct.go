@@ -158,3 +158,37 @@ type RelationMultiResourceRangeResponse struct {
 	TraceID string                                   `json:"trace_id"`
 	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }
+
+type RelationMultiResourceResponseDataV2 struct {
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList Matchers `json:"target_list"`
+	Path       []PathV2 `json:"path"`
+	Message    string   `json:"message"`
+}
+
+type RelationMultiResourceResponseV2 struct {
+	TraceID string                                `json:"trace_id"`
+	Data    []RelationMultiResourceResponseDataV2 `json:"data"`
+}
+
+type RelationMultiResourceRangeResponseDataV2 struct {
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+	Path       []PathV2                `json:"path"`
+	Message    string                  `json:"message"`
+}
+
+type RelationMultiResourceRangeResponseV2 struct {
+	TraceID string                                     `json:"trace_id"`
+	Data    []RelationMultiResourceRangeResponseDataV2 `json:"data"`
+}

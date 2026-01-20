@@ -10,9 +10,9 @@
 package v2
 
 const (
-	MaxHopsConfigPath            = "cmdb.v2.max_hops"
-	MaxAllowedHopsConfigPath     = "cmdb.v2.max_allowed_hops"
-	DefaultLimitConfigPath       = "cmdb.v2.default_limit"
+	MaxHopsConfigPath              = "cmdb.v2.max_hops"
+	MaxAllowedHopsConfigPath       = "cmdb.v2.max_allowed_hops"
+	DefaultLimitConfigPath         = "cmdb.v2.default_limit"
 	DefaultLookBackDeltaConfigPath = "cmdb.v2.look_back_delta"
 )
 

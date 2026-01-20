@@ -12,11 +12,33 @@ package v2
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
+
+var (
+	defaultModel *Model
+	modelMutex   sync.Mutex
+)
+
+func GetModel(ctx context.Context) (cmdb.CMDBv2, error) {
+	if defaultModel == nil {
+		modelMutex.Lock()
+		defer modelMutex.Unlock()
+		if defaultModel == nil {
+			client := NewBKBaseSurrealDBClient()
+			model, err := NewModel(ctx, client)
+			if err != nil {
+				return nil, err
+			}
+			defaultModel = model
+		}
+	}
+	return defaultModel, nil
+}
 
 type GraphQueryExecutor interface {
 	Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error)

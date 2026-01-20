@@ -22,6 +22,15 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
+
+	viper.SetDefault(BKBaseSurrealDBUrlConfigPath, DefaultBKBaseSurrealDBUrl)
+	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
+	viper.SetDefault(BKBaseSurrealDBPreferStorageConfigPath, DefaultBKBaseSurrealDBPreferStorage)
+	viper.SetDefault(BKBaseSurrealDBAuthMethodConfigPath, DefaultBKBaseSurrealDBAuthMethod)
+	viper.SetDefault(BKBaseSurrealDBUsernameConfigPath, DefaultBKBaseSurrealDBUsername)
+	viper.SetDefault(BKBaseSurrealDBAppCodeConfigPath, DefaultBKBaseSurrealDBAppCode)
+	viper.SetDefault(BKBaseSurrealDBAppSecretConfigPath, DefaultBKBaseSurrealDBAppSecret)
+	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
 }
 
 func LoadConfig() {
@@ -29,6 +38,15 @@ func LoadConfig() {
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
+
+	BKBaseSurrealDBUrl = viper.GetString(BKBaseSurrealDBUrlConfigPath)
+	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)
+	BKBaseSurrealDBPreferStorage = viper.GetString(BKBaseSurrealDBPreferStorageConfigPath)
+	BKBaseSurrealDBAuthMethod = viper.GetString(BKBaseSurrealDBAuthMethodConfigPath)
+	BKBaseSurrealDBUsername = viper.GetString(BKBaseSurrealDBUsernameConfigPath)
+	BKBaseSurrealDBAppCode = viper.GetString(BKBaseSurrealDBAppCodeConfigPath)
+	BKBaseSurrealDBAppSecret = viper.GetString(BKBaseSurrealDBAppSecretConfigPath)
+	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)
 }
 
 func init() {

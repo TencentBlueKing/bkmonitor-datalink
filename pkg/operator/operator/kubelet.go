@@ -150,15 +150,14 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	}
 	logger.Debugf("sync kubelet service %s", cfg)
 
-	// 获取 Service 的 UID（用于 OwnerReferences）
-	existingSvc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrap(err, "failed to get service for UID")
-	}
-	svcUID := existingSvc.UID
-
 	// 判断是否使用 EndpointSlice
 	if useEndpointslice {
+		// 获取 Service 的 UID（用于 OwnerReferences）
+		existingSvc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+		if err != nil {
+			return errors.Wrap(err, "failed to get service for UID")
+		}
+
 		// 使用 EndpointSlice 方式，支持拆分多个 EndpointSlice
 		const maxEndpointsPerSlice = 1000
 		endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
@@ -206,7 +205,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 							APIVersion: "v1",
 							Kind:       "Service",
 							Name:       cfg.Name,
-							UID:        svcUID,
+							UID:        existingSvc.UID,
 						},
 					},
 				},

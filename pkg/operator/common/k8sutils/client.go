@@ -22,12 +22,14 @@ import (
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/operator"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	appsv1iface "k8s.io/client-go/kubernetes/typed/apps/v1"
 	corev1iface "k8s.io/client-go/kubernetes/typed/core/v1"
+	discoveryv1iface "k8s.io/client-go/kubernetes/typed/discovery/v1"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -124,6 +126,22 @@ func mergeKubectlAnnotations(from *metav1.ObjectMeta, to metav1.ObjectMeta) {
 
 func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {
 	return promk8sutil.CreateOrUpdateEndpoints(ctx, cli, desired)
+}
+
+func CreateOrUpdateEndpointSlice(ctx context.Context, cli discoveryv1iface.EndpointSliceInterface, desired *discoveryv1.EndpointSlice) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		existing, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+		mergeMetadata(&desired.ObjectMeta, existing.ObjectMeta)
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 func CreateOrUpdateSecret(ctx context.Context, cli corev1iface.SecretInterface, desired *corev1.Secret) error {

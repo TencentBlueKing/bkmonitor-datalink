@@ -18,6 +18,8 @@ import (
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
@@ -109,31 +111,6 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	c.cleanupDeprecatedService(ctx) // 先清理弃用 service
 
 	cfg := configs.G().Kubelet
-	eps := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   cfg.Name,
-			Labels: kubeletServiceLabels.Labels(),
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Ports: []corev1.EndpointPort{
-					{
-						Name: "https-metrics",
-						Port: 10250,
-					},
-					{
-						Name: "http-metrics",
-						Port: 10255,
-					},
-					{
-						Name: "cadvisor",
-						Port: 4194,
-					},
-				},
-			},
-		},
-	}
-
 	nodes := c.objectsController.NodeObjs()
 	logger.Debugf("nodes retrieved from the Kubernetes API, num_nodes: %d", len(nodes))
 
@@ -142,7 +119,6 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		logger.Errorf("failed to get node address: %s", err)
 	}
 
-	eps.Subsets[0].Addresses = addresses
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   cfg.Name,
@@ -174,6 +150,140 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	}
 	logger.Debugf("sync kubelet service %s", cfg)
 
+	// 获取 Service 的 UID（用于 OwnerReferences）
+	existingSvc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to get service for UID")
+	}
+	svcUID := existingSvc.UID
+
+	// 判断是否使用 EndpointSlice
+	if useEndpointslice {
+		// 使用 EndpointSlice 方式，支持拆分多个 EndpointSlice
+		const maxEndpointsPerSlice = 1000
+		endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
+
+		// 计算需要创建的 EndpointSlice 数量
+		numSlices := (len(addresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
+
+		// 获取现有的 EndpointSlice
+		existingSlices, err := endpointSliceClient.List(ctx, metav1.ListOptions{
+			LabelSelector: kubeletServiceLabels.Matcher(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to list existing endpoint slices")
+		}
+
+		// 创建或更新 EndpointSlice
+		for i := 0; i < numSlices; i++ {
+			start := i * maxEndpointsPerSlice
+			end := start + maxEndpointsPerSlice
+			if end > len(addresses) {
+				end = len(addresses)
+			}
+
+			sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+			endpoints := make([]discoveryv1.Endpoint, 0, end-start)
+			for j := start; j < end; j++ {
+				endpoints = append(endpoints, discoveryv1.Endpoint{
+					Addresses: []string{addresses[j].IP},
+					TargetRef: &corev1.ObjectReference{
+						Kind:       addresses[j].TargetRef.Kind,
+						Name:       addresses[j].TargetRef.Name,
+						UID:        addresses[j].TargetRef.UID,
+						APIVersion: addresses[j].TargetRef.APIVersion,
+					},
+				})
+			}
+
+			slice := &discoveryv1.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sliceName,
+					Namespace: cfg.Namespace,
+					Labels:    kubeletServiceLabels.Labels(),
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "v1",
+							Kind:       "Service",
+							Name:       cfg.Name,
+							UID:        svcUID,
+						},
+					},
+				},
+				AddressType: discoveryv1.AddressTypeIPv4,
+				Endpoints:   endpoints,
+				Ports: []discoveryv1.EndpointPort{
+					{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)},
+					{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},
+					{Name: stringPtr("cadvisor"), Port: int32Ptr(4194)},
+				},
+			}
+
+			err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create/update endpoint slice %s", sliceName)
+			}
+		}
+
+		// 删除多余的 EndpointSlice（如果节点数量减少）
+		existingSliceMap := make(map[string]bool)
+		for _, slice := range existingSlices.Items {
+			existingSliceMap[slice.Name] = true
+		}
+		for i := 0; i < numSlices; i++ {
+			sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+			delete(existingSliceMap, sliceName)
+		}
+		// 删除不再需要的 EndpointSlice
+		for sliceName := range existingSliceMap {
+			err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				logger.Errorf("failed to delete endpoint slice %s: %v", sliceName, err)
+			}
+		}
+
+		// 删除原来的 Endpoints 资源，避免 EndpointSlice Mirroring Controller 继续镜像
+		// 这可以防止创建重复的 EndpointSlice 或产生冲突
+		endpointsClient := c.client.CoreV1().Endpoints(cfg.Namespace)
+		err = endpointsClient.Delete(ctx, cfg.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			logger.Warnf("failed to delete endpoints %s: %v (this is not critical, but may cause duplicate endpoint slices)", cfg.Name, err)
+		} else if err == nil {
+			logger.Debugf("deleted old endpoints %s to avoid mirroring conflicts", cfg.Name)
+		}
+
+		logger.Debugf("sync kubelet endpoint slices %s, address count (%d), slice count (%d)", cfg, len(addresses), numSlices)
+
+		return nil
+	}
+
+	// 保持原有逻辑：创建 Endpoints（向后兼容）
+	eps := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   cfg.Name,
+			Labels: kubeletServiceLabels.Labels(),
+		},
+		Subsets: []corev1.EndpointSubset{
+			{
+				Addresses: addresses,
+				Ports: []corev1.EndpointPort{
+					{
+						Name: "https-metrics",
+						Port: 10250,
+					},
+					{
+						Name: "http-metrics",
+						Port: 10255,
+					},
+					{
+						Name: "cadvisor",
+						Port: 4194,
+					},
+				},
+			},
+		},
+	}
+
 	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(cfg.Namespace), eps)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
@@ -181,6 +291,16 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	logger.Debugf("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
 
 	return nil
+}
+
+// stringPtr returns a pointer to the given string
+func stringPtr(s string) *string {
+	return &s
+}
+
+// int32Ptr returns a pointer to the given int32
+func int32Ptr(i int32) *int32 {
+	return &i
 }
 
 func getNodeAddresses(nodes []*corev1.Node) ([]corev1.EndpointAddress, []error) {

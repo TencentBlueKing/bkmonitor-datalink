@@ -81,9 +81,10 @@ type TLS struct {
 
 // Kubelet 采集配置
 type Kubelet struct {
-	Enable    bool   `yaml:"enable"`
-	Namespace string `yaml:"namespace"`
-	Name      string `yaml:"name"`
+	Enable               bool   `yaml:"enable"`
+	Namespace            string `yaml:"namespace"`
+	Name                 string `yaml:"name"`
+	MaxEndpointsPerSlice int    `yaml:"max_endpoints_per_slice"` // EndpointSlice 每个 slice 最多包含的 endpoints 数量，默认 100，最大 1000
 }
 
 func (k Kubelet) String() string {
@@ -327,6 +328,19 @@ func setupTimeSync(c *Config) {
 	}
 }
 
+func setupKubelet(c *Config) {
+	// 设置 MaxEndpointsPerSlice 默认值为 100（Kubernetes 的默认值）
+	// 如果用户配置了该值（> 0），则使用用户配置
+	// 最大值限制为 1000（Kubernetes 的硬限制）
+	if c.Kubelet.MaxEndpointsPerSlice <= 0 {
+		c.Kubelet.MaxEndpointsPerSlice = 100
+	}
+	// 限制最大值为 1000，避免超过 Kubernetes 的限制
+	if c.Kubelet.MaxEndpointsPerSlice > 1000 {
+		c.Kubelet.MaxEndpointsPerSlice = 1000
+	}
+}
+
 // GetTLS 转换 tls 配置为 restclinet tls
 func (c *Config) GetTLS() *rest.TLSClientConfig {
 	return &rest.TLSClientConfig{
@@ -346,6 +360,7 @@ func (c *Config) setup() {
 		setupStatefulSetWorker,
 		setupVCluster,
 		setupTimeSync,
+		setupKubelet,
 	}
 
 	for _, fn := range funcs {

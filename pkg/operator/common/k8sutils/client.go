@@ -139,6 +139,11 @@ func CreateOrUpdateEndpointSlice(ctx context.Context, cli discoveryv1iface.Endpo
 			return err
 		}
 		mergeMetadata(&desired.ObjectMeta, existing.ObjectMeta)
+		// 使用 DeepEqual 检查是否需要更新，避免不必要的 API 调用
+		// 注意：有序的 address 列表可以确保 DeepEqual 比较的准确性
+		if apiequality.Semantic.DeepEqual(existing, desired) {
+			return nil
+		}
 		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	})

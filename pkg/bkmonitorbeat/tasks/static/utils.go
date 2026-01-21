@@ -208,6 +208,15 @@ var GetMemoryStatus = func(ctx context.Context) (*Memory, error) {
 	return &Memory{Total: info.Total}, nil
 }
 
+func checkBlacklist(name string, blacklist []string) bool {
+	for _, pattern := range blacklist {
+		if strings.Contains(name, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetNetStatus :
 var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Net, error) {
 	interfaces, err := net.Interfaces()
@@ -243,13 +252,9 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 		// 排除黑名单网卡
 		if cfg != nil && len(cfg.VirtualIfaceBlacklist) > 0 {
 			logger.Debug("VirtualIfaceBlacklist: %v", cfg.VirtualIfaceBlacklist)
-
-			for _, pattern := range cfg.VirtualIfaceBlacklist {
-				if strings.Contains(inter.Name, pattern) {
-					logger.Debug("Hit blacklist: %s", inter.Name)
-
-					continue
-				}
+			if checkBlacklist(inter.Name, cfg.VirtualIfaceBlacklist) {
+				logger.Debug("Hit blacklist: %s", inter.Name)
+				continue
 			}
 		}
 

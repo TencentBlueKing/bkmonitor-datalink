@@ -22,6 +22,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	discoveryv1iface "k8s.io/client-go/kubernetes/typed/discovery/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -38,7 +39,28 @@ var (
 	// deleteEndpointsOnce 确保删除 Endpoints 的操作只执行一次（进程内）
 	// 使用 sync.Once 可以避免每次同步都检查 Endpoints，提升性能
 	deleteEndpointsOnce sync.Once
+
+	// commonEndpointPorts 定义 kubelet EndpointSlice 的公共端口配置
+	// 所有 EndpointSlice 共享这个配置，避免重复创建
+	commonEndpointPorts = []discoveryv1.EndpointPort{
+		{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)}, // kubelet HTTPS 指标端口
+		{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},  // kubelet HTTP 指标端口（已弃用，但保留兼容性）
+		{Name: stringPtr("cadvisor"), Port: int32Ptr(4194)},       // cAdvisor 容器指标端口
+	}
 )
+
+// endpointSliceAnalysisResult 分析结果，包含需要删除、更新、新建的 slices 信息
+type endpointSliceAnalysisResult struct {
+	// SlicesToDelete 需要删除的 slice 名称集合
+	SlicesToDelete map[string]struct{}
+	// SlicesToSync 需要同步的 slices（包括需要更新和新建的 slices）
+	// 注意：底层函数 CreateOrUpdateEndpointSlice 已经支持创建或更新，所以可以统一处理
+	SlicesToSync []*discoveryv1.EndpointSlice
+	// TotalSlices 调整后的总 slice 数量
+	TotalSlices int
+	// Service Service 对象，如果为 nil 表示 Service 不存在，需要删除所有 EndpointSlice
+	Service *corev1.Service
+}
 
 type WrapLabels map[string]string
 
@@ -247,18 +269,6 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 // - 超过该限制会导致 EndpointSlice 创建失败
 // - 参考：https://kubernetes.io/docs/reference/command-line-tools/kube-controller-manager/
 func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, addresses []corev1.EndpointAddress) error {
-	endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
-	endpointsClient := c.client.CoreV1().Endpoints(cfg.Namespace)
-
-	// ========== 前置检查：确保 Service 存在 ==========
-	// Service 必须在删除操作之前检查，如果不存在则直接报错返回
-	// 这样可以避免在 Service 不存在的情况下删除 Endpoints 或 EndpointSlice，导致数据上报完全中断
-	// 原则：少了总比没有好，如果 Service 不存在，保留现有的 Endpoints/EndpointSlice 至少还能部分采集
-	svc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrap(err, "failed to get service, aborting sync to avoid data loss")
-	}
-
 	// ========== 第一步：删除操作（放在开头，避免重复采集） ==========
 
 	// 1. 删除原来的 Endpoints 资源（仅在第一次启动时执行，避免 EndpointSlice Mirroring Controller 继续镜像）
@@ -270,6 +280,7 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// - 这会导致创建重复的 EndpointSlice 或产生冲突（例如命名冲突）
 	// - 使用 sync.Once + 检查 Endpoints 是否存在，既保证了只执行一次，又保证了逻辑正确性
 	deleteEndpointsOnce.Do(func() {
+		endpointsClient := c.client.CoreV1().Endpoints(cfg.Namespace)
 		_, err := endpointsClient.Get(ctx, cfg.Name, metav1.GetOptions{})
 		if err == nil {
 			// Endpoints 资源存在，说明可能是从旧版本升级或首次使用 EndpointSlice
@@ -287,20 +298,9 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 		// 如果 Endpoints 不存在（NotFound），说明已经被删除或从未创建，无需处理
 	})
 
-	// 2. 计算需要创建的 EndpointSlice 数量（用于确定哪些 slice 需要保留）
-	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
-	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
-	maxEndpointsPerSlice := cfg.MaxEndpointsPerSlice
-	// 计算需要创建的 EndpointSlice 数量（向上取整）
-	// 公式说明：(a + b - 1) / b 是整数向上取整的经典技巧
-	// - 当 a 能被 b 整除时：(a + b - 1) / b = a / b（例如：1000 / 1000 = 1）
-	// - 当 a 不能被 b 整除时：(a + b - 1) / b 会多出 1（例如：1181 / 1000 = 1.181，向上取整为 2）
-	// 示例：1181 个节点，maxEndpointsPerSlice=1000 时，需要 2 个 EndpointSlice（1000 + 181）
-	numSlices := (len(addresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
-
-	// 3. 清理多余的 EndpointSlice（当节点数量减少时）
-	// 例如：如果之前有 1181 个节点（需要 2 个 slice），现在只有 800 个节点（只需要 1 个 slice），
-	// 则需要删除多余的 slice（bkmonitor-operator-stack-kubelet-1）
+	// 2. 获取现有的 EndpointSlice（用于优化填充策略）
+	// 参考 Kubernetes 官方实现：优先填充已有的 slice，最大化利用空间
+	endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
 	existingSlices, err := endpointSliceClient.List(ctx, metav1.ListOptions{
 		LabelSelector: kubeletServiceLabels.Matcher(),
 	})
@@ -308,91 +308,437 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 		return errors.Wrap(err, "failed to list existing endpoint slices")
 	}
 
-	// 构建需要保留的 slice 名称集合
-	// 使用 map[string]struct{} 而不是 map[string]bool，性能更好且语义更清晰
-	neededSliceMap := make(map[string]struct{})
-	for i := 0; i < numSlices; i++ {
-		sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
-		neededSliceMap[sliceName] = struct{}{}
+	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
+	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
+	maxEndpointsPerSlice := cfg.MaxEndpointsPerSlice
+	rebalanceThreshold := cfg.RebalanceThreshold
+
+	// ========== 分析阶段：计算需要删除、更新、新建的 slices ==========
+	// 分析函数内部会：
+	// 1. 检查 Service 是否存在（如果不存在，Service 字段为 nil，SlicesToDelete 包含所有现有 slices）
+	// 2. 判断是否需要 rebalance（如果需要，构建重新分配的 slices）
+	// 3. 正常场景下：
+	// 3. 正常场景下，计算需要删除、更新、新建的 slices
+	analysisResult, err := c.analyzeEndpointSlices(ctx, cfg, existingSlices.Items, addresses, maxEndpointsPerSlice, rebalanceThreshold)
+	if err != nil {
+		return errors.Wrap(err, "failed to analyze endpoint slices")
 	}
 
-	// 删除不再需要的 EndpointSlice（避免重复采集）
-	for _, slice := range existingSlices.Items {
-		if _, exists := neededSliceMap[slice.Name]; !exists {
-			err := endpointSliceClient.Delete(ctx, slice.Name, metav1.DeleteOptions{})
-			if err != nil && !apierrors.IsNotFound(err) {
-				// 如果删除失败且不是 NotFound 错误，记录错误但不中断流程
-				// NotFound 错误可以忽略（可能已经被其他进程删除）
-				logger.Errorf("failed to delete endpoint slice %s: %v", slice.Name, err)
-			} else if err == nil {
-				logger.Debugf("deleted unnecessary endpoint slice %s", slice.Name)
+	// ========== 执行阶段：根据分析结果执行删除、更新、新建操作 ==========
+	// 执行函数会根据分析结果：
+	// 1. 删除不再需要的 slices（所有场景）
+	// 2. 如果 Service 不存在，只删除，不更新或创建
+	// 3. 如果需要 rebalance，删除所有旧 slices 后创建新的 slices
+	// 4. 正常场景下，更新需要更新的 slices 并创建新的 slices
+	err = c.executeEndpointSliceChanges(ctx, endpointSliceClient, cfg, analysisResult)
+	if err != nil {
+		return errors.Wrap(err, "failed to execute endpoint slice changes")
+	}
+
+	// Service 不存在时的特殊处理：记录日志并返回
+	// 注意：Service 检查已在 analyzeEndpointSlices 函数内部完成，这里只是记录日志
+	if analysisResult.Service == nil {
+		logger.Infof("cleaned up %d endpoint slices (service %s/%s not found)", len(analysisResult.SlicesToDelete), cfg.Namespace, cfg.Name)
+		return errors.New("service not found, endpoint slices cleaned up")
+	}
+
+	logger.Debugf("sync kubelet endpoint slices %s, address count (%d), existing slices (%d), slices to sync (%d), total slices (%d)", cfg, len(addresses), len(existingSlices.Items), len(analysisResult.SlicesToSync), analysisResult.TotalSlices)
+
+	return nil
+}
+
+// convertAddressesToEndpoints 批量将 corev1.EndpointAddress 转换为 discoveryv1.Endpoint
+// 这是一个辅助函数，用于消除代码重复
+func convertAddressesToEndpoints(addresses []corev1.EndpointAddress) []discoveryv1.Endpoint {
+	endpoints := make([]discoveryv1.Endpoint, 0, len(addresses))
+	for _, addr := range addresses {
+		endpoints = append(endpoints, discoveryv1.Endpoint{
+			Addresses: []string{addr.IP},
+			TargetRef: &corev1.ObjectReference{
+				Kind:       addr.TargetRef.Kind,
+				Name:       addr.TargetRef.Name,
+				UID:        addr.TargetRef.UID,
+				APIVersion: addr.TargetRef.APIVersion,
+			},
+		})
+	}
+	return endpoints
+}
+
+// analyzeEndpointSlices 分析 EndpointSlice 的变化，计算需要删除、更新、新建的 slices
+//
+// 功能说明：
+// 1. 检查 Service 是否存在，如果不存在则标记需要删除所有 EndpointSlice（Service 字段为 nil）
+// 2. 判断是否需要 rebalance（合并 slice），如果需要则构建 rebalance 的 slices
+// 3. 正常场景下：
+//   - 删除不再需要的 endpoints（当节点减少时）
+//   - 填充新的 addresses（优化填充策略，优先填充已有的 slice）
+//   - 计算需要删除、更新、新建的 slices
+//
+// 参数：
+//   - ctx: 上下文（用于获取 Service）
+//   - cfg: Kubelet 配置
+//   - existingSlices: 现有的 EndpointSlice 列表
+//   - addresses: 期望的节点地址列表
+//   - maxEndpointsPerSlice: 每个 slice 最多包含的 endpoints 数量
+//   - rebalanceThreshold: Rebalance 阈值（0.0-1.0）
+//
+// 返回：
+//   - *endpointSliceAnalysisResult: 分析结果，包含需要删除、更新、新建的 slices 信息
+//   - 如果 Service 不存在，Service 字段为 nil，SlicesToDelete 包含所有现有 slices
+//   - 如果需要 rebalance，SlicesToDelete 包含所有现有 slices，SlicesToSync 包含重新分配的 slices
+//   - 正常场景下，包含需要删除、同步的 slices 信息（SlicesToSync 包括需要更新和新建的 slices）
+//   - error: 如果分析失败返回错误（如 Service 获取失败）
+func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubelet, existingSlices []discoveryv1.EndpointSlice, addresses []corev1.EndpointAddress, maxEndpointsPerSlice int, rebalanceThreshold float64) (*endpointSliceAnalysisResult, error) {
+	result := &endpointSliceAnalysisResult{
+		SlicesToDelete: make(map[string]struct{}),
+		SlicesToSync:   make([]*discoveryv1.EndpointSlice, 0),
+	}
+
+	// ========== 第一步：检查 Service 是否存在 ==========
+	svc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Service 不存在，需要在分析函数中处理删除所有 EndpointSlice 的逻辑
+			logger.Warnf("service %s/%s not found, will delete all related endpoint slices", cfg.Namespace, cfg.Name)
+			// 收集所有需要删除的 slice 名称
+			for _, slice := range existingSlices {
+				result.SlicesToDelete[slice.Name] = struct{}{}
 			}
+			return result, nil
+		} else {
+			// 其他错误（如网络错误、权限错误等），直接返回
+			return nil, errors.Wrap(err, "failed to get service")
+		}
+	}
+	result.Service = svc
+
+	// ========== 第二步：Rebalance 提前判断 ==========
+	// 计算需要的 slice 数量（向上取整）
+	numSlicesNeeded := (len(addresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
+	// 计算调整后的总容量和使用率
+	// 调整后的总容量 = 需要的 slice 数量 × maxEndpointsPerSlice
+	// 调整后的实际使用 = 当前节点数量（addresses 的长度）
+	// 调整后的使用率 = 调整后的实际使用 / 调整后的总容量
+	totalCapacityAfterAdjustment := numSlicesNeeded * maxEndpointsPerSlice
+	totalUsedAfterAdjustment := len(addresses)
+
+	// 如果总容量为 0（没有节点），跳过 rebalance 检查
+	// 如果调整后的使用率 < 阈值，直接执行 rebalance（合并 slice）
+	// 这样可以避免不必要的删除、填充等操作，直接执行 rebalance 更高效
+	shouldRebalance := totalCapacityAfterAdjustment > 0 && float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment) < rebalanceThreshold
+
+	if shouldRebalance {
+		logger.Infof("rebalance triggered (pre-check): adjusted capacity usage %.2f%% (%d/%d) < threshold %.2f%%, merging slices", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
+
+		// ========== Rebalance 分支：数据准备 ==========
+		// 1. 将 addresses 转换为 endpoints（使用辅助函数）
+		allEndpoints := convertAddressesToEndpoints(addresses)
+
+		// 2. 构建现有 slices 的映射（按名称索引，方便查找和复用）
+		existingSliceMap := make(map[string]*discoveryv1.EndpointSlice)
+		for i := range existingSlices {
+			existingSliceMap[existingSlices[i].Name] = &existingSlices[i]
+		}
+
+		// Rebalance 逻辑：基于最新的 addresses 重新分配
+		// 优化策略：最小化修改原则
+		// 1. 复用现有的 slices（如果编号匹配且可以更新）
+		// 2. 只删除多余的 slices（新分配方案中不需要的）
+		// 3. 只创建新分配方案中需要但现有 slices 无法覆盖的部分
+
+		// 构建需要同步的 slices（复用现有的或创建新的）
+		for i := 0; i < numSlicesNeeded; i++ {
+			start := i * maxEndpointsPerSlice
+			end := start + maxEndpointsPerSlice
+			if end > len(allEndpoints) {
+				end = len(allEndpoints)
+			}
+
+			sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+
+			var slice *discoveryv1.EndpointSlice
+			// 检查是否可以复用现有的 slice
+			if existingSlice, exists := existingSliceMap[sliceName]; exists {
+				// 复用现有的 slice，更新其 endpoints
+				slice = existingSlice.DeepCopy()
+				// 从映射中移除，表示已处理
+				delete(existingSliceMap, sliceName)
+			} else {
+				// 需要创建新的 slice
+				slice = &discoveryv1.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: sliceName,
+					},
+				}
+			}
+
+			// 设置公共属性（无论是复用还是新建）
+			slice.Endpoints = allEndpoints[start:end]
+			slice.AddressType = discoveryv1.AddressTypeIPv4
+			slice.Ports = commonEndpointPorts
+
+			result.SlicesToSync = append(result.SlicesToSync, slice)
+		}
+
+		// 收集需要删除的 slices（只删除新分配方案中不需要的）
+		// existingSliceMap 中剩余的就是需要删除的
+		for sliceName := range existingSliceMap {
+			result.SlicesToDelete[sliceName] = struct{}{}
+		}
+
+		result.TotalSlices = numSlicesNeeded
+		logger.Infof("rebalance plan: total slices=%d, slices to sync=%d, slices to delete=%d",
+			numSlicesNeeded, len(result.SlicesToSync), len(result.SlicesToDelete))
+		return result, nil
+	}
+
+	// ========== 第三步：正常分析流程（非 rebalance 场景）==========
+
+	// 删除不再需要的 endpoints（当节点减少时）
+	// 构建期望的地址集合（基于 IP 地址，因为节点名称可能变化但 IP 不变）
+	desiredIPs := make(map[string]struct{})
+	for _, addr := range addresses {
+		desiredIPs[addr.IP] = struct{}{}
+	}
+
+	// 从现有 slices 中删除不再需要的 endpoints，同时构建 existingIPs 集合
+	// 例如：如果之前有 100 个节点，现在只有 99 个节点，应该从某个 slice 中删除对应的 endpoint
+	// 注意：这里需要深拷贝，避免修改原始 slice
+	// 优化：在删除的同时构建 existingIPs 集合，减少一次遍历
+	// 重要：如果 slice 中的所有 endpoints 都被删除（newEndpoints 为空），则不添加到 slicesCopy
+	//       这样后续逻辑会自动将其标记为需要删除的 slice
+	slicesCopy := make([]*discoveryv1.EndpointSlice, 0, len(existingSlices))
+	existingIPs := make(map[string]struct{})
+	for i := range existingSlices {
+		slice := existingSlices[i].DeepCopy()
+		newEndpoints := make([]discoveryv1.Endpoint, 0, len(slice.Endpoints))
+		for _, ep := range slice.Endpoints {
+			if len(ep.Addresses) > 0 {
+				ip := ep.Addresses[0]
+				if _, exists := desiredIPs[ip]; exists {
+					// endpoint 仍然需要，保留
+					newEndpoints = append(newEndpoints, ep)
+					// 同时记录到 existingIPs 集合中（用于后续快速查找）
+					existingIPs[ip] = struct{}{}
+				}
+				// 如果不存在，说明节点已被删除，不添加到 newEndpoints（即删除）
+			}
+		}
+		// 只保留非空的 slice（如果 newEndpoints 为空，说明该 slice 中的所有 endpoints 都被删除了）
+		if len(newEndpoints) > 0 {
+			// 更新 slice 的 endpoints（即使数量没变，内容也可能变化，如节点的 UID 变化）
+			// 注意：这里总是更新 slice.Endpoints，因为 newEndpoints 可能包含不同的内容
+			// 后续的 DeepEqual 检查会判断 slice 是否有变化，避免不必要的 API 调用
+			slice.Endpoints = newEndpoints
+			slicesCopy = append(slicesCopy, slice)
+		}
+		// 如果 newEndpoints 为空，不添加到 slicesCopy，后续逻辑会自动将其标记为需要删除
+	}
+
+	// 填充新的 addresses（优化填充策略）
+	// 核心思想：优先填充已有的 slice，最大化利用空间，减少 slice 数量
+	// 1. 按 endpoints 数量降序排序（优先填充最满的 slice）
+	// 2. 先填充已有的 slices（如果有空位）
+	// 3. 如果还有剩余，创建新的 slices
+
+	// 按 endpoints 数量降序排序（优先填充最满的 slice）
+	// 这样可以最大化利用已有 slice 的空间，减少 slice 数量
+	sort.Slice(slicesCopy, func(i, j int) bool {
+		return len(slicesCopy[i].Endpoints) > len(slicesCopy[j].Endpoints)
+	})
+
+	// 收集需要新增的 addresses（不在现有 slices 中的）
+	// 时间复杂度：O(n)，其中 n = addresses 数量
+	remainingAddresses := make([]corev1.EndpointAddress, 0)
+	for _, addr := range addresses {
+		if _, exists := existingIPs[addr.IP]; !exists {
+			remainingAddresses = append(remainingAddresses, addr)
 		}
 	}
 
-	// ========== 第二步：创建或更新 EndpointSlice ==========
-	// 注意：Service 已在函数开头检查，这里直接使用 svc 变量
+	// 先填充已有的 slices（如果有空位）
+	// 注意：slicesCopy 中已经不包含空的 slice（在构建时已过滤），所以不需要再次检查
+	for _, slice := range slicesCopy {
+		// 计算当前 slice 的空位
+		space := maxEndpointsPerSlice - len(slice.Endpoints)
+		if space > 0 && len(remainingAddresses) > 0 {
+			// 计算可以添加的 endpoints 数量
+			toAdd := space
+			if len(remainingAddresses) < space {
+				toAdd = len(remainingAddresses)
+			}
 
-	// 创建或更新每个 EndpointSlice
-	// 将 addresses 数组按 maxEndpointsPerSlice 大小切分成多个批次
-	for i := 0; i < numSlices; i++ {
+			// 更新 slice 的 endpoints（追加新的 endpoints，使用辅助函数）
+			newEndpoints := make([]discoveryv1.Endpoint, 0, len(slice.Endpoints)+toAdd)
+			newEndpoints = append(newEndpoints, slice.Endpoints...)
+			newEndpoints = append(newEndpoints, convertAddressesToEndpoints(remainingAddresses[:toAdd])...)
+			slice.Endpoints = newEndpoints
+			remainingAddresses = remainingAddresses[toAdd:]
+		}
+
+		// 保留该 slice（名称不变，只更新内容）
+		result.SlicesToSync = append(result.SlicesToSync, slice)
+	}
+
+	// 如果还有剩余，创建新的 slices（见缝插针策略）
+	// 计算需要创建的新 slice 数量（向上取整）
+	numNewSlices := (len(remainingAddresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
+
+	// 计算新 slice 的起始编号（从现有 slices 的最大编号 + 1 开始）
+	// 这样可以避免命名冲突，同时保持编号递增（虽然可能不连续，但不影响功能）
+	maxExistingIndex := -1
+	for _, slice := range existingSlices {
+		// 从 slice 名称中提取编号（格式：{service-name}-{index}）
+		// 例如：bkmonitor-operator-stack-kubelet-5 -> 5
+		// 注意：如果 slice 名称格式不对（如不包含编号），会忽略该 slice，不影响逻辑
+		parts := strings.Split(slice.Name, "-")
+		if len(parts) > 0 {
+			var index int
+			_, err := fmt.Sscanf(parts[len(parts)-1], "%d", &index)
+			// 如果解析成功且编号大于当前最大值，更新最大值
+			// 如果解析失败（slice 名称格式不对），忽略该 slice
+			if err == nil && index > maxExistingIndex {
+				maxExistingIndex = index
+			}
+		}
+	}
+	nextSliceIndex := maxExistingIndex + 1
+
+	// 构建需要新建的 slices（使用递增编号，从 nextSliceIndex 开始）
+	for i := 0; i < numNewSlices; i++ {
 		// 计算当前 EndpointSlice 的地址范围
 		start := i * maxEndpointsPerSlice
 		end := start + maxEndpointsPerSlice
-		if end > len(addresses) {
-			end = len(addresses) // 最后一个 slice 可能不足 1000 个
+		if end > len(remainingAddresses) {
+			end = len(remainingAddresses) // 最后一个 slice 可能不足 maxEndpointsPerSlice 个
 		}
 
 		// EndpointSlice 命名规则：{service-name}-{index}
 		// 例如：bkmonitor-operator-stack-kubelet-0, bkmonitor-operator-stack-kubelet-1
-		sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+		// 注意：使用递增编号，避免命名冲突（编号可能不连续，但不影响功能）
+		sliceName := fmt.Sprintf("%s-%d", cfg.Name, nextSliceIndex+i)
 
-		// 构建当前 slice 的 endpoints 列表
-		endpoints := make([]discoveryv1.Endpoint, 0, end-start)
-		for j := start; j < end; j++ {
-			endpoints = append(endpoints, discoveryv1.Endpoint{
-				Addresses: []string{addresses[j].IP}, // 节点 IP 地址
-				TargetRef: &corev1.ObjectReference{ // 节点引用信息，用于关联到具体的 Node 资源
-					Kind:       addresses[j].TargetRef.Kind,
-					Name:       addresses[j].TargetRef.Name,
-					UID:        addresses[j].TargetRef.UID,
-					APIVersion: addresses[j].TargetRef.APIVersion,
-				},
-			})
-		}
+		// 构建当前 slice 的 endpoints 列表（使用辅助函数）
+		endpoints := convertAddressesToEndpoints(remainingAddresses[start:end])
 
-		// 构建 EndpointSlice 对象
-		slice := &discoveryv1.EndpointSlice{
+		// 构建 EndpointSlice 对象（注意：这里不设置 Namespace、Labels、OwnerReferences，在执行阶段设置）
+
+		result.SlicesToSync = append(result.SlicesToSync, &discoveryv1.EndpointSlice{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      sliceName,
-				Namespace: cfg.Namespace,
-				Labels:    kubeletServiceLabels.Labels(), // 使用相同的标签，便于查询和管理
-				OwnerReferences: []metav1.OwnerReference{
-					{
-						APIVersion: "v1",
-						Kind:       "Service",
-						Name:       cfg.Name,
-						UID:        svc.UID, // 设置 Service 为 Owner，实现级联删除
-					},
-				},
+				Name: sliceName,
 			},
 			AddressType: discoveryv1.AddressTypeIPv4, // 仅支持 IPv4
 			Endpoints:   endpoints,
-			Ports: []discoveryv1.EndpointPort{
-				{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)}, // kubelet HTTPS 指标端口
-				{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},  // kubelet HTTP 指标端口
-				{Name: stringPtr("cadvisor"), Port: int32Ptr(4194)},       // cAdvisor 容器指标端口
-			},
-		}
+			Ports:       commonEndpointPorts, // 使用公共的 Ports 配置
+		})
+	}
 
-		// 创建或更新 EndpointSlice（如果已存在则更新，不存在则创建）
-		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
-		if err != nil {
-			return errors.Wrapf(err, "failed to create/update endpoint slice %s", sliceName)
+	// 计算调整后的总 slice 数量
+	result.TotalSlices = len(result.SlicesToSync)
+
+	// ========== 第四步：构建删除列表（在处理完所有 remainingAddresses 之后）==========
+	// 构建需要保留的 slice 名称集合（从 SlicesToSync 中提取）
+	neededSliceMap := make(map[string]struct{})
+	for _, slice := range result.SlicesToSync {
+		neededSliceMap[slice.Name] = struct{}{}
+	}
+
+	// 构建需要删除的 slice 名称集合（existingSlices 中不在 neededSliceMap 中的）
+	for _, slice := range existingSlices {
+		if _, exists := neededSliceMap[slice.Name]; !exists {
+			result.SlicesToDelete[slice.Name] = struct{}{}
 		}
 	}
 
-	logger.Debugf("sync kubelet endpoint slices %s, address count (%d), slice count (%d)", cfg, len(addresses), numSlices)
+	return result, nil
+}
+
+// executeEndpointSliceChanges 根据分析结果执行删除、更新、新建操作
+//
+// 功能说明：
+// 1. 删除不再需要的 slices（所有场景都需要）
+// 2. 如果 Service 不存在（analysisResult.Service == nil），只删除，不更新或创建
+// 3. 正常场景下：
+//   - 更新需要更新的 slices（包括重命名）
+//   - 创建新的 slices
+//
+// 参数：
+//   - ctx: 上下文
+//   - endpointSliceClient: EndpointSlice 客户端
+//   - cfg: Kubelet 配置
+//   - analysisResult: 分析结果（包含 Service 信息，如果 Service 不存在则为 nil）
+//
+// 返回：
+//   - error: 如果执行失败返回错误
+func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSliceClient discoveryv1iface.EndpointSliceInterface, cfg configs.Kubelet, analysisResult *endpointSliceAnalysisResult) error {
+	// ========== 第一步：删除不再需要的 slices ==========
+	if err := c.deleteUnnecessaryEndpointSlices(ctx, endpointSliceClient, analysisResult.SlicesToDelete); err != nil {
+		return errors.Wrap(err, "failed to delete unnecessary endpoint slices")
+	}
+
+	// Service 不存在时，只需要删除，不需要更新或创建
+	if analysisResult.Service == nil {
+		return nil
+	}
+
+	// ========== 第二步：同步 slices（包括更新和新建）==========
+	// 注意：底层函数 CreateOrUpdateEndpointSlice 已经支持创建或更新，所以可以统一处理
+
+	for _, slice := range analysisResult.SlicesToSync {
+		// 设置完整的元数据
+		slice.Namespace = cfg.Namespace
+		slice.Labels = kubeletServiceLabels.Labels()
+		slice.OwnerReferences = []metav1.OwnerReference{
+			{
+				APIVersion: "v1",
+				Kind:       "Service",
+				Name:       cfg.Name,
+				UID:        analysisResult.Service.UID,
+			},
+		}
+
+		// 同步 EndpointSlice（CreateOrUpdateEndpointSlice 会自动判断是创建还是更新）
+		// 注意：DeepEqual 检查在 CreateOrUpdateEndpointSlice 内部完成，避免不必要的更新
+		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
+		if err != nil {
+			return errors.Wrapf(err, "failed to sync endpoint slice %s", slice.Name)
+		}
+	}
+
+	return nil
+}
+
+// deleteUnnecessaryEndpointSlices 删除不再需要的 EndpointSlice
+//
+// 参数：
+//   - ctx: 上下文
+//   - endpointSliceClient: EndpointSlice 客户端
+//   - slicesToDelete: 需要删除的 slice 名称集合（map[string]struct{}）
+//
+// 返回：
+//   - error: 如果删除失败返回错误（NotFound 错误会被忽略）
+func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpointSliceClient discoveryv1iface.EndpointSliceInterface, slicesToDelete map[string]struct{}) error {
+	if len(slicesToDelete) == 0 {
+		return nil
+	}
+
+	var deleteErrors []error
+	for sliceName := range slicesToDelete {
+		err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			// 如果删除失败且不是 NotFound 错误，记录错误
+			// NotFound 错误可以忽略（可能已经被其他进程删除）
+			deleteErrors = append(deleteErrors, errors.Wrapf(err, "failed to delete endpoint slice %s", sliceName))
+			logger.Errorf("failed to delete endpoint slice %s: %v", sliceName, err)
+		} else if err == nil {
+			logger.Debugf("deleted unnecessary endpoint slice %s", sliceName)
+		}
+	}
+
+	if len(deleteErrors) > 0 {
+		return errors.Wrapf(errors.New("failed to delete some endpoint slices"), "errors: %v", deleteErrors)
+	}
 
 	return nil
 }

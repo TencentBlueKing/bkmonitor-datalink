@@ -226,7 +226,15 @@ type LimitNode struct {
 func (v *LimitNode) getOffsetAndLimit() (string, string) {
 	offset := v.offset + v.ParentOffset
 
-	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0.代表没有数据
+	// 计算原始数据的上限位置（offset + limit）
+	// 如果 limit > 0，上限 = offset + limit
+	// 如果 limit <= 0，表示无限制
+	upperBound := 0
+	if v.limit > 0 {
+		upperBound = v.offset + v.limit
+	}
+
+	// 如果外层的 OFFSET 已经超出了内层的 LIMIT，则需要设置 LIMIT 为 0，代表没有数据
 	if v.limit > 0 && v.ParentOffset >= v.limit {
 		return "", "0"
 	}
@@ -249,11 +257,12 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 		resultLimit = defaultLimit
 	}
 
-	// 只有制定了 offset 的逻辑的才需要进行切割
-	if v.ParentOffset > 0 && v.limit > 0 && (limit+offset) > v.limit {
-		left := v.limit % limit
-		if left != 0 {
-			resultLimit = cast.ToString(left)
+	// 只有指定了 ParentOffset 且有上限时才需要进行切割
+	// 计算剩余可取数量：上限 - 当前offset
+	if v.ParentOffset > 0 && upperBound > 0 {
+		remaining := upperBound - offset
+		if remaining < limit {
+			resultLimit = cast.ToString(remaining)
 		}
 	}
 

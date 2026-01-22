@@ -929,10 +929,11 @@ func TestOffsetAndLimitMove(t *testing.T) {
 			n: LimitNode{
 				ParentOffset: 0,
 				ParentLimit:  3,
-				offset:       3,
+				offset:       0,
 				limit:        10,
 			},
 			res: []string{
+				"1,2,3",
 				"4,5,6",
 				"7,8,9",
 				"10",
@@ -971,7 +972,7 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				limit:        10,
 			},
 			res: []string{
-				"3,4,5,6,7,8,9,10,11,12",
+				"3,4,5,6,7,8,9,10",
 			},
 		},
 		{
@@ -983,7 +984,7 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				limit:        10,
 			},
 			res: []string{
-				"7,8,9,10,11,12,13,14,15,16",
+				"7,8,9,10,11,12,13,14",
 			},
 		},
 		{
@@ -1177,14 +1178,14 @@ func TestOffsetGreaterThanOrEqualLimit(t *testing.T) {
 			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
 			limit:    15,
 			offset:   30,
-			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 40`, // 50%15=5
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 40`, // 剩余可取: 50-30=20, min(15,20)=15
 		},
 		{
 			name:     "完整翻页-SQL有offset和limit-第4页",
 			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
 			limit:    15,
 			offset:   45,
-			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 55`, // 50%15=5
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 55`, // 剩余可取: 50-45=5, min(15,5)=5
 		},
 		{
 			name:     "完整翻页-SQL有offset和limit-溢出",

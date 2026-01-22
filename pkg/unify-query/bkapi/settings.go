@@ -11,6 +11,7 @@ package bkapi
 
 const (
 	// BKDATA 配置
+	BkDataAddressConfigPath              = "bk_data.address"
 	BkDataUriPathConfigPath              = "bk_data.uri_path"
 	BkDataAuthenticationMethodConfigPath = "bk_data.authentication_method"
 	BkDataTokenConfigPath                = "bk_data.token"

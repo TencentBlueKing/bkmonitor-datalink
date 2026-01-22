@@ -41,7 +41,8 @@ var (
 	deleteEndpointsOnce sync.Once
 
 	// commonEndpointPorts 定义 kubelet EndpointSlice 的公共端口配置
-	// 所有 EndpointSlice 共享这个配置，避免重复创建
+	// 注意：这是一个只读的常量，所有 EndpointSlice 共享这个配置
+	// 由于 Ports 字段是只读的（不会修改），所以可以安全地共享，避免重复创建
 	commonEndpointPorts = []discoveryv1.EndpointPort{
 		{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)}, // kubelet HTTPS 指标端口
 		{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},  // kubelet HTTP 指标端口（已弃用，但保留兼容性）
@@ -49,7 +50,7 @@ var (
 	}
 )
 
-// endpointSliceAnalysisResult 分析结果，包含需要删除、更新、新建的 slices 信息
+// endpointSliceAnalysisResult 分析结果，包含需要删除、同步的 slices 信息
 type endpointSliceAnalysisResult struct {
 	// SlicesToDelete 需要删除的 slice 名称集合
 	SlicesToDelete map[string]struct{}
@@ -248,7 +249,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 // syncEndpointSlices 同步 kubelet 的 EndpointSlice 资源
 //
 // 功能说明：
-// 1. 将大量节点拆分成多个 EndpointSlice，每个 EndpointSlice 最多包含的 endpoints 数量可配置（默认 1000）
+// 1. 将大量节点拆分成多个 EndpointSlice，每个 EndpointSlice 最多包含的 endpoints 数量可配置（默认 100）
 // 2. 支持超大规模集群（节点数 > 1000），解决 EndpointSlice Mirroring Controller 的限制问题
 // 3. 自动清理多余的 EndpointSlice（当节点数量减少时）
 // 4. 删除旧的 Endpoints 资源，避免与 EndpointSlice Mirroring Controller 产生冲突
@@ -257,7 +258,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 //   - Kubernetes 的 EndpointSlice Mirroring Controller 在镜像 Endpoints 到 EndpointSlice 时，
 //     受限于 --mirroring-max-endpoints-per-subset=1000 配置，只会镜像前 1000 个地址
 //   - 对于超过 1000 个节点的集群，直接创建 EndpointSlice 可以绕过该限制
-//   - 每个 EndpointSlice 最多包含的 endpoints 数量由配置项 max_endpoints_per_slice 控制（默认 1000）
+//   - 每个 EndpointSlice 最多包含的 endpoints 数量由配置项 max_endpoints_per_slice 控制（默认 100）
 //
 // 配置说明：
 // - max_endpoints_per_slice：每个 EndpointSlice 最多包含的 endpoints 数量
@@ -313,23 +314,22 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	maxEndpointsPerSlice := cfg.MaxEndpointsPerSlice
 	rebalanceThreshold := cfg.RebalanceThreshold
 
-	// ========== 分析阶段：计算需要删除、更新、新建的 slices ==========
+	// ========== 分析阶段：计算需要删除、同步的 slices ==========
 	// 分析函数内部会：
 	// 1. 检查 Service 是否存在（如果不存在，Service 字段为 nil，SlicesToDelete 包含所有现有 slices）
 	// 2. 判断是否需要 rebalance（如果需要，构建重新分配的 slices）
-	// 3. 正常场景下：
-	// 3. 正常场景下，计算需要删除、更新、新建的 slices
+	// 3. 正常场景下，计算需要删除、同步的 slices（SlicesToSync 包括需要更新和新建的 slices）
 	analysisResult, err := c.analyzeEndpointSlices(ctx, cfg, existingSlices.Items, addresses, maxEndpointsPerSlice, rebalanceThreshold)
 	if err != nil {
 		return errors.Wrap(err, "failed to analyze endpoint slices")
 	}
 
-	// ========== 执行阶段：根据分析结果执行删除、更新、新建操作 ==========
+	// ========== 执行阶段：根据分析结果执行删除、同步操作 ==========
 	// 执行函数会根据分析结果：
 	// 1. 删除不再需要的 slices（所有场景）
 	// 2. 如果 Service 不存在，只删除，不更新或创建
-	// 3. 如果需要 rebalance，删除所有旧 slices 后创建新的 slices
-	// 4. 正常场景下，更新需要更新的 slices 并创建新的 slices
+	// 3. 如果需要 rebalance，删除所有旧 slices 后同步新的 slices
+	// 4. 正常场景下，同步需要同步的 slices（包括更新和新建，统一使用 CreateOrUpdateEndpointSlice）
 	err = c.executeEndpointSliceChanges(ctx, endpointSliceClient, cfg, analysisResult)
 	if err != nil {
 		return errors.Wrap(err, "failed to execute endpoint slice changes")
@@ -365,7 +365,7 @@ func convertAddressesToEndpoints(addresses []corev1.EndpointAddress) []discovery
 	return endpoints
 }
 
-// analyzeEndpointSlices 分析 EndpointSlice 的变化，计算需要删除、更新、新建的 slices
+// analyzeEndpointSlices 分析 EndpointSlice 的变化，计算需要删除、同步的 slices
 //
 // 功能说明：
 // 1. 检查 Service 是否存在，如果不存在则标记需要删除所有 EndpointSlice（Service 字段为 nil）
@@ -384,7 +384,7 @@ func convertAddressesToEndpoints(addresses []corev1.EndpointAddress) []discovery
 //   - rebalanceThreshold: Rebalance 阈值（0.0-1.0）
 //
 // 返回：
-//   - *endpointSliceAnalysisResult: 分析结果，包含需要删除、更新、新建的 slices 信息
+//   - *endpointSliceAnalysisResult: 分析结果，包含需要删除、同步的 slices 信息
 //   - 如果 Service 不存在，Service 字段为 nil，SlicesToDelete 包含所有现有 slices
 //   - 如果需要 rebalance，SlicesToDelete 包含所有现有 slices，SlicesToSync 包含重新分配的 slices
 //   - 正常场景下，包含需要删除、同步的 slices 信息（SlicesToSync 包括需要更新和新建的 slices）
@@ -660,8 +660,8 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 // 1. 删除不再需要的 slices（所有场景都需要）
 // 2. 如果 Service 不存在（analysisResult.Service == nil），只删除，不更新或创建
 // 3. 正常场景下：
-//   - 更新需要更新的 slices（包括重命名）
-//   - 创建新的 slices
+//   - 同步需要同步的 slices（包括更新和新建，统一使用 CreateOrUpdateEndpointSlice）
+//   - 底层函数会自动判断是创建还是更新，并检查是否有变化，避免不必要的 API 调用
 //
 // 参数：
 //   - ctx: 上下文

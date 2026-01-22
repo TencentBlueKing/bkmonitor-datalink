@@ -157,6 +157,7 @@ EOF
       check_period: 1m
       report_period: 6h
       virtual_iface_whitelist: ["bond1"]
+      virtual_iface_blacklist: []
 
   # 主机性能数据采集
 EOF

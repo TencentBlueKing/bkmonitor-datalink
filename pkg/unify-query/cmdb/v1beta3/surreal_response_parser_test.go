@@ -113,7 +113,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1"},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 			},
 		}, graph)
@@ -200,7 +200,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1", "rel_2"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1", "rel_2"},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 				"service:⟨cluster=c1,namespace=ns1,service=svc2⟩": {},
 			},
@@ -347,8 +347,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":              {"rel_1"},
-				"replicaset:⟨cluster=c1,namespace=ns1,replicaset=rs1⟩": {"rel_2"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":                 {"rel_1"},
+				"replicaset:⟨cluster=c1,namespace=ns1,replicaset=rs1⟩":  {"rel_2"},
 				"deployment:⟨cluster=c1,namespace=ns1,deployment=dep1⟩": {},
 			},
 		}, graph)
@@ -471,8 +471,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			Adjacency: map[string][]string{
 				"container:⟨cluster=c1,namespace=ns1,pod=p1,container=c1⟩": {"rel_1"},
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":                    {"rel_2"},
-				"node:⟨cluster=c1,node=node1⟩":                              {"rel_3"},
-				"system:⟨bk_cloud_id=0,bk_target_ip=10.0.0.1⟩":              {},
+				"node:⟨cluster=c1,node=node1⟩":                             {"rel_3"},
+				"system:⟨bk_cloud_id=0,bk_target_ip=10.0.0.1⟩":             {},
 			},
 		}, graph)
 	})
@@ -725,7 +725,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1"},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 			},
 		}, graph)
@@ -882,7 +882,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1"},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 			},
 		}, graph)
@@ -1035,7 +1035,7 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1"},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1"},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 			},
 		}, graphs[0])
@@ -1272,8 +1272,8 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 				},
 			},
 			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":         {"rel_1", "rel_2"},
-				"node:⟨cluster=c1,node=node1⟩":                  {},
+				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1", "rel_2"},
+				"node:⟨cluster=c1,node=node1⟩":                    {},
 				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
 			},
 		}, graphs[0])

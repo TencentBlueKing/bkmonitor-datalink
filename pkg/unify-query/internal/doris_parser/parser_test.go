@@ -1099,6 +1099,100 @@ func TestOffsetGreaterThanOrEqualLimit(t *testing.T) {
 			// 应该返回 LIMIT 50 OFFSET 15 (10+5)
 			expected: `SELECT * FROM t LIMIT 50 OFFSET 15`,
 		},
+		// case-1: SQL 无 limit 和 offset 的完整翻页流程
+		{
+			name:     "完整翻页-SQL无limit无offset-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   30,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 30`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   60,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 60`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第4页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   90,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 90`,
+		},
+		// case-2: SQL 有 limit=50 无 offset 的完整翻页流程
+		{
+			name:     "完整翻页-SQL有limit无offset-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 20`,
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   20,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 20 OFFSET 20`,
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   40,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 10 OFFSET 40`, // 50%20=10
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-溢出",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   60, // ParentOffset >= v.limit
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 0`,
+		},
+		// case-3: SQL 有 offset=10 和 limit=50 的完整翻页流程
+		{
+			name:     "完整翻页-SQL有offset和limit-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 10`,
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   15,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 25`,
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   30,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 40`, // 50%15=5
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第4页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   45,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 55`, // 50%15=5
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-溢出",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   60, // ParentOffset >= v.limit
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 0`,
+		},
 	}
 
 	for _, c := range testCases {

@@ -8,3 +8,11 @@
 // specific language governing permissions and limitations under the License.
 
 package featureFlag
+
+const (
+	DataSourceConfigPath = "feature_flag.data_source"
+)
+
+var (
+	DataSource string // "consul" 或 "redis"，默认为 "redis"
+)

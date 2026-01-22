@@ -998,10 +998,23 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				"1,2,3,4,5,6,7,8,9,10",
 			},
 		},
+		{
+			name: "test-8",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  0,
+				offset:       10,
+				limit:        10,
+			},
+			res: []string{
+				"11,12,13,14,15,16,17,18,19,20",
+			},
+		},
 	}
 
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
+			fmt.Printf("name: %s\n", c.name)
 			nn := c.n
 			idx := 0
 			total := 0
@@ -1020,12 +1033,18 @@ func TestOffsetAndLimitMove(t *testing.T) {
 					offset = "0"
 				}
 				total += cast.ToInt(limit)
-
-				assert.Equal(t, c.res[idx-1], strings.Join(s, ","))
-
+				resIdx := idx - 1
+				currentPage := c.res[resIdx]
+				assert.Equal(t, currentPage, strings.Join(s, ","))
+				currentPageItems := strings.Split(currentPage, ",")
+				currentPageLength := len(currentPageItems)
+				var last string
+				if currentPageLength > 0 {
+					last = currentPageItems[currentPageLength-1]
+				}
 				fmt.Printf("page: %d limit %s,%s result: %s\n", idx, offset, limit, strings.Join(s, ","))
 				nn.ParentOffset += cast.ToInt(limit)
-				if idx > 10 {
+				if last == "10" {
 					break
 				}
 			}

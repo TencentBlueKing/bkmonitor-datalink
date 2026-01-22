@@ -512,7 +512,8 @@ func TestQueryReferenceWithEs(t *testing.T) {
 				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
-			result: `[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__ext.container_name"],"group_values":[""],"values":[[1741154079123,4325521]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__ext.container_name"],"group_values":["unify-query"],"values":[[1741154079123,182355]]}]`,
+			// 修复后按 _value 升序排序: 182355 -> 4325521
+			result: `[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__ext.container_name"],"group_values":["unify-query"],"values":[[1741154079123,182355]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__ext.container_name"],"group_values":[""],"values":[[1741154079123,4325521]]}]`,
 		},
 		"根据维度 __ext.container_name 进行 count 聚合，同时用值倒序": {
 			queryTs: &structured.QueryTs{

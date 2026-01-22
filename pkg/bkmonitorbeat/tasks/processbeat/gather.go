@@ -28,14 +28,14 @@ import (
 	"context"
 	"time"
 
+	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/processbeat/process"
-	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Gather struct {
@@ -88,6 +88,10 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	logger.Info("ProcessBeat is running....")
 	if g.isRunning {
 		logger.Info("ProcessBeat has been started")
+		return
+	}
+	if g.config.Disable {
+		logger.Info("ProcessBeat collection is disabled")
 		return
 	}
 

@@ -662,17 +662,30 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 
 // sortTablesByOrderBy 按 order_by 对结果进行排序
 // Prometheus 引擎会按 labels 字典序排序，这里需要按用户指定的 order_by 重新排序
+// 支持多字段排序，按 orderBy 中的顺序依次比较
 func sortTablesByOrderBy(tables *promql.Tables, orderBy structured.OrderBy) {
-	for _, order := range orderBy {
-		if order == promql.ResultColumnValue {
-			tables.SortByValue(true)
-			return
-		}
-		if order == "-"+promql.ResultColumnValue {
-			tables.SortByValue(false)
-			return
-		}
+	if len(orderBy) == 0 {
+		return
 	}
+
+	orders := make([]promql.Order, 0, len(orderBy))
+	for _, ob := range orderBy {
+		if len(ob) == 0 {
+			continue
+		}
+
+		order := promql.Order{
+			Name: ob,
+			Asc:  true,
+		}
+		if strings.HasPrefix(ob, "-") {
+			order.Name = ob[1:]
+			order.Asc = false
+		}
+		orders = append(orders, order)
+	}
+
+	tables.SortByOrders(orders)
 }
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt

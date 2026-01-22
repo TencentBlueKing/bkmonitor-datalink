@@ -181,3 +181,58 @@ func (t *Table) getLastValue() float64 {
 	// _value 在第二个位置
 	return cast.ToFloat64(lastRow[1])
 }
+
+// Order 排序字段定义
+type Order struct {
+	Name string // 字段名，支持 _value 或 GroupKeys 中的字段
+	Asc  bool   // 是否升序
+}
+
+// SortByOrders 按多字段对 Tables 进行排序
+// 支持按 _value 或任意 label 字段排序，多字段时按优先级依次比较
+func (t *Tables) SortByOrders(orders []Order) {
+	if len(t.Tables) == 0 || len(orders) == 0 {
+		return
+	}
+
+	sort.SliceStable(t.Tables, func(i, j int) bool {
+		for _, order := range orders {
+			cmp := t.Tables[i].compareBy(t.Tables[j], order.Name)
+			if cmp == 0 {
+				continue
+			}
+			if order.Asc {
+				return cmp < 0
+			}
+			return cmp > 0
+		}
+		return false
+	})
+}
+
+func (t *Table) compareBy(other *Table, field string) int {
+	if field == ResultColumnValue {
+		vi := t.getLastValue()
+		vj := other.getLastValue()
+		if vi < vj {
+			return -1
+		}
+		if vi > vj {
+			return 1
+		}
+		return 0
+	}
+
+	vi := t.getGroupValue(field)
+	vj := other.getGroupValue(field)
+	return strings.Compare(vi, vj)
+}
+
+func (t *Table) getGroupValue(key string) string {
+	for i, k := range t.GroupKeys {
+		if k == key && i < len(t.GroupValues) {
+			return t.GroupValues[i]
+		}
+	}
+	return ""
+}

@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -31,7 +31,7 @@ import (
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      cmdb.RelationMultiResourceRequest			  true   "json data"
-// @Success  200                   	{object}  cmdb.RelationMultiResourceResponse
+// @Success  200                   	{object}  cmdb.RelationMultiResourceResponseV2
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/multi_resource [post]
 func HandlerAPIRelationMultiResource(c *gin.Context) {
@@ -60,15 +60,15 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
 
-	model, err := v1beta1.GetModel(ctx)
+	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
-	data := new(cmdb.RelationMultiResourceResponse)
+	data := new(cmdb.RelationMultiResourceResponseV2)
 	data.TraceID = span.TraceID()
-	data.Data = make([]cmdb.RelationMultiResourceResponseData, len(request.QueryList))
+	data.Data = make([]cmdb.RelationMultiResourceResponseDataV2, len(request.QueryList))
 
 	var (
 		sendWg sync.WaitGroup
@@ -83,7 +83,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		sendWg.Add(1)
 		_ = p.Submit(func() {
 			defer sendWg.Done()
-			d := cmdb.RelationMultiResourceResponseData{
+			d := cmdb.RelationMultiResourceResponseDataV2{
 				Code: http.StatusOK,
 			}
 
@@ -116,7 +116,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      cmdb.RelationMultiResourceRangeRequest			  true   "json data"
-// @Success  200                   	{object}  cmdb.RelationMultiResourceRangeResponse
+// @Success  200                   	{object}  cmdb.RelationMultiResourceRangeResponseV2
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/multi_resource_range [post]
 func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
@@ -145,15 +145,15 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
 
-	model, err := v1beta1.GetModel(ctx)
+	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
-	data := new(cmdb.RelationMultiResourceRangeResponse)
+	data := new(cmdb.RelationMultiResourceRangeResponseV2)
 	data.TraceID = span.TraceID()
-	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, len(request.QueryList))
+	data.Data = make([]cmdb.RelationMultiResourceRangeResponseDataV2, len(request.QueryList))
 
 	var (
 		sendWg sync.WaitGroup
@@ -168,7 +168,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		sendWg.Add(1)
 		_ = p.Submit(func() {
 			defer sendWg.Done()
-			d := cmdb.RelationMultiResourceRangeResponseData{
+			d := cmdb.RelationMultiResourceRangeResponseDataV2{
 				Code: http.StatusOK,
 			}
 
@@ -184,8 +184,8 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			}
 
 			if len(d.Path) > 0 {
-				d.SourceType = cmdb.Resource(d.Path[0])
-				d.TargetType = cmdb.Resource(d.Path[len(d.Path)-1])
+				d.SourceType = cmdb.Resource(d.Path[0].Steps[0].ResourceType)
+				d.TargetType = cmdb.Resource(d.Path[0].Steps[len(d.Path[0].Steps)-1].ResourceType)
 			}
 
 			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错

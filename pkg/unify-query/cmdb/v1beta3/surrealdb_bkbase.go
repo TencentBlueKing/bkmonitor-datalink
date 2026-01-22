@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package v2
+package v1beta3
 
 import (
 	"context"
@@ -20,14 +20,14 @@ import (
 )
 
 const (
-	BKBaseSurrealDBUrlConfigPath           = "cmdb.v2.surrealdb.bkbase.url"
-	BKBaseSurrealDBResultTableIDConfigPath = "cmdb.v2.surrealdb.bkbase.result_table_id"
-	BKBaseSurrealDBPreferStorageConfigPath = "cmdb.v2.surrealdb.bkbase.prefer_storage"
-	BKBaseSurrealDBAuthMethodConfigPath    = "cmdb.v2.surrealdb.bkbase.auth_method"
-	BKBaseSurrealDBUsernameConfigPath      = "cmdb.v2.surrealdb.bkbase.username"
-	BKBaseSurrealDBAppCodeConfigPath       = "cmdb.v2.surrealdb.bkbase.app_code"
-	BKBaseSurrealDBAppSecretConfigPath     = "cmdb.v2.surrealdb.bkbase.app_secret"
-	BKBaseSurrealDBTimeoutConfigPath       = "cmdb.v2.surrealdb.bkbase.timeout"
+	BKBaseSurrealDBUrlConfigPath           = "cmdb.v1beta3.surrealdb.bkbase.url"
+	BKBaseSurrealDBResultTableIDConfigPath = "cmdb.v1beta3.surrealdb.bkbase.result_table_id"
+	BKBaseSurrealDBPreferStorageConfigPath = "cmdb.v1beta3.surrealdb.bkbase.prefer_storage"
+	BKBaseSurrealDBAuthMethodConfigPath    = "cmdb.v1beta3.surrealdb.bkbase.auth_method"
+	BKBaseSurrealDBUsernameConfigPath      = "cmdb.v1beta3.surrealdb.bkbase.username"
+	BKBaseSurrealDBAppCodeConfigPath       = "cmdb.v1beta3.surrealdb.bkbase.app_code"
+	BKBaseSurrealDBAppSecretConfigPath     = "cmdb.v1beta3.surrealdb.bkbase.app_secret"
+	BKBaseSurrealDBTimeoutConfigPath       = "cmdb.v1beta3.surrealdb.bkbase.timeout"
 )
 
 var (

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package v2
+package v1beta3
 
 import (
 	"fmt"
@@ -52,14 +52,14 @@ func LoadConfig() {
 func init() {
 	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPreParse, setDefaultConfig); err != nil {
 		fmt.Printf(
-			"failed to subscribe event->[%s] for cmdb v2 module for default config, maybe cmdb v2 module won't working.",
+			"failed to subscribe event->[%s] for cmdb v1beta3 module for default config, maybe cmdb v1beta3 module won't working.",
 			eventbus.EventSignalConfigPreParse,
 		)
 	}
 
 	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPostParse, LoadConfig); err != nil {
 		fmt.Printf(
-			"failed to subscribe event->[%s] for cmdb v2 module for new config, maybe cmdb v2 module won't working.",
+			"failed to subscribe event->[%s] for cmdb v1beta3 module for new config, maybe cmdb v1beta3 module won't working.",
 			eventbus.EventSignalConfigPostParse,
 		)
 	}

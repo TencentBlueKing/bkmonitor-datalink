@@ -7,13 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package v2
+package v1beta3
 
 const (
-	MaxHopsConfigPath              = "cmdb.v2.max_hops"
-	MaxAllowedHopsConfigPath       = "cmdb.v2.max_allowed_hops"
-	DefaultLimitConfigPath         = "cmdb.v2.default_limit"
-	DefaultLookBackDeltaConfigPath = "cmdb.v2.look_back_delta"
+	MaxHopsConfigPath              = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath       = "cmdb.v1beta3.max_allowed_hops"
+	DefaultLimitConfigPath         = "cmdb.v1beta3.default_limit"
+	DefaultLookBackDeltaConfigPath = "cmdb.v1beta3.look_back_delta"
 )
 
 var (

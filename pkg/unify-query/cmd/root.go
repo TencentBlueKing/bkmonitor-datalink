@@ -61,7 +61,7 @@ var rootCmd = &cobra.Command{
 			&tsdb.Service{},
 			&promql.Service{},
 			&http.Service{},
-			&featureFlag.Service{}, // gzl_step1: 特性开关服务
+			&featureFlag.Service{},
 		}
 		log.Infof(ctx, "http service started.")
 
@@ -70,7 +70,7 @@ var rootCmd = &cobra.Command{
 	LOOP:
 		for {
 			for _, service := range serviceList {
-				service.Reload(ctx) // gzl_step2: 重新加载配置
+				service.Reload(ctx)
 			}
 			log.Infof(ctx, "reload done")
 			switch <-sc {

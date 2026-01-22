@@ -41,32 +41,32 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 // reloadFeatureFlags
-func (s *Service) reloadFeatureFlags(ctx context.Context) error { //将特性开关配置加载到内存
+func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	var data []byte
 	var err error
 
 	// 根据配置选择数据源
 	if DataSource == "consul" {
-		data, err = consul.GetFeatureFlags() // gzl_step4: 从consul获取特征标记
+		data, err = consul.GetFeatureFlags() // 从consul获取特征标记
 		if err != nil {
 			log.Errorf(ctx, "get feature flags from consul failed,error:%s", err)
 			return err
 		}
 	} else {
-		data, err = redis.GetFeatureFlags(ctx) // gzl_step4: 从redis获取特征标记
+		data, err = redis.GetFeatureFlags(ctx) // 从redis获取特征标记
 		if err != nil {
 			log.Errorf(ctx, "get feature flags from redis failed,error:%s", err)
 			return err
 		}
 	}
 
-	err = featureFlag.ReloadFeatureFlags(data) // gzl_step5: 重新加载特征标记到内存
+	err = featureFlag.ReloadFeatureFlags(data)
 	return err
 }
 
 // loopReloadFeatureFlags
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
-	err := s.reloadFeatureFlags(ctx) // gzl_step3-1: 启动时重新加载一次
+	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
 		log.Errorf(ctx, "reload feature flags failed, error: %s", err)
 		return err
@@ -75,14 +75,14 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	var ch <-chan any
 	// 根据配置选择监听方式
 	if DataSource == "consul" {
-		ch, err = consul.WatchFeatureFlags(ctx) // gzl_step3-2: 开始监听变化(consul)
+		ch, err = consul.WatchFeatureFlags(ctx)
 		if err != nil {
 			log.Errorf(ctx, "watch feature flags from consul failed, error: %s", err)
 			return err
 		}
 	} else {
 		// 默认使用 redis
-		ch, err = redis.WatchFeatureFlags(ctx) // gzl_step3-2: 开始监听变化(redis)
+		ch, err = redis.WatchFeatureFlags(ctx)
 		if err != nil {
 			log.Errorf(ctx, "watch feature flags from redis failed, error: %s", err)
 			return err
@@ -99,7 +99,7 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get feature flags changed notify from %s", DataSource)
-				err = s.reloadFeatureFlags(ctx) // gzl_step3-3: 重新加载一次
+				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
 					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
 				}
@@ -123,7 +123,7 @@ func (s *Service) Reload(ctx context.Context) {
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 
-	err = s.loopReloadFeatureFlags(s.ctx) // gzl_step3: 开始监听变化
+	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
 		log.Errorf(s.ctx, "start loop feature flags failed,error: %s", err)
 		return
@@ -132,7 +132,7 @@ func (s *Service) Reload(ctx context.Context) {
 	err = ffclient.Init(ffclient.Config{
 		PollingInterval: 1 * time.Minute,
 		Context:         s.ctx,
-		Retriever:       &featureFlag.CustomRetriever{}, //配置文件，获取特征开关配置
+		Retriever:       &featureFlag.CustomRetriever{},
 		FileFormat:      "json",
 		DataExporter: ffclient.DataExporter{
 			FlushInterval:    5 * time.Second,

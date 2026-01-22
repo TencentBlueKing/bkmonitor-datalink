@@ -929,14 +929,14 @@ func TestOffsetAndLimitMove(t *testing.T) {
 			n: LimitNode{
 				ParentOffset: 0,
 				ParentLimit:  3,
-				offset:       0,
+				offset:       3,
 				limit:        10,
 			},
 			res: []string{
-				"1,2,3",
 				"4,5,6",
 				"7,8,9",
-				"10",
+				"10,11,12",
+				"13",
 			},
 		},
 		{

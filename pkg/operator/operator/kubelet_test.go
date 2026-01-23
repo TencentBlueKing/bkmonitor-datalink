@@ -605,3 +605,108 @@ func TestSyncNodeEndpoints_DeleteEndpointsWhenUsingSlice(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, len(slices.Items), "should create EndpointSlice")
 }
+
+// TestSyncNodeEndpoints_FilterNonManagedSlices 测试过滤非纳管的 EndpointSlice
+// 场景：当删除 Endpoint 后，Kubernetes 的 endpointslicemirroring-controller 会自动创建镜像 EndpointSlice
+// 这些 EndpointSlice 的删除有延迟，可能会被 label selector 匹配到
+// 它们使用标准的 Kubernetes label: endpointslice.kubernetes.io/managed-by=endpointslicemirroring-controller.k8s.io
+// 预期：在读取阶段就过滤掉这些非纳管资源，不会尝试删除它们
+func TestSyncNodeEndpoints_FilterNonManagedSlices(t *testing.T) {
+	originalUseEndpointslice := useEndpointslice
+	defer func() {
+		useEndpointslice = originalUseEndpointslice
+	}()
+
+	useEndpointslice = true
+
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100,
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "https-metrics", Port: 10250},
+			},
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 创建一个由 Kubernetes endpointslicemirroring-controller 自动创建的 EndpointSlice（非纳管）
+	// 这种 EndpointSlice 使用标准的 Kubernetes label: endpointslice.kubernetes.io/managed-by
+	nonManagedSlice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name + "-auto",
+			Namespace: cfg.Namespace,
+			Labels: map[string]string{
+				"k8s-app":                "kubelet",
+				"app.kubernetes.io/name": "kubelet",
+				// 标准的 Kubernetes label，表示由 endpointslicemirroring-controller 管理
+				"endpointslice.kubernetes.io/managed-by": "endpointslicemirroring-controller.k8s.io",
+				// 注意：缺少 "app.kubernetes.io/managed-by": "bkmonitor-operator"
+			},
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.1"}},
+		},
+	}
+	_, err = client.DiscoveryV1().EndpointSlices(cfg.Namespace).Create(context.Background(), nonManagedSlice, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 创建一个由 bkmonitor-operator 管理的 EndpointSlice
+	managedSlice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name + "-0",
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.0.0.2"}},
+		},
+	}
+	_, err = client.DiscoveryV1().EndpointSlices(cfg.Namespace).Create(context.Background(), managedSlice, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 创建节点并同步
+	nodes := createTestNodes(50) // 50 个节点，只需要 1 个 slice
+	op := createTestOperator(t, client, nodes)
+
+	err = op.syncNodeEndpoints(context.Background())
+	require.NoError(t, err)
+
+	// 验证纳管的 EndpointSlice（使用与实际代码相同的过滤条件）
+	managedSlices, err := client.DiscoveryV1().EndpointSlices(cfg.Namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: kubeletServiceLabels.Matcher() + ",!endpointslice.kubernetes.io/managed-by",
+	})
+	require.NoError(t, err)
+
+	// 应该只有 1 个纳管的 slice（非纳管的被过滤掉了）
+	assert.Equal(t, 1, len(managedSlices.Items), "should have 1 managed slice (non-managed filtered out)")
+
+	// 验证纳管 slice 的内容已被更新
+	assert.Equal(t, cfg.Name+"-0", managedSlices.Items[0].Name, "managed slice name should be correct")
+	assert.Equal(t, 50, len(managedSlices.Items[0].Endpoints), "managed slice should be updated with 50 nodes")
+
+	// 验证非纳管的 slice 仍然存在（通过直接查询，不使用过滤器）
+	nonManagedSlice, err = client.DiscoveryV1().EndpointSlices(cfg.Namespace).Get(context.Background(), cfg.Name+"-auto", metav1.GetOptions{})
+	require.NoError(t, err, "non-managed slice should still exist (not deleted)")
+	// 验证非纳管 slice 的内容没有被修改
+	assert.Equal(t, 1, len(nonManagedSlice.Endpoints), "non-managed slice should not be modified")
+	assert.Equal(t, "10.0.0.1", nonManagedSlice.Endpoints[0].Addresses[0], "non-managed slice should not be modified")
+}

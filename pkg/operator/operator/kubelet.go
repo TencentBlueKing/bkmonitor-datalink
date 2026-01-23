@@ -304,15 +304,24 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// 2. 获取现有的 EndpointSlice（用于优化填充策略）
 	// 参考 Kubernetes 官方实现：优先填充已有的 slice，最大化利用空间
 	endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
-	logger.Debugf("[kubelet-endpointslice] listing existing endpoint slices in namespace=%s, labelSelector=%s", cfg.Namespace, kubeletServiceLabels.Matcher())
+
+	// 构建 label selector：过滤掉由 Kubernetes 系统控制器创建的镜像 EndpointSlice
+	// 背景说明：
+	// - 当我们删除 Endpoint 后，Kubernetes 的 endpointslicemirroring-controller 会自动创建镜像 EndpointSlice
+	// - 这些镜像 EndpointSlice 的删除有延迟，可能会被 label selector 匹配到
+	// - 它们有标准的 Kubernetes label: endpointslice.kubernetes.io/managed-by=endpointslicemirroring-controller.k8s.io
+	// - 通过在 LabelSelector 中添加 !endpointslice.kubernetes.io/managed-by 条件（表示该标签不存在），让 API Server 直接过滤
+	labelSelector := kubeletServiceLabels.Matcher() + ",!endpointslice.kubernetes.io/managed-by"
+
+	logger.Debugf("[kubelet-endpointslice] listing existing endpoint slices in namespace=%s, labelSelector=%s", cfg.Namespace, labelSelector)
 	existingSlices, err := endpointSliceClient.List(ctx, metav1.ListOptions{
-		LabelSelector: kubeletServiceLabels.Matcher(),
+		LabelSelector: labelSelector,
 	})
 	if err != nil {
 		logger.Errorf("[kubelet-endpointslice] failed to list existing endpoint slices: %v", err)
 		return errors.Wrap(err, "failed to list existing endpoint slices")
 	}
-	logger.Infof("[kubelet-endpointslice] found %d existing endpoint slices", len(existingSlices.Items))
+	logger.Infof("[kubelet-endpointslice] found %d endpoint slices", len(existingSlices.Items))
 
 	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
 	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
@@ -754,15 +763,18 @@ func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpoint
 	for sliceName := range slicesToDelete {
 		logger.Debugf("[kubelet-endpointslice] deleting slice: name=%s", sliceName)
 		err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			// 如果删除失败且不是 NotFound 错误，记录错误
+		if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err) {
+			// 如果删除失败且不是 NotFound 或 Forbidden 错误，记录错误
 			// NotFound 错误可以忽略（可能已经被其他进程删除）
+			// Forbidden 错误可以忽略（可能是非纳管的资源，没有删除权限）
 			deleteErrors = append(deleteErrors, errors.Wrapf(err, "failed to delete endpoint slice %s", sliceName))
 			logger.Errorf("[kubelet-endpointslice] failed to delete slice %s: %v", sliceName, err)
 		} else if err == nil {
 			logger.Debugf("[kubelet-endpointslice] successfully deleted slice: name=%s", sliceName)
-		} else {
+		} else if apierrors.IsNotFound(err) {
 			logger.Debugf("[kubelet-endpointslice] slice %s already deleted (NotFound)", sliceName)
+		} else if apierrors.IsForbidden(err) {
+			logger.Warnf("[kubelet-endpointslice] slice %s is forbidden to delete (non-managed resource), skipping", sliceName)
 		}
 	}
 

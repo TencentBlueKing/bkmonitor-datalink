@@ -90,6 +90,7 @@ bk_api:
   code: bk_code
   secret: bk_secret
 bk_data:
+  address: "" # 可选 如果配置了 address，则直接使用此地址，不再通过 bk_api.address + uri_path 组装
   uri_path: bk_data
   authentication_method: token
   token: 123456

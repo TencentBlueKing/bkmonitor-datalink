@@ -20,7 +20,7 @@ redis:
   read_timeout: 10s
   service_name: bkmonitorv3:spaces
 feature_flag:
-  data_source: redis  # 可选值: consul 或 redis,默认为 redis
+  data_source: consul  # 可选值: consul 或 redis,默认为 consul
 victoria_metrics:
   timeout: 30s
 influxdb:

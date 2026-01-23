@@ -132,7 +132,7 @@ func HandleFeatureFlag(c *gin.Context) {
 	ctx := c.Request.Context()
 	res := ""
 	refresh := c.Query("r")
-	source := c.DefaultQuery("source", "redis") // 可选参数，默认为redis,指定数据源: consul 或 redis
+	source := c.DefaultQuery("source", "consul") // 可选参数，默认为consul,指定数据源: consul 或 redis
 
 	if refresh != "" {
 		res += "refresh feature flag\n"
@@ -141,22 +141,22 @@ func HandleFeatureFlag(c *gin.Context) {
 		var err error
 		var dataSource string
 
-		if source == "consul" {
-			dataSource = "consul"
-			path = consul.GetFeatureFlagsPath()
-			res += fmt.Sprintf("consul feature flags path: %s\n", path)
-			data, err = consul.GetFeatureFlags()
-			if err != nil {
-				res += fmt.Sprintf("consul get feature flags error: %s\n", err.Error())
-			}
-		} else {
-			// 默认使用 redis
+		if source == "redis" {
 			dataSource = "redis"
 			path = redis.GetFeatureFlagsPath()
 			res += fmt.Sprintf("redis feature flags key: %s\n", path)
 			data, err = redis.GetFeatureFlags(ctx)
 			if err != nil {
 				res += fmt.Sprintf("redis get feature flags error: %s\n", err.Error())
+			}
+		} else {
+			// 默认使用 consul
+			dataSource = "consul"
+			path = consul.GetFeatureFlagsPath()
+			res += fmt.Sprintf("consul feature flags path: %s\n", path)
+			data, err = consul.GetFeatureFlags()
+			if err != nil {
+				res += fmt.Sprintf("consul get feature flags error: %s\n", err.Error())
 			}
 		}
 

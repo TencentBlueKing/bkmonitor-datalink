@@ -14,5 +14,5 @@ const (
 )
 
 var (
-	DataSource string // "consul" 或 "redis"，默认为 "redis"
+	DataSource string // "consul" 或 "redis"，默认为 "consul"
 )

@@ -18,13 +18,13 @@ import (
 )
 
 func setDefaultConfig() {
-	viper.SetDefault(DataSourceConfigPath, "redis")
+	viper.SetDefault(DataSourceConfigPath, "consul")
 }
 
 func LoadConfig() {
 	DataSource = viper.GetString(DataSourceConfigPath)
 	if DataSource != "consul" && DataSource != "redis" {
-		DataSource = "redis" // 默认使用 redis，处理配置异常状况
+		DataSource = "consul" // 默认使用 consul，处理配置异常状况
 	}
 }
 

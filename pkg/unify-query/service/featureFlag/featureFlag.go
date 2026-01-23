@@ -46,16 +46,16 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	var err error
 
 	// 根据配置选择数据源
-	if DataSource == "consul" {
-		data, err = consul.GetFeatureFlags() // 从consul获取特征标记
-		if err != nil {
-			log.Errorf(ctx, "get feature flags from consul failed,error:%s", err)
-			return err
-		}
-	} else {
+	if DataSource == "redis" {
 		data, err = redis.GetFeatureFlags(ctx) // 从redis获取特征标记
 		if err != nil {
 			log.Errorf(ctx, "get feature flags from redis failed,error:%s", err)
+			return err
+		}
+	} else {
+		data, err = consul.GetFeatureFlags() // 从consul获取特征标记
+		if err != nil {
+			log.Errorf(ctx, "get feature flags from consul failed,error:%s", err)
 			return err
 		}
 	}
@@ -74,17 +74,17 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 
 	var ch <-chan any
 	// 根据配置选择监听方式
-	if DataSource == "consul" {
-		ch, err = consul.WatchFeatureFlags(ctx)
-		if err != nil {
-			log.Errorf(ctx, "watch feature flags from consul failed, error: %s", err)
-			return err
-		}
-	} else {
-		// 默认使用 redis
+	if DataSource == "redis" {
 		ch, err = redis.WatchFeatureFlags(ctx)
 		if err != nil {
 			log.Errorf(ctx, "watch feature flags from redis failed, error: %s", err)
+			return err
+		}
+	} else {
+		// 默认使用 consul
+		ch, err = consul.WatchFeatureFlags(ctx)
+		if err != nil {
+			log.Errorf(ctx, "watch feature flags from consul failed, error: %s", err)
 			return err
 		}
 	}

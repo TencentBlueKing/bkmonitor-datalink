@@ -122,6 +122,8 @@ func NewBackend(ctx context.Context, name string) (*Backend, error) {
 	}, err
 }
 
+func (b *Backend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // Push :
 func (b *Backend) Push(d define.Payload, killChan chan<- error) {
 	b.pushOnce.Do(func() {

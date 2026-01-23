@@ -425,6 +425,8 @@ type MockBackend struct {
 	recorder *MockBackendMockRecorder
 }
 
+func (m *MockBackend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // MockBackendMockRecorder is the mock recorder for MockBackend.
 type MockBackendMockRecorder struct {
 	mock *MockBackend

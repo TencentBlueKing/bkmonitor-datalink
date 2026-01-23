@@ -210,6 +210,29 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	}
 	logger.Debugf("[kubelet-endpointslice] using legacy Endpoints mode (EndpointSlice disabled)")
 
+	// 清理遗留的 EndpointSlice 资源（当从 EndpointSlice 模式切换到 Endpoints 模式时）
+	// 背景说明：
+	// - 当配置从 useEndpointslice=true 切换到 useEndpointslice=false 时，之前创建的 EndpointSlice 资源会遗留
+	// - 需要在切换到 Endpoints 模式时清理这些遗留资源
+	endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
+	labelSelector := kubeletServiceLabels.Matcher() + ",!endpointslice.kubernetes.io/managed-by"
+	existingSlices, err := endpointSliceClient.List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		logger.Warnf("[kubelet-endpoint] failed to list endpoint slices for cleanup: %v (this is not critical)", err)
+	} else if len(existingSlices.Items) > 0 {
+		logger.Infof("[kubelet-endpoint] found %d legacy endpoint slices, cleaning up...", len(existingSlices.Items))
+		for _, slice := range existingSlices.Items {
+			err := endpointSliceClient.Delete(ctx, slice.Name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				logger.Warnf("[kubelet-endpoint] failed to delete legacy slice %s: %v", slice.Name, err)
+			} else if err == nil {
+				logger.Debugf("[kubelet-endpoint] deleted legacy endpoint slice: %s", slice.Name)
+			}
+		}
+	}
+
 	// 保持原有逻辑：创建 Endpoints（向后兼容）
 	// 适用于 K8s < 1.21.0 或未启用 EndpointSlice 的场景
 	eps := &corev1.Endpoints{

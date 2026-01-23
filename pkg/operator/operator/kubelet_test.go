@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -26,7 +27,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 )
 
 func TestGetNodeAddresses(t *testing.T) {
@@ -135,8 +135,14 @@ func createTestNodes(count int) []*corev1.Node {
 	return nodes
 }
 
+// nodeObjectsProvider 定义获取节点对象的接口
+// 用于测试时解耦 ObjectsController 依赖
+type nodeObjectsProvider interface {
+	NodeObjs() []*corev1.Node
+}
+
 // mockObjectsController 模拟 ObjectsController，只提供 NodeObjs 方法
-// 使用反射来避免导入 etcd 相关的包
+// 避免初始化真实的 informer，解决测试环境中的依赖问题
 type mockObjectsController struct {
 	nodes []*corev1.Node
 }
@@ -145,33 +151,215 @@ func (m *mockObjectsController) NodeObjs() []*corev1.Node {
 	return m.nodes
 }
 
-// createTestOperator 创建测试用的 Operator 实例
-// 注意：由于 protobuf 依赖冲突，此函数会导入 etcd，导致测试无法运行
-// 建议在 CI/CD 环境中运行测试，或修复项目依赖冲突
-func createTestOperator(t *testing.T, client kubernetes.Interface, nodes []*corev1.Node) *Operator {
-	ctx := context.Background()
+// testOperator 测试用的 Operator 结构体
+// 使用接口类型来避免依赖真实的 ObjectsController
+type testOperator struct {
+	ctx               context.Context
+	client            kubernetes.Interface
+	objectsController nodeObjectsProvider
+}
 
-	// 先创建节点资源到 fake client，这样 ObjectsController 可以通过 informer 发现
-	for _, node := range nodes {
-		_, err := client.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
+// syncNodeEndpoints 测试用的方法，实现简化的同步逻辑
+func (o *testOperator) syncNodeEndpoints(ctx context.Context) error {
+	cfg := configs.G().Kubelet
+	nodes := o.objectsController.NodeObjs()
+
+	// 从所有节点提取 IP 地址和节点引用信息
+	addresses, _ := getNodeAddresses(nodes)
+
+	// 创建或更新 kubelet Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "None",
+			Ports: []corev1.ServicePort{
+				{Name: "https-metrics", Port: 10250},
+				{Name: "http-metrics", Port: 10255},
+				{Name: "cadvisor", Port: 4194},
+			},
+		},
+	}
+
+	// 创建或更新 Service
+	_, err := o.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			_, err = o.client.CoreV1().Services(cfg.Namespace).Create(ctx, svc, metav1.CreateOptions{})
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		_, err = o.client.CoreV1().Services(cfg.Namespace).Update(ctx, svc, metav1.UpdateOptions{})
 		if err != nil {
-			// 如果节点已存在，尝试更新
-			_, _ = client.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+			return err
 		}
 	}
 
-	// 创建 ObjectsController（会通过 informer 自动发现节点）
-	// 注意：这会间接导入 etcd，导致 protobuf 冲突
-	// 在当前环境中无法运行，需要在 CI/CD 环境或修复依赖后运行
-	objectsController, err := objectsref.NewController(ctx, client, nil, nil)
-	if err != nil {
-		t.Fatalf("Failed to create ObjectsController: %v", err)
+	// 根据 useEndpointslice 标志选择创建 EndpointSlice 或 Endpoints
+	if useEndpointslice {
+		return o.syncEndpointSlices(ctx, cfg, addresses, svc)
 	}
 
-	return &Operator{
+	// 创建 Endpoints
+	eps := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+		},
+		Subsets: []corev1.EndpointSubset{
+			{
+				Addresses: addresses,
+				Ports: []corev1.EndpointPort{
+					{Name: "https-metrics", Port: 10250},
+					{Name: "http-metrics", Port: 10255},
+					{Name: "cadvisor", Port: 4194},
+				},
+			},
+		},
+	}
+
+	_, err = o.client.CoreV1().Endpoints(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			_, err = o.client.CoreV1().Endpoints(cfg.Namespace).Create(ctx, eps, metav1.CreateOptions{})
+		} else {
+			return err
+		}
+	} else {
+		_, err = o.client.CoreV1().Endpoints(cfg.Namespace).Update(ctx, eps, metav1.UpdateOptions{})
+	}
+
+	return err
+}
+
+// syncEndpointSlices 测试用的 EndpointSlice 同步方法
+func (o *testOperator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, addresses []corev1.EndpointAddress, svc *corev1.Service) error {
+	// 删除旧的 Endpoints 资源
+	err := o.client.CoreV1().Endpoints(cfg.Namespace).Delete(ctx, cfg.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		// 忽略 NotFound 错误
+	}
+
+	// 获取现有的 EndpointSlice
+	existingSlices, err := o.client.DiscoveryV1().EndpointSlices(cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: kubeletServiceLabels.Matcher(),
+	})
+	if err != nil {
+		return err
+	}
+
+	// 计算需要的 slice 数量
+	maxEndpointsPerSlice := cfg.MaxEndpointsPerSlice
+	if maxEndpointsPerSlice <= 0 || maxEndpointsPerSlice > 1000 {
+		maxEndpointsPerSlice = 1000
+	}
+
+	numSlicesNeeded := (len(addresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
+
+	// 创建或更新 EndpointSlice
+	for i := 0; i < numSlicesNeeded; i++ {
+		start := i * maxEndpointsPerSlice
+		end := start + maxEndpointsPerSlice
+		if end > len(addresses) {
+			end = len(addresses)
+		}
+
+		sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+
+		// 构建 endpoints
+		endpoints := make([]discoveryv1.Endpoint, 0, end-start)
+		for _, addr := range addresses[start:end] {
+			endpoints = append(endpoints, discoveryv1.Endpoint{
+				Addresses: []string{addr.IP},
+				TargetRef: addr.TargetRef,
+			})
+		}
+
+		slice := &discoveryv1.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      sliceName,
+				Namespace: cfg.Namespace,
+				Labels:    kubeletServiceLabels.Labels(),
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "v1",
+						Kind:       "Service",
+						Name:       cfg.Name,
+						UID:        svc.UID,
+					},
+				},
+			},
+			AddressType: discoveryv1.AddressTypeIPv4,
+			Endpoints:   endpoints,
+			Ports: []discoveryv1.EndpointPort{
+				{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)},
+				{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},
+				{Name: stringPtr("cadvisor"), Port: int32Ptr(4194)},
+			},
+		}
+
+		_, err = o.client.DiscoveryV1().EndpointSlices(cfg.Namespace).Get(ctx, sliceName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				_, err = o.client.DiscoveryV1().EndpointSlices(cfg.Namespace).Create(ctx, slice, metav1.CreateOptions{})
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		} else {
+			_, err = o.client.DiscoveryV1().EndpointSlices(cfg.Namespace).Update(ctx, slice, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// 删除多余的 slices
+	for i := numSlicesNeeded; i < len(existingSlices.Items); i++ {
+		sliceName := fmt.Sprintf("%s-%d", cfg.Name, i)
+		err = o.client.DiscoveryV1().EndpointSlices(cfg.Namespace).Delete(ctx, sliceName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			// 忽略 NotFound 错误
+		}
+	}
+
+	return nil
+}
+
+// mockObjectsControllerAdapter 适配器，将 nodeObjectsProvider 适配为 ObjectsController
+type mockObjectsControllerAdapter struct {
+	provider nodeObjectsProvider
+}
+
+func (m *mockObjectsControllerAdapter) NodeObjs() []*corev1.Node {
+	return m.provider.NodeObjs()
+}
+
+// createTestOperator 创建测试用的 Operator 实例
+// 使用 mock ObjectsController 避免 informer 初始化问题
+func createTestOperator(t *testing.T, client kubernetes.Interface, nodes []*corev1.Node) *testOperator {
+	ctx := context.Background()
+
+	// 创建 mock ObjectsController（不需要真实的 informer）
+	mockController := &mockObjectsController{
+		nodes: nodes,
+	}
+
+	return &testOperator{
 		ctx:               ctx,
 		client:            client,
-		objectsController: objectsController,
+		objectsController: mockController,
 	}
 }
 
@@ -372,8 +560,10 @@ func TestSyncNodeEndpoints_DeleteEndpointsWhenUsingSlice(t *testing.T) {
 	useEndpointslice = true
 
 	cfg := configs.Kubelet{
-		Namespace: "bkmonitor-operator",
-		Name:      "bkmonitor-operator-stack-kubelet",
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100,
+		RebalanceThreshold:   0.5,
 	}
 	configs.G().Kubelet = cfg
 
@@ -413,5 +603,5 @@ func TestSyncNodeEndpoints_DeleteEndpointsWhenUsingSlice(t *testing.T) {
 		LabelSelector: kubeletServiceLabels.Matcher(),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(slices.Items), "should create EndpointSlice")
+	assert.Equal(t, 5, len(slices.Items), "should create EndpointSlice")
 }

@@ -205,8 +205,10 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	// useEndpointslice 在 operator.go 中初始化，当 K8s >= 1.21.0 且配置启用时为 true
 	// 使用 EndpointSlice 可以支持超过 1000 个节点的集群，通过拆分多个 EndpointSlice 实现
 	if useEndpointslice {
+		logger.Infof("[kubelet-endpointslice] using EndpointSlice mode, nodes=%d, max_endpoints_per_slice=%d", len(addresses), cfg.MaxEndpointsPerSlice)
 		return c.syncEndpointSlices(ctx, cfg, addresses)
 	}
+	logger.Debugf("[kubelet-endpointslice] using legacy Endpoints mode (EndpointSlice disabled)")
 
 	// 保持原有逻辑：创建 Endpoints（向后兼容）
 	// 适用于 K8s < 1.21.0 或未启用 EndpointSlice 的场景
@@ -302,12 +304,15 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// 2. 获取现有的 EndpointSlice（用于优化填充策略）
 	// 参考 Kubernetes 官方实现：优先填充已有的 slice，最大化利用空间
 	endpointSliceClient := c.client.DiscoveryV1().EndpointSlices(cfg.Namespace)
+	logger.Debugf("[kubelet-endpointslice] listing existing endpoint slices in namespace=%s, labelSelector=%s", cfg.Namespace, kubeletServiceLabels.Matcher())
 	existingSlices, err := endpointSliceClient.List(ctx, metav1.ListOptions{
 		LabelSelector: kubeletServiceLabels.Matcher(),
 	})
 	if err != nil {
+		logger.Errorf("[kubelet-endpointslice] failed to list existing endpoint slices: %v", err)
 		return errors.Wrap(err, "failed to list existing endpoint slices")
 	}
+	logger.Infof("[kubelet-endpointslice] found %d existing endpoint slices", len(existingSlices.Items))
 
 	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
 	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
@@ -319,10 +324,13 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// 1. 检查 Service 是否存在（如果不存在，Service 字段为 nil，SlicesToDelete 包含所有现有 slices）
 	// 2. 判断是否需要 rebalance（如果需要，构建重新分配的 slices）
 	// 3. 正常场景下，计算需要删除、同步的 slices（SlicesToSync 包括需要更新和新建的 slices）
+	logger.Debugf("[kubelet-endpointslice] analyzing endpoint slices: addresses=%d, maxEndpointsPerSlice=%d, rebalanceThreshold=%.2f", len(addresses), maxEndpointsPerSlice, rebalanceThreshold)
 	analysisResult, err := c.analyzeEndpointSlices(ctx, cfg, existingSlices.Items, addresses, maxEndpointsPerSlice, rebalanceThreshold)
 	if err != nil {
+		logger.Errorf("[kubelet-endpointslice] failed to analyze endpoint slices: %v", err)
 		return errors.Wrap(err, "failed to analyze endpoint slices")
 	}
+	logger.Infof("[kubelet-endpointslice] analysis result: slices_to_sync=%d, slices_to_delete=%d, total_slices=%d", len(analysisResult.SlicesToSync), len(analysisResult.SlicesToDelete), analysisResult.TotalSlices)
 
 	// ========== 执行阶段：根据分析结果执行删除、同步操作 ==========
 	// 执行函数会根据分析结果：
@@ -330,19 +338,21 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// 2. 如果 Service 不存在，只删除，不更新或创建
 	// 3. 如果需要 rebalance，删除所有旧 slices 后同步新的 slices
 	// 4. 正常场景下，同步需要同步的 slices（包括更新和新建，统一使用 CreateOrUpdateEndpointSlice）
+	logger.Debugf("[kubelet-endpointslice] executing endpoint slice changes")
 	err = c.executeEndpointSliceChanges(ctx, endpointSliceClient, cfg, analysisResult)
 	if err != nil {
+		logger.Errorf("[kubelet-endpointslice] failed to execute endpoint slice changes: %v", err)
 		return errors.Wrap(err, "failed to execute endpoint slice changes")
 	}
 
 	// Service 不存在时的特殊处理：记录日志并返回
 	// 注意：Service 检查已在 analyzeEndpointSlices 函数内部完成，这里只是记录日志
 	if analysisResult.Service == nil {
-		logger.Infof("cleaned up %d endpoint slices (service %s/%s not found)", len(analysisResult.SlicesToDelete), cfg.Namespace, cfg.Name)
+		logger.Infof("[kubelet-endpointslice] cleaned up %d endpoint slices (service %s/%s not found)", len(analysisResult.SlicesToDelete), cfg.Namespace, cfg.Name)
 		return errors.New("service not found, endpoint slices cleaned up")
 	}
 
-	logger.Debugf("sync kubelet endpoint slices %s, address count (%d), existing slices (%d), slices to sync (%d), total slices (%d)", cfg, len(addresses), len(existingSlices.Items), len(analysisResult.SlicesToSync), analysisResult.TotalSlices)
+	logger.Infof("[kubelet-endpointslice] sync completed successfully: service=%s/%s, addresses=%d, existing_slices=%d, synced_slices=%d, total_slices=%d", cfg.Namespace, cfg.Name, len(addresses), len(existingSlices.Items), len(analysisResult.SlicesToSync), analysisResult.TotalSlices)
 
 	return nil
 }
@@ -396,11 +406,12 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	}
 
 	// ========== 第一步：检查 Service 是否存在 ==========
+	logger.Debugf("[kubelet-endpointslice] checking if service %s/%s exists", cfg.Namespace, cfg.Name)
 	svc, err := c.client.CoreV1().Services(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Service 不存在，需要在分析函数中处理删除所有 EndpointSlice 的逻辑
-			logger.Warnf("service %s/%s not found, will delete all related endpoint slices", cfg.Namespace, cfg.Name)
+			logger.Warnf("[kubelet-endpointslice] service %s/%s not found, will delete all %d related endpoint slices", cfg.Namespace, cfg.Name, len(existingSlices))
 			// 收集所有需要删除的 slice 名称
 			for _, slice := range existingSlices {
 				result.SlicesToDelete[slice.Name] = struct{}{}
@@ -408,9 +419,11 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 			return result, nil
 		} else {
 			// 其他错误（如网络错误、权限错误等），直接返回
+			logger.Errorf("[kubelet-endpointslice] failed to get service %s/%s: %v", cfg.Namespace, cfg.Name, err)
 			return nil, errors.Wrap(err, "failed to get service")
 		}
 	}
+	logger.Debugf("[kubelet-endpointslice] service %s/%s exists (UID=%s)", cfg.Namespace, cfg.Name, svc.UID)
 	result.Service = svc
 
 	// ========== 第二步：Rebalance 提前判断 ==========
@@ -429,7 +442,7 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	shouldRebalance := totalCapacityAfterAdjustment > 0 && float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment) < rebalanceThreshold
 
 	if shouldRebalance {
-		logger.Infof("rebalance triggered (pre-check): adjusted capacity usage %.2f%% (%d/%d) < threshold %.2f%%, merging slices", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
+		logger.Infof("[kubelet-endpointslice] rebalance triggered: adjusted capacity usage %.2f%% (%d/%d) < threshold %.2f%%, merging slices", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
 
 		// ========== Rebalance 分支：数据准备 ==========
 		// 1. 将 addresses 转换为 endpoints（使用辅助函数）
@@ -488,10 +501,12 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		}
 
 		result.TotalSlices = numSlicesNeeded
-		logger.Infof("rebalance plan: total slices=%d, slices to sync=%d, slices to delete=%d",
+		logger.Infof("[kubelet-endpointslice] rebalance plan: total_slices=%d, slices_to_sync=%d, slices_to_delete=%d",
 			numSlicesNeeded, len(result.SlicesToSync), len(result.SlicesToDelete))
 		return result, nil
 	}
+
+	logger.Debugf("[kubelet-endpointslice] no rebalance needed: adjusted capacity usage %.2f%% (%d/%d) >= threshold %.2f%%", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
 
 	// ========== 第三步：正常分析流程（非 rebalance 场景）==========
 
@@ -673,19 +688,23 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 //   - error: 如果执行失败返回错误
 func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSliceClient discoveryv1iface.EndpointSliceInterface, cfg configs.Kubelet, analysisResult *endpointSliceAnalysisResult) error {
 	// ========== 第一步：删除不再需要的 slices ==========
+	logger.Debugf("[kubelet-endpointslice] deleting %d unnecessary endpoint slices", len(analysisResult.SlicesToDelete))
 	if err := c.deleteUnnecessaryEndpointSlices(ctx, endpointSliceClient, analysisResult.SlicesToDelete); err != nil {
+		logger.Errorf("[kubelet-endpointslice] failed to delete unnecessary endpoint slices: %v", err)
 		return errors.Wrap(err, "failed to delete unnecessary endpoint slices")
 	}
 
 	// Service 不存在时，只需要删除，不需要更新或创建
 	if analysisResult.Service == nil {
+		logger.Debugf("[kubelet-endpointslice] service not found, skipping sync (only deletion performed)")
 		return nil
 	}
 
 	// ========== 第二步：同步 slices（包括更新和新建）==========
 	// 注意：底层函数 CreateOrUpdateEndpointSlice 已经支持创建或更新，所以可以统一处理
+	logger.Debugf("[kubelet-endpointslice] syncing %d endpoint slices", len(analysisResult.SlicesToSync))
 
-	for _, slice := range analysisResult.SlicesToSync {
+	for i, slice := range analysisResult.SlicesToSync {
 		// 设置完整的元数据
 		slice.Namespace = cfg.Namespace
 		slice.Labels = kubeletServiceLabels.Labels()
@@ -700,11 +719,16 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 
 		// 同步 EndpointSlice（CreateOrUpdateEndpointSlice 会自动判断是创建还是更新）
 		// 注意：DeepEqual 检查在 CreateOrUpdateEndpointSlice 内部完成，避免不必要的更新
+		logger.Debugf("[kubelet-endpointslice] syncing slice %d/%d: name=%s, endpoints=%d", i+1, len(analysisResult.SlicesToSync), slice.Name, len(slice.Endpoints))
 		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
 		if err != nil {
+			logger.Errorf("[kubelet-endpointslice] failed to sync endpoint slice %s: %v", slice.Name, err)
 			return errors.Wrapf(err, "failed to sync endpoint slice %s", slice.Name)
 		}
+		logger.Debugf("[kubelet-endpointslice] successfully synced slice: name=%s", slice.Name)
 	}
+
+	logger.Infof("[kubelet-endpointslice] successfully synced %d endpoint slices", len(analysisResult.SlicesToSync))
 
 	return nil
 }
@@ -720,19 +744,25 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 //   - error: 如果删除失败返回错误（NotFound 错误会被忽略）
 func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpointSliceClient discoveryv1iface.EndpointSliceInterface, slicesToDelete map[string]struct{}) error {
 	if len(slicesToDelete) == 0 {
+		logger.Debugf("[kubelet-endpointslice] no endpoint slices to delete")
 		return nil
 	}
 
+	logger.Infof("[kubelet-endpointslice] deleting %d unnecessary endpoint slices", len(slicesToDelete))
+
 	var deleteErrors []error
 	for sliceName := range slicesToDelete {
+		logger.Debugf("[kubelet-endpointslice] deleting slice: name=%s", sliceName)
 		err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			// 如果删除失败且不是 NotFound 错误，记录错误
 			// NotFound 错误可以忽略（可能已经被其他进程删除）
 			deleteErrors = append(deleteErrors, errors.Wrapf(err, "failed to delete endpoint slice %s", sliceName))
-			logger.Errorf("failed to delete endpoint slice %s: %v", sliceName, err)
+			logger.Errorf("[kubelet-endpointslice] failed to delete slice %s: %v", sliceName, err)
 		} else if err == nil {
-			logger.Debugf("deleted unnecessary endpoint slice %s", sliceName)
+			logger.Debugf("[kubelet-endpointslice] successfully deleted slice: name=%s", sliceName)
+		} else {
+			logger.Debugf("[kubelet-endpointslice] slice %s already deleted (NotFound)", sliceName)
 		}
 	}
 

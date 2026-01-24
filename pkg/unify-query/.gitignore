@@ -31,3 +31,4 @@ unify-query.log
 
 # ignore bolt.db file
 **/bolt.db
+unify_query

@@ -758,11 +758,11 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 
 		// 同步 EndpointSlice（CreateOrUpdateEndpointSlice 会自动判断是创建还是更新）
 		// 注意：DeepEqual 检查在 CreateOrUpdateEndpointSlice 内部完成，避免不必要的更新
-		logger.Debugf("[kubelet-endpointslice] syncing slice %s with %d endpoints", slice.Name, len(slice.Endpoints))
 		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
 		if err != nil {
 			return errors.Wrapf(err, "failed to sync endpoint slice %s", slice.Name)
 		}
+		logger.Infof("[kubelet-endpointslice] synced slice %s with %d endpoints", slice.Name, len(slice.Endpoints))
 	}
 
 	return nil
@@ -782,7 +782,6 @@ func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpoint
 		return nil
 	}
 
-	logger.Debugf("[kubelet-endpointslice] deleting %d unnecessary slices", len(slicesToDelete))
 	var deleteErrors []error
 	for sliceName := range slicesToDelete {
 		err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})
@@ -791,6 +790,8 @@ func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpoint
 			// NotFound 错误可以忽略（可能已经被其他进程删除）
 			// Forbidden 错误可以忽略（可能是非纳管的资源，没有删除权限）
 			deleteErrors = append(deleteErrors, errors.Wrapf(err, "failed to delete endpoint slice %s", sliceName))
+		} else if err == nil {
+			logger.Infof("[kubelet-endpointslice] deleted slice %s", sliceName)
 		}
 	}
 

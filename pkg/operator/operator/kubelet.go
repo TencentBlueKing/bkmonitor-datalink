@@ -379,8 +379,13 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 		return errors.New("service not found, endpoint slices cleaned up")
 	}
 
-	logger.Infof("[kubelet-endpointslice] sync completed: addresses=%d, slices=%d, synced=%d, deleted=%d",
-		len(addresses), analysisResult.TotalSlices, len(analysisResult.SlicesToSync), len(analysisResult.SlicesToDelete))
+	// 根据变更情况输出不同的日志
+	if len(analysisResult.SlicesToSync) == 0 && len(analysisResult.SlicesToDelete) == 0 {
+		logger.Infof("[kubelet-endpointslice] no changes: addresses=%d, slices=%d", len(addresses), analysisResult.TotalSlices)
+	} else {
+		logger.Infof("[kubelet-endpointslice] sync completed: addresses=%d, slices=%d, synced=%d, deleted=%d",
+			len(addresses), analysisResult.TotalSlices, len(analysisResult.SlicesToSync), len(analysisResult.SlicesToDelete))
+	}
 
 	return nil
 }
@@ -559,7 +564,6 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		desiredIPs[addr.IP] = struct{}{}
 	}
 
-	// ========== 快速判断：检查是否有变更 ==========
 	// 构建现有的地址集合（从现有 slices 中提取所有 IP）
 	existingIPsForCheck := make(map[string]struct{})
 	for _, slice := range existingSlices {
@@ -567,24 +571,6 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 			if len(ep.Addresses) > 0 {
 				existingIPsForCheck[ep.Addresses[0]] = struct{}{}
 			}
-		}
-	}
-
-	// 快速判断：如果期望的 IPs 和现有的 IPs 完全一致，则无需任何变更
-	// 条件：数量相同，且所有期望的 IP 都在现有集合中
-	if len(desiredIPs) == len(existingIPsForCheck) {
-		hasChange := false
-		for ip := range desiredIPs {
-			if _, exists := existingIPsForCheck[ip]; !exists {
-				hasChange = true
-				break
-			}
-		}
-		if !hasChange {
-			// 无变更，直接返回空结果（不需要删除、不需要同步）
-			result.TotalSlices = len(existingSlices)
-			logger.Debugf("[kubelet-endpointslice] no changes detected: addresses=%d, slices=%d", len(desiredIPs), len(existingSlices))
-			return result, nil
 		}
 	}
 

@@ -583,6 +583,7 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		if !hasChange {
 			// 无变更，直接返回空结果（不需要删除、不需要同步）
 			result.TotalSlices = len(existingSlices)
+			logger.Debugf("[kubelet-endpointslice] no changes detected: addresses=%d, slices=%d", len(desiredIPs), len(existingSlices))
 			return result, nil
 		}
 	}

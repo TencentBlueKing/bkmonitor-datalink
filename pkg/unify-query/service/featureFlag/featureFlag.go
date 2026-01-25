@@ -11,6 +11,7 @@ package featureFlag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -28,8 +29,8 @@ type Service struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	wg                     *sync.WaitGroup
-	redisFeatureFlagClient *redis.FeatureFlagClient
+	wg       *sync.WaitGroup
+	provider FeatureFlagProvider
 }
 
 // Type
@@ -44,22 +45,14 @@ func (s *Service) Start(ctx context.Context) {
 
 // reloadFeatureFlags
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
-	var data []byte
-	var err error
+	if s.provider == nil {
+		return fmt.Errorf("feature flag provider is not initialized")
+	}
 
-	// 根据配置选择数据源
-	if DataSource == "redis" {
-		data, err = s.redisFeatureFlagClient.GetFeatureFlags(ctx) // 从redis获取特征标记
-		if err != nil {
-			log.Errorf(ctx, "get feature flags from redis failed,error:%s", err)
-			return err
-		}
-	} else {
-		data, err = consul.GetFeatureFlags() // 从consul获取特征标记
-		if err != nil {
-			log.Errorf(ctx, "get feature flags from consul failed,error:%s", err)
-			return err
-		}
+	data, err := s.provider.GetFeatureFlags(ctx)
+	if err != nil {
+		log.Errorf(ctx, "get feature flags failed, error: %s", err)
+		return err
 	}
 
 	err = featureFlag.ReloadFeatureFlags(data)
@@ -68,27 +61,20 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 
 // loopReloadFeatureFlags
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
+	if s.provider == nil {
+		return fmt.Errorf("feature flag provider is not initialized")
+	}
+
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
 		log.Errorf(ctx, "reload feature flags failed, error: %s", err)
 		return err
 	}
 
-	var ch <-chan any
-	// 根据配置选择监听方式
-	if DataSource == "redis" {
-		ch, err = s.redisFeatureFlagClient.WatchFeatureFlags(ctx)
-		if err != nil {
-			log.Errorf(ctx, "watch feature flags from redis failed, error: %s", err)
-			return err
-		}
-	} else {
-		// 默认使用 consul
-		ch, err = consul.WatchFeatureFlags(ctx)
-		if err != nil {
-			log.Errorf(ctx, "watch feature flags from consul failed, error: %s", err)
-			return err
-		}
+	ch, err := s.provider.WatchFeatureFlags(ctx)
+	if err != nil {
+		log.Errorf(ctx, "watch feature flags failed, error: %s", err)
+		return err
 	}
 
 	s.wg.Add(1)
@@ -100,10 +86,10 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 				log.Warnf(context.TODO(), "feature flags reload loop exit")
 				return
 			case <-ch:
-				log.Debugf(context.TODO(), "get feature flags changed notify from %s", DataSource)
+				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
+					log.Errorf(context.TODO(), "reload feature flags failed, error: %s", err)
 				}
 			}
 		}
@@ -124,7 +110,8 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
-	// 如果使用 Redis 数据源，初始化 Redis feature flag client
+
+	// 根据配置选择数据源，初始化 provider
 	if DataSource == "redis" {
 		redisClient := redis.Client()
 		if redisClient == nil {
@@ -136,7 +123,10 @@ func (s *Service) Reload(ctx context.Context) {
 		if basePath == "" {
 			basePath = "bkmonitorv3:unify-query"
 		}
-		s.redisFeatureFlagClient = redis.NewFeatureFlagClient(redisClient, basePath)
+		s.provider = redis.NewFeatureFlagClient(redisClient, basePath)
+	} else {
+		// 默认使用 consul
+		s.provider = consul.NewFeatureFlagProvider()
 	}
 
 	err = s.loopReloadFeatureFlags(s.ctx)

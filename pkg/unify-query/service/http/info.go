@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	featureFlagService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/featureFlag"
 	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
@@ -137,11 +138,13 @@ func HandleFeatureFlag(c *gin.Context) {
 
 	if refresh != "" {
 		res += "refresh feature flag\n"
+		var provider featureFlagService.FeatureFlagProvider
 		var path string
 		var data []byte
 		var err error
 		var dataSource string
 
+		// 根据 source 参数创建对应的 provider
 		if source == "redis" {
 			dataSource = "redis"
 			redisClient := redis.Client()
@@ -153,21 +156,27 @@ func HandleFeatureFlag(c *gin.Context) {
 					basePath = "bkmonitorv3:unify-query"
 				}
 				ffClient := redis.NewFeatureFlagClient(redisClient, basePath)
-				path = ffClient.GetFeatureFlagsPath()
-				res += fmt.Sprintf("redis feature flags key: %s\n", path)
-				data, err = ffClient.GetFeatureFlags(ctx)
-				if err != nil {
-					res += fmt.Sprintf("redis get feature flags error: %s\n", err.Error())
-				}
+				provider = ffClient
 			}
 		} else {
-			// 默认使用 consul
+			// 默认使用 consul,处理输入异常情况
 			dataSource = "consul"
-			path = consul.GetFeatureFlagsPath()
-			res += fmt.Sprintf("consul feature flags path: %s\n", path)
-			data, err = consul.GetFeatureFlags()
+			provider = consul.NewFeatureFlagProvider()
+		}
+
+		if provider != nil {
+			path = provider.GetFeatureFlagsPath()
+			if source == "redis" {
+				res += fmt.Sprintf("redis feature flags key: %s\n", path)
+			} else {
+				res += fmt.Sprintf("consul feature flags path: %s\n", path)
+			}
+		}
+
+		if provider != nil {
+			data, err = provider.GetFeatureFlags(ctx)
 			if err != nil {
-				res += fmt.Sprintf("consul get feature flags error: %s\n", err.Error())
+				res += fmt.Sprintf("%s get feature flags error: %s\n", dataSource, err.Error())
 			}
 		}
 

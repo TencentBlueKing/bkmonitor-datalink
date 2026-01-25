@@ -11,14 +11,12 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/likexian/gokit/assert"
-	"github.com/prashantv/gostub"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -27,11 +25,20 @@ import (
 func TestGetFeatureFlagsPath(t *testing.T) {
 	log.InitTestLogger()
 
-	// 设置基础路径
-	basePath = "bkmonitorv3:unify-query"
-	dataPath = "data"
+	// 使用 miniredis 创建 mock client
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
 
-	path := GetFeatureFlagsPath()
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+	path := ffClient.GetFeatureFlagsPath()
 	expected := "bkmonitorv3:unify-query:data:feature_flag"
 	assert.Equal(t, expected, path)
 }
@@ -40,11 +47,20 @@ func TestGetFeatureFlagsPath(t *testing.T) {
 func TestGetFeatureFlagsChannel(t *testing.T) {
 	log.InitTestLogger()
 
-	// 设置基础路径
-	basePath = "bkmonitorv3:unify-query"
-	dataPath = "data"
+	// 使用 miniredis 创建 mock client
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
 
-	channel := GetFeatureFlagsChannel()
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+	channel := ffClient.GetFeatureFlagsChannel()
 	expected := "bkmonitorv3:unify-query:data:feature_flag:feature_flag_channel"
 	assert.Equal(t, expected, channel)
 }
@@ -56,6 +72,17 @@ func TestGetFeatureFlags(t *testing.T) {
 
 	// 测试用例 1: 正常获取配置
 	t.Run("正常获取配置", func(t *testing.T) {
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("failed to start miniredis: %v", err)
+		}
+		defer mr.Close()
+
+		client := goRedis.NewClient(&goRedis.Options{
+			Addr: mr.Addr(),
+		})
+		defer client.Close()
+
 		featureFlagConfig := `{
 			"test-flag": {
 				"variations": {
@@ -68,10 +95,12 @@ func TestGetFeatureFlags(t *testing.T) {
 			}
 		}`
 
-		stubs := gostub.StubFunc(&GetKVData, []byte(featureFlagConfig), nil)
-		defer stubs.Reset()
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		key := ffClient.GetFeatureFlagsPath()
+		err = client.Set(ctx, key, featureFlagConfig, 0).Err()
+		assert.Nil(t, err)
 
-		data, err := GetFeatureFlags(ctx)
+		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.Nil(t, err)
 		assert.NotNil(t, data)
 		assert.Equal(t, featureFlagConfig, string(data))
@@ -79,33 +108,48 @@ func TestGetFeatureFlags(t *testing.T) {
 
 	// 测试用例 2: 配置不存在（Redis 返回空数据）
 	t.Run("配置不存在", func(t *testing.T) {
-		// GetKVData 在 key 不存在时返回 []byte("{}")
-		stubs := gostub.StubFunc(&GetKVData, []byte("{}"), nil)
-		defer stubs.Reset()
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("failed to start miniredis: %v", err)
+		}
+		defer mr.Close()
 
-		data, err := GetFeatureFlags(ctx)
+		client := goRedis.NewClient(&goRedis.Options{
+			Addr: mr.Addr(),
+		})
+		defer client.Close()
+
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.Nil(t, err)
 		assert.NotNil(t, data)
 		assert.Equal(t, "{}", string(data))
 	})
 
-	// 测试用例 3: 获取配置失败
-	t.Run("获取配置失败", func(t *testing.T) {
-		stubs := gostub.StubFunc(&GetKVData, nil, errors.New("redis get error"))
-		defer stubs.Reset()
-
-		data, err := GetFeatureFlags(ctx)
+	// 测试用例 3: Redis client 未初始化
+	t.Run("Redis client 未初始化", func(t *testing.T) {
+		ffClient := NewFeatureFlagClient(nil, "bkmonitorv3:unify-query")
+		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.NotNil(t, err)
-		assert.Equal(t, "redis get error", err.Error())
-		assert.Equal(t, 0, len(data), "data should be nil or empty when error occurs")
+		assert.Contains(t, err.Error(), "redis client is not initialized")
+		assert.Equal(t, 0, len(data))
 	})
 
 	// 测试用例 4: 空配置
 	t.Run("空配置", func(t *testing.T) {
-		stubs := gostub.StubFunc(&GetKVData, []byte("{}"), nil)
-		defer stubs.Reset()
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("failed to start miniredis: %v", err)
+		}
+		defer mr.Close()
 
-		data, err := GetFeatureFlags(ctx)
+		client := goRedis.NewClient(&goRedis.Options{
+			Addr: mr.Addr(),
+		})
+		defer client.Close()
+
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.Nil(t, err)
 		assert.NotNil(t, data)
 		assert.Equal(t, "{}", string(data))
@@ -120,46 +164,63 @@ func TestWatchFeatureFlags(t *testing.T) {
 
 	// 测试用例 1: 正常监听
 	t.Run("正常监听", func(t *testing.T) {
-		testChan := make(chan any, 1)
-		testChan <- &goRedis.Message{Payload: "test notification"}
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("failed to start miniredis: %v", err)
+		}
+		defer mr.Close()
 
-		stubs := gostub.StubFunc(&WatchChange, testChan, nil)
-		defer stubs.Reset()
+		client := goRedis.NewClient(&goRedis.Options{
+			Addr: mr.Addr(),
+		})
+		defer client.Close()
 
-		ch, err := WatchFeatureFlags(ctx)
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		ch, err := ffClient.WatchFeatureFlags(ctx)
 		assert.Nil(t, err)
 		assert.NotNil(t, ch)
 
+		// 发布消息
+		channel := ffClient.GetFeatureFlagsChannel()
+		err = client.Publish(ctx, channel, "test notification").Err()
+		assert.Nil(t, err)
+
+		// 等待消息
 		select {
 		case msg := <-ch:
 			redisMsg, ok := msg.(*goRedis.Message)
 			assert.True(t, ok)
 			assert.Equal(t, "test notification", redisMsg.Payload)
-		case <-time.After(1 * time.Second):
+		case <-time.After(2 * time.Second):
 			t.Error("timeout waiting for message")
 		}
 	})
 
-	// 测试用例 2: 监听失败
-	t.Run("监听失败", func(t *testing.T) {
-		stubs := gostub.StubFunc(&WatchChange, nil, errors.New("watch error"))
-		defer stubs.Reset()
-
-		ch, err := WatchFeatureFlags(ctx)
+	// 测试用例 2: Redis client 未初始化
+	t.Run("Redis client 未初始化", func(t *testing.T) {
+		ffClient := NewFeatureFlagClient(nil, "bkmonitorv3:unify-query")
+		ch, err := ffClient.WatchFeatureFlags(ctx)
 		assert.NotNil(t, err)
-		assert.Equal(t, "watch error", err.Error())
+		assert.Contains(t, err.Error(), "redis client is not initialized")
 		assert.True(t, ch == nil, "channel should be nil when error occurs")
 	})
 
 	// 测试用例 3: 上下文取消
 	t.Run("上下文取消", func(t *testing.T) {
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("failed to start miniredis: %v", err)
+		}
+		defer mr.Close()
+
+		client := goRedis.NewClient(&goRedis.Options{
+			Addr: mr.Addr(),
+		})
+		defer client.Close()
+
 		cancelCtx, cancelFunc := context.WithCancel(context.Background())
-		testChan := make(chan any)
-
-		stubs := gostub.StubFunc(&WatchChange, testChan, nil)
-		defer stubs.Reset()
-
-		ch, err := WatchFeatureFlags(cancelCtx)
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		ch, err := ffClient.WatchFeatureFlags(cancelCtx)
 		assert.Nil(t, err)
 		assert.NotNil(t, ch)
 
@@ -173,20 +234,12 @@ func TestSetFeatureFlags(t *testing.T) {
 	log.InitTestLogger()
 	ctx := context.Background()
 
-	// 保存原始的 globalInstance
-	originalInstance := globalInstance
-
 	// 测试用例 1: Redis client 未初始化
 	t.Run("Redis client 未初始化", func(t *testing.T) {
-		// 设置 globalInstance 为 nil
-		globalInstance = nil
-		defer func() {
-			globalInstance = originalInstance
-		}()
-
-		err := SetFeatureFlags(ctx, []byte("{}"))
+		ffClient := NewFeatureFlagClient(nil, "bkmonitorv3:unify-query")
+		err := ffClient.SetFeatureFlags(ctx, []byte("{}"))
 		assert.NotNil(t, err)
-		assert.Equal(t, "redis client is not initialized", err.Error())
+		assert.Contains(t, err.Error(), "redis client is not initialized")
 	})
 
 	// 测试用例 2: 正常设置配置
@@ -204,31 +257,24 @@ func TestSetFeatureFlags(t *testing.T) {
 		})
 		defer client.Close()
 
-		// 创建 Instance
-		mockInstance := &Instance{
-			client: client,
-		}
-		globalInstance = mockInstance
-		defer func() {
-			globalInstance = originalInstance
-		}()
-
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
 		configData := []byte(`{"flag-1":{"variations":{"true":true,"false":false},"defaultRule":{"variation":"false"}}}`)
-		err = SetFeatureFlags(ctx, configData)
+		err = ffClient.SetFeatureFlags(ctx, configData)
 		assert.Nil(t, err)
 
 		// 验证数据已设置到 Redis
-		key := GetFeatureFlagsPath()
+		key := ffClient.GetFeatureFlagsPath()
 		value, err := client.Get(ctx, key).Result()
 		assert.Nil(t, err)
 		assert.Equal(t, string(configData), value)
 
 		// 验证 channel 已发布消息（通过订阅验证）
-		pubsub := client.Subscribe(ctx, GetFeatureFlagsChannel())
+		channel := ffClient.GetFeatureFlagsChannel()
+		pubsub := client.Subscribe(ctx, channel)
 		defer pubsub.Close()
 
 		// 再次发布以触发消息
-		err = SetFeatureFlags(ctx, configData)
+		err = ffClient.SetFeatureFlags(ctx, configData)
 		assert.Nil(t, err)
 
 		// 等待消息
@@ -246,15 +292,8 @@ func TestSetFeatureFlags(t *testing.T) {
 		})
 		defer client.Close()
 
-		mockInstance := &Instance{
-			client: client,
-		}
-		globalInstance = mockInstance
-		defer func() {
-			globalInstance = originalInstance
-		}()
-
-		err := SetFeatureFlags(ctx, []byte("{}"))
+		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		err := ffClient.SetFeatureFlags(ctx, []byte("{}"))
 		// 应该返回错误（连接失败）
 		assert.NotNil(t, err)
 		assert.Contains(t, err.Error(), "failed to set feature flags to redis")
@@ -265,12 +304,22 @@ func TestSetFeatureFlags(t *testing.T) {
 func TestFeatureFlagsIntegration(t *testing.T) {
 	log.InitTestLogger()
 
-	// 设置基础路径
-	basePath = "bkmonitorv3:unify-query"
-	dataPath = "data"
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// 使用 miniredis 创建真实的 Redis 实例
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
 
 	// 测试配置
 	featureFlagConfig := `{
@@ -301,37 +350,34 @@ func TestFeatureFlagsIntegration(t *testing.T) {
 		}
 	}`
 
-	// Mock GetKVData 返回配置
-	stubs := gostub.StubFunc(&GetKVData, []byte(featureFlagConfig), nil)
-	defer stubs.Reset()
+	// 设置配置
+	err = ffClient.SetFeatureFlags(ctx, []byte(featureFlagConfig))
+	assert.Nil(t, err)
 
 	// 测试获取配置
-	data, err := GetFeatureFlags(ctx)
+	data, err := ffClient.GetFeatureFlags(ctx)
 	assert.Nil(t, err)
 	assert.NotNil(t, data)
 	assert.Equal(t, featureFlagConfig, string(data))
 
 	// 测试路径
-	path := GetFeatureFlagsPath()
+	path := ffClient.GetFeatureFlagsPath()
 	assert.Equal(t, "bkmonitorv3:unify-query:data:feature_flag", path)
 
 	// 测试 channel 路径
-	channel := GetFeatureFlagsChannel()
+	channel := ffClient.GetFeatureFlagsChannel()
 	assert.Equal(t, "bkmonitorv3:unify-query:data:feature_flag:feature_flag_channel", channel)
 
-	// 测试监听（使用一个简单的 channel）
-	watchChan := make(chan any, 1)
-	watchStubs := gostub.StubFunc(&WatchChange, watchChan, nil)
-	defer watchStubs.Reset()
-
-	ch, err := WatchFeatureFlags(ctx)
+	// 测试监听
+	ch, err := ffClient.WatchFeatureFlags(ctx)
 	assert.Nil(t, err)
 	assert.NotNil(t, ch)
 
 	// 模拟配置变更通知
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		watchChan <- &goRedis.Message{Payload: featureFlagConfig}
+		err := client.Publish(ctx, channel, featureFlagConfig).Err()
+		assert.Nil(t, err)
 	}()
 
 	// 验证能接收到变更通知
@@ -349,6 +395,19 @@ func TestFeatureFlagsIntegration(t *testing.T) {
 func TestGetFeatureFlagsWithMultipleFlags(t *testing.T) {
 	log.InitTestLogger()
 	ctx := context.Background()
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
 
 	complexConfig := `{
 		"flag-1": {
@@ -389,10 +448,11 @@ func TestGetFeatureFlagsWithMultipleFlags(t *testing.T) {
 		}
 	}`
 
-	stubs := gostub.StubFunc(&GetKVData, []byte(complexConfig), nil)
-	defer stubs.Reset()
+	// 设置配置
+	err = ffClient.SetFeatureFlags(ctx, []byte(complexConfig))
+	assert.Nil(t, err)
 
-	data, err := GetFeatureFlags(ctx)
+	data, err := ffClient.GetFeatureFlags(ctx)
 	assert.Nil(t, err)
 	assert.NotNil(t, data)
 
@@ -407,26 +467,27 @@ func TestGetFeatureFlagsWithMultipleFlags(t *testing.T) {
 func TestGetFeatureFlagsPathWithCustomBasePath(t *testing.T) {
 	log.InitTestLogger()
 
-	// 保存原始值
-	originalBasePath := basePath
-	originalDataPath := dataPath
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
 
-	// 设置自定义路径
-	basePath = "custom:base:path"
-	dataPath = "custom_data"
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
 
-	path := GetFeatureFlagsPath()
-	expected := "custom:base:path:custom_data:feature_flag"
+	// 测试自定义 basePath
+	ffClient := NewFeatureFlagClient(client, "custom:base:path")
+	path := ffClient.GetFeatureFlagsPath()
+	expected := "custom:base:path:data:feature_flag"
 	assert.Equal(t, expected, path)
 
 	// 测试 channel 路径也会相应变化
-	channel := GetFeatureFlagsChannel()
-	expectedChannel := "custom:base:path:custom_data:feature_flag:feature_flag_channel"
+	channel := ffClient.GetFeatureFlagsChannel()
+	expectedChannel := "custom:base:path:data:feature_flag:feature_flag_channel"
 	assert.Equal(t, expectedChannel, channel)
-
-	// 恢复原始值
-	basePath = originalBasePath
-	dataPath = originalDataPath
 }
 
 // TestWatchFeatureFlagsMultipleNotifications 测试多次通知
@@ -435,21 +496,32 @@ func TestWatchFeatureFlagsMultipleNotifications(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	watchChan := make(chan any, 3)
-	stubs := gostub.StubFunc(&WatchChange, watchChan, nil)
-	defer stubs.Reset()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
 
-	ch, err := WatchFeatureFlags(ctx)
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+	ch, err := ffClient.WatchFeatureFlags(ctx)
 	assert.Nil(t, err)
 	assert.NotNil(t, ch)
 
+	channel := ffClient.GetFeatureFlagsChannel()
+
 	// 发送多个通知
 	go func() {
-		watchChan <- &goRedis.Message{Payload: "notification 1"}
+		time.Sleep(50 * time.Millisecond)
+		client.Publish(ctx, channel, "notification 1")
 		time.Sleep(10 * time.Millisecond)
-		watchChan <- &goRedis.Message{Payload: "notification 2"}
+		client.Publish(ctx, channel, "notification 2")
 		time.Sleep(10 * time.Millisecond)
-		watchChan <- &goRedis.Message{Payload: "notification 3"}
+		client.Publish(ctx, channel, "notification 3")
 	}()
 
 	// 验证能接收到所有通知
@@ -472,12 +544,21 @@ func TestWatchFeatureFlagsMultipleNotifications(t *testing.T) {
 func TestGetFeatureFlagsChannelFormat(t *testing.T) {
 	log.InitTestLogger()
 
-	basePath = "test:path"
-	dataPath = "data"
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
 
-	channel := GetFeatureFlagsChannel()
+	client := goRedis.NewClient(&goRedis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	ffClient := NewFeatureFlagClient(client, "test:path")
+	channel := ffClient.GetFeatureFlagsChannel()
 	// 应该包含 key 和 channel 后缀
-	assert.Contains(t, channel, GetFeatureFlagsPath())
+	assert.Contains(t, channel, ffClient.GetFeatureFlagsPath())
 	assert.Contains(t, channel, featureFlagChannel)
 	assert.Equal(t, "test:path:data:feature_flag:feature_flag_channel", channel)
 }

@@ -11,8 +11,6 @@ package redis
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -143,62 +141,4 @@ var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Me
 	log.Debugf(ctx, "[redis] subscribe %s", channels)
 	p := globalInstance.client.Subscribe(ctx, channels...)
 	return p.Channel()
-}
-
-// WatchChange 监听指定 channel，监听触发时，channel将会传出信息（用于特性开关等场景）
-var WatchChange = func(ctx context.Context, channel string) (<-chan any, error) {
-	if globalInstance == nil {
-		return nil, fmt.Errorf("redis client is not initialized")
-	}
-
-	msgChan := Subscribe(ctx, channel)
-
-	// 转换为通用的 channel
-	resultChan := make(chan any)
-	go func() {
-		defer close(resultChan)
-		for {
-			select {
-			case <-ctx.Done():
-				log.Debugf(ctx, "[redis] watch context cancelled")
-				return
-			case msg, ok := <-msgChan:
-				if !ok {
-					log.Debugf(ctx, "[redis] channel closed")
-					return
-				}
-				// 当收到消息时，通知配置变更
-				log.Debugf(ctx, "[redis] received change notification: %s", msg.Payload)
-				// 使用非阻塞发送，如果接收者已停止，直接丢弃消息
-				select {
-				case resultChan <- msg:
-				case <-ctx.Done():
-					return
-				default:
-					// 如果 resultChan 已满或接收者已停止，记录日志但不阻塞
-					log.Debugf(ctx, "[redis] result channel is full or receiver stopped, dropping message")
-				}
-			}
-		}
-	}()
-
-	return resultChan, nil
-}
-
-// GetKVData 通过 key 路径获取 value（用于特性开关等场景）
-var GetKVData = func(ctx context.Context, key string) ([]byte, error) {
-	if globalInstance == nil {
-		return nil, fmt.Errorf("redis client is not initialized")
-	}
-
-	data, err := globalInstance.client.Get(ctx, key).Result()
-	if err != nil {
-		if errors.Is(err, goRedis.Nil) {
-			// 若Key 不存在，返回空数据
-			return []byte("{}"), nil
-		}
-		return nil, fmt.Errorf("failed to get data from redis: %w", err)
-	}
-
-	return []byte(data), nil
 }

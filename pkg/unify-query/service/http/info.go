@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -143,11 +144,21 @@ func HandleFeatureFlag(c *gin.Context) {
 
 		if source == "redis" {
 			dataSource = "redis"
-			path = redis.GetFeatureFlagsPath()
-			res += fmt.Sprintf("redis feature flags key: %s\n", path)
-			data, err = redis.GetFeatureFlags(ctx)
-			if err != nil {
-				res += fmt.Sprintf("redis get feature flags error: %s\n", err.Error())
+			redisClient := redis.Client()
+			if redisClient == nil {
+				res += "redis client is not initialized\n"
+			} else {
+				basePath := redisService.KVBasePath
+				if basePath == "" {
+					basePath = "bkmonitorv3:unify-query"
+				}
+				ffClient := redis.NewFeatureFlagClient(redisClient, basePath)
+				path = ffClient.GetFeatureFlagsPath()
+				res += fmt.Sprintf("redis feature flags key: %s\n", path)
+				data, err = ffClient.GetFeatureFlags(ctx)
+				if err != nil {
+					res += fmt.Sprintf("redis get feature flags error: %s\n", err.Error())
+				}
 			}
 		} else {
 			// 默认使用 consul

@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
 
 // Service
@@ -27,7 +28,8 @@ type Service struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	wg *sync.WaitGroup
+	wg                     *sync.WaitGroup
+	redisFeatureFlagClient *redis.FeatureFlagClient
 }
 
 // Type
@@ -47,7 +49,7 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 
 	// 根据配置选择数据源
 	if DataSource == "redis" {
-		data, err = redis.GetFeatureFlags(ctx) // 从redis获取特征标记
+		data, err = s.redisFeatureFlagClient.GetFeatureFlags(ctx) // 从redis获取特征标记
 		if err != nil {
 			log.Errorf(ctx, "get feature flags from redis failed,error:%s", err)
 			return err
@@ -75,7 +77,7 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	var ch <-chan any
 	// 根据配置选择监听方式
 	if DataSource == "redis" {
-		ch, err = redis.WatchFeatureFlags(ctx)
+		ch, err = s.redisFeatureFlagClient.WatchFeatureFlags(ctx)
 		if err != nil {
 			log.Errorf(ctx, "watch feature flags from redis failed, error: %s", err)
 			return err
@@ -122,6 +124,20 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
+	// 如果使用 Redis 数据源，初始化 Redis feature flag client
+	if DataSource == "redis" {
+		redisClient := redis.Client()
+		if redisClient == nil {
+			log.Errorf(ctx, "redis client is not initialized")
+			return
+		}
+		// 从配置获取 basePath，如果没有则使用默认值
+		basePath := redisService.KVBasePath
+		if basePath == "" {
+			basePath = "bkmonitorv3:unify-query"
+		}
+		s.redisFeatureFlagClient = redis.NewFeatureFlagClient(redisClient, basePath)
+	}
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {

@@ -549,54 +549,69 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		desiredIPs[addr.IP] = struct{}{}
 	}
 
-	// 从现有 slices 中删除不再需要的 endpoints，同时构建 existingIPs 集合
-	// 例如：如果之前有 100 个节点，现在只有 99 个节点，应该从某个 slice 中删除对应的 endpoint
-	// 注意：这里需要深拷贝，避免修改原始 slice
-	// 优化：在删除的同时构建 existingIPs 集合，减少一次遍历
-	// 重要：如果 slice 中的所有 endpoints 都被删除（newEndpoints 为空），则不添加到 slicesCopy
-	//       这样后续逻辑会自动将其标记为需要删除的 slice
-	slicesCopy := make([]*discoveryv1.EndpointSlice, 0, len(existingSlices))
-	existingIPs := make(map[string]struct{})
+	// ========== 快速判断：检查是否有变更 ==========
+	// 构建现有的地址集合（从现有 slices 中提取所有 IP）
+	existingIPsForCheck := make(map[string]struct{})
+	for _, slice := range existingSlices {
+		for _, ep := range slice.Endpoints {
+			if len(ep.Addresses) > 0 {
+				existingIPsForCheck[ep.Addresses[0]] = struct{}{}
+			}
+		}
+	}
+
+	// 快速判断：如果期望的 IPs 和现有的 IPs 完全一致，则无需任何变更
+	// 条件：数量相同，且所有期望的 IP 都在现有集合中
+	if len(desiredIPs) == len(existingIPsForCheck) {
+		hasChange := false
+		for ip := range desiredIPs {
+			if _, exists := existingIPsForCheck[ip]; !exists {
+				hasChange = true
+				break
+			}
+		}
+		if !hasChange {
+			// 无变更，直接返回空结果（不需要删除、不需要同步）
+			logger.Debugf("[kubelet-endpointslice] no changes detected, skipping sync (addresses=%d, existing_slices=%d)", len(addresses), len(existingSlices))
+			result.TotalSlices = len(existingSlices)
+			return result, nil
+		}
+	}
+	logger.Debugf("[kubelet-endpointslice] changes detected, proceeding with analysis (desired=%d, existing=%d)", len(desiredIPs), len(existingIPsForCheck))
+
+	// 从现有 slices 中删除不再需要的 endpoints，并标记是否有删除
+	type sliceState struct {
+		slice   *discoveryv1.EndpointSlice
+		changed bool // 是否有变更（删除或新增）
+	}
+	slicesCopy := make([]sliceState, 0, len(existingSlices))
+	existingIPs := existingIPsForCheck // 复用之前构建的集合
+
 	for i := range existingSlices {
 		slice := existingSlices[i].DeepCopy()
+		originalLen := len(slice.Endpoints)
+		// 过滤掉已删除节点的 endpoints
 		newEndpoints := make([]discoveryv1.Endpoint, 0, len(slice.Endpoints))
 		for _, ep := range slice.Endpoints {
 			if len(ep.Addresses) > 0 {
-				ip := ep.Addresses[0]
-				if _, exists := desiredIPs[ip]; exists {
-					// endpoint 仍然需要，保留
+				if _, exists := desiredIPs[ep.Addresses[0]]; exists {
 					newEndpoints = append(newEndpoints, ep)
-					// 同时记录到 existingIPs 集合中（用于后续快速查找）
-					existingIPs[ip] = struct{}{}
 				}
-				// 如果不存在，说明节点已被删除，不添加到 newEndpoints（即删除）
 			}
 		}
-		// 只保留非空的 slice（如果 newEndpoints 为空，说明该 slice 中的所有 endpoints 都被删除了）
-		if len(newEndpoints) > 0 {
-			// 更新 slice 的 endpoints（即使数量没变，内容也可能变化，如节点的 UID 变化）
-			// 注意：这里总是更新 slice.Endpoints，因为 newEndpoints 可能包含不同的内容
-			// 后续的 DeepEqual 检查会判断 slice 是否有变化，避免不必要的 API 调用
-			slice.Endpoints = newEndpoints
-			slicesCopy = append(slicesCopy, slice)
-		}
-		// 如果 newEndpoints 为空，不添加到 slicesCopy，后续逻辑会自动将其标记为需要删除
+
+		slice.Endpoints = newEndpoints
+		// 如果有 endpoint 被删除，标记为已变更
+		// 注意：空 slice 也会加入 slicesCopy，后续删除逻辑会处理
+		slicesCopy = append(slicesCopy, sliceState{slice, len(newEndpoints) != originalLen})
 	}
 
-	// 填充新的 addresses（优化填充策略）
-	// 核心思想：优先填充已有的 slice，最大化利用空间，减少 slice 数量
-	// 1. 按 endpoints 数量降序排序（优先填充最满的 slice）
-	// 2. 先填充已有的 slices（如果有空位）
-	// 3. 如果还有剩余，创建新的 slices
-
-	// 按 endpoints 数量降序排序（优先填充最满的 slice）
-	// 这样可以最大化利用已有 slice 的空间，减少 slice 数量
+	// 按 endpoints 数量降序排序，优先填充最满的 slice
 	sort.Slice(slicesCopy, func(i, j int) bool {
-		return len(slicesCopy[i].Endpoints) > len(slicesCopy[j].Endpoints)
+		return len(slicesCopy[i].slice.Endpoints) > len(slicesCopy[j].slice.Endpoints)
 	})
 
-	// 收集需要新增的 addresses（不在现有 slices 中的）
-	// 时间复杂度：O(n)，其中 n = addresses 数量
+	// 收集需要新增的 addresses
 	remainingAddresses := make([]corev1.EndpointAddress, 0)
 	for _, addr := range addresses {
 		if _, exists := existingIPs[addr.IP]; !exists {
@@ -604,28 +619,21 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		}
 	}
 
-	// 先填充已有的 slices（如果有空位）
-	// 注意：slicesCopy 中已经不包含空的 slice（在构建时已过滤），所以不需要再次检查
-	for _, slice := range slicesCopy {
-		// 计算当前 slice 的空位
-		space := maxEndpointsPerSlice - len(slice.Endpoints)
-		if space > 0 && len(remainingAddresses) > 0 {
-			// 计算可以添加的 endpoints 数量
-			toAdd := space
-			if len(remainingAddresses) < space {
-				toAdd = len(remainingAddresses)
-			}
-
-			// 更新 slice 的 endpoints（追加新的 endpoints，使用辅助函数）
-			newEndpoints := make([]discoveryv1.Endpoint, 0, len(slice.Endpoints)+toAdd)
-			newEndpoints = append(newEndpoints, slice.Endpoints...)
-			newEndpoints = append(newEndpoints, convertAddressesToEndpoints(remainingAddresses[:toAdd])...)
-			slice.Endpoints = newEndpoints
+	// 填充已有 slices 的空位，并检测变更
+	// 注意：空 slice 也参与填充，填充后变非空则更新（而不是删除+新建）
+	for i := range slicesCopy {
+		slice := slicesCopy[i].slice
+		if space := maxEndpointsPerSlice - len(slice.Endpoints); space > 0 && len(remainingAddresses) > 0 {
+			toAdd := min(space, len(remainingAddresses))
+			slice.Endpoints = append(slice.Endpoints, convertAddressesToEndpoints(remainingAddresses[:toAdd])...)
 			remainingAddresses = remainingAddresses[toAdd:]
+			slicesCopy[i].changed = true // 有新增，标记为已变更
 		}
-
-		// 保留该 slice（名称不变，只更新内容）
-		result.SlicesToSync = append(result.SlicesToSync, slice)
+		// 只有有变更（删除或新增）且非空才需要同步
+		// 空 slice 会在后面被标记为删除
+		if slicesCopy[i].changed && len(slice.Endpoints) > 0 {
+			result.SlicesToSync = append(result.SlicesToSync, slice)
+		}
 	}
 
 	// 如果还有剩余，创建新的 slices（见缝插针策略）
@@ -681,22 +689,17 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		})
 	}
 
-	// 计算调整后的总 slice 数量
-	result.TotalSlices = len(result.SlicesToSync)
-
-	// ========== 第四步：构建删除列表（在处理完所有 remainingAddresses 之后）==========
-	// 构建需要保留的 slice 名称集合（从 SlicesToSync 中提取）
-	neededSliceMap := make(map[string]struct{})
-	for _, slice := range result.SlicesToSync {
-		neededSliceMap[slice.Name] = struct{}{}
-	}
-
-	// 构建需要删除的 slice 名称集合（existingSlices 中不在 neededSliceMap 中的）
-	for _, slice := range existingSlices {
-		if _, exists := neededSliceMap[slice.Name]; !exists {
-			result.SlicesToDelete[slice.Name] = struct{}{}
+	// 计算需要保留的 slice 数量（有 endpoints 的现有 slice + 新建的 slice）
+	validSliceCount := 0
+	for _, item := range slicesCopy {
+		if len(item.slice.Endpoints) > 0 {
+			validSliceCount++
+		} else {
+			// 空 slice 需要删除
+			result.SlicesToDelete[item.slice.Name] = struct{}{}
 		}
 	}
+	result.TotalSlices = validSliceCount + numNewSlices
 
 	return result, nil
 }

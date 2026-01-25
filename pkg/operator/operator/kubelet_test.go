@@ -710,3 +710,601 @@ func TestSyncNodeEndpoints_FilterNonManagedSlices(t *testing.T) {
 	assert.Equal(t, 1, len(nonManagedSlice.Endpoints), "non-managed slice should not be modified")
 	assert.Equal(t, "10.0.0.1", nonManagedSlice.Endpoints[0].Addresses[0], "non-managed slice should not be modified")
 }
+
+// TestAnalyzeEndpointSlices_NoChange 测试无变更场景
+// 当期望的 IPs 和现有的 IPs 完全一致时，不应该有任何同步或删除操作
+func TestAnalyzeEndpointSlices_NoChange(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 3, // 设置为 3，使 3 个节点刚好填满，避免触发 rebalance
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 创建现有的 EndpointSlice，包含 3 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（与现有完全一致）
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}},
+	}
+
+	op := &Operator{client: client}
+	// 使用 maxEndpointsPerSlice=3，使用率 = 3/3 = 100% >= 50%，不会触发 rebalance
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 3, 0.5)
+	require.NoError(t, err)
+
+	// 无变更：不应该有任何同步或删除操作
+	assert.Equal(t, 0, len(result.SlicesToSync), "should not have any slices to sync")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "should not have any slices to delete")
+	assert.Equal(t, 1, result.TotalSlices, "total slices should be 1")
+}
+
+// TestAnalyzeEndpointSlices_AddNode 测试新增节点场景
+func TestAnalyzeEndpointSlices_AddNode(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 5, // 设置为 5，使 3 个节点使用率 = 60% >= 50%，不触发 rebalance
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有的 EndpointSlice 包含 2 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（新增 1 个节点）
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}}, // 新增
+	}
+
+	op := &Operator{client: client}
+	// 使用 maxEndpointsPerSlice=5，使用率 = 3/5 = 60% >= 50%，不会触发 rebalance
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 5, 0.5)
+	require.NoError(t, err)
+
+	// 应该有 1 个 slice 需要同步（新增了节点）
+	assert.Equal(t, 1, len(result.SlicesToSync), "should have 1 slice to sync")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "should not have any slices to delete")
+	assert.Equal(t, 3, len(result.SlicesToSync[0].Endpoints), "slice should have 3 endpoints")
+}
+
+// TestAnalyzeEndpointSlices_RemoveNode 测试删除节点场景
+func TestAnalyzeEndpointSlices_RemoveNode(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 3, // 设置为 3，使 2 个节点使用率 = 67% >= 50%，不触发 rebalance
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有的 EndpointSlice 包含 3 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（删除 1 个节点）
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		// 10.0.0.3 被删除
+	}
+
+	op := &Operator{client: client}
+	// 使用 maxEndpointsPerSlice=3，使用率 = 2/3 = 67% >= 50%，不会触发 rebalance
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 3, 0.5)
+	require.NoError(t, err)
+
+	// 应该有 1 个 slice 需要同步（删除了节点）
+	assert.Equal(t, 1, len(result.SlicesToSync), "should have 1 slice to sync")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "should not have any slices to delete")
+	assert.Equal(t, 2, len(result.SlicesToSync[0].Endpoints), "slice should have 2 endpoints")
+}
+
+// TestAnalyzeEndpointSlices_AddAndRemoveNode 测试同时新增和删除节点场景（删一个加一个）
+// 这是之前的 bug 场景：数量不变但内容变了
+func TestAnalyzeEndpointSlices_AddAndRemoveNode(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 5, // 设置为 5，使 3 个节点使用率 = 60% >= 50%，不触发 rebalance
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有的 EndpointSlice 包含 3 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（删除 10.0.0.3，新增 10.0.0.4）
+	// 数量不变（还是 3 个），但内容变了
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.4", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-3"}}, // 新增
+		// 10.0.0.3 被删除
+	}
+
+	op := &Operator{client: client}
+	// 使用 maxEndpointsPerSlice=5，使用率 = 3/5 = 60% >= 50%，不会触发 rebalance
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 5, 0.5)
+	require.NoError(t, err)
+
+	// 应该有 1 个 slice 需要同步（虽然数量不变，但内容变了）
+	assert.Equal(t, 1, len(result.SlicesToSync), "should have 1 slice to sync (content changed even though count is same)")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "should not have any slices to delete")
+	assert.Equal(t, 3, len(result.SlicesToSync[0].Endpoints), "slice should have 3 endpoints")
+
+	// 验证新的 endpoints 包含正确的 IP
+	ips := make(map[string]bool)
+	for _, ep := range result.SlicesToSync[0].Endpoints {
+		if len(ep.Addresses) > 0 {
+			ips[ep.Addresses[0]] = true
+		}
+	}
+	assert.True(t, ips["10.0.0.1"], "should contain 10.0.0.1")
+	assert.True(t, ips["10.0.0.2"], "should contain 10.0.0.2")
+	assert.True(t, ips["10.0.0.4"], "should contain 10.0.0.4 (new)")
+	assert.False(t, ips["10.0.0.3"], "should not contain 10.0.0.3 (removed)")
+}
+
+// TestAnalyzeEndpointSlices_RemoveAllNodesFromSlice 测试删除某个 slice 中所有节点的场景
+func TestAnalyzeEndpointSlices_RemoveAllNodesFromSlice(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 3,
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 2 个 EndpointSlice
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-1",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.4"}},
+				{Addresses: []string{"10.0.0.5"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（只保留前 3 个，删除后 2 个）
+	// 这将导致第二个 slice 变空
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}},
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 3, 0.5)
+	require.NoError(t, err)
+
+	// 第二个 slice 应该被删除（所有 endpoint 都被移除）
+	assert.Equal(t, 1, len(result.SlicesToDelete), "should have 1 slice to delete")
+	_, exists := result.SlicesToDelete[cfg.Name+"-1"]
+	assert.True(t, exists, "slice-1 should be in delete list")
+
+	// 第一个 slice 无变更，不需要同步
+	assert.Equal(t, 0, len(result.SlicesToSync), "should not have any slices to sync (no change in slice-0)")
+}
+
+// TestAnalyzeEndpointSlices_MultipleSlicesPartialChange 测试多个 slice 部分变更场景
+func TestAnalyzeEndpointSlices_MultipleSlicesPartialChange(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 3,
+		RebalanceThreshold:   0.3, // 低阈值避免触发 rebalance
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 2 个 EndpointSlice，每个 3 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-1",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.4"}},
+				{Addresses: []string{"10.0.0.5"}},
+				{Addresses: []string{"10.0.0.6"}},
+			},
+		},
+	}
+
+	// 期望的节点地址：
+	// - 保留 slice-0 的所有节点（无变更）
+	// - 从 slice-1 删除 10.0.0.6，新增 10.0.0.7
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}},
+		{IP: "10.0.0.4", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-3"}},
+		{IP: "10.0.0.5", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-4"}},
+		{IP: "10.0.0.7", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-6"}}, // 新增，替代 10.0.0.6
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 3, 0.3)
+	require.NoError(t, err)
+
+	// 只有 slice-1 有变更（删除 + 新增），slice-0 无变更
+	assert.Equal(t, 1, len(result.SlicesToSync), "should have 1 slice to sync (only slice-1 changed)")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "should not have any slices to delete")
+
+	// 验证变更的 slice 是 slice-1
+	syncedSlice := result.SlicesToSync[0]
+	assert.Equal(t, cfg.Name+"-1", syncedSlice.Name, "changed slice should be slice-1")
+
+	// 验证 slice-1 的 endpoints
+	ips := make(map[string]bool)
+	for _, ep := range syncedSlice.Endpoints {
+		if len(ep.Addresses) > 0 {
+			ips[ep.Addresses[0]] = true
+		}
+	}
+	assert.True(t, ips["10.0.0.4"], "should contain 10.0.0.4")
+	assert.True(t, ips["10.0.0.5"], "should contain 10.0.0.5")
+	assert.True(t, ips["10.0.0.7"], "should contain 10.0.0.7 (new)")
+	assert.False(t, ips["10.0.0.6"], "should not contain 10.0.0.6 (removed)")
+}
+
+// TestAnalyzeEndpointSlices_ServiceNotFound 测试 Service 不存在的场景
+func TestAnalyzeEndpointSlices_ServiceNotFound(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100,
+		RebalanceThreshold:   0.5,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 不创建 Service
+
+	// 现有的 EndpointSlice
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+			},
+		},
+	}
+
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 100, 0.5)
+	require.NoError(t, err)
+
+	// Service 不存在时，应该删除所有 EndpointSlice
+	assert.Nil(t, result.Service, "service should be nil")
+	assert.Equal(t, 1, len(result.SlicesToDelete), "should delete all slices when service not found")
+	assert.Equal(t, 0, len(result.SlicesToSync), "should not sync any slices when service not found")
+}
+
+// TestAnalyzeEndpointSlices_Rebalance 测试 Rebalance 场景
+func TestAnalyzeEndpointSlices_Rebalance(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100,
+		RebalanceThreshold:   0.8, // 高阈值，容易触发 rebalance
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 2 个 EndpointSlice，各有 50 个节点（总共 100 个）
+	// 如果删除大量节点，使用率会低于阈值，触发 rebalance
+	slice0Endpoints := make([]discoveryv1.Endpoint, 50)
+	for i := 0; i < 50; i++ {
+		slice0Endpoints[i] = discoveryv1.Endpoint{Addresses: []string{fmt.Sprintf("10.0.0.%d", i+1)}}
+	}
+	slice1Endpoints := make([]discoveryv1.Endpoint, 50)
+	for i := 0; i < 50; i++ {
+		slice1Endpoints[i] = discoveryv1.Endpoint{Addresses: []string{fmt.Sprintf("10.0.1.%d", i+1)}}
+	}
+
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: slice0Endpoints,
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-1",
+			},
+			Endpoints: slice1Endpoints,
+		},
+	}
+
+	// 期望的节点地址：只保留 30 个节点
+	// 30 / 100 = 30% < 80% 阈值，应该触发 rebalance
+	addresses := make([]corev1.EndpointAddress, 30)
+	for i := 0; i < 30; i++ {
+		addresses[i] = corev1.EndpointAddress{
+			IP:        fmt.Sprintf("10.0.0.%d", i+1),
+			TargetRef: &corev1.ObjectReference{Kind: "Node", Name: fmt.Sprintf("node-%d", i)},
+		}
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 100, 0.8)
+	require.NoError(t, err)
+
+	// Rebalance 场景：
+	// - 30 个节点只需要 1 个 slice
+	// - 应该同步 1 个 slice，删除 1 个 slice
+	assert.Equal(t, 1, len(result.SlicesToSync), "should sync 1 slice after rebalance")
+	assert.Equal(t, 1, len(result.SlicesToDelete), "should delete 1 extra slice after rebalance")
+	assert.Equal(t, 30, len(result.SlicesToSync[0].Endpoints), "synced slice should have 30 endpoints")
+}
+
+// TestAnalyzeEndpointSlices_EmptySliceFilled 测试空 slice 被填充后变为非空的场景
+// 验证：空 slice 被填充后应该更新而不是删除+新建
+func TestAnalyzeEndpointSlices_EmptySliceFilled(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 3, // 每个 slice 最多 3 个节点
+		RebalanceThreshold:   0.3,
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 2 个 EndpointSlice：
+	// - slice-0: 有 3 个节点
+	// - slice-1: 有 2 个节点（这 2 个节点将被删除）
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-1",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.4"}}, // 将被删除
+				{Addresses: []string{"10.0.0.5"}}, // 将被删除
+			},
+		},
+	}
+
+	// 期望的节点地址：
+	// - 保留 slice-0 的 3 个节点
+	// - 删除 slice-1 的 2 个节点（10.0.0.4, 10.0.0.5）
+	// - 新增 3 个新节点（100.0.0.1, 100.0.0.2, 100.0.0.3）
+	// 结果：slice-1 先变空，然后被填充新节点，应该更新而不是删除+新建
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}},
+		{IP: "100.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-3"}}, // 新增
+		{IP: "100.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-4"}}, // 新增
+		{IP: "100.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-5"}}, // 新增
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 3, 0.3)
+	require.NoError(t, err)
+
+	// 关键断言：
+	// - slice-1 应该被更新（填充新节点），而不是被删除
+	// - 不应该有新建的 slice
+	// - 不应该有删除的 slice
+	assert.Equal(t, 0, len(result.SlicesToDelete), "empty slice should be filled, not deleted")
+	assert.Equal(t, 1, len(result.SlicesToSync), "should sync 1 slice (slice-1 with new nodes)")
+	assert.Equal(t, 2, result.TotalSlices, "total slices should be 2")
+
+	// 验证同步的 slice 是 slice-1（被填充的空 slice）
+	syncedSlice := result.SlicesToSync[0]
+	assert.Equal(t, cfg.Name+"-1", syncedSlice.Name, "synced slice should be slice-1 (the empty slice that was filled)")
+
+	// 验证 slice-1 包含新节点
+	ips := make(map[string]bool)
+	for _, ep := range syncedSlice.Endpoints {
+		if len(ep.Addresses) > 0 {
+			ips[ep.Addresses[0]] = true
+		}
+	}
+	assert.True(t, ips["100.0.0.1"], "should contain 100.0.0.1 (new)")
+	assert.True(t, ips["100.0.0.2"], "should contain 100.0.0.2 (new)")
+	assert.True(t, ips["100.0.0.3"], "should contain 100.0.0.3 (new)")
+	assert.False(t, ips["10.0.0.4"], "should not contain old node")
+	assert.False(t, ips["10.0.0.5"], "should not contain old node")
+}

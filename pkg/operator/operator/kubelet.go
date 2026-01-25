@@ -472,17 +472,31 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	existingTotalCapacity := existingSliceCount * maxEndpointsPerSlice
 	actualUsed := len(addresses)
 
-	// Rebalance 条件：
-	// 1. 现有 slice 数量 > 需要的 slice 数量（有多余的 slice）
-	// 2. 现有容量 > 0（避免除零错误）
-	// 3. 现有 slice 的实际利用率 < 阈值
-	shouldRebalance := existingSliceCount > numSlicesNeeded &&
-		existingTotalCapacity > 0 &&
-		float64(actualUsed)/float64(existingTotalCapacity) < rebalanceThreshold
+	// Rebalance 条件（满足任一即可）：
+	// 条件1：有 slice 超过 maxEndpointsPerSlice 限制（配置变小，需要拆分）
+	// 条件2：现有 slice 数量 > 需要的 slice 数量 且 利用率过低（需要合并）
+
+	// 检查是否有 slice 超过 maxEndpointsPerSlice 限制
+	hasOversizedSlice := false
+	for _, slice := range existingSlices {
+		if len(slice.Endpoints) > maxEndpointsPerSlice {
+			hasOversizedSlice = true
+			break
+		}
+	}
+
+	shouldRebalance := hasOversizedSlice ||
+		(existingSliceCount > numSlicesNeeded &&
+			existingTotalCapacity > 0 &&
+			float64(actualUsed)/float64(existingTotalCapacity) < rebalanceThreshold)
 
 	if shouldRebalance {
-		logger.Infof("[kubelet-endpointslice] rebalance triggered: slices %d->%d, usage %.1f%% < threshold %.1f%%",
-			existingSliceCount, numSlicesNeeded, float64(actualUsed)/float64(existingTotalCapacity)*100, rebalanceThreshold*100)
+		if hasOversizedSlice {
+			logger.Infof("[kubelet-endpointslice] rebalance triggered: some slices exceed maxEndpointsPerSlice=%d, will redistribute", maxEndpointsPerSlice)
+		} else {
+			logger.Infof("[kubelet-endpointslice] rebalance triggered: slices %d->%d, usage %.1f%% < threshold %.1f%%",
+				existingSliceCount, numSlicesNeeded, float64(actualUsed)/float64(existingTotalCapacity)*100, rebalanceThreshold*100)
+		}
 
 		// ========== Rebalance 分支：数据准备 ==========
 		// 1. 将 addresses 转换为 endpoints（使用辅助函数）

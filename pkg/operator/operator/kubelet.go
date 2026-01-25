@@ -725,7 +725,7 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 	// ========== 第二步：同步 slices（包括更新和新建）==========
 	// 注意：底层函数 CreateOrUpdateEndpointSlice 已经支持创建或更新，所以可以统一处理
 
-	for i, slice := range analysisResult.SlicesToSync {
+	for _, slice := range analysisResult.SlicesToSync {
 		// 设置完整的元数据
 		slice.Namespace = cfg.Namespace
 		slice.Labels = kubeletServiceLabels.Labels()

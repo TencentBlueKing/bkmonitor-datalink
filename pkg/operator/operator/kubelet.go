@@ -96,7 +96,7 @@ func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 		return
 	}
 
-	logger.Debugf("[kubelet] list services %s, count=%d", cfg, len(obj.Items))
+	logger.Debugf("[kubelet-endpointslice] list services %s, count=%d", cfg, len(obj.Items))
 	for _, svc := range obj.Items {
 		if svc.Namespace == cfg.Namespace && svc.Name == cfg.Name {
 			continue
@@ -108,7 +108,7 @@ func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 			logger.Errorf("failed to delete service %s/%s, err: %v", svc.Namespace, svc.Name, err)
 			continue
 		}
-		logger.Infof("[kubelet] cleanup deprecated service %s/%s", svc.Namespace, svc.Name)
+		logger.Infof("[kubelet-endpointslice] cleanup deprecated service %s/%s", svc.Namespace, svc.Name)
 	}
 }
 
@@ -159,7 +159,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 
 	cfg := configs.G().Kubelet
 	nodes := c.objectsController.NodeObjs()
-	logger.Debugf("[kubelet] nodes retrieved: num_nodes=%d", len(nodes))
+	logger.Debugf("[kubelet-endpointslice] nodes retrieved: num_nodes=%d", len(nodes))
 
 	// 从所有节点提取 IP 地址和节点引用信息
 	addresses, errs := getNodeAddresses(nodes)
@@ -199,13 +199,13 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet service object failed")
 	}
-	logger.Debugf("[kubelet] sync service %s", cfg)
+	logger.Debugf("[kubelet-endpointslice] sync service %s", cfg)
 
 	// 判断是否使用 EndpointSlice
 	// useEndpointslice 在 operator.go 中初始化，当 K8s >= 1.21.0 且配置启用时为 true
 	// 使用 EndpointSlice 可以支持超过 1000 个节点的集群，通过拆分多个 EndpointSlice 实现
 	if useEndpointslice {
-		logger.Debugf("[kubelet] using EndpointSlice mode: nodes=%d, maxEndpointsPerSlice=%d, rebalanceThreshold=%.2f",
+		logger.Debugf("[kubelet-endpointslice] using EndpointSlice mode: nodes=%d, maxEndpointsPerSlice=%d, rebalanceThreshold=%.2f",
 			len(addresses), cfg.MaxEndpointsPerSlice, cfg.RebalanceThreshold)
 		return c.syncEndpointSlices(ctx, cfg, addresses)
 	}
@@ -266,7 +266,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
 	}
-	logger.Debugf("[kubelet] sync endpoints %s, address count=%d", cfg, len(addresses))
+	logger.Debugf("[kubelet-endpointslice] sync endpoints %s, address count=%d", cfg, len(addresses))
 
 	return nil
 }
@@ -342,7 +342,7 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	if err != nil {
 		return errors.Wrap(err, "failed to list existing endpoint slices")
 	}
-	logger.Debugf("[kubelet] found %d existing endpoint slices", len(existingSlices.Items))
+	logger.Debugf("[kubelet-endpointslice] found %d existing endpoint slices", len(existingSlices.Items))
 
 	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
 	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
@@ -358,7 +358,7 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	if err != nil {
 		return errors.Wrap(err, "failed to analyze endpoint slices")
 	}
-	logger.Debugf("[kubelet] analysis completed: toSync=%d, toDelete=%d, totalSlices=%d",
+	logger.Debugf("[kubelet-endpointslice] analysis completed: toSync=%d, toDelete=%d, totalSlices=%d",
 		len(analysisResult.SlicesToSync), len(analysisResult.SlicesToDelete), analysisResult.TotalSlices)
 
 	// ========== 执行阶段：根据分析结果执行删除、同步操作 ==========
@@ -375,11 +375,11 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	// Service 不存在时的特殊处理：记录日志并返回
 	// 注意：Service 检查已在 analyzeEndpointSlices 函数内部完成，这里只是记录日志
 	if analysisResult.Service == nil {
-		logger.Warnf("[kubelet] service %s/%s not found, cleaned up %d endpoint slices", cfg.Namespace, cfg.Name, len(analysisResult.SlicesToDelete))
+		logger.Warnf("[kubelet-endpointslice] service %s/%s not found, cleaned up %d endpoint slices", cfg.Namespace, cfg.Name, len(analysisResult.SlicesToDelete))
 		return errors.New("service not found, endpoint slices cleaned up")
 	}
 
-	logger.Infof("[kubelet] endpointslice sync completed: addresses=%d, slices=%d, synced=%d, deleted=%d",
+	logger.Infof("[kubelet-endpointslice] sync completed: addresses=%d, slices=%d, synced=%d, deleted=%d",
 		len(addresses), analysisResult.TotalSlices, len(analysisResult.SlicesToSync), len(analysisResult.SlicesToDelete))
 
 	return nil
@@ -438,7 +438,7 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Service 不存在，需要在分析函数中处理删除所有 EndpointSlice 的逻辑
-			logger.Warnf("[kubelet] service %s/%s not found, will delete all %d endpoint slices", cfg.Namespace, cfg.Name, len(existingSlices))
+			logger.Warnf("[kubelet-endpointslice] service %s/%s not found, will delete all %d endpoint slices", cfg.Namespace, cfg.Name, len(existingSlices))
 			// 收集所有需要删除的 slice 名称
 			for _, slice := range existingSlices {
 				result.SlicesToDelete[slice.Name] = struct{}{}
@@ -476,7 +476,7 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		float64(actualUsed)/float64(existingTotalCapacity) < rebalanceThreshold
 
 	if shouldRebalance {
-		logger.Infof("[kubelet] endpointslice rebalance: slices %d->%d, usage %.1f%% < threshold %.1f%%",
+		logger.Infof("[kubelet-endpointslice] rebalance triggered: slices %d->%d, usage %.1f%% < threshold %.1f%%",
 			existingSliceCount, numSlicesNeeded, float64(actualUsed)/float64(existingTotalCapacity)*100, rebalanceThreshold*100)
 
 		// ========== Rebalance 分支：数据准备 ==========
@@ -536,11 +536,11 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		}
 
 		result.TotalSlices = numSlicesNeeded
-		logger.Debugf("[kubelet] rebalance plan: toSync=%d, toDelete=%d", len(result.SlicesToSync), len(result.SlicesToDelete))
+		logger.Debugf("[kubelet-endpointslice] rebalance plan: toSync=%d, toDelete=%d", len(result.SlicesToSync), len(result.SlicesToDelete))
 		return result, nil
 	}
 
-	logger.Debugf("[kubelet] no rebalance needed: existingSlices=%d, neededSlices=%d, usage=%.1f%%, threshold=%.1f%%",
+	logger.Debugf("[kubelet-endpointslice] no rebalance needed: existingSlices=%d, neededSlices=%d, usage=%.1f%%, threshold=%.1f%%",
 		existingSliceCount, numSlicesNeeded,
 		func() float64 {
 			if existingTotalCapacity > 0 {
@@ -757,7 +757,7 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 
 		// 同步 EndpointSlice（CreateOrUpdateEndpointSlice 会自动判断是创建还是更新）
 		// 注意：DeepEqual 检查在 CreateOrUpdateEndpointSlice 内部完成，避免不必要的更新
-		logger.Debugf("[kubelet] syncing endpoint slice %s with %d endpoints", slice.Name, len(slice.Endpoints))
+		logger.Debugf("[kubelet-endpointslice] syncing slice %s with %d endpoints", slice.Name, len(slice.Endpoints))
 		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
 		if err != nil {
 			return errors.Wrapf(err, "failed to sync endpoint slice %s", slice.Name)
@@ -781,7 +781,7 @@ func (c *Operator) deleteUnnecessaryEndpointSlices(ctx context.Context, endpoint
 		return nil
 	}
 
-	logger.Debugf("[kubelet] deleting %d unnecessary endpoint slices", len(slicesToDelete))
+	logger.Debugf("[kubelet-endpointslice] deleting %d unnecessary slices", len(slicesToDelete))
 	var deleteErrors []error
 	for sliceName := range slicesToDelete {
 		err := endpointSliceClient.Delete(ctx, sliceName, metav1.DeleteOptions{})

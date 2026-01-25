@@ -1215,6 +1215,155 @@ func TestAnalyzeEndpointSlices_Rebalance(t *testing.T) {
 	assert.Equal(t, 30, len(result.SlicesToSync[0].Endpoints), "synced slice should have 30 endpoints")
 }
 
+// TestAnalyzeEndpointSlices_SmallClusterNoRebalance 测试小集群不会错误触发 rebalance
+// 场景：5 个节点，maxEndpointsPerSlice=100，1 个现有 slice
+// 旧逻辑：5 / 100 = 5% < 50% 阈值，会错误触发 rebalance
+// 新逻辑：existingSliceCount(1) > numSlicesNeeded(1) 为 false，不触发 rebalance
+func TestAnalyzeEndpointSlices_SmallClusterNoRebalance(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100, // 大容量，模拟小集群场景
+		RebalanceThreshold:   0.5, // 50% 阈值
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 1 个 EndpointSlice，包含 5 个节点
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: []discoveryv1.Endpoint{
+				{Addresses: []string{"10.0.0.1"}},
+				{Addresses: []string{"10.0.0.2"}},
+				{Addresses: []string{"10.0.0.3"}},
+				{Addresses: []string{"10.0.0.4"}},
+				{Addresses: []string{"10.0.0.5"}},
+			},
+		},
+	}
+
+	// 期望的节点地址（与现有完全一致）
+	addresses := []corev1.EndpointAddress{
+		{IP: "10.0.0.1", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-0"}},
+		{IP: "10.0.0.2", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-1"}},
+		{IP: "10.0.0.3", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-2"}},
+		{IP: "10.0.0.4", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-3"}},
+		{IP: "10.0.0.5", TargetRef: &corev1.ObjectReference{Kind: "Node", Name: "node-4"}},
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 100, 0.5)
+	require.NoError(t, err)
+
+	// 关键断言：
+	// 1. 不应该触发 rebalance（因为 existingSliceCount(1) > numSlicesNeeded(1) 为 false）
+	// 2. 无变更，不需要同步或删除
+	assert.Equal(t, 0, len(result.SlicesToSync), "small cluster should not trigger unnecessary sync")
+	assert.Equal(t, 0, len(result.SlicesToDelete), "small cluster should not trigger unnecessary delete")
+	assert.Equal(t, 1, result.TotalSlices, "total slices should be 1")
+}
+
+// TestAnalyzeEndpointSlices_RebalanceOnlyWhenExcessSlices 测试只有当存在多余的 slice 时才触发 rebalance
+// 场景：30 个节点，maxEndpointsPerSlice=100，但有 2 个现有 slice（多余 1 个）
+// 期望：应该触发 rebalance 合并为 1 个 slice
+func TestAnalyzeEndpointSlices_RebalanceOnlyWhenExcessSlices(t *testing.T) {
+	cfg := configs.Kubelet{
+		Namespace:            "bkmonitor-operator",
+		Name:                 "bkmonitor-operator-stack-kubelet",
+		MaxEndpointsPerSlice: 100,
+		RebalanceThreshold:   0.5, // 50% 阈值
+	}
+	configs.G().Kubelet = cfg
+
+	client := fake.NewSimpleClientset()
+
+	// 创建 Service
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cfg.Name,
+			Namespace: cfg.Namespace,
+			Labels:    kubeletServiceLabels.Labels(),
+			UID:       types.UID("test-service-uid"),
+		},
+	}
+	_, err := client.CoreV1().Services(cfg.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 现有 2 个 EndpointSlice，各有 15 个节点（共 30 个）
+	// 这模拟了之前有更多节点，后来大量删除的场景
+	slice0Endpoints := make([]discoveryv1.Endpoint, 15)
+	for i := 0; i < 15; i++ {
+		slice0Endpoints[i] = discoveryv1.Endpoint{Addresses: []string{fmt.Sprintf("10.0.0.%d", i+1)}}
+	}
+	slice1Endpoints := make([]discoveryv1.Endpoint, 15)
+	for i := 0; i < 15; i++ {
+		slice1Endpoints[i] = discoveryv1.Endpoint{Addresses: []string{fmt.Sprintf("10.0.1.%d", i+1)}}
+	}
+
+	existingSlices := []discoveryv1.EndpointSlice{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-0",
+			},
+			Endpoints: slice0Endpoints,
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cfg.Name + "-1",
+			},
+			Endpoints: slice1Endpoints,
+		},
+	}
+
+	// 期望的节点地址：30 个节点
+	addresses := make([]corev1.EndpointAddress, 30)
+	for i := 0; i < 15; i++ {
+		addresses[i] = corev1.EndpointAddress{
+			IP:        fmt.Sprintf("10.0.0.%d", i+1),
+			TargetRef: &corev1.ObjectReference{Kind: "Node", Name: fmt.Sprintf("node-%d", i)},
+		}
+	}
+	for i := 0; i < 15; i++ {
+		addresses[15+i] = corev1.EndpointAddress{
+			IP:        fmt.Sprintf("10.0.1.%d", i+1),
+			TargetRef: &corev1.ObjectReference{Kind: "Node", Name: fmt.Sprintf("node-%d", 15+i)},
+		}
+	}
+
+	op := &Operator{client: client}
+	result, err := op.analyzeEndpointSlices(context.Background(), cfg, existingSlices, addresses, 100, 0.5)
+	require.NoError(t, err)
+
+	// 关键断言：
+	// - existingSliceCount(2) > numSlicesNeeded(1) 为 true
+	// - 使用率 = 30 / 200 = 15% < 50% 阈值
+	// - 应该触发 rebalance，合并为 1 个 slice
+	assert.Equal(t, 1, len(result.SlicesToSync), "should sync 1 slice after rebalance")
+	assert.Equal(t, 1, len(result.SlicesToDelete), "should delete 1 excess slice after rebalance")
+	assert.Equal(t, 30, len(result.SlicesToSync[0].Endpoints), "synced slice should have all 30 endpoints")
+	assert.Equal(t, 1, result.TotalSlices, "total slices should be 1 after rebalance")
+
+	// 验证被删除的是 slice-1
+	_, exists := result.SlicesToDelete[cfg.Name+"-1"]
+	assert.True(t, exists, "slice-1 should be deleted")
+}
+
 // TestAnalyzeEndpointSlices_EmptySliceFilled 测试空 slice 被填充后变为非空的场景
 // 验证：空 slice 被填充后应该更新而不是删除+新建
 func TestAnalyzeEndpointSlices_EmptySliceFilled(t *testing.T) {

@@ -459,22 +459,32 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	result.Service = svc
 
 	// ========== 第二步：Rebalance 提前判断 ==========
+	// Rebalance 的目的：当现有的多个 slice 利用率过低时，合并它们以减少 slice 数量
+	// 判断条件：
+	// 1. 现有 slice 数量 > 需要的 slice 数量（说明有多余的 slice 可以合并）
+	// 2. 现有 slice 的实际利用率 < 阈值（说明空间浪费严重）
+
 	// 计算需要的 slice 数量（向上取整）
 	numSlicesNeeded := (len(addresses) + maxEndpointsPerSlice - 1) / maxEndpointsPerSlice
-	// 计算调整后的总容量和使用率
-	// 调整后的总容量 = 需要的 slice 数量 × maxEndpointsPerSlice
-	// 调整后的实际使用 = 当前节点数量（addresses 的长度）
-	// 调整后的使用率 = 调整后的实际使用 / 调整后的总容量
-	totalCapacityAfterAdjustment := numSlicesNeeded * maxEndpointsPerSlice
-	totalUsedAfterAdjustment := len(addresses)
 
-	// 如果总容量为 0（没有节点），跳过 rebalance 检查
-	// 如果调整后的使用率 < 阈值，直接执行 rebalance（合并 slice）
-	// 这样可以避免不必要的删除、填充等操作，直接执行 rebalance 更高效
-	shouldRebalance := totalCapacityAfterAdjustment > 0 && float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment) < rebalanceThreshold
+	// 计算现有 slice 的实际使用情况（基于现有 slice 的总容量）
+	// 现有总容量 = 现有 slice 数量 × maxEndpointsPerSlice
+	// 实际使用 = 当前节点数量（addresses 的长度）
+	existingSliceCount := len(existingSlices)
+	existingTotalCapacity := existingSliceCount * maxEndpointsPerSlice
+	actualUsed := len(addresses)
+
+	// Rebalance 条件：
+	// 1. 现有 slice 数量 > 需要的 slice 数量（有多余的 slice）
+	// 2. 现有容量 > 0（避免除零错误）
+	// 3. 现有 slice 的实际利用率 < 阈值
+	shouldRebalance := existingSliceCount > numSlicesNeeded &&
+		existingTotalCapacity > 0 &&
+		float64(actualUsed)/float64(existingTotalCapacity) < rebalanceThreshold
 
 	if shouldRebalance {
-		logger.Infof("[kubelet-endpointslice] rebalance triggered: adjusted capacity usage %.2f%% (%d/%d) < threshold %.2f%%, merging slices", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
+		logger.Infof("[kubelet-endpointslice] rebalance triggered: existing slices=%d > needed=%d, capacity usage %.2f%% (%d/%d) < threshold %.2f%%, merging slices",
+			existingSliceCount, numSlicesNeeded, float64(actualUsed)/float64(existingTotalCapacity)*100, actualUsed, existingTotalCapacity, rebalanceThreshold*100)
 
 		// ========== Rebalance 分支：数据准备 ==========
 		// 1. 将 addresses 转换为 endpoints（使用辅助函数）
@@ -538,7 +548,12 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		return result, nil
 	}
 
-	logger.Debugf("[kubelet-endpointslice] no rebalance needed: adjusted capacity usage %.2f%% (%d/%d) >= threshold %.2f%%", float64(totalUsedAfterAdjustment)/float64(totalCapacityAfterAdjustment)*100, totalUsedAfterAdjustment, totalCapacityAfterAdjustment, rebalanceThreshold*100)
+	if existingTotalCapacity > 0 {
+		logger.Debugf("[kubelet-endpointslice] no rebalance needed: existing slices=%d, needed=%d, capacity usage %.2f%% (%d/%d), threshold %.2f%%",
+			existingSliceCount, numSlicesNeeded, float64(actualUsed)/float64(existingTotalCapacity)*100, actualUsed, existingTotalCapacity, rebalanceThreshold*100)
+	} else {
+		logger.Debugf("[kubelet-endpointslice] no rebalance needed: no existing slices")
+	}
 
 	// ========== 第三步：正常分析流程（非 rebalance 场景）==========
 
@@ -585,7 +600,6 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 		changed bool // 是否有变更（删除或新增）
 	}
 	slicesCopy := make([]sliceState, 0, len(existingSlices))
-	existingIPs := existingIPsForCheck // 复用之前构建的集合
 
 	for i := range existingSlices {
 		slice := existingSlices[i].DeepCopy()
@@ -614,7 +628,7 @@ func (c *Operator) analyzeEndpointSlices(ctx context.Context, cfg configs.Kubele
 	// 收集需要新增的 addresses
 	remainingAddresses := make([]corev1.EndpointAddress, 0)
 	for _, addr := range addresses {
-		if _, exists := existingIPs[addr.IP]; !exists {
+		if _, exists := existingIPsForCheck[addr.IP]; !exists {
 			remainingAddresses = append(remainingAddresses, addr)
 		}
 	}

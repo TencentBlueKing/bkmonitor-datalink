@@ -392,11 +392,16 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 
 // convertAddressesToEndpoints 批量将 corev1.EndpointAddress 转换为 discoveryv1.Endpoint
 // 这是一个辅助函数，用于消除代码重复
+// 注意：必须设置 Conditions.Ready = true，否则 Prometheus 的 EndpointSlice 服务发现无法发现这些 endpoint
 func convertAddressesToEndpoints(addresses []corev1.EndpointAddress) []discoveryv1.Endpoint {
+	ready := true
 	endpoints := make([]discoveryv1.Endpoint, 0, len(addresses))
 	for _, addr := range addresses {
 		endpoints = append(endpoints, discoveryv1.Endpoint{
 			Addresses: []string{addr.IP},
+			Conditions: discoveryv1.EndpointConditions{
+				Ready: &ready, // 必须设置为 true，Prometheus 才能发现这个 endpoint
+			},
 			TargetRef: &corev1.ObjectReference{
 				Kind:       addr.TargetRef.Kind,
 				Name:       addr.TargetRef.Name,

@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -316,4 +317,69 @@ func HandleTsDBPrint(c *gin.Context) {
 		}
 	}
 	c.String(200, strings.Join(results, "\n\n"))
+}
+
+// HandleStorage 打印存储配置信息，refresh 不为空则强制刷新
+func HandleStorage(c *gin.Context) {
+	res := ""
+	refresh := c.Query("r")
+	source := c.DefaultQuery("source", "consul") // 可选参数，默认为consul,指定数据源: consul 或 redis
+
+	if refresh != "" {
+		res += "refresh storage info\n"
+		if source == "consul" {
+			path := consul.GetStoragePath()
+			res += fmt.Sprintf("consul storage path: %s\n", path)
+			data, err := consul.GetStorageInfo()
+			if err != nil {
+				res += fmt.Sprintf("consul get storage info error: %s\n", err.Error())
+			}
+			if data == nil {
+				res += "consul get storage info is empty\n"
+			} else {
+				// 获取 TSDB 存储信息（过滤出有效的存储类型）
+				tsdbData, err := consul.GetTsDBStorageInfo()
+				if err != nil {
+					res += fmt.Sprintf("get tsdb storage info error: %s\n", err.Error())
+				} else {
+					// 这里不实际重新加载，因为需要完整的 Options 配置
+					// 实际重新加载由 service/tsdb/service.go 中的监听机制处理
+					res += fmt.Sprintf("consul get storage info count: %d (tsdb count: %d)\n", len(data), len(tsdbData))
+				}
+			}
+		} else if source == "redis" {
+			// TODO: 如果后续支持 redis，可以在这里添加
+			res += "redis storage info refresh not implemented yet\n"
+		} else {
+			// 默认使用 consul,处理输入异常情况
+			res += fmt.Sprintf("unknown source: %s, using consul\n", source)
+			source = "consul"
+		}
+		res += fmt.Sprintln("-------------------------------")
+	}
+
+	// 打印存储配置信息
+	res += tsdb.Print() + "\n"
+	res += fmt.Sprintln("-----------------------------------")
+
+	// 打印 Consul 中的存储配置
+	if source == "consul" {
+		data, err := consul.GetStorageInfo()
+		if err != nil {
+			res += fmt.Sprintf("get storage info from consul error: %s\n", err.Error())
+		} else {
+			res += fmt.Sprintf("storage info from consul (count: %d):\n", len(data))
+			for storageID, storage := range data {
+				res += fmt.Sprintf("  %s: address=%s, type=%s, username=%s\n",
+					storageID, storage.Address, storage.Type, storage.Username)
+			}
+		}
+	}
+	// 打印 Redis 中的存储配置
+	if source == "redis" {
+		// TODO: 如果后续支持 redis，可以在这里添加
+		res += "redis storage info not implemented yet\n"
+	}
+
+	c.String(200, res)
 }

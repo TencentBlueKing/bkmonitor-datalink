@@ -279,7 +279,7 @@ func TestQueryResourceMatcher(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			source, matcher, path, target, matchers, err := model.QueryResourceMatcher(
+			source, matcher, path, target, matchers, err := model.QueryDynamicPaths(
 				ctx,
 				tc.LookBackDelta,
 				tc.SpaceUid,

@@ -1233,50 +1233,55 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, len(graphs))
 
-		assert.Equal(t, &LivenessGraph{
-			QueryStart: 1000,
-			QueryEnd:   2000,
-			Nodes: map[string]*NodeLiveness{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
-					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ResourceType: ResourceTypePod,
-					Labels:       map[string]string{},
-				},
-				"node:⟨cluster=c1,node=node1⟩": {
-					ResourceID:   "node:⟨cluster=c1,node=node1⟩",
-					ResourceType: ResourceTypeNode,
-					Labels:       map[string]string{},
-				},
-				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {
-					ResourceID:   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-					ResourceType: ResourceTypeService,
-					Labels:       map[string]string{},
-				},
-			},
-			Edges: map[string]*EdgeLiveness{
-				"rel_1": {
-					RelationID:   "rel_1",
-					RelationType: RelationType("node_with_pod"),
-					Category:     RelationCategoryStatic,
-					Direction:    DirectionInbound,
-					FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ToID:         "node:⟨cluster=c1,node=node1⟩",
-				},
-				"rel_2": {
-					RelationID:   "rel_2",
-					RelationType: RelationType("pod_with_service"),
-					Category:     RelationCategoryStatic,
-					Direction:    DirectionOutbound,
-					FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ToID:         "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-				},
-			},
-			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1", "rel_2"},
-				"node:⟨cluster=c1,node=node1⟩":                    {},
-				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
-			},
-		}, graphs[0])
+		graph := graphs[0]
+		assert.Equal(t, int64(1000), graph.QueryStart)
+		assert.Equal(t, int64(2000), graph.QueryEnd)
+		assert.Equal(t, 3, len(graph.Nodes))
+		assert.Equal(t, 2, len(graph.Edges))
+
+		// Check nodes
+		assert.Equal(t, &NodeLiveness{
+			ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+			ResourceType: ResourceTypePod,
+			Labels:       map[string]string{},
+		}, graph.Nodes["pod:⟨cluster=c1,namespace=ns1,pod=p1⟩"])
+
+		assert.Equal(t, &NodeLiveness{
+			ResourceID:   "node:⟨cluster=c1,node=node1⟩",
+			ResourceType: ResourceTypeNode,
+			Labels:       map[string]string{},
+		}, graph.Nodes["node:⟨cluster=c1,node=node1⟩"])
+
+		assert.Equal(t, &NodeLiveness{
+			ResourceID:   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
+			ResourceType: ResourceTypeService,
+			Labels:       map[string]string{},
+		}, graph.Nodes["service:⟨cluster=c1,namespace=ns1,service=svc1⟩"])
+
+		// Check edges
+		assert.Equal(t, &EdgeLiveness{
+			RelationID:   "rel_1",
+			RelationType: RelationType("node_with_pod"),
+			Category:     RelationCategoryStatic,
+			Direction:    DirectionInbound,
+			FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+			ToID:         "node:⟨cluster=c1,node=node1⟩",
+		}, graph.Edges["rel_1"])
+
+		assert.Equal(t, &EdgeLiveness{
+			RelationID:   "rel_2",
+			RelationType: RelationType("pod_with_service"),
+			Category:     RelationCategoryStatic,
+			Direction:    DirectionOutbound,
+			FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+			ToID:         "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
+		}, graph.Edges["rel_2"])
+
+		// Check adjacency (order-insensitive)
+		assert.Equal(t, 3, len(graph.Adjacency))
+		assert.ElementsMatch(t, []string{"rel_1", "rel_2"}, graph.Adjacency["pod:⟨cluster=c1,namespace=ns1,pod=p1⟩"])
+		assert.Equal(t, []string{}, graph.Adjacency["node:⟨cluster=c1,node=node1⟩"])
+		assert.Equal(t, []string{}, graph.Adjacency["service:⟨cluster=c1,namespace=ns1,service=svc1⟩"])
 	})
 }
 

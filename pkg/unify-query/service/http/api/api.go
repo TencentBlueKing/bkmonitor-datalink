@@ -88,7 +88,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			}
 
 			timestamp := cast.ToString(qry.Timestamp)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryDynamicPaths(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
@@ -174,7 +174,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryDynamicPathsRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = metadata.NewMessage(
 					metadata.MsgQueryRelation,

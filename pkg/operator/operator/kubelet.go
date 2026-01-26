@@ -751,13 +751,21 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 	for _, slice := range analysisResult.SlicesToSync {
 		// 设置完整的元数据
 		slice.Namespace = cfg.Namespace
-		slice.Labels = kubeletServiceLabels.Labels()
+		// 关键：必须设置 kubernetes.io/service-name 标签，Prometheus EndpointSlice 服务发现依赖此标签
+		labels := kubeletServiceLabels.Labels()
+		labels[discoveryv1.LabelServiceName] = cfg.Name
+		slice.Labels = labels
+		// 设置完整的 OwnerReferences，包括 BlockOwnerDeletion 和 Controller
+		blockOwnerDeletion := true
+		isController := true
 		slice.OwnerReferences = []metav1.OwnerReference{
 			{
-				APIVersion: "v1",
-				Kind:       "Service",
-				Name:       cfg.Name,
-				UID:        analysisResult.Service.UID,
+				APIVersion:         "v1",
+				BlockOwnerDeletion: &blockOwnerDeletion,
+				Controller:         &isController,
+				Kind:               "Service",
+				Name:               cfg.Name,
+				UID:                analysisResult.Service.UID,
 			},
 		}
 

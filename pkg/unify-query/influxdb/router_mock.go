@@ -221,6 +221,9 @@ func MockSpaceRouter(ctx context.Context) {
 					"rt.doris_2": &ir.SpaceResultTable{
 						TableId: "rt.doris_2",
 					},
+					"bklog_index_set_2643": &ir.SpaceResultTable{
+						TableId: "bklog_index_set_2643",
+					},
 				},
 			},
 			ir.ResultTableDetailInfo{
@@ -468,6 +471,13 @@ func MockSpaceRouter(ctx context.Context) {
 					SourceType:  "bkdata",
 					DB:          "es_index",
 					DataLabel:   "bkbase_es",
+					StorageType: metadata.ElasticsearchStorageType,
+				},
+				"bklog_index_set_2643": &ir.ResultTableDetail{
+					StorageId:   3,
+					TableId:     "bklog_index_set_2643",
+					DB:          "2_bklog_index_set_2643",
+					DataLabel:   "bklog_index_set_2643",
 					StorageType: metadata.ElasticsearchStorageType,
 				},
 			}, nil,

@@ -17,6 +17,7 @@ import (
 
 // PathFinder 路径发现器，用于查找资源之间的关联路径
 type PathFinder struct {
+	schemaProvider    SchemaProvider
 	allowedCategories []RelationCategory
 	dynamicDirection  TraversalDirection
 	maxHops           int
@@ -24,6 +25,15 @@ type PathFinder struct {
 
 // PathFinderOption PathFinder 配置选项
 type PathFinderOption func(*PathFinder)
+
+// WithSchemaProvider 设置 SchemaProvider
+func WithSchemaProvider(provider SchemaProvider) PathFinderOption {
+	return func(pf *PathFinder) {
+		if provider != nil {
+			pf.schemaProvider = provider
+		}
+	}
+}
 
 // WithAllowedCategories 设置允许的关系类别
 func WithAllowedCategories(categories ...RelationCategory) PathFinderOption {
@@ -49,8 +59,10 @@ func WithMaxHops(maxHops int) PathFinderOption {
 }
 
 // NewPathFinder 创建路径发现器
+// 如果不提供 schemaProvider,将使用默认的 StaticSchemaProvider
 func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 	pf := &PathFinder{
+		schemaProvider:    NewStaticSchemaProvider(),
 		allowedCategories: []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 		dynamicDirection:  DirectionBoth,
 		maxHops:           DefaultMaxHops,
@@ -174,8 +186,11 @@ func (pf *PathFinder) satisfiesPathConstraint(path []cmdb.PathStepV2, pathResour
 func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*RelationQueryInfo {
 	var results []*RelationQueryInfo
 
-	for i := range schemaRegistry {
-		schema := &schemaRegistry[i]
+	// 从 SchemaProvider 获取所有关联 Schema
+	schemas := pf.schemaProvider.ListRelationSchemas()
+
+	for i := range schemas {
+		schema := &schemas[i]
 
 		if !pf.isRelationCategoryAllowed(schema.Category) {
 			continue

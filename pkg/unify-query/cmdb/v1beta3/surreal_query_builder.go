@@ -51,19 +51,34 @@ func buildEntityDataFields(keys []string, prefix string) string {
 
 // SurrealQueryBuilder 构建 SurrealQL 关联查询
 type SurrealQueryBuilder struct {
-	request    *QueryRequest
-	pathFinder *PathFinder
+	request        *QueryRequest
+	pathFinder     *PathFinder
+	schemaProvider SchemaProvider
 }
 
 // NewSurrealQueryBuilder 创建查询构建器
-func NewSurrealQueryBuilder(request *QueryRequest) *SurrealQueryBuilder {
+// 如果不提供 schemaProvider,将使用默认的 StaticSchemaProvider
+func NewSurrealQueryBuilder(request *QueryRequest, opts ...PathFinderOption) *SurrealQueryBuilder {
 	request.Normalize()
-	pf := NewPathFinder(
+
+	// 默认使用 StaticSchemaProvider
+	provider := NewStaticSchemaProvider()
+
+	// 创建 PathFinder 时传入 SchemaProvider
+	allOpts := append([]PathFinderOption{
+		WithSchemaProvider(provider),
 		WithAllowedCategories(request.AllowedRelationTypes...),
 		WithDynamicDirection(request.DynamicRelationDirection),
 		WithMaxHops(request.MaxHops),
-	)
-	return &SurrealQueryBuilder{request: request, pathFinder: pf}
+	}, opts...)
+
+	pf := NewPathFinder(allOpts...)
+
+	return &SurrealQueryBuilder{
+		request:        request,
+		pathFinder:     pf,
+		schemaProvider: provider,
+	}
 }
 
 // Build 构建完整的 SurrealQL 查询
@@ -115,7 +130,7 @@ func (b *SurrealQueryBuilder) buildMainQuery() string {
 // buildRootSelect 构建 Root 实体的 SELECT 结构
 func (b *SurrealQueryBuilder) buildRootSelect() string {
 	sourceType := b.request.SourceType
-	primaryKeys := GetResourcePrimaryKeys(sourceType)
+	primaryKeys := b.schemaProvider.GetResourcePrimaryKeys(sourceType)
 	livenessTable := GetLivenessRecordTableName(sourceType)
 	livenessIDField := GetLivenessIDField(sourceType)
 
@@ -184,7 +199,7 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := relationTable + rel.KeySuffix
-	targetPrimaryKeys := GetResourcePrimaryKeys(rel.TargetType)
+	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -269,7 +284,7 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := relationTable + rel.KeySuffix
-	targetPrimaryKeys := GetResourcePrimaryKeys(rel.TargetType)
+	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -359,7 +374,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 	keyName := relationTable + rel.KeySuffix
 	indent := strings.Repeat(sqlIndent1, indentLevel)
 	innerIndent := strings.Repeat(sqlIndent1, indentLevel+1)
-	targetPrimaryKeys := GetResourcePrimaryKeys(rel.TargetType)
+	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`

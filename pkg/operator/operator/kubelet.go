@@ -41,8 +41,8 @@ var (
 	deleteEndpointsOnce sync.Once
 
 	// commonEndpointPorts 定义 kubelet EndpointSlice 的公共端口配置
-	// 注意：这是一个只读的常量，所有 EndpointSlice 共享这个配置
-	// 由于 Ports 字段是只读的（不会修改），所以可以安全地共享，避免重复创建
+	// 注意：这是一个包级别的共享变量，所有 EndpointSlice 共享这个配置
+	// 由于使用时不会修改这个 slice 的内容，所以可以安全地共享，避免重复创建
 	commonEndpointPorts = []discoveryv1.EndpointPort{
 		{Name: stringPtr("https-metrics"), Port: int32Ptr(10250)}, // kubelet HTTPS 指标端口
 		{Name: stringPtr("http-metrics"), Port: int32Ptr(10255)},  // kubelet HTTP 指标端口（已弃用，但保留兼容性）
@@ -52,10 +52,10 @@ var (
 
 // endpointSliceAnalysisResult 分析结果，包含需要删除、同步的 slices 信息
 type endpointSliceAnalysisResult struct {
-	// SlicesToDelete 需要删除的 slice 名称集合
+	// SlicesToDelete 需要删除的 slice 名称集合（key 为 slice 名称）
 	SlicesToDelete map[string]struct{}
-	// SlicesToSync 需要同步的 slices（包括需要更新和新建的 slices）
-	// 注意：底层函数 CreateOrUpdateEndpointSlice 已经支持创建或更新，所以可以统一处理
+	// SlicesToSync 需要同步的 slices（包括需要更新和需要新建的 slices）
+	// 底层函数 CreateOrUpdateEndpointSlice 会自动判断是创建还是更新
 	SlicesToSync []*discoveryv1.EndpointSlice
 	// TotalSlices 调整后的总 slice 数量
 	TotalSlices int
@@ -330,8 +330,8 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 
 	// 构建 label selector：过滤掉由 Kubernetes 系统控制器创建的镜像 EndpointSlice
 	// 背景说明：
-	// - 当我们删除 Endpoint 后，Kubernetes 的 endpointslicemirroring-controller 会自动创建镜像 EndpointSlice
-	// - 这些镜像 EndpointSlice 的删除有延迟，可能会被 label selector 匹配到
+	// - 当 Endpoints 存在时，Kubernetes 的 endpointslicemirroring-controller 会自动将其镜像为 EndpointSlice
+	// - 当我们删除 Endpoints 后，镜像 EndpointSlice 的删除有延迟，可能会被 label selector 匹配到
 	// - 它们有标准的 Kubernetes label: endpointslice.kubernetes.io/managed-by=endpointslicemirroring-controller.k8s.io
 	// - 通过在 LabelSelector 中添加 !endpointslice.kubernetes.io/managed-by 条件（表示该标签不存在），让 API Server 直接过滤
 	labelSelector := kubeletServiceLabels.Matcher() + ",!endpointslice.kubernetes.io/managed-by"
@@ -345,7 +345,7 @@ func (c *Operator) syncEndpointSlices(ctx context.Context, cfg configs.Kubelet, 
 	logger.Debugf("[kubelet-endpointslice] found %d existing endpoint slices", len(existingSlices.Items))
 
 	// 从配置中获取每个 EndpointSlice 最多包含的 endpoints 数量
-	// 注意：边界检查已在 setupKubelet 函数中完成，这里直接使用配置值
+	// 注意：配置值的边界检查已在 configs 包中完成，这里直接使用
 	maxEndpointsPerSlice := cfg.MaxEndpointsPerSlice
 	rebalanceThreshold := cfg.RebalanceThreshold
 
@@ -770,7 +770,7 @@ func (c *Operator) executeEndpointSliceChanges(ctx context.Context, endpointSlic
 		}
 
 		// 同步 EndpointSlice（CreateOrUpdateEndpointSlice 会自动判断是创建还是更新）
-		// 注意：DeepEqual 检查在 CreateOrUpdateEndpointSlice 内部完成，避免不必要的更新
+		// 底层函数会比较现有资源和期望资源，如果没有变化则跳过更新
 		err := k8sutils.CreateOrUpdateEndpointSlice(ctx, endpointSliceClient, slice)
 		if err != nil {
 			return errors.Wrapf(err, "failed to sync endpoint slice %s", slice.Name)
@@ -836,7 +836,7 @@ func int32Ptr(i int32) *int32 {
 //   - 调用方需要根据 errs 决定是否记录警告或错误日志
 func getNodeAddresses(nodes []*corev1.Node) ([]corev1.EndpointAddress, []error) {
 	// 对节点列表按名称排序，确保 EndpointSlice 内容稳定
-	// 因为 NodeMap.GetAll() 返回的节点列表来自 map，顺序是随机的
+	// 因为 objectsController.NodeObjs() 返回的节点列表来自 map，顺序是随机的
 	sortedNodes := make([]*corev1.Node, len(nodes))
 	copy(sortedNodes, nodes)
 	sort.Slice(sortedNodes, func(i, j int) bool {

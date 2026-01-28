@@ -61,7 +61,7 @@ func (s *Service) Reload(ctx context.Context) {
 		options.MasterName = ""
 	}
 
-	err := redis.SetInstance(s.ctx, ServiceName, options)
+	err := redis.SetInstance(s.ctx, KVBasePath, ServiceName, options)
 	if err != nil {
 		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
 		return

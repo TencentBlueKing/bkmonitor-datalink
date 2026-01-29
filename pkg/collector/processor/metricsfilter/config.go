@@ -59,7 +59,29 @@ func (c *Config) Validate() error {
 }
 
 type DropAction struct {
-	Metrics []string `config:"metrics" mapstructure:"metrics"`
+	Metrics []string    `config:"metrics" mapstructure:"metrics"`
+	Op      Op          `config:"op" mapstructure:"op"`
+	Rules   []*DropRule `config:"extra_rules" mapstructure:"extra_rules"`
+}
+
+func (d *DropAction) MetricMatch(name string) bool {
+	switch d.Op {
+	case OpNotIn:
+		return !slices.Contains(d.Metrics, name)
+
+	default:
+		return slices.Contains(d.Metrics, name)
+	}
+}
+
+type DropRule struct {
+	PredicateKey string      `config:"predicate_key" mapstructure:"predicate_key"`
+	MatchConfig  MatchConfig `config:"match" mapstructure:"match"`
+}
+
+type MatchConfig struct {
+	Op    string `config:"op" mapstructure:"op"`
+	Value string `config:"value" mapstructure:"value"`
 }
 
 type ReplaceAction struct {

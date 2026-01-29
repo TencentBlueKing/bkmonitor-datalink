@@ -255,7 +255,7 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 			res += fmt.Sprintf("Value: %s\n", val.Print())
 		}
 	} else {
-		res += "Value: nil\n"
+		res += fmt.Sprintf("Value: nil")
 	}
 	c.String(200, res)
 }
@@ -365,8 +365,7 @@ func HandleTsDBPrint(c *gin.Context) {
 			}
 		}
 	}
-	res += strings.Join(results, "\n\n")
-	c.String(200, res)
+	c.String(200, strings.Join(results, "\n\n"))
 }
 
 // HandleStorage 打印存储配置信息，refresh 不为空则强制刷新

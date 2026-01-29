@@ -121,27 +121,3 @@ func GetAllStorageFromMemory() map[string]*Storage {
 	}
 	return result
 }
-
-// GetTsDBStorageFromMemory 从内存中获取 TSDB 存储配置（过滤出有效的存储类型）
-func GetTsDBStorageFromMemory() map[string]*Storage {
-	storageLock.RLock()
-	defer storageLock.RUnlock()
-
-	typeList := []string{
-		metadata.InfluxDBStorageType,
-		metadata.ElasticsearchStorageType,
-		metadata.BkSqlStorageType,
-		metadata.VictoriaMetricsStorageType,
-	}
-
-	result := make(map[string]*Storage)
-	for k, v := range storageMap {
-		for _, t := range typeList {
-			if v.Type == t {
-				result[k] = v
-				break
-			}
-		}
-	}
-	return result
-}

@@ -126,9 +126,6 @@ func (s *Service) reloadStorage() error {
 		log.Debugf(context.TODO(), "storage hash not changed")
 		return nil
 	}
-	//storageData：提供连接信息（Type、Address、Username、Password），来自配置中心
-	//options：提供运行时参数（Timeout、MaxLimit 等），来自应用配置
-	//结合方式：在 ReloadTsDBStorage 中，根据 storageType 将两者合并为完整的 tsdb.Storage 对象
 
 	options := &inner.Options{
 		InfluxDB: &inner.InfluxDBOption{

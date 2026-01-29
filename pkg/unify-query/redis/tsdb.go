@@ -7,13 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package consul
+package redis
 
 import (
-	"encoding/gob"
+	"context"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-// init 注册 consul.Storage 类型到 gob，用于 utils.HashIt 函数
-func init() {
-	gob.Register(&Storage{})
+var typeList = []string{metadata.InfluxDBStorageType, metadata.ElasticsearchStorageType, metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType}
+
+// GetTsDBStorageInfo 获取 tsDB 存储实例
+func GetTsDBStorageInfo(ctx context.Context) (map[string]*Storage, error) {
+	infos, err := GetStorageInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tsdbInfos := make(map[string]*Storage)
+	for key, info := range infos {
+		for _, t := range typeList {
+			if info.Type == t {
+				tsdbInfos[key] = info
+			}
+		}
+	}
+	return tsdbInfos, nil
 }

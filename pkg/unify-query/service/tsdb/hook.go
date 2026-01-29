@@ -56,6 +56,7 @@ func setDefaultConfig() {
 	viper.SetDefault(EsTimeoutConfigPath, "30s")
 	viper.SetDefault(EsMaxSizeConfigPath, 1e4)
 	viper.SetDefault(EsMaxRoutingConfigPath, 10)
+	viper.SetDefault(StorageSourceConfigPath, "consul") // storage 数据源配置，默认为 consul
 }
 
 // initConfig 加载配置
@@ -68,6 +69,7 @@ func initConfig() {
 	InfluxDBQueryRawAccept = viper.GetString(InfluxDBQueryRawAcceptConfigPath)
 	InfluxDBQueryRawAcceptEncoding = viper.GetString(InfluxDBQueryRawAcceptEncodingConfigPath)
 
+	InfluxDBQueryReadRateLimit = viper.GetFloat64(InfluxDBQueryReadRateLimitConfigPath)
 	InfluxDBMaxLimit = viper.GetInt(InfluxDBMaxLimitConfigPath)
 	InfluxDBMaxSLimit = viper.GetInt(InfluxDBMaxSLimitConfigPath)
 	InfluxDBTolerance = viper.GetInt(InfluxDBToleranceConfigPath)
@@ -93,6 +95,13 @@ func initConfig() {
 	EsTimeout = viper.GetDuration(EsTimeoutConfigPath)
 	EsMaxRouting = viper.GetInt(EsMaxRoutingConfigPath)
 	EsMaxSize = viper.GetInt(EsMaxSizeConfigPath)
+
+	// storage 数据源配置
+	StorageSource = viper.GetString(StorageSourceConfigPath)
+	if StorageSource != "consul" && StorageSource != "redis" {
+		// 如果配置值不正确，默认使用 consul
+		StorageSource = "consul"
+	}
 }
 
 // init 初始化，通过 eventBus 加载配置读取前和读取后操作

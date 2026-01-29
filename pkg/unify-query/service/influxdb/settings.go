@@ -39,6 +39,8 @@ const (
 	GrpcMaxCallSendMsgSizeConfigPath = "influxdb.grpc_max_call_send_msg_size"
 
 	IsCacheConfigPath = "influxdb.is_cache"
+
+	StorageSourceConfigPath = "storage.source" // storage 数据源配置 可选值: consul(默认) 或 redis
 )
 
 var (
@@ -67,4 +69,6 @@ var (
 
 	GrpcMaxCallRecvMsgSize int
 	GrpcMaxCallSendMsgSize int
+
+	StorageSource string // storage 数据源 consul 或 redis，默认为 consul
 )

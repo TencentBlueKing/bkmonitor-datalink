@@ -116,6 +116,10 @@ type AlarmHostInfo struct {
 	TopoLinks map[string][]map[string]any `json:"topo_link"`
 
 	Expands map[string]map[string]any `json:"expands"`
+
+	// ToResourceMap 动态资源映射
+	// 结构: map[拓扑层级]map[资源类型]map[属性名]属性值
+	ToResourceMap map[string]map[string]map[string]any `json:"to_resource_map"`
 }
 
 const (
@@ -234,6 +238,8 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		DisplayName: displayName,
 		TopoLinks:   make(map[string][]map[string]any),
 		Expands:     expands,
+
+		ToResourceMap: info.Host.ToResourceMap,
 	}
 
 	return host
@@ -415,10 +421,11 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 		}
 
 		hostInfo := &relation.Info{
-			ID:       hostID,
-			Resource: relation.Host,
-			Label:    hostItem.Label,
-			Expands:  relation.TransformExpands(h.Expands),
+			ID:            hostID,
+			Resource:      relation.Host,
+			Label:         hostItem.Label,
+			Expands:       relation.TransformExpands(h.Expands),
+			ToResourceMap: h.ToResourceMap,
 		}
 		if hostInfo.Expands[relation.Host] != nil {
 			hostInfo.Expands[relation.Host][relation.HostName] = h.BkHostName

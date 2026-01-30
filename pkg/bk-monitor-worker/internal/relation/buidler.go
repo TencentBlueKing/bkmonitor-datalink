@@ -302,6 +302,37 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 					}
 				}
 			}
+
+			// 处理 ToResourceMap 生成动态资源关系指标
+			if info.ToResourceMap != nil && len(info.ToResourceMap) > 0 {
+				// 获取当前资源的拓扑层级和 ID
+				topologyLevel := ""
+				topologyID := ""
+
+				switch info.Resource {
+				case Host:
+					topologyLevel = "host"
+					topologyID = info.Label[HostID]
+				case Set:
+					topologyLevel = "set"
+					topologyID = info.Label[SetID]
+				case Module:
+					topologyLevel = "module"
+					topologyID = info.Label[ModuleID]
+				}
+
+				if topologyLevel != "" && topologyID != "" {
+					toResourceMetrics := ConvertToResourceMapToMetrics(
+						info.ToResourceMap,
+						topologyID,
+						topologyLevel,
+						bizID,
+					)
+					for _, metric := range toResourceMetrics {
+						addMetrics(metric)
+					}
+				}
+			}
 		})
 	}
 

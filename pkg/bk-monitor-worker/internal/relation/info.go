@@ -39,6 +39,10 @@ type Info struct {
 	Label    map[string]string            `json:"label,omitempty"`
 	Expands  map[string]map[string]string `json:"expands,omitempty"`
 	Links    []Link                       `json:"links,omitempty"`
+
+	// ToResourceMap 动态资源映射
+	// map[拓扑层级]map[资源类型]map[属性名]属性值
+	ToResourceMap map[string]map[string]map[string]any `json:"to_resource_map,omitempty"`
 }
 
 // ResourceInfo 扩展信息 map[{资源ID}]Info

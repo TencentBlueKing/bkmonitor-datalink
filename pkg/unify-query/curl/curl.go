@@ -15,12 +15,27 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+)
+
+var (
+	// 全局共享的 Transport，避免每次请求创建新的连接池
+	defaultTransport = &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+	}
+
+	// 包装 OpenTelemetry 的 Transport（只创建一次）
+	otelTransport = otelhttp.NewTransport(defaultTransport)
 )
 
 const (
@@ -57,10 +72,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		defer span.End()
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	// 复用全局 Transport，避免连接泄漏
 	client := http.Client{
-		Transport: otelhttp.NewTransport(transport),
+		Transport: otelTransport,
 	}
 	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
 

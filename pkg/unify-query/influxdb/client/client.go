@@ -30,6 +30,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
+var (
+	// 全局共享的 HTTP 客户端，避免每次请求创建新的连接池
+	sharedClient = &http.Client{
+		Transport: otelhttp.NewTransport(&http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     90 * time.Second,
+		}),
+	}
+)
+
 type Client interface {
 	Query(ctx context.Context, db, sql, precision, contentType string, chunked bool) (*decoder.Response, error)
 }
@@ -80,9 +92,7 @@ func (c *BasicClient) Query(
 	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
 	trace.InsertStringIntoSpan("http-url", urlPath, span)
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	client := &http.Client{Transport: otelhttp.NewTransport(transport)}
+	// 使用全局共享的 HTTP 客户端，避免连接泄漏
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
 	if err != nil {
 		log.Errorf(ctx, "client new request error:%s", err)
@@ -99,7 +109,7 @@ func (c *BasicClient) Query(
 	trace.InsertStringIntoSpan("http-request", fmt.Sprintf("%v", req.Header), span)
 
 	start := time.Now()
-	resp, err := client.Do(req)
+	resp, err := sharedClient.Do(req)
 	if err != nil {
 		log.Errorf(ctx, "client do request:%s error:%s", sql, err)
 		return nil, err

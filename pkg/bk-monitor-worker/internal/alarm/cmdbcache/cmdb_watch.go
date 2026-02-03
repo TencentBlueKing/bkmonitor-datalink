@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
@@ -537,6 +538,20 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// 初始化 SchemaProvider
+	redisClient, err := redis.GetClient(&params.Redis)
+	if err != nil {
+		logger.Errorf("[cmdb_relation] failed to get redis client for schema provider: %v", err)
+	} else {
+		schemaProvider, err := service.NewRedisSchemaProvider(redisClient)
+		if err != nil {
+			logger.Errorf("[cmdb_relation] failed to create schema provider: %v", err)
+		} else {
+			relation.GetRelationMetricsBuilder().WithSchemaProvider(schemaProvider)
+			logger.Infof("[cmdb_relation] schema provider initialized successfully")
+		}
+	}
 
 	// 推送自定义上报数据，如果没有配置则不启动
 	if config.PromRemoteWriteUrl != "" {

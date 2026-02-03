@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -66,13 +67,29 @@ func putTsPool(ts []prompb.TimeSeries) {
 	tsPool.Put(ts)
 }
 
-// MetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type MetricsBuilder struct {
 	spaceReport remote.Reporter
+
+	// SchemaProvider 提供资源和关系的元数据定义
+	schemaProvider SchemaProvider
 
 	lock sync.RWMutex
 	// 业务ID -> 资源类型（set、module、host) -> resourceInfo
 	resources map[int]map[string]*ResourceInfo
+}
+
+type SchemaProvider interface {
+	GetResourceDefinition(namespace, resourceType string) (ResourceDefinition, error)
+	GetRelationDefinition(namespace, fromResource, toResource string) (RelationDefinition, error)
+}
+
+type ResourceDefinition interface {
+	GetPrimaryKeys() []string
+}
+
+type RelationDefinition interface {
+	GetRelationName() string
+	GetRequiredFields(fromResourceDef, toResourceDef ResourceDefinition) []string
 }
 
 func newRelationMetricsBuilder() *MetricsBuilder {
@@ -87,6 +104,12 @@ func GetRelationMetricsBuilder() *MetricsBuilder {
 
 func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuilder {
 	b.spaceReport = reporter
+	return b
+}
+
+// WithSchemaProvider 注入 SchemaProvider
+func (b *MetricsBuilder) WithSchemaProvider(provider service.SchemaProvider) *MetricsBuilder {
+	b.schemaProvider = NewSchemaProviderAdapter(provider)
 	return b
 }
 
@@ -302,6 +325,12 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 					}
 				}
 			}
+
+			// 新增: 处理 RelationConfig
+			relationConfigMetrics := b.buildRelationConfigMetrics(bizID, info)
+			for _, metric := range relationConfigMetrics {
+				addMetrics(metric)
+			}
 		})
 	}
 
@@ -369,4 +398,105 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 	logger.Infof("[cmdb_relation] push_all_metrics biz_count: %d ts_count: %d cost: %s", len(bizs), pushCount, time.Since(n))
 
 	return nil
+}
+
+// buildRelationConfigMetrics 构建基于 RelationConfig 的关系指标
+func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info) []Metric {
+	if len(info.RelationConfig) == 0 {
+		return nil
+	}
+
+	if b.schemaProvider == nil {
+		logger.Warnf("[relation_config] SchemaProvider not configured")
+		return nil
+	}
+
+	metrics := make([]Metric, 0)
+	namespace := fmt.Sprintf("bkcc__%d", bizID)
+
+	for targetResource, fields := range info.RelationConfig {
+		// 1. 查询 RelationDefinition
+		relationDef, err := b.schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource)
+		if err != nil {
+			logger.Warnf("[relation_config] Relation %s_with_%s not found in SchemaProvider: %v",
+				targetResource, info.Resource, err)
+			continue
+		}
+
+		// 2. 获取两端资源的 ResourceDefinition
+		fromResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, targetResource)
+		if err != nil {
+			logger.Errorf("[relation_config] Resource definition for %s not found: %v", targetResource, err)
+			continue
+		}
+
+		toResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, info.Resource)
+		if err != nil {
+			logger.Errorf("[relation_config] Resource definition for %s not found: %v", info.Resource, err)
+			continue
+		}
+
+		// 3. 获取必填字段列表
+		requiredFields := relationDef.GetRequiredFields(fromResourceDef, toResourceDef)
+
+		// 4. 字段完整性校验
+		labels := make(map[string]string)
+
+		// 添加业务ID
+		labels[BizID] = fmt.Sprintf("%d", bizID)
+
+		// 添加目标资源的主键字段（从 info.Label 获取）
+		for _, pk := range toResourceDef.GetPrimaryKeys() {
+			if val, ok := info.Label[pk]; ok {
+				labels[pk] = val
+			} else if pk == info.Resource+"_id" && info.ID != "" {
+				labels[pk] = info.ID
+			}
+		}
+
+		// 校验并添加源资源的字段（从 RelationConfig 中获取）
+		missingFields := make([]string, 0)
+		for _, requiredField := range requiredFields {
+			// 跳过已经处理的字段（目标资源的主键和业务ID）
+			if _, ok := labels[requiredField]; ok {
+				continue
+			}
+
+			// 从 RelationConfig 的 fields 中查找
+			if val, ok := fields[requiredField]; ok {
+				labels[requiredField] = fmt.Sprint(val)
+			} else {
+				missingFields = append(missingFields, requiredField)
+			}
+		}
+
+		// 5. 如果有缺失字段，记录错误并跳过
+		if len(missingFields) > 0 {
+			logger.Errorf("[relation_config] Missing required labels for %s: %v",
+				relationDef.GetRelationName(), missingFields)
+			continue
+		}
+
+		// 6. 生成指标
+		// 转换 map[string]string 到 Labels
+		labelList := make(Labels, 0, len(labels))
+		for k, v := range labels {
+			labelList = append(labelList, Label{
+				Name:  k,
+				Value: v,
+			})
+		}
+
+		metric := Metric{
+			Name:   relationDef.GetRelationName(),
+			Labels: labelList,
+		}
+
+		metrics = append(metrics, metric)
+
+		logger.Debugf("[relation_config] Generated metric: %s with labels: %v",
+			metric.Name, labels)
+	}
+
+	return metrics
 }

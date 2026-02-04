@@ -553,11 +553,11 @@ func (m *MockSchemaProvider) AddRelationDefinition(namespace, fromResource, toRe
 }
 
 // AddRelationDefinitionWithDirection 添加关系定义，支持指定方向性
-// isBelongsTo=true: 单向关系，使用 _to_ 连接，key 按 from_to_to 格式
-// isBelongsTo=false: 双向关系，使用 _with_ 连接，key 按字母序排序
-func (m *MockSchemaProvider) AddRelationDefinitionWithDirection(namespace, fromResource, toResource string, isBelongsTo bool) {
+// isDirectional=true: 单向关系，使用 _to_ 连接，key 按 from_to_to 格式
+// isDirectional=false: 双向关系，使用 _with_ 连接，key 按字母序排序
+func (m *MockSchemaProvider) AddRelationDefinitionWithDirection(namespace, fromResource, toResource string, isDirectional bool) {
 	var name, key string
-	if isBelongsTo {
+	if isDirectional {
 		// 单向关系：使用 _to_，不排序
 		name = fmt.Sprintf("%s_to_%s", fromResource, toResource)
 		key = fmt.Sprintf("%s:%s", namespace, name)
@@ -569,12 +569,12 @@ func (m *MockSchemaProvider) AddRelationDefinitionWithDirection(namespace, fromR
 		key = fmt.Sprintf("%s:%s", namespace, name)
 	}
 	m.relationDefs[key] = &service.RelationDefinition{
-		Namespace:    namespace,
-		Name:         name,
-		FromResource: fromResource,
-		ToResource:   toResource,
-		Category:     "static",
-		IsBelongsTo:  isBelongsTo,
+		Namespace:     namespace,
+		Name:          name,
+		FromResource:  fromResource,
+		ToResource:    toResource,
+		Category:      "static",
+		IsDirectional: isDirectional,
 	}
 }
 
@@ -586,21 +586,52 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string) (*service.RelationDefinition, error) {
-	// 先尝试单向关系 key（from_to_to 格式）
-	directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
-	directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
-	if def, ok := m.relationDefs[directionalKey]; ok {
-		return def, nil
-	}
+func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType service.RelationType) (*service.RelationDefinition, error) {
+	switch relationType {
+	case service.RelationTypeDirectional:
+		// 只查找单向关系
+		directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
+		directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
+		if def, ok := m.relationDefs[directionalKey]; ok {
+			// 校验：确保是单向关系且方向正确
+			if def.IsDirectional && def.FromResource == fromResource && def.ToResource == toResource {
+				return def, nil
+			}
+		}
+	case service.RelationTypeBidirectional:
+		// 只查找双向关系
+		resources := []string{fromResource, toResource}
+		sort.Strings(resources)
+		bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
+		bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
+		if def, ok := m.relationDefs[bidirectionalKey]; ok {
+			// 校验：确保是双向关系
+			if !def.IsDirectional {
+				return def, nil
+			}
+		}
+	default: // RelationTypeAny
+		// 先尝试单向关系 key（from_to_to 格式）
+		directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
+		directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
+		if def, ok := m.relationDefs[directionalKey]; ok {
+			// 校验：单向关系必须是 IsDirectional 且方向正确
+			if def.IsDirectional && def.FromResource == fromResource && def.ToResource == toResource {
+				return def, nil
+			}
+		}
 
-	// 再尝试双向关系 key（按字母序排序）
-	resources := []string{fromResource, toResource}
-	sort.Strings(resources)
-	bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
-	bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
-	if def, ok := m.relationDefs[bidirectionalKey]; ok {
-		return def, nil
+		// 再尝试双向关系 key（按字母序排序）
+		resources := []string{fromResource, toResource}
+		sort.Strings(resources)
+		bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
+		bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
+		if def, ok := m.relationDefs[bidirectionalKey]; ok {
+			// 校验：双向关系不应该是 IsDirectional
+			if !def.IsDirectional {
+				return def, nil
+			}
+		}
 	}
 
 	return nil, fmt.Errorf("not found")

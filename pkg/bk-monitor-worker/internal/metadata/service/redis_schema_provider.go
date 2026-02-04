@@ -111,62 +111,56 @@ func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, resourceType st
 	return nil, fmt.Errorf("resource definition not found: namespace=%s, type=%s", namespace, resourceType)
 }
 
-// buildRelationKey 构建双向关系的 key，按字母序排序
-// 用于双向关系（IsBelongsTo=false）
-func buildRelationKey(fromResource, toResource string) string {
+func (rsp *RedisSchemaProvider) buildBidirectionalRelationKey(fromResource, toResource string) string {
 	resources := []string{fromResource, toResource}
 	sort.Strings(resources)
 	return fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 }
 
-// buildDirectionalRelationKey 构建单向关系的 key
-// 用于单向关系（IsBelongsTo=true）
-func buildDirectionalRelationKey(fromResource, toResource string) string {
+func (rsp *RedisSchemaProvider) buildDirectionalRelationKey(fromResource, toResource string) string {
 	return fmt.Sprintf("%s_to_%s", fromResource, toResource)
 }
 
-// GetRelationDefinition 获取关系定义
-// 会同时尝试查找单向关系（from_to_to）和双向关系（按字母序排序）
-func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string) (*RelationDefinition, error) {
+// GetRelationDefinition 获取关联
+func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType RelationType) (*RelationDefinition, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	ns := normalizeNamespace(namespace)
 
-	// 辅助函数：在指定 map 中查找关系定义
-	findInMap := func(nsMap map[string]*RelationDefinition) *RelationDefinition {
-		// 先尝试单向关系 key
-		directionalKey := buildDirectionalRelationKey(fromResource, toResource)
-		if def, ok := nsMap[directionalKey]; ok {
-			return def
+	findInMap := func(nsMap map[string]*RelationDefinition) (*RelationDefinition, error) {
+		switch relationType {
+		case RelationTypeDirectional:
+			// 只查找单向关系
+			directionalKey := rsp.buildDirectionalRelationKey(fromResource, toResource)
+			if def, ok := nsMap[directionalKey]; ok {
+				return def, nil
+			} else {
+				return nil, fmt.Errorf("relation definition not found: namespace=%s, type=%s", namespace, fromResource)
+			}
+		case RelationTypeBidirectional:
+			// 只查找双向关系
+			bidirectionalKey := rsp.buildBidirectionalRelationKey(fromResource, toResource)
+			if def, ok := nsMap[bidirectionalKey]; ok {
+				return def, nil
+			} else {
+				return nil, fmt.Errorf("relation definition not found: namespace=%s, type=%s", namespace, fromResource)
+			}
+		default: // RelationTypeAny
+			return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s, type=%d", namespace, fromResource, toResource, relationType)
 		}
-
-		// 再尝试双向关系 key（按字母序排序）
-		bidirectionalKey := buildRelationKey(fromResource, toResource)
-		if def, ok := nsMap[bidirectionalKey]; ok {
-			return def
-		}
-
-		return nil
 	}
 
 	// 先从指定 namespace 查找
 	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
-		if def := findInMap(nsMap); def != nil {
-			return def, nil
-		}
+		return findInMap(nsMap)
 	}
 
-	// 如果指定 namespace 没找到，尝试从 __all__ 查找
-	if ns != NamespaceAll {
-		if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
-			if def := findInMap(allMap); def != nil {
-				return def, nil
-			}
-		}
+	if nsMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+		return findInMap(nsMap)
 	}
 
-	return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s", namespace, fromResource, toResource)
+	return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s, type=%d", namespace, fromResource, toResource, relationType)
 }
 
 // ListRelationDefinitions 列出指定 namespace 下的所有关系定义
@@ -382,15 +376,18 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData
 		if isBelongsTo, ok := spec["is_belongs_to"].(bool); ok {
 			def.IsBelongsTo = isBelongsTo
 		}
+		if isDirectional, ok := spec["is_directional"].(bool); ok {
+			def.IsDirectional = isDirectional
+		}
 
 		// 根据关系类型使用不同的 key
 		var relationKey string
-		if def.IsBelongsTo {
+		if def.IsDirectional {
 			// 单向关系：使用 from_to_to 格式
-			relationKey = buildDirectionalRelationKey(def.FromResource, def.ToResource)
+			relationKey = rsp.buildDirectionalRelationKey(def.FromResource, def.ToResource)
 		} else {
 			// 双向关系：按字母序排序
-			relationKey = buildRelationKey(def.FromResource, def.ToResource)
+			relationKey = rsp.buildBidirectionalRelationKey(def.FromResource, def.ToResource)
 		}
 
 		rsp.mu.Lock()
@@ -428,7 +425,6 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 
 	logger.Infof("[schema_provider] subscribing to channels: %v", channels)
 
-	// 指数退避参数
 	const (
 		initialBackoff = 1 * time.Second
 		maxBackoff     = 30 * time.Second
@@ -463,7 +459,6 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 						continue
 					}
 
-					// 收到消息，重置退避时间
 					backoff = initialBackoff
 
 					var payload MsgPayload
@@ -489,7 +484,6 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 			return
 		}
 
-		// 指数退避重连
 		logger.Infof("[schema_provider] waiting %v before reconnecting...", backoff)
 		select {
 		case <-rsp.ctx.Done():
@@ -497,7 +491,6 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 		case <-time.After(backoff):
 		}
 
-		// 指数增长，最大 30 秒
 		backoff *= 2
 		if backoff > maxBackoff {
 			backoff = maxBackoff
@@ -513,7 +506,6 @@ func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error
 	// HGET 获取 namespace 下的所有实体
 	entitiesJson, err := rsp.client.HGet(rsp.ctx, schemaKey, namespace).Result()
 	if errors.Is(err, redis.Nil) {
-		// namespace 不存在，删除缓存中的实体
 		rsp.deleteEntityFromCache(kind, namespace, name)
 		logger.Infof("[schema_provider] deleted %s %s:%s (namespace not found)", kind, namespace, name)
 		return nil
@@ -541,6 +533,29 @@ func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error
 	return rsp.loadEntityByKind(kind, namespace, name, string(jsonData))
 }
 
+type entityWithName interface {
+	GetName() string
+}
+
+func (rd *ResourceDefinition) GetName() string { return rd.Name }
+
+func (rd *RelationDefinition) GetName() string { return rd.Name }
+
+func deleteFromMap[T entityWithName](nsMap map[string]T, name, kind, namespace string) {
+	found := false
+	for key, def := range nsMap {
+		if def.GetName() == name {
+			delete(nsMap, key)
+			logger.Debugf("[schema_provider] deleted %s: ns=%s, name=%s, key=%s", kind, namespace, name, key)
+			found = true
+			break
+		}
+	}
+	if !found {
+		logger.Warnf("[schema_provider] %s not found for deletion: ns=%s, name=%s", kind, namespace, name)
+	}
+}
+
 // deleteEntityFromCache 从缓存删除实体
 func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name string) {
 	normalizedNs := normalizeNamespace(namespace)
@@ -551,18 +566,11 @@ func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name stri
 	switch kind {
 	case KindResourceDefinition:
 		if nsMap, ok := rsp.resourceDefinitions[normalizedNs]; ok {
-			delete(nsMap, name)
+			deleteFromMap(nsMap, name, kind, normalizedNs)
 		}
 	case KindRelationDefinition:
 		if nsMap, ok := rsp.relationDefinitions[normalizedNs]; ok {
-			// 需要找到对应的 relation key 来删除
-			// 由于我们存储时使用了按字母序排序的 key，这里需要遍历查找
-			for key, def := range nsMap {
-				if def.Name == name {
-					delete(nsMap, key)
-					break
-				}
-			}
+			deleteFromMap(nsMap, name, kind, normalizedNs)
 		}
 	}
 }

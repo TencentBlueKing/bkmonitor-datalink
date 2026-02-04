@@ -154,26 +154,20 @@ type MetricsBuilder struct {
 	spaceReport remote.Reporter
 
 	// SchemaProvider 提供资源和关系的元数据定义
-	schemaProvider SchemaProvider
+	schemaProvider service.SchemaProvider
 
 	lock sync.RWMutex
 	// 业务ID -> 资源类型（set、module、host) -> resourceInfo
 	resources map[int]map[string]*ResourceInfo
 }
 
-type SchemaProvider interface {
-	GetResourceDefinition(namespace, resourceType string) (ResourceDefinition, error)
-	GetRelationDefinition(namespace, fromResource, toResource string) (RelationDefinition, error)
-}
+// RelationType 关系查找类型，直接使用 service 包的定义
+type RelationType = service.RelationType
 
-type ResourceDefinition interface {
-	GetPrimaryKeys() []string
-}
-
-type RelationDefinition interface {
-	GetRelationName() string
-	GetRequiredFields(fromResourceDef, toResourceDef ResourceDefinition) []string
-}
+const (
+	RelationTypeDirectional   = service.RelationTypeDirectional
+	RelationTypeBidirectional = service.RelationTypeBidirectional
+)
 
 func newRelationMetricsBuilder() *MetricsBuilder {
 	return &MetricsBuilder{
@@ -192,7 +186,7 @@ func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuild
 
 // WithSchemaProvider 注入 SchemaProvider
 func (b *MetricsBuilder) WithSchemaProvider(provider service.SchemaProvider) *MetricsBuilder {
-	b.schemaProvider = NewSchemaProviderAdapter(provider)
+	b.schemaProvider = provider
 	return b
 }
 
@@ -474,13 +468,18 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 	return nil
 }
 
-// buildRelationConfigMetrics 构建基于 RelationConfig 的关系指标
+// buildRelationConfigMetrics 构建基于 RelatioetricsnConfig 的关系指标
 func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, parentExpands *ParentExpandsStore) []Metric {
 	if len(info.RelationConfig) == 0 {
 		return nil
 	}
 
-	if b.schemaProvider == nil {
+	// 获取 schemaProvider 的快照，避免并发访问问题
+	b.lock.RLock()
+	schemaProvider := b.schemaProvider
+	b.lock.RUnlock()
+
+	if schemaProvider == nil {
 		logger.Warnf("[relation_config] SchemaProvider not configured")
 		return nil
 	}
@@ -496,11 +495,23 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 
 	for targetResource, fields := range info.RelationConfig {
 		// 1. 查询 RelationDefinition
-		relationDef, err := b.schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource)
+		// 1.1  查找单向的关联
+		// 如果单向和双向的关联同时存在，优先使用单向的关联
+		relationDef, err := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeDirectional)
 		if err != nil {
-			logger.Warnf("[relation_config] Relation %s_with_%s not found in SchemaProvider: %v",
+			logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider: %v",
 				targetResource, info.Resource, err)
 			continue
+		}
+
+		// 1.2  查找双向的关联
+		if relationDef == nil {
+			relationDef, err = schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeBidirectional)
+			if err != nil {
+				logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider: %v",
+					targetResource, info.Resource, err)
+				continue
+			}
 		}
 
 		// 2. 获取两端资源的 ResourceDefinition
@@ -573,8 +584,9 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 			})
 		}
 
+		// 指标名称格式：{relation_name}_relation，与 node.go 中的 RelationMetric 保持一致
 		metric := Metric{
-			Name:   relationDef.GetRelationName(),
+			Name:   fmt.Sprintf("%s_relation", relationDef.GetRelationName()),
 			Labels: labelList,
 		}
 

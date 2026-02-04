@@ -62,7 +62,10 @@ func (m Metric) String(labels ...Label) string {
 	buf.WriteString(m.Name)
 	buf.WriteString(`{`)
 
-	allLabels := append(m.Labels, labels...)
+	// 创建新的 slice 并复制所有 labels，避免修改原始数据
+	allLabels := make([]Label, 0, len(m.Labels)+len(labels))
+	allLabels = append(allLabels, m.Labels...)
+	allLabels = append(allLabels, labels...)
 
 	// 按 label name 排序，确保输出稳定
 	sort.Slice(allLabels, func(i, j int) bool {

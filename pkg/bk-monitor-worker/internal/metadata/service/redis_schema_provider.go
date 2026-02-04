@@ -193,10 +193,10 @@ func (rsp *RedisSchemaProvider) loadAllEntities() error {
 }
 
 // loadEntitiesByKind 按 kind 加载实体
+// Redis 结构: redisKey -> namespace -> {name: jsonData, name2: jsonData2, ...}
 func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 	redisKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
 
-	// HGETALL 获取所有数据
 	result, err := rsp.client.HGetAll(rsp.ctx, redisKey).Result()
 	if err != nil {
 		return fmt.Errorf("failed to hgetall %s: %w", redisKey, err)
@@ -204,21 +204,22 @@ func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 
 	// 解析并存储
 	count := 0
-	for field, jsonData := range result {
-		// 解析 namespace:name
-		parts := strings.SplitN(field, ":", 2)
-		if len(parts) != 2 {
-			logger.Warnf("[schema_provider] invalid field format: %s", field)
+	for namespace, entitiesJson := range result {
+		// 解析 namespace 下的所有实体
+		var entities map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(entitiesJson), &entities); err != nil {
+			logger.Warnf("[schema_provider] failed to unmarshal entities for namespace %s: %v", namespace, err)
 			continue
 		}
-		namespace := parts[0]
-		name := parts[1]
 
-		if err := rsp.loadEntityByKind(kind, namespace, name, jsonData); err != nil {
-			logger.Warnf("[schema_provider] failed to load %s %s: %v", kind, field, err)
-			continue
+		// 遍历每个实体
+		for name, jsonData := range entities {
+			if err := rsp.loadEntityByKind(kind, namespace, name, string(jsonData)); err != nil {
+				logger.Warnf("[schema_provider] failed to load %s %s:%s: %v", kind, namespace, name, err)
+				continue
+			}
+			count++
 		}
-		count++
 	}
 
 	logger.Debugf("[schema_provider] loaded %d entities of kind %s", count, kind)
@@ -360,6 +361,16 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData
 	return nil
 }
 
+type MsgPayload struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"` // KindResourceDefinition or KindRelationDefinition
+}
+
+func (m *MsgPayload) IsEmpty() bool {
+	return m.Namespace == "" && m.Name == ""
+}
+
 // subscribeEntities 订阅实体变更
 func (rsp *RedisSchemaProvider) subscribeEntities() {
 	defer rsp.wg.Done()
@@ -395,32 +406,23 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 						logger.Warnf("[schema_provider] pubsub channel closed, reconnecting...")
 						return
 					}
-
 					if msg == nil {
 						continue
 					}
 
-					// 提取 kind
-					kind, err := rsp.extractKindFromChannel(msg.Channel)
-					if err != nil {
-						logger.Warnf("[schema_provider] %v", err)
-						continue
-					}
-
-					// msg.Payload 为 JSON 格式: {"namespace": "xxx", "name": "yyy"}
-					var payload struct {
-						Namespace string `json:"namespace"`
-						Name      string `json:"name"`
-					}
+					var payload MsgPayload
 					if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
 						logger.Warnf("[schema_provider] invalid payload format: %s, err: %v", msg.Payload, err)
 						continue
 					}
 
-					logger.Infof("[schema_provider] received update: kind=%s namespace=%s name=%s", kind, payload.Namespace, payload.Name)
+					if payload.IsEmpty() {
+						logger.Warnf("[schema_provider] invalid payload format: %s", msg.Payload)
+						continue
+					}
 
-					// 从 Redis 重新加载
-					if err := rsp.reloadEntity(kind, payload.Namespace, payload.Name); err != nil {
+					logger.Infof("[schema_provider] received update: kind=%s namespace=%s name=%s", payload.Kind, payload.Namespace, payload.Name)
+					if err := rsp.reloadEntity(payload.Kind, payload.Namespace, payload.Name); err != nil {
 						logger.Errorf("[schema_provider] failed to reload entity: %v", err)
 					}
 				}
@@ -430,24 +432,39 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 }
 
 // reloadEntity 重新加载单个实体
+// Redis 结构: redisKey -> namespace -> {name: jsonData, ...}
 func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error {
-	redisKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
-	field := fmt.Sprintf("%s:%s", namespace, name)
+	schemaKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
 
-	// HGET 获取数据
-	jsonData, err := rsp.client.HGet(rsp.ctx, redisKey, field).Result()
+	// HGET 获取 namespace 下的所有实体
+	entitiesJson, err := rsp.client.HGet(rsp.ctx, schemaKey, namespace).Result()
 	if errors.Is(err, redis.Nil) {
-		// 数据已删除
+		// namespace 不存在，删除缓存中的实体
 		rsp.deleteEntityFromCache(kind, namespace, name)
-		logger.Infof("[schema_provider] deleted %s %s:%s", kind, namespace, name)
+		logger.Infof("[schema_provider] deleted %s %s:%s (namespace not found)", kind, namespace, name)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("failed to hget: %w", err)
 	}
 
+	// 解析 namespace 下的所有实体
+	var entities map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(entitiesJson), &entities); err != nil {
+		return fmt.Errorf("failed to unmarshal entities: %w", err)
+	}
+
+	// 查找对应的实体
+	jsonData, ok := entities[name]
+	if !ok {
+		// 实体不存在，删除缓存
+		rsp.deleteEntityFromCache(kind, namespace, name)
+		logger.Infof("[schema_provider] deleted %s %s:%s (entity not found)", kind, namespace, name)
+		return nil
+	}
+
 	// 加载到缓存
-	return rsp.loadEntityByKind(kind, namespace, name, jsonData)
+	return rsp.loadEntityByKind(kind, namespace, name, string(jsonData))
 }
 
 // deleteEntityFromCache 从缓存删除实体

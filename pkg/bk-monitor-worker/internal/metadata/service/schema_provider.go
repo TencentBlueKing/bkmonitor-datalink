@@ -30,7 +30,10 @@ type SchemaProvider interface {
 	GetResourceDefinition(namespace, resourceType string) (*ResourceDefinition, error)
 
 	// GetRelationDefinition 获取关系定义
-	GetRelationDefinition(namespace, fromResource, toResource string, relationType RelationType) (*RelationDefinition, error)
+	// 返回值：
+	//   - (*RelationDefinition, true): 找到了关系定义
+	//   - (nil, false): 未找到
+	GetRelationDefinition(namespace, fromResource, toResource string, relationType RelationType) (*RelationDefinition, bool)
 
 	// ListRelationDefinitions 列出所有关系定义
 	ListRelationDefinitions(namespace string) ([]*RelationDefinition, error)

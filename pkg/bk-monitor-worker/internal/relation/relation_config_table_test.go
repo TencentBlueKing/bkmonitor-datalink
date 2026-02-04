@@ -586,18 +586,16 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType service.RelationType) (*service.RelationDefinition, error) {
+func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType service.RelationType) (*service.RelationDefinition, bool) {
 	switch relationType {
 	case service.RelationTypeDirectional:
 		// 只查找单向关系
 		directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
 		directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
 		if def, ok := m.relationDefs[directionalKey]; ok {
-			// 校验：确保是单向关系且方向正确
-			if def.IsDirectional && def.FromResource == fromResource && def.ToResource == toResource {
-				return def, nil
-			}
+			return def, true
 		}
+		return nil, false
 	case service.RelationTypeBidirectional:
 		// 只查找双向关系
 		resources := []string{fromResource, toResource}
@@ -605,36 +603,12 @@ func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toRe
 		bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 		bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
 		if def, ok := m.relationDefs[bidirectionalKey]; ok {
-			// 校验：确保是双向关系
-			if !def.IsDirectional {
-				return def, nil
-			}
+			return def, true
 		}
-	default: // RelationTypeAny
-		// 先尝试单向关系 key（from_to_to 格式）
-		directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
-		directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
-		if def, ok := m.relationDefs[directionalKey]; ok {
-			// 校验：单向关系必须是 IsDirectional 且方向正确
-			if def.IsDirectional && def.FromResource == fromResource && def.ToResource == toResource {
-				return def, nil
-			}
-		}
-
-		// 再尝试双向关系 key（按字母序排序）
-		resources := []string{fromResource, toResource}
-		sort.Strings(resources)
-		bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
-		bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
-		if def, ok := m.relationDefs[bidirectionalKey]; ok {
-			// 校验：双向关系不应该是 IsDirectional
-			if !def.IsDirectional {
-				return def, nil
-			}
-		}
+		return nil, false
+	default:
+		return nil, false
 	}
-
-	return nil, fmt.Errorf("not found")
 }
 
 func (m *MockSchemaProvider) ListRelationDefinitions(namespace string) ([]*service.RelationDefinition, error) {

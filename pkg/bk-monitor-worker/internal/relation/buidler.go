@@ -497,21 +497,18 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 		// 1. 查询 RelationDefinition
 		// 1.1  查找单向的关联
 		// 如果单向和双向的关联同时存在，优先使用单向的关联
-		relationDef, err := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeDirectional)
-		if err != nil {
-			logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider: %v",
-				targetResource, info.Resource, err)
-			continue
+		relationDef, found := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeDirectional)
+
+		// 1.2  如果单向关系未找到，查找双向的关联
+		if !found {
+			relationDef, found = schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeBidirectional)
 		}
 
-		// 1.2  查找双向的关联
-		if relationDef == nil {
-			relationDef, err = schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeBidirectional)
-			if err != nil {
-				logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider: %v",
-					targetResource, info.Resource, err)
-				continue
-			}
+		// 1.3  如果两种关系都未找到，跳过
+		if !found {
+			logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider",
+				targetResource, info.Resource)
+			continue
 		}
 
 		// 2. 获取两端资源的 ResourceDefinition

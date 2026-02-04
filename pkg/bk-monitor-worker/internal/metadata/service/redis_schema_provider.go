@@ -122,45 +122,53 @@ func (rsp *RedisSchemaProvider) buildDirectionalRelationKey(fromResource, toReso
 }
 
 // GetRelationDefinition 获取关联
-func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType RelationType) (*RelationDefinition, error) {
+// 返回值：
+//   - (*RelationDefinition, true): 找到了关系定义
+//   - (nil, false): 未找到
+func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType RelationType) (*RelationDefinition, bool) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	ns := normalizeNamespace(namespace)
 
-	findInMap := func(nsMap map[string]*RelationDefinition) (*RelationDefinition, error) {
+	findInMap := func(nsMap map[string]*RelationDefinition) (*RelationDefinition, bool) {
 		switch relationType {
 		case RelationTypeDirectional:
 			// 只查找单向关系
 			directionalKey := rsp.buildDirectionalRelationKey(fromResource, toResource)
 			if def, ok := nsMap[directionalKey]; ok {
-				return def, nil
-			} else {
-				return nil, fmt.Errorf("relation definition not found: namespace=%s, type=%s", namespace, fromResource)
+				return def, true
 			}
+			return nil, false
 		case RelationTypeBidirectional:
 			// 只查找双向关系
 			bidirectionalKey := rsp.buildBidirectionalRelationKey(fromResource, toResource)
 			if def, ok := nsMap[bidirectionalKey]; ok {
-				return def, nil
-			} else {
-				return nil, fmt.Errorf("relation definition not found: namespace=%s, type=%s", namespace, fromResource)
+				return def, true
 			}
-		default: // RelationTypeAny
-			return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s, type=%d", namespace, fromResource, toResource, relationType)
+			return nil, false
+		default:
+			return nil, false
 		}
 	}
 
 	// 先从指定 namespace 查找
 	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
-		return findInMap(nsMap)
+		if def, found := findInMap(nsMap); found {
+			return def, true
+		}
 	}
 
-	if nsMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
-		return findInMap(nsMap)
+	// 如果指定 namespace 没找到，尝试从 __all__ 查找
+	if ns != NamespaceAll {
+		if nsMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+			if def, found := findInMap(nsMap); found {
+				return def, true
+			}
+		}
 	}
 
-	return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s, type=%d", namespace, fromResource, toResource, relationType)
+	return nil, false
 }
 
 // ListRelationDefinitions 列出指定 namespace 下的所有关系定义
@@ -260,124 +268,30 @@ func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 }
 
 // loadEntityByKind 按 kind 加载单个实体
+// jsonData 直接是 ResourceDefinition 或 RelationDefinition 的 JSON 格式
 func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
 	normalizedNs := normalizeNamespace(namespace)
 
 	switch kind {
 	case KindResourceDefinition:
-		// 解析 metadata 和 spec 结构
-		var rawData map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonData), &rawData); err != nil {
-			return fmt.Errorf("failed to unmarshal raw data: %w", err)
-		}
-
-		// 提取 metadata
-		metadata, ok := rawData["metadata"].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("missing or invalid metadata")
-		}
-
-		// 提取 spec
-		spec, ok := rawData["spec"].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("missing or invalid spec")
-		}
-
-		// 构建 ResourceDefinition
-		def := &ResourceDefinition{
-			Namespace: namespace,
-			Name:      name,
-			Fields:    make([]FieldDefinition, 0),
-		}
-
-		// 提取 labels
-		if labels, ok := metadata["labels"].(map[string]interface{}); ok {
-			def.Labels = make(map[string]string)
-			for k, v := range labels {
-				if strVal, ok := v.(string); ok {
-					def.Labels[k] = strVal
-				}
-			}
-		}
-
-		// 提取 fields
-		if fields, ok := spec["fields"].([]interface{}); ok {
-			for _, fieldRaw := range fields {
-				if fieldMap, ok := fieldRaw.(map[string]interface{}); ok {
-					field := FieldDefinition{}
-					if ns, ok := fieldMap["namespace"].(string); ok {
-						field.Namespace = ns
-					}
-					if name, ok := fieldMap["name"].(string); ok {
-						field.Name = name
-					}
-					if required, ok := fieldMap["required"].(bool); ok {
-						field.Required = required
-					}
-					def.Fields = append(def.Fields, field)
-				}
-			}
+		var def ResourceDefinition
+		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
+			return fmt.Errorf("failed to unmarshal ResourceDefinition: %w", err)
 		}
 
 		rsp.mu.Lock()
 		if _, ok := rsp.resourceDefinitions[normalizedNs]; !ok {
 			rsp.resourceDefinitions[normalizedNs] = make(map[string]*ResourceDefinition)
 		}
-		rsp.resourceDefinitions[normalizedNs][name] = def
+		rsp.resourceDefinitions[normalizedNs][name] = &def
 		rsp.mu.Unlock()
 
 		logger.Debugf("[schema_provider] loaded resource definition: ns=%s, name=%s", normalizedNs, name)
 
 	case KindRelationDefinition:
-		// 解析 metadata 和 spec 结构
-		var rawData map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonData), &rawData); err != nil {
-			return fmt.Errorf("failed to unmarshal raw data: %w", err)
-		}
-
-		// 提取 metadata
-		metadata, ok := rawData["metadata"].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("missing or invalid metadata")
-		}
-
-		// 提取 spec
-		spec, ok := rawData["spec"].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("missing or invalid spec")
-		}
-
-		// 构建 RelationDefinition
-		def := &RelationDefinition{
-			Namespace: namespace,
-			Name:      name,
-		}
-
-		// 提取 labels
-		if labels, ok := metadata["labels"].(map[string]interface{}); ok {
-			def.Labels = make(map[string]string)
-			for k, v := range labels {
-				if strVal, ok := v.(string); ok {
-					def.Labels[k] = strVal
-				}
-			}
-		}
-
-		// 提取 spec 字段
-		if fromResource, ok := spec["from_resource"].(string); ok {
-			def.FromResource = fromResource
-		}
-		if toResource, ok := spec["to_resource"].(string); ok {
-			def.ToResource = toResource
-		}
-		if category, ok := spec["category"].(string); ok {
-			def.Category = category
-		}
-		if isBelongsTo, ok := spec["is_belongs_to"].(bool); ok {
-			def.IsBelongsTo = isBelongsTo
-		}
-		if isDirectional, ok := spec["is_directional"].(bool); ok {
-			def.IsDirectional = isDirectional
+		var def RelationDefinition
+		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
+			return fmt.Errorf("failed to unmarshal RelationDefinition: %w", err)
 		}
 
 		// 根据关系类型使用不同的 key
@@ -394,7 +308,7 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData
 		if _, ok := rsp.relationDefinitions[normalizedNs]; !ok {
 			rsp.relationDefinitions[normalizedNs] = make(map[string]*RelationDefinition)
 		}
-		rsp.relationDefinitions[normalizedNs][relationKey] = def
+		rsp.relationDefinitions[normalizedNs][relationKey] = &def
 		rsp.mu.Unlock()
 
 		logger.Debugf("[schema_provider] loaded relation definition: ns=%s, key=%s", normalizedNs, relationKey)

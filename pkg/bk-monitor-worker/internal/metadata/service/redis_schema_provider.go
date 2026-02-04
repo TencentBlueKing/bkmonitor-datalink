@@ -12,7 +12,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -28,6 +30,8 @@ const (
 	// 实体类型
 	KindResourceDefinition = "ResourceDefinition"
 	KindRelationDefinition = "RelationDefinition"
+
+	NamespaceAll = "__all__"
 )
 
 // RedisSchemaProvider Redis 实现的 SchemaProvider
@@ -35,8 +39,10 @@ type RedisSchemaProvider struct {
 	client redis.UniversalClient
 
 	// 本地缓存
-	resourceDefinitions map[string]*ResourceDefinition // key: namespace:name
-	relationDefinitions map[string]*RelationDefinition // key: namespace:name
+	// 外层 key: namespace (空的映射到 __all__)
+	// 内层 key: 资源/关系名称
+	resourceDefinitions map[string]map[string]*ResourceDefinition
+	relationDefinitions map[string]map[string]*RelationDefinition
 
 	mu     sync.RWMutex
 	ctx    context.Context
@@ -45,13 +51,13 @@ type RedisSchemaProvider struct {
 }
 
 // NewRedisSchemaProvider 创建 RedisSchemaProvider
-func NewRedisSchemaProvider(client redis.UniversalClient) (*RedisSchemaProvider, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewRedisSchemaProvider(ctx context.Context, client redis.UniversalClient) (*RedisSchemaProvider, error) {
+	ctx, cancel := context.WithCancel(ctx)
 
 	provider := &RedisSchemaProvider{
 		client:              client,
-		resourceDefinitions: make(map[string]*ResourceDefinition),
-		relationDefinitions: make(map[string]*RelationDefinition),
+		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+		relationDefinitions: make(map[string]map[string]*RelationDefinition),
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
@@ -71,17 +77,45 @@ func NewRedisSchemaProvider(client redis.UniversalClient) (*RedisSchemaProvider,
 	return provider, nil
 }
 
+// normalizeNamespace 规范化 namespace，空的映射到 __all__
+func normalizeNamespace(namespace string) string {
+	if namespace == "" {
+		return NamespaceAll
+	}
+	return namespace
+}
+
 // GetResourceDefinition 获取资源定义
 func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, resourceType string) (*ResourceDefinition, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	key := fmt.Sprintf("%s:%s", namespace, resourceType)
-	if def, ok := rsp.resourceDefinitions[key]; ok {
-		return def, nil
+	ns := normalizeNamespace(namespace)
+
+	// 先从指定 namespace 查找
+	if nsMap, ok := rsp.resourceDefinitions[ns]; ok {
+		if def, ok := nsMap[resourceType]; ok {
+			return def, nil
+		}
 	}
 
-	return nil, fmt.Errorf("resource definition not found: %s", key)
+	// 如果指定 namespace 没找到，尝试从 __all__ 查找
+	if ns != NamespaceAll {
+		if allMap, ok := rsp.resourceDefinitions[NamespaceAll]; ok {
+			if def, ok := allMap[resourceType]; ok {
+				return def, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("resource definition not found: namespace=%s, type=%s", namespace, resourceType)
+}
+
+// buildRelationKey 构建关系的 key，按字母序排序
+func buildRelationKey(fromResource, toResource string) string {
+	resources := []string{fromResource, toResource}
+	sort.Strings(resources)
+	return fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 }
 
 // GetRelationDefinition 获取关系定义
@@ -89,27 +123,40 @@ func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, t
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	// 尝试查找 from_with_to
-	name := fmt.Sprintf("%s_with_%s", fromResource, toResource)
-	key := fmt.Sprintf("%s:%s", namespace, name)
+	ns := normalizeNamespace(namespace)
+	// 按字母序构建 key
+	name := buildRelationKey(fromResource, toResource)
 
-	if def, ok := rsp.relationDefinitions[key]; ok {
-		return def, nil
+	// 先从指定 namespace 查找
+	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
+		if def, ok := nsMap[name]; ok {
+			return def, nil
+		}
 	}
 
-	return nil, fmt.Errorf("relation definition not found: %s", key)
+	// 如果指定 namespace 没找到，尝试从 __all__ 查找
+	if ns != NamespaceAll {
+		if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+			if def, ok := allMap[name]; ok {
+				return def, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("relation definition not found: namespace=%s, relation=%s", namespace, name)
 }
 
-// ListRelationDefinitions 列出所有关系定义
+// ListRelationDefinitions 列出指定 namespace 下的所有关系定义
 func (rsp *RedisSchemaProvider) ListRelationDefinitions(namespace string) ([]*RelationDefinition, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
+	ns := normalizeNamespace(namespace)
 	definitions := make([]*RelationDefinition, 0)
-	prefix := namespace + ":"
 
-	for key, def := range rsp.relationDefinitions {
-		if strings.HasPrefix(key, prefix) {
+	// 从指定 namespace 获取
+	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
+		for _, def := range nsMap {
 			definitions = append(definitions, def)
 		}
 	}
@@ -129,19 +176,28 @@ func (rsp *RedisSchemaProvider) loadAllEntities() error {
 		return fmt.Errorf("failed to load relation definitions: %w", err)
 	}
 
+	// 统计数量
+	resourceCount := 0
+	for _, nsMap := range rsp.resourceDefinitions {
+		resourceCount += len(nsMap)
+	}
+	relationCount := 0
+	for _, nsMap := range rsp.relationDefinitions {
+		relationCount += len(nsMap)
+	}
+
 	logger.Infof("[schema_provider] loaded %d resource definitions, %d relation definitions",
-		len(rsp.resourceDefinitions), len(rsp.relationDefinitions))
+		resourceCount, relationCount)
 
 	return nil
 }
 
 // loadEntitiesByKind 按 kind 加载实体
 func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
-	ctx := context.Background()
 	redisKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
 
 	// HGETALL 获取所有数据
-	result, err := rsp.client.HGetAll(ctx, redisKey).Result()
+	result, err := rsp.client.HGetAll(rsp.ctx, redisKey).Result()
 	if err != nil {
 		return fmt.Errorf("failed to hgetall %s: %w", redisKey, err)
 	}
@@ -149,7 +205,16 @@ func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 	// 解析并存储
 	count := 0
 	for field, jsonData := range result {
-		if err := rsp.loadEntityByKind(kind, field, jsonData); err != nil {
+		// 解析 namespace:name
+		parts := strings.SplitN(field, ":", 2)
+		if len(parts) != 2 {
+			logger.Warnf("[schema_provider] invalid field format: %s", field)
+			continue
+		}
+		namespace := parts[0]
+		name := parts[1]
+
+		if err := rsp.loadEntityByKind(kind, namespace, name, jsonData); err != nil {
 			logger.Warnf("[schema_provider] failed to load %s %s: %v", kind, field, err)
 			continue
 		}
@@ -162,12 +227,8 @@ func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 }
 
 // loadEntityByKind 按 kind 加载单个实体
-func (rsp *RedisSchemaProvider) loadEntityByKind(kind, field, jsonData string) error {
-	// 解析 namespace:name
-	parts := strings.SplitN(field, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid field format: %s", field)
-	}
+func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
+	normalizedNs := normalizeNamespace(namespace)
 
 	switch kind {
 	case KindResourceDefinition:
@@ -191,8 +252,8 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, field, jsonData string) e
 
 		// 构建 ResourceDefinition
 		def := &ResourceDefinition{
-			Namespace: parts[0],
-			Name:      parts[1],
+			Namespace: namespace,
+			Name:      name,
 			Fields:    make([]FieldDefinition, 0),
 		}
 
@@ -226,10 +287,13 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, field, jsonData string) e
 		}
 
 		rsp.mu.Lock()
-		rsp.resourceDefinitions[field] = def
+		if _, ok := rsp.resourceDefinitions[normalizedNs]; !ok {
+			rsp.resourceDefinitions[normalizedNs] = make(map[string]*ResourceDefinition)
+		}
+		rsp.resourceDefinitions[normalizedNs][name] = def
 		rsp.mu.Unlock()
 
-		logger.Debugf("[schema_provider] loaded resource definition: %s", field)
+		logger.Debugf("[schema_provider] loaded resource definition: ns=%s, name=%s", normalizedNs, name)
 
 	case KindRelationDefinition:
 		// 解析 metadata 和 spec 结构
@@ -252,8 +316,8 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, field, jsonData string) e
 
 		// 构建 RelationDefinition
 		def := &RelationDefinition{
-			Namespace: parts[0],
-			Name:      parts[1],
+			Namespace: namespace,
+			Name:      name,
 		}
 
 		// 提取 labels
@@ -280,11 +344,17 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, field, jsonData string) e
 			def.IsBelongsTo = isBelongsTo
 		}
 
+		// 使用按字母序排序的 key 存储
+		relationKey := buildRelationKey(def.FromResource, def.ToResource)
+
 		rsp.mu.Lock()
-		rsp.relationDefinitions[field] = def
+		if _, ok := rsp.relationDefinitions[normalizedNs]; !ok {
+			rsp.relationDefinitions[normalizedNs] = make(map[string]*RelationDefinition)
+		}
+		rsp.relationDefinitions[normalizedNs][relationKey] = def
 		rsp.mu.Unlock()
 
-		logger.Debugf("[schema_provider] loaded relation definition: %s", field)
+		logger.Debugf("[schema_provider] loaded relation definition: ns=%s, key=%s", normalizedNs, relationKey)
 	}
 
 	return nil
@@ -331,19 +401,26 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 					}
 
 					// 提取 kind
-					kind := extractKindFromChannel(msg.Channel)
-					if kind == "" {
-						logger.Warnf("[schema_provider] invalid channel: %s", msg.Channel)
+					kind, err := rsp.extractKindFromChannel(msg.Channel)
+					if err != nil {
+						logger.Warnf("[schema_provider] %v", err)
 						continue
 					}
 
-					// msg.Payload: "namespace:name"
-					field := msg.Payload
+					// msg.Payload 为 JSON 格式: {"namespace": "xxx", "name": "yyy"}
+					var payload struct {
+						Namespace string `json:"namespace"`
+						Name      string `json:"name"`
+					}
+					if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+						logger.Warnf("[schema_provider] invalid payload format: %s, err: %v", msg.Payload, err)
+						continue
+					}
 
-					logger.Infof("[schema_provider] received update: kind=%s field=%s", kind, field)
+					logger.Infof("[schema_provider] received update: kind=%s namespace=%s name=%s", kind, payload.Namespace, payload.Name)
 
 					// 从 Redis 重新加载
-					if err := rsp.reloadEntity(kind, field); err != nil {
+					if err := rsp.reloadEntity(kind, payload.Namespace, payload.Name); err != nil {
 						logger.Errorf("[schema_provider] failed to reload entity: %v", err)
 					}
 				}
@@ -353,16 +430,16 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 }
 
 // reloadEntity 重新加载单个实体
-func (rsp *RedisSchemaProvider) reloadEntity(kind, field string) error {
-	ctx := context.Background()
+func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error {
 	redisKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
+	field := fmt.Sprintf("%s:%s", namespace, name)
 
 	// HGET 获取数据
-	jsonData, err := rsp.client.HGet(ctx, redisKey, field).Result()
-	if err == redis.Nil {
+	jsonData, err := rsp.client.HGet(rsp.ctx, redisKey, field).Result()
+	if errors.Is(err, redis.Nil) {
 		// 数据已删除
-		rsp.deleteEntityFromCache(kind, field)
-		logger.Infof("[schema_provider] deleted %s %s", kind, field)
+		rsp.deleteEntityFromCache(kind, namespace, name)
+		logger.Infof("[schema_provider] deleted %s %s:%s", kind, namespace, name)
 		return nil
 	}
 	if err != nil {
@@ -370,31 +447,42 @@ func (rsp *RedisSchemaProvider) reloadEntity(kind, field string) error {
 	}
 
 	// 加载到缓存
-	return rsp.loadEntityByKind(kind, field, jsonData)
+	return rsp.loadEntityByKind(kind, namespace, name, jsonData)
 }
 
 // deleteEntityFromCache 从缓存删除实体
-func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, field string) {
+func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name string) {
+	normalizedNs := normalizeNamespace(namespace)
+
 	rsp.mu.Lock()
 	defer rsp.mu.Unlock()
 
 	switch kind {
 	case KindResourceDefinition:
-		delete(rsp.resourceDefinitions, field)
+		if nsMap, ok := rsp.resourceDefinitions[normalizedNs]; ok {
+			delete(nsMap, name)
+		}
 	case KindRelationDefinition:
-		delete(rsp.relationDefinitions, field)
+		if nsMap, ok := rsp.relationDefinitions[normalizedNs]; ok {
+			// 需要找到对应的 relation key 来删除
+			// 由于我们存储时使用了按字母序排序的 key，这里需要遍历查找
+			for key, def := range nsMap {
+				if def.Name == name {
+					delete(nsMap, key)
+					break
+				}
+			}
+		}
 	}
 }
 
 // extractKindFromChannel 从 channel 提取 kind
-// 输入: "bkmonitorv3:entity:ResourceDefinition:channel"
-// 输出: "ResourceDefinition"
-func extractKindFromChannel(channel string) string {
+func (rsp *RedisSchemaProvider) extractKindFromChannel(channel string) (string, error) {
 	parts := strings.Split(channel, ":")
-	if len(parts) >= 3 {
-		return parts[2]
+	if len(parts) < 3 {
+		return "", fmt.Errorf("invalid channel format: %s, expected at least 3 parts separated by ':'", channel)
 	}
-	return ""
+	return parts[2], nil
 }
 
 // Close 关闭 provider

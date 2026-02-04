@@ -48,6 +48,89 @@ const (
 	BizID      = "bk_biz_id"
 )
 
+// ExpandFields 表示扩展字段 map
+type ExpandFields map[string]string
+
+// ParentExpandsStore 存储父资源的扩展字段配置
+// 结构: targetResource -> parentResource -> parentID -> expandFields
+// 例如: set 配置了 host 的扩展字段，当 host 构建指标时可以从这里继承
+type ParentExpandsStore struct {
+	// data: targetResource -> parentResource -> parentID -> expandFields
+	data map[string]map[string]map[string]ExpandFields
+}
+
+func NewParentExpandsStore() *ParentExpandsStore {
+	return &ParentExpandsStore{
+		data: make(map[string]map[string]map[string]ExpandFields),
+	}
+}
+
+// Set 设置父资源的扩展字段
+func (s *ParentExpandsStore) Set(targetResource, parentResource, parentID string, fields ExpandFields) {
+	if _, ok := s.data[targetResource]; !ok {
+		s.data[targetResource] = make(map[string]map[string]ExpandFields)
+	}
+	if _, ok := s.data[targetResource][parentResource]; !ok {
+		s.data[targetResource][parentResource] = make(map[string]ExpandFields)
+	}
+	s.data[targetResource][parentResource][parentID] = fields
+}
+
+// Get 获取父资源的扩展字段
+func (s *ParentExpandsStore) Get(targetResource, parentResource, parentID string) (ExpandFields, bool) {
+	if targetMap, ok := s.data[targetResource]; ok {
+		if parentMap, ok := targetMap[parentResource]; ok {
+			if fields, ok := parentMap[parentID]; ok {
+				return fields, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// GetByParents 根据目标资源和父资源列表查找扩展字段
+// targetResource: 目标资源类型
+// parents: 父资源列表，每个元素包含 Resource 和 ID
+// 返回找到的第一个扩展字段
+func (s *ParentExpandsStore) GetByParents(targetResource string, parents []Item) (ExpandFields, bool) {
+	targetMap, ok := s.data[targetResource]
+	if !ok {
+		return nil, false
+	}
+
+	for _, parent := range parents {
+		if parentMap, ok := targetMap[parent.Resource]; ok {
+			if fields, ok := parentMap[parent.ID]; ok {
+				return fields, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// GetField 从父资源中获取单个字段值
+// targetResource: 目标资源类型
+// parents: 父资源列表
+// fieldName: 字段名
+// 返回字段值和是否存在
+func (s *ParentExpandsStore) GetField(targetResource string, parents []Item, fieldName string) (string, bool) {
+	targetMap, ok := s.data[targetResource]
+	if !ok {
+		return "", false
+	}
+
+	for _, parent := range parents {
+		if parentMap, ok := targetMap[parent.Resource]; ok {
+			if fields, ok := parentMap[parent.ID]; ok {
+				if val, ok := fields[fieldName]; ok {
+					return val, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 var (
 	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
 
@@ -229,10 +312,11 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 	metricCheck := make(map[string]struct{})
 
 	addMetrics := func(m Metric) {
-		if _, ok := metricCheck[m.String()]; !ok {
-			metrics = append(metrics, m)
-			metricCheck[m.String()] = struct{}{}
+		if _, ok := metricCheck[m.String()]; ok {
+			return
 		}
+		metrics = append(metrics, m)
+		metricCheck[m.String()] = struct{}{}
 	}
 
 	// 默认注入业务维度
@@ -240,9 +324,8 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 		BizID: fmt.Sprintf("%d", bizID),
 	}
 
-	// 资源场景（ resource) -> 资源配置 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
-	// 例如：set 资源配置 host 和 module 的资源场景，说明生成 host 扩展维度的时候，如果自己没有单独配置的话，需要继承 set 所配置的扩展信息
-	resourceParentExpands := make(map[string]map[string]map[string]map[string]string)
+	// 父资源扩展字段存储
+	parentExpands := NewParentExpandsStore()
 
 	// 不同业务分开构建，方便拆分数据
 	resources := b.resources[bizID]
@@ -260,9 +343,7 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 
 		infos.Range(func(info *Info) {
 			// 判断是否对该资源配置扩展
-			var (
-				expandInfoStatus bool
-			)
+			var expandInfoStatus bool
 
 			// 注入 ExpandInfo 指标
 			// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
@@ -272,7 +353,7 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 				}
 
 				// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
-				// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
+				// 这里的 info.Resource 指该实体的真实归属资源，上面的 resource 表示的是数据维护的资源
 				// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
 				if expandResource == info.Resource {
 					// 构建维度，注入主键和扩展维度
@@ -282,15 +363,8 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 					addMetrics(metric)
 					expandInfoStatus = true
 				} else {
-					// 注入父资源的 Expand
-					if _, ok := resourceParentExpands[expandResource]; !ok {
-						resourceParentExpands[expandResource] = make(map[string]map[string]map[string]string)
-					}
-					if _, ok := resourceParentExpands[expandResource][resource]; !ok {
-						resourceParentExpands[expandResource][resource] = make(map[string]map[string]string)
-					}
-
-					resourceParentExpands[expandResource][resource][info.ID] = expand
+					// 存储父资源的 Expand，供子资源继承
+					parentExpands.Set(expandResource, resource, info.ID, expand)
 				}
 			}
 
@@ -310,13 +384,13 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 					addMetrics(metric)
 					sourceNode = nextNode
 
-					// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承，如果已经配置了则直接退出
+					// 如果已经配置了扩展信息，则跳过继承查找
 					if expandInfoStatus {
 						continue
 					}
 
 					// 查找上游资源是否配置了扩展信息
-					if expand, expandOk := resourceParentExpands[info.Resource][item.Resource][item.ID]; expandOk {
+					if expand, ok := parentExpands.Get(info.Resource, item.Resource, item.ID); ok {
 						// 构建维度，注入主键和扩展维度
 						node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
 						expandMetric := node.ExpandInfoMetric()
@@ -326,8 +400,8 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 				}
 			}
 
-			// 新增: 处理 RelationConfig
-			relationConfigMetrics := b.buildRelationConfigMetrics(bizID, info)
+			// 通过 relationConfig 构建指标
+			relationConfigMetrics := b.buildRelationConfigMetrics(bizID, info, parentExpands)
 			for _, metric := range relationConfigMetrics {
 				addMetrics(metric)
 			}
@@ -401,7 +475,7 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 }
 
 // buildRelationConfigMetrics 构建基于 RelationConfig 的关系指标
-func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info) []Metric {
+func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, parentExpands *ParentExpandsStore) []Metric {
 	if len(info.RelationConfig) == 0 {
 		return nil
 	}
@@ -413,6 +487,12 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info) []Met
 
 	metrics := make([]Metric, 0)
 	namespace := fmt.Sprintf("bkcc__%d", bizID)
+
+	// 将 info.Links 展平为 Item 列表，用于查找父资源的扩展字段
+	var parentLinks []Item
+	for _, link := range info.Links {
+		parentLinks = append(parentLinks, link...)
+	}
 
 	for targetResource, fields := range info.RelationConfig {
 		// 1. 查询 RelationDefinition
@@ -440,47 +520,53 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info) []Met
 		requiredFields := relationDef.GetRequiredFields(fromResourceDef, toResourceDef)
 
 		// 4. 字段完整性校验
-		labels := make(map[string]string)
+		collectedFields := make(map[string]string)
+		collectedFields[BizID] = fmt.Sprintf("%d", bizID)
 
-		// 添加业务ID
-		labels[BizID] = fmt.Sprintf("%d", bizID)
+		// 获取自身资源的 expands 字段
+		selfExpands := info.Expands[info.Resource]
 
-		// 添加目标资源的主键字段（从 info.Label 获取）
-		for _, pk := range toResourceDef.GetPrimaryKeys() {
-			if val, ok := info.Label[pk]; ok {
-				labels[pk] = val
-			} else if pk == info.Resource+"_id" && info.ID != "" {
-				labels[pk] = info.ID
-			}
-		}
-
-		// 校验并添加源资源的字段（从 RelationConfig 中获取）
+		// 校验并添加源资源的字段
 		missingFields := make([]string, 0)
 		for _, requiredField := range requiredFields {
-			// 跳过已经处理的字段（目标资源的主键和业务ID）
-			if _, ok := labels[requiredField]; ok {
+			// 跳过已经处理的字段
+			if _, ok := collectedFields[requiredField]; ok {
 				continue
 			}
 
 			// 从 RelationConfig 的 fields 中查找
 			if val, ok := fields[requiredField]; ok {
-				labels[requiredField] = fmt.Sprint(val)
-			} else {
-				missingFields = append(missingFields, requiredField)
+				collectedFields[requiredField] = fmt.Sprint(val)
+				continue
 			}
+
+			// 从自身资源的 expands 中查找
+			if selfExpands != nil {
+				if val, ok := selfExpands[requiredField]; ok {
+					collectedFields[requiredField] = val
+					continue
+				}
+			}
+
+			// 从父资源的扩展字段中查找
+			if val, ok := parentExpands.GetField(info.Resource, parentLinks, requiredField); ok {
+				collectedFields[requiredField] = val
+				continue
+			}
+
+			missingFields = append(missingFields, requiredField)
 		}
 
 		// 5. 如果有缺失字段，记录错误并跳过
 		if len(missingFields) > 0 {
-			logger.Errorf("[relation_config] Missing required labels for %s: %v",
+			logger.Errorf("[relation_config] Missing required fields for %s: %v",
 				relationDef.GetRelationName(), missingFields)
 			continue
 		}
 
 		// 6. 生成指标
-		// 转换 map[string]string 到 Labels
-		labelList := make(Labels, 0, len(labels))
-		for k, v := range labels {
+		labelList := make(Labels, 0, len(collectedFields))
+		for k, v := range collectedFields {
 			labelList = append(labelList, Label{
 				Name:  k,
 				Value: v,
@@ -494,8 +580,8 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info) []Met
 
 		metrics = append(metrics, metric)
 
-		logger.Debugf("[relation_config] Generated metric: %s with labels: %v",
-			metric.Name, labels)
+		logger.Debugf("[relation_config] Generated metric: %s with fields: %v",
+			metric.Name, collectedFields)
 	}
 
 	return metrics

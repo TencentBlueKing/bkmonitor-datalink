@@ -12,6 +12,7 @@ package relation
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,11 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 							"resource": "host",
 							"label": {
 								"bk_host_id": "3001"
+							},
+							"expands": {
+								"host": {
+									"bk_host_id": "3001"
+								}
 							},
 							"relation_config": {
 								"app_version": {
@@ -77,6 +83,13 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 			},
 			expected: []expectedMetric{
 				{
+					name: "host_info_relation",
+					labels: map[string]string{
+						"bk_biz_id":  "2",
+						"bk_host_id": "3001",
+					},
+				},
+				{
 					name: "app_version_with_host_relation",
 					labels: map[string]string{
 						"bk_biz_id":  "2",
@@ -99,6 +112,11 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 							"resource": "host",
 							"label": {
 								"bk_host_id": "3001"
+							},
+							"expands": {
+								"host": {
+									"bk_host_id": "3001"
+								}
 							},
 							"relation_config": {
 								"app_version": {
@@ -134,7 +152,15 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: []expectedMetric{}, // 字段缺失，不生成指标
+			expected: []expectedMetric{
+				{
+					name: "host_info_relation",
+					labels: map[string]string{
+						"bk_biz_id":  "2",
+						"bk_host_id": "3001",
+					},
+				},
+			}, // version 字段缺失，不生成 app_version_with_host_relation 指标
 		},
 		{
 			name:  "多个关系场景：host 同时关联 app_version 和 git_commit",
@@ -148,6 +174,11 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 							"resource": "host",
 							"label": {
 								"bk_host_id": "3001"
+							},
+							"expands": {
+								"host": {
+									"bk_host_id": "3001"
+								}
 							},
 							"relation_config": {
 								"app_version": {
@@ -202,6 +233,13 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 				},
 			},
 			expected: []expectedMetric{
+				{
+					name: "host_info_relation",
+					labels: map[string]string{
+						"bk_biz_id":  "2",
+						"bk_host_id": "3001",
+					},
+				},
 				{
 					name: "app_version_with_host_relation",
 					labels: map[string]string{
@@ -287,6 +325,139 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 			},
 			expected: []expectedMetric{}, // 没有配置，不生成指标
 		},
+		{
+			name:  "继承场景：host 构建 RelationConfig 时字段从 set 的 Expands 获取",
+			bizID: 2,
+			resources: `{
+				"set": {
+					"name": "set",
+					"data": {
+						"3001": {
+							"id": "3001",
+							"resource": "set",
+							"label": {
+								"bk_set_id": "3001"
+							},
+							"expands": {
+								"host": {
+									"bk_host_id": "1001",
+									"env_type": "prod",
+									"deploy_version": "v2.0"
+								}
+							}
+						}
+					}
+				},
+				"module": {
+					"name": "module",
+					"data": {
+						"2001": {
+							"id": "2001",
+							"resource": "module",
+							"label": {
+								"bk_module_id": "2001"
+							}
+						}
+					}
+				},
+				"host": {
+					"name": "host",
+					"data": {
+						"1001": {
+							"id": "1001",
+							"resource": "host",
+							"label": {
+								"bk_host_id": "1001"
+							},
+							"relation_config": {
+								"deploy_config": {
+									"app_name": "my-service"
+								}
+							},
+							"links": [
+								[
+									{
+										"id": "2001",
+										"resource": "module",
+										"label": {"bk_module_id": "2001"}
+									},
+									{
+										"id": "3001",
+										"resource": "set",
+										"label": {"bk_set_id": "3001"}
+									}
+								]
+							]
+						}
+					}
+				}
+			}`,
+			schema: mockSchemaConfig{
+				resources: map[string]*service.ResourceDefinition{
+					"deploy_config": {
+						Name: "deploy_config",
+						Fields: []service.FieldDefinition{
+							{Name: "app_name", Required: true},
+							{Name: "env_type", Required: true},
+							{Name: "deploy_version", Required: true},
+						},
+					},
+					"host": {
+						Name: "host",
+						Fields: []service.FieldDefinition{
+							{Name: "bk_host_id", Required: true},
+						},
+					},
+				},
+				relations: map[string]*service.RelationDefinition{
+					"deploy_config_with_host": {
+						Name:         "deploy_config_with_host",
+						FromResource: "deploy_config",
+						ToResource:   "host",
+						Category:     "static",
+					},
+				},
+			},
+			// host 配置了 relation_config.deploy_config，只有 app_name
+			// env_type 和 deploy_version 需要从 host 所属的 set 的 expands.host 中获取
+			expected: []expectedMetric{
+				{
+					name: "host_with_module_relation",
+					labels: map[string]string{
+						"bk_biz_id":    "2",
+						"bk_host_id":   "1001",
+						"bk_module_id": "2001",
+					},
+				},
+				{
+					name: "module_with_set_relation",
+					labels: map[string]string{
+						"bk_biz_id":    "2",
+						"bk_module_id": "2001",
+						"bk_set_id":    "3001",
+					},
+				},
+				{
+					name: "host_info_relation",
+					labels: map[string]string{
+						"bk_biz_id":      "2",
+						"bk_host_id":     "1001",
+						"env_type":       "prod",
+						"deploy_version": "v2.0",
+					},
+				},
+				{
+					name: "deploy_config_with_host_relation",
+					labels: map[string]string{
+						"bk_biz_id":      "2",
+						"bk_host_id":     "1001",
+						"app_name":       "my-service",
+						"env_type":       "prod",
+						"deploy_version": "v2.0",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -320,8 +491,7 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 				})
 			}
 
-			// 6. 整体断言
-			assert.Equal(t, tt.expected, actualResults, "生成的指标与预期不符")
+			assert.ElementsMatch(t, tt.expected, actualResults, "生成的指标与预期不符")
 		})
 	}
 }
@@ -379,7 +549,10 @@ func (m *MockSchemaProvider) AddResourceDefinition(namespace, resourceType strin
 }
 
 func (m *MockSchemaProvider) AddRelationDefinition(namespace, fromResource, toResource string) {
-	name := fmt.Sprintf("%s_with_%s", fromResource, toResource)
+	// 按字母序排序构建 key，与 RedisSchemaProvider 保持一致
+	resources := []string{fromResource, toResource}
+	sort.Strings(resources)
+	name := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 	key := fmt.Sprintf("%s:%s", namespace, name)
 	m.relationDefs[key] = &service.RelationDefinition{
 		Namespace:    namespace,
@@ -399,7 +572,10 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 }
 
 func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string) (*service.RelationDefinition, error) {
-	name := fmt.Sprintf("%s_with_%s", fromResource, toResource)
+	// 按字母序排序构建 key，与 RedisSchemaProvider 保持一致
+	resources := []string{fromResource, toResource}
+	sort.Strings(resources)
+	name := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 	key := fmt.Sprintf("%s:%s", namespace, name)
 	if def, ok := m.relationDefs[key]; ok {
 		return def, nil

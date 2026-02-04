@@ -9,7 +9,10 @@
 
 package service
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // SchemaProvider 提供资源和关系的元数据定义
 type SchemaProvider interface {
@@ -58,14 +61,29 @@ type RelationDefinition struct {
 	FromResource string            `json:"from_resource"`  // 源资源类型
 	ToResource   string            `json:"to_resource"`    // 目标资源类型
 	Category     string            `json:"category"`       // 关联类别: static/dynamic
-	IsBelongsTo  bool              `json:"is_belongs_to"`  // 是否为从属关系
+	IsBelongsTo  bool              `json:"is_belongs_to"`  // 是否为从属关系（单向关系）
 	Labels       map[string]string `json:"labels"`         // 标签
 }
 
-// GetRelationName 获取关系指标名称
-// 返回格式: {from}_with_{to}_relation
+// IsDirectional 判断关系是否为单向（有方向性）
+// IsBelongsTo=true 表示单向关系，使用 _to_ 连接
+// IsBelongsTo=false 表示双向关系，使用 _with_ 连接
+func (rd *RelationDefinition) IsDirectional() bool {
+	return rd.IsBelongsTo
+}
+
+// GetRelationName 获取关系指标/表名称
+// 双向关系（IsBelongsTo=false）：按字母序排序，使用 {resource1}_with_{resource2}（resource1 < resource2）
+// 单向关系（IsBelongsTo=true）：按流量方向，使用 {from}_to_{to}
 func (rd *RelationDefinition) GetRelationName() string {
-	return fmt.Sprintf("%s_with_%s_relation", rd.FromResource, rd.ToResource)
+	if rd.IsDirectional() {
+		// 单向关系：使用 _to_，保持 from -> to 方向
+		return fmt.Sprintf("%s_to_%s", rd.FromResource, rd.ToResource)
+	}
+	// 双向关系：使用 _with_，按字母序排序
+	resources := []string{rd.FromResource, rd.ToResource}
+	sort.Strings(resources)
+	return fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 }
 
 // GetRequiredFields 获取关系的必填字段列表

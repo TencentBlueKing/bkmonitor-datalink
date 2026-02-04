@@ -15,8 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 
@@ -111,25 +111,48 @@ func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, resourceType st
 	return nil, fmt.Errorf("resource definition not found: namespace=%s, type=%s", namespace, resourceType)
 }
 
-// buildRelationKey 构建关系的 key，按字母序排序
+// buildRelationKey 构建双向关系的 key，按字母序排序
+// 用于双向关系（IsBelongsTo=false）
 func buildRelationKey(fromResource, toResource string) string {
 	resources := []string{fromResource, toResource}
 	sort.Strings(resources)
 	return fmt.Sprintf("%s_with_%s", resources[0], resources[1])
 }
 
+// buildDirectionalRelationKey 构建单向关系的 key
+// 用于单向关系（IsBelongsTo=true）
+func buildDirectionalRelationKey(fromResource, toResource string) string {
+	return fmt.Sprintf("%s_to_%s", fromResource, toResource)
+}
+
 // GetRelationDefinition 获取关系定义
+// 会同时尝试查找单向关系（from_to_to）和双向关系（按字母序排序）
 func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string) (*RelationDefinition, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	ns := normalizeNamespace(namespace)
-	// 按字母序构建 key
-	name := buildRelationKey(fromResource, toResource)
+
+	// 辅助函数：在指定 map 中查找关系定义
+	findInMap := func(nsMap map[string]*RelationDefinition) *RelationDefinition {
+		// 先尝试单向关系 key
+		directionalKey := buildDirectionalRelationKey(fromResource, toResource)
+		if def, ok := nsMap[directionalKey]; ok {
+			return def
+		}
+
+		// 再尝试双向关系 key（按字母序排序）
+		bidirectionalKey := buildRelationKey(fromResource, toResource)
+		if def, ok := nsMap[bidirectionalKey]; ok {
+			return def
+		}
+
+		return nil
+	}
 
 	// 先从指定 namespace 查找
 	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
-		if def, ok := nsMap[name]; ok {
+		if def := findInMap(nsMap); def != nil {
 			return def, nil
 		}
 	}
@@ -137,27 +160,42 @@ func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, t
 	// 如果指定 namespace 没找到，尝试从 __all__ 查找
 	if ns != NamespaceAll {
 		if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
-			if def, ok := allMap[name]; ok {
+			if def := findInMap(allMap); def != nil {
 				return def, nil
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("relation definition not found: namespace=%s, relation=%s", namespace, name)
+	return nil, fmt.Errorf("relation definition not found: namespace=%s, from=%s, to=%s", namespace, fromResource, toResource)
 }
 
 // ListRelationDefinitions 列出指定 namespace 下的所有关系定义
+// 会合并指定 namespace 和 __all__ namespace 的定义
 func (rsp *RedisSchemaProvider) ListRelationDefinitions(namespace string) ([]*RelationDefinition, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	ns := normalizeNamespace(namespace)
 	definitions := make([]*RelationDefinition, 0)
+	seen := make(map[string]struct{}) // 用于去重
 
 	// 从指定 namespace 获取
 	if nsMap, ok := rsp.relationDefinitions[ns]; ok {
-		for _, def := range nsMap {
+		for key, def := range nsMap {
 			definitions = append(definitions, def)
+			seen[key] = struct{}{}
+		}
+	}
+
+	// 如果不是 __all__，还需要从 __all__ 获取（合并）
+	if ns != NamespaceAll {
+		if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+			for key, def := range allMap {
+				// 跳过已存在的（指定 namespace 优先）
+				if _, exists := seen[key]; !exists {
+					definitions = append(definitions, def)
+				}
+			}
 		}
 	}
 
@@ -345,8 +383,15 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData
 			def.IsBelongsTo = isBelongsTo
 		}
 
-		// 使用按字母序排序的 key 存储
-		relationKey := buildRelationKey(def.FromResource, def.ToResource)
+		// 根据关系类型使用不同的 key
+		var relationKey string
+		if def.IsBelongsTo {
+			// 单向关系：使用 from_to_to 格式
+			relationKey = buildDirectionalRelationKey(def.FromResource, def.ToResource)
+		} else {
+			// 双向关系：按字母序排序
+			relationKey = buildRelationKey(def.FromResource, def.ToResource)
+		}
 
 		rsp.mu.Lock()
 		if _, ok := rsp.relationDefinitions[normalizedNs]; !ok {
@@ -383,6 +428,13 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 
 	logger.Infof("[schema_provider] subscribing to channels: %v", channels)
 
+	// 指数退避参数
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 30 * time.Second
+	)
+	backoff := initialBackoff
+
 	for {
 		select {
 		case <-rsp.ctx.Done():
@@ -393,22 +445,26 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 
 		pubsub := rsp.client.Subscribe(rsp.ctx, channels...)
 
-		func() {
+		// subscribeLoop 返回 true 表示正常退出（ctx done），false 表示需要重连
+		normalExit := func() bool {
 			defer pubsub.Close()
 
 			ch := pubsub.Channel()
 			for {
 				select {
 				case <-rsp.ctx.Done():
-					return
+					return true
 				case msg, ok := <-ch:
 					if !ok {
 						logger.Warnf("[schema_provider] pubsub channel closed, reconnecting...")
-						return
+						return false
 					}
 					if msg == nil {
 						continue
 					}
+
+					// 收到消息，重置退避时间
+					backoff = initialBackoff
 
 					var payload MsgPayload
 					if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
@@ -428,6 +484,24 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 				}
 			}
 		}()
+
+		if normalExit {
+			return
+		}
+
+		// 指数退避重连
+		logger.Infof("[schema_provider] waiting %v before reconnecting...", backoff)
+		select {
+		case <-rsp.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		// 指数增长，最大 30 秒
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
@@ -491,15 +565,6 @@ func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name stri
 			}
 		}
 	}
-}
-
-// extractKindFromChannel 从 channel 提取 kind
-func (rsp *RedisSchemaProvider) extractKindFromChannel(channel string) (string, error) {
-	parts := strings.Split(channel, ":")
-	if len(parts) < 3 {
-		return "", fmt.Errorf("invalid channel format: %s, expected at least 3 parts separated by ':'", channel)
-	}
-	return parts[2], nil
 }
 
 // Close 关闭 provider

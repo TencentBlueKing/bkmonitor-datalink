@@ -545,11 +545,16 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		return errors.Wrapf(err, "failed to get redis client for schema provider")
 	}
 
-	schemaProvider, err := service.NewRedisSchemaProvider(ctx, redisClient)
+	schemaProvider, err := service.NewRedisSchemaProvider(cancelCtx, redisClient)
 	if err != nil {
 		logger.Errorf("[cmdb_relation] failed to create schema provider: %v", err)
 		return errors.Wrapf(err, "failed to create schema provider")
 	}
+	defer func() {
+		if closeErr := schemaProvider.Close(); closeErr != nil {
+			logger.Warnf("[cmdb_relation] failed to close schema provider: %v", closeErr)
+		}
+	}()
 	relation.GetRelationMetricsBuilder().WithSchemaProvider(schemaProvider)
 	logger.Infof("[cmdb_relation] schema provider initialized successfully")
 

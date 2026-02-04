@@ -549,17 +549,32 @@ func (m *MockSchemaProvider) AddResourceDefinition(namespace, resourceType strin
 }
 
 func (m *MockSchemaProvider) AddRelationDefinition(namespace, fromResource, toResource string) {
-	// 按字母序排序构建 key，与 RedisSchemaProvider 保持一致
-	resources := []string{fromResource, toResource}
-	sort.Strings(resources)
-	name := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
-	key := fmt.Sprintf("%s:%s", namespace, name)
+	m.AddRelationDefinitionWithDirection(namespace, fromResource, toResource, false)
+}
+
+// AddRelationDefinitionWithDirection 添加关系定义，支持指定方向性
+// isBelongsTo=true: 单向关系，使用 _to_ 连接，key 按 from_to_to 格式
+// isBelongsTo=false: 双向关系，使用 _with_ 连接，key 按字母序排序
+func (m *MockSchemaProvider) AddRelationDefinitionWithDirection(namespace, fromResource, toResource string, isBelongsTo bool) {
+	var name, key string
+	if isBelongsTo {
+		// 单向关系：使用 _to_，不排序
+		name = fmt.Sprintf("%s_to_%s", fromResource, toResource)
+		key = fmt.Sprintf("%s:%s", namespace, name)
+	} else {
+		// 双向关系：按字母序排序，与 RedisSchemaProvider 保持一致
+		resources := []string{fromResource, toResource}
+		sort.Strings(resources)
+		name = fmt.Sprintf("%s_with_%s", resources[0], resources[1])
+		key = fmt.Sprintf("%s:%s", namespace, name)
+	}
 	m.relationDefs[key] = &service.RelationDefinition{
 		Namespace:    namespace,
 		Name:         name,
 		FromResource: fromResource,
 		ToResource:   toResource,
 		Category:     "static",
+		IsBelongsTo:  isBelongsTo,
 	}
 }
 
@@ -572,14 +587,22 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 }
 
 func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string) (*service.RelationDefinition, error) {
-	// 按字母序排序构建 key，与 RedisSchemaProvider 保持一致
-	resources := []string{fromResource, toResource}
-	sort.Strings(resources)
-	name := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
-	key := fmt.Sprintf("%s:%s", namespace, name)
-	if def, ok := m.relationDefs[key]; ok {
+	// 先尝试单向关系 key（from_to_to 格式）
+	directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
+	directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
+	if def, ok := m.relationDefs[directionalKey]; ok {
 		return def, nil
 	}
+
+	// 再尝试双向关系 key（按字母序排序）
+	resources := []string{fromResource, toResource}
+	sort.Strings(resources)
+	bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
+	bidirectionalKey := fmt.Sprintf("%s:%s", namespace, bidirectionalName)
+	if def, ok := m.relationDefs[bidirectionalKey]; ok {
+		return def, nil
+	}
+
 	return nil, fmt.Errorf("not found")
 }
 

@@ -11,6 +11,7 @@ package relation
 
 import (
 	"bytes"
+	"sort"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -61,10 +62,15 @@ func (m Metric) String(labels ...Label) string {
 	buf.WriteString(m.Name)
 	buf.WriteString(`{`)
 
-	m.Labels = append(m.Labels, labels...)
+	allLabels := append(m.Labels, labels...)
+
+	// 按 label name 排序，确保输出稳定
+	sort.Slice(allLabels, func(i, j int) bool {
+		return allLabels[i].Name < allLabels[j].Name
+	})
 
 	var n int
-	for _, label := range m.Labels {
+	for _, label := range allLabels {
 		if n > 0 {
 			buf.WriteString(`,`)
 		}

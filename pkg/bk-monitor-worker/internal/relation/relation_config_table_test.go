@@ -458,6 +458,100 @@ func TestBuildRelationConfigMetrics_TableDriven(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:  "单向和双向关系同时存在场景：同一对资源生成两个指标",
+			bizID: 2,
+			resources: `{
+				"host": {
+					"name": "host",
+					"data": {
+						"3001": {
+							"id": "3001",
+							"resource": "host",
+							"label": {
+								"bk_host_id": "3001"
+							},
+							"expands": {
+								"host": {
+									"bk_host_id": "3001"
+								}
+							},
+							"relation_config": {
+								"service": {
+									"service_name": "my-service",
+									"service_port": "8080"
+								}
+							}
+						}
+					}
+				}
+			}`,
+			schema: mockSchemaConfig{
+				resources: map[string]*service.ResourceDefinition{
+					"service": {
+						Name: "service",
+						Fields: []service.FieldDefinition{
+							{Name: "service_name", Required: true},
+							{Name: "service_port", Required: true},
+						},
+					},
+					"host": {
+						Name: "host",
+						Fields: []service.FieldDefinition{
+							{Name: "bk_host_id", Required: true},
+						},
+					},
+				},
+				relations: map[string]*service.RelationDefinition{
+					// 双向关系：host 与 service 互相关联
+					"host_with_service": {
+						Name:          "host_with_service",
+						FromResource:  "host",
+						ToResource:    "service",
+						Category:      "static",
+						IsDirectional: false,
+					},
+					// 单向关系：service 部署到 host（service -> host 方向）
+					"service_to_host": {
+						Name:          "service_to_host",
+						FromResource:  "service",
+						ToResource:    "host",
+						Category:      "dynamic",
+						IsDirectional: true,
+					},
+				},
+			},
+			// 同一个 relation_config.service 应该同时匹配单向和双向关系，生成两个指标
+			expected: []expectedMetric{
+				{
+					name: "host_info_relation",
+					labels: map[string]string{
+						"bk_biz_id":  "2",
+						"bk_host_id": "3001",
+					},
+				},
+				{
+					// 单向关系指标：service_to_host_flow
+					name: "service_to_host_flow",
+					labels: map[string]string{
+						"bk_biz_id":    "2",
+						"bk_host_id":   "3001",
+						"service_name": "my-service",
+						"service_port": "8080",
+					},
+				},
+				{
+					// 双向关系指标：host_with_service_relation
+					name: "host_with_service_relation",
+					labels: map[string]string{
+						"bk_biz_id":    "2",
+						"bk_host_id":   "3001",
+						"service_name": "my-service",
+						"service_port": "8080",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -520,7 +614,7 @@ func newMockSchemaProviderFromConfig(bizID int, config mockSchemaConfig) *MockSc
 
 	// 添加关系定义
 	for _, relDef := range config.relations {
-		provider.AddRelationDefinition(namespace, relDef.FromResource, relDef.ToResource)
+		provider.AddRelationDefinitionWithDirection(namespace, relDef.FromResource, relDef.ToResource, relDef.IsDirectional)
 	}
 
 	return provider

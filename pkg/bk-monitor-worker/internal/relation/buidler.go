@@ -493,41 +493,24 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 		parentLinks = append(parentLinks, link...)
 	}
 
-	for targetResource, fields := range info.RelationConfig {
-		// 1. 查询 RelationDefinition
-		// 1.1  查找单向的关联
-		// 如果单向和双向的关联同时存在，优先使用单向的关联
-		relationDef, found := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeDirectional)
-
-		// 1.2  如果单向关系未找到，查找双向的关联
-		if !found {
-			relationDef, found = schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeBidirectional)
-		}
-
-		// 1.3  如果两种关系都未找到，跳过
-		if !found {
-			logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider",
-				targetResource, info.Resource)
-			continue
-		}
-
-		// 2. 获取两端资源的 ResourceDefinition
+	generateMetric := func(relationDef *service.RelationDefinition, targetResource string, fields map[string]any) *Metric {
+		// 获取两端资源的 ResourceDefinition
 		fromResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, targetResource)
 		if err != nil {
 			logger.Errorf("[relation_config] Resource definition for %s not found: %v", targetResource, err)
-			continue
+			return nil
 		}
 
 		toResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, info.Resource)
 		if err != nil {
 			logger.Errorf("[relation_config] Resource definition for %s not found: %v", info.Resource, err)
-			continue
+			return nil
 		}
 
-		// 3. 获取必填字段列表
+		// 获取必填字段列表
 		requiredFields := relationDef.GetRequiredFields(fromResourceDef, toResourceDef)
 
-		// 4. 字段完整性校验
+		// 字段完整性校验
 		collectedFields := make(map[string]string)
 		collectedFields[BizID] = fmt.Sprintf("%d", bizID)
 
@@ -565,32 +548,58 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 			missingFields = append(missingFields, requiredField)
 		}
 
-		// 5. 如果有缺失字段，记录错误并跳过
+		// 如果有缺失字段，记录错误并返回 nil
 		if len(missingFields) > 0 {
 			logger.Errorf("[relation_config] Missing required fields for %s: %v",
 				relationDef.GetRelationName(), missingFields)
-			continue
+			return nil
 		}
 
-		// 6. 生成指标
+		// 生成指标
 		labelList := make(Labels, 0, len(collectedFields))
 		for k, v := range collectedFields {
 			labelList = append(labelList, Label{
 				Name:  k,
-			Value: v,
-		})
-	}
+				Value: v,
+			})
+		}
 
-		// 指标名称格式：{relation_name}，GetRelationName 已包含后缀（_flow 或 _relation）
 		metric := Metric{
 			Name:   relationDef.GetRelationName(),
 			Labels: labelList,
 		}
 
-		metrics = append(metrics, metric)
-
 		logger.Debugf("[relation_config] Generated metric: %s with fields: %v",
 			metric.Name, collectedFields)
+
+		return &metric
+	}
+
+	for targetResource, fields := range info.RelationConfig {
+		// 1. 查询 RelationDefinition，单向和双向都尝试匹配
+		foundAny := false
+
+		// 1.1 尝试单向关系
+		if relationDef, found := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeDirectional); found {
+			foundAny = true
+			if metric := generateMetric(relationDef, targetResource, fields); metric != nil {
+				metrics = append(metrics, *metric)
+			}
+		}
+
+		// 1.2 尝试双向关系
+		if relationDef, found := schemaProvider.GetRelationDefinition(namespace, targetResource, info.Resource, RelationTypeBidirectional); found {
+			foundAny = true
+			if metric := generateMetric(relationDef, targetResource, fields); metric != nil {
+				metrics = append(metrics, *metric)
+			}
+		}
+
+		// 1.3 如果两种关系都未找到，记录警告
+		if !foundAny {
+			logger.Warnf("[relation_config] Relation between %s and %s not found in SchemaProvider",
+				targetResource, info.Resource)
+		}
 	}
 
 	return metrics

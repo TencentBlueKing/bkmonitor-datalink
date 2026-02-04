@@ -78,7 +78,7 @@ func NewRedisSchemaProvider(ctx context.Context, client redis.UniversalClient) (
 }
 
 // normalizeNamespace 规范化 namespace，空的映射到 __all__
-func normalizeNamespace(namespace string) string {
+func (rsp *RedisSchemaProvider) normalizeNamespace(namespace string) string {
 	if namespace == "" {
 		return NamespaceAll
 	}
@@ -90,7 +90,7 @@ func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, resourceType st
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	ns := normalizeNamespace(namespace)
+	ns := rsp.normalizeNamespace(namespace)
 
 	// 先从指定 namespace 查找
 	if nsMap, ok := rsp.resourceDefinitions[ns]; ok {
@@ -100,11 +100,9 @@ func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, resourceType st
 	}
 
 	// 如果指定 namespace 没找到，尝试从 __all__ 查找
-	if ns != NamespaceAll {
-		if allMap, ok := rsp.resourceDefinitions[NamespaceAll]; ok {
-			if def, ok := allMap[resourceType]; ok {
-				return def, nil
-			}
+	if allMap, ok := rsp.resourceDefinitions[NamespaceAll]; ok {
+		if def, ok := allMap[resourceType]; ok {
+			return def, nil
 		}
 	}
 
@@ -129,7 +127,7 @@ func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, t
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	ns := normalizeNamespace(namespace)
+	ns := rsp.normalizeNamespace(namespace)
 
 	findInMap := func(nsMap map[string]*RelationDefinition) (*RelationDefinition, bool) {
 		switch relationType {
@@ -160,11 +158,9 @@ func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, fromResource, t
 	}
 
 	// 如果指定 namespace 没找到，尝试从 __all__ 查找
-	if ns != NamespaceAll {
-		if nsMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
-			if def, found := findInMap(nsMap); found {
-				return def, true
-			}
+	if nsMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+		if def, found := findInMap(nsMap); found {
+			return def, true
 		}
 	}
 
@@ -177,7 +173,7 @@ func (rsp *RedisSchemaProvider) ListRelationDefinitions(namespace string) ([]*Re
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	ns := normalizeNamespace(namespace)
+	ns := rsp.normalizeNamespace(namespace)
 	definitions := make([]*RelationDefinition, 0)
 	seen := make(map[string]struct{}) // 用于去重
 
@@ -190,13 +186,11 @@ func (rsp *RedisSchemaProvider) ListRelationDefinitions(namespace string) ([]*Re
 	}
 
 	// 如果不是 __all__，还需要从 __all__ 获取（合并）
-	if ns != NamespaceAll {
-		if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
-			for key, def := range allMap {
-				// 跳过已存在的（指定 namespace 优先）
-				if _, exists := seen[key]; !exists {
-					definitions = append(definitions, def)
-				}
+	if allMap, ok := rsp.relationDefinitions[NamespaceAll]; ok {
+		for key, def := range allMap {
+			// 跳过已存在的（指定 namespace 优先）
+			if _, exists := seen[key]; !exists {
+				definitions = append(definitions, def)
 			}
 		}
 	}
@@ -270,7 +264,7 @@ func (rsp *RedisSchemaProvider) loadEntitiesByKind(kind string) error {
 // loadEntityByKind 按 kind 加载单个实体
 // jsonData 直接是 ResourceDefinition 或 RelationDefinition 的 JSON 格式
 func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
-	normalizedNs := normalizeNamespace(namespace)
+	normalizedNs := rsp.normalizeNamespace(namespace)
 
 	switch kind {
 	case KindResourceDefinition:
@@ -472,7 +466,7 @@ func deleteFromMap[T entityWithName](nsMap map[string]T, name, kind, namespace s
 
 // deleteEntityFromCache 从缓存删除实体
 func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name string) {
-	normalizedNs := normalizeNamespace(namespace)
+	normalizedNs := rsp.normalizeNamespace(namespace)
 
 	rsp.mu.Lock()
 	defer rsp.mu.Unlock()

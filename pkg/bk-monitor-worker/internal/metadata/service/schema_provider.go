@@ -80,13 +80,13 @@ type RelationDefinition struct {
 // GetRelationName 获取关联名称
 func (rd *RelationDefinition) GetRelationName() string {
 	if rd.IsDirectional {
-		// 单向关系：使用 _to_，保持 from -> to 方向
-		return fmt.Sprintf("%s_to_%s", rd.FromResource, rd.ToResource)
+		// 单向关系：使用 _to_，保持 from -> to 方向，加 _flow 后缀
+		return fmt.Sprintf("%s_to_%s_flow", rd.FromResource, rd.ToResource)
 	}
-	// 双向关系：使用 _with_，按字母序排序
+	// 双向关系：使用 _with_，按字母序排序，加 _relation 后缀
 	resources := []string{rd.FromResource, rd.ToResource}
 	sort.Strings(resources)
-	return fmt.Sprintf("%s_with_%s", resources[0], resources[1])
+	return fmt.Sprintf("%s_with_%s_relation", resources[0], resources[1])
 }
 
 // GetRequiredFields 获取关系的必填字段列表

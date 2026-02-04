@@ -577,13 +577,13 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 		for k, v := range collectedFields {
 			labelList = append(labelList, Label{
 				Name:  k,
-				Value: v,
-			})
-		}
+			Value: v,
+		})
+	}
 
-		// 指标名称格式：{relation_name}_relation，与 node.go 中的 RelationMetric 保持一致
+		// 指标名称格式：{relation_name}，GetRelationName 已包含后缀（_flow 或 _relation）
 		metric := Metric{
-			Name:   fmt.Sprintf("%s_relation", relationDef.GetRelationName()),
+			Name:   relationDef.GetRelationName(),
 			Labels: labelList,
 		}
 

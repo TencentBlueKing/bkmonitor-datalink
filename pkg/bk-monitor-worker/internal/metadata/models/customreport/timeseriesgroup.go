@@ -18,6 +18,8 @@ type TimeSeriesGroup struct {
 	BkTenantId          string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
 	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
+
+	MetricGroupDimensions string `gorm:"column:metric_group_dimensions;type:json;default:'[]'"`
 }
 
 // TableName : 用于设置表的别名

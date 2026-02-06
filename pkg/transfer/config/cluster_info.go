@@ -79,3 +79,12 @@ func (c *SimpleMetaClusterInfo) GetAddress() string {
 	}
 	return fmt.Sprintf("%s://%s:%d", schema, c.GetDomain(), c.GetPort())
 }
+
+// GetSSLInsecureSkipVerify 获取是否跳过 SSL 证书校验
+// 默认为 true，即跳过校验
+func (c *SimpleMetaClusterInfo) GetSSLInsecureSkipVerify() bool {
+	if skipVerify, ok := c.ClusterConfigHelper.GetBool("ssl_insecure_skip_verify"); ok {
+		return skipVerify
+	}
+	return true
+}

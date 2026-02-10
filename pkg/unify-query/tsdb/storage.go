@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
 var (
@@ -23,21 +24,35 @@ var (
 	storageLock = new(sync.RWMutex)
 )
 
+// getStorageFields 从存储结构体中提取字段，支持 consul.Storage 和 redis.Storage
+func getStorageFields(storage any) (storageType, address, username, password string) {
+	switch s := storage.(type) {
+	case *consul.Storage:
+		return s.Type, s.Address, s.Username, s.Password
+	case *redis.Storage:
+		return s.Type, s.Address, s.Username, s.Password
+	default:
+		panic(fmt.Sprintf("unsupported storage type: %T", storage))
+	}
+}
+
 // ReloadTsDBStorage 重新加载存储实例到内存里面
-func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt *Options) error {
+// 支持 consul.Storage 和 redis.Storage
+func ReloadTsDBStorage(_ context.Context, tsDBs map[string]any, opt *Options) error {
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
 
 	for storageID, tsDB := range tsDBs {
+		storageType, address, username, password := getStorageFields(tsDB)
 		var storage *Storage
 
 		storage = &Storage{
-			Type:     tsDB.Type,
-			Address:  tsDB.Address,
-			Username: tsDB.Username,
-			Password: tsDB.Password,
+			Type:     storageType,
+			Address:  address,
+			Username: username,
+			Password: password,
 		}
 
-		switch tsDB.Type {
+		switch storageType {
 		case metadata.ElasticsearchStorageType:
 			storage.Timeout = opt.Es.Timeout
 			storage.MaxRouting = opt.Es.MaxRouting
@@ -93,4 +108,16 @@ func SetStorage(storageID string, storage *Storage) {
 	defer storageLock.Unlock()
 
 	storageMap[storageID] = storage
+}
+
+// GetAllStorageFromMemory 从内存中获取所有存储配置
+func GetAllStorageFromMemory() map[string]*Storage {
+	storageLock.RLock()
+	defer storageLock.RUnlock()
+
+	result := make(map[string]*Storage, len(storageMap))
+	for k, v := range storageMap {
+		result[k] = v
+	}
+	return result
 }

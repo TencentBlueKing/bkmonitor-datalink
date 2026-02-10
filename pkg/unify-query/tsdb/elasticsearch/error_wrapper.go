@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 
 	elastic "github.com/olivere/elastic/v7"
@@ -38,7 +39,7 @@ func handleESError(ctx context.Context, url string, err error, shardFailures []*
 		return nil
 	}
 
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) && len(shardFailures) == 0 {
 		return nil
 	}
 
@@ -63,7 +64,7 @@ func handleESError(ctx context.Context, url string, err error, shardFailures []*
 
 	// 处理 ES 错误
 	if err != nil {
-		if errors.As(err, &esErr) {
+		if errors.As(err, &esErr) && esErr != nil {
 			indices, reasonMsg, typeMsg := deepest(*esErr)
 			if typeMsg != "" {
 				msgBuilder.WriteString(": [")
@@ -78,7 +79,7 @@ func handleESError(ctx context.Context, url string, err error, shardFailures []*
 				msgBuilder.WriteString(strings.Join(indices, ", "))
 				msgBuilder.WriteString(")")
 			}
-		} else {
+		} else if !isTypedNilError(err) {
 			msgBuilder.WriteString(": [")
 			msgBuilder.WriteString(ThirdPartyErrType)
 			msgBuilder.WriteString("] ")
@@ -114,6 +115,19 @@ func handleESError(ctx context.Context, url string, err error, shardFailures []*
 	}
 
 	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
+}
+
+func isTypedNilError(err error) bool {
+	if err == nil {
+		return true
+	}
+	v := reflect.ValueOf(err)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func deepest(esErr elastic.Error) (indices []string, reasonMsg string, typeMsg string) {

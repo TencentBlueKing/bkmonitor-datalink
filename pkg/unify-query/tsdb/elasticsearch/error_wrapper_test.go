@@ -110,27 +110,37 @@ func Test_handleESError(t *testing.T) {
 			},
 			expectedErrMsg: "es 查询失败: Elasticsearch error: shard failures: [exception] shard failure only (indices: test_index)",
 		},
+		{
+			name: "should not panic when error is typed nil *elastic.Error",
+			err: func() error {
+				var esErr *elastic.Error
+				return esErr
+			}(),
+			expectedErrMsg: "es 查询失败: Elasticsearch error",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var resultErr error
+			var callErr error
+
 			if tt.errMsg != "" {
 				var esErr elastic.Error
 				err := json.Unmarshal([]byte(tt.errMsg), &esErr)
 				if err != nil {
-					thirdPartyErr := errors.New(tt.errMsg)
-					resultErr = handleESError(t.Context(), tt.esAddr, thirdPartyErr, tt.shardFailures)
+					callErr = errors.New(tt.errMsg)
 				} else {
-					resultErr = handleESError(t.Context(), tt.esAddr, &esErr, tt.shardFailures)
+					callErr = &esErr
 				}
-			} else if tt.err != nil {
-				resultErr = handleESError(t.Context(), tt.esAddr, tt.err, tt.shardFailures)
-			} else if len(tt.shardFailures) > 0 {
-				resultErr = handleESError(t.Context(), tt.esAddr, nil, tt.shardFailures)
+			} else {
+				callErr = tt.err
 			}
+
+			resultErr := handleESError(t.Context(), tt.esAddr, callErr, tt.shardFailures)
 			if tt.expectedErrMsg == "" {
 				assert.NoError(t, resultErr)
-			} else {
+				return
+			}
+			if assert.Error(t, resultErr) {
 				assert.EqualError(t, resultErr, tt.expectedErrMsg)
 			}
 		})

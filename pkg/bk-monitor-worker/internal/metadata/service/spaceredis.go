@@ -1591,31 +1591,32 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 		return make(map[string]string), nil
 	}
 	db := mysql.GetDBSession().DB
+
+	// 根据BCS集群使用的数据源 ID，获取结果表与集群的映射关系
+	// 获取结果表对应的数据源 ID
 	var dsrtList []resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId, resulttable.DataSourceResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&dsrtList); err != nil {
 		return nil, err
-	}
-	if len(dsrtList) == 0 {
-		return make(map[string]string), nil
 	}
 	var dataIds []uint
 	for _, dsrt := range dsrtList {
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
-	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义，已删除状态但是允许访问历史数据的集群依然进行推送
-	qs := bcs.NewBCSClusterInfoQuerySet(db)
-
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
-	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
-		return nil, err
-	}
-
 	var clusterListB []bcs.BCSClusterInfo
-	if err := qs.Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).CustomMetricDataIDIn(dataIds...).All(&clusterListB); err != nil {
-		return nil, err
+	if len(dataIds) > 0 {
+		// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义，已删除状态但是允许访问历史数据的集群依然进行推送
+		qs := bcs.NewBCSClusterInfoQuerySet(db)
+		if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
+			return nil, err
+		}
+		if err := qs.Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).CustomMetricDataIDIn(dataIds...).All(&clusterListB); err != nil {
+			return nil, err
+		}
 	}
 
+	// 组装数据源 ID 到集群 ID 的映射
 	dataIdClusterIdMap := make(map[uint]string)
 	for _, c := range clusterListA {
 		dataIdClusterIdMap[c.K8sMetricDataID] = c.ClusterID
@@ -1628,6 +1629,19 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 	for _, dsrt := range dsrtList {
 		tableIdClusterIdMap[dsrt.TableId] = dataIdClusterIdMap[dsrt.BkDataId]
 	}
+
+	// 补充特殊配置，ResultTableOption中的binding_bcs_cluster_id
+	var rtoList []resulttable.ResultTableOption
+	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(tableIds...).NameEq(models.BindingBcsClusterId).All(&rtoList); err != nil {
+		return nil, err
+	}
+	for _, rto := range rtoList {
+		if rto.Value == "" {
+			continue
+		}
+		tableIdClusterIdMap[rto.TableID] = rto.Value
+	}
+
 	return tableIdClusterIdMap, nil
 }
 

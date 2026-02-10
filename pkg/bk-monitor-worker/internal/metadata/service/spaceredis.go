@@ -1628,6 +1628,16 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 	for _, dsrt := range dsrtList {
 		tableIdClusterIdMap[dsrt.TableId] = dataIdClusterIdMap[dsrt.BkDataId]
 	}
+
+	// 补充特殊配置，ResultTableOption中的binding_bcs_cluster_id
+	var rtoList []resulttable.ResultTableOption
+	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(tableIds...).NameEq(models.BindingBcsClusterId).All(&rtoList); err != nil {
+		return nil, err
+	}
+	for _, rto := range rtoList {
+		tableIdClusterIdMap[rto.TableID] = rto.Value
+	}
+
 	return tableIdClusterIdMap, nil
 }
 

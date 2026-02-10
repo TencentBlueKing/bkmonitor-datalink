@@ -44,6 +44,21 @@ var (
 	DivideSymbol  = "###"
 	EqualSymbol   = "=="
 	DefaultTagKey = "__default__/__default__/__default__==__default__"
+
+	// pingTransport 是 Ping 方法共享的 Transport，避免每次请求创建新的连接池
+	pingTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	// pingClient 是 Ping 方法共享的 http.Client
+	// 注意：不设置 Timeout，通过 context 控制每次请求的超时
+	pingClient = &http.Client{
+		Transport: pingTransport,
+	}
 )
 
 type Router struct {
@@ -131,28 +146,19 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 		return
 	}
 
-	// 开始进行 Ping influxdb
-	clint := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
+	// 使用共享的 pingClient，通过 context 控制超时
 	for _, v := range r.hostInfo {
 		// 重试 pingCount 次数
 		var read bool
 		for i := 0; i < pingCount; i++ {
 			addr := fmt.Sprintf("%s://%s:%d", v.Protocol, v.DomainName, v.Port)
-			req, err := http.NewRequest("GET", addr+"/ping", nil)
+
+			// 为每次请求创建带超时的 context
+			reqCtx, cancel := context.WithTimeout(ctx, timeout)
+			req, err := http.NewRequestWithContext(reqCtx, "GET", addr+"/ping", nil)
 			if err != nil {
+				cancel()
 				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)
-				continue
-			}
-			resp, err := clint.Do(req)
-			if err != nil {
-				log.Warnf(ctx, "do ping failed, error: %s", err)
 				continue
 			}
 			// 对于配置了账号密码的情况
@@ -161,9 +167,20 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 				req.SetBasicAuth(v.Username, v.Password)
 			}
 
+			resp, err := pingClient.Do(req)
+			cancel() // 请求完成后取消 context
+			if err != nil {
+				log.Warnf(ctx, "do ping failed, error: %s", err)
+				continue
+			}
+
+			// 必须关闭 response body，否则会导致连接泄漏
+			statusCode := resp.StatusCode
+			resp.Body.Close()
+
 			// 状态码 204 变更 read 跳出循环
 			// 否则持续走完 PingCount 结束
-			if resp.StatusCode == http.StatusNoContent {
+			if statusCode == http.StatusNoContent {
 				read = true
 				break
 			}

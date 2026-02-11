@@ -1085,7 +1085,7 @@
         {
           "name": "cpu_summary",
           "tags": {
-            "bk_target_ip": "9.135.247.9"
+            "bk_target_ip": "127.0.0.1"
           },
           "columns": [
             "_time",

@@ -973,6 +973,12 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series")
 	defer span.End(&err)
 
+	// 先获取字段映射，用于过滤不可聚合的字段和构建查询条件
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
 	// 获取所有标签名
 	labelNames, err := i.QueryLabelNames(ctx, query, start, end)
 	if err != nil {
@@ -983,7 +989,21 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, nil
 	}
 
+	// 过滤不可聚合的字段（如 text 类型），这些字段不能参与 composite aggregation
+	aggLabelNames := make([]string, 0, len(labelNames))
+	for _, name := range labelNames {
+		if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
+			continue
+		}
+		aggLabelNames = append(aggLabelNames, name)
+	}
+
+	if len(aggLabelNames) == 0 {
+		return nil, nil
+	}
+
 	span.Set("label-names", labelNames)
+	span.Set("agg-label-names", aggLabelNames)
 
 	// 获取索引别名
 	aliases, err := i.getAlias(ctx, query, start, end)
@@ -991,9 +1011,9 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, err
 	}
 
-	// 构建 composite aggregation 的 sources
-	sources := make([]elastic.CompositeAggregationValuesSource, 0, len(labelNames))
-	for _, name := range labelNames {
+	// 构建 composite aggregation 的 sources（仅使用可聚合字段）
+	sources := make([]elastic.CompositeAggregationValuesSource, 0, len(aggLabelNames))
+	for _, name := range aggLabelNames {
 		sources = append(sources, elastic.NewCompositeAggregationTermsValuesSource(name).Field(name).MissingBucket(true))
 	}
 
@@ -1003,12 +1023,6 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	}
 
 	compositeAgg := elastic.NewCompositeAggregation().Sources(sources...).Size(size)
-
-	// 构建查询条件
-	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
-	if err != nil {
-		return nil, err
-	}
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 	fact := NewFormatFactory(ctx).

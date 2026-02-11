@@ -587,35 +587,51 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series")
 	defer span.End(&err)
 
-	// 先获取标签名列表：执行一次查询以获取字段顺序
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
 
-	// 先保存原有的 Size，QueryLabelNames 会修改
-	origSize := query.Size
-	query.Size = 1
-
-	firstSQL, err := queryFactory.SQL()
-	if err != nil {
-		return nil, err
-	}
-
-	firstData, err := i.sqlQuery(ctx, firstSQL)
-	if err != nil {
-		return nil, err
-	}
-
 	var labelNames []string
-	for _, k := range firstData.SelectFieldsOrder {
-		if checkInternalDimension(k) {
-			continue
+
+	if len(query.Source) > 0 {
+		// 用户指定了查询字段，直接使用
+		for _, k := range query.Source {
+			if checkInternalDimension(k) {
+				continue
+			}
+			if k == sql_expr.TimeStamp || k == sql_expr.Value {
+				continue
+			}
+			labelNames = append(labelNames, k)
 		}
-		if k == sql_expr.TimeStamp || k == sql_expr.Value {
-			continue
+	} else {
+		// 用户未指定字段，执行一次查询以获取字段顺序
+		origSize := query.Size
+		query.Size = 1
+
+		firstSQL, err := queryFactory.SQL()
+		if err != nil {
+			return nil, err
 		}
-		labelNames = append(labelNames, k)
+
+		firstData, err := i.sqlQuery(ctx, firstSQL)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, k := range firstData.SelectFieldsOrder {
+			if checkInternalDimension(k) {
+				continue
+			}
+			if k == sql_expr.TimeStamp || k == sql_expr.Value {
+				continue
+			}
+			labelNames = append(labelNames, k)
+		}
+
+		// 恢复 Size
+		query.Size = origSize
 	}
 
 	if len(labelNames) == 0 {
@@ -624,8 +640,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	span.Set("label-names", labelNames)
 
-	// 恢复 Size 并设置 SelectDistinct 以获取唯一标签组合
-	query.Size = origSize
+	// 设置 SelectDistinct 以获取唯一标签组合
 	query.SelectDistinct = labelNames
 	defer func() {
 		query.SelectDistinct = nil
@@ -654,7 +669,8 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 			value, valErr := getValue(encodedName, d)
 			if valErr != nil {
-				return nil, valErr
+				// 字段不存在时视为空值（NULL），不返回错误
+				continue
 			}
 
 			if value != "" {

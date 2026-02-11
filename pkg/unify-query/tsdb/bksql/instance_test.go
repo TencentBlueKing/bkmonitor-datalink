@@ -2331,6 +2331,8 @@ func TestInstance_QuerySeries(t *testing.T) {
 		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 1": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","log":"test log message","serverip":"10.0.0.1","cloudid":0,"gseindex":100,"_timestamp_":1740552000000}],"select_fields_order":["path","log","serverip","cloudid","gseindex","_timestamp_"],"total_record_size":100,"timetaken":0.01,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
 		// 第二次查询：SELECT DISTINCT 获取唯一组合
 		"SELECT DISTINCT `path`, `log`, `serverip`, `cloudid`, `gseindex` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":3,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","log":"msg1","serverip":"10.0.0.1","cloudid":0,"gseindex":100},{"path":"/var/log/test.log","log":"msg2","serverip":"10.0.0.2","cloudid":0,"gseindex":200},{"path":"/var/log/app.log","log":"msg3","serverip":"10.0.0.1","cloudid":1,"gseindex":300}],"select_fields_order":["path","log","serverip","cloudid","gseindex"],"total_record_size":300,"timetaken":0.05,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
+		// 指定字段查询：SELECT DISTINCT path, serverip
+		"SELECT DISTINCT `path`, `serverip` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":2,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","serverip":"10.0.0.1"},{"path":"/var/log/app.log","serverip":"10.0.0.1"}],"select_fields_order":["path","serverip"],"total_record_size":200,"timetaken":0.03,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
 	})
 
 	tests := []struct {
@@ -2349,6 +2351,19 @@ func TestInstance_QuerySeries(t *testing.T) {
 				{"path": "/var/log/test.log", "log": "msg1", "serverip": "10.0.0.1", "cloudid": "0", "gseindex": "100"},
 				{"path": "/var/log/test.log", "log": "msg2", "serverip": "10.0.0.2", "cloudid": "0", "gseindex": "200"},
 				{"path": "/var/log/app.log", "log": "msg3", "serverip": "10.0.0.1", "cloudid": "1", "gseindex": "300"},
+			},
+		},
+		{
+			name: "series query with source fields",
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Size:        10,
+				Source:       []string{"path", "serverip"},
+			},
+			expected: []map[string]string{
+				{"path": "/var/log/test.log", "serverip": "10.0.0.1"},
+				{"path": "/var/log/app.log", "serverip": "10.0.0.1"},
 			},
 		},
 	}

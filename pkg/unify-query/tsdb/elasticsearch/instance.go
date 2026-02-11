@@ -979,30 +979,38 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, err
 	}
 
-	// 获取所有标签名
-	labelNames, err := i.QueryLabelNames(ctx, query, start, end)
-	if err != nil {
-		return nil, err
-	}
+	var aggLabelNames []string
 
-	if len(labelNames) == 0 {
-		return nil, nil
-	}
-
-	// 过滤不可聚合的字段（如 text 类型），这些字段不能参与 composite aggregation
-	aggLabelNames := make([]string, 0, len(labelNames))
-	for _, name := range labelNames {
-		if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
-			continue
+	if len(query.Source) > 0 {
+		// 用户指定了查询字段，直接使用，但仍需过滤不可聚合的字段
+		for _, name := range query.Source {
+			if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
+				continue
+			}
+			aggLabelNames = append(aggLabelNames, name)
 		}
-		aggLabelNames = append(aggLabelNames, name)
+	} else {
+		// 用户未指定字段，获取所有标签名
+		labelNames, err := i.QueryLabelNames(ctx, query, start, end)
+		if err != nil {
+			return nil, err
+		}
+
+		// 过滤不可聚合的字段（如 text 类型），这些字段不能参与 composite aggregation
+		for _, name := range labelNames {
+			if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
+				continue
+			}
+			aggLabelNames = append(aggLabelNames, name)
+		}
+
+		span.Set("label-names", labelNames)
 	}
 
 	if len(aggLabelNames) == 0 {
 		return nil, nil
 	}
 
-	span.Set("label-names", labelNames)
 	span.Set("agg-label-names", aggLabelNames)
 
 	// 获取索引别名

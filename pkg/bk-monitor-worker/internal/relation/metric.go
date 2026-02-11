@@ -62,7 +62,6 @@ func (m Metric) String(labels ...Label) string {
 	buf.WriteString(`{`)
 
 	m.Labels = append(m.Labels, labels...)
-
 	var n int
 	for _, label := range m.Labels {
 		if n > 0 {

@@ -175,7 +175,8 @@ func (httpService *Service) Reload(flowID uint64) error {
 		KeyFile:    keyFile,
 		SkipVerify: skipVerify,
 	}
-	err = consul.Reload(address, prefix, tlsConfig)
+	aclToken := common.Config.GetString(common.ConfigKeyConsulACLToken)
+	err = consul.Reload(address, prefix, tlsConfig, aclToken)
 	if err != nil {
 		flowLog.Errorf("consul reload failed,error:%s", err)
 		return err

@@ -25,6 +25,7 @@ func initConfig(c common.Configuration) {
 	c.SetDefault(common.ConfigKeyConsulHealthPeriod, "30s")
 	c.SetDefault(common.ConfigKeyConsulAddress, "127.0.0.1:8500")
 	c.SetDefault(common.ConfigKeyConsulPrefix, "bkmonitor_enterprise_production/metadata/influxdb_info")
+	c.SetDefault(common.ConfigKeyConsulACLToken, "")
 }
 
 func init() {

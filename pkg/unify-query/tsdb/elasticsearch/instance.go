@@ -968,6 +968,124 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	return labelValues, nil
 }
 
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series")
+	defer span.End(&err)
+
+	// 获取所有标签名
+	labelNames, err := i.QueryLabelNames(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(labelNames) == 0 {
+		return nil, nil
+	}
+
+	span.Set("label-names", labelNames)
+
+	// 获取索引别名
+	aliases, err := i.getAlias(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	// 构建 composite aggregation 的 sources
+	sources := make([]elastic.CompositeAggregationValuesSource, 0, len(labelNames))
+	for _, name := range labelNames {
+		sources = append(sources, elastic.NewCompositeAggregationTermsValuesSource(name).Field(name).MissingBucket(true))
+	}
+
+	size := query.Size
+	if size <= 0 {
+		size = i.maxSize
+	}
+
+	compositeAgg := elastic.NewCompositeAggregation().Sources(sources...).Size(size)
+
+	// 构建查询条件
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	unit := metadata.GetQueryParams(ctx).TimeUnit
+	fact := NewFormatFactory(ctx).
+		WithQuery("", query.TimeField, start, end, unit, 0).
+		WithFieldMap(fieldMap)
+
+	filterQueries := make([]elastic.Query, 0)
+
+	// 过滤条件
+	filterQuery, err := fact.Query(query.AllConditions)
+	if err != nil {
+		return nil, err
+	}
+	if filterQuery != nil {
+		filterQueries = append(filterQueries, filterQuery)
+	}
+
+	// 时间范围条件
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
+
+	// querystring 条件
+	if query.QueryString != "" {
+		q := fact.ParserQueryString(ctx, query.QueryString, query.IsPrefix)
+		if q != nil {
+			filterQueries = append(filterQueries, q)
+		}
+	}
+
+	source := elastic.NewSearchSource().Size(0)
+	if len(filterQueries) > 0 {
+		source.Query(elastic.NewBoolQuery().Filter(filterQueries...))
+	}
+	source.Aggregation("series", compositeAgg)
+
+	// 获取 ES 客户端并执行查询
+	cli, err := i.getClient(ctx, i.connect)
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Stop()
+
+	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if searchResult.Aggregations == nil {
+		return nil, nil
+	}
+
+	composite, found := searchResult.Aggregations.Composite("series")
+	if !found || composite == nil {
+		return nil, nil
+	}
+
+	series := make([]map[string]string, 0, len(composite.Buckets))
+	for _, bucket := range composite.Buckets {
+		seriesMap := make(map[string]string)
+		for k, v := range bucket.Key {
+			if v == nil {
+				continue
+			}
+			seriesMap[k] = fmt.Sprintf("%v", v)
+		}
+		if len(seriesMap) > 0 {
+			series = append(series, seriesMap)
+		}
+	}
+
+	span.Set("series-count", len(series))
+	return series, nil
+}
+
 func (i *Instance) InstanceType() string {
 	return metadata.ElasticsearchStorageType
 }

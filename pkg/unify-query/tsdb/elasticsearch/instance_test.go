@@ -12,10 +12,12 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -1387,6 +1389,118 @@ func TestInstance_QueryLabelNames(t *testing.T) {
 					}
 					if !found {
 						t.Logf("Expected field %s not found in %v", expectedName, labelNames)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestInstance_QuerySeries(t *testing.T) {
+	mock.Init()
+
+	// 使用 es_index 因为它已经在 mock 中注册了 mapping endpoint
+	// es_index 的字段映射包含: a, b, level, group, type, timestamp, dtEventTimeStamp, user.first, user.last 等
+
+	// 设置固定的时间范围
+	defaultStart := time.UnixMilli(1723593608000)
+	defaultEnd := time.UnixMilli(1723679962000)
+
+	// mock composite aggregation 响应
+	compositeResponse := `{
+		"took": 10,
+		"timed_out": false,
+		"_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+		"hits": {"total": {"value": 100, "relation": "eq"}, "max_score": null, "hits": []},
+		"aggregations": {
+			"series": {
+				"buckets": [
+					{
+						"key": {"a": "value1", "b": "value2", "level": "INFO"},
+						"doc_count": 50
+					},
+					{
+						"key": {"a": "value3", "b": "value4", "level": "ERROR"},
+						"doc_count": 30
+					},
+					{
+						"key": {"a": "value5", "b": null, "level": "WARN"},
+						"doc_count": 20
+					}
+				]
+			}
+		}
+	}`
+
+	tests := []struct {
+		name           string
+		query          *metadata.Query
+		expectedError  bool
+		expectedSeries []map[string]string
+	}{
+		{
+			name: "basic_series_query",
+			query: &metadata.Query{
+				DB:      "es_index",
+				TableID: "test_table",
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+					Type: "date",
+					Unit: "millisecond",
+				},
+				Size: 100,
+			},
+			expectedError: false,
+			expectedSeries: []map[string]string{
+				{"a": "value1", "b": "value2", "level": "INFO"},
+				{"a": "value3", "b": "value4", "level": "ERROR"},
+				{"a": "value5", "level": "WARN"}, // null 值会被跳过
+			},
+		},
+		{
+			name: "empty_db",
+			query: &metadata.Query{
+				DB:      "",
+				TableID: "test_table",
+			},
+			expectedError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata.InitMetadata()
+			ctx := metadata.InitHashID(context.Background())
+
+			// 注册一个通用的 search handler，用于匹配任意请求体
+			// 这样可以避免需要精确匹配动态生成的 composite aggregation 查询
+			httpmock.RegisterResponder(
+				http.MethodPost,
+				mock.EsUrl+"/es_index/_search",
+				httpmock.NewStringResponder(http.StatusOK, compositeResponse),
+			)
+
+			inst, err := NewInstance(ctx, &InstanceOption{
+				Connect: Connect{
+					Address: mock.EsUrl,
+				},
+				Timeout: time.Minute,
+				MaxSize: 1000,
+			})
+			assert.NoError(t, err)
+
+			series, err := inst.QuerySeries(ctx, tt.query, defaultStart, defaultEnd)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, series)
+				assert.Equal(t, len(tt.expectedSeries), len(series))
+
+				for i, expected := range tt.expectedSeries {
+					for k, v := range expected {
+						assert.Equal(t, v, series[i][k], "series[%d][%s] mismatch", i, k)
 					}
 				}
 			}

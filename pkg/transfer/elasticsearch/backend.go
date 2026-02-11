@@ -213,7 +213,9 @@ func NewBulkHandler(cluster *config.ElasticSearchMetaClusterInfo, table *config.
 	logging.Infof("create elasticsearch writer %s by version %s", name, ver.String())
 
 	// 从集群配置中读取 ssl_insecure_skip_verify 决定是否跳过证书校验
-	transport := NewTransportWithTLS(cluster.GetSSLInsecureSkipVerify())
+	insecureSkipVerify := cluster.GetSSLInsecureSkipVerify()
+	logging.Debugf("[DEBUG] cluster address: %s, ssl_insecure_skip_verify: %v, cluster_config: %+v", cluster.GetAddress(), insecureSkipVerify, cluster.ClusterConfig)
+	transport := NewTransportWithTLS(insecureSkipVerify)
 
 	authConf := utils.NewMapHelper(cluster.AuthInfo)
 	writer, err := NewBulkWriter(name, map[string]interface{}{

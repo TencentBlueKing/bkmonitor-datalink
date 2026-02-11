@@ -13,6 +13,8 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 )
 
 // ESWriter :
@@ -48,6 +50,7 @@ func NewTransportWithTLS(insecureSkipVerify bool) *http.Transport {
 		cloned.TLSClientConfig = &tls.Config{}
 	}
 	cloned.TLSClientConfig.InsecureSkipVerify = insecureSkipVerify
+	logging.Debugf("[DEBUG] NewTransportWithTLS: insecureSkipVerify=%v, TLSClientConfig.InsecureSkipVerify=%v", insecureSkipVerify, cloned.TLSClientConfig.InsecureSkipVerify)
 	return cloned
 }
 

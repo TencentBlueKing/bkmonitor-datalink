@@ -9,10 +9,11 @@
 
 package featureFlag
 
-const (
-	DataSourceConfigPath = "feature_flag.data_source"
-)
+import "context"
 
-var (
-	DataSource string // "consul" 或 "redis"，默认为 "consul"
-)
+// FeatureFlagProvider 特性开关提供者接口(consul和redis)
+type FeatureFlagProvider interface {
+	GetFeatureFlags(ctx context.Context) ([]byte, error)
+	WatchFeatureFlags(ctx context.Context) (<-chan any, error)
+	GetFeatureFlagsPath() string
+}

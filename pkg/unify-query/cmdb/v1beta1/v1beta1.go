@@ -509,3 +509,43 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
 }
+
+func (r *model) QueryDynamicPaths(ctx context.Context, lookBackDelta, spaceUid string, timestamp string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, cmdb.Matchers, error) {
+	resSource, resIndexMatcher, pathStrings, resTarget, resMatchers, err := r.QueryResourceMatcher(ctx, lookBackDelta, spaceUid, timestamp, target, source, indexesMatcher, expandMatcher, expandShow, pathResource)
+	if err != nil {
+		return resSource, resIndexMatcher, nil, resTarget, resMatchers, err
+	}
+
+	return resSource, resIndexMatcher, convertStringsToPathsV2(pathStrings), resTarget, resMatchers, nil
+}
+
+func (r *model) QueryDynamicPathsRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	resSource, resIndexMatcher, pathStrings, resTarget, result, err := r.QueryResourceMatcherRange(ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexesMatcher, expandMatcher, expandShow, pathResource)
+	if err != nil {
+		return resSource, resIndexMatcher, nil, resTarget, result, err
+	}
+
+	return resSource, resIndexMatcher, convertStringsToPathsV2(pathStrings), resTarget, result, nil
+}
+
+func convertStringsToPathsV2(pathStrings []string) []cmdb.PathV2 {
+	if len(pathStrings) == 0 {
+		return nil
+	}
+
+	pathsV2 := make([]cmdb.PathV2, len(pathStrings))
+	for i, pathStr := range pathStrings {
+		// pathStr 格式为 "resource1 -> resource2 -> resource3"
+		// 将其转换为 PathV2 结构
+		pathV2 := cmdb.PathV2{
+			Steps: []cmdb.PathStepV2{
+				{
+					ResourceType: pathStr,
+					// v1beta1 没有详细的关系类型信息，只存储完整路径字符串
+				},
+			},
+		}
+		pathsV2[i] = pathV2
+	}
+	return pathsV2
+}

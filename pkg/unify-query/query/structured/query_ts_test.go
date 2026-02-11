@@ -1615,6 +1615,44 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			promql:        `count by (new_dim) (a)`,
 			refString:     `{"a":[{"QueryList":[{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_1","db":"100915_bklog_pub_svrlog_pangusvr_lobby_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_1:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"bk_sql","storage_id":"0","data_source":"bklog","data_label":"multi_doris","table_id":"rt.doris_2","db":"100915_bklog_pub_svrlog_pangusvr_other_9_analysis","measurement":"doris","field":"kube_pod_info","time_field":{},"fields":["kube_pod_info"],"measurements":["doris"],"metric_names":["bklog:rt:doris_2:kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,
 		},
+		"bklog topk with count and order_by": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "bklog_index_set_2643",
+						FieldName:     "serverIp",
+						ReferenceName: "a",
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "serverIp",
+									Operator:      ConditionEqual,
+									Value:         []string{"11.176.75.25", "30.167.61.89", "30.186.110.212"},
+								},
+							},
+						},
+						TimeAggregation: TimeAggregation{
+							Function: "count_over_time",
+							Window:   "1d",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"serverIp"},
+							},
+						},
+					},
+				},
+				MetricMerge: "topk(5, a)",
+				Start:       "1768874157661",
+				End:         "1769478957661",
+				Step:        "1d",
+				OrderBy:     OrderBy{"-dtEventTimeStamp", "-gseIndex", "-iterationIndex"},
+			},
+			isDirectQuery: false,
+			promql:        `topk(5, count by (serverIp) (count_over_time(a[1d])))`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var (

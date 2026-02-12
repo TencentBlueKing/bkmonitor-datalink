@@ -981,30 +981,17 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	var aggLabelNames []string
 
-	if len(query.Source) > 0 {
-		// 用户指定了查询字段，直接使用，但仍需过滤不可聚合的字段
-		for _, name := range query.Source {
-			if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
-				continue
-			}
-			aggLabelNames = append(aggLabelNames, name)
-		}
-	} else {
-		// 用户未指定字段，获取所有标签名
-		labelNames, err := i.QueryLabelNames(ctx, query, start, end)
-		if err != nil {
-			return nil, err
-		}
+	if len(query.Source) == 0 {
+		err = fmt.Errorf("no source specified")
+		return nil, err
+	}
 
-		// 过滤不可聚合的字段（如 text 类型），这些字段不能参与 composite aggregation
-		for _, name := range labelNames {
-			if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
-				continue
-			}
-			aggLabelNames = append(aggLabelNames, name)
+	// 用户指定了查询字段，直接使用，但仍需过滤不可聚合的字段
+	for _, name := range query.Source {
+		if fo := fieldMap.Field(name); fo.Existed() && !fo.IsAgg {
+			continue
 		}
-
-		span.Set("label-names", labelNames)
+		aggLabelNames = append(aggLabelNames, name)
 	}
 
 	if len(aggLabelNames) == 0 {

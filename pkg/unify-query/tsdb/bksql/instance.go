@@ -592,53 +592,33 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, err
 	}
 
-	var labelNames []string
-
-	if len(query.Source) > 0 {
-		// 用户指定了查询字段，直接使用
-		for _, k := range query.Source {
-			if checkInternalDimension(k) {
-				continue
-			}
-			if k == sql_expr.TimeStamp || k == sql_expr.Value {
-				continue
-			}
-			labelNames = append(labelNames, k)
-		}
-	} else {
-		// 用户未指定字段，执行一次查询以获取字段顺序
-		origSize := query.Size
-		query.Size = 1
-
-		firstSQL, err := queryFactory.SQL()
-		if err != nil {
-			return nil, err
-		}
-
-		firstData, err := i.sqlQuery(ctx, firstSQL)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, k := range firstData.SelectFieldsOrder {
-			if checkInternalDimension(k) {
-				continue
-			}
-			if k == sql_expr.TimeStamp || k == sql_expr.Value {
-				continue
-			}
-			labelNames = append(labelNames, k)
-		}
-
-		// 恢复 Size
-		query.Size = origSize
+	if len(query.Source) == 0 {
+		err = fmt.Errorf("no source specified")
+		return nil, err
 	}
+
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelNames []string
+	for _, k := range query.Source {
+		if checkInternalDimension(k) {
+			continue
+		}
+		if k == sql_expr.TimeStamp || k == sql_expr.Value {
+			continue
+		}
+		labelNames = append(labelNames, k)
+	}
+
+	span.Set("field-map", fieldMap)
+	span.Set("label-names", labelNames)
 
 	if len(labelNames) == 0 {
 		return nil, nil
 	}
-
-	span.Set("label-names", labelNames)
 
 	// 设置 SelectDistinct 以获取唯一标签组合
 	query.SelectDistinct = labelNames

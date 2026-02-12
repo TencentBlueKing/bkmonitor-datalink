@@ -1448,7 +1448,8 @@ func TestInstance_QuerySeries(t *testing.T) {
 					Type: "date",
 					Unit: "millisecond",
 				},
-				Size: 100,
+				Size:   100,
+				Source: []string{"a", "b", "level"},
 			},
 			expectedError: false,
 			expectedSeries: []map[string]string{

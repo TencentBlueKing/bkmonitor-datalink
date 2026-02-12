@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
@@ -78,4 +79,15 @@ func (c *SimpleMetaClusterInfo) GetAddress() string {
 		schema = "http"
 	}
 	return fmt.Sprintf("%s://%s:%d", schema, c.GetDomain(), c.GetPort())
+}
+
+// GetSSLInsecureSkipVerify 获取是否跳过 SSL 证书校验
+// 默认为 true，即跳过校验
+func (c *SimpleMetaClusterInfo) GetSSLInsecureSkipVerify() bool {
+	if skipVerify, ok := c.ClusterConfigHelper.GetBool("ssl_insecure_skip_verify"); ok {
+		logging.Debugf("[DEBUG] GetSSLInsecureSkipVerify from config: %v, cluster_config: %+v", skipVerify, c.ClusterConfig)
+		return skipVerify
+	}
+	logging.Debugf("[DEBUG] GetSSLInsecureSkipVerify using default true, cluster_config: %+v", c.ClusterConfig)
+	return true
 }

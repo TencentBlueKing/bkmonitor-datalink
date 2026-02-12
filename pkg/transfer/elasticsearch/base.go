@@ -10,8 +10,11 @@
 package elasticsearch
 
 import (
+	"crypto/tls"
 	"io"
 	"net/http"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 )
 
 // ESWriter :
@@ -35,5 +38,21 @@ func NewESWriter(transport Transport) *ESWriter {
 	}
 }
 
-// DefaultTransport
+// NewTransportWithTLS 基于 DefaultTransport 创建一个带有 TLS 配置的 Transport
+// insecureSkipVerify 为 true 时跳过服务端证书校验
+func NewTransportWithTLS(insecureSkipVerify bool) *http.Transport {
+	t, ok := DefaultTransport.(*http.Transport)
+	if !ok {
+		t = http.DefaultTransport.(*http.Transport)
+	}
+	cloned := t.Clone()
+	if cloned.TLSClientConfig == nil {
+		cloned.TLSClientConfig = &tls.Config{}
+	}
+	cloned.TLSClientConfig.InsecureSkipVerify = insecureSkipVerify
+	logging.Debugf("[DEBUG] NewTransportWithTLS: insecureSkipVerify=%v, TLSClientConfig.InsecureSkipVerify=%v", insecureSkipVerify, cloned.TLSClientConfig.InsecureSkipVerify)
+	return cloned
+}
+
+// DefaultTransport 默认使用 http.DefaultTransport
 var DefaultTransport = http.DefaultTransport

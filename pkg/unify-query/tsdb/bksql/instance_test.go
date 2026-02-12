@@ -2317,3 +2317,84 @@ func createTestInstance(ctx context.Context) *bksql.Instance {
 	}
 	return ins
 }
+
+func TestInstance_QuerySeries(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	instance := createTestInstance(ctx)
+
+	end := time.Unix(1740553771, 0)
+	start := time.Unix(1740551971, 0)
+
+	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `5000140_bklog_container_log_demo_analysis`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":4,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"select_fields_order":[],"total_record_size":0,"timetaken":0.0,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":[]},"errors":null,"trace_id":"","span_id":""}`,
+		// 第一次查询：获取字段名
+		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 1": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","log":"test log message","serverip":"10.0.0.1","cloudid":0,"gseindex":100,"_timestamp_":1740552000000}],"select_fields_order":["path","log","serverip","cloudid","gseindex","_timestamp_"],"total_record_size":100,"timetaken":0.01,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
+		// 第二次查询：SELECT DISTINCT 获取唯一组合
+		"SELECT DISTINCT `path`, `log`, `serverip`, `cloudid`, `gseindex` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":3,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","log":"msg1","serverip":"10.0.0.1","cloudid":0,"gseindex":100},{"path":"/var/log/test.log","log":"msg2","serverip":"10.0.0.2","cloudid":0,"gseindex":200},{"path":"/var/log/app.log","log":"msg3","serverip":"10.0.0.1","cloudid":1,"gseindex":300}],"select_fields_order":["path","log","serverip","cloudid","gseindex"],"total_record_size":300,"timetaken":0.05,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
+		// 指定字段查询：SELECT DISTINCT path, serverip
+		"SELECT DISTINCT `path`, `serverip` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":2,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","serverip":"10.0.0.1"},{"path":"/var/log/app.log","serverip":"10.0.0.1"}],"select_fields_order":["path","serverip"],"total_record_size":200,"timetaken":0.03,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
+		// 包含不存在字段的查询：SELECT DISTINCT path, NULL AS non_existent_field（dimTransform 将不存在的字段替换为 NULL）
+		"SELECT DISTINCT `path`, NULL AS `non_existent_field` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":2,"external_api_call_time_mills":{},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"path":"/var/log/test.log","non_existent_field":null},{"path":"/var/log/app.log","non_existent_field":null}],"select_fields_order":["path","non_existent_field"],"total_record_size":200,"timetaken":0.03,"result_schema":[],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"","span_id":""}`,
+	})
+
+	tests := []struct {
+		name     string
+		query    *metadata.Query
+		expected []map[string]string
+	}{
+		{
+			name: "normal series query",
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Size:        10,
+				Source:       []string{"path", "log", "serverip", "cloudid", "gseindex"},
+			},
+			expected: []map[string]string{
+				{"path": "/var/log/test.log", "log": "msg1", "serverip": "10.0.0.1", "cloudid": "0", "gseindex": "100"},
+				{"path": "/var/log/test.log", "log": "msg2", "serverip": "10.0.0.2", "cloudid": "0", "gseindex": "200"},
+				{"path": "/var/log/app.log", "log": "msg3", "serverip": "10.0.0.1", "cloudid": "1", "gseindex": "300"},
+			},
+		},
+		{
+			name: "series query with source fields",
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Size:        10,
+				Source:       []string{"path", "serverip"},
+			},
+			expected: []map[string]string{
+				{"path": "/var/log/test.log", "serverip": "10.0.0.1"},
+				{"path": "/var/log/app.log", "serverip": "10.0.0.1"},
+			},
+		},
+		{
+			name: "series query with non-existent field replaced by null",
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Size:        10,
+				Source:       []string{"path", "non_existent_field"},
+			},
+			expected: []map[string]string{
+				{"path": "/var/log/test.log"},
+				{"path": "/var/log/app.log"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			series, err := instance.QuerySeries(ctx, tt.query, start, end)
+			assert.NoError(t, err)
+			assert.Equal(t, len(tt.expected), len(series))
+			for idx, expected := range tt.expected {
+				for k, v := range expected {
+					assert.Equal(t, v, series[idx][k], fmt.Sprintf("series[%d][%s]", idx, k))
+				}
+			}
+		})
+	}
+}

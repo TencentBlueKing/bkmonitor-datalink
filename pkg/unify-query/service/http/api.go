@@ -424,6 +424,11 @@ func HandlerSeries(c *gin.Context) {
 				return
 			}
 
+			// 将用户指定的 keys 传递给 query.Source，让底层存储只查询指定字段
+			if len(params.Keys) > 0 {
+				qry.Source = params.Keys
+			}
+
 			instance := prometheus.GetTsDbInstance(ctx, qry)
 			if instance == nil {
 				return

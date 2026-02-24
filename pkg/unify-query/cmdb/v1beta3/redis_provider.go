@@ -26,7 +26,7 @@ import (
 const (
 	// 默认配置常量（导出供测试使用）
 	// 新的统一 Entity 格式
-	DefaultRedisKeyPrefix        = "bkmonitorv3:entity:"
+	DefaultRedisKeyPrefix           = "bkmonitorv3:entity:"
 	DefaultRedisPubSubChannelSuffix = ":channel"
 
 	// 内部默认值
@@ -36,6 +36,22 @@ const (
 
 	// 关联类型 kinds（用于区分 resource 和 relation）
 	KindCustomRelationStatus = "CustomRelationStatus"
+
+	// Entity kind 名称（用于构建 Redis Hash key）
+	KindResourceDef = "ResourceDef"
+	KindRelationDef = "CustomRelationStatus"
+
+	// 常用 Redis Hash key（导出供测试使用）
+	// 资源定义的 Hash key: bkmonitorv3:entity:ResourceDef
+	DefaultRedisKeyPrefixResourceDef = DefaultRedisKeyPrefix + KindResourceDef
+	// 关联定义的 Hash key: bkmonitorv3:entity:CustomRelationStatus
+	DefaultRedisKeyPrefixRelationDef = DefaultRedisKeyPrefix + KindRelationDef
+
+	// Pub/Sub 通道名称（导出供测试使用）
+	// 资源定义更新通道: bkmonitorv3:entity:ResourceDef:channel
+	DefaultRedisPubSubChannelResourceDef = DefaultRedisKeyPrefixResourceDef + DefaultRedisPubSubChannelSuffix
+	// 关联定义更新通道: bkmonitorv3:entity:CustomRelationStatus:channel
+	DefaultRedisPubSubChannelRelationDef = DefaultRedisKeyPrefixRelationDef + DefaultRedisPubSubChannelSuffix
 )
 
 // RedisSchemaProviderConfig Redis Schema 提供器配置
@@ -231,8 +247,9 @@ func (rsp *RedisSchemaProvider) loadAllEntities() error {
 
 // loadEntitiesByKey 从 Redis Hash key 加载所有实体
 func (rsp *RedisSchemaProvider) loadEntitiesByKey(key string) (loadedCount int, failedCount int) {
+	var err error
 	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.load_entities_by_key")
-	defer span.End(nil)
+	defer span.End(&err)
 
 	span.Set("redis.key", key)
 

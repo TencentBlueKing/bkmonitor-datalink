@@ -62,8 +62,8 @@ func TestRedisSchemaProvider_LoadResourceDefinitions(t *testing.T) {
 	// 写入 Redis
 	rd1Data, _ := json.Marshal(rd1)
 	rd2Data, _ := json.Marshal(rd2)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app_instance", string(rd1Data))
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:git_commit", string(rd2Data))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app_instance", string(rd1Data))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:git_commit", string(rd2Data))
 
 	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
@@ -134,8 +134,8 @@ func TestRedisSchemaProvider_LoadRelationDefinitions(t *testing.T) {
 	// 写入 Redis
 	rd1Data, _ := json.Marshal(rd1)
 	rd2Data, _ := json.Marshal(rd2)
-	mr.Set(DefaultRedisKeyPrefixRelationDef+"test:app_to_commit", string(rd1Data))
-	mr.Set(DefaultRedisKeyPrefixRelationDef+"test:commit_to_author", string(rd2Data))
+	mr.HSet(DefaultRedisKeyPrefixRelationDef, "test:app_to_commit", string(rd1Data))
+	mr.HSet(DefaultRedisKeyPrefixRelationDef, "test:commit_to_author", string(rd2Data))
 
 	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
@@ -202,7 +202,7 @@ func TestRedisSchemaProvider_HotReload(t *testing.T) {
 	}
 
 	rdData, _ := json.Marshal(rd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
 
 	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
@@ -220,7 +220,7 @@ func TestRedisSchemaProvider_HotReload(t *testing.T) {
 	// 更新数据
 	rd.Fields = append(rd.Fields, FieldDefinition{Name: "version", Required: false})
 	rdData, _ = json.Marshal(rd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
 
 	// 发送 Pub/Sub 通知
 	ctx := context.Background()
@@ -251,7 +251,7 @@ func TestRedisSchemaProvider_HotDelete(t *testing.T) {
 	}
 
 	rdData, _ := json.Marshal(rd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
 
 	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
@@ -265,8 +265,8 @@ func TestRedisSchemaProvider_HotDelete(t *testing.T) {
 	_, err = provider.GetResourceDefinition("test", "app")
 	require.NoError(t, err)
 
-	// 删除 Redis key
-	mr.Del(DefaultRedisKeyPrefixResourceDef + "test:app")
+	// 删除 Redis Hash field
+	mr.HDel(DefaultRedisKeyPrefixResourceDef, "test:app")
 
 	// 发送 Pub/Sub 通知
 	ctx := context.Background()
@@ -293,7 +293,7 @@ func TestRedisSchemaProvider_WithoutReloadOnStart(t *testing.T) {
 	}
 
 	rdData, _ := json.Marshal(rd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
 
 	// 创建提供器，不预加载
 	provider, err := NewRedisSchemaProvider(client, WithReloadOnStart(false))
@@ -339,7 +339,7 @@ func TestRedisSchemaProvider_ConcurrentAccess(t *testing.T) {
 	}
 
 	rdData, _ := json.Marshal(rd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"test:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
 
 	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)

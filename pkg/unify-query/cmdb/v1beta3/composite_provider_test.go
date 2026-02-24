@@ -37,7 +37,7 @@ func TestCompositeSchemaProvider_Priority(t *testing.T) {
 		Labels: map[string]string{"source": "redis"},
 	}
 	rdData, _ := json.Marshal(customRd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+":pod", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, ":pod", string(rdData))
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -93,8 +93,8 @@ func TestCompositeSchemaProvider_ListMerge(t *testing.T) {
 
 	rd1Data, _ := json.Marshal(customRd1)
 	rd2Data, _ := json.Marshal(customRd2)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"custom:app_instance", string(rd1Data))
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"custom:git_commit", string(rd2Data))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:app_instance", string(rd1Data))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:git_commit", string(rd2Data))
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestCompositeSchemaProvider_RelationMerge(t *testing.T) {
 	}
 
 	relData, _ := json.Marshal(customRel)
-	mr.Set(DefaultRedisKeyPrefixRelationDef+"custom:app_to_commit", string(relData))
+	mr.HSet(DefaultRedisKeyPrefixRelationDef, "custom:app_to_commit", string(relData))
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestCompositeSchemaProvider_GetResourcePrimaryKeys(t *testing.T) {
 	}
 
 	rdData, _ := json.Marshal(customRd)
-	mr.Set(DefaultRedisKeyPrefixResourceDef+"custom:app", string(rdData))
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:app", string(rdData))
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)

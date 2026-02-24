@@ -21,7 +21,7 @@ import (
 // gen:qs
 type TimeSeriesScope struct {
 	ID              uint      `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	GroupID         int       `gorm:"column:group_id;type:int;index;uniqueIndex:idx_group_scope" json:"group_id"`
+	GroupID         uint      `gorm:"column:group_id;type:int;index;uniqueIndex:idx_group_scope" json:"group_id"`
 	ScopeName       string    `gorm:"type:varchar(255);not null;column:scope_name;uniqueIndex:idx_group_scope" json:"scope_name"`
 	DimensionConfig string    `gorm:"type:json;column:dimension_config;default:'{}'" json:"dimension_config"`
 	AutoRules       string    `gorm:"type:json;column:auto_rules;default:'[]'" json:"auto_rules"`

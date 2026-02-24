@@ -58,10 +58,10 @@ func setupTestData(t *testing.T, groupID uint, metrics []customreport.TimeSeries
 		// 直接插入所有字段，包括 is_active
 		err := db.Exec(`
 			INSERT INTO metadata_timeseriesmetric 
-			(group_id, table_id, field_name, tag_list, last_modify_time, last_index, label, is_active)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			(group_id, table_id, field_name, tag_list, last_modify_time, last_index, label, is_active, field_config, field_scope)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, metric.GroupID, metric.TableID, metric.FieldName, metric.TagList,
-			metric.LastModifyTime, metric.LastIndex, metric.Label, originalIsActive).Error
+			metric.LastModifyTime, metric.LastIndex, metric.Label, originalIsActive, "{}", "default").Error
 		require.NoError(t, err)
 
 		// 验证插入是否成功
@@ -439,12 +439,14 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 			FieldName:      "active_tasks",
 			TagList:        `["target", "module", "location"]`,
 			LastModifyTime: time.Unix(1722942000, 0), // 2024-08-06 19:00:00 UTC
+			IsActive:       true,
 		},
 		{
 			GroupID:        100376,
 			FieldName:      "backup_tasks_count",
 			TagList:        `["target", "module", "location"]`,
 			LastModifyTime: time.Unix(1722942000, 0), // 2024-09-17 15:37:00 UTC
+			IsActive:       true,
 		},
 	}
 

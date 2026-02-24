@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -109,7 +110,7 @@ func TestCreateMetricWithIsActiveTrue(t *testing.T) {
 	}
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 
 	// 验证新创建的指标存在且 is_active=True
@@ -153,7 +154,7 @@ func TestUpdateExistingMetricToActive(t *testing.T) {
 	assert.False(t, metric3Before.IsActive, "metric3 should be false before update")
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err = svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	_, err = svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 
 	// 验证更新后 metric3 是 True
@@ -163,7 +164,7 @@ func TestUpdateExistingMetricToActive(t *testing.T) {
 	assert.True(t, metric3After.IsActive, "metric3 should be true after update")
 }
 
-// TestSetMetricToInactiveWhenNotInList 测试不在返回列表中的已存在指标，is_active 应该设置为 False
+// TestSetMetricToInactiveWhenNotInList 测试 queryFromBkdata=true 时，不在返回列表中的已存在指标，is_active 应该设置为 False
 func TestSetMetricToInactiveWhenNotInList(t *testing.T) {
 	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
 	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
@@ -205,7 +206,7 @@ func TestSetMetricToInactiveWhenNotInList(t *testing.T) {
 	assert.True(t, metric2Before.IsActive, "metric2 should be true before update")
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err = svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	_, err = svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 
 	// 验证 metric1 仍然是 True（在列表中）
@@ -225,6 +226,121 @@ func TestSetMetricToInactiveWhenNotInList(t *testing.T) {
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric3").One(&metric3)
 	require.NoError(t, err)
 	assert.False(t, metric3.IsActive, "metric3 should be false (not in the list)")
+}
+
+// TestBkDataModeUpdateIsActive 测试 queryFromBkdata=true 时 is_active 的更新语义：
+// 1. 返回列表中的指标会被激活
+// 2. 缺失指标会被直接置为不活跃（与 last_modify_time 无关）
+func TestBkDataModeUpdateIsActive(t *testing.T) {
+	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
+	recentTime := time.Now().Add(-1 * time.Hour).UTC()
+	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric1",
+			FieldName:      "metric1",
+			TagList:        tagListStr,
+			LastModifyTime: recentTime,
+			IsActive:       false, // 在返回列表中，预期更新为 true
+		},
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric2",
+			FieldName:      "metric2",
+			TagList:        tagListStr,
+			LastModifyTime: recentTime,
+			IsActive:       true, // 不在返回列表中，预期更新为 false
+		},
+	})
+	defer cleanup()
+
+	currTime := time.Now().Unix()
+	metricInfoList := []map[string]any{
+		createMetricInfo("metric1", currTime),
+	}
+
+	svc := &TimeSeriesMetricSvc{}
+	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
+	require.NoError(t, err)
+
+	db := mysql.GetDBSession().DB
+	var metric1 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric1").One(&metric1)
+	require.NoError(t, err)
+	assert.True(t, metric1.IsActive, "metric1 should be true (in list, activated)")
+
+	var metric2 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric2").One(&metric2)
+	require.NoError(t, err)
+	assert.False(t, metric2.IsActive, "metric2 should be false (missing in bkdata mode)")
+}
+
+// TestRedisModeOnlyMarkExpiredMissingMetricsInactive 测试 queryFromBkdata=false 时，只有过期且缺失的指标会被置为 inactive
+func TestRedisModeOnlyMarkExpiredMissingMetricsInactive(t *testing.T) {
+	fixedNow := time.Date(2026, time.February, 24, 9, 0, 0, 0, time.UTC)
+	originalNowFunc := nowFunc
+	nowFunc = func() time.Time { return fixedNow }
+	defer func() { nowFunc = originalNowFunc }()
+	originalExpiredSeconds := config.GlobalTimeSeriesMetricExpiredSeconds
+	config.GlobalTimeSeriesMetricExpiredSeconds = 30 * 24 * 3600
+	defer func() { config.GlobalTimeSeriesMetricExpiredSeconds = originalExpiredSeconds }()
+
+	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
+	expiredTime := fixedNow.Add(-time.Duration(config.GlobalTimeSeriesMetricExpiredSeconds+3600) * time.Second).UTC()
+	recentTime := fixedNow.Add(-time.Duration(config.GlobalTimeSeriesMetricExpiredSeconds-3600) * time.Second).UTC()
+	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric1",
+			FieldName:      "metric1",
+			TagList:        tagListStr,
+			LastModifyTime: recentTime,
+			IsActive:       false, // 在返回列表中，预期更新为 true
+		},
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric2",
+			FieldName:      "metric2",
+			TagList:        tagListStr,
+			LastModifyTime: expiredTime,
+			IsActive:       true,
+		},
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric3",
+			FieldName:      "metric3",
+			TagList:        tagListStr,
+			LastModifyTime: recentTime,
+			IsActive:       true,
+		},
+	})
+	defer cleanup()
+
+	currTime := fixedNow.Unix()
+	// 仅返回 metric1，metric2 和 metric3 都是缺失指标
+	metricInfoList := []map[string]any{
+		createMetricInfo("metric1", currTime),
+	}
+
+	svc := &TimeSeriesMetricSvc{}
+	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, false)
+	require.NoError(t, err)
+
+	db := mysql.GetDBSession().DB
+	var metric1 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric1").One(&metric1)
+	require.NoError(t, err)
+	assert.True(t, metric1.IsActive, "metric1 should be true (in list, activated)")
+
+	var metric2 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric2").One(&metric2)
+	require.NoError(t, err)
+	assert.False(t, metric2.IsActive, "metric2 should be false (missing and expired)")
+
+	var metric3 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric3").One(&metric3)
+	require.NoError(t, err)
+	assert.True(t, metric3.IsActive, "metric3 should remain true (missing but not expired)")
 }
 
 // TestMixedScenarioActiveAndInactive 测试混合场景：部分指标在返回列表中，部分不在
@@ -263,7 +379,7 @@ func TestMixedScenarioActiveAndInactive(t *testing.T) {
 	}
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 
 	// 验证在列表中的指标是 True
@@ -326,7 +442,7 @@ func TestCreateAndUpdateMetricsTogether(t *testing.T) {
 	assert.Equal(t, int64(3), initialCount)
 
 	svc := &TimeSeriesMetricSvc{}
-	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	_, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 
 	// 验证新指标创建成功且 is_active=True
@@ -403,7 +519,7 @@ func TestEmptyMetricListSkipsUpdate(t *testing.T) {
 	assert.True(t, metric2Before.IsActive, "metric2 should be true before update")
 
 	svc := &TimeSeriesMetricSvc{}
-	needPush, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true)
+	needPush, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, true, true)
 	require.NoError(t, err)
 	assert.False(t, needPush, "should not need to push when skipping update")
 
@@ -506,7 +622,7 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	svc := &TimeSeriesMetricSvc{}
 
 	// 调用 BulkRefreshTSMetrics
-	needPush, err := svc.BulkRefreshTSMetrics("system", 100376, "test_table", metricInfoList, true)
+	needPush, err := svc.BulkRefreshTSMetrics("system", 100376, "test_table", metricInfoList, true, true)
 	assert.NoError(t, err)
 	assert.False(t, needPush)
 

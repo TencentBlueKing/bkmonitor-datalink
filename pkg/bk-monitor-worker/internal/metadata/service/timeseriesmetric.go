@@ -31,6 +31,8 @@ type TimeSeriesMetricSvc struct {
 	*customreport.TimeSeriesMetric
 }
 
+var nowFunc = time.Now
+
 func NewTimeSeriesMetricSvcSvc(obj *customreport.TimeSeriesMetric) TimeSeriesMetricSvc {
 	return TimeSeriesMetricSvc{
 		TimeSeriesMetric: obj,
@@ -38,7 +40,7 @@ func NewTimeSeriesMetricSvcSvc(obj *customreport.TimeSeriesMetric) TimeSeriesMet
 }
 
 // BulkRefreshTSMetrics 更新或创建时序指标数据
-func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
+func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool, queryFromBkData bool) (bool, error) {
 	// 当 metricInfoList 为空时，可能是上游异常、限流或拉取失败，跳过更新操作以避免误将所有指标标记为不活跃
 	if len(metricInfoList) == 0 {
 		logger.Warnf("BulkRefreshTSMetrics: metricInfoList is empty for group_id [%v], skip update to avoid marking all metrics as inactive due to potential upstream issues", groupId)
@@ -80,7 +82,7 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 	inactiveMetricFieldNameSet := existFieldNameSet.Difference(metricFieldNameSet)
 	inactiveMetricFieldNames := inactiveMetricFieldNameSet.ToSlice()
 	if len(inactiveMetricFieldNames) > 0 {
-		if err := s.BulkMarkMetricsInactive(groupId, inactiveMetricFieldNames); err != nil {
+		if err := s.BulkMarkMetricsInactive(groupId, inactiveMetricFieldNames, queryFromBkData); err != nil {
 			logger.Errorf("BulkRefreshTSMetrics: mark inactive metrics [%v] for group_id [%v] failed, %v", inactiveMetricFieldNames, groupId, err)
 			// 不返回错误，继续执行其他逻辑
 		}
@@ -255,25 +257,35 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 	return updated && isAutoDiscovery, nil
 }
 
-// BulkMarkMetricsInactive 批量标记指标为不活跃（不在 Redis 返回结果中的指标）
-func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames []string) error {
+// BulkMarkMetricsInactive 批量标记指标为不活跃（不在返回结果中的指标）
+func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames []string, queryFromBkData bool) error {
 	if len(metricNames) == 0 {
 		return nil
 	}
 	db := mysql.GetDBSession().DB
+	expireBefore := nowFunc().Add(-time.Duration(config.GlobalTimeSeriesMetricExpiredSeconds) * time.Second).UTC()
 	// 使用批量 SQL 更新，按 chunk 分批处理以避免 SQL 参数过多
 	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
-		// 批量更新：UPDATE metadata_timeseriesmetric SET is_active=false WHERE group_id=? AND field_name IN (...) AND is_active=true
-		updater := customreport.NewTimeSeriesMetricQuerySet(db).
+		querySet := customreport.NewTimeSeriesMetricQuerySet(db).
 			GroupIDEq(groupId).
 			FieldNameIn(chunkMetricNameList...).
-			IsActiveEq(true).
-			GetUpdater()
+			IsActiveEq(true)
+
+		// queryFromBkData=true 时，返回列表可视为全量可信，缺失即失活；
+		// queryFromBkData=false 时（Redis 时间窗），仅当超过过期阈值才判定为失活。
+		if !queryFromBkData {
+			querySet = querySet.LastModifyTimeLt(expireBefore)
+		}
+		updater := querySet.GetUpdater()
 
 		if err := updater.SetIsActive(false).Update(); err != nil {
 			return errors.Wrapf(err, "BulkMarkMetricsInactive: batch update TimeSeriesMetric with group_id [%v], field_name [%v] to inactive failed", groupId, chunkMetricNameList)
 		}
-		logger.Infof("BulkMarkMetricsInactive: marked %d TimeSeriesMetrics as inactive for group_id [%v], field_names [%v]", len(chunkMetricNameList), groupId, chunkMetricNameList)
+		if queryFromBkData {
+			logger.Infof("BulkMarkMetricsInactive: marked %d TimeSeriesMetrics as inactive for group_id [%v], field_names [%v], mode [%s]", len(chunkMetricNameList), groupId, chunkMetricNameList, "bkdata")
+		} else {
+			logger.Infof("BulkMarkMetricsInactive: marked expired TimeSeriesMetrics as inactive for group_id [%v], field_names [%v], expire_before [%v], mode [%s]", groupId, chunkMetricNameList, expireBefore, "redis")
+		}
 	}
 	return nil
 }

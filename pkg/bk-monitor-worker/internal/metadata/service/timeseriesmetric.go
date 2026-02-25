@@ -278,13 +278,16 @@ func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames 
 		}
 		updater := querySet.GetUpdater()
 
-		if err := updater.SetIsActive(false).Update(); err != nil {
+		affectedRows, err := updater.SetIsActive(false).UpdateNum()
+		if err != nil {
 			return errors.Wrapf(err, "BulkMarkMetricsInactive: batch update TimeSeriesMetric with group_id [%v], field_name [%v] to inactive failed", groupId, chunkMetricNameList)
 		}
 		if queryFromBkData {
-			logger.Infof("BulkMarkMetricsInactive: marked %d TimeSeriesMetrics as inactive for group_id [%v], field_names [%v], mode [%s]", len(chunkMetricNameList), groupId, chunkMetricNameList, "bkdata")
+			logger.Infof("BulkMarkMetricsInactive: candidates [%d], affected_rows [%d], group_id [%v], field_names [%v], mode [%s]",
+				len(chunkMetricNameList), affectedRows, groupId, chunkMetricNameList, "bkdata")
 		} else {
-			logger.Infof("BulkMarkMetricsInactive: marked expired TimeSeriesMetrics as inactive for group_id [%v], field_names [%v], expire_before [%v], mode [%s]", groupId, chunkMetricNameList, expireBefore, "redis")
+			logger.Infof("BulkMarkMetricsInactive: candidates [%d], affected_rows [%d], group_id [%v], field_names [%v], expire_before [%v], mode [%s]",
+				len(chunkMetricNameList), affectedRows, groupId, chunkMetricNameList, expireBefore, "redis")
 		}
 	}
 	return nil

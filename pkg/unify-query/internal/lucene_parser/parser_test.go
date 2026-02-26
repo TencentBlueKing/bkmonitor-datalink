@@ -1469,6 +1469,30 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"wildcard":{"a":{"value":"b+?c"}}}`,
 			sql: "`a` LIKE 'b+_c'",
 		},
+
+		// =================================================================
+		// Test Suite: quoted_special_chars - 引号内特殊字符不应被识别为通配符
+		// =================================================================
+		"quoted_question_mark_not_wildcard": {
+			q:   `request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
+			sql: "`request_uri` = '/scm/api/proxy?serviceName=test'",
+		},
+		"negation_quoted_question_mark": {
+			q:   `!request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}}}`,
+			sql: "`request_uri` != '/scm/api/proxy?serviceName=test'",
+		},
+		"quoted_star_keeps_wildcard": {
+			q:   `field:"value*with*stars"`,
+			es:  `{"wildcard":{"field":{"value":"value*with*stars"}}}`,
+			sql: "`field` LIKE 'value%with%stars'",
+		},
+		"quoted_question_mark_analyzed_field": {
+			q:   `log:"/path?query=1"`,
+			es:  `{"match_phrase":{"log":{"query":"/path?query=1"}}}`,
+			sql: "`log` MATCH_PHRASE '/path?query=1'",
+		},
 	}
 
 	mock.Init()

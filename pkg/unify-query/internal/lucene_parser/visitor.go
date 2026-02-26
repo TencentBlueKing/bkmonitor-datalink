@@ -371,7 +371,11 @@ func (n *ConditionNode) String() string {
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
-		op = "LIKE"
+		if n.isQuoted && !containsUnescapedStar(n.value.String()) {
+			// 引号内仅包含 ? 时，? 是字面字符（如 URL 参数分隔符），不应视为通配符
+		} else {
+			op = "LIKE"
+		}
 	case *RegexpNode:
 		op = "REGEXP"
 	case *StringNode:
@@ -526,11 +530,28 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 		}
 		result = cq
 	case *WildCardNode:
-		cq := elastic.NewWildcardQuery(field, value)
-		if cv.Boost != "" {
-			cq.Boost(cast.ToFloat64(cv.Boost))
+		if n.isQuoted && !containsUnescapedStar(value) {
+			// 引号内仅包含 ? 时，? 是字面字符（如 URL 参数分隔符），不应生成 wildcard 查询
+			if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
+		} else {
+			cq := elastic.NewWildcardQuery(field, value)
+			if cv.Boost != "" {
+				cq.Boost(cast.ToFloat64(cv.Boost))
+			}
+			result = cq
 		}
-		result = cq
 	case *RegexpNode:
 		cq := elastic.NewRegexpQuery(field, value)
 		if cv.Boost != "" {

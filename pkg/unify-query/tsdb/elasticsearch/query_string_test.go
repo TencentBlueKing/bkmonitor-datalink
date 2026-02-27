@@ -74,6 +74,10 @@ func TestQsToDsl(t *testing.T) {
 		"group": {
 			FieldType: Text,
 		},
+		"request_uri": {
+			FieldName: "request_uri",
+			FieldType: KeyWord,
+		},
 	}
 
 	ctx := metadata.InitHashID(context.Background())
@@ -159,6 +163,15 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
 			expected: `{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO "}},{"term":{"loglevel":"WARN "}},{"term":{"loglevel":"ERROR"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
+		},
+		// 引号内 ? 不应被视为通配符（URL 查询参数场景）
+		{
+			q:        `!request_uri:"/scm/api/proxy?serviceName=test&methodName=hook"`,
+			expected: `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test\u0026methodName=hook"}}}}`,
+		},
+		{
+			q:        `request_uri:"/scm/api/proxy?serviceName=test"`,
+			expected: `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

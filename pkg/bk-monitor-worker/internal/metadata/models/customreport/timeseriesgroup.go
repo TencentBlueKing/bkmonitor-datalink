@@ -9,6 +9,8 @@
 
 package customreport
 
+import "github.com/jinzhu/gorm"
+
 //go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup_gen.go
 
 // TimeSeriesGroup : time series group model
@@ -18,6 +20,20 @@ type TimeSeriesGroup struct {
 	BkTenantId          string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
 	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
+
+	MetricGroupDimensions string `gorm:"column:metric_group_dimensions;type:json;default:'[]'"`
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (s *TimeSeriesGroup) BeforeCreate(tx *gorm.DB) error {
+	err := s.CustomGroupBase.BeforeCreate(tx)
+	if err != nil {
+		return err
+	}
+	if s.MetricGroupDimensions == "" {
+		s.MetricGroupDimensions = "[]"
+	}
+	return nil
 }
 
 // TableName : 用于设置表的别名

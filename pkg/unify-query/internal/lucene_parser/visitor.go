@@ -410,9 +410,27 @@ func (n *ConditionNode) String() string {
 			op = "NOT LIKE"
 		}
 		value = n.likeValue(value)
+	case "REGEXP":
+		if n.reverseOp {
+			op = "NOT REGEXP"
+		}
+		if isNumericFieldType(fieldOption.FieldType) {
+			field = fmt.Sprintf("CAST(%s AS VARCHAR)", field)
+		}
 	}
 
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func isNumericFieldType(fieldType string) bool {
+	switch strings.ToUpper(fieldType) {
+	case "INT", "TINYINT", "SMALLINT", "LARGEINT", "BIGINT",
+		"FLOAT", "DOUBLE", "DECIMAL", "DECIMALV3",
+		"BOOLEAN":
+		return true
+	default:
+		return false
+	}
 }
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {

@@ -365,6 +365,9 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			key = ""
 		} else {
 			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+			if d.isNumeric(c.DimensionName) {
+				key = fmt.Sprintf("CAST(%s AS VARCHAR)", key)
+			}
 		}
 		return key, val
 	}
@@ -549,6 +552,17 @@ func (d *DorisSQLExpr) isText(k string) bool {
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
 	return d.getFieldType(k).IsAnalyzed
+}
+
+func (d *DorisSQLExpr) isNumeric(k string) bool {
+	switch d.getFieldType(k).FieldType {
+	case DorisTypeInt, DorisTypeTinyInt, DorisTypeSmallInt, DorisTypeLargeInt, DorisTypeBigInt,
+		DorisTypeFloat, DorisTypeDouble, DorisTypeDecimal, DorisTypeDecimalV3,
+		DorisTypeBoolean:
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {

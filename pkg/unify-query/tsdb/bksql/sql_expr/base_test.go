@@ -359,3 +359,50 @@ func TestParserAllConditions(t *testing.T) {
 		t.Logf("特殊字符转义结果：%s", result)
 	})
 }
+
+func TestDorisIntFieldRegexp(t *testing.T) {
+	dorisExpr := sql_expr.NewSQLExpr(sql_expr.Doris).WithFieldsMap(metadata.FieldsMap{
+		"opType":      {FieldType: sql_expr.DorisTypeInt},
+		"iZoneAreaID": {FieldType: sql_expr.DorisTypeBigInt},
+		"name":        {FieldType: sql_expr.DorisTypeString},
+	})
+
+	t.Run("INT字段_REGEXP_复现Doris类型错误", func(t *testing.T) {
+		conditions := metadata.AllConditions{
+			{
+				{DimensionName: "opType", Operator: metadata.ConditionRegEqual, Value: []string{"2", "5"}},
+			},
+		}
+		result, err := dorisExpr.ParserAllConditions(conditions)
+		assert.NoError(t, err)
+
+		t.Logf("当前生成SQL条件: %s", result)
+		assert.Equal(t, "CAST(`opType` AS VARCHAR) REGEXP '2|5'", result, "INT字段应使用CAST转为VARCHAR后再REGEXP")
+	})
+
+	t.Run("BIGINT字段_NOT_REGEXP_同样问题", func(t *testing.T) {
+		conditions := metadata.AllConditions{
+			{
+				{DimensionName: "iZoneAreaID", Operator: metadata.ConditionNotRegEqual, Value: []string{"36"}},
+			},
+		}
+		result, err := dorisExpr.ParserAllConditions(conditions)
+		assert.NoError(t, err)
+
+		t.Logf("当前生成SQL条件: %s", result)
+		assert.Equal(t, "CAST(`iZoneAreaID` AS VARCHAR) NOT REGEXP '36'", result, "BIGINT字段应使用CAST转为VARCHAR后再NOT REGEXP")
+	})
+
+	t.Run("STRING字段_REGEXP_无需CAST_应保持原样", func(t *testing.T) {
+		conditions := metadata.AllConditions{
+			{
+				{DimensionName: "name", Operator: metadata.ConditionRegEqual, Value: []string{"test.*"}},
+			},
+		}
+		result, err := dorisExpr.ParserAllConditions(conditions)
+		assert.NoError(t, err)
+
+		t.Logf("当前生成SQL条件: %s", result)
+		assert.Equal(t, "`name` REGEXP 'test.*'", result, "STRING字段不需要CAST，应保持原样")
+	})
+}

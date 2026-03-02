@@ -564,13 +564,26 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sleep"}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"46"}}]}}`,
 			sql: "`log` NOT MATCH_PHRASE 'sleep' AND `log` MATCH_PHRASE '46'",
 		},
-		// 并不支持 _exists_ 语法糖,不存在于词法文件中
-		//"field_query_exists": {
-		//	q:   `_exists_:author`,
-		//	n:   &ConditionNode{field: &StringNode{Value: "_exists_"}, op: OpMatch, value: &StringNode{Value: "author"}},
-		//	es:  `{"exists":{"field":"author"}}`,
-		//	sql: "`author` IS NOT NULL",
-		//},
+		"field_query_exists": {
+			q:   `_exists_:author`,
+			es:  `{"exists":{"field":"author"}}`,
+			sql: "`author` IS NOT NULL",
+		},
+		"field_query_exists_not": {
+			q:   `NOT _exists_:author`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
+		"field_query_exists_or": {
+			q:   `_exists_: Dsa OR _exists_: Allocate`,
+			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
+			sql: "`Dsa` IS NOT NULL OR `Allocate` IS NOT NULL",
+		},
+		"field_query_exists_alias": {
+			q:   `_exists_: container_name`,
+			es:  `{"exists":{"field":"__ext.container_name"}}`,
+			sql: "CAST(__ext['container_name'] AS STRING) IS NOT NULL",
+		},
 		"basic_phrase_query": {
 			q:   `"hello world"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello world\""}}`,
@@ -1508,6 +1521,10 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"message": {
 			IsAnalyzed: true,
+		},
+		"__ext.container_name": {
+			AliasName: "container_name",
+			FieldType: "text",
 		},
 	}
 	aliasMap := make(map[string]string)

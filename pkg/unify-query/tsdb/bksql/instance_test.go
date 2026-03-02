@@ -2348,7 +2348,7 @@ func TestInstance_QuerySeries(t *testing.T) {
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
 				Size:        10,
-				Source:       []string{"path", "log", "serverip", "cloudid", "gseindex"},
+				Source:      []string{"path", "log", "serverip", "cloudid", "gseindex"},
 			},
 			expected: []map[string]string{
 				{"path": "/var/log/test.log", "log": "msg1", "serverip": "10.0.0.1", "cloudid": "0", "gseindex": "100"},
@@ -2362,7 +2362,7 @@ func TestInstance_QuerySeries(t *testing.T) {
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
 				Size:        10,
-				Source:       []string{"path", "serverip"},
+				Source:      []string{"path", "serverip"},
 			},
 			expected: []map[string]string{
 				{"path": "/var/log/test.log", "serverip": "10.0.0.1"},
@@ -2375,7 +2375,7 @@ func TestInstance_QuerySeries(t *testing.T) {
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
 				Size:        10,
-				Source:       []string{"path", "non_existent_field"},
+				Source:      []string{"path", "non_existent_field"},
 			},
 			expected: []map[string]string{
 				{"path": "/var/log/test.log"},

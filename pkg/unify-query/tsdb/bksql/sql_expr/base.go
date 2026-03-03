@@ -386,7 +386,8 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 	case metadata.ConditionRegEqual:
 		if d.key == HDFS {
 			pattern := strings.Join(c.Value, "|") // 多个值用|连接
-			val = fmt.Sprintf("regexp_like(%s, '%s')", key, pattern)
+			field := d.castVarcharIfNumeric(c.DimensionName, key)
+			val = fmt.Sprintf("regexp_like(%s, '%s')", field, pattern)
 			key = ""
 		} else {
 			op = "REGEXP"
@@ -395,7 +396,8 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 	case metadata.ConditionNotRegEqual:
 		if d.key == HDFS {
 			pattern := strings.Join(c.Value, "|")
-			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", key, pattern)
+			field := d.castVarcharIfNumeric(c.DimensionName, key)
+			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", field, pattern)
 			key = ""
 		} else {
 			op = "NOT REGEXP"
@@ -435,6 +437,19 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 		return fmt.Sprintf("%s %s %s", key, op, val), nil
 	}
 	return val, nil
+}
+
+// castVarcharIfNumeric 如果字段是整数类型，则用 CAST(key AS VARCHAR) 包裹
+// regexp_like 要求第一参数必须是字符串，整数类型字段需要先转换
+func (d *DefaultSQLExpr) castVarcharIfNumeric(dimensionName, key string) string {
+	if d.fieldMap != nil {
+		fieldType := strings.ToUpper(d.fieldMap.Field(dimensionName).FieldType)
+		switch fieldType {
+		case "INT":
+			return fmt.Sprintf("CAST(%s AS VARCHAR)", key)
+		}
+	}
+	return key
 }
 
 func (d *DefaultSQLExpr) valueTransform(s string) string {

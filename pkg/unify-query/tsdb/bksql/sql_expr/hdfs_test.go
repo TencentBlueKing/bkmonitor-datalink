@@ -121,3 +121,48 @@ func TestHDFS_vs_Default_RegexComparison(t *testing.T) {
 
 	assert.NotEqual(t, hdfsResult, defaultResult)
 }
+
+func TestHDFS_RegexpLike_IntField(t *testing.T) {
+	hdfsExpr := &DefaultSQLExpr{
+		key: HDFS,
+		fieldMap: metadata.FieldsMap{
+			"opType":      {FieldType: "INT"},
+			"iZoneAreaID": {FieldType: "BIGINT"},
+			"name":        {FieldType: "STRING"},
+		},
+	}
+
+	t.Run("INT字段_regexp_like_需要CAST", func(t *testing.T) {
+		condition := metadata.ConditionField{
+			DimensionName: "opType",
+			Operator:      metadata.ConditionRegEqual,
+			Value:         []string{"2", "5"},
+		}
+		result, err := hdfsExpr.buildCondition(condition)
+		assert.NoError(t, err)
+		assert.Equal(t, "regexp_like(CAST(`opType` AS VARCHAR), '2|5')", result)
+	})
+
+	t.Run("STRING字段_regexp_like_无需CAST", func(t *testing.T) {
+		condition := metadata.ConditionField{
+			DimensionName: "name",
+			Operator:      metadata.ConditionRegEqual,
+			Value:         []string{"test.*"},
+		}
+		result, err := hdfsExpr.buildCondition(condition)
+		assert.NoError(t, err)
+		assert.Equal(t, "regexp_like(`name`, 'test.*')", result)
+	})
+
+	t.Run("无fieldMap时_不CAST", func(t *testing.T) {
+		hdfsNoMap := &DefaultSQLExpr{key: HDFS}
+		condition := metadata.ConditionField{
+			DimensionName: "opType",
+			Operator:      metadata.ConditionRegEqual,
+			Value:         []string{"2"},
+		}
+		result, err := hdfsNoMap.buildCondition(condition)
+		assert.NoError(t, err)
+		assert.Equal(t, "regexp_like(`opType`, '2')", result)
+	})
+}

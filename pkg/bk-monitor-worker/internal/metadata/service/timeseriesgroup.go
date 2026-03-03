@@ -68,7 +68,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 		if err != nil {
 			return false, err
 		}
-		return s.UpdateMetrics(*vmMetrics, true)
+		return s.UpdateMetrics(*vmMetrics)
 	}
 	// 获取 redis 中数据，用于后续指标及tag的更新
 	logger.Infof("UpdateTimeSeriesMetrics get redis data for vm_rt: %s", vmRt)
@@ -120,7 +120,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 	}
 
 	// 记录是否有更新，然后推送redis并发布通知
-	return s.UpdateMetrics(metricInfo, false)
+	return s.UpdateMetrics(metricInfo)
 }
 
 // QueryMetricAndDimension RefreshMetric 更新指标
@@ -254,7 +254,7 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]an
 }
 
 // UpdateMetrics update ts metrics
-func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any, queryFromBkData bool) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
@@ -263,7 +263,7 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any, quer
 	metricInfoList = s.filterInvalidMetrics(metricInfoList)
 
 	// 刷新 ts 表中的指标和维度
-	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery, queryFromBkData)
+	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, metricInfoList)
 	}

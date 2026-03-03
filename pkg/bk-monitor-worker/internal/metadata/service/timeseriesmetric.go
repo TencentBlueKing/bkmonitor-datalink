@@ -37,6 +37,14 @@ func NewTimeSeriesMetricSvcSvc(obj *customreport.TimeSeriesMetric) TimeSeriesMet
 	}
 }
 
+// metricKey 用于按 (field_name, field_scope) 唯一标识指标
+func metricKey(fieldName, fieldScope string) string {
+	if fieldScope == "" {
+		fieldScope = "default"
+	}
+	return fieldName + "\x00" + fieldScope
+}
+
 // BulkRefreshTSMetrics 更新或创建时序指标数据
 func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
 	// 当 metricInfoList 为空时，可能是上游异常、限流或拉取失败，跳过更新操作以避免误将所有指标标记为不活跃
@@ -45,76 +53,105 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 		return false, nil
 	}
 
-	// 获取需要批量处理的指标名
-	metricFieldNameSet := mapset.NewSet[string]()
+	// 按 (field_name, field_scope) 聚合
 	metricsMap := make(map[string]map[string]any)
+	newRecordKeys := mapset.NewSet[string]()
 	for _, m := range metricInfoList {
 		fieldName, ok := m["field_name"].(string)
-		if !ok {
+		if !ok || fieldName == "" {
 			logger.Errorf("parse metricInfo [%v] field_name failed, skip", m)
 			continue
 		}
-		metricsMap[fieldName] = m
-		metricFieldNameSet.Add(fieldName)
+		fieldScope, _ := m["field_scope"].(string)
+		if fieldScope == "" {
+			fieldScope = "default"
+		}
+		key := metricKey(fieldName, fieldScope)
+		metricsMap[key] = m
+		newRecordKeys.Add(key)
 	}
 	db := mysql.GetDBSession().DB
-	// 获取不存在的指标，然后批量创建
 	var metrics []customreport.TimeSeriesMetric
-	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName).GroupIDEq(groupId).All(&metrics); err != nil {
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldID, customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.FieldScope).GroupIDEq(groupId).All(&metrics); err != nil {
 		return false, errors.Wrapf(err, "query for TimeSeriesMetric with group_id [%v] failed", groupId)
 	}
-	existFieldNameSet := mapset.NewSet[string]()
+	oldRecordKeys := mapset.NewSet[string]()
+	oldKeyToFieldID := make(map[string]uint)
 	for _, m := range metrics {
-		existFieldNameSet.Add(m.FieldName)
+		scope := m.FieldScope
+		if scope == "" {
+			scope = "default"
+		}
+		key := metricKey(m.FieldName, scope)
+		oldRecordKeys.Add(key)
+		oldKeyToFieldID[key] = m.FieldID
 	}
 
-	// 获取需要批量创建的指标名
-	needCreateMetricFieldNameSet := metricFieldNameSet.Difference(existFieldNameSet)
-	needCreateMetricFieldNames := needCreateMetricFieldNameSet.ToSlice()
-	// 获取已经存在的指标名，然后进行批量更新
-	needUpdateMetricFieldNameSet := metricFieldNameSet.Difference(needCreateMetricFieldNameSet)
-	needUpdateMetricFieldNames := needUpdateMetricFieldNameSet.ToSlice()
-
-	// 处理不在返回结果中的指标，将它们标记为不活跃
-	// 获取所有已存在但不在本次返回结果中的指标
-	inactiveMetricFieldNameSet := existFieldNameSet.Difference(metricFieldNameSet)
-	inactiveMetricFieldNames := inactiveMetricFieldNameSet.ToSlice()
-	if len(inactiveMetricFieldNames) > 0 {
-		if err := s.BulkMarkMetricsInactive(groupId, inactiveMetricFieldNames); err != nil {
-			logger.Errorf("BulkRefreshTSMetrics: mark inactive metrics [%v] for group_id [%v] failed, %v", inactiveMetricFieldNames, groupId, err)
-			// 不返回错误，继续执行其他逻辑
+	needCreateKeys := newRecordKeys.Difference(oldRecordKeys).ToSlice()
+	needUpdateKeys := newRecordKeys.Intersect(oldRecordKeys).ToSlice()
+	inactiveKeys := oldRecordKeys.Difference(newRecordKeys).ToSlice()
+	if len(inactiveKeys) > 0 {
+		inactiveFieldIDs := make([]uint, 0, len(inactiveKeys))
+		for _, k := range inactiveKeys {
+			if id, ok := oldKeyToFieldID[k]; ok {
+				inactiveFieldIDs = append(inactiveFieldIDs, id)
+			}
+		}
+		if err := s.BulkMarkMetricsInactiveByFieldIDs(groupId, inactiveFieldIDs); err != nil {
+			logger.Errorf("BulkRefreshTSMetrics: mark inactive metrics for group_id [%v] failed, %v", groupId, err)
 		}
 	}
 
-	// 针对创建时和白名单模式有更新时，推送路由数据
 	needPush := false
 	var err error
-	if len(needCreateMetricFieldNames) != 0 {
-		needPush, err = s.BulkCreateMetrics(bkTenantId, metricsMap, needCreateMetricFieldNames, groupId, tableId, isAutoDiscovery)
+	if len(needCreateKeys) != 0 {
+		needPush, err = s.BulkCreateMetricsByKeys(bkTenantId, metricsMap, needCreateKeys, groupId, tableId, isAutoDiscovery)
 		if err != nil {
-			return false, errors.Wrapf(err, "bulk create metrics [%v] for group_id [%v] table_id [%s] failed", needCreateMetricFieldNames, groupId, tableId)
+			return false, errors.Wrapf(err, "bulk create metrics for group_id [%v] table_id [%s] failed", groupId, tableId)
 		}
 	}
-
-	if len(needUpdateMetricFieldNames) != 0 {
-		updatePush, err := s.BulkUpdateMetrics(bkTenantId, metricsMap, needUpdateMetricFieldNames, groupId, isAutoDiscovery)
+	if len(needUpdateKeys) != 0 {
+		updatePush, err := s.BulkUpdateMetricsByKeys(bkTenantId, metricsMap, needUpdateKeys, groupId, isAutoDiscovery)
 		if err != nil {
-			return false, errors.Wrapf(err, "bulk update metrics [%v] for group_id [%v] table_id [%s] failed", needUpdateMetricFieldNames, groupId, tableId)
+			return false, errors.Wrapf(err, "bulk update metrics for group_id [%v] failed", groupId)
 		}
 		needPush = needPush || updatePush
 	}
-
 	return needPush, nil
 }
 
-// BulkCreateMetrics 批量创建指标
-func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
+// BulkMarkMetricsInactiveByFieldIDs 按 field_id 批量标记指标为不活跃
+func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactiveByFieldIDs(groupId uint, fieldIDs []uint) error {
+	if len(fieldIDs) == 0 {
+		return nil
+	}
 	db := mysql.GetDBSession().DB
-	for _, name := range metricNames {
-		metricInfo, ok := metricMap[name]
+	for _, chunk := range slicex.ChunkSlice(fieldIDs, 100) {
+		updater := customreport.NewTimeSeriesMetricQuerySet(db).
+			GroupIDEq(groupId).
+			FieldIDIn(chunk...).
+			IsActiveEq(true).
+			GetUpdater()
+		if err := updater.SetIsActive(false).Update(); err != nil {
+			return errors.Wrapf(err, "BulkMarkMetricsInactiveByFieldIDs group_id [%v] field_ids [%v] failed", groupId, chunk)
+		}
+		logger.Infof("BulkMarkMetricsInactiveByFieldIDs: marked %d TimeSeriesMetrics inactive for group_id [%v]", len(chunk), groupId)
+	}
+	return nil
+}
+
+// BulkCreateMetricsByKeys 按 (field_name, field_scope) key 批量创建指标，并写入 scope_id
+func (s *TimeSeriesMetricSvc) BulkCreateMetricsByKeys(bkTenantId string, metricMap map[string]map[string]any, keys []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
+	db := mysql.GetDBSession().DB
+	for _, key := range keys {
+		metricInfo, ok := metricMap[key]
 		if !ok {
-			// 如果获取不到指标数据，则跳过
 			continue
+		}
+		fieldName, _ := metricInfo["field_name"].(string)
+		fieldScope, _ := metricInfo["field_scope"].(string)
+		if fieldScope == "" {
+			fieldScope = "default"
 		}
 		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
@@ -128,54 +165,80 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 		if !isActive && !isAutoDiscovery {
 			continue
 		}
-
-		tagListStr, err := jsonx.MarshalString(tagList)
-		if err != nil {
-			logger.Errorf("marshal tagList [%v] failed, %v", tagList, err)
-		}
-		realTableId := fmt.Sprintf("%s.%s", strings.Split(tableId, ".")[0], name)
+		tagListStr, _ := jsonx.MarshalString(tagList)
+		realTableId := fmt.Sprintf("%s.%s", strings.Split(tableId, ".")[0], fieldName)
 		tsm := customreport.TimeSeriesMetric{
 			GroupID:        groupId,
 			TableID:        realTableId,
-			FieldName:      name,
+			FieldName:      fieldName,
+			FieldScope:     fieldScope,
 			TagList:        tagListStr,
 			LastModifyTime: time.Now(),
-			IsActive:       isActive, // 同步 is_active 字段
+			IsActive:       isActive,
 		}
-
+		if sid, ok := metricInfo["scope_id"]; ok {
+			switch v := sid.(type) {
+			case uint:
+				tsm.ScopeID = v
+			case float64:
+				tsm.ScopeID = uint(v)
+			}
+		}
 		if err := tsm.Create(db); err != nil {
-			logger.Errorf("create TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s] failed, %v", tsm.GroupID, tsm.TableID, tsm.FieldName, tsm.TagList, err)
+			logger.Errorf("create TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] failed, %v", groupId, fieldName, fieldScope, err)
 			continue
 		}
-		logger.Infof("created TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.FieldName, tsm.TagList)
+		logger.Infof("created TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] field_scope [%s]", tsm.GroupID, tsm.TableID, tsm.FieldName, tsm.FieldScope)
 	}
 	return true, nil
 }
 
-// BulkUpdateMetrics 批量更新指标，针对记录仅更新最后更新时间和 tag 字段
-func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
+// BulkCreateMetrics 批量创建指标（保留兼容，按 field_name 仅当单 scope 时使用）
+func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
+	keys := make([]string, 0, len(metricNames))
+	for _, name := range metricNames {
+		keys = append(keys, metricKey(name, "default"))
+	}
+	return s.BulkCreateMetricsByKeys(bkTenantId, metricMap, keys, groupId, tableId, isAutoDiscovery)
+}
+
+// BulkUpdateMetricsByKeys 按 (field_name, field_scope) key 批量更新指标
+func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricMap map[string]map[string]any, keys []string, groupId uint, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
-	var tsmList []customreport.TimeSeriesMetric
-	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
-		var tempList []customreport.TimeSeriesMetric
-		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunkMetricNameList...).GroupIDEq(groupId).All(&tempList); err != nil {
-			return false, errors.Wrapf(err, "BulkUpdateMetrics：query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
+	fieldNames := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			fieldNames = append(fieldNames, parts[0])
 		}
-		tsmList = append(tsmList, tempList...)
+	}
+	if len(fieldNames) == 0 {
+		return false, nil
+	}
+	keySet := mapset.NewSet(keys...)
+	var tsmList []customreport.TimeSeriesMetric
+	for _, chunk := range slicex.ChunkSlice(fieldNames, 100) {
+		var tempList []customreport.TimeSeriesMetric
+		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunk...).GroupIDEq(groupId).All(&tempList); err != nil {
+			return false, errors.Wrapf(err, "BulkUpdateMetricsByKeys: query TimeSeriesMetric group_id [%v] failed", groupId)
+		}
+		for i := range tempList {
+			k := metricKey(tempList[i].FieldName, tempList[i].FieldScope)
+			if keySet.Contains(k) {
+				tsmList = append(tsmList, tempList[i])
+			}
+		}
 	}
 	updated := false
-	whiteListDisabledMetricSet := mapset.NewSet[string]()
-	// 组装更新的数据
+	whiteListDisabledMetricSet := mapset.NewSet[uint]()
 	for _, tsm := range tsmList {
-		metricInfo, ok := metricMap[tsm.FieldName]
+		key := metricKey(tsm.FieldName, tsm.FieldScope)
+		metricInfo, ok := metricMap[key]
 		if !ok {
-			// 如果获取不到指标数据，则跳过
 			continue
 		}
 		lastModifyTime, ok := metricInfo["last_modify_time"].(float64)
-		logger.Infof("BulkUpdateMetrics: group_id:[%v],table_id:[%v],last_modify_time [%v]", tsm.GroupID, tsm.TableID, lastModifyTime)
 		if !ok {
-			logger.Errorf("BulkUpdateMetrics: group_id:[%v],table_id:[%v],last_modify_time [%v] is nil", tsm.GroupID, tsm.TableID, lastModifyTime)
 			lastModifyTime = float64(time.Now().Unix())
 		}
 		lastTime := time.Unix(int64(lastModifyTime), 0)
@@ -188,7 +251,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 			if isAutoDiscovery {
 				lastTime = time.Unix(0, 0).UTC()
 			} else {
-				whiteListDisabledMetricSet.Add(tsm.FieldName)
+				whiteListDisabledMetricSet.Add(tsm.FieldID)
 			}
 		}
 		// 标识是否需要更新
@@ -212,47 +275,56 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 			continue
 		}
 		var dbTagList []string
-		if err := jsonx.UnmarshalString(tsm.TagList, &dbTagList); err != nil {
-			logger.Errorf("BulkUpdateMetrics:TimeSeriesMetric group_id [%v] table_id [%s] has wrong format tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.TagList)
-			continue
-		}
-		if !mapset.NewSet(dbTagList...).Equal(mapset.NewSet(tagList...)) {
-			isNeedUpdate = true
-			tagListStr, err := jsonx.MarshalString(tagList)
-			if err != nil {
-				logger.Errorf("BulkUpdateMetrics:marshal tagList for [%v] failed, %v", tagList, err)
-				continue
+		if jsonx.UnmarshalString(tsm.TagList, &dbTagList) == nil {
+			if !mapset.NewSet(dbTagList...).Equal(mapset.NewSet(tagList...)) {
+				isNeedUpdate = true
+				tagListStr, _ := jsonx.MarshalString(tagList)
+				tsm.TagList = tagListStr
 			}
-			tsm.TagList = tagListStr
 		}
-		// 检查 is_active 字段是否需要更新
 		needUpdateIsActive := false
 		if tsm.IsActive != isActive {
 			isNeedUpdate = true
 			needUpdateIsActive = true
 			tsm.IsActive = isActive
 		}
+		if scopeID, ok := metricInfo["scope_id"]; ok && tsm.ScopeID == 0 {
+			switch v := scopeID.(type) {
+			case uint:
+				tsm.ScopeID = v
+			case float64:
+				tsm.ScopeID = uint(v)
+			}
+			isNeedUpdate = true
+		}
 		if isNeedUpdate {
 			updateFields := []customreport.TimeSeriesMetricDBSchemaField{customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime}
 			if needUpdateIsActive {
 				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.IsActive)
 			}
-			if err := tsm.Update(db, updateFields...); err != nil {
-				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
+			if tsm.ScopeID != 0 {
+				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.ScopeID)
+			}
+			if tsm.Update(db, updateFields...) != nil {
 				continue
 			}
-			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
+			updated = true
 		}
 	}
-	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
 	disabledList := whiteListDisabledMetricSet.ToSlice()
-	if len(disabledList) != 0 {
-		if err := customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldNameIn(disabledList...).Delete(); err != nil {
-			logger.Errorf("BulkUpdateMetrics:delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
-		}
+	if len(disabledList) > 0 {
+		_ = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldIDIn(disabledList...).Delete()
 	}
-	// 自动发现且有更新时需要推送路由数据
 	return updated && isAutoDiscovery, nil
+}
+
+// BulkUpdateMetrics 批量更新指标，针对记录仅更新最后更新时间和 tag 字段
+func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
+	keys := make([]string, 0, len(metricNames))
+	for _, name := range metricNames {
+		keys = append(keys, metricKey(name, "default"))
+	}
+	return s.BulkUpdateMetricsByKeys(bkTenantId, metricMap, keys, groupId, isAutoDiscovery)
 }
 
 // BulkMarkMetricsInactive 批量标记指标为不活跃（不在 Redis 返回结果中的指标）
@@ -284,8 +356,14 @@ func (*TimeSeriesMetricSvc) getMetricTagFromMetricInfo(metricInfo map[string]any
 	// 当前从redis中取出的metricInfo只有tag_value_list
 	if tagValues, ok := metricInfo["tag_value_list"].(map[string]any); ok {
 		tags.Append(mapx.GetMapKeys(tagValues)...)
-	} else {
-		return nil, errors.Errorf("metricInfo [%#v] parse tag_value_list failed", metricInfo)
+	} else if tagList, ok := metricInfo["tag_list"].([]any); ok {
+		for _, t := range tagList {
+			if tagInfo, ok := t.(map[string]any); ok {
+				if fn, ok := tagInfo["field_name"].(string); ok && fn != "" {
+					tags.Add(fn)
+				}
+			}
+		}
 	}
 	// 添加特殊字段，兼容先前逻辑
 	tags.Add("target")

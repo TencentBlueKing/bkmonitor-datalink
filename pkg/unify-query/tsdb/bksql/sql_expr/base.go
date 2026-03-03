@@ -300,6 +300,9 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 }
 
 func (d *DefaultSQLExpr) DescribeTableSQL(table string) string {
+	if d.key == HDFS {
+		return fmt.Sprintf("SHOW CREATE TABLE %s", table)
+	}
 	return ""
 }
 

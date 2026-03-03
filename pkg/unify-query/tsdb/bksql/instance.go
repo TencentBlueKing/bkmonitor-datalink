@@ -199,8 +199,8 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// 只有 Doris 才需要获取字段表结构
-	if query.Measurement == sql_expr.Doris {
+	// Doris 和 HDFS 都需要获取字段表结构
+	if query.Measurement == sql_expr.Doris || query.Measurement == sql_expr.HDFS {
 		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
 			return nil, err

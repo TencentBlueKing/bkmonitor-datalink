@@ -20,13 +20,13 @@ import (
 // TimeSeriesScope: time series scope model
 // gen:qs
 type TimeSeriesScope struct {
-	ID              uint      `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	GroupID         uint      `gorm:"column:group_id;type:int;index;uniqueIndex:idx_group_scope" json:"group_id"`
-	ScopeName       string    `gorm:"type:varchar(255);not null;column:scope_name;uniqueIndex:idx_group_scope" json:"scope_name"`
+	ID              uint      `gorm:"primary_key;AUTO_INCREMENT;column:id" json:"id"`
+	GroupID         uint      `gorm:"column:group_id;type:int;index;unique_index:idx_group_scope" json:"group_id"`
+	ScopeName       string    `gorm:"type:varchar(255);not null;column:scope_name;unique_index:idx_group_scope" json:"scope_name"`
 	DimensionConfig string    `gorm:"type:json;column:dimension_config;default:'{}'" json:"dimension_config"`
 	AutoRules       string    `gorm:"type:json;column:auto_rules;default:'[]'" json:"auto_rules"`
 	CreateFrom      string    `gorm:"type:varchar(10);default:'data';column:create_from" json:"create_from"`
-	LastModifyTime  time.Time `gorm:"type:datetime;autoUpdateTime;column:last_modify_time" json:"last_modify_time"`
+	LastModifyTime  time.Time `gorm:"type:datetime;column:last_modify_time" json:"last_modify_time"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

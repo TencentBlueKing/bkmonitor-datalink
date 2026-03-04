@@ -272,8 +272,21 @@ func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scope
 		}
 	}
 	if len(scopesToCreate) > 0 {
-		if err := db.Create(&scopesToCreate).Error; err != nil {
-			return errors.Wrap(err, "bulk create TimeSeriesScope")
+		// 项目是 github.com/jinzhu/gorm v1.9.16，这个版本对 slice 批量创建并不稳定，容易触发你这个 panic：reflect.Value.Interface on zero Value
+		tx := db.Begin()
+		if tx.Error != nil {
+			return errors.Wrap(tx.Error, "begin tx for create TimeSeriesScope")
+		}
+
+		for i := range scopesToCreate {
+			if err := tx.Create(&scopesToCreate[i]).Error; err != nil {
+				tx.Rollback()
+				return errors.Wrap(err, "create TimeSeriesScope")
+			}
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return errors.Wrap(err, "commit tx for create TimeSeriesScope")
 		}
 	}
 	for _, scope := range scopesToUpdate {

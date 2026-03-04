@@ -181,13 +181,12 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	allMust := make([]elastic.Query, 0)
 	allShould := make([]elastic.Query, 0)
 	allMustNot := make([]elastic.Query, 0)
+	implicitShould := make([]elastic.Query, 0)
 
 	for i, c := range n.Nodes {
 		q := MergeQuery(c.DSL())
-		// 只有为显性的使用 AND 和 OR 才需要进行拼接
 		logic := ""
 		if i == 0 {
-			// 第一个根据后面的来判断
 			if len(n.logics) > 0 {
 				logic = n.logics[i]
 			}
@@ -200,7 +199,17 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 			continue
 		}
 
-		allShould = append(allShould, q)
+		if logic == logicOR {
+			allShould = append(allShould, q)
+		} else {
+			implicitShould = append(implicitShould, q)
+		}
+	}
+
+	if len(implicitShould) == 1 && len(allMust) > 1 {
+		allMust = append(allMust, implicitShould...)
+	} else {
+		allShould = append(allShould, implicitShould...)
 	}
 
 	return filterQuery(allMust, allShould, allMustNot)

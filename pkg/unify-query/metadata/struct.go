@@ -87,6 +87,14 @@ func (f FieldOption) Existed() bool {
 
 type VmCondition string
 
+// VmQueryCluster holds VM query routing information returned by VM API response
+type VmQueryCluster struct {
+	VmRt               string   `json:"vm_rt,omitempty"`
+	CmdbLevelVmRt      string   `json:"cmdb_level_vm_rt,omitempty"`
+	QueryCluster       string   `json:"query_cluster,omitempty"`
+	StorageClusterList []string `json:"storage_cluster_list,omitempty"`
+}
+
 type FieldAlias map[string]string
 
 type TimeField struct {

@@ -34,18 +34,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var TSDefaultStorageConfig = map[string]any{"use_default_rp": true}
-
-var TSStorageFieldList = []map[string]any{
-	{
-		"field_name":        "target",
-		"field_type":        "string",
-		"tag":               models.ResultTableFieldTagDimension,
-		"option":            map[string]any{},
-		"is_config_by_user": true,
-	},
-}
-
 const metricNamePattern = `^[a-zA-Z0-9_]+$`
 
 // TimeSeriesGroupSvc time series group service
@@ -59,7 +47,7 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 	}
 }
 
-// IsDefaultScopeInfo 与 Python TimeSeriesGroup.is_default_scope_info 一致：判断是否为默认分组并返回默认分组名
+// IsDefaultScopeInfo ：判断是否为默认分组并返回默认分组名
 func (s *TimeSeriesGroupSvc) IsDefaultScopeInfo(scopeName string) (isDefault bool, defaultScopeName string) {
 	const defaultName = "default"
 	if scopeName == defaultName {
@@ -91,7 +79,7 @@ func (s *TimeSeriesGroupSvc) IsDefaultScopeInfo(scopeName string) (isDefault boo
 	return false, defaultName
 }
 
-// GetScopeNamePrefix 与 Python TimeSeriesScope.get_scope_name_prefix 一致：返回除最后一级外的前缀
+// GetScopeNamePrefix ：返回除最后一级外的前缀
 func GetScopeNamePrefix(scopeName string) string {
 	if scopeName == "" {
 		return ""
@@ -362,7 +350,7 @@ func (s *TimeSeriesGroupSvc) aggregateMetricInfoByFieldName(metricInfoList []map
 				aggTagList[tagName] = tagInfoRaw
 				continue
 			}
-			// 与 Python tag_info.get("values", []) 一致，nil 视为空
+
 			newValues := mapset.NewSet[string]()
 			if v, ok := tagInfoMap["values"].([]any); ok && v != nil {
 				for _, val := range v {

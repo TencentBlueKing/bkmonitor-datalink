@@ -193,15 +193,6 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetricsByKeys(bkTenantId string, metricM
 	return true, nil
 }
 
-// BulkCreateMetrics 批量创建指标（保留兼容，按 field_name 仅当单 scope 时使用）
-func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
-	keys := make([]string, 0, len(metricNames))
-	for _, name := range metricNames {
-		keys = append(keys, metricKey(name, "default"))
-	}
-	return s.BulkCreateMetricsByKeys(bkTenantId, metricMap, keys, groupId, tableId, isAutoDiscovery)
-}
-
 // BulkUpdateMetricsByKeys 按 (field_name, field_scope) key 批量更新指标
 func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricMap map[string]map[string]any, keys []string, groupId uint, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
@@ -316,38 +307,6 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 		_ = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldIDIn(disabledList...).Delete()
 	}
 	return updated && isAutoDiscovery, nil
-}
-
-// BulkUpdateMetrics 批量更新指标，针对记录仅更新最后更新时间和 tag 字段
-func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map[string]map[string]any, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
-	keys := make([]string, 0, len(metricNames))
-	for _, name := range metricNames {
-		keys = append(keys, metricKey(name, "default"))
-	}
-	return s.BulkUpdateMetricsByKeys(bkTenantId, metricMap, keys, groupId, isAutoDiscovery)
-}
-
-// BulkMarkMetricsInactive 批量标记指标为不活跃（不在 Redis 返回结果中的指标）
-func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactive(groupId uint, metricNames []string) error {
-	if len(metricNames) == 0 {
-		return nil
-	}
-	db := mysql.GetDBSession().DB
-	// 使用批量 SQL 更新，按 chunk 分批处理以避免 SQL 参数过多
-	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
-		// 批量更新：UPDATE metadata_timeseriesmetric SET is_active=false WHERE group_id=? AND field_name IN (...) AND is_active=true
-		updater := customreport.NewTimeSeriesMetricQuerySet(db).
-			GroupIDEq(groupId).
-			FieldNameIn(chunkMetricNameList...).
-			IsActiveEq(true).
-			GetUpdater()
-
-		if err := updater.SetIsActive(false).Update(); err != nil {
-			return errors.Wrapf(err, "BulkMarkMetricsInactive: batch update TimeSeriesMetric with group_id [%v], field_name [%v] to inactive failed", groupId, chunkMetricNameList)
-		}
-		logger.Infof("BulkMarkMetricsInactive: marked %d TimeSeriesMetrics as inactive for group_id [%v], field_names [%v]", len(chunkMetricNameList), groupId, chunkMetricNameList)
-	}
-	return nil
 }
 
 // 获取 tags

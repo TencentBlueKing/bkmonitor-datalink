@@ -23,16 +23,15 @@ import (
 
 const defaultDataScopeName = "default"
 
-// DISABLE_SCOPE_ID 与 Python TimeSeriesMetric.DISABLE_SCOPE_ID 一致
 const DISABLE_SCOPE_ID = 0
 
-// scopeDimensionInfo 与 Python scope_name_to_dimensions 中每个 value 结构一致
+// scopeDimensionInfo
 type scopeDimensionInfo struct {
 	dimensions        mapset.Set[string]
 	createFromDefault bool
 }
 
-// isMatchAutoRules 与 Python TimeSeriesScope.is_match_auto_rules 一致
+// isMatchAutoRules
 func isMatchAutoRules(autoRulesJSON string, fieldName string) bool {
 	if autoRulesJSON == "" || autoRulesJSON == "[]" {
 		return false
@@ -54,7 +53,7 @@ func isMatchAutoRules(autoRulesJSON string, fieldName string) bool {
 	return false
 }
 
-// determineScopeNameForNewMetric 与 Python _determine_scope_name_for_new_metric 一致
+// determineScopeNameForNewMetric
 func determineScopeNameForNewMetric(svc *TimeSeriesGroupSvc, fieldName, fieldScope string, allScopes []customreport.TimeSeriesScope) (scopeName string, createFromDefault bool) {
 	isDefault, defaultName := svc.IsDefaultScopeInfo(fieldScope)
 	if isDefault {
@@ -74,7 +73,7 @@ func determineScopeNameForNewMetric(svc *TimeSeriesGroupSvc, fieldName, fieldSco
 	return fieldScope, false
 }
 
-// getDimensionKeysFromMetricInfo 与 Python tag_list = metric_info.get("tag_value_list") or metric_info.get("tag_list") or {}; tag_list.keys()
+// getDimensionKeysFromMetricInfo
 func getDimensionKeysFromMetricInfo(item map[string]any) []string {
 	tags := mapset.NewSet[string]()
 	if tagValueList, ok := item["tag_value_list"].(map[string]any); ok {
@@ -93,7 +92,7 @@ func getDimensionKeysFromMetricInfo(item map[string]any) []string {
 	return tags.ToSlice()
 }
 
-// collectMetricsAndDimensions 与 Python _collect_metrics_and_dimensions 完全一致
+// collectMetricsAndDimensions
 func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[string]any) (scopeNameToMetrics map[string][]map[string]any, scopeNameToDimensions map[string]*scopeDimensionInfo, err error) {
 	type fieldKey struct {
 		fieldName  string
@@ -119,15 +118,14 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 	for _, k := range fieldKeys {
 		fieldNames = append(fieldNames, k.fieldName)
 	}
-	db := mysql.GetDBSession().DB
 
-	var existingMetrics []struct {
-		FieldName  string `gorm:"column:field_name"`
-		FieldScope string `gorm:"column:field_scope"`
-		ScopeID    uint   `gorm:"column:scope_id"`
-	}
-	if err := db.Table(customreport.TimeSeriesMetric{}.TableName()).Select("field_name, field_scope, scope_id").
-		Where("group_id = ? AND field_name IN ?", svc.TimeSeriesGroupID, fieldNames).Find(&existingMetrics).Error; err != nil {
+	db := mysql.GetDBSession().DB
+	var existingMetrics []customreport.TimeSeriesMetric
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(
+		customreport.TimeSeriesMetricDBSchema.FieldID,
+		customreport.TimeSeriesMetricDBSchema.FieldName,
+		customreport.TimeSeriesMetricDBSchema.FieldScope,
+	).GroupIDEq(svc.TimeSeriesGroupID).All(&existingMetrics); err != nil {
 		return nil, nil, errors.Wrap(err, "query existing TimeSeriesMetric")
 	}
 
@@ -164,19 +162,20 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 		if fieldScope == "" {
 			fieldScope = defaultDataScopeName
 		}
-		// 判断传入数据是否包含 values (tag_value_list/tag_list)，与 Python _collect_metrics_and_dimensions 一致
+		// 判断传入数据是否包含 values (tag_value_list/tag_list)
 		tagList := getDimensionKeysFromMetricInfo(item)
 
 		scopeName := existingMetricScopeMap[fieldKey{fieldName, fieldScope}]
 		if scopeName == "" {
 			// 不在已有指标中，或该指标已被 disabled，重新激活需重新分配分组
-			scopeName, createFromDefault := determineScopeNameForNewMetric(svc, fieldName, fieldScope, allScopes)
-			if scopeNameToDimensions[scopeName] == nil {
-				scopeNameToDimensions[scopeName] = &scopeDimensionInfo{
+			newScopeName, createFromDefault := determineScopeNameForNewMetric(svc, fieldName, fieldScope, allScopes)
+			if scopeNameToDimensions[newScopeName] == nil {
+				scopeNameToDimensions[newScopeName] = &scopeDimensionInfo{
 					dimensions:        mapset.NewSet[string](),
 					createFromDefault: createFromDefault,
 				}
 			}
+			scopeName = newScopeName
 		}
 		scopeNameToMetrics[scopeName] = append(scopeNameToMetrics[scopeName], item)
 		if scopeNameToDimensions[scopeName] == nil {
@@ -191,7 +190,7 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 		}
 	}
 
-	// 检查并补充缺失的默认分组（与 Python 一致）
+	// 检查并补充缺失的默认分组
 	checkedPrefixes := mapset.NewSet[string]()
 	for scopeName := range scopeNameToDimensions {
 		prefix := GetScopeNamePrefix(scopeName)
@@ -213,7 +212,7 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 	return scopeNameToMetrics, scopeNameToDimensions, nil
 }
 
-// doBulkRefreshTSScopes 与 Python _do_bulk_refresh_ts_scopes 完全一致
+// doBulkRefreshTSScopes : 批量刷新 TimeSeriesScope
 func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scopeDimensionInfo) error {
 	db := mysql.GetDBSession().DB
 	var existingScopes []customreport.TimeSeriesScope
@@ -309,7 +308,7 @@ func BulkRefreshTSScopes(svc *TimeSeriesGroupSvc, metricInfoList []map[string]an
 		scopeNameToID[allScopes[i].ScopeName] = allScopes[i].ID
 	}
 
-	// 为每个指标添加 scope_id（与 Python 顺序一致：按 scope_name_to_metrics 遍历）
+	// 为每个指标添加 scope_id
 	newMetricInfoList := make([]map[string]any, 0, len(metricInfoList))
 	for scopeName, metrics := range scopeNameToMetrics {
 		scopeID := scopeNameToID[scopeName]

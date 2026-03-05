@@ -1384,6 +1384,16 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"range":{"age":{"from":18,"include_lower":true,"include_upper":true,"to":65}}},{"term":{"status":"active"}}]}}`,
 			sql: "`age` >= '18' AND `age` <= '65' AND `status` = 'active'",
 		},
+		"range_with_multiple_not": {
+			q:   `status:[500 TO 600] NOT status:501 AND NOT sIdeToken AND NOT "dify-api"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"501"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sIdeToken"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"dify-api\""}}}},{"range":{"status":{"from":500,"include_lower":true,"include_upper":true,"to":600}}}]}}`,
+			sql: "`status` >= '500' AND `status` <= '600' AND `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501' OR `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501'",
+		},
+		"field_value_with_multiple_not": {
+			q:   `log:error NOT status:active NOT "ECONNRESET" NOT "endsWith"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"active"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"ECONNRESET\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"endsWith\""}}}},{"match_phrase":{"log":{"query":"error"}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith' OR `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith'",
+		},
 
 		// =================================================================
 		// Test Suite: boost_query_variations - 权重查询变体测试

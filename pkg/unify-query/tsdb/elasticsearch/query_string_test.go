@@ -173,6 +173,22 @@ func TestQsToDsl(t *testing.T) {
 			q:        `request_uri:"/scm/api/proxy?serviceName=test"`,
 			expected: `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
 		},
+		{
+			q:        `_exists_:level`,
+			expected: `{"exists":{"field":"level"}}`,
+		},
+		{
+			q:        `NOT _exists_:level`,
+			expected: `{"bool":{"must_not":{"exists":{"field":"level"}}}}`,
+		},
+		{
+			q:        `_exists_: log OR _exists_: level`,
+			expected: `{"bool":{"should":[{"exists":{"field":"log"}},{"exists":{"field":"level"}}]}}`,
+		},
+		{
+			q:        `_exists_: event_detail`,
+			expected: `{"exists":{"field":"events.attributes.message.detail"}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

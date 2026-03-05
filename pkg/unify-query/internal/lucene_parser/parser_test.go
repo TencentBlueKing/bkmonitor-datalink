@@ -205,6 +205,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"WorldAttrPool free num (15) less than\""}}}}`,
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
 		},
+		{
+			name:  "wildcard on analyzed field should lowercase",
+			input: "log: *TSpiderCreateTableException*",
+			sql:   "`log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
+		},
+		{
+			name:  "wildcard on non-analyzed field keeps case",
+			input: "status: *Active*",
+			sql:   "`status` LIKE '%Active%'",
+			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
+		},
 	}
 
 	mock.Init()

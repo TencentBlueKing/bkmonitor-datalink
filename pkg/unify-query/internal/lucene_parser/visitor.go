@@ -581,6 +581,9 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				result = cq
 			}
 		} else {
+			if fieldOption.IsAnalyzed {
+				value = strings.ToLower(value)
+			}
 			cq := elastic.NewWildcardQuery(field, value)
 			if cv.Boost != "" {
 				cq.Boost(cast.ToFloat64(cv.Boost))

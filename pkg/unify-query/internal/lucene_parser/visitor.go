@@ -371,8 +371,8 @@ func (n *ConditionNode) String() string {
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
-		if n.isQuoted && !containsUnescapedStar(n.value.String()) {
-			// 引号内仅包含 ? 时，? 是字面字符（如 URL 参数分隔符），不应视为通配符
+		if n.isQuoted {
+			// 引号内的通配符应视为字面字符，与 ES query_string 语义一致
 		} else {
 			op = "LIKE"
 		}

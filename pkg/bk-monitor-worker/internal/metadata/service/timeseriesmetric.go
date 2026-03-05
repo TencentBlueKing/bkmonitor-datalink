@@ -297,11 +297,11 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.ScopeID)
 			}
 			if tsm.Update(db, updateFields...) != nil {
-				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
+				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
 				continue
 			}
 			updated = true
-			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
+			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
 		}
 	}
 	disabledList := whiteListDisabledMetricSet.ToSlice()

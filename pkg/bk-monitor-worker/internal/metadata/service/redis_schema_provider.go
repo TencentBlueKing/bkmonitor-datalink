@@ -313,12 +313,12 @@ func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData
 
 type MsgPayload struct {
 	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"` // KindResourceDefinition or KindRelationDefinition
+	Name      string `json:"name,omitempty"` // Deprecated: 保留用于向后兼容，新消息不再包含此字段
+	Kind      string `json:"kind"`           // KindResourceDefinition or KindRelationDefinition
 }
 
 func (m *MsgPayload) IsEmpty() bool {
-	return m.Namespace == "" && m.Name == ""
+	return m.Namespace == ""
 }
 
 // subscribeEntities 订阅实体变更
@@ -380,9 +380,9 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 						continue
 					}
 
-					logger.Infof("[schema_provider] received update: kind=%s namespace=%s name=%s", payload.Kind, payload.Namespace, payload.Name)
-					if err := rsp.reloadEntity(payload.Kind, payload.Namespace, payload.Name); err != nil {
-						logger.Errorf("[schema_provider] failed to reload entity: %v", err)
+					logger.Infof("[schema_provider] received update: kind=%s namespace=%s", payload.Kind, payload.Namespace)
+					if err := rsp.reloadNamespace(payload.Kind, payload.Namespace); err != nil {
+						logger.Errorf("[schema_provider] failed to reload namespace: %v", err)
 					}
 				}
 			}
@@ -406,16 +406,19 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 	}
 }
 
-// reloadEntity 重新加载单个实体
+// reloadNamespace 按 namespace 全量重建该 kind 的本地缓存
+// 与 metadata 端的 _rebuild_redis_cache 保持一致：每次变更都是按 namespace 全量覆盖
 // Redis 结构: redisKey -> namespace -> {name: jsonData, ...}
-func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error {
+func (rsp *RedisSchemaProvider) reloadNamespace(kind, namespace string) error {
 	schemaKey := fmt.Sprintf("%s:%s", RedisKeyPrefix, kind)
+	normalizedNs := rsp.normalizeNamespace(namespace)
 
 	// HGET 获取 namespace 下的所有实体
 	entitiesJson, err := rsp.client.HGet(rsp.ctx, schemaKey, namespace).Result()
 	if errors.Is(err, redis.Nil) {
-		rsp.deleteEntityFromCache(kind, namespace, name)
-		logger.Infof("[schema_provider] deleted %s %s:%s (namespace not found)", kind, namespace, name)
+		// namespace 已不存在，清空该 namespace 的本地缓存
+		rsp.clearNamespaceCache(kind, normalizedNs)
+		logger.Infof("[schema_provider] cleared namespace cache: kind=%s, ns=%s (namespace not found in redis)", kind, normalizedNs)
 		return nil
 	}
 	if err != nil {
@@ -428,58 +431,57 @@ func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error
 		return fmt.Errorf("failed to unmarshal entities: %w", err)
 	}
 
-	// 查找对应的实体
-	jsonData, ok := entities[name]
-	if !ok {
-		// 实体不存在，删除缓存
-		rsp.deleteEntityFromCache(kind, namespace, name)
-		logger.Infof("[schema_provider] deleted %s %s:%s (entity not found)", kind, namespace, name)
-		return nil
-	}
-
-	// 加载到缓存
-	return rsp.loadEntityByKind(kind, namespace, name, string(jsonData))
-}
-
-type entityWithName interface {
-	GetName() string
-}
-
-func (rd *ResourceDefinition) GetName() string { return rd.Name }
-
-func (rd *RelationDefinition) GetName() string { return rd.Name }
-
-func deleteFromMap[T entityWithName](nsMap map[string]T, name, kind, namespace string) {
-	found := false
-	for key, def := range nsMap {
-		if def.GetName() == name {
-			delete(nsMap, key)
-			logger.Debugf("[schema_provider] deleted %s: ns=%s, name=%s, key=%s", kind, namespace, name, key)
-			found = true
-			break
+	// 全量重建该 namespace 的缓存
+	switch kind {
+	case KindResourceDefinition:
+		newMap := make(map[string]*ResourceDefinition, len(entities))
+		for name, jsonData := range entities {
+			var def ResourceDefinition
+			if err := json.Unmarshal(jsonData, &def); err != nil {
+				logger.Warnf("[schema_provider] failed to unmarshal ResourceDefinition %s:%s: %v", normalizedNs, name, err)
+				continue
+			}
+			newMap[name] = &def
 		}
+		rsp.mu.Lock()
+		rsp.resourceDefinitions[normalizedNs] = newMap
+		rsp.mu.Unlock()
+
+	case KindRelationDefinition:
+		newMap := make(map[string]*RelationDefinition, len(entities))
+		for _, jsonData := range entities {
+			var def RelationDefinition
+			if err := json.Unmarshal(jsonData, &def); err != nil {
+				logger.Warnf("[schema_provider] failed to unmarshal RelationDefinition in ns=%s: %v", normalizedNs, err)
+				continue
+			}
+			var relationKey string
+			if def.IsDirectional {
+				relationKey = rsp.buildDirectionalRelationKey(def.FromResource, def.ToResource)
+			} else {
+				relationKey = rsp.buildBidirectionalRelationKey(def.FromResource, def.ToResource)
+			}
+			newMap[relationKey] = &def
+		}
+		rsp.mu.Lock()
+		rsp.relationDefinitions[normalizedNs] = newMap
+		rsp.mu.Unlock()
 	}
-	if !found {
-		logger.Warnf("[schema_provider] %s not found for deletion: ns=%s, name=%s", kind, namespace, name)
-	}
+
+	logger.Infof("[schema_provider] reloaded namespace cache: kind=%s, ns=%s, count=%d", kind, normalizedNs, len(entities))
+	return nil
 }
 
-// deleteEntityFromCache 从缓存删除实体
-func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name string) {
-	normalizedNs := rsp.normalizeNamespace(namespace)
-
+// clearNamespaceCache 清空指定 kind + namespace 的本地缓存
+func (rsp *RedisSchemaProvider) clearNamespaceCache(kind, normalizedNs string) {
 	rsp.mu.Lock()
 	defer rsp.mu.Unlock()
 
 	switch kind {
 	case KindResourceDefinition:
-		if nsMap, ok := rsp.resourceDefinitions[normalizedNs]; ok {
-			deleteFromMap(nsMap, name, kind, normalizedNs)
-		}
+		delete(rsp.resourceDefinitions, normalizedNs)
 	case KindRelationDefinition:
-		if nsMap, ok := rsp.relationDefinitions[normalizedNs]; ok {
-			deleteFromMap(nsMap, name, kind, normalizedNs)
-		}
+		delete(rsp.relationDefinitions, normalizedNs)
 	}
 }
 

@@ -385,8 +385,8 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 	// - 其他数据库使用 REGEXP 操作符
 	case metadata.ConditionRegEqual:
 		if d.key == HDFS {
-			pattern := strings.Join(c.Value, "|") // 多个值用|连接
-			val = fmt.Sprintf("regexp_like(%s, '%s')", key, pattern)
+			pattern := strings.Join(c.Value, "|")
+			val = fmt.Sprintf("regexp_like(CAST(%s AS VARCHAR), '%s')", key, pattern)
 			key = ""
 		} else {
 			op = "REGEXP"
@@ -395,7 +395,7 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 	case metadata.ConditionNotRegEqual:
 		if d.key == HDFS {
 			pattern := strings.Join(c.Value, "|")
-			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", key, pattern)
+			val = fmt.Sprintf("NOT regexp_like(CAST(%s AS VARCHAR), '%s')", key, pattern)
 			key = ""
 		} else {
 			op = "NOT REGEXP"

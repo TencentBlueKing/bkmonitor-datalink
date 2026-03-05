@@ -300,6 +300,69 @@ func TestModel_GetPath(t *testing.T) {
 				{"container"},
 			},
 		},
+		"pod to git_commit": {
+			target: "git_commit",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "git_commit"},
+				{"pod", "node", "system", "host", "app_version", "git_commit"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "git_commit"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "git_commit"},
+			},
+		},
+		"pod to p4_changelist": {
+			target: "p4_changelist",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "p4_changelist"},
+				{"pod", "node", "system", "host", "app_version", "p4_changelist"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "p4_changelist"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "p4_changelist"},
+			},
+		},
+		"pod to svn_revision": {
+			target: "svn_revision",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "svn_revision"},
+				{"pod", "node", "system", "host", "app_version", "svn_revision"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "svn_revision"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "svn_revision"},
+			},
+		},
 	}
 
 	for n, c := range testCases {

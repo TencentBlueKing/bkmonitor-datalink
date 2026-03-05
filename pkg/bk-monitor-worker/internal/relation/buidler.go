@@ -31,10 +31,8 @@ const (
 	System = "system"
 	Biz    = "biz"
 
-	AppVersion   = "app_version"
-	GitCommit    = "git_commit"
-	P4Changelist = "p4_changelist"
-	SvnRevision  = "svn_revision"
+	AppVersion = "app_version"
+	GitCommit  = "git_commit"
 
 	ExpandInfoColumn = "version_meta"
 )

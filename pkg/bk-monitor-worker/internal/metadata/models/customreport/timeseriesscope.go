@@ -31,6 +31,12 @@ type TimeSeriesScope struct {
 
 // BeforeCreate 新建前时间字段设置为当前时间
 func (t *TimeSeriesScope) BeforeCreate(tx *gorm.DB) error {
+	if t.DimensionConfig == "" {
+		t.DimensionConfig = "{}"
+	}
+	if t.AutoRules == "" {
+		t.AutoRules = "[]"
+	}
 	t.LastModifyTime = time.Now()
 	return nil
 }

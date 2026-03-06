@@ -12,6 +12,8 @@ package lucene_parser
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
 
@@ -49,6 +51,8 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 			Value: "",
 		}
 	}
+
+	q = convertSingleQuotes(q)
 
 	is := antlr.NewInputStream(q)
 	lexer := gen.NewLuceneLexer(is)
@@ -108,4 +112,24 @@ func (c *CustomErrorListener) GetFirstError() string {
 		return c.errors[0]
 	}
 	return ""
+}
+
+var singleQuotePattern = regexp.MustCompile(`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'`)
+
+// convertSingleQuotes converts single-quoted strings to double-quoted strings,
+// preserving existing double-quoted strings. Internal escaping is adjusted:
+// \' → ', " → \".
+func convertSingleQuotes(q string) string {
+	if !strings.ContainsRune(q, '\'') {
+		return q
+	}
+	return singleQuotePattern.ReplaceAllStringFunc(q, func(m string) string {
+		if m[0] == '"' {
+			return m
+		}
+		inner := m[1 : len(m)-1]
+		inner = strings.ReplaceAll(inner, `\'`, `'`)
+		inner = strings.ReplaceAll(inner, `"`, `\"`)
+		return `"` + inner + `"`
+	})
 }

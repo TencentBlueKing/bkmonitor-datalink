@@ -35,7 +35,7 @@ const (
 	MsgLengthLimit = 500
 )
 
-func extractESResult(err error, res *elastic.SearchResult) (error, []*elastic.ShardOperationFailedException) {
+func extractESResult(err error, res *elastic.SearchResult) ([]*elastic.ShardOperationFailedException, error) {
 	if res != nil {
 		if err == nil && res.Error != nil {
 			err = &elastic.Error{
@@ -44,16 +44,16 @@ func extractESResult(err error, res *elastic.SearchResult) (error, []*elastic.Sh
 			}
 		}
 		if res.Shards != nil && len(res.Shards.Failures) > 0 {
-			return err, res.Shards.Failures
+			return res.Shards.Failures, err
 		}
 	} else if err == nil {
-		err = fmt.Errorf("empty search result")
+		err = fmt.Errorf("unexpected nil SearchResult")
 	}
-	return err, nil
+	return nil, err
 }
 
 func handleESError(ctx context.Context, url string, err error, res *elastic.SearchResult) error {
-	err, shardFailures := extractESResult(err, res)
+	shardFailures, err := extractESResult(err, res)
 
 	if err == nil && len(shardFailures) == 0 {
 		return nil

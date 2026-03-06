@@ -1682,3 +1682,88 @@ func TestKeywordAsFieldValue(t *testing.T) {
 		})
 	}
 }
+
+func TestNotEqualOperator(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldsMap := metadata.FieldsMap{
+		"log": {
+			IsAnalyzed: true,
+			FieldType:  "text",
+		},
+		"message": {
+			IsAnalyzed: true,
+		},
+	}
+
+	testCases := map[string]struct {
+		input string
+		sql   string
+		es    string
+	}{
+		"not_equal_number": {
+			input: "status != 200",
+			sql:   "`status` != '200'",
+			es:    `{"bool":{"must_not":{"term":{"status":"200"}}}}`,
+		},
+		"not_equal_string": {
+			input: "status != active",
+			sql:   "`status` != 'active'",
+			es:    `{"bool":{"must_not":{"term":{"status":"active"}}}}`,
+		},
+		"not_equal_analyzed_field": {
+			input: "log != error",
+			sql:   "`log` NOT MATCH_PHRASE 'error'",
+			es:    `{"bool":{"must_not":{"match_phrase":{"log":{"query":"error"}}}}}`,
+		},
+		"not_equal_with_colon": {
+			input: "status:!= 200",
+			sql:   "`status` != '200'",
+			es:    `{"bool":{"must_not":{"term":{"status":"200"}}}}`,
+		},
+		"not_equal_combined_and": {
+			input: "status != 200 AND log: error",
+			sql:   "`status` != '200' AND `log` MATCH_PHRASE 'error'",
+			es:    `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"200"}}}},{"match_phrase":{"log":{"query":"error"}}}]}}`,
+		},
+		"not_equal_combined_or": {
+			input: "status != 200 OR status != 500",
+			sql:   "`status` != '200' OR `status` != '500'",
+			es:    `{"bool":{"should":[{"bool":{"must_not":{"term":{"status":"200"}}}},{"bool":{"must_not":{"term":{"status":"500"}}}}]}}`,
+		},
+		"bang_not_still_works": {
+			input: "!status:active",
+			sql:   "`status` != 'active'",
+			es:    `{"bool":{"must_not":{"term":{"status":"active"}}}}`,
+		},
+		"greater_than_still_works": {
+			input: "status > 200",
+			sql:   "`status` > '200'",
+			es:    `{"range":{"status":{"from":200,"include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			node := ParseLuceneWithVisitor(ctx, tc.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			t.Logf("Input:      %q", tc.input)
+			t.Logf("Error:      %v", node.Error())
+			t.Logf("Actual SQL: %s", node.String())
+			t.Logf("Expect SQL: %s", tc.sql)
+			assert.Nil(t, node.Error(), "should parse without error for input: %s", tc.input)
+			assert.Equal(t, tc.sql, node.String(), "SQL mismatch for input: %s", tc.input)
+
+			node = ParseLuceneWithVisitor(ctx, tc.input, Option{FieldsMap: fieldsMap})
+			dsl := MergeQuery(node.DSL())
+			dslJSON, _ := queryToJSON(dsl)
+			t.Logf("Actual DSL: %s", dslJSON)
+			t.Logf("Expect DSL: %s", tc.es)
+			assert.Equal(t, tc.es, dslJSON, "ES DSL mismatch for input: %s", tc.input)
+		})
+	}
+}

@@ -32,22 +32,23 @@ var LuceneParserParserStaticData struct {
 func luceneparserParserInit() {
 	staticData := &LuceneParserParserStaticData
 	staticData.LiteralNames = []string{
-		"", "", "", "", "'fn:'", "'+'", "'-'", "'('", "')'", "':'", "'='", "'<'",
-		"'<='", "'>'", "'>='", "'^'", "'~'", "", "", "", "", "'['", "'{'", "",
-		"", "", "", "'after'", "'before'", "", "'containing'", "'extend'", "'or'",
-		"", "", "", "", "", "", "", "'ordered'", "'overlapping'", "'phrase'",
+		"", "", "", "'!='", "", "'fn:'", "'+'", "'-'", "'('", "')'", "':'",
+		"'='", "'<'", "'<='", "'>'", "'>='", "'^'", "'~'", "", "", "", "", "'['",
+		"'{'", "", "", "", "", "'after'", "'before'", "", "'containing'", "'extend'",
+		"'or'", "", "", "", "", "", "", "", "'ordered'", "'overlapping'", "'phrase'",
 		"'unordered'", "", "'wildcard'", "'within'", "", "", "']'", "'}'",
 	}
 	staticData.SymbolicNames = []string{
-		"", "AND", "OR", "NOT", "FN_PREFIX", "PLUS", "MINUS", "LPAREN", "RPAREN",
-		"OP_COLON", "OP_EQUAL", "OP_LESSTHAN", "OP_LESSTHANEQ", "OP_MORETHAN",
-		"OP_MORETHANEQ", "CARAT", "TILDE", "QUOTED", "NUMBER", "TERM", "REGEXPTERM",
-		"RANGEIN_START", "RANGEEX_START", "DEFAULT_SKIP", "UNKNOWN", "F_SKIP",
-		"ATLEAST", "AFTER", "BEFORE", "CONTAINED_BY", "CONTAINING", "EXTEND",
-		"FN_OR", "FUZZYTERM", "MAXGAPS", "MAXWIDTH", "NON_OVERLAPPING", "NOT_CONTAINED_BY",
-		"NOT_CONTAINING", "NOT_WITHIN", "ORDERED", "OVERLAPPING", "PHRASE",
-		"UNORDERED", "UNORDERED_NO_OVERLAPS", "WILDCARD", "WITHIN", "R_SKIP",
-		"RANGE_TO", "RANGEIN_END", "RANGEEX_END", "RANGE_QUOTED", "RANGE_GOOP",
+		"", "AND", "OR", "OP_NOTEQUAL", "NOT", "FN_PREFIX", "PLUS", "MINUS",
+		"LPAREN", "RPAREN", "OP_COLON", "OP_EQUAL", "OP_LESSTHAN", "OP_LESSTHANEQ",
+		"OP_MORETHAN", "OP_MORETHANEQ", "CARAT", "TILDE", "QUOTED", "NUMBER",
+		"TERM", "REGEXPTERM", "RANGEIN_START", "RANGEEX_START", "DEFAULT_SKIP",
+		"UNKNOWN", "F_SKIP", "ATLEAST", "AFTER", "BEFORE", "CONTAINED_BY", "CONTAINING",
+		"EXTEND", "FN_OR", "FUZZYTERM", "MAXGAPS", "MAXWIDTH", "NON_OVERLAPPING",
+		"NOT_CONTAINED_BY", "NOT_CONTAINING", "NOT_WITHIN", "ORDERED", "OVERLAPPING",
+		"PHRASE", "UNORDERED", "UNORDERED_NO_OVERLAPS", "WILDCARD", "WITHIN",
+		"R_SKIP", "RANGE_TO", "RANGEIN_END", "RANGEEX_END", "RANGE_QUOTED",
+		"RANGE_GOOP",
 	}
 	staticData.RuleNames = []string{
 		"topLevelQuery", "query", "disjQuery", "conjQuery", "modClause", "modifier",
@@ -56,7 +57,7 @@ func luceneparserParserInit() {
 	}
 	staticData.PredictionContextCache = antlr.NewPredictionContextCache()
 	staticData.serializedATN = []int32{
-		4, 1, 52, 163, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
+		4, 1, 53, 163, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
 		4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7,
 		10, 2, 11, 7, 11, 2, 12, 7, 12, 2, 13, 7, 13, 1, 0, 1, 0, 1, 0, 1, 1, 4,
 		1, 33, 8, 1, 11, 1, 12, 1, 34, 1, 2, 1, 2, 1, 2, 5, 2, 40, 8, 2, 10, 2,
@@ -72,60 +73,60 @@ func luceneparserParserInit() {
 		10, 8, 12, 8, 137, 9, 8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 144, 8, 9,
 		1, 10, 1, 10, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 12, 1, 12, 1,
 		12, 3, 12, 157, 8, 12, 1, 13, 1, 13, 3, 13, 161, 8, 13, 1, 13, 0, 1, 16,
-		14, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 3, 3,
-		5, 6, 1, 0, 9, 10, 1, 0, 11, 14, 1, 0, 17, 19, 1, 0, 21, 22, 2, 0, 48,
-		48, 51, 52, 1, 0, 49, 50, 178, 0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0, 0, 4,
-		36, 1, 0, 0, 0, 6, 47, 1, 0, 0, 0, 8, 59, 1, 0, 0, 0, 10, 63, 1, 0, 0,
-		0, 12, 75, 1, 0, 0, 0, 14, 77, 1, 0, 0, 0, 16, 125, 1, 0, 0, 0, 18, 138,
-		1, 0, 0, 0, 20, 145, 1, 0, 0, 0, 22, 147, 1, 0, 0, 0, 24, 153, 1, 0, 0,
-		0, 26, 158, 1, 0, 0, 0, 28, 29, 3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30, 1,
-		1, 0, 0, 0, 31, 33, 3, 4, 2, 0, 32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0,
-		34, 32, 1, 0, 0, 0, 34, 35, 1, 0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3, 6,
-		3, 0, 37, 38, 5, 2, 0, 0, 38, 40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40, 43,
-		1, 0, 0, 0, 41, 39, 1, 0, 0, 0, 41, 42, 1, 0, 0, 0, 42, 45, 1, 0, 0, 0,
-		43, 41, 1, 0, 0, 0, 44, 46, 5, 2, 0, 0, 45, 44, 1, 0, 0, 0, 45, 46, 1,
-		0, 0, 0, 46, 5, 1, 0, 0, 0, 47, 52, 3, 8, 4, 0, 48, 49, 5, 1, 0, 0, 49,
-		51, 3, 8, 4, 0, 50, 48, 1, 0, 0, 0, 51, 54, 1, 0, 0, 0, 52, 50, 1, 0, 0,
-		0, 52, 53, 1, 0, 0, 0, 53, 56, 1, 0, 0, 0, 54, 52, 1, 0, 0, 0, 55, 57,
-		5, 1, 0, 0, 56, 55, 1, 0, 0, 0, 56, 57, 1, 0, 0, 0, 57, 7, 1, 0, 0, 0,
-		58, 60, 3, 10, 5, 0, 59, 58, 1, 0, 0, 0, 59, 60, 1, 0, 0, 0, 60, 61, 1,
-		0, 0, 0, 61, 62, 3, 12, 6, 0, 62, 9, 1, 0, 0, 0, 63, 64, 7, 0, 0, 0, 64,
-		11, 1, 0, 0, 0, 65, 76, 3, 14, 7, 0, 66, 67, 3, 20, 10, 0, 67, 68, 7, 1,
-		0, 0, 68, 70, 1, 0, 0, 0, 69, 66, 1, 0, 0, 0, 69, 70, 1, 0, 0, 0, 70, 73,
-		1, 0, 0, 0, 71, 74, 3, 16, 8, 0, 72, 74, 3, 18, 9, 0, 73, 71, 1, 0, 0,
-		0, 73, 72, 1, 0, 0, 0, 74, 76, 1, 0, 0, 0, 75, 65, 1, 0, 0, 0, 75, 69,
-		1, 0, 0, 0, 76, 13, 1, 0, 0, 0, 77, 79, 3, 20, 10, 0, 78, 80, 5, 9, 0,
-		0, 79, 78, 1, 0, 0, 0, 79, 80, 1, 0, 0, 0, 80, 81, 1, 0, 0, 0, 81, 82,
+		14, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 4, 4,
+		6, 7, 1, 0, 10, 11, 2, 0, 3, 3, 12, 15, 1, 0, 18, 20, 1, 0, 22, 23, 2,
+		0, 49, 49, 52, 53, 1, 0, 50, 51, 178, 0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0,
+		0, 4, 36, 1, 0, 0, 0, 6, 47, 1, 0, 0, 0, 8, 59, 1, 0, 0, 0, 10, 63, 1,
+		0, 0, 0, 12, 75, 1, 0, 0, 0, 14, 77, 1, 0, 0, 0, 16, 125, 1, 0, 0, 0, 18,
+		138, 1, 0, 0, 0, 20, 145, 1, 0, 0, 0, 22, 147, 1, 0, 0, 0, 24, 153, 1,
+		0, 0, 0, 26, 158, 1, 0, 0, 0, 28, 29, 3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30,
+		1, 1, 0, 0, 0, 31, 33, 3, 4, 2, 0, 32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0,
+		0, 34, 32, 1, 0, 0, 0, 34, 35, 1, 0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3,
+		6, 3, 0, 37, 38, 5, 2, 0, 0, 38, 40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40,
+		43, 1, 0, 0, 0, 41, 39, 1, 0, 0, 0, 41, 42, 1, 0, 0, 0, 42, 45, 1, 0, 0,
+		0, 43, 41, 1, 0, 0, 0, 44, 46, 5, 2, 0, 0, 45, 44, 1, 0, 0, 0, 45, 46,
+		1, 0, 0, 0, 46, 5, 1, 0, 0, 0, 47, 52, 3, 8, 4, 0, 48, 49, 5, 1, 0, 0,
+		49, 51, 3, 8, 4, 0, 50, 48, 1, 0, 0, 0, 51, 54, 1, 0, 0, 0, 52, 50, 1,
+		0, 0, 0, 52, 53, 1, 0, 0, 0, 53, 56, 1, 0, 0, 0, 54, 52, 1, 0, 0, 0, 55,
+		57, 5, 1, 0, 0, 56, 55, 1, 0, 0, 0, 56, 57, 1, 0, 0, 0, 57, 7, 1, 0, 0,
+		0, 58, 60, 3, 10, 5, 0, 59, 58, 1, 0, 0, 0, 59, 60, 1, 0, 0, 0, 60, 61,
+		1, 0, 0, 0, 61, 62, 3, 12, 6, 0, 62, 9, 1, 0, 0, 0, 63, 64, 7, 0, 0, 0,
+		64, 11, 1, 0, 0, 0, 65, 76, 3, 14, 7, 0, 66, 67, 3, 20, 10, 0, 67, 68,
+		7, 1, 0, 0, 68, 70, 1, 0, 0, 0, 69, 66, 1, 0, 0, 0, 69, 70, 1, 0, 0, 0,
+		70, 73, 1, 0, 0, 0, 71, 74, 3, 16, 8, 0, 72, 74, 3, 18, 9, 0, 73, 71, 1,
+		0, 0, 0, 73, 72, 1, 0, 0, 0, 74, 76, 1, 0, 0, 0, 75, 65, 1, 0, 0, 0, 75,
+		69, 1, 0, 0, 0, 76, 13, 1, 0, 0, 0, 77, 79, 3, 20, 10, 0, 78, 80, 5, 10,
+		0, 0, 79, 78, 1, 0, 0, 0, 79, 80, 1, 0, 0, 0, 80, 81, 1, 0, 0, 0, 81, 82,
 		7, 2, 0, 0, 82, 83, 7, 3, 0, 0, 83, 15, 1, 0, 0, 0, 84, 85, 6, 8, -1, 0,
-		85, 88, 5, 20, 0, 0, 86, 87, 5, 15, 0, 0, 87, 89, 5, 18, 0, 0, 88, 86,
+		85, 88, 5, 21, 0, 0, 86, 87, 5, 16, 0, 0, 87, 89, 5, 19, 0, 0, 88, 86,
 		1, 0, 0, 0, 88, 89, 1, 0, 0, 0, 89, 126, 1, 0, 0, 0, 90, 93, 3, 22, 11,
-		0, 91, 92, 5, 15, 0, 0, 92, 94, 5, 18, 0, 0, 93, 91, 1, 0, 0, 0, 93, 94,
-		1, 0, 0, 0, 94, 126, 1, 0, 0, 0, 95, 98, 3, 24, 12, 0, 96, 97, 5, 15, 0,
-		0, 97, 99, 5, 18, 0, 0, 98, 96, 1, 0, 0, 0, 98, 99, 1, 0, 0, 0, 99, 126,
-		1, 0, 0, 0, 100, 103, 5, 18, 0, 0, 101, 102, 5, 15, 0, 0, 102, 104, 5,
-		18, 0, 0, 103, 101, 1, 0, 0, 0, 103, 104, 1, 0, 0, 0, 104, 126, 1, 0, 0,
-		0, 105, 108, 5, 19, 0, 0, 106, 107, 5, 15, 0, 0, 107, 109, 5, 18, 0, 0,
+		0, 91, 92, 5, 16, 0, 0, 92, 94, 5, 19, 0, 0, 93, 91, 1, 0, 0, 0, 93, 94,
+		1, 0, 0, 0, 94, 126, 1, 0, 0, 0, 95, 98, 3, 24, 12, 0, 96, 97, 5, 16, 0,
+		0, 97, 99, 5, 19, 0, 0, 98, 96, 1, 0, 0, 0, 98, 99, 1, 0, 0, 0, 99, 126,
+		1, 0, 0, 0, 100, 103, 5, 19, 0, 0, 101, 102, 5, 16, 0, 0, 102, 104, 5,
+		19, 0, 0, 103, 101, 1, 0, 0, 0, 103, 104, 1, 0, 0, 0, 104, 126, 1, 0, 0,
+		0, 105, 108, 5, 20, 0, 0, 106, 107, 5, 16, 0, 0, 107, 109, 5, 19, 0, 0,
 		108, 106, 1, 0, 0, 0, 108, 109, 1, 0, 0, 0, 109, 126, 1, 0, 0, 0, 110,
-		113, 5, 1, 0, 0, 111, 112, 5, 15, 0, 0, 112, 114, 5, 18, 0, 0, 113, 111,
+		113, 5, 1, 0, 0, 111, 112, 5, 16, 0, 0, 112, 114, 5, 19, 0, 0, 113, 111,
 		1, 0, 0, 0, 113, 114, 1, 0, 0, 0, 114, 126, 1, 0, 0, 0, 115, 118, 5, 2,
-		0, 0, 116, 117, 5, 15, 0, 0, 117, 119, 5, 18, 0, 0, 118, 116, 1, 0, 0,
-		0, 118, 119, 1, 0, 0, 0, 119, 126, 1, 0, 0, 0, 120, 123, 5, 3, 0, 0, 121,
-		122, 5, 15, 0, 0, 122, 124, 5, 18, 0, 0, 123, 121, 1, 0, 0, 0, 123, 124,
+		0, 0, 116, 117, 5, 16, 0, 0, 117, 119, 5, 19, 0, 0, 118, 116, 1, 0, 0,
+		0, 118, 119, 1, 0, 0, 0, 119, 126, 1, 0, 0, 0, 120, 123, 5, 4, 0, 0, 121,
+		122, 5, 16, 0, 0, 122, 124, 5, 19, 0, 0, 123, 121, 1, 0, 0, 0, 123, 124,
 		1, 0, 0, 0, 124, 126, 1, 0, 0, 0, 125, 84, 1, 0, 0, 0, 125, 90, 1, 0, 0,
 		0, 125, 95, 1, 0, 0, 0, 125, 100, 1, 0, 0, 0, 125, 105, 1, 0, 0, 0, 125,
 		110, 1, 0, 0, 0, 125, 115, 1, 0, 0, 0, 125, 120, 1, 0, 0, 0, 126, 135,
 		1, 0, 0, 0, 127, 128, 10, 9, 0, 0, 128, 131, 3, 26, 13, 0, 129, 130, 5,
-		15, 0, 0, 130, 132, 5, 18, 0, 0, 131, 129, 1, 0, 0, 0, 131, 132, 1, 0,
+		16, 0, 0, 130, 132, 5, 19, 0, 0, 131, 129, 1, 0, 0, 0, 131, 132, 1, 0,
 		0, 0, 132, 134, 1, 0, 0, 0, 133, 127, 1, 0, 0, 0, 134, 137, 1, 0, 0, 0,
 		135, 133, 1, 0, 0, 0, 135, 136, 1, 0, 0, 0, 136, 17, 1, 0, 0, 0, 137, 135,
-		1, 0, 0, 0, 138, 139, 5, 7, 0, 0, 139, 140, 3, 2, 1, 0, 140, 143, 5, 8,
-		0, 0, 141, 142, 5, 15, 0, 0, 142, 144, 5, 18, 0, 0, 143, 141, 1, 0, 0,
-		0, 143, 144, 1, 0, 0, 0, 144, 19, 1, 0, 0, 0, 145, 146, 5, 19, 0, 0, 146,
+		1, 0, 0, 0, 138, 139, 5, 8, 0, 0, 139, 140, 3, 2, 1, 0, 140, 143, 5, 9,
+		0, 0, 141, 142, 5, 16, 0, 0, 142, 144, 5, 19, 0, 0, 143, 141, 1, 0, 0,
+		0, 143, 144, 1, 0, 0, 0, 144, 19, 1, 0, 0, 0, 145, 146, 5, 20, 0, 0, 146,
 		21, 1, 0, 0, 0, 147, 148, 7, 4, 0, 0, 148, 149, 7, 5, 0, 0, 149, 150, 5,
-		48, 0, 0, 150, 151, 7, 5, 0, 0, 151, 152, 7, 6, 0, 0, 152, 23, 1, 0, 0,
-		0, 153, 156, 5, 17, 0, 0, 154, 155, 5, 15, 0, 0, 155, 157, 5, 18, 0, 0,
+		49, 0, 0, 150, 151, 7, 5, 0, 0, 151, 152, 7, 6, 0, 0, 152, 23, 1, 0, 0,
+		0, 153, 156, 5, 18, 0, 0, 154, 155, 5, 16, 0, 0, 155, 157, 5, 19, 0, 0,
 		156, 154, 1, 0, 0, 0, 156, 157, 1, 0, 0, 0, 157, 25, 1, 0, 0, 0, 158, 160,
-		5, 16, 0, 0, 159, 161, 5, 18, 0, 0, 160, 159, 1, 0, 0, 0, 160, 161, 1,
+		5, 17, 0, 0, 159, 161, 5, 19, 0, 0, 160, 159, 1, 0, 0, 0, 160, 161, 1,
 		0, 0, 0, 161, 27, 1, 0, 0, 0, 24, 34, 41, 45, 52, 56, 59, 69, 73, 75, 79,
 		88, 93, 98, 103, 108, 113, 118, 123, 125, 131, 135, 143, 156, 160,
 	}
@@ -168,56 +169,57 @@ const (
 	LuceneParserEOF                   = antlr.TokenEOF
 	LuceneParserAND                   = 1
 	LuceneParserOR                    = 2
-	LuceneParserNOT                   = 3
-	LuceneParserFN_PREFIX             = 4
-	LuceneParserPLUS                  = 5
-	LuceneParserMINUS                 = 6
-	LuceneParserLPAREN                = 7
-	LuceneParserRPAREN                = 8
-	LuceneParserOP_COLON              = 9
-	LuceneParserOP_EQUAL              = 10
-	LuceneParserOP_LESSTHAN           = 11
-	LuceneParserOP_LESSTHANEQ         = 12
-	LuceneParserOP_MORETHAN           = 13
-	LuceneParserOP_MORETHANEQ         = 14
-	LuceneParserCARAT                 = 15
-	LuceneParserTILDE                 = 16
-	LuceneParserQUOTED                = 17
-	LuceneParserNUMBER                = 18
-	LuceneParserTERM                  = 19
-	LuceneParserREGEXPTERM            = 20
-	LuceneParserRANGEIN_START         = 21
-	LuceneParserRANGEEX_START         = 22
-	LuceneParserDEFAULT_SKIP          = 23
-	LuceneParserUNKNOWN               = 24
-	LuceneParserF_SKIP                = 25
-	LuceneParserATLEAST               = 26
-	LuceneParserAFTER                 = 27
-	LuceneParserBEFORE                = 28
-	LuceneParserCONTAINED_BY          = 29
-	LuceneParserCONTAINING            = 30
-	LuceneParserEXTEND                = 31
-	LuceneParserFN_OR                 = 32
-	LuceneParserFUZZYTERM             = 33
-	LuceneParserMAXGAPS               = 34
-	LuceneParserMAXWIDTH              = 35
-	LuceneParserNON_OVERLAPPING       = 36
-	LuceneParserNOT_CONTAINED_BY      = 37
-	LuceneParserNOT_CONTAINING        = 38
-	LuceneParserNOT_WITHIN            = 39
-	LuceneParserORDERED               = 40
-	LuceneParserOVERLAPPING           = 41
-	LuceneParserPHRASE                = 42
-	LuceneParserUNORDERED             = 43
-	LuceneParserUNORDERED_NO_OVERLAPS = 44
-	LuceneParserWILDCARD              = 45
-	LuceneParserWITHIN                = 46
-	LuceneParserR_SKIP                = 47
-	LuceneParserRANGE_TO              = 48
-	LuceneParserRANGEIN_END           = 49
-	LuceneParserRANGEEX_END           = 50
-	LuceneParserRANGE_QUOTED          = 51
-	LuceneParserRANGE_GOOP            = 52
+	LuceneParserOP_NOTEQUAL           = 3
+	LuceneParserNOT                   = 4
+	LuceneParserFN_PREFIX             = 5
+	LuceneParserPLUS                  = 6
+	LuceneParserMINUS                 = 7
+	LuceneParserLPAREN                = 8
+	LuceneParserRPAREN                = 9
+	LuceneParserOP_COLON              = 10
+	LuceneParserOP_EQUAL              = 11
+	LuceneParserOP_LESSTHAN           = 12
+	LuceneParserOP_LESSTHANEQ         = 13
+	LuceneParserOP_MORETHAN           = 14
+	LuceneParserOP_MORETHANEQ         = 15
+	LuceneParserCARAT                 = 16
+	LuceneParserTILDE                 = 17
+	LuceneParserQUOTED                = 18
+	LuceneParserNUMBER                = 19
+	LuceneParserTERM                  = 20
+	LuceneParserREGEXPTERM            = 21
+	LuceneParserRANGEIN_START         = 22
+	LuceneParserRANGEEX_START         = 23
+	LuceneParserDEFAULT_SKIP          = 24
+	LuceneParserUNKNOWN               = 25
+	LuceneParserF_SKIP                = 26
+	LuceneParserATLEAST               = 27
+	LuceneParserAFTER                 = 28
+	LuceneParserBEFORE                = 29
+	LuceneParserCONTAINED_BY          = 30
+	LuceneParserCONTAINING            = 31
+	LuceneParserEXTEND                = 32
+	LuceneParserFN_OR                 = 33
+	LuceneParserFUZZYTERM             = 34
+	LuceneParserMAXGAPS               = 35
+	LuceneParserMAXWIDTH              = 36
+	LuceneParserNON_OVERLAPPING       = 37
+	LuceneParserNOT_CONTAINED_BY      = 38
+	LuceneParserNOT_CONTAINING        = 39
+	LuceneParserNOT_WITHIN            = 40
+	LuceneParserORDERED               = 41
+	LuceneParserOVERLAPPING           = 42
+	LuceneParserPHRASE                = 43
+	LuceneParserUNORDERED             = 44
+	LuceneParserUNORDERED_NO_OVERLAPS = 45
+	LuceneParserWILDCARD              = 46
+	LuceneParserWITHIN                = 47
+	LuceneParserR_SKIP                = 48
+	LuceneParserRANGE_TO              = 49
+	LuceneParserRANGEIN_END           = 50
+	LuceneParserRANGEEX_END           = 51
+	LuceneParserRANGE_QUOTED          = 52
+	LuceneParserRANGE_GOOP            = 53
 )
 
 // LuceneParser rules.
@@ -496,7 +498,7 @@ func (p *LuceneParser) Query() (localctx IQueryContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	for ok := true; ok; ok = ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&8257774) != 0) {
+	for ok := true; ok; ok = ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&16515542) != 0) {
 		{
 			p.SetState(31)
 			p.DisjQuery()
@@ -1172,7 +1174,7 @@ func (p *LuceneParser) Modifier() (localctx IModifierContext) {
 		p.SetState(63)
 		_la = p.GetTokenStream().LA(1)
 
-		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&104) != 0) {
+		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&208) != 0) {
 			p.GetErrorHandler().RecoverInline(p)
 		} else {
 			p.GetErrorHandler().ReportMatch(p)
@@ -1444,6 +1446,7 @@ type IFieldRangeExprContext interface {
 	OP_MORETHAN() antlr.TerminalNode
 	OP_LESSTHANEQ() antlr.TerminalNode
 	OP_MORETHANEQ() antlr.TerminalNode
+	OP_NOTEQUAL() antlr.TerminalNode
 	TERM() antlr.TerminalNode
 	QUOTED() antlr.TerminalNode
 	NUMBER() antlr.TerminalNode
@@ -1515,6 +1518,10 @@ func (s *FieldRangeExprContext) OP_LESSTHANEQ() antlr.TerminalNode {
 
 func (s *FieldRangeExprContext) OP_MORETHANEQ() antlr.TerminalNode {
 	return s.GetToken(LuceneParserOP_MORETHANEQ, 0)
+}
+
+func (s *FieldRangeExprContext) OP_NOTEQUAL() antlr.TerminalNode {
+	return s.GetToken(LuceneParserOP_NOTEQUAL, 0)
 }
 
 func (s *FieldRangeExprContext) TERM() antlr.TerminalNode {
@@ -1595,7 +1602,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 		p.SetState(81)
 		_la = p.GetTokenStream().LA(1)
 
-		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&30720) != 0) {
+		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&61448) != 0) {
 			p.GetErrorHandler().RecoverInline(p)
 		} else {
 			p.GetErrorHandler().ReportMatch(p)
@@ -1606,7 +1613,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 		p.SetState(82)
 		_la = p.GetTokenStream().LA(1)
 
-		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&917504) != 0) {
+		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&1835008) != 0) {
 			p.GetErrorHandler().RecoverInline(p)
 		} else {
 			p.GetErrorHandler().ReportMatch(p)
@@ -2636,7 +2643,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 
 		_la = p.GetTokenStream().LA(1)
 
-		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&7036874417766400) != 0) {
+		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&14073748835532800) != 0) {
 			var _ri = p.GetErrorHandler().RecoverInline(p)
 
 			localctx.(*TermRangeExprContext).left = _ri
@@ -2662,7 +2669,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 
 		_la = p.GetTokenStream().LA(1)
 
-		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&7036874417766400) != 0) {
+		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&14073748835532800) != 0) {
 			var _ri = p.GetErrorHandler().RecoverInline(p)
 
 			localctx.(*TermRangeExprContext).right = _ri

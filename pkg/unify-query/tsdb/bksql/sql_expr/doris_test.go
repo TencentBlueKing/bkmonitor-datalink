@@ -45,7 +45,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "trailing operators ignored",
 			input: "name:test AND OR",
-			want:  "`name` = 'test'",
+			want:  "`name` = 'test' AND `log` MATCH_PHRASE 'OR'",
 		},
 		{
 			name:  "empty input",

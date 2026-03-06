@@ -98,6 +98,9 @@ term
     | quotedTerm ( CARAT NUMBER)?
     | NUMBER ( CARAT NUMBER)?
     | TERM ( CARAT NUMBER)?
+    | AND ( CARAT NUMBER)?
+    | OR ( CARAT NUMBER)?
+    | NOT ( CARAT NUMBER)?
     ;
 
 // GroupingExpr ::= '(' Query ')' ('^' <NUMBER>)?

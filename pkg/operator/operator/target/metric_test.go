@@ -14,6 +14,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -202,4 +203,54 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
 		})
 	}
+}
+
+func TestMetricTargetPodUIDAffectsIdentity(t *testing.T) {
+	base := MetricTarget{
+		Meta: define.MonitorMeta{
+			Name:      "monitor-name",
+			Namespace: "blueking",
+			Index:     0,
+		},
+		Address:   "http://localhost:8080",
+		NodeName:  "node-127-0-1-1",
+		DataID:    12345,
+		Namespace: "blueking",
+		Period:    "10s",
+		Timeout:   "10s",
+		Path:      "/metrics",
+	}
+
+	withUIDA := base
+	withUIDA.PodUID = "pod-uid-a"
+	withUIDA.ConfigRevision = 1
+	ya, err := withUIDA.YamlBytes()
+	require.NoError(t, err)
+
+	withUIDB := base
+	withUIDB.PodUID = "pod-uid-b"
+	withUIDB.ConfigRevision = 2
+	yb, err := withUIDB.YamlBytes()
+	require.NoError(t, err)
+
+	assert.NotEqual(t, withUIDA.FileName(), withUIDB.FileName())
+
+	var cfgA map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(ya, &cfgA))
+	var cfgB map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(yb, &cfgB))
+
+	tasksA := cfgA["tasks"].([]interface{})
+	taskA := tasksA[0].(map[interface{}]interface{})
+	labelsA := taskA["labels"].([]interface{})[0].(map[interface{}]interface{})
+	_, hasPodUID := labelsA["pod_uid"]
+	_, hasRevision := labelsA["config_revision"]
+	assert.False(t, hasPodUID)
+	assert.False(t, hasRevision)
+	assert.Equal(t, "pod-uid-a", taskA["pod_uid"])
+	assert.Equal(t, 1, taskA["config_revision"])
+
+	tasksB := cfgB["tasks"].([]interface{})
+	taskB := tasksB[0].(map[interface{}]interface{})
+	assert.NotEqual(t, taskA["task_id"], taskB["task_id"])
 }

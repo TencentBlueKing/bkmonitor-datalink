@@ -11,6 +11,9 @@ package configs
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/elastic/beats/libbeat/common"
 
@@ -34,7 +37,9 @@ type ModulesConfig struct {
 type MetricBeatConfig struct {
 	BaseTaskParam `config:"_,inline"`
 
-	Module *common.Config `config:"module"`
+	Module         *common.Config `config:"module"`
+	PodUID         string         `config:"pod_uid"`
+	ConfigRevision uint64         `config:"config_revision"`
 	// 是否使用自定义指标格式上报
 	CustomReport bool `config:"custom_report"`
 
@@ -112,6 +117,60 @@ type MetricBeatMetaConfig struct {
 	Tasks []*MetricBeatConfig `config:"tasks"`
 }
 
+type metricTargetConfig struct {
+	Hosts       []string `config:"hosts"`
+	MetricsPath string   `config:"metrics_path"`
+}
+
+func (c *MetricBeatConfig) targetKey() (string, error) {
+	module := metricTargetConfig{}
+	if err := c.Module.Unpack(&module); err != nil {
+		return "", err
+	}
+
+	hosts := append([]string(nil), module.Hosts...)
+	sort.Strings(hosts)
+	return fmt.Sprintf("%s|%s", strings.Join(hosts, ","), module.MetricsPath), nil
+}
+
+func (c *MetricBeatConfig) configRevision() uint64 {
+	return c.ConfigRevision
+}
+
+func keepLatestMetricTasks(tasks []*MetricBeatConfig) []*MetricBeatConfig {
+	latest := make(map[string]*MetricBeatConfig)
+	ordered := make([]string, 0)
+	passthrough := make([]*MetricBeatConfig, 0)
+
+	for _, task := range tasks {
+		targetKey, err := task.targetKey()
+		if err != nil || targetKey == "|" {
+			passthrough = append(passthrough, task)
+			continue
+		}
+
+		curr, ok := latest[targetKey]
+		if !ok {
+			latest[targetKey] = task
+			ordered = append(ordered, targetKey)
+			continue
+		}
+
+		nextRevision := task.configRevision()
+		currRevision := curr.configRevision()
+		if nextRevision > currRevision || (nextRevision == currRevision && task.GetTaskID() > curr.GetTaskID()) {
+			latest[targetKey] = task
+		}
+	}
+
+	result := make([]*MetricBeatConfig, 0, len(passthrough)+len(ordered))
+	result = append(result, passthrough...)
+	for _, key := range ordered {
+		result = append(result, latest[key])
+	}
+	return result
+}
+
 // Clean :
 func (c *MetricBeatMetaConfig) Clean() error {
 	err := utils.CleanCompositeParamList(&c.BaseTaskMetaParam)
@@ -125,6 +184,7 @@ func (c *MetricBeatMetaConfig) Clean() error {
 		}
 
 	}
+	c.Tasks = keepLatestMetricTasks(c.Tasks)
 	return nil
 }
 

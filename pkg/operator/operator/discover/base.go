@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
@@ -94,6 +95,8 @@ type BaseDiscover struct {
 	childConfigMut    sync.RWMutex
 	childConfigGroups map[string]map[uint64]*ChildConfig // map[targetGroup.Source]map[hash]*ChildConfig
 }
+
+var childConfigRevision uint64
 
 func NewBaseDiscover(ctx context.Context, opts *CommonOptions) *BaseDiscover {
 	return &BaseDiscover{
@@ -429,6 +432,15 @@ func tgSourceNamespace(s string) string {
 	return "-"
 }
 
+func labelValue(lbls labels.Labels, key string) string {
+	for i := 0; i < len(lbls); i++ {
+		if lbls[i].Name == key {
+			return lbls[i].Value
+		}
+	}
+	return ""
+}
+
 func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	var count int
 	for k, v := range selector {
@@ -511,6 +523,8 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs labels.Labels
 	if err != nil {
 		return nil, errors.Wrap(err, "make metric target failed")
 	}
+	metricTarget.PodUID = labelValue(orig, "__meta_kubernetes_pod_uid")
+	metricTarget.ConfigRevision = atomic.AddUint64(&childConfigRevision, 1)
 
 	interval, _ := time.ParseDuration(metricTarget.Period)
 	d.mm.SetMonitorScrapeInterval(interval.Seconds())
@@ -532,6 +546,7 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs labels.Labels
 		Node:         metricTarget.NodeName,
 		FileName:     metricTarget.FileName(),
 		Address:      metricTarget.Address,
+		PodUID:       metricTarget.PodUID,
 		Data:         data,
 		Scheme:       metricTarget.Scheme,
 		Path:         metricTarget.Path,

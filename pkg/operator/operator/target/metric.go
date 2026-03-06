@@ -65,6 +65,8 @@ type MetricTarget struct {
 	RelabelIndex           string
 	NormalizeMetricName    bool
 	Address                string
+	PodUID                 string
+	ConfigRevision         uint64
 	NodeName               string
 	Scheme                 string
 	DataID                 int
@@ -217,6 +219,12 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	task = append(task, yaml.MapItem{Key: "period", Value: t.Period})
 	task = append(task, yaml.MapItem{Key: "timeout", Value: t.Timeout})
 	task = append(task, yaml.MapItem{Key: "custom_report", Value: true})
+	if t.PodUID != "" {
+		task = append(task, yaml.MapItem{Key: "pod_uid", Value: t.PodUID})
+	}
+	if t.ConfigRevision != 0 {
+		task = append(task, yaml.MapItem{Key: "config_revision", Value: t.ConfigRevision})
+	}
 
 	module := make(yaml.MapSlice, 0)
 	module = append(module, yaml.MapItem{Key: "module", Value: "prometheus"})
@@ -360,6 +368,7 @@ func (t *MetricTarget) generateTaskID() uint64 {
 		h.Write([]byte(label.Name))
 		h.Write([]byte(label.Value))
 	}
+	h.Write([]byte(t.PodUID))
 	h.Write([]byte(fmt.Sprintf("%d", t.Meta.Index)))
 	h.Write([]byte(t.Namespace))
 	h.Write([]byte(t.Meta.Name))

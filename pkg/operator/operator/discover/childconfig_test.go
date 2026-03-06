@@ -9,38 +9,25 @@
 
 package discover
 
-import (
-	"fmt"
-	"hash/fnv"
+import "testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
-)
+func TestChildConfigHashIncludesPodUID(t *testing.T) {
+	t.Parallel()
 
-// ChildConfig 子任务配置文件信息
-type ChildConfig struct {
-	Meta         define.MonitorMeta
-	Node         string
-	FileName     string
-	Address      string
-	PodUID       string
-	Data         []byte
-	Scheme       string
-	Path         string
-	Mask         string
-	TaskType     string
-	Namespace    string
-	AntiAffinity bool
-}
+	cfgA := ChildConfig{
+		Node:   "node-a",
+		PodUID: "pod-uid-a",
+		Data:   []byte("same-data"),
+		Mask:   "same-mask",
+	}
+	cfgB := ChildConfig{
+		Node:   "node-a",
+		PodUID: "pod-uid-b",
+		Data:   []byte("same-data"),
+		Mask:   "same-mask",
+	}
 
-func (c ChildConfig) String() string {
-	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s", c.Node, c.FileName, c.Address)
-}
-
-func (c ChildConfig) Hash() uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(c.Node))
-	h.Write([]byte(c.PodUID))
-	h.Write(c.Data)
-	h.Write([]byte(c.Mask))
-	return h.Sum64()
+	if cfgA.Hash() == cfgB.Hash() {
+		t.Fatalf("expected different hashes for different pod uids")
+	}
 }

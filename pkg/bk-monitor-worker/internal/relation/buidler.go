@@ -54,6 +54,9 @@ type ExpandFields map[string]string
 // ParentExpandsStore 存储父资源的扩展字段配置
 // 结构: targetResource -> parentResource -> parentID -> expandFields
 // 例如: set 配置了 host 的扩展字段，当 host 构建指标时可以从这里继承
+//
+// 注意：此结构非并发安全，设计为在 getCMDBMetrics 单次调用内作为局部变量使用，
+// 不应在多个 goroutine 间共享。如需并发使用，须加 sync.RWMutex 保护。
 type ParentExpandsStore struct {
 	// data: targetResource -> parentResource -> parentID -> expandFields
 	data map[string]map[string]map[string]ExpandFields
@@ -548,10 +551,11 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 			missingFields = append(missingFields, requiredField)
 		}
 
-		// 如果有缺失字段，记录错误并返回 nil
+		// 如果有缺失字段，记录警告并跳过该指标
+		// 所有缺失字段均为两端资源的主键，缺失主键无法构建有效关系指标
 		if len(missingFields) > 0 {
-			logger.Errorf("[relation_config] Missing required fields for %s: %v",
-				relationDef.GetRelationName(), missingFields)
+			logger.Warnf("[relation_config] Skipping metric %s: missing primary key fields %v (resource=%s, id=%s)",
+				relationDef.GetRelationName(), missingFields, info.Resource, info.ID)
 			return nil
 		}
 

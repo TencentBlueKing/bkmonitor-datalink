@@ -1015,10 +1015,6 @@ func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[stri
 		logger.Errorf("normalizeResultTableLabels: labels is not object, table_id [%s], labels [%s]", tableId, labelsStr)
 		return map[string]any{}
 	}
-
-	if labelsMap == nil {
-		return map[string]any{}
-	}
 	return labelsMap
 }
 

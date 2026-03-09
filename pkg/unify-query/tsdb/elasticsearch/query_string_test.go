@@ -183,6 +183,22 @@ func TestQsToDsl(t *testing.T) {
 			q:        `__ext.io_kubernetes_workload_name: "prod-roomjob-sts" AND level: "ERROR" AND NOT log:"err*" AND log:"error*"`,
 			expected: `{"bool":{"must":[{"term":{"__ext.io_kubernetes_workload_name":"prod-roomjob-sts"}},{"term":{"level":"ERROR"}},{"bool":{"must_not":{"match_phrase":{"log":{"query":"err*"}}}}},{"match_phrase":{"log":{"query":"error*"}}}]}}`,
 		},
+		{
+			q:        `_exists_:level`,
+			expected: `{"exists":{"field":"level"}}`,
+		},
+		{
+			q:        `NOT _exists_:level`,
+			expected: `{"bool":{"must_not":{"exists":{"field":"level"}}}}`,
+		},
+		{
+			q:        `_exists_: log OR _exists_: level`,
+			expected: `{"bool":{"should":[{"exists":{"field":"log"}},{"exists":{"field":"level"}}]}}`,
+		},
+		{
+			q:        `_exists_: event_detail`,
+			expected: `{"exists":{"field":"events.attributes.message.detail"}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

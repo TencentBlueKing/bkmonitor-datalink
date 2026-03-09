@@ -75,7 +75,7 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Mock apiservice.Bkdata.QueryMetricAndDimension to prevent external API calls
-	bkdataPatch := gomonkey.ApplyMethod(reflect.TypeOf(apiservice.Bkdata), "QueryMetricAndDimension", func(_ apiservice.BkdataService, bkTenantId string, storage string, rt string) ([]map[string]any, error) {
+	bkdataPatch := gomonkey.ApplyMethod(reflect.TypeOf(apiservice.Bkdata), "QueryMetricAndDimension", func(_ apiservice.BkdataService, bkTenantId string, storage string, rt string, metricGroupDimensions string) ([]map[string]any, error) {
 		return []map[string]any{
 			{
 				"field_name": "metric_a",

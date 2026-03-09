@@ -581,6 +581,10 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				result = cq
 			}
 		} else {
+			// text 字段倒排索引为小写，wildcard 不经分词器，需手动小写化 pattern
+			if fieldOption.IsAnalyzed {
+				value = strings.ToLower(value)
+			}
 			cq := elastic.NewWildcardQuery(field, value)
 			if cv.Boost != "" {
 				cq.Boost(cast.ToFloat64(cv.Boost))

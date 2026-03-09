@@ -509,14 +509,14 @@ func TestLuceneParser(t *testing.T) {
 		"test": {
 			q: `path: "/proz/logds/ds-5910974792526317*"`,
 
-			es:  `{"wildcard":{"path":{"value":"/proz/logds/ds-5910974792526317*"}}}`,
-			sql: "`path` LIKE '/proz/logds/ds-5910974792526317%'",
+			es:  `{"term":{"path":"/proz/logds/ds-5910974792526317*"}}`,
+			sql: "`path` = '/proz/logds/ds-5910974792526317*'",
 		},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
 
-			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
-			sql: "`log` MATCH_PHRASE '32221112' AND `path` LIKE '/data/home/user00/log/zonesvr%'",
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"32221112\""}},{"term":{"path":"/data/home/user00/log/zonesvr*"}}]}}`,
+			sql: "`log` MATCH_PHRASE '32221112' AND `path` = '/data/home/user00/log/zonesvr*'",
 		},
 		"test - 2": {
 			q:   `log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
@@ -530,8 +530,8 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"test - many tPHRASE ": {
 			q:   `loglevel: ("*TRACE*" OR "*DEBUG*" OR "*INFO*" OR "*WARN*" OR "*ERROR*") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			es:  `{"bool":{"must":[{"bool":{"should":[{"wildcard":{"loglevel":{"value":"*TRACE*"}}},{"wildcard":{"loglevel":{"value":"*DEBUG*"}}},{"wildcard":{"loglevel":{"value":"*INFO*"}}},{"wildcard":{"loglevel":{"value":"*WARN*"}}},{"wildcard":{"loglevel":{"value":"*ERROR*"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
-			sql: "(`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO%' OR `loglevel` LIKE '%WARN%' OR `loglevel` LIKE '%ERROR%') AND (`log` MATCH_PHRASE 'friendsvr' AND (`log` MATCH_PHRASE 'game_app' OR `log` MATCH_PHRASE 'testOr') AND `log` MATCH_PHRASE 'testAnd' OR `log` MATCH_PHRASE 'test111')",
+			es:  `{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"*TRACE*"}},{"term":{"loglevel":"*DEBUG*"}},{"term":{"loglevel":"*INFO*"}},{"term":{"loglevel":"*WARN*"}},{"term":{"loglevel":"*ERROR*"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
+			sql: "(`loglevel` = '*TRACE*' OR `loglevel` = '*DEBUG*' OR `loglevel` = '*INFO*' OR `loglevel` = '*WARN*' OR `loglevel` = '*ERROR*') AND (`log` MATCH_PHRASE 'friendsvr' AND (`log` MATCH_PHRASE 'game_app' OR `log` MATCH_PHRASE 'testOr') AND `log` MATCH_PHRASE 'testAnd' OR `log` MATCH_PHRASE 'test111')",
 		},
 		"test - Single Bracket And  ": {
 			q:   `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
@@ -1287,7 +1287,7 @@ func TestLuceneParser(t *testing.T) {
 		"edge_phrase_with_wildcard": {
 			q:   `"hello wor*"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello wor*\""}}`,
-			sql: "`log` LIKE 'hello wor%'",
+			sql: "`log` MATCH_PHRASE 'hello wor*'",
 		},
 		"edge_nested_parentheses": {
 			q:   `((a OR b) AND (c OR d))`,
@@ -1518,10 +1518,10 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}}}`,
 			sql: "`request_uri` != '/scm/api/proxy?serviceName=test'",
 		},
-		"quoted_star_keeps_wildcard": {
+		"quoted_star_as_literal": {
 			q:   `field:"value*with*stars"`,
-			es:  `{"wildcard":{"field":{"value":"value*with*stars"}}}`,
-			sql: "`field` LIKE 'value%with%stars'",
+			es:  `{"term":{"field":"value*with*stars"}}`,
+			sql: "`field` = 'value*with*stars'",
 		},
 		"quoted_question_mark_analyzed_field": {
 			q:   `log:"/path?query=1"`,

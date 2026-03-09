@@ -2391,22 +2391,30 @@ func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
 		{
 			GroupID:   60011,
 			TableID:   "1001_test.__default__",
+			ScopeID:   0,
 			FieldName: "field1",
+			IsActive:  true,
 		},
 		{
 			GroupID:   60011,
 			TableID:   "1001_test.__default__",
+			ScopeID:   0,
 			FieldName: "field2",
+			IsActive:  true,
 		},
 		{
 			GroupID:   60011,
 			TableID:   "1001_test.__default__",
+			ScopeID:   0,
 			FieldName: "field3",
+			IsActive:  true,
 		},
 		{
 			GroupID:   60011,
 			TableID:   "1001_test.__default__",
+			ScopeID:   0,
 			FieldName: "field4",
+			IsActive:  true,
 		},
 	}
 	for _, timeSeriesMetric := range timeSeriesMetrics {

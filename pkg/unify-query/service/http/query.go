@@ -160,7 +160,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		message strings.Builder
 		lock    sync.Mutex
 
-		allLabelMap = make(map[string][]function.LabelMapValue)
+		allLabelMap  = make(map[string][]function.LabelMapValue)
+		allFieldsMap = make(metadata.FieldsMap)
 
 		queryRef metadata.QueryReference
 	)
@@ -259,7 +260,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		var hlF *function.HighLightFactory
 		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
-			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
+			hlF = function.NewHighLightFactory(allLabelMap, allFieldsMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
 
 		for _, item := range data {
@@ -312,6 +313,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			labelMap := function.LabelMap(ctx, qry)
 			// 合并 labelMap
+			lock.Lock()
 			for k, lm := range labelMap {
 				if _, ok := allLabelMap[k]; !ok {
 					allLabelMap[k] = make([]function.LabelMapValue, 0)
@@ -319,6 +321,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				allLabelMap[k] = append(allLabelMap[k], lm...)
 			}
+			lock.Unlock()
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
 			if queryRef.Count() > 1 {
@@ -340,6 +343,19 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						"查询实例为空",
 					).Error(ctx, nil)
 					return
+				}
+
+				// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
+				if queryTs.HighLight != nil && queryTs.HighLight.Enable {
+					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, qry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
+						lock.Lock()
+						for k, v := range fieldsMap {
+							if _, ok := allFieldsMap[k]; !ok {
+								allFieldsMap[k] = v
+							}
+						}
+						lock.Unlock()
+					}
 				}
 
 				_, size, option, queryErr := instance.QueryRawData(ctx, qry, qb.Start, qb.End, dataCh)
@@ -649,6 +665,8 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	sortTablesByOrderBy(tables, queryTs.OrderBy)
+
 	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
@@ -656,6 +674,34 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	}
 
 	return resp, err
+}
+
+// sortTablesByOrderBy 按 order_by 对结果进行排序
+// Prometheus 引擎会按 labels 字典序排序，这里需要按用户指定的 order_by 重新排序
+// 支持多字段排序，按 orderBy 中的顺序依次比较
+func sortTablesByOrderBy(tables *promql.Tables, orderBy structured.OrderBy) {
+	if len(orderBy) == 0 {
+		return
+	}
+
+	orders := make([]promql.Order, 0, len(orderBy))
+	for _, ob := range orderBy {
+		if len(ob) == 0 {
+			continue
+		}
+
+		order := promql.Order{
+			Name: ob,
+			Asc:  true,
+		}
+		if strings.HasPrefix(ob, "-") {
+			order.Name = ob[1:]
+			order.Asc = false
+		}
+		orders = append(orders, order)
+	}
+
+	tables.SortByOrders(orders)
 }
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
@@ -836,6 +882,8 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
+
+	sortTablesByOrderBy(tables, query.OrderBy)
 
 	resp.IsPartial = isPartial
 	err = resp.Fill(tables)

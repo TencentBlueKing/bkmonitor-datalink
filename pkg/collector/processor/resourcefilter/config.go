@@ -10,11 +10,13 @@
 package resourcefilter
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Config struct {
@@ -47,6 +49,17 @@ func (c *Config) Clean() {
 		keys[i] = fields.TrimResourcePrefix(keys[i]).String()
 	}
 	c.FromCache.keys = keys
+
+	for i := 0; i < len(c.Replace); i++ {
+		if c.Replace[i].ExtractPattern != "" {
+			re, err := regexp.Compile(c.Replace[i].ExtractPattern)
+			if err != nil {
+				logger.Warnf("failed to compile regex pattern '%s': %v", c.Replace[i].ExtractPattern, err)
+			} else {
+				c.Replace[i].compiledRegex = re
+			}
+		}
+	}
 }
 
 type DropAction struct {
@@ -56,6 +69,11 @@ type DropAction struct {
 type ReplaceAction struct {
 	Source      string `config:"source" mapstructure:"source"`
 	Destination string `config:"destination" mapstructure:"destination"`
+	// 正则表达式提取配置
+	ExtractPattern string `config:"extract_pattern" mapstructure:"extract_pattern"` // 正则表达式模式
+
+	// 内部字段，不参与配置映射
+	compiledRegex *regexp.Regexp `config:"-" mapstructure:"-"`
 }
 
 type AddAction struct {

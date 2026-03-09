@@ -20,19 +20,41 @@ import (
 // TimeSeriesMetric: time series metric model
 // gen:qs
 type TimeSeriesMetric struct {
-	GroupID        uint      `json:"group_id" gorm:"unique"`
-	TableID        string    `json:"table_id" gorm:"size:255"`
-	FieldID        uint      `json:"field_id" gorm:"primary_key"`
-	FieldName      string    `json:"field_name" gorm:"size:255;unique"`
-	TagList        string    `json:"tag_list" sql:"type:text"`
-	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time"`
-	LastIndex      uint      `json:"last_index"`
-	Label          string    `json:"label" gorm:"size:255"`
-	IsActive       bool      `json:"is_active" gorm:"column:is_active;default:true"`
+	FieldID        uint      `gorm:"primaryKey;autoIncrement;column:field_id" json:"field_id"`
+	GroupID        uint      `gorm:"type:int;column:group_id;index;uniqueIndex:idx_group_scope_name" json:"group_id"`
+	ScopeID        uint      `gorm:"type:int;column:scope_id;index" json:"scope_id"`
+	TableID        string    `gorm:"type:varchar(255);column:table_id" json:"table_id"`
+	FieldScope     string    `gorm:"type:varchar(255);default:'default';column:field_scope;uniqueIndex:idx_group_scope_name" json:"field_scope"`
+	FieldName      string    `gorm:"type:varchar(255);not null;column:field_name;uniqueIndex:idx_group_scope_name" json:"field_name"`
+	TagList        string    `gorm:"type:json;column:tag_list;default:'[]'" json:"tag_list"`
+	FieldConfig    string    `gorm:"type:json;column:field_config;default:'{}'" json:"field_config"`
+	CreateTime     time.Time `gorm:"type:datetime;autoCreateTime;column:create_time" json:"create_time"`
+	LastModifyTime time.Time `gorm:"type:datetime;autoUpdateTime;column:last_modify_time" json:"last_modify_time"`
+	Label          string    `gorm:"type:varchar(255);column:label" json:"label"`
+	IsActive       bool      `gorm:"type:bool;default:true;column:is_active" json:"is_active"`
+	LastIndex      uint      `gorm:"type:int;column:last_index" json:"last_index"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间
 func (s *TimeSeriesMetric) BeforeCreate(tx *gorm.DB) error {
+	if s.CreateTime.IsZero() {
+		s.CreateTime = time.Now()
+	}
+	if s.LastModifyTime.IsZero() {
+		s.LastModifyTime = time.Now()
+	}
+	if s.TagList == "" {
+		s.TagList = "[]"
+	}
+	if s.FieldConfig == "" {
+		s.FieldConfig = "{}"
+	}
+
+	return nil
+}
+
+// BeforeUpdate 更新前的钩子函数
+func (s *TimeSeriesMetric) BeforeUpdate(tx *gorm.DB) error {
 	s.LastModifyTime = time.Now()
 	return nil
 }

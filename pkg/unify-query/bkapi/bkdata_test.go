@@ -10,6 +10,7 @@
 package bkapi
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -61,4 +62,52 @@ func TestGetDataUrl(t *testing.T) {
 			assert.Equal(t, c.url, url)
 		})
 	}
+}
+
+// TestBkDataDirectAddress 测试直接使用 bk_data.address 配置
+func TestBkDataDirectAddress(t *testing.T) {
+	mock.Init()
+
+	// 设置 bk_data.address 配置
+	originalAddress := viper.GetString(BkDataAddressConfigPath)
+	defer func() {
+		// 恢复原始配置
+		if originalAddress != "" {
+			viper.Set(BkDataAddressConfigPath, originalAddress)
+		} else {
+			viper.Set(BkDataAddressConfigPath, "")
+		}
+		// 重置单例，以便重新读取配置
+		onceBkDataAPI = sync.Once{}
+		defaultBkDataAPI = nil
+	}()
+
+	// 情景一：测试直接使用 bk_data.address 的场景
+	directAddress := "http://120.1.1.1:8000/v3/queryengine"
+	viper.Set(BkDataAddressConfigPath, directAddress)
+
+	// 重置单例以重新读取配置
+	onceBkDataAPI = sync.Once{}
+	defaultBkDataAPI = nil
+
+	bkDataAPI := GetBkDataAPI()
+
+	// 验证 QueryUrl 使用直接地址
+	url := bkDataAPI.QueryUrl("")
+	expected := "http://120.1.1.1:8000/v3/queryengine/query_sync/"
+	assert.Equal(t, expected, url, "应该直接使用 bk_data.address，不再通过 bk_api.address 组装")
+
+	// 情景二：测试不使用 bk_data.address 的场景
+	viper.Set(BkDataAddressConfigPath, "")
+
+	// 重置单例以重新读取配置
+	onceBkDataAPI = sync.Once{}
+	defaultBkDataAPI = nil
+
+	bkDataAPI = GetBkDataAPI()
+
+	// 验证 QueryUrl 使用 bk_api.address + bk_data.uri_path 组装
+	url = bkDataAPI.QueryUrl("")
+	expected = "http://127.0.0.1:12001/bk_data/query_sync/"
+	assert.Equal(t, expected, url, "应该使用 bk_api.address + bk_data.uri_path 组装")
 }

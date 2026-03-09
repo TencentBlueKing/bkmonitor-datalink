@@ -12,10 +12,12 @@ package promql
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
 	prom "github.com/prometheus/prometheus/promql"
+	"github.com/spf13/cast"
 )
 
 // Table :
@@ -33,7 +35,7 @@ type Table struct {
 func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(string) string) *Table {
 	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
-	t.Headers = []string{"_time", "_value"}
+	t.Headers = []string{ResultColumnTime, ResultColumnValue}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
@@ -66,7 +68,7 @@ func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(strin
 func NewTable(index int, series prom.Series, queryRawFormat func(string) string) *Table {
 	t := new(Table)
 	// header对应的就是列名,promql的数据列是固定的
-	t.Headers = []string{"_time", "_value"}
+	t.Headers = []string{ResultColumnTime, ResultColumnValue}
 	t.Types = []string{"float", "float"}
 
 	// 数据类型通过type提供，所以这里直接全转换为string
@@ -146,4 +148,91 @@ func (t *Tables) Add(table *Table) {
 func (t *Tables) Clear() error {
 	t.Tables = make([]*Table, 0)
 	return nil
+}
+
+// SortByValue 按照 _value 对 Tables 进行排序
+// asc: true 为升序，false 为降序
+func (t *Tables) SortByValue(asc bool) {
+	if len(t.Tables) == 0 {
+		return
+	}
+
+	sort.SliceStable(t.Tables, func(i, j int) bool {
+		vi := t.Tables[i].getLastValue()
+		vj := t.Tables[j].getLastValue()
+		if asc {
+			return vi < vj
+		}
+		return vi > vj
+	})
+}
+
+// getLastValue 获取 Table 中最后一个数据点的 _value 值
+// 用于排序比较
+func (t *Table) getLastValue() float64 {
+	if len(t.Data) == 0 {
+		return 0
+	}
+	// Data 的格式是 [[_time, _value], ...]
+	lastRow := t.Data[len(t.Data)-1]
+	if len(lastRow) < 2 {
+		return 0
+	}
+	// _value 在第二个位置
+	return cast.ToFloat64(lastRow[1])
+}
+
+// Order 排序字段定义
+type Order struct {
+	Name string // 字段名，支持 _value 或 GroupKeys 中的字段
+	Asc  bool   // 是否升序
+}
+
+// SortByOrders 按多字段对 Tables 进行排序
+// 支持按 _value 或任意 label 字段排序，多字段时按优先级依次比较
+func (t *Tables) SortByOrders(orders []Order) {
+	if len(t.Tables) == 0 || len(orders) == 0 {
+		return
+	}
+
+	sort.SliceStable(t.Tables, func(i, j int) bool {
+		for _, order := range orders {
+			cmp := t.Tables[i].compareBy(t.Tables[j], order.Name)
+			if cmp == 0 {
+				continue
+			}
+			if order.Asc {
+				return cmp < 0
+			}
+			return cmp > 0
+		}
+		return false
+	})
+}
+
+func (t *Table) compareBy(other *Table, field string) int {
+	if field == ResultColumnValue {
+		vi := t.getLastValue()
+		vj := other.getLastValue()
+		if vi < vj {
+			return -1
+		}
+		if vi > vj {
+			return 1
+		}
+		return 0
+	}
+
+	vi := t.getGroupValue(field)
+	vj := other.getGroupValue(field)
+	return strings.Compare(vi, vj)
+}
+
+func (t *Table) getGroupValue(key string) string {
+	for i, k := range t.GroupKeys {
+		if k == key && i < len(t.GroupValues) {
+			return t.GroupValues[i]
+		}
+	}
+	return ""
 }

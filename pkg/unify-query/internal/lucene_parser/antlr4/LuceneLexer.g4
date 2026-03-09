@@ -42,6 +42,9 @@ AND: [Aa][Nn][Dd] | '&&';
 // <OR:            ("OR" | "||") >
 OR: [Oo][Rr] | '||';
 
+// <OP_NOTEQUAL:   "!=" >
+OP_NOTEQUAL: '!=';
+
 // <NOT:           ("NOT" | "!") >
 NOT: [Nn][Oo][Tt] | '!';
 

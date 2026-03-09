@@ -431,6 +431,10 @@ func (n *ConditionNode) String() string {
 				op = "!="
 			}
 		}
+	case "!=":
+		if fieldOption.IsAnalyzed {
+			op = "NOT MATCH_PHRASE"
+		}
 	case "LIKE":
 		if n.reverseOp {
 			op = "NOT LIKE"
@@ -442,9 +446,15 @@ func (n *ConditionNode) String() string {
 }
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
-	var result elastic.Query
+	var (
+		result   elastic.Query
+		notEqual bool
+	)
 	defer func() {
-		if n.reverseOp {
+		if result == nil {
+			return
+		}
+		if n.reverseOp || notEqual {
 			allMustNot = append(allMustNot, result)
 		} else {
 			allMust = append(allMust, result)
@@ -607,6 +617,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
 		case "<=":
 			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+		case "!=":
+			notEqual = true
+			if fieldOption.IsAnalyzed {
+				result = elastic.NewMatchPhraseQuery(field, value)
+			} else {
+				result = elastic.NewTermQuery(field, value)
+			}
 		default:
 			if n.fuzziness != "" {
 				result = elastic.NewFuzzyQuery(field, value).Fuzziness(n.fuzziness)
@@ -639,7 +656,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	switch ctx.GetText() {
-	case ">", "<", ">=", "<=":
+	case ">", "<", ">=", "<=", "!=":
 		n.op = n.MakeInitNode(&StringNode{
 			Value: ctx.GetText(),
 		})

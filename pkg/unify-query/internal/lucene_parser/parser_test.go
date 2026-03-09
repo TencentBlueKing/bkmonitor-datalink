@@ -564,13 +564,26 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sleep"}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"46"}}]}}`,
 			sql: "`log` NOT MATCH_PHRASE 'sleep' AND `log` MATCH_PHRASE '46'",
 		},
-		// 并不支持 _exists_ 语法糖,不存在于词法文件中
-		//"field_query_exists": {
-		//	q:   `_exists_:author`,
-		//	n:   &ConditionNode{field: &StringNode{Value: "_exists_"}, op: OpMatch, value: &StringNode{Value: "author"}},
-		//	es:  `{"exists":{"field":"author"}}`,
-		//	sql: "`author` IS NOT NULL",
-		//},
+		"field_query_exists": {
+			q:   `_exists_:author`,
+			es:  `{"exists":{"field":"author"}}`,
+			sql: "`author` IS NOT NULL",
+		},
+		"field_query_exists_not": {
+			q:   `NOT _exists_:author`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
+		"field_query_exists_or": {
+			q:   `_exists_: Dsa OR _exists_: Allocate`,
+			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
+			sql: "`Dsa` IS NOT NULL OR `Allocate` IS NOT NULL",
+		},
+		"field_query_exists_alias": {
+			q:   `_exists_: container_name`,
+			es:  `{"exists":{"field":"__ext.container_name"}}`,
+			sql: "CAST(__ext['container_name'] AS STRING) IS NOT NULL",
+		},
 		"basic_phrase_query": {
 			q:   `"hello world"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello world\""}}`,
@@ -1371,6 +1384,16 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"range":{"age":{"from":18,"include_lower":true,"include_upper":true,"to":65}}},{"term":{"status":"active"}}]}}`,
 			sql: "`age` >= '18' AND `age` <= '65' AND `status` = 'active'",
 		},
+		"range_with_multiple_not": {
+			q:   `status:[500 TO 600] NOT status:501 AND NOT sIdeToken AND NOT "dify-api"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"501"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sIdeToken"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"dify-api\""}}}},{"range":{"status":{"from":500,"include_lower":true,"include_upper":true,"to":600}}}]}}`,
+			sql: "`status` >= '500' AND `status` <= '600' AND `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501' OR `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501'",
+		},
+		"field_value_with_multiple_not": {
+			q:   `log:error NOT status:active NOT "ECONNRESET" NOT "endsWith"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"active"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"ECONNRESET\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"endsWith\""}}}},{"match_phrase":{"log":{"query":"error"}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith' OR `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith'",
+		},
 
 		// =================================================================
 		// Test Suite: boost_query_variations - 权重查询变体测试
@@ -1469,6 +1492,30 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"wildcard":{"a":{"value":"b+?c"}}}`,
 			sql: "`a` LIKE 'b+_c'",
 		},
+
+		// =================================================================
+		// Test Suite: quoted_special_chars - 引号内特殊字符不应被识别为通配符
+		// =================================================================
+		"quoted_question_mark_not_wildcard": {
+			q:   `request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
+			sql: "`request_uri` = '/scm/api/proxy?serviceName=test'",
+		},
+		"negation_quoted_question_mark": {
+			q:   `!request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}}}`,
+			sql: "`request_uri` != '/scm/api/proxy?serviceName=test'",
+		},
+		"quoted_star_keeps_wildcard": {
+			q:   `field:"value*with*stars"`,
+			es:  `{"wildcard":{"field":{"value":"value*with*stars"}}}`,
+			sql: "`field` LIKE 'value%with%stars'",
+		},
+		"quoted_question_mark_analyzed_field": {
+			q:   `log:"/path?query=1"`,
+			es:  `{"match_phrase":{"log":{"query":"/path?query=1"}}}`,
+			sql: "`log` MATCH_PHRASE '/path?query=1'",
+		},
 	}
 
 	mock.Init()
@@ -1484,6 +1531,10 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"message": {
 			IsAnalyzed: true,
+		},
+		"__ext.container_name": {
+			AliasName: "container_name",
+			FieldType: "text",
 		},
 	}
 	aliasMap := make(map[string]string)

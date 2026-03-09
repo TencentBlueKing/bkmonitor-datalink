@@ -935,7 +935,8 @@ func TestOffsetAndLimitMove(t *testing.T) {
 			res: []string{
 				"4,5,6",
 				"7,8,9",
-				"10",
+				"10,11,12",
+				"13",
 			},
 		},
 		{
@@ -971,7 +972,7 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				limit:        10,
 			},
 			res: []string{
-				"3,4,5,6,7,8,9,10,11,12",
+				"3,4,5,6,7,8,9,10",
 			},
 		},
 		{
@@ -983,7 +984,7 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				limit:        10,
 			},
 			res: []string{
-				"7,8,9,10,11,12,13,14,15,16",
+				"7,8,9,10,11,12,13,14",
 			},
 		},
 		{
@@ -998,10 +999,23 @@ func TestOffsetAndLimitMove(t *testing.T) {
 				"1,2,3,4,5,6,7,8,9,10",
 			},
 		},
+		{
+			name: "test-8",
+			n: LimitNode{
+				ParentOffset: 0,
+				ParentLimit:  0,
+				offset:       10,
+				limit:        10,
+			},
+			res: []string{
+				"11,12,13,14,15,16,17,18,19,20",
+			},
+		},
 	}
 
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
+			fmt.Printf("name: %s\n", c.name)
 			nn := c.n
 			idx := 0
 			total := 0
@@ -1020,15 +1034,241 @@ func TestOffsetAndLimitMove(t *testing.T) {
 					offset = "0"
 				}
 				total += cast.ToInt(limit)
-
-				assert.Equal(t, c.res[idx-1], strings.Join(s, ","))
-
+				resIdx := idx - 1
+				currentPage := c.res[resIdx]
+				assert.Equal(t, currentPage, strings.Join(s, ","))
+				currentPageItems := strings.Split(currentPage, ",")
+				currentPageLength := len(currentPageItems)
+				var last string
+				if currentPageLength > 0 {
+					last = currentPageItems[currentPageLength-1]
+				}
 				fmt.Printf("page: %d limit %s,%s result: %s\n", idx, offset, limit, strings.Join(s, ","))
 				nn.ParentOffset += cast.ToInt(limit)
-				if idx > 10 {
+				if last == "10" {
 					break
 				}
 			}
+		})
+	}
+}
+
+func TestOffsetGreaterThanOrEqualLimit(t *testing.T) {
+	mock.Init()
+	ctx := context.Background()
+
+	testCases := []struct {
+		name     string
+		q        string
+		expected string
+		limit    int
+		offset   int
+	}{
+		{
+			name:     "OFFSET等于LIMIT-无外层分页",
+			q:        `SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 100`,
+			expected: `SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 100`,
+		},
+		{
+			name:     "OFFSET大于LIMIT-无外层分页",
+			q:        `SELECT * ORDER BY time DESC LIMIT 50 OFFSET 100`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 50 OFFSET 100`,
+		},
+		{
+			name:     "正常分页-OFFSET小于LIMIT",
+			q:        `SELECT * ORDER BY time DESC LIMIT 100 OFFSET 50`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 100 OFFSET 50`,
+		},
+		{
+			name:     "无OFFSET的正常查询",
+			q:        `SELECT * ORDER BY time DESC LIMIT 100`,
+			expected: `SELECT * ORDER BY time DESC LIMIT 100`,
+		},
+		{
+			name:   "外层分页-OFFSET超出范围",
+			q:      `SELECT * FROM t LIMIT 10`,
+			limit:  50,
+			offset: 500, // 外层 offset 超过内层 limit
+			// 应该返回 LIMIT 0，因为外层分页超出范围
+			expected: `SELECT * FROM t LIMIT 0`,
+		},
+		{
+			name:   "外层分页-正常范围",
+			q:      `SELECT * FROM t LIMIT 100 OFFSET 10`,
+			limit:  50,
+			offset: 5,
+			// 应该返回 LIMIT 50 OFFSET 15 (10+5)
+			expected: `SELECT * FROM t LIMIT 50 OFFSET 15`,
+		},
+		// case-1: SQL 无 limit 和 offset 的完整翻页流程
+		{
+			name:     "完整翻页-SQL无limit无offset-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   30,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 30`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   60,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 60`,
+		},
+		{
+			name:     "完整翻页-SQL无limit无offset-第4页",
+			q:        `SELECT * FROM t ORDER BY time DESC`,
+			limit:    30,
+			offset:   90,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 30 OFFSET 90`,
+		},
+		// case-2: SQL 有 limit=50 无 offset 的完整翻页流程
+		{
+			name:     "完整翻页-SQL有limit无offset-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 20`,
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   20,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 20 OFFSET 20`,
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   40,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 10 OFFSET 40`, // 50%20=10
+		},
+		{
+			name:     "完整翻页-SQL有limit无offset-溢出",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50`,
+			limit:    20,
+			offset:   60, // ParentOffset >= v.limit
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 0`,
+		},
+		// case-3: SQL 有 offset=10 和 limit=50 的完整翻页流程
+		{
+			name:     "完整翻页-SQL有offset和limit-第1页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   0,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 10`,
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第2页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   15,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 25`,
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第3页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   30,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 15 OFFSET 40`, // 剩余可取: 50-30=20, min(15,20)=15
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-第4页",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   45,
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 5 OFFSET 55`, // 剩余可取: 50-45=5, min(15,5)=5
+		},
+		{
+			name:     "完整翻页-SQL有offset和limit-溢出",
+			q:        `SELECT * FROM t ORDER BY time DESC LIMIT 50 OFFSET 10`,
+			limit:    15,
+			offset:   60, // ParentOffset >= v.limit
+			expected: `SELECT * FROM t ORDER BY time DESC LIMIT 0`,
+		},
+	}
+
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			opt := &Option{
+				Limit:  c.limit,
+				Offset: c.offset,
+			}
+			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)
+			assert.Nil(t, err)
+			assert.Equal(t, c.expected, sql)
+		})
+	}
+}
+
+func TestLimitNodeGetOffsetAndLimit(t *testing.T) {
+	testCases := []struct {
+		name           string
+		node           LimitNode
+		expectedOffset string
+		expectedLimit  string
+	}{
+		{
+			name: "SQL带OFFSET>=LIMIT且无外层分页-应保持原样",
+			node: LimitNode{
+				offset:       100,
+				limit:        100,
+				ParentOffset: 0,
+				ParentLimit:  0,
+			},
+			expectedOffset: "100",
+			expectedLimit:  "100",
+		},
+		{
+			name: "SQL带OFFSET>LIMIT且无外层分页-应保持原样",
+			node: LimitNode{
+				offset:       200,
+				limit:        100,
+				ParentOffset: 0,
+				ParentLimit:  0,
+			},
+			expectedOffset: "200",
+			expectedLimit:  "100",
+		},
+		{
+			name: "有外层分页且超出范围-应返回LIMIT0",
+			node: LimitNode{
+				offset:       0,
+				limit:        10,
+				ParentOffset: 500,
+				ParentLimit:  50,
+			},
+			expectedOffset: "",
+			expectedLimit:  "0",
+		},
+		{
+			name: "有外层分页但在范围内-正常返回",
+			node: LimitNode{
+				offset:       10,
+				limit:        100,
+				ParentOffset: 5,
+				ParentLimit:  50,
+			},
+			expectedOffset: "15",
+			expectedLimit:  "50",
+		},
+	}
+
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			offset, limit := c.node.getOffsetAndLimit()
+			assert.Equal(t, c.expectedOffset, offset)
+			assert.Equal(t, c.expectedLimit, limit)
 		})
 	}
 }

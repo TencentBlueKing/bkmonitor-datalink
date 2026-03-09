@@ -24,9 +24,10 @@ func Test_handleESError(t *testing.T) {
 	tests := []struct {
 		name string
 
-		errMsg string
-		err    error
-		esAddr string
+		errMsg        string
+		err           error
+		esAddr        string
+		shardFailures []*elastic.ShardOperationFailedException
 
 		expectedErrMsg string
 	}{
@@ -78,29 +79,69 @@ func Test_handleESError(t *testing.T) {
 			errMsg:         `{"error":{"reason":"结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确","type":"结果表不存在","root_cause":[{"reason":"结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确","type":"结果表不存在"}]},"status":1532001}`,
 			expectedErrMsg: `es 查询失败: Elasticsearch error: [结果表不存在] 结果表 2_bklog_839_clustered_test 不存在，请确认结果表名是否正确`,
 		},
+		// shard failures 附加到 error 的测试用例
+		{
+			name:   "should append shard failures info to error message",
+			errMsg: `{"error":{"type":"search_phase_execution_exception","reason":"all shards failed"},"status":500}`,
+			shardFailures: []*elastic.ShardOperationFailedException{
+				{
+					Shard: 0,
+					Index: "v2_space_4220437_bklog_bcs_k8s_41672_ai_log_std_20260109_0",
+					Reason: map[string]any{
+						"type":   "exception",
+						"reason": "Trying to create too many scroll contexts. Must be less than or equal to: [500]. This limit can be set by changing the [search.max_open_scroll_context] setting.",
+					},
+				},
+			},
+			expectedErrMsg: "es 查询失败: Elasticsearch error: [search_phase_execution_exception] all shards failed; shard failures: [exception] Trying to create too many scroll contexts. Must be less than or equal to: [500]. This limit can be set by changing the [search.max_open_scroll_context] setting. (indices: v2_space_4220437_bklog_bcs_k8s_41672_ai_log_std_20260109_0)",
+		},
+		// 只有 shard failures 没有 error 的情况
+		{
+			name: "should return error when only shard failures exist",
+			shardFailures: []*elastic.ShardOperationFailedException{
+				{
+					Shard: 0,
+					Index: "test_index",
+					Reason: map[string]any{
+						"type":   "exception",
+						"reason": "shard failure only",
+					},
+				},
+			},
+			expectedErrMsg: "es 查询失败: Elasticsearch error: shard failures: [exception] shard failure only (indices: test_index)",
+		},
+		{
+			name: "should not panic when error is typed nil *elastic.Error",
+			err: func() error {
+				var esErr *elastic.Error
+				return esErr
+			}(),
+			expectedErrMsg: "es 查询失败: Elasticsearch error",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var callErr error
+
 			if tt.errMsg != "" {
 				var esErr elastic.Error
-				var thirdPartyErr error
 				err := json.Unmarshal([]byte(tt.errMsg), &esErr)
 				if err != nil {
-					thirdPartyErr = errors.New(tt.errMsg)
-					resultErr := handleESError(t.Context(), tt.esAddr, thirdPartyErr)
-					if resultErr != nil {
-						if tt.expectedErrMsg != "" {
-							assert.EqualError(t, resultErr, tt.expectedErrMsg)
-						}
-					}
+					callErr = errors.New(tt.errMsg)
 				} else {
-					resultErr := handleESError(t.Context(), tt.esAddr, &esErr)
-					if resultErr != nil {
-						if tt.expectedErrMsg != "" {
-							assert.EqualError(t, resultErr, tt.expectedErrMsg)
-						}
-					}
+					callErr = &esErr
 				}
+			} else {
+				callErr = tt.err
+			}
+
+			resultErr := handleESError(t.Context(), tt.esAddr, callErr, tt.shardFailures)
+			if tt.expectedErrMsg == "" {
+				assert.NoError(t, resultErr)
+				return
+			}
+			if assert.Error(t, resultErr) {
+				assert.EqualError(t, resultErr, tt.expectedErrMsg)
 			}
 		})
 	}

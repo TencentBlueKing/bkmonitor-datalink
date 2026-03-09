@@ -41,6 +41,10 @@ const (
 	StaticMetricValue = "metric_value"
 
 	StaticField = "value"
+
+	// 结果集列名常量
+	ResultColumnTime  = "_time"
+	ResultColumnValue = "_value"
 )
 
 // promql内置的几种运算对应的字符串

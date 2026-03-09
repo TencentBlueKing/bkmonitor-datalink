@@ -37,7 +37,8 @@ var (
 type BkDataAPI struct {
 	bkAPI *BkAPI
 
-	uriPath string
+	baseAddress string // 如果配置了 bk_data.address，则直接使用此地址，不再通过 bk_api.address 组装
+	uriPath     string
 
 	authConfig map[string]string
 
@@ -60,8 +61,9 @@ func GetBkDataAPI() *BkDataAPI {
 
 		bkAPI := GetBkAPI()
 		defaultBkDataAPI = &BkDataAPI{
-			bkAPI:   bkAPI,
-			uriPath: viper.GetString(BkDataUriPathConfigPath),
+			bkAPI:       bkAPI,
+			baseAddress: viper.GetString(BkDataAddressConfigPath), // 如果配置了则直接使用，否则使用原来的组装方式
+			uriPath:     viper.GetString(BkDataUriPathConfigPath),
 			authConfig: map[string]string{
 				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
 				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
@@ -89,7 +91,13 @@ func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
 }
 
 func (i *BkDataAPI) url(path string) string {
-	url := i.bkAPI.Url(i.uriPath)
+	var url string
+	// 如果配置了 baseAddress，则直接使用，否则使用原来的组装方式
+	if i.baseAddress != "" {
+		url = i.baseAddress
+	} else {
+		url = i.bkAPI.Url(i.uriPath)
+	}
 	if path != "" {
 		url = fmt.Sprintf("%s/%s/", url, path)
 	}

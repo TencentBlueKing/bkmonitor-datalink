@@ -320,8 +320,6 @@ func TestWriteContainerInfoRelation(t *testing.T) {
 	objectsController.WriteAppVersionWithContainerRelation(buf)
 
 	expected := []string{
-		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",app_name="test-image",version="1.0.0",environment="paasv3",region="guangzhou"} 1`,
-		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",app_name="test-image",version="2.0.0",environment="paasv3",region="guangzhou"} 1`,
 		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",app_name="test-image",version="1.0.0"} 1`,
 		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",app_name="test-image",version="2.0.0"} 1`,
 	}

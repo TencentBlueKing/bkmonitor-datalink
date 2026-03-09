@@ -1595,6 +1595,98 @@ func queryToJSON(query elastic.Query) (string, error) {
 	return string(jsonBytes), nil
 }
 
+func TestConvertSingleQuotes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"basic", `'hello world'`, `"hello world"`},
+		{"internal_double_quote_escaped", `'abc"def'`, `"abc\"def"`},
+		{"escaped_single_quote_unescaped", `'abc\'def'`, `"abc'def"`},
+		{"double_quote_preserved", `"already double"`, `"already double"`},
+		{"field_value", `field: 'value'`, `field: "value"`},
+		{"mixed_quotes", `log: 'error' AND msg: "ok"`, `log: "error" AND msg: "ok"`},
+		{"no_quotes", `plain query`, `plain query`},
+		{"empty_single_quote", `''`, `""`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertSingleQuotes(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSingleQuoteAdaptation(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldsMap := metadata.FieldsMap{
+		"log": {
+			IsAnalyzed: true,
+			FieldType:  "text",
+		},
+		"message": {
+			IsAnalyzed: true,
+		},
+	}
+
+	testCases := map[string]struct {
+		input string
+		sql   string
+		es    string
+	}{
+		"simple_single_quote": {
+			input: `log: 'hello world'`,
+			sql:   "`log` MATCH_PHRASE 'hello world'",
+			es:    `{"match_phrase":{"log":{"query":"hello world"}}}`,
+		},
+		"single_quote_with_and": {
+			input: `log: 'error and warning'`,
+			sql:   "`log` MATCH_PHRASE 'error and warning'",
+			es:    `{"match_phrase":{"log":{"query":"error and warning"}}}`,
+		},
+		"single_quote_field_value": {
+			input: `status: 'active'`,
+			sql:   "`status` = 'active'",
+			es:    `{"term":{"status":"active"}}`,
+		},
+		"single_quote_with_escaped_single": {
+			input: `log: 'it\'s working'`,
+			sql:   "`log` MATCH_PHRASE 'it's working'",
+			es:    `{"match_phrase":{"log":{"query":"it's working"}}}`,
+		},
+		"mixed_quotes": {
+			input: `log: 'error' AND message: "warning"`,
+			sql:   "`log` MATCH_PHRASE 'error' AND `message` MATCH_PHRASE 'warning'",
+			es:    `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"match_phrase":{"message":{"query":"warning"}}}]}}`,
+		},
+		"double_quote_preserved": {
+			input: `log: "hello world"`,
+			sql:   "`log` MATCH_PHRASE 'hello world'",
+			es:    `{"match_phrase":{"log":{"query":"hello world"}}}`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			node := ParseLuceneWithVisitor(ctx, tc.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			assert.Nil(t, node.Error(), "should parse without error for input: %s", tc.input)
+			assert.Equal(t, tc.sql, node.String(), "SQL mismatch for input: %s", tc.input)
+
+			node = ParseLuceneWithVisitor(ctx, tc.input, Option{FieldsMap: fieldsMap})
+			dsl := MergeQuery(node.DSL())
+			dslJSON, _ := queryToJSON(dsl)
+			assert.Equal(t, tc.es, dslJSON, "ES DSL mismatch for input: %s", tc.input)
+		})
+	}
+}
+
 func TestKeywordAsFieldValue(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())

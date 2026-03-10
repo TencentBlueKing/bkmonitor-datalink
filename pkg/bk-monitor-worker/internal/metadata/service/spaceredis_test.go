@@ -1739,7 +1739,10 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	// 准备测试数据
 	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
 	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
+	tableID3 := "1001_bkmonitor_time_series_50012.__default__"
 	dataLabel1 := "a" // 初始化为字符串
+	labels1 := json.RawMessage(`{"env":"prod","region":"sh"}`)
+	labels3 := json.RawMessage(`["unexpected"]`)
 
 	// 插入 ResultTable 数据
 	resultTables := []resulttable.ResultTable{
@@ -1748,6 +1751,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 			BkBizId:      1001,
 			BkBizIdAlias: "appid",
 			DataLabel:    &dataLabel1, // 使用字符串指针
+			Labels:       labels1,
 		},
 		{
 			TableId:      tableID2,
@@ -1755,23 +1759,18 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 			BkBizIdAlias: "",
 			DataLabel:    nil,
 		},
+		{
+			TableId:      tableID3,
+			BkBizId:      1001,
+			BkBizIdAlias: "",
+			DataLabel:    nil,
+			Labels:       labels3,
+		},
 	}
 	for _, rt := range resultTables {
 		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
 		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
 	}
-
-	//// 插入 ResultTable 数据
-	//resultTable := resulttable.ResultTable{
-	//	TableId:      tableID1,
-	//	BkBizId:      1001,
-	//	BkBizIdAlias: "appid",
-	//	DataLabel:    &dataLabel1, // 使用字符串指针
-	//}
-	//
-	//// 确保数据不存在后重新插入
-	//db.Delete(&resulttable.ResultTable{}, "table_id = ?", resultTable.TableId)
-	//assert.NoError(t, db.Create(&resultTable).Error, "Failed to insert ResultTable")
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
@@ -1796,6 +1795,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"options":                 map[string]any{"option1": "value1"},
 		"storage_cluster_records": []any{},
 		"data_label":              "a",
+		"labels":                  map[string]any{"env": "prod", "region": "sh"},
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
@@ -1825,6 +1825,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"options":                 map[string]any{"option1": "value1"},
 		"storage_cluster_records": []any{},
 		"data_label":              nil,
+		"labels":                  map[string]any{},
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
@@ -1840,6 +1841,151 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, resTid, tableID2, "TableID should match")
 
 	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
+
+	resTid3, detailStr3, err := spacePusher.composeEsTableIdDetail(
+		tableID3,
+		map[string]any{"option1": "value1"},
+		1,
+		"sourceType1",
+		"indexSet1",
+		nil,
+	)
+	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
+	assert.Equal(t, tableID3, resTid3, "TableID should match")
+
+	var actualDetail3 map[string]any
+	err = json.Unmarshal([]byte(detailStr3), &actualDetail3)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, map[string]any{}, actualDetail3["labels"], "non-object labels should fallback to empty map")
+}
+
+func TestNormalizeResultTableLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels json.RawMessage
+		want   map[string]any
+	}{
+		{
+			name:   "object",
+			labels: json.RawMessage(`{"env":"prod"}`),
+			want:   map[string]any{"env": "prod"},
+		},
+		{
+			name:   "null",
+			labels: json.RawMessage(`null`),
+			want:   map[string]any{},
+		},
+		{
+			name:   "empty",
+			labels: nil,
+			want:   map[string]any{},
+		},
+		{
+			name:   "string",
+			labels: json.RawMessage(`"invalid"`),
+			want:   map[string]any{},
+		},
+		{
+			name:   "invalid json",
+			labels: json.RawMessage(`{"env":`),
+			want:   map[string]any{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeResultTableLabels("test.table", tt.labels))
+		})
+	}
+}
+
+func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{})
+
+	tableID1 := "bklog.test_rt_doris_labels"
+	tableID2 := "bklog.test_rt_doris_invalid_labels"
+	dataLabel := "test_label"
+	labels1 := json.RawMessage(`{"env":"prod"}`)
+	labels2 := json.RawMessage(`["unexpected"]`)
+
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:   tableID1,
+			DataLabel: &dataLabel,
+			Labels:    labels1,
+		},
+		{
+			TableId: tableID2,
+			Labels:  labels2,
+		},
+	}
+	for _, rt := range resultTables {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	spacePusher := SpacePusher{}
+
+	_, detailStr, err := spacePusher.composeDorisTableIdDetail(tableID1, "bklog_test_rt_bkbase", nil)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail map[string]any
+	err = json.Unmarshal([]byte(detailStr), &actualDetail)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, map[string]any{"env": "prod"}, actualDetail["labels"], "labels should be object")
+	assert.Equal(t, "test_label", actualDetail["data_label"], "data_label should be preserved")
+
+	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(tableID2, "bklog_test_rt_bkbase", nil)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail2 map[string]any
+	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, map[string]any{}, actualDetail2["labels"], "non-object labels should fallback to empty map")
+}
+
+func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.AccessVMRecord{}, &resulttable.ResultTableField{}, &resulttable.ResultTableOption{})
+
+	tableID := "demo.labels_rt"
+	labels := json.RawMessage(`{"env":"prod","module":"worker"}`)
+
+	rt := resulttable.ResultTable{
+		TableId:      tableID,
+		SchemaType:   models.ResultTableSchemaTypeFixed,
+		IsDeleted:    false,
+		IsEnable:     true,
+		BkTenantId:   tenant.DefaultTenantId,
+		BkBizIdAlias: "appid",
+		Labels:       labels,
+	}
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
+	assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+	vmRecord := storage.AccessVMRecord{
+		BkTenantId:      tenant.DefaultTenantId,
+		ResultTableId:   tableID,
+		VmResultTableId: "vm_demo_labels_rt",
+	}
+	db.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", vmRecord.ResultTableId)
+	assert.NoError(t, db.Create(&vmRecord).Error, "Failed to insert AccessVMRecord")
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	pusher := NewSpacePusher()
+	err := pusher.PushTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
+	assert.NoError(t, err, "PushTableIdDetail should not return an error")
+
+	detailStr := client.HGet(cfg.ResultTableDetailKey, tableID)
+	assert.NotEmpty(t, detailStr, "result_table_detail should be written to redis")
+
+	var detail map[string]any
+	err = json.Unmarshal([]byte(detailStr), &detail)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, map[string]any{"env": "prod", "module": "worker"}, detail["labels"], "labels should be normalized as object")
 }
 
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {

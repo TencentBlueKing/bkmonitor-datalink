@@ -8,44 +8,44 @@ type LuceneParserVisitor interface {
 	antlr.ParseTreeVisitor
 
 	// Visit a parse tree produced by LuceneParser#topLevelQuery.
-	VisitTopLevelQuery(ctx *TopLevelQueryContext) any
+	VisitTopLevelQuery(ctx *TopLevelQueryContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#query.
-	VisitQuery(ctx *QueryContext) any
+	VisitQuery(ctx *QueryContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#disjQuery.
-	VisitDisjQuery(ctx *DisjQueryContext) any
+	VisitDisjQuery(ctx *DisjQueryContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#conjQuery.
-	VisitConjQuery(ctx *ConjQueryContext) any
+	VisitConjQuery(ctx *ConjQueryContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#modClause.
-	VisitModClause(ctx *ModClauseContext) any
+	VisitModClause(ctx *ModClauseContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#modifier.
-	VisitModifier(ctx *ModifierContext) any
+	VisitModifier(ctx *ModifierContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#clause.
-	VisitClause(ctx *ClauseContext) any
+	VisitClause(ctx *ClauseContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#fieldRangeExpr.
-	VisitFieldRangeExpr(ctx *FieldRangeExprContext) any
+	VisitFieldRangeExpr(ctx *FieldRangeExprContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#term.
-	VisitTerm(ctx *TermContext) any
+	VisitTerm(ctx *TermContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#groupingExpr.
-	VisitGroupingExpr(ctx *GroupingExprContext) any
+	VisitGroupingExpr(ctx *GroupingExprContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#fieldName.
-	VisitFieldName(ctx *FieldNameContext) any
+	VisitFieldName(ctx *FieldNameContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#termRangeExpr.
-	VisitTermRangeExpr(ctx *TermRangeExprContext) any
+	VisitTermRangeExpr(ctx *TermRangeExprContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#quotedTerm.
-	VisitQuotedTerm(ctx *QuotedTermContext) any
+	VisitQuotedTerm(ctx *QuotedTermContext) interface{}
 
 	// Visit a parse tree produced by LuceneParser#fuzzy.
-	VisitFuzzy(ctx *FuzzyContext) any
+	VisitFuzzy(ctx *FuzzyContext) interface{}
 }

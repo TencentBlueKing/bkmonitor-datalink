@@ -243,3 +243,13 @@ func (csp *CompositeSchemaProvider) ListRelationSchemas() []RelationSchema {
 
 // Ensure CompositeSchemaProvider implements SchemaProvider
 var _ SchemaProvider = (*CompositeSchemaProvider)(nil)
+
+// makeResourceCacheKey 生成资源定义去重 key
+func makeResourceCacheKey(namespace, name string) string {
+	return namespace + ":" + name
+}
+
+// makeRelationCacheKey 生成关联定义去重 key
+func makeRelationCacheKey(namespace, name string) string {
+	return namespace + ":" + name
+}

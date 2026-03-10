@@ -427,6 +427,12 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 	var conditions []string
 
 	if len(b.request.SourceInfo) > 0 {
+		// 获取合法字段白名单（主键字段），防止字段名注入
+		allowedFields := make(map[string]bool)
+		for _, pk := range b.schemaProvider.GetResourcePrimaryKeys(b.request.SourceType) {
+			allowedFields[pk] = true
+		}
+
 		keys := make([]string, 0, len(b.request.SourceInfo))
 		for k := range b.request.SourceInfo {
 			keys = append(keys, k)
@@ -434,6 +440,9 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		sort.Strings(keys)
 
 		for _, k := range keys {
+			if !allowedFields[k] {
+				continue
+			}
 			v := b.request.SourceInfo[k]
 			conditions = append(conditions, fmt.Sprintf("%s = '%s'", k, escapeSurrealString(v)))
 		}

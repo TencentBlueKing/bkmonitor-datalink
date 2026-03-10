@@ -30,12 +30,41 @@ func setupTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return client, mr
 }
 
+// setResourceDefinitions 向 miniredis 写入资源定义
+// Redis 结构: bkmonitorv3:entity:ResourceDefinition -> namespace -> {name: JSON, ...}
+func setResourceDefinitions(t *testing.T, mr *miniredis.Miniredis, namespace string, defs ...*ResourceDefinition) {
+	t.Helper()
+	entities := make(map[string]json.RawMessage, len(defs))
+	for _, def := range defs {
+		b, err := json.Marshal(def)
+		require.NoError(t, err)
+		entities[def.Name] = b
+	}
+	b, err := json.Marshal(entities)
+	require.NoError(t, err)
+	mr.HSet(DefaultRedisKeyPrefixResourceDef, namespace, string(b))
+}
+
+// setRelationDefinitions 向 miniredis 写入关联定义
+// Redis 结构: bkmonitorv3:entity:RelationDefinition -> namespace -> {name: JSON, ...}
+func setRelationDefinitions(t *testing.T, mr *miniredis.Miniredis, namespace string, defs ...*RelationDefinition) {
+	t.Helper()
+	entities := make(map[string]json.RawMessage, len(defs))
+	for _, def := range defs {
+		b, err := json.Marshal(def)
+		require.NoError(t, err)
+		entities[def.Name] = b
+	}
+	b, err := json.Marshal(entities)
+	require.NoError(t, err)
+	mr.HSet(DefaultRedisKeyPrefixRelationDef, namespace, string(b))
+}
+
 // TestRedisSchemaProvider_LoadResourceDefinitions 测试加载资源定义
 func TestRedisSchemaProvider_LoadResourceDefinitions(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 准备测试数据
 	rd1 := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "app_instance",
@@ -45,9 +74,7 @@ func TestRedisSchemaProvider_LoadResourceDefinitions(t *testing.T) {
 			{Name: "version", Required: false},
 		},
 		Labels: map[string]string{"env": "test"},
-		Spec:   map[string]interface{}{"type": "application"},
 	}
-
 	rd2 := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "git_commit",
@@ -55,25 +82,13 @@ func TestRedisSchemaProvider_LoadResourceDefinitions(t *testing.T) {
 			{Name: "repo", Required: true},
 			{Name: "commit_sha", Required: true},
 		},
-		Labels: map[string]string{"env": "test"},
-		Spec:   map[string]interface{}{"type": "git"},
 	}
+	setResourceDefinitions(t, mr, "test", rd1, rd2)
 
-	// 写入 Redis
-	rd1Data, _ := json.Marshal(rd1)
-	rd2Data, _ := json.Marshal(rd2)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app_instance", string(rd1Data))
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:git_commit", string(rd2Data))
-
-	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
 	defer provider.Close()
 
-	// 等待加载完成
-	time.Sleep(100 * time.Millisecond)
-
-	// 测试 GetResourceDefinition
 	t.Run("GetResourceDefinition", func(t *testing.T) {
 		rd, err := provider.GetResourceDefinition("test", "app_instance")
 		require.NoError(t, err)
@@ -83,20 +98,17 @@ func TestRedisSchemaProvider_LoadResourceDefinitions(t *testing.T) {
 		assert.Equal(t, []string{"app_id", "instance_id"}, rd.GetPrimaryKeys())
 	})
 
-	// 测试 ListResourceDefinitions
 	t.Run("ListResourceDefinitions", func(t *testing.T) {
 		list, err := provider.ListResourceDefinitions("test")
 		require.NoError(t, err)
 		assert.Len(t, list, 2)
 	})
 
-	// 测试 GetResourcePrimaryKeys
 	t.Run("GetResourcePrimaryKeys", func(t *testing.T) {
 		keys := provider.GetResourcePrimaryKeys("app_instance")
 		assert.Equal(t, []string{"app_id", "instance_id"}, keys)
 	})
 
-	// 测试不存在的资源
 	t.Run("NotFound", func(t *testing.T) {
 		_, err := provider.GetResourceDefinition("test", "nonexistent")
 		assert.ErrorIs(t, err, ErrResourceDefinitionNotFound)
@@ -108,18 +120,13 @@ func TestRedisSchemaProvider_LoadRelationDefinitions(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 准备测试数据
 	rd1 := &RelationDefinition{
 		Namespace:    "test",
 		Name:         "app_to_commit",
 		FromResource: "app_instance",
 		ToResource:   "git_commit",
 		Category:     "dynamic",
-		IsBelongsTo:  false,
-		Labels:       map[string]string{"env": "test"},
-		Spec:         map[string]interface{}{"type": "deployment"},
 	}
-
 	rd2 := &RelationDefinition{
 		Namespace:    "test",
 		Name:         "commit_to_author",
@@ -127,25 +134,13 @@ func TestRedisSchemaProvider_LoadRelationDefinitions(t *testing.T) {
 		ToResource:   "developer",
 		Category:     "static",
 		IsBelongsTo:  true,
-		Labels:       map[string]string{"env": "test"},
-		Spec:         map[string]interface{}{"type": "ownership"},
 	}
+	setRelationDefinitions(t, mr, "test", rd1, rd2)
 
-	// 写入 Redis
-	rd1Data, _ := json.Marshal(rd1)
-	rd2Data, _ := json.Marshal(rd2)
-	mr.HSet(DefaultRedisKeyPrefixRelationDef, "test:app_to_commit", string(rd1Data))
-	mr.HSet(DefaultRedisKeyPrefixRelationDef, "test:commit_to_author", string(rd2Data))
-
-	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
 	defer provider.Close()
 
-	// 等待加载完成
-	time.Sleep(100 * time.Millisecond)
-
-	// 测试 GetRelationDefinition
 	t.Run("GetRelationDefinition", func(t *testing.T) {
 		rd, err := provider.GetRelationDefinition("test", "app_to_commit")
 		require.NoError(t, err)
@@ -156,14 +151,12 @@ func TestRedisSchemaProvider_LoadRelationDefinitions(t *testing.T) {
 		assert.Equal(t, "dynamic", rd.Category)
 	})
 
-	// 测试 ListRelationDefinitions
 	t.Run("ListRelationDefinitions", func(t *testing.T) {
 		list, err := provider.ListRelationDefinitions("test")
 		require.NoError(t, err)
 		assert.Len(t, list, 2)
 	})
 
-	// 测试 GetRelationSchema
 	t.Run("GetRelationSchema", func(t *testing.T) {
 		schema, err := provider.GetRelationSchema("test:app_to_commit")
 		require.NoError(t, err)
@@ -174,109 +167,105 @@ func TestRedisSchemaProvider_LoadRelationDefinitions(t *testing.T) {
 		assert.False(t, schema.IsBelongsTo)
 	})
 
-	// 测试 ListRelationSchemas
 	t.Run("ListRelationSchemas", func(t *testing.T) {
 		schemas := provider.ListRelationSchemas()
 		assert.Len(t, schemas, 2)
 	})
 
-	// 测试不存在的关联
 	t.Run("NotFound", func(t *testing.T) {
 		_, err := provider.GetRelationDefinition("test", "nonexistent")
 		assert.ErrorIs(t, err, ErrRelationDefinitionNotFound)
 	})
 }
 
-// TestRedisSchemaProvider_HotReload 测试热更新
+// TestRedisSchemaProvider_HotReload 测试热更新（Pub/Sub）
 func TestRedisSchemaProvider_HotReload(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 初始数据
 	rd := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "app",
-		Fields: []FieldDefinition{
-			{Name: "app_id", Required: true},
-		},
+		Fields:    []FieldDefinition{{Name: "app_id", Required: true}},
 	}
+	setResourceDefinitions(t, mr, "test", rd)
 
-	rdData, _ := json.Marshal(rd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
-
-	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
 	defer provider.Close()
-
-	// 等待加载完成
-	time.Sleep(100 * time.Millisecond)
 
 	// 验证初始数据
 	result, err := provider.GetResourceDefinition("test", "app")
 	require.NoError(t, err)
 	assert.Len(t, result.Fields, 1)
 
-	// 更新数据
+	// 等待 Pub/Sub 订阅建立
+	time.Sleep(100 * time.Millisecond)
+
+	// 更新 Redis 数据
 	rd.Fields = append(rd.Fields, FieldDefinition{Name: "version", Required: false})
-	rdData, _ = json.Marshal(rd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
+	setResourceDefinitions(t, mr, "test", rd)
 
-	// 发送 Pub/Sub 通知
+	// 发送 Pub/Sub 通知（JSON 格式，与 bk-monitor-worker 保持一致）
 	ctx := context.Background()
-	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, "test:app")
+	payload, _ := json.Marshal(MsgPayload{Namespace: "test", Kind: KindResourceDef})
+	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, string(payload))
 
-	// 等待更新完成
-	time.Sleep(200 * time.Millisecond)
+	// 等待热更新完成（轮询，最多 1 秒）
+	var updated *ResourceDefinition
+	for i := 0; i < 20; i++ {
+		updated, err = provider.GetResourceDefinition("test", "app")
+		if err == nil && len(updated.Fields) == 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// 验证更新后的数据
-	result, err = provider.GetResourceDefinition("test", "app")
 	require.NoError(t, err)
-	assert.Len(t, result.Fields, 2)
-	assert.Equal(t, "version", result.Fields[1].Name)
+	require.Len(t, updated.Fields, 2)
+	assert.Equal(t, "version", updated.Fields[1].Name)
 }
 
-// TestRedisSchemaProvider_DeleteDefinition 测试删除定义
+// TestRedisSchemaProvider_HotDelete 测试热删除（namespace 不存在时清空缓存）
 func TestRedisSchemaProvider_HotDelete(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 初始数据
 	rd := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "app",
-		Fields: []FieldDefinition{
-			{Name: "app_id", Required: true},
-		},
+		Fields:    []FieldDefinition{{Name: "app_id", Required: true}},
 	}
+	setResourceDefinitions(t, mr, "test", rd)
 
-	rdData, _ := json.Marshal(rd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
-
-	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
 	defer provider.Close()
-
-	// 等待加载完成
-	time.Sleep(100 * time.Millisecond)
 
 	// 验证初始数据
 	_, err = provider.GetResourceDefinition("test", "app")
 	require.NoError(t, err)
 
-	// 删除 Redis Hash field
-	mr.HDel(DefaultRedisKeyPrefixResourceDef, "test:app")
+	// 等待 Pub/Sub 订阅建立
+	time.Sleep(100 * time.Millisecond)
+
+	// 删除 Redis Hash field（整个 namespace）
+	mr.HDel(DefaultRedisKeyPrefixResourceDef, "test")
 
 	// 发送 Pub/Sub 通知
 	ctx := context.Background()
-	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, "test:app")
+	payload, _ := json.Marshal(MsgPayload{Namespace: "test", Kind: KindResourceDef})
+	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, string(payload))
 
 	// 等待删除完成
-	time.Sleep(200 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		_, err = provider.GetResourceDefinition("test", "app")
+		if err != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// 验证已删除
-	_, err = provider.GetResourceDefinition("test", "app")
 	assert.ErrorIs(t, err, ErrResourceDefinitionNotFound)
 }
 
@@ -285,15 +274,12 @@ func TestRedisSchemaProvider_WithoutReloadOnStart(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 准备测试数据
 	rd := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "app",
 		Fields:    []FieldDefinition{{Name: "app_id", Required: true}},
 	}
-
-	rdData, _ := json.Marshal(rd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
+	setResourceDefinitions(t, mr, "test", rd)
 
 	// 创建提供器，不预加载
 	provider, err := NewRedisSchemaProvider(client, WithReloadOnStart(false))
@@ -309,11 +295,12 @@ func TestRedisSchemaProvider_WithoutReloadOnStart(t *testing.T) {
 
 	// 发送 Pub/Sub 通知触发加载
 	ctx := context.Background()
-	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, "test:app")
+	payload, _ := json.Marshal(MsgPayload{Namespace: "test", Kind: KindResourceDef})
+	client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, string(payload))
 
-	// 等待加载完成，使用重试机制
+	// 等待加载完成
 	var result *ResourceDefinition
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		result, err = provider.GetResourceDefinition("test", "app")
 		if err == nil {
 			break
@@ -321,7 +308,6 @@ func TestRedisSchemaProvider_WithoutReloadOnStart(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// 现在应该能找到了
 	require.NoError(t, err)
 	assert.Equal(t, "app", result.Name)
 }
@@ -331,23 +317,16 @@ func TestRedisSchemaProvider_ConcurrentAccess(t *testing.T) {
 	client, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	// 准备测试数据
 	rd := &ResourceDefinition{
 		Namespace: "test",
 		Name:      "app",
 		Fields:    []FieldDefinition{{Name: "app_id", Required: true}},
 	}
+	setResourceDefinitions(t, mr, "test", rd)
 
-	rdData, _ := json.Marshal(rd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "test:app", string(rdData))
-
-	// 创建提供器
 	provider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
 	defer provider.Close()
-
-	// 等待加载完成
-	time.Sleep(100 * time.Millisecond)
 
 	// 并发读写测试
 	done := make(chan bool)
@@ -364,13 +343,13 @@ func TestRedisSchemaProvider_ConcurrentAccess(t *testing.T) {
 	// 同时进行更新
 	go func() {
 		ctx := context.Background()
+		payload, _ := json.Marshal(MsgPayload{Namespace: "test", Kind: KindResourceDef})
 		for i := 0; i < 50; i++ {
-			client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, "test:app")
+			client.Publish(ctx, DefaultRedisPubSubChannelResourceDef, string(payload))
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
 
-	// 等待所有 goroutine 完成
 	for i := 0; i < 10; i++ {
 		<-done
 	}

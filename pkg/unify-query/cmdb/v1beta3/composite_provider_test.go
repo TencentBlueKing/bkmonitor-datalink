@@ -10,7 +10,6 @@
 package v1beta3
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -36,8 +35,7 @@ func TestCompositeSchemaProvider_Priority(t *testing.T) {
 		},
 		Labels: map[string]string{"source": "redis"},
 	}
-	rdData, _ := json.Marshal(customRd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, ":pod", string(rdData))
+	setResourceDefinitions(t, mr, "", customRd)
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -91,10 +89,7 @@ func TestCompositeSchemaProvider_ListMerge(t *testing.T) {
 		Fields:    []FieldDefinition{{Name: "commit_sha", Required: true}},
 	}
 
-	rd1Data, _ := json.Marshal(customRd1)
-	rd2Data, _ := json.Marshal(customRd2)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:app_instance", string(rd1Data))
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:git_commit", string(rd2Data))
+	setResourceDefinitions(t, mr, "custom", customRd1, customRd2)
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -144,8 +139,7 @@ func TestCompositeSchemaProvider_RelationMerge(t *testing.T) {
 		IsBelongsTo:  false,
 	}
 
-	relData, _ := json.Marshal(customRel)
-	mr.HSet(DefaultRedisKeyPrefixRelationDef, "custom:app_to_commit", string(relData))
+	setRelationDefinitions(t, mr, "custom", customRel)
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)
@@ -211,8 +205,7 @@ func TestCompositeSchemaProvider_GetResourcePrimaryKeys(t *testing.T) {
 		},
 	}
 
-	rdData, _ := json.Marshal(customRd)
-	mr.HSet(DefaultRedisKeyPrefixResourceDef, "custom:app", string(rdData))
+	setResourceDefinitions(t, mr, "custom", customRd)
 
 	redisProvider, err := NewRedisSchemaProvider(client)
 	require.NoError(t, err)

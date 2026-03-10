@@ -12,8 +12,8 @@ package v1beta3
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,80 +24,60 @@ import (
 )
 
 const (
-	// 默认配置常量（导出供测试使用）
-	// 新的统一 Entity 格式
-	DefaultRedisKeyPrefix           = "bkmonitorv3:entity:"
+	// Redis Key 前缀（与 bk-monitor-worker 保持一致）
+	DefaultRedisKeyPrefix = "bkmonitorv3:entity"
+
+	// Pub/Sub 通道后缀
 	DefaultRedisPubSubChannelSuffix = ":channel"
+
+	// 实体 Kind 名称（与 bk-monitor-worker 保持一致）
+	KindResourceDef = "ResourceDefinition"
+	KindRelationDef = "RelationDefinition"
+
+	// Redis Hash key（与 bk-monitor-worker 保持一致）
+	// 结构: bkmonitorv3:entity:{Kind} -> namespace -> {name: JSON, ...}
+	DefaultRedisKeyPrefixResourceDef = DefaultRedisKeyPrefix + ":" + KindResourceDef
+	DefaultRedisKeyPrefixRelationDef = DefaultRedisKeyPrefix + ":" + KindRelationDef
+
+	// Pub/Sub 通道名称
+	DefaultRedisPubSubChannelResourceDef = DefaultRedisKeyPrefixResourceDef + DefaultRedisPubSubChannelSuffix
+	DefaultRedisPubSubChannelRelationDef = DefaultRedisKeyPrefixRelationDef + DefaultRedisPubSubChannelSuffix
 
 	// 内部默认值
 	defaultRedisReconnectInterval = 5 * time.Second
 	defaultRedisReconnectMaxRetry = 10
-	defaultRedisScanBatchSize     = 100
-
-	// 关联类型 kinds（用于区分 resource 和 relation）
-	KindCustomRelationStatus = "CustomRelationStatus"
-
-	// Entity kind 名称（用于构建 Redis Hash key）
-	KindResourceDef = "ResourceDef"
-	KindRelationDef = "CustomRelationStatus"
-
-	// 常用 Redis Hash key（导出供测试使用）
-	// 资源定义的 Hash key: bkmonitorv3:entity:ResourceDef
-	DefaultRedisKeyPrefixResourceDef = DefaultRedisKeyPrefix + KindResourceDef
-	// 关联定义的 Hash key: bkmonitorv3:entity:CustomRelationStatus
-	DefaultRedisKeyPrefixRelationDef = DefaultRedisKeyPrefix + KindRelationDef
-
-	// Pub/Sub 通道名称（导出供测试使用）
-	// 资源定义更新通道: bkmonitorv3:entity:ResourceDef:channel
-	DefaultRedisPubSubChannelResourceDef = DefaultRedisKeyPrefixResourceDef + DefaultRedisPubSubChannelSuffix
-	// 关联定义更新通道: bkmonitorv3:entity:CustomRelationStatus:channel
-	DefaultRedisPubSubChannelRelationDef = DefaultRedisKeyPrefixRelationDef + DefaultRedisPubSubChannelSuffix
 )
 
 // RedisSchemaProviderConfig Redis Schema 提供器配置
 type RedisSchemaProviderConfig struct {
-	// Redis Key 前缀: bkmonitorv3:entity:
-	KeyPrefix string
-
-	// Pub/Sub 通道后缀: :channel
-	PubSubChannelSuffix string
-
-	// 关联类型 kinds 集合（用于区分 resource 和 relation）
-	RelationKinds map[string]bool
-
-	// 重连配置
 	ReconnectInterval time.Duration
 	ReconnectMaxRetry int
-
-	// SCAN 批次大小
-	ScanBatchSize uint64
-
-	// 是否在启动时重新加载所有数据
-	ReloadOnStart bool
+	ReloadOnStart     bool
 }
 
 // DefaultRedisSchemaProviderConfig 返回默认配置
 func DefaultRedisSchemaProviderConfig() *RedisSchemaProviderConfig {
 	return &RedisSchemaProviderConfig{
-		KeyPrefix:           DefaultRedisKeyPrefix,
-		PubSubChannelSuffix: DefaultRedisPubSubChannelSuffix,
-		RelationKinds: map[string]bool{
-			KindCustomRelationStatus: true, // 关联类型
-		},
 		ReconnectInterval: defaultRedisReconnectInterval,
 		ReconnectMaxRetry: defaultRedisReconnectMaxRetry,
-		ScanBatchSize:     defaultRedisScanBatchSize,
 		ReloadOnStart:     true,
 	}
 }
 
 // RedisSchemaProvider Redis Schema 提供器
 // 从 Redis 动态加载资源和关联定义，支持 Pub/Sub 热更新
+//
+// Redis 数据结构（与 bk-monitor-worker 保持一致）:
+//   - key:   bkmonitorv3:entity:ResourceDefinition
+//   - field: {namespace}
+//   - value: {"name1": {JSON}, "name2": {JSON}, ...}
 type RedisSchemaProvider struct {
-	client              redis.UniversalClient // 支持 UniversalClient 接口
-	config              *RedisSchemaProviderConfig
-	resourceDefinitions map[string]*ResourceDefinition // key: namespace:name
-	relationDefinitions map[string]*RelationDefinition // key: namespace:name
+	client redis.UniversalClient
+	config *RedisSchemaProviderConfig
+
+	// 外层 key: namespace, 内层 key: resource/relation name
+	resourceDefinitions map[string]map[string]*ResourceDefinition
+	relationDefinitions map[string]map[string]*RelationDefinition
 	mu                  sync.RWMutex
 
 	ctx    context.Context
@@ -115,30 +95,6 @@ func WithReloadOnStart(reload bool) RedisSchemaProviderOption {
 	}
 }
 
-// WithKeyPrefix 设置 Redis Key 前缀
-func WithKeyPrefix(prefix string) RedisSchemaProviderOption {
-	return func(config *RedisSchemaProviderConfig) {
-		config.KeyPrefix = prefix
-	}
-}
-
-// WithPubSubChannelSuffix 设置 Pub/Sub 通道后缀
-func WithPubSubChannelSuffix(suffix string) RedisSchemaProviderOption {
-	return func(config *RedisSchemaProviderConfig) {
-		config.PubSubChannelSuffix = suffix
-	}
-}
-
-// WithRelationKinds 设置关联类型 kinds
-func WithRelationKinds(kinds []string) RedisSchemaProviderOption {
-	return func(config *RedisSchemaProviderConfig) {
-		config.RelationKinds = make(map[string]bool)
-		for _, kind := range kinds {
-			config.RelationKinds[kind] = true
-		}
-	}
-}
-
 // WithReconnectConfig 设置重连配置
 func WithReconnectConfig(interval time.Duration, maxRetry int) RedisSchemaProviderOption {
 	return func(config *RedisSchemaProviderConfig) {
@@ -147,20 +103,9 @@ func WithReconnectConfig(interval time.Duration, maxRetry int) RedisSchemaProvid
 	}
 }
 
-// WithScanBatchSize 设置 SCAN 批次大小
-func WithScanBatchSize(size uint64) RedisSchemaProviderOption {
-	return func(config *RedisSchemaProviderConfig) {
-		config.ScanBatchSize = size
-	}
-}
-
 // NewRedisSchemaProvider 创建 Redis Schema 提供器（使用自定义客户端）
-// 适用于测试或需要自定义 Redis 客户端的场景
 func NewRedisSchemaProvider(client redis.UniversalClient, opts ...RedisSchemaProviderOption) (*RedisSchemaProvider, error) {
-	// 使用默认配置
 	config := DefaultRedisSchemaProviderConfig()
-
-	// 应用配置选项
 	for _, opt := range opts {
 		opt(config)
 	}
@@ -169,13 +114,12 @@ func NewRedisSchemaProvider(client redis.UniversalClient, opts ...RedisSchemaPro
 	provider := &RedisSchemaProvider{
 		client:              client,
 		config:              config,
-		resourceDefinitions: make(map[string]*ResourceDefinition),
-		relationDefinitions: make(map[string]*RelationDefinition),
+		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+		relationDefinitions: make(map[string]map[string]*RelationDefinition),
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
 
-	// 初始化加载所有数据
 	if config.ReloadOnStart {
 		if err := provider.loadAllEntities(); err != nil {
 			cancel()
@@ -183,7 +127,6 @@ func NewRedisSchemaProvider(client redis.UniversalClient, opts ...RedisSchemaPro
 		}
 	}
 
-	// 启动 Pub/Sub 订阅
 	provider.wg.Add(1)
 	go provider.subscribeEntities()
 
@@ -191,7 +134,6 @@ func NewRedisSchemaProvider(client redis.UniversalClient, opts ...RedisSchemaPro
 }
 
 // NewRedisSchemaProviderWithGlobalClient 创建 Redis Schema 提供器（使用全局客户端）
-// 推荐用于生产环境，使用 unify-query 统一的 Redis 客户端管理
 func NewRedisSchemaProviderWithGlobalClient(opts ...RedisSchemaProviderOption) (*RedisSchemaProvider, error) {
 	client := unifyRedis.Client()
 	if client == nil {
@@ -207,160 +149,162 @@ func (rsp *RedisSchemaProvider) Close() error {
 	return nil
 }
 
-// loadAllEntities 加载所有实体数据（统一方法）
+// loadAllEntities 启动时全量加载所有实体
 func (rsp *RedisSchemaProvider) loadAllEntities() error {
 	var err error
 	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.load_all_entities")
 	defer span.End(&err)
 
-	pattern := rsp.config.KeyPrefix + "*"
-	span.Set("redis.pattern", pattern)
-
-	// 使用 SCAN 扫描所有 entity keys
-	var cursor uint64
-	var totalLoadedCount, totalFailedCount int
-
-	for {
-		keys, nextCursor, scanErr := rsp.client.Scan(ctx, cursor, pattern, int64(rsp.config.ScanBatchSize)).Result()
-		if scanErr != nil {
-			err = fmt.Errorf("failed to scan entity keys: %w", scanErr)
-			return err
-		}
-
-		for _, key := range keys {
-			loadedCount, failedCount := rsp.loadEntitiesByKey(key)
-			totalLoadedCount += loadedCount
-			totalFailedCount += failedCount
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+	if err = rsp.loadEntitiesByKind(ctx, KindResourceDef); err != nil {
+		return fmt.Errorf("failed to load resource definitions: %w", err)
+	}
+	if err = rsp.loadEntitiesByKind(ctx, KindRelationDef); err != nil {
+		return fmt.Errorf("failed to load relation definitions: %w", err)
 	}
 
-	span.Set("total_loaded_count", totalLoadedCount)
-	span.Set("total_failed_count", totalFailedCount)
-	log.Infof(ctx, "loaded %d entities, %d failed", totalLoadedCount, totalFailedCount)
+	resourceCount := 0
+	for _, nsMap := range rsp.resourceDefinitions {
+		resourceCount += len(nsMap)
+	}
+	relationCount := 0
+	for _, nsMap := range rsp.relationDefinitions {
+		relationCount += len(nsMap)
+	}
+
+	log.Infof(ctx, "loaded %d resource definitions, %d relation definitions", resourceCount, relationCount)
 	return nil
 }
 
-// loadEntitiesByKey 从 Redis Hash key 加载所有实体
-func (rsp *RedisSchemaProvider) loadEntitiesByKey(key string) (loadedCount int, failedCount int) {
-	var err error
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.load_entities_by_key")
-	defer span.End(&err)
+// loadEntitiesByKind 按 Kind 全量加载实体
+// Redis 结构: {prefix}:{kind} -> namespace -> {name: JSON, ...}
+func (rsp *RedisSchemaProvider) loadEntitiesByKind(ctx context.Context, kind string) error {
+	redisKey := DefaultRedisKeyPrefix + ":" + kind
 
-	span.Set("redis.key", key)
-
-	// 从 Redis Hash 中获取所有 field-value 对
-	data, getErr := rsp.client.HGetAll(ctx, key).Result()
-	if getErr != nil {
-		log.Errorf(ctx, "failed to get all entities from key %s: %v", key, getErr)
-		return 0, 1
+	result, err := rsp.client.HGetAll(ctx, redisKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to hgetall %s: %w", redisKey, err)
 	}
 
-	// 提取 kind（从 key 中）
-	// key 格式: bkmonitorv3:entity:{kind}
-	kind := strings.TrimPrefix(key, rsp.config.KeyPrefix)
-	span.Set("entity.kind", kind)
-
-	// 遍历每个 field-value 对
-	for field, value := range data {
-		// field 格式: {namespace}:{name}
-		parts := strings.SplitN(field, ":", 2)
-		if len(parts) != 2 {
-			log.Errorf(ctx, "invalid field format: %s", field)
-			failedCount++
+	for namespace, entitiesJSON := range result {
+		var entities map[string]json.RawMessage
+		if unmarshalErr := json.Unmarshal([]byte(entitiesJSON), &entities); unmarshalErr != nil {
+			log.Warnf(ctx, "failed to unmarshal entities for namespace %s: %v", namespace, unmarshalErr)
 			continue
 		}
-
-		namespace, name := parts[0], parts[1]
-
-		// 解析 JSON 数据并根据 kind 分类存储
-		if loadErr := rsp.loadEntityByKind(kind, namespace, name, value); loadErr != nil {
-			log.Errorf(ctx, "failed to load entity %s:%s:%s: %v", kind, namespace, name, loadErr)
-			failedCount++
-		} else {
-			loadedCount++
+		for name, jsonData := range entities {
+			if loadErr := rsp.loadEntityByKind(kind, namespace, name, string(jsonData)); loadErr != nil {
+				log.Warnf(ctx, "failed to load %s %s:%s: %v", kind, namespace, name, loadErr)
+			}
 		}
 	}
-
-	log.Infof(ctx, "loaded %d entities from key %s, %d failed", loadedCount, key, failedCount)
-	return loadedCount, failedCount
-}
-
-// loadEntityByKind 根据 kind 加载实体到对应的缓存中
-func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.load_entity_by_kind")
-	var err error
-	defer span.End(&err)
-
-	span.Set("entity.kind", kind)
-	span.Set("entity.namespace", namespace)
-	span.Set("entity.name", name)
-
-	// 根据 kind 判断是资源还是关联
-	isRelation := rsp.config.RelationKinds[kind]
-	span.Set("entity.is_relation", isRelation)
-
-	cacheKey := makeResourceCacheKey(namespace, name)
-
-	if isRelation {
-		// 解析为关联定义
-		var rd RelationDefinition
-		if unmarshalErr := json.Unmarshal([]byte(jsonData), &rd); unmarshalErr != nil {
-			err = fmt.Errorf("failed to unmarshal relation definition: %w", unmarshalErr)
-			return err
-		}
-
-		rsp.mu.Lock()
-		rsp.relationDefinitions[cacheKey] = &rd
-		rsp.mu.Unlock()
-
-		log.Infof(ctx, "loaded relation definition: %s:%s", namespace, name)
-	} else {
-		// 解析为资源定义
-		var rd ResourceDefinition
-		if unmarshalErr := json.Unmarshal([]byte(jsonData), &rd); unmarshalErr != nil {
-			err = fmt.Errorf("failed to unmarshal resource definition: %w", unmarshalErr)
-			return err
-		}
-
-		rsp.mu.Lock()
-		rsp.resourceDefinitions[cacheKey] = &rd
-		rsp.mu.Unlock()
-
-		log.Infof(ctx, "loaded resource definition: %s:%s", namespace, name)
-	}
-
 	return nil
 }
 
-// deleteEntityFromCache 从缓存中删除实体（统一删除方法）
-func (rsp *RedisSchemaProvider) deleteEntityFromCache(kind, namespace, name string) {
-	cacheKey := makeResourceCacheKey(namespace, name)
-	isRelation := rsp.config.RelationKinds[kind]
+// loadEntityByKind 加载单个实体到缓存
+func (rsp *RedisSchemaProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
+	switch kind {
+	case KindResourceDef:
+		var def ResourceDefinition
+		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
+			return fmt.Errorf("failed to unmarshal ResourceDefinition: %w", err)
+		}
+		rsp.mu.Lock()
+		if _, ok := rsp.resourceDefinitions[namespace]; !ok {
+			rsp.resourceDefinitions[namespace] = make(map[string]*ResourceDefinition)
+		}
+		rsp.resourceDefinitions[namespace][name] = &def
+		rsp.mu.Unlock()
 
-	rsp.mu.Lock()
-	if isRelation {
-		delete(rsp.relationDefinitions, cacheKey)
-	} else {
-		delete(rsp.resourceDefinitions, cacheKey)
+	case KindRelationDef:
+		var def RelationDefinition
+		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
+			return fmt.Errorf("failed to unmarshal RelationDefinition: %w", err)
+		}
+		rsp.mu.Lock()
+		if _, ok := rsp.relationDefinitions[namespace]; !ok {
+			rsp.relationDefinitions[namespace] = make(map[string]*RelationDefinition)
+		}
+		rsp.relationDefinitions[namespace][name] = &def
+		rsp.mu.Unlock()
 	}
-	rsp.mu.Unlock()
-
-	log.Infof(rsp.ctx, "deleted entity from cache: %s:%s:%s", kind, namespace, name)
+	return nil
 }
 
-// subscribeEntities 订阅所有实体类型的更新通知（统一订阅方法）
+// reloadNamespace 按 namespace 全量重建该 kind 的本地缓存（与 bk-monitor-worker 保持一致）
+func (rsp *RedisSchemaProvider) reloadNamespace(ctx context.Context, kind, namespace string) error {
+	redisKey := DefaultRedisKeyPrefix + ":" + kind
+
+	entitiesJSON, err := rsp.client.HGet(ctx, redisKey, namespace).Result()
+	if errors.Is(err, redis.Nil) {
+		// namespace 已不存在，清空缓存
+		rsp.mu.Lock()
+		switch kind {
+		case KindResourceDef:
+			delete(rsp.resourceDefinitions, namespace)
+		case KindRelationDef:
+			delete(rsp.relationDefinitions, namespace)
+		}
+		rsp.mu.Unlock()
+		log.Infof(ctx, "cleared namespace cache: kind=%s, ns=%s", kind, namespace)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to hget: %w", err)
+	}
+
+	var entities map[string]json.RawMessage
+	if err = json.Unmarshal([]byte(entitiesJSON), &entities); err != nil {
+		return fmt.Errorf("failed to unmarshal entities: %w", err)
+	}
+
+	switch kind {
+	case KindResourceDef:
+		newMap := make(map[string]*ResourceDefinition, len(entities))
+		for name, jsonData := range entities {
+			var def ResourceDefinition
+			if unmarshalErr := json.Unmarshal(jsonData, &def); unmarshalErr != nil {
+				log.Warnf(ctx, "failed to unmarshal ResourceDefinition %s:%s: %v", namespace, name, unmarshalErr)
+				continue
+			}
+			newMap[name] = &def
+		}
+		rsp.mu.Lock()
+		rsp.resourceDefinitions[namespace] = newMap
+		rsp.mu.Unlock()
+
+	case KindRelationDef:
+		newMap := make(map[string]*RelationDefinition, len(entities))
+		for name, jsonData := range entities {
+			var def RelationDefinition
+			if unmarshalErr := json.Unmarshal(jsonData, &def); unmarshalErr != nil {
+				log.Warnf(ctx, "failed to unmarshal RelationDefinition %s:%s: %v", namespace, name, unmarshalErr)
+				continue
+			}
+			newMap[name] = &def
+		}
+		rsp.mu.Lock()
+		rsp.relationDefinitions[namespace] = newMap
+		rsp.mu.Unlock()
+	}
+
+	log.Infof(ctx, "reloaded namespace cache: kind=%s, ns=%s, count=%d", kind, namespace, len(entities))
+	return nil
+}
+
+// MsgPayload Pub/Sub 消息体（与 bk-monitor-worker 保持一致）
+type MsgPayload struct {
+	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"`
+}
+
+// subscribeEntities 订阅实体变更通知
 func (rsp *RedisSchemaProvider) subscribeEntities() {
 	defer rsp.wg.Done()
 
-	// 订阅所有实体类型的通道
-	// 通道格式: bkmonitorv3:entity:{kind}:channel
-	// 使用 Redis Pattern Subscribe 订阅所有匹配的通道
-	channelPattern := rsp.config.KeyPrefix + "*" + rsp.config.PubSubChannelSuffix
+	channels := []string{
+		DefaultRedisPubSubChannelResourceDef,
+		DefaultRedisPubSubChannelRelationDef,
+	}
 
 	retryCount := 0
 	for {
@@ -370,12 +314,9 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 		default:
 		}
 
-		pubsub := rsp.client.PSubscribe(rsp.ctx, channelPattern)
-		defer pubsub.Close()
+		pubsub := rsp.client.Subscribe(rsp.ctx, channels...)
+		log.Infof(rsp.ctx, "subscribed to entity channels: %v", channels)
 
-		log.Infof(rsp.ctx, "subscribed to entity channels: %s", channelPattern)
-
-		// 使用独立的 goroutine 处理消息，避免阻塞
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -389,38 +330,31 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 						return
 					}
 
-					// msg.Channel 格式: bkmonitorv3:entity:{kind}:channel
-					// msg.Payload 格式: {namespace}:{name}
-					log.Debugf(rsp.ctx, "received entity update from channel %s: %s", msg.Channel, msg.Payload)
-
-					// 提取 kind
-					kind := strings.TrimPrefix(msg.Channel, rsp.config.KeyPrefix)
-					kind = strings.TrimSuffix(kind, rsp.config.PubSubChannelSuffix)
-
-					// 解析 namespace:name
-					parts := strings.SplitN(msg.Payload, ":", 2)
-					if len(parts) != 2 {
-						log.Errorf(rsp.ctx, "invalid message format: %s", msg.Payload)
+					var payload MsgPayload
+					if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+						log.Warnf(rsp.ctx, "invalid pubsub payload: %s, err: %v", msg.Payload, err)
+						continue
+					}
+					if payload.Namespace == "" || payload.Kind == "" {
+						log.Warnf(rsp.ctx, "empty namespace or kind in payload: %s", msg.Payload)
 						continue
 					}
 
-					namespace, name := parts[0], parts[1]
-
-					// 从 Redis Hash 重新加载实体数据
-					if err := rsp.reloadEntity(kind, namespace, name); err != nil {
-						log.Errorf(rsp.ctx, "failed to reload entity %s:%s:%s: %v", kind, namespace, name, err)
+					log.Infof(rsp.ctx, "received entity update: kind=%s namespace=%s", payload.Kind, payload.Namespace)
+					if err := rsp.reloadNamespace(rsp.ctx, payload.Kind, payload.Namespace); err != nil {
+						log.Errorf(rsp.ctx, "failed to reload namespace %s:%s: %v", payload.Kind, payload.Namespace, err)
 					}
 				}
 			}
 		}()
 
-		// 等待消息处理完成或 context 取消
 		select {
 		case <-rsp.ctx.Done():
+			pubsub.Close()
 			<-done
 			return
 		case <-done:
-			// 连接断开
+			pubsub.Close()
 		}
 
 		retryCount++
@@ -436,165 +370,128 @@ func (rsp *RedisSchemaProvider) subscribeEntities() {
 		case <-rsp.ctx.Done():
 			return
 		case <-time.After(rsp.config.ReconnectInterval):
-			// 继续重试
 		}
 	}
-}
-
-// reloadEntity 重新加载单个实体
-func (rsp *RedisSchemaProvider) reloadEntity(kind, namespace, name string) error {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.reload_entity")
-	var err error
-	defer span.End(&err)
-
-	span.Set("entity.kind", kind)
-	span.Set("entity.namespace", namespace)
-	span.Set("entity.name", name)
-
-	// 构建 Redis key 和 field
-	redisKey := rsp.config.KeyPrefix + kind
-	field := fmt.Sprintf("%s:%s", namespace, name)
-
-	// 从 Redis Hash 获取数据
-	jsonData, getErr := rsp.client.HGet(ctx, redisKey, field).Result()
-	if getErr != nil {
-		if getErr == redis.Nil {
-			// 数据已删除，从缓存中移除
-			rsp.deleteEntityFromCache(kind, namespace, name)
-			return nil
-		}
-		err = fmt.Errorf("failed to get entity from redis: %w", getErr)
-		return err
-	}
-
-	// 加载实体到缓存
-	return rsp.loadEntityByKind(kind, namespace, name, jsonData)
 }
 
 // GetResourceDefinition 获取资源定义
 func (rsp *RedisSchemaProvider) GetResourceDefinition(namespace, name string) (*ResourceDefinition, error) {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.get_resource_definition")
 	var err error
+	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.get_resource_definition")
 	defer span.End(&err)
-
-	span.Set("resource.namespace", namespace)
-	span.Set("resource.name", name)
 
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	cacheKey := makeResourceCacheKey(namespace, name)
-	rd, ok := rsp.resourceDefinitions[cacheKey]
-	if !ok {
-		err = ErrResourceDefinitionNotFound
-		span.Set("cache.hit", false)
-		return nil, err
+	if nsMap, ok := rsp.resourceDefinitions[namespace]; ok {
+		if def, ok := nsMap[name]; ok {
+			span.Set("cache.hit", true)
+			return def, nil
+		}
 	}
 
-	span.Set("cache.hit", true)
-	log.Debugf(ctx, "get resource definition from cache: %s:%s", namespace, name)
-	return rd, nil
+	err = ErrResourceDefinitionNotFound
+	span.Set("cache.hit", false)
+	log.Debugf(ctx, "resource definition not found: namespace=%s, name=%s", namespace, name)
+	return nil, err
 }
 
-// ListResourceDefinitions 列出资源定义
+// ListResourceDefinitions 列出指定命名空间下的所有资源定义
 func (rsp *RedisSchemaProvider) ListResourceDefinitions(namespace string) ([]*ResourceDefinition, error) {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.list_resource_definitions")
-	var err error
-	defer span.End(&err)
-
-	span.Set("resource.namespace", namespace)
-
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	result := make([]*ResourceDefinition, 0)
-	for _, rd := range rsp.resourceDefinitions {
-		if rd.Namespace == namespace {
-			result = append(result, rd)
+	if namespace == "" {
+		for _, nsMap := range rsp.resourceDefinitions {
+			for _, def := range nsMap {
+				result = append(result, def)
+			}
 		}
+		return result, nil
 	}
 
-	span.Set("result.count", len(result))
-	log.Debugf(ctx, "list resource definitions for namespace %s: found %d", namespace, len(result))
+	if nsMap, ok := rsp.resourceDefinitions[namespace]; ok {
+		for _, def := range nsMap {
+			result = append(result, def)
+		}
+	}
 	return result, nil
 }
 
 // GetRelationDefinition 获取关联定义
 func (rsp *RedisSchemaProvider) GetRelationDefinition(namespace, name string) (*RelationDefinition, error) {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.get_relation_definition")
 	var err error
+	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.get_relation_definition")
 	defer span.End(&err)
-
-	span.Set("relation.namespace", namespace)
-	span.Set("relation.name", name)
 
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	cacheKey := makeRelationCacheKey(namespace, name)
-	rd, ok := rsp.relationDefinitions[cacheKey]
-	if !ok {
-		err = ErrRelationDefinitionNotFound
-		span.Set("cache.hit", false)
-		return nil, err
+	if nsMap, ok := rsp.relationDefinitions[namespace]; ok {
+		if def, ok := nsMap[name]; ok {
+			span.Set("cache.hit", true)
+			return def, nil
+		}
 	}
 
-	span.Set("cache.hit", true)
-	log.Debugf(ctx, "get relation definition from cache: %s:%s", namespace, name)
-	return rd, nil
+	err = ErrRelationDefinitionNotFound
+	span.Set("cache.hit", false)
+	log.Debugf(ctx, "relation definition not found: namespace=%s, name=%s", namespace, name)
+	return nil, err
 }
 
-// ListRelationDefinitions 列出关联定义
+// ListRelationDefinitions 列出指定命名空间下的所有关联定义
 func (rsp *RedisSchemaProvider) ListRelationDefinitions(namespace string) ([]*RelationDefinition, error) {
-	ctx, span := trace.NewSpan(rsp.ctx, "redis_provider.list_relation_definitions")
-	var err error
-	defer span.End(&err)
-
-	span.Set("relation.namespace", namespace)
-
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
 	result := make([]*RelationDefinition, 0)
-	for _, rd := range rsp.relationDefinitions {
-		if rd.Namespace == namespace {
-			result = append(result, rd)
+	if namespace == "" {
+		for _, nsMap := range rsp.relationDefinitions {
+			for _, def := range nsMap {
+				result = append(result, def)
+			}
 		}
+		return result, nil
 	}
 
-	span.Set("result.count", len(result))
-	log.Debugf(ctx, "list relation definitions for namespace %s: found %d", namespace, len(result))
+	if nsMap, ok := rsp.relationDefinitions[namespace]; ok {
+		for _, def := range nsMap {
+			result = append(result, def)
+		}
+	}
 	return result, nil
 }
 
-// GetResourcePrimaryKeys 获取资源主键字段列表
+// GetResourcePrimaryKeys 获取资源类型的主键字段列表
 func (rsp *RedisSchemaProvider) GetResourcePrimaryKeys(resourceType ResourceType) []string {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	// 遍历所有资源定义，查找匹配的资源类型
-	for _, rd := range rsp.resourceDefinitions {
-		if rd.ToResourceType() == resourceType {
-			return rd.GetPrimaryKeys()
+	for _, nsMap := range rsp.resourceDefinitions {
+		for _, rd := range nsMap {
+			if rd.ToResourceType() == resourceType {
+				return rd.GetPrimaryKeys()
+			}
 		}
 	}
-
 	return []string{}
 }
 
-// GetRelationSchema 获取关联 Schema
+// GetRelationSchema 获取关联关系的 Schema
 func (rsp *RedisSchemaProvider) GetRelationSchema(relationType RelationType) (*RelationSchema, error) {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	// 遍历所有关联定义，查找匹配的关联类型
-	for _, rd := range rsp.relationDefinitions {
-		if rd.ToRelationType() == relationType {
-			schema := rd.ToRelationSchema()
-			return &schema, nil
+	for _, nsMap := range rsp.relationDefinitions {
+		for _, rd := range nsMap {
+			if rd.ToRelationType() == relationType {
+				schema := rd.ToRelationSchema()
+				return &schema, nil
+			}
 		}
 	}
-
 	return nil, ErrRelationDefinitionNotFound
 }
 
@@ -603,24 +500,13 @@ func (rsp *RedisSchemaProvider) ListRelationSchemas() []RelationSchema {
 	rsp.mu.RLock()
 	defer rsp.mu.RUnlock()
 
-	result := make([]RelationSchema, 0, len(rsp.relationDefinitions))
-	for _, rd := range rsp.relationDefinitions {
-		result = append(result, rd.ToRelationSchema())
+	result := make([]RelationSchema, 0)
+	for _, nsMap := range rsp.relationDefinitions {
+		for _, rd := range nsMap {
+			result = append(result, rd.ToRelationSchema())
+		}
 	}
-
 	return result
-}
-
-// Helper functions
-
-// makeResourceCacheKey 生成资源定义缓存 key
-func makeResourceCacheKey(namespace, name string) string {
-	return fmt.Sprintf("%s:%s", namespace, name)
-}
-
-// makeRelationCacheKey 生成关联定义缓存 key
-func makeRelationCacheKey(namespace, name string) string {
-	return fmt.Sprintf("%s:%s", namespace, name)
 }
 
 // Ensure RedisSchemaProvider implements SchemaProvider

@@ -393,6 +393,8 @@ type Query struct {
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
 	TableID TableID `json:"table_id,omitempty" example:"system.cpu_summary"`
+	// TableIDConditions 按 labels 条件匹配结果表，当 TableID 为空时生效
+	TableIDConditions map[string]string `json:"table_id_conditions,omitempty"`
 	// FieldName 查询指标
 	FieldName string `json:"field_name,omitempty" example:"usage"`
 	// IsRegexp 指标是否使用正则查询
@@ -681,14 +683,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 	if len(tsDBs) == 0 {
 		tsDBs, err = GetTsDBList(ctx, &TsDBOption{
-			SpaceUid:      spaceUid,
-			TableID:       tableID,
-			FieldName:     metricName,
-			IsRegexp:      q.IsRegexp,
-			AllConditions: allConditions,
-			IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
-			IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
-			IsSkipField:   isSkipField,
+			SpaceUid:          spaceUid,
+			TableID:           tableID,
+			FieldName:         metricName,
+			IsRegexp:          q.IsRegexp,
+			AllConditions:     allConditions,
+			IsSkipSpace:       metadata.GetUser(ctx).IsSkipSpace(),
+			IsSkipK8s:         metadata.GetQueryParams(ctx).IsSkipK8s,
+			IsSkipField:       isSkipField,
+			TableIDConditions: q.TableIDConditions,
 		})
 		if err != nil {
 			return nil, err

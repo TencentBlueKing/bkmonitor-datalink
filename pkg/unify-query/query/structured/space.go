@@ -105,11 +105,17 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions map[string]string,
 ) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
+	}
+
+	if len(tableIDConditions) > 0 {
+		if !matchLabels(rtDetail.Labels, tableIDConditions) {
+			return nil
+		}
 	}
 
 	// 只有在容器场景下的特殊逻辑
@@ -265,7 +271,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 
-	if opt.TableID == "" && opt.FieldName == "" {
+	if opt.TableID == "" && opt.FieldName == "" && len(opt.TableIDConditions) == 0 {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 	tsDBs := make([]*query.TsDBV2, 0)
@@ -302,6 +308,14 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
 			return nil, nil
 		}
+	} else if len(opt.TableIDConditions) > 0 {
+		tIDs := s.GetSpaceRtIDs()
+		tableIDs.Add(tIDs...)
+
+		if tableIDs.Size() == 0 {
+			routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
+			return nil, nil
+		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = !opt.IsSkipK8s
@@ -323,7 +337,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditions)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -346,8 +360,9 @@ type TsDBOption struct {
 	TableID   TableID
 	FieldName string
 	// IsRegexp 指标是否使用正则查询
-	IsRegexp      bool
-	AllConditions AllConditions
+	IsRegexp          bool
+	AllConditions     AllConditions
+	TableIDConditions map[string]string
 }
 
 type TsDBs []*query.TsDBV2
@@ -364,4 +379,16 @@ func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {
 		return nil, err
 	}
 	return tsDBs, nil
+}
+
+func matchLabels(labels, conditions map[string]string) bool {
+	if len(labels) == 0 {
+		return false
+	}
+	for k, v := range conditions {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
 }

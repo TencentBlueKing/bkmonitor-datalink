@@ -96,3 +96,177 @@ func toJson(q []*query.TsDBV2) string {
 	s, _ := json.Marshal(q)
 	return string(s)
 }
+
+func TestMatchLabels(t *testing.T) {
+	testCases := map[string]struct {
+		labels     map[string]string
+		conditions map[string]string
+		expected   bool
+	}{
+		"exact_match": {
+			labels:     map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"},
+			conditions: map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"},
+			expected:   true,
+		},
+		"subset_match": {
+			labels:     map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"},
+			conditions: map[string]string{"scene": "log"},
+			expected:   true,
+		},
+		"mismatch_value": {
+			labels:     map[string]string{"scene": "log"},
+			conditions: map[string]string{"scene": "k8s"},
+			expected:   false,
+		},
+		"missing_key": {
+			labels:     map[string]string{"scene": "log"},
+			conditions: map[string]string{"cluster_id": "BCS-K8S-00001"},
+			expected:   false,
+		},
+		"empty_labels": {
+			labels:     map[string]string{},
+			conditions: map[string]string{"scene": "log"},
+			expected:   false,
+		},
+		"nil_labels": {
+			labels:     nil,
+			conditions: map[string]string{"scene": "log"},
+			expected:   false,
+		},
+		"empty_conditions": {
+			labels:     map[string]string{"scene": "log"},
+			conditions: map[string]string{},
+			expected:   true,
+		},
+		"both_empty": {
+			labels:     map[string]string{},
+			conditions: map[string]string{},
+			expected:   false,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			result := matchLabels(c.labels, c.conditions)
+			assert.Equal(t, c.expected, result)
+		})
+	}
+}
+
+func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+
+	testCases := map[string]struct {
+		tableID           TableID
+		tableIDConditions map[string]string
+		fieldName         string
+		isSkipField       bool
+		expectTableIDs    []string
+		expectErr         bool
+	}{
+		"match_by_scene_log": {
+			tableIDConditions: map[string]string{"scene": "log"},
+			isSkipField:       true,
+			expectTableIDs:    []string{influxdb.ResultTableEs},
+		},
+		"match_by_scene_and_cluster": {
+			tableIDConditions: map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"},
+			isSkipField:       true,
+			expectTableIDs:    []string{influxdb.ResultTableEs},
+		},
+		"no_match": {
+			tableIDConditions: map[string]string{"scene": "metric"},
+			isSkipField:       true,
+			expectTableIDs:    nil,
+		},
+		// 仅传 TableIDConditions，不传 TableID 和 FieldName，应该不报错（输入校验放宽）
+		"only_conditions_no_field_no_table": {
+			tableIDConditions: map[string]string{"scene": "log"},
+			fieldName:         "",
+			isSkipField:       true,
+			expectTableIDs:    []string{influxdb.ResultTableEs},
+		},
+		// TableID + FieldName + Conditions 都为空 → 应报错
+		"all_empty_returns_error": {
+			tableID:           "",
+			tableIDConditions: nil,
+			fieldName:         "",
+			expectErr:         true,
+		},
+		// 空 map 等价于不传，走原逻辑（无 TableID + 无 FieldName → 报错）
+		"empty_map_conditions_falls_through": {
+			tableIDConditions: map[string]string{},
+			fieldName:         "",
+			expectErr:         true,
+		},
+		// conditions 中有一个 key 不匹配就整体不通过
+		"partial_key_mismatch": {
+			tableIDConditions: map[string]string{"scene": "log", "env": "prod"},
+			isSkipField:       true,
+			expectTableIDs:    nil,
+		},
+		// TableID + TableIDConditions 同时存在时，两者都生效：
+		// TableID 决定候选集，TableIDConditions 在 NewTsDBs 中做二次过滤
+		// system.cpu_summary 没有 Labels，所以被过滤掉
+		"tableid_with_conditions_both_applied": {
+			tableID:           "system.cpu_summary",
+			tableIDConditions: map[string]string{"scene": "log"},
+			fieldName:         "usage",
+			expectTableIDs:    nil,
+		},
+		// TableID 存在且无 conditions 时走原始逻辑，不受 labels 影响
+		"tableid_without_conditions_works": {
+			tableID:        "system.cpu_summary",
+			fieldName:      "usage",
+			expectTableIDs: []string{"system.cpu_summary"},
+		},
+		// TableIDConditions + FieldName 组合：先 labels 过滤再字段过滤
+		// ResultTableEs 没有 Fields，isSkipField=false 时字段匹配走空返回
+		"conditions_with_field_filter_no_fields": {
+			tableIDConditions: map[string]string{"scene": "log"},
+			fieldName:         "some_metric",
+			isSkipField:       false,
+			expectTableIDs:    nil,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			influxdb.MockSpaceRouter(ctx)
+
+			sf, err := NewSpaceFilter(ctx, &TsDBOption{
+				SpaceUid: influxdb.SpaceUid,
+			})
+			assert.NoError(t, err)
+
+			tsdb, err := sf.DataList(&TsDBOption{
+				SpaceUid:          influxdb.SpaceUid,
+				TableID:           c.tableID,
+				TableIDConditions: c.tableIDConditions,
+				FieldName:         c.fieldName,
+				IsSkipField:       c.isSkipField,
+			})
+
+			if c.expectErr {
+				assert.Error(t, err)
+				return
+			}
+
+			if c.expectTableIDs == nil {
+				assert.Nil(t, tsdb)
+			} else {
+				assert.NotNil(t, tsdb)
+				actual := make([]string, 0, len(tsdb))
+				for _, db := range tsdb {
+					actual = append(actual, db.TableID)
+				}
+				sort.Strings(actual)
+				sort.Strings(c.expectTableIDs)
+				assert.Equal(t, c.expectTableIDs, actual)
+			}
+		})
+	}
+}

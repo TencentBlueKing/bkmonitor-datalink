@@ -353,6 +353,10 @@ func MockSpaceRouter(ctx context.Context) {
 						},
 					},
 					DataLabel: "es",
+					Labels: map[string]string{
+						"scene":      "log",
+						"cluster_id": "BCS-K8S-00001",
+					},
 					FieldAlias: map[string]string{
 						"alias_ns": "__ext.host.bk_set_name",
 					},

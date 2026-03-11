@@ -114,11 +114,6 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 		return map[string][]map[string]any{}, map[string]*scopeDimensionInfo{}, nil
 	}
 
-	fieldNames := make([]string, 0, len(fieldKeys))
-	for _, k := range fieldKeys {
-		fieldNames = append(fieldNames, k.fieldName)
-	}
-
 	db := mysql.GetDBSession().DB
 	var existingMetrics []customreport.TimeSeriesMetric
 	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(
@@ -289,11 +284,14 @@ func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scope
 			return errors.Wrap(err, "commit tx for create TimeSeriesScope")
 		}
 	}
+	logger.Infof("doBulkRefreshTSScopes: create TimeSeriesScope success: len(%d)", len(scopesToCreate))
+
 	for _, scope := range scopesToUpdate {
 		if err := scope.Update(db, customreport.TimeSeriesScopeDBSchema.DimensionConfig); err != nil {
 			logger.Warnf("doBulkRefreshTSScopes: update scope [%s] dimension_config failed: %v", scope.ScopeName, err)
 		}
 	}
+	logger.Infof("doBulkRefreshTSScopes: update TimeSeriesScope success: len(%d)", len(scopesToUpdate))
 	return nil
 }
 

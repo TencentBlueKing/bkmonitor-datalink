@@ -26,6 +26,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -1819,6 +1820,13 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &recordRuleValues)
 
+	// 追加 BKBase 短链路结果表（预计算 v4 主动拉取的结果表）,不需要filters
+	shortChainValues, errShortChain := s.composeBkBaseShortChainTableIds(bkTenantId, spaceType, spaceId)
+	if errShortChain != nil {
+		logger.Errorf("pushBkccSpaceTableIds:compose bkbase short chain table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errShortChain)
+	}
+	s.composeValue(&values, &shortChainValues)
+
 	// 追加es空间路由表,不需要filters
 	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
 	if errEs != nil {
@@ -2168,6 +2176,55 @@ func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[strin
 	}
 	logger.Infof("ComposeDorisTableIds: compose doris table_id successfully, data_values->[%v]", dataValues)
 
+	return dataValuesToRedis, nil
+}
+
+// composeBkBaseShortChainTableIds 组装 BKBase 短链路结果表（预计算 v4 主动拉取的结果表）
+func (s *SpacePusher) composeBkBaseShortChainTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+	// 仅支持 bkcc 空间类型
+	if spaceType != models.SpaceTypeBKCC {
+		return make(map[string]map[string]any), nil
+	}
+
+	logger.Infof("composeBkBaseShortChainTableIds: start to compose bkbase short chain table_id, space_type [%s], space_id [%s], bk_tenant_id [%s]", spaceType, spaceId, bkTenantId)
+
+	// 将 spaceId 转换为 bk_biz_id
+	bkBizId, err := strconv.Atoi(spaceId)
+	if err != nil {
+		logger.Errorf("composeBkBaseShortChainTableIds: convert space_id [%s] to bk_biz_id failed, err: %s", spaceId, err)
+		return nil, errors.Wrapf(err, "convert space_id to bk_biz_id failed")
+	}
+
+	db := mysql.GetDBSession().DB
+	var shortChainList []bkdata.BkBaseShortChainResultTable
+
+	// 查询该业务下的所有短链路结果表
+	qs := bkdata.NewBkBaseShortChainResultTableQuerySet(db).BkBizIdEq(bkBizId)
+
+	// 如果开启多租户模式，则需要过滤租户
+	if cfg.EnableMultiTenantMode {
+		qs = qs.BkTenantIdEq(bkTenantId)
+	}
+
+	if err := qs.All(&shortChainList); err != nil {
+		logger.Errorf("composeBkBaseShortChainTableIds: query short chain result table failed, bk_biz_id [%d], err: %s", bkBizId, err)
+		return nil, errors.Wrapf(err, "query short chain result table failed")
+	}
+
+	// 组装数据，短链路表不需要 filters
+	dataValues := make(map[string]map[string]any)
+	for _, shortChain := range shortChainList {
+		dataValues[shortChain.TableId] = map[string]any{"filters": []any{}}
+	}
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]any)
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+
+	logger.Infof("composeBkBaseShortChainTableIds: compose bkbase short chain table_id successfully, space_type [%s], space_id [%s], count [%d]", spaceType, spaceId, len(dataValuesToRedis))
 	return dataValuesToRedis, nil
 }
 

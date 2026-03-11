@@ -294,7 +294,7 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]an
 func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
-	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
+	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v,metricInfoList: %d", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery, len(metricInfoList))
 
 	// 过滤非法的指标
 	metricInfoList = s.filterInvalidMetrics(metricInfoList)

@@ -112,6 +112,7 @@ func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string
 		logger.Errorf("query bkdata metrics error, params: %v, metrics: %v", params, metricInfo)
 		return []map[string]any{}, errors.New("query metrics error, no data")
 	}
+	logger.Infof("query bkdata metrics success for rt(%v), params: %v, metrics: %d", rt, params, len(metricInfo))
 
 	useV2 := metricGroupDimensions != "" && metricGroupDimensions != "[]"
 

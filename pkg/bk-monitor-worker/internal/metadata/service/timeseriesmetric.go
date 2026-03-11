@@ -132,7 +132,7 @@ func (s *TimeSeriesMetricSvc) BulkMarkMetricsInactiveByFieldIDs(groupId uint, fi
 			FieldIDIn(chunk...).
 			IsActiveEq(true).
 			GetUpdater()
-		if err := updater.SetIsActive(false).Update(); err != nil {
+		if err := updater.SetIsActive(false).SetLastModifyTime(time.Now()).Update(); err != nil {
 			return errors.Wrapf(err, "BulkMarkMetricsInactiveByFieldIDs group_id [%v] field_ids [%v] failed", groupId, chunk)
 		}
 		logger.Infof("BulkMarkMetricsInactiveByFieldIDs: marked %d TimeSeriesMetrics inactive for group_id [%v]", len(chunk), groupId)

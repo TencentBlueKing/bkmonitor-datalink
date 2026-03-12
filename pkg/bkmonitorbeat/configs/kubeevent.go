@@ -47,7 +47,7 @@ func (c *KubeEventConfig) GetType() string {
 }
 
 func (c *KubeEventConfig) Clean() error {
-	return nil
+	return c.InitIdent()
 }
 
 func NewKubeEventConfig(root *Config) *KubeEventConfig {

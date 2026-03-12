@@ -216,7 +216,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 	}
 	keySet := mapset.NewSet(keys...)
 	var tsmList []customreport.TimeSeriesMetric
-	for _, chunk := range slicex.ChunkSlice(fieldNames, 100) {
+	for _, chunk := range slicex.ChunkSlice(fieldNames, 0) {
 		var tempList []customreport.TimeSeriesMetric
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunk...).GroupIDEq(groupId).All(&tempList); err != nil {
 			return false, errors.Wrapf(err, "BulkUpdateMetricsByKeys: query TimeSeriesMetric group_id [%v] failed", groupId)

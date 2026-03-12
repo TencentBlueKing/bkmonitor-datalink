@@ -399,17 +399,17 @@ func (oc *ObjectsController) WritePodRelations(w io.Writer) {
 				Labels: labels,
 			})
 
-		case kindGameStatefulSet:
-			labels = append(labels, promfmt.Label{
-				Name:  "statefulset",
-				Value: ownerRef.Name,
-			})
-			promfmt.FmtBytes(w, promfmt.Metric{
-				Name:   relationPodStatefulset,
-				Labels: labels,
-			})
+	case kindStatefulSet, kindGameStatefulSet:
+		labels = append(labels, promfmt.Label{
+			Name:  "statefulset",
+			Value: ownerRef.Name,
+		})
+		promfmt.FmtBytes(w, promfmt.Metric{
+			Name:   relationPodStatefulset,
+			Labels: labels,
+		})
 
-		case kindDaemonSet:
+	case kindDaemonSet:
 			labels = append(labels, promfmt.Label{
 				Name:  "daemonset",
 				Value: ownerRef.Name,

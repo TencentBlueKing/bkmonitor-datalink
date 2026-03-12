@@ -35,6 +35,11 @@ const (
 	DefaultKey = "log"
 )
 
+// isIgnoreValueField 取值字段为空、全表(SelectAll)或索引占位(SelectIndex)时视为忽略，不做字段变换
+func isIgnoreValueField(s string) bool {
+	return s == "" || s == SelectAll || s == SelectIndex
+}
+
 const (
 	DorisTypeInt       = "INT"
 	DorisTypeTinyInt   = "TINYINT"
@@ -188,7 +193,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			groupByFields = append(groupByFields, newDim)
 		}
 
-		if valueField == "" || valueField == SelectIndex {
+		if valueField == "" {
 			valueField = SelectAll
 		}
 
@@ -633,7 +638,7 @@ func (d *DorisSQLExpr) getField(s string) (metadata.FieldOption, bool) {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
-	if s == "" || s == "*" {
+	if isIgnoreValueField(s) {
 		return ns, as
 	}
 

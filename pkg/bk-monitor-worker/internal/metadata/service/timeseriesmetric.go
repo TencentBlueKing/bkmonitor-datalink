@@ -72,11 +72,16 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 	}
 	db := mysql.GetDBSession().DB
 	var metrics []customreport.TimeSeriesMetric
-	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldID, customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.FieldScope).GroupIDEq(groupId).All(&metrics); err != nil {
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(
+		customreport.TimeSeriesMetricDBSchema.FieldID,
+		customreport.TimeSeriesMetricDBSchema.FieldName,
+		customreport.TimeSeriesMetricDBSchema.FieldScope,
+		customreport.TimeSeriesMetricDBSchema.IsActive,
+	).GroupIDEq(groupId).All(&metrics); err != nil {
 		return false, errors.Wrapf(err, "query for TimeSeriesMetric with group_id [%v] failed", groupId)
 	}
 	oldRecordKeys := mapset.NewSet[string]()
-	oldKeyToFieldID := make(map[string]uint)
+	oldActiveKeyToFieldID := make(map[string]uint)
 	for _, m := range metrics {
 		scope := m.FieldScope
 		if scope == "" {
@@ -84,16 +89,19 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 		}
 		key := metricKey(m.FieldName, scope)
 		oldRecordKeys.Add(key)
-		oldKeyToFieldID[key] = m.FieldID
+		if m.IsActive {
+			oldActiveKeyToFieldID[key] = m.FieldID
+		}
 	}
 
 	needCreateKeys := newRecordKeys.Difference(oldRecordKeys).ToSlice()
 	needUpdateKeys := newRecordKeys.Intersect(oldRecordKeys).ToSlice()
-	inactiveKeys := oldRecordKeys.Difference(newRecordKeys).ToSlice()
-	if len(inactiveKeys) > 0 {
-		inactiveFieldIDs := make([]uint, 0, len(inactiveKeys))
-		for _, k := range inactiveKeys {
-			if id, ok := oldKeyToFieldID[k]; ok {
+	newInactiveKeys := oldRecordKeys.Difference(newRecordKeys).ToSlice()
+	if len(newInactiveKeys) > 0 {
+		inactiveFieldIDs := make([]uint, 0, len(newInactiveKeys))
+		for _, k := range newInactiveKeys {
+			if id, ok := oldActiveKeyToFieldID[k]; ok {
+				// 只更新数据库中是活跃的
 				inactiveFieldIDs = append(inactiveFieldIDs, id)
 			}
 		}

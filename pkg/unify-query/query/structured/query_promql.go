@@ -545,28 +545,40 @@ func convertMethod(t parser.ItemType) string {
 }
 
 // parseQueryLabelSelector 解析 __query_label_selector 标签选择器字符串
-// 仅支持四种操作符：= (eq), != (neq), =~ (reg), !~ (nreg)；多个条件用逗号分隔，全部 AND
-// 示例：__query_label_selector="scene=log,cluster_id=BCS-K8S-00001"
+// 支持 = (eq), != (neq), =~ (reg), !~ (nreg)。逗号分隔为 AND，" or " 分隔为 OR。
+// 示例：scene=log,cluster_id=BCS-K8S-00001 或 scene=log or scene=k8s
 func parseQueryLabelSelector(value string) *TableIDConditionExpr {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil
 	}
-	var conds []LabelCondition
-	for _, part := range splitAndPart(value) {
-		part = strings.TrimSpace(part)
-		if part == "" {
+	// 先按 " or " 拆成 OR 组（引号内不拆分）
+	orParts := splitRespectingQuotes(value, " or ")
+	var orGroups [][]LabelCondition
+	for _, orPart := range orParts {
+		orPart = strings.TrimSpace(orPart)
+		if orPart == "" {
 			continue
 		}
-		c := parseOneCondition(part)
-		if c != nil {
-			conds = append(conds, *c)
+		var conds []LabelCondition
+		for _, part := range splitAndPart(orPart) {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			c := parseOneCondition(part)
+			if c != nil {
+				conds = append(conds, *c)
+			}
+		}
+		if len(conds) > 0 {
+			orGroups = append(orGroups, conds)
 		}
 	}
-	if len(conds) == 0 {
+	if len(orGroups) == 0 {
 		return nil
 	}
-	return &TableIDConditionExpr{Conditions: conds}
+	return &TableIDConditionExpr{OrGroups: orGroups}
 }
 
 // splitAndPart 按逗号分隔（引号内逗号不拆分），用于解析多条件

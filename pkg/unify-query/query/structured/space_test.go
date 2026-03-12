@@ -281,7 +281,7 @@ func TestHasTableIDConditions(t *testing.T) {
 		"only_expr": {
 			opt: &TsDBOption{
 				TableIDConditionExpr: &TableIDConditionExpr{
-					Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+					OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpEq, Value: "log"}}},
 				},
 			},
 			expected: true,
@@ -297,7 +297,7 @@ func TestHasTableIDConditions(t *testing.T) {
 		"both_expr_and_map": {
 			opt: &TsDBOption{
 				TableIDConditionExpr: &TableIDConditionExpr{
-					Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+					OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpEq, Value: "log"}}},
 				},
 				TableIDConditions: map[string]string{"scene": "log"},
 			},
@@ -316,10 +316,10 @@ func TestHasTableIDConditions(t *testing.T) {
 			},
 			expected: false,
 		},
-		// expr 非 nil 但 Conditions 为空
+		// expr 非 nil 但 OrGroups 为空
 		"expr_empty_conditions": {
 			opt: &TsDBOption{
-				TableIDConditionExpr: &TableIDConditionExpr{Conditions: nil},
+				TableIDConditionExpr: &TableIDConditionExpr{OrGroups: nil},
 			},
 			expected: false,
 		},
@@ -348,7 +348,7 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// eq 匹配 —— ResultTableEs 的 Labels 包含 scene=log
 		"expr_eq_match_scene_log": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+				OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpEq, Value: "log"}}},
 			},
 			isSkipField:    true,
 			expectTableIDs: []string{influxdb.ResultTableEs},
@@ -356,7 +356,7 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// neq 匹配 —— scene != "metric"，ResultTableEs 的 scene=log 满足
 		"expr_neq_match": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNeq, Value: "metric"}},
+				OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpNeq, Value: "metric"}}},
 			},
 			isSkipField:    true,
 			expectTableIDs: []string{influxdb.ResultTableEs},
@@ -364,7 +364,7 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// neq 不匹配 —— scene != "log"，ResultTableEs 的 scene=log 不满足
 		"expr_neq_no_match": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNeq, Value: "log"}},
+				OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpNeq, Value: "log"}}},
 			},
 			isSkipField:    true,
 			expectTableIDs: nil,
@@ -372,7 +372,7 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// reg 匹配 —— scene 正则匹配 "lo."
 		"expr_reg_match": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpReg, Value: "lo."}},
+				OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpReg, Value: "lo."}}},
 			},
 			isSkipField:    true,
 			expectTableIDs: []string{influxdb.ResultTableEs},
@@ -380,7 +380,7 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// nreg 匹配 —— scene 不正则匹配 "^k8s"，ResultTableEs 的 scene=log 满足
 		"expr_nreg_match": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNreg, Value: "^k8s"}},
+				OrGroups: [][]LabelCondition{{{Key: "scene", Op: LabelOpNreg, Value: "^k8s"}}},
 			},
 			isSkipField:    true,
 			expectTableIDs: []string{influxdb.ResultTableEs},
@@ -388,10 +388,10 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// 多条件 AND —— scene=log AND cluster_id=BCS-K8S-00001
 		"expr_multi_conditions_match": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{
+				OrGroups: [][]LabelCondition{{
 					{Key: "scene", Op: LabelOpEq, Value: "log"},
 					{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
-				},
+				}},
 			},
 			isSkipField:    true,
 			expectTableIDs: []string{influxdb.ResultTableEs},
@@ -399,17 +399,17 @@ func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
 		// 多条件 AND 一个不满足
 		"expr_multi_conditions_one_fail": {
 			tableIDConditionExpr: &TableIDConditionExpr{
-				Conditions: []LabelCondition{
+				OrGroups: [][]LabelCondition{{
 					{Key: "scene", Op: LabelOpEq, Value: "log"},
 					{Key: "cluster_id", Op: LabelOpEq, Value: "OTHER"},
-				},
+				}},
 			},
 			isSkipField:    true,
 			expectTableIDs: nil,
 		},
 		// expr 为空（Empty），回退到无条件路径 → 无 TableID 和 FieldName 时报错
 		"expr_empty_no_field_no_table_error": {
-			tableIDConditionExpr: &TableIDConditionExpr{Conditions: nil},
+			tableIDConditionExpr: &TableIDConditionExpr{OrGroups: nil},
 			fieldName:            "",
 			expectErr:            true,
 		},

@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -388,14 +389,73 @@ type TimeField struct {
 	Unit string `json:"unit,omitempty"`
 }
 
+// TableIDConditionsValue 表标签条件，本质与 conditions 一致（key op value），统一用 Conditions 表示。
+// JSON 可写为：1) map {"scene":"log",...} 解析时转为 field_list+eq；
+// 2) conditions {"field_list":[...],"condition_list":[...]} 原样解析。
+type TableIDConditionsValue struct {
+	Conditions Conditions
+}
+
+// UnmarshalJSON 有 field_list 则按 Conditions 解析，否则按 map 解析并转为 Conditions（每项 eq）。
+func (v *TableIDConditionsValue) UnmarshalJSON(data []byte) error {
+	var raw map[string]stdjson.RawMessage
+	if err := stdjson.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, has := raw["field_list"]; has {
+		return stdjson.Unmarshal(data, &v.Conditions)
+	}
+	var m map[string]string
+	if err := stdjson.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	v.Conditions.FieldList = make([]ConditionField, 0, len(m))
+	v.Conditions.ConditionList = make([]string, 0, len(m)-1)
+	for k, val := range m {
+		v.Conditions.FieldList = append(v.Conditions.FieldList, ConditionField{
+			DimensionName: k,
+			Value:         []string{val},
+			Operator:      ConditionEqual,
+		})
+	}
+	for i := 0; i < len(m)-1; i++ {
+		v.Conditions.ConditionList = append(v.Conditions.ConditionList, ConditionAnd)
+	}
+	return nil
+}
+
+// MarshalJSON 统一序列化为 conditions 结构（field_list + condition_list）。
+func (v *TableIDConditionsValue) MarshalJSON() ([]byte, error) {
+	return stdjson.Marshal(v.Conditions)
+}
+
+// Empty 是否未设置任何条件
+func (v *TableIDConditionsValue) Empty() bool {
+	if v == nil {
+		return true
+	}
+	return len(v.Conditions.FieldList) == 0
+}
+
+// ToTableIDConditionExpr 转为 TableIDConditionExpr（供选表过滤用），复用 condition.go 逻辑。
+func (v *TableIDConditionsValue) ToTableIDConditionExpr() *TableIDConditionExpr {
+	if v == nil || v.Empty() {
+		return nil
+	}
+	return ConditionsToTableIDConditionExpr(v.Conditions)
+}
+
 type Query struct {
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
 	TableID TableID `json:"table_id,omitempty" example:"system.cpu_summary"`
-	// TableIDConditions 按 labels 条件匹配结果表（仅 eq），当 TableID 为空时生效
-	TableIDConditions map[string]string `json:"table_id_conditions,omitempty"`
-	// TableIDConditionExpr 从 PromQL __query_label_selector 解析出的条件表达式（支持 eq/neq/reg/nreg 与 and/or）
+	// TableIDConditions 按 labels 条件匹配结果表。JSON 可为 map（仅 eq）或 conditions 结构（field_list+op，支持 eq/ne/req/nreq）
+	TableIDConditions TableIDConditionsValue `json:"table_id_conditions,omitempty"`
+	// TableIDConditionExpr 从 PromQL __query_label_selector 解析出的条件表达式（支持 eq/neq/reg/nreg）
 	TableIDConditionExpr *TableIDConditionExpr `json:"-"`
 	// FieldName 查询指标
 	FieldName string `json:"field_name,omitempty" example:"usage"`
@@ -470,6 +530,14 @@ type Query struct {
 	IsMergeDB bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
+}
+
+// ResolveTableIDConditionExpr 解析出用于表标签过滤的表达式：优先 body 中的 table_id_conditions（map 或 conditions 结构），否则用 PromQL 的 TableIDConditionExpr。
+func (q *Query) ResolveTableIDConditionExpr() *TableIDConditionExpr {
+	if expr := q.TableIDConditions.ToTableIDConditionExpr(); expr != nil && !expr.Empty() {
+		return expr
+	}
+	return q.TableIDConditionExpr
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -693,8 +761,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			IsSkipSpace:          metadata.GetUser(ctx).IsSkipSpace(),
 			IsSkipK8s:            metadata.GetQueryParams(ctx).IsSkipK8s,
 			IsSkipField:          isSkipField,
-			TableIDConditions:    q.TableIDConditions,
-			TableIDConditionExpr: q.TableIDConditionExpr,
+			TableIDConditions:    nil, // 已合并到 TableIDConditionExpr
+			TableIDConditionExpr: q.ResolveTableIDConditionExpr(),
 		})
 		if err != nil {
 			return nil, err

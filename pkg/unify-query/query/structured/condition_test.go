@@ -931,3 +931,21 @@ func TestAllConditions_VMString(t *testing.T) {
 		})
 	}
 }
+
+// TestConditions_MatchLabels_ORGroups 测试 MatchLabels 多组 OR（任一 AND 组满足即 true）
+func TestConditions_MatchLabels_ORGroups(t *testing.T) {
+	// (scene=log and cluster_id=1) or (scene=k8s)
+	c := Conditions{
+		FieldList: []ConditionField{
+			{DimensionName: "scene", Operator: ConditionEqual, Value: []string{"log"}},
+			{DimensionName: "cluster_id", Operator: ConditionEqual, Value: []string{"1"}},
+			{DimensionName: "scene", Operator: ConditionEqual, Value: []string{"k8s"}},
+		},
+		ConditionList: []string{ConditionAnd, ConditionOr},
+	}
+	assert.True(t, c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"}))
+	assert.True(t, c.MatchLabels(map[string]string{"scene": "k8s"}))
+	assert.False(t, c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"}))
+	assert.False(t, c.MatchLabels(map[string]string{"scene": "metric"}))
+	assert.False(t, c.MatchLabels(nil))
+}

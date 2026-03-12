@@ -115,6 +115,39 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 	return totalBuffer, nil
 }
 
+// MatchLabels 判断 labels（表标签 map）是否满足本条件。多组为 OR（任一 AND 组满足即 true），组内为 AND。用于表级过滤。
+// 表级过滤要求：条件中的 key 必须存在于 labels 中才参与匹配，否则该表视为不满足（排除无该标签的表）。
+func (c Conditions) MatchLabels(labels map[string]string) bool {
+	if labels == nil {
+		return false
+	}
+	allGroups, err := c.AnalysisConditions()
+	if err != nil || len(allGroups) == 0 {
+		return false
+	}
+	for _, group := range allGroups {
+		allMatch := true
+		for i := range group {
+			f := group[i]
+			norm := *(f.ContainsToPromReg())
+			actual, keyExists := labels[norm.DimensionName]
+			if !keyExists {
+				// 表标签过滤：表中无该 key 则视为不满足，排除该表
+				allMatch = false
+				break
+			}
+			if !norm.MatchesLabelValue(actual, keyExists) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return true
+		}
+	}
+	return false
+}
+
 // ToProm
 func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 	var (

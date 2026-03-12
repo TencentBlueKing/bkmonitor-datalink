@@ -150,31 +150,41 @@ func TestQueryPromQLExpr(t *testing.T) {
 }
 
 func TestParseQueryLabelSelector(t *testing.T) {
+	one := func(lc LabelCondition) *TableIDConditionExpr {
+		return &TableIDConditionExpr{OrGroups: [][]LabelCondition{{lc}}}
+	}
+	andGroup := func(lc ...LabelCondition) *TableIDConditionExpr {
+		return &TableIDConditionExpr{OrGroups: [][]LabelCondition{lc}}
+	}
+	orGroups := func(groups ...[]LabelCondition) *TableIDConditionExpr {
+		return &TableIDConditionExpr{OrGroups: groups}
+	}
+
 	testCases := map[string]struct {
 		input    string
 		expected *TableIDConditionExpr
 	}{
 		"single_pair": {
 			input:    "scene=k8s",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "k8s"}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpEq, Value: "k8s"}),
 		},
 		"multi_pair": {
 			input: "scene=k8s,cluster_id=BCS-K8S-00001",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{
-				{Key: "scene", Op: LabelOpEq, Value: "k8s"},
-				{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
-			}},
+			expected: andGroup(
+				LabelCondition{Key: "scene", Op: LabelOpEq, Value: "k8s"},
+				LabelCondition{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
+			),
 		},
 		"with_spaces": {
 			input: " scene = log , cluster_id = BCS-K8S-00001 ",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{
-				{Key: "scene", Op: LabelOpEq, Value: "log"},
-				{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
-			}},
+			expected: andGroup(
+				LabelCondition{Key: "scene", Op: LabelOpEq, Value: "log"},
+				LabelCondition{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
+			),
 		},
 		"empty_value": {
 			input:    "scene=",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: ""}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpEq, Value: ""}),
 		},
 		"empty_string": {
 			input:    "",
@@ -182,48 +192,56 @@ func TestParseQueryLabelSelector(t *testing.T) {
 		},
 		"value_with_equals": {
 			input:    "expr=a=b",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "expr", Op: LabelOpEq, Value: "a=b"}}},
+			expected: one(LabelCondition{Key: "expr", Op: LabelOpEq, Value: "a=b"}),
 		},
 		"neq_op": {
 			input:    "scene!=metric",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNeq, Value: "metric"}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpNeq, Value: "metric"}),
 		},
 		"reg_op": {
 			input:    "scene=~\"log.*\"",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpReg, Value: "log.*"}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpReg, Value: "log.*"}),
 		},
-		// === 以下为补充的用例 ===
-		// nreg 操作符解析
 		"nreg_op": {
 			input:    `scene!~"k8s"`,
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNreg, Value: "k8s"}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpNreg, Value: "k8s"}),
 		},
-		// nreg 不带引号
 		"nreg_op_no_quotes": {
 			input:    "scene!~k8s",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNreg, Value: "k8s"}}},
+			expected: one(LabelCondition{Key: "scene", Op: LabelOpNreg, Value: "k8s"}),
 		},
-		// 引号内逗号不拆分
 		"value_with_comma_in_quotes": {
 			input:    `key="a,b"`,
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{{Key: "key", Op: LabelOpEq, Value: "a,b"}}},
+			expected: one(LabelCondition{Key: "key", Op: LabelOpEq, Value: "a,b"}),
 		},
-		// 纯空白输入 → nil
 		"only_whitespace": {
 			input:    "   ",
 			expected: nil,
 		},
-		// 不可解析段（无操作符）→ 跳过该段，仅保留合法条件
 		"partial_unparseable": {
-			input: "scene=log,badpart",
-			expected: &TableIDConditionExpr{Conditions: []LabelCondition{
-				{Key: "scene", Op: LabelOpEq, Value: "log"},
-			}},
+			input:    "scene=log,badpart",
+			expected: andGroup(LabelCondition{Key: "scene", Op: LabelOpEq, Value: "log"}),
 		},
-		// 全部不可解析 → nil
 		"all_unparseable": {
 			input:    "nokeyvalue",
 			expected: nil,
+		},
+		"or_two_groups": {
+			input: "scene=log or scene=k8s",
+			expected: orGroups(
+				[]LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+				[]LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "k8s"}},
+			),
+		},
+		"or_with_and_in_group": {
+			input: "scene=log,cluster_id=1 or scene=k8s",
+			expected: orGroups(
+				[]LabelCondition{
+					{Key: "scene", Op: LabelOpEq, Value: "log"},
+					{Key: "cluster_id", Op: LabelOpEq, Value: "1"},
+				},
+				[]LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "k8s"}},
+			),
 		},
 	}
 

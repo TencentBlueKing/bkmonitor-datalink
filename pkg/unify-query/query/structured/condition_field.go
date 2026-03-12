@@ -240,3 +240,41 @@ func LabelMatcherToConditions(lm []*labels.Matcher) (string, []ConditionField, e
 	}
 	return metricName, conds, nil
 }
+
+// MatchesLabelValue 判断标签键值是否满足本条件（用于表标签过滤）。调用前应先 ContainsToPromReg 归一化。
+// actual 为标签值，keyExists 表示该 key 是否存在于 labels 中。
+func (c *ConditionField) MatchesLabelValue(actual string, keyExists bool) bool {
+	val := ""
+	if len(c.Value) > 0 {
+		val = c.Value[0]
+	}
+	switch c.ToPromOperator() {
+	case labels.MatchEqual:
+		return keyExists && actual == val
+	case labels.MatchNotEqual:
+		if !keyExists {
+			return val != ""
+		}
+		return actual != val
+	case labels.MatchRegexp:
+		if !keyExists {
+			return false
+		}
+		re, err := regexp.Compile(val)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(actual)
+	case labels.MatchNotRegexp:
+		if !keyExists {
+			return true
+		}
+		re, err := regexp.Compile(val)
+		if err != nil {
+			return true
+		}
+		return !re.MatchString(actual)
+	default:
+		return false
+	}
+}

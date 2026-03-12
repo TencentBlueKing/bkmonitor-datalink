@@ -105,14 +105,18 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions map[string]string,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions map[string]string, tableIDConditionExpr *TableIDConditionExpr,
 ) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
 	}
 
-	if len(tableIDConditions) > 0 {
+	if tableIDConditionExpr != nil && !tableIDConditionExpr.Empty() {
+		if !matchLabelsExpr(rtDetail.Labels, tableIDConditionExpr) {
+			return nil
+		}
+	} else if len(tableIDConditions) > 0 {
 		if !matchLabels(rtDetail.Labels, tableIDConditions) {
 			return nil
 		}
@@ -271,7 +275,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 
-	if opt.TableID == "" && opt.FieldName == "" && len(opt.TableIDConditions) == 0 {
+	if opt.TableID == "" && opt.FieldName == "" && !opt.hasTableIDConditions() {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 	tsDBs := make([]*query.TsDBV2, 0)
@@ -308,7 +312,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
 			return nil, nil
 		}
-	} else if len(opt.TableIDConditions) > 0 {
+	} else if opt.hasTableIDConditions() {
 		tIDs := s.GetSpaceRtIDs()
 		tableIDs.Add(tIDs...)
 
@@ -337,7 +341,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditions)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditions, opt.TableIDConditionExpr)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -360,12 +364,17 @@ type TsDBOption struct {
 	TableID   TableID
 	FieldName string
 	// IsRegexp 指标是否使用正则查询
-	IsRegexp          bool
-	AllConditions     AllConditions
-	TableIDConditions map[string]string
+	IsRegexp             bool
+	AllConditions        AllConditions
+	TableIDConditions    map[string]string
+	TableIDConditionExpr *TableIDConditionExpr
 }
 
 type TsDBs []*query.TsDBV2
+
+func (o *TsDBOption) hasTableIDConditions() bool {
+	return (o.TableIDConditionExpr != nil && !o.TableIDConditionExpr.Empty()) || len(o.TableIDConditions) > 0
+}
 
 // GetTsDBList : 通过 spaceUid  约定该空间查询范围
 func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {

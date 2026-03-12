@@ -21,6 +21,8 @@ const (
 	bkDatabaseLabelName    = "bk_database"    // argus/prom 存储, db 名对应的 label 名称
 	bkMeasurementLabelName = "bk_measurement" // argus/prom 存储, 表名对应的 label 名称
 
+	queryLabelSelectorName = "__query_label_selector" // 场景化检索: 通过 labels 条件匹配结果表
+
 	BkMonitorAlisa = "bk_monitor"
 	BkMonitor      = "bkmonitor"
 	Custom         = "custom"

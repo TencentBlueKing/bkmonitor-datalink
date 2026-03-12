@@ -211,6 +211,12 @@ func (sp *queryPromQLExpr) splitVecGroups() error {
 	return nil
 }
 
+// QueryTs 将 PromQL 字符串解析为 QueryTs 结构体（对外的主入口方法）
+// 处理流程：
+// 1. 使用 Prometheus 的 parser.ParseExpr 解析 PromQL 语法
+// 2. 将 PromQL 字符串转为字节数组备用
+// 3. 调用 inspect 遍历语法树
+// 4. 调用 queryTs 执行实际的转换逻辑
 func (sp *queryPromQLExpr) QueryTs() (*QueryTs, error) {
 	var err error
 	sp.expr, err = parser.ParseExpr(sp.q)
@@ -437,6 +443,11 @@ func vectorQuery(
 			continue
 		}
 
+		if label.Name == queryLabelSelectorName {
+			query.TableIDConditionExpr = parseQueryLabelSelector(label.Value)
+			continue
+		}
+
 		cond := ConditionField{
 			DimensionName: label.Name,
 			Value:         []string{label.Value},
@@ -531,4 +542,104 @@ func convertMethod(t parser.ItemType) string {
 	}
 
 	return ""
+}
+
+// parseQueryLabelSelector 解析 __query_label_selector 标签选择器字符串
+// 仅支持四种操作符：= (eq), != (neq), =~ (reg), !~ (nreg)；多个条件用逗号分隔，全部 AND
+// 示例：__query_label_selector="scene=log,cluster_id=BCS-K8S-00001"
+func parseQueryLabelSelector(value string) *TableIDConditionExpr {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	var conds []LabelCondition
+	for _, part := range splitAndPart(value) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		c := parseOneCondition(part)
+		if c != nil {
+			conds = append(conds, *c)
+		}
+	}
+	if len(conds) == 0 {
+		return nil
+	}
+	return &TableIDConditionExpr{Conditions: conds}
+}
+
+// splitAndPart 按逗号分隔（引号内逗号不拆分），用于解析多条件
+func splitAndPart(s string) []string {
+	var parts []string
+	for _, p := range splitRespectingQuotes(s, ",") {
+		parts = append(parts, strings.TrimSpace(p))
+	}
+	return parts
+}
+
+func splitRespectingQuotes(s, sep string) []string {
+	var result []string
+	start := 0
+	inQuote := false
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i] == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		if strings.HasPrefix(s[i:], sep) {
+			result = append(result, strings.TrimSpace(s[start:i]))
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+	result = append(result, strings.TrimSpace(s[start:]))
+	return result
+}
+
+func parseOneCondition(s string) *LabelCondition {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var op string
+	var idx int
+	if i := strings.Index(s, "=~"); i >= 0 {
+		op, idx = LabelOpReg, i
+	} else if i := strings.Index(s, "!~"); i >= 0 {
+		op, idx = LabelOpNreg, i
+	} else if i := strings.Index(s, "!="); i >= 0 {
+		op, idx = LabelOpNeq, i
+	} else if i := strings.Index(s, "="); i >= 0 {
+		op, idx = LabelOpEq, i
+	} else {
+		return nil
+	}
+	key := strings.TrimSpace(s[:idx])
+	if key == "" {
+		return nil
+	}
+	var val string
+	switch op {
+	case LabelOpReg, LabelOpNreg:
+		val = strings.TrimSpace(s[idx+2:])
+	case LabelOpNeq:
+		val = strings.TrimSpace(s[idx+2:])
+	case LabelOpEq:
+		val = strings.TrimSpace(s[idx+1:])
+	}
+	val = unquoteValue(val)
+	return &LabelCondition{Key: key, Op: op, Value: val}
+}
+
+func unquoteValue(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		v = v[1 : len(v)-1]
+		v = strings.ReplaceAll(v, `\"`, `"`)
+	}
+	return v
 }

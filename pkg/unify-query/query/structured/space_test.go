@@ -270,3 +270,185 @@ func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 		})
 	}
 }
+
+// TestHasTableIDConditions 单独测试 hasTableIDConditions 方法
+func TestHasTableIDConditions(t *testing.T) {
+	testCases := map[string]struct {
+		opt      *TsDBOption
+		expected bool
+	}{
+		// 仅 expr 非空
+		"only_expr": {
+			opt: &TsDBOption{
+				TableIDConditionExpr: &TableIDConditionExpr{
+					Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+				},
+			},
+			expected: true,
+		},
+		// 仅 map 非空
+		"only_map": {
+			opt: &TsDBOption{
+				TableIDConditions: map[string]string{"scene": "log"},
+			},
+			expected: true,
+		},
+		// 两者都非空
+		"both_expr_and_map": {
+			opt: &TsDBOption{
+				TableIDConditionExpr: &TableIDConditionExpr{
+					Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+				},
+				TableIDConditions: map[string]string{"scene": "log"},
+			},
+			expected: true,
+		},
+		// 两者都空
+		"both_empty": {
+			opt:      &TsDBOption{},
+			expected: false,
+		},
+		// expr 为 nil，map 为空
+		"nil_expr_empty_map": {
+			opt: &TsDBOption{
+				TableIDConditionExpr: nil,
+				TableIDConditions:    map[string]string{},
+			},
+			expected: false,
+		},
+		// expr 非 nil 但 Conditions 为空
+		"expr_empty_conditions": {
+			opt: &TsDBOption{
+				TableIDConditionExpr: &TableIDConditionExpr{Conditions: nil},
+			},
+			expected: false,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, c.expected, c.opt.hasTableIDConditions())
+		})
+	}
+}
+
+// TestSpaceFilter_DataList_WithTableIDConditionExpr 测试仅使用 TableIDConditionExpr（不使用 map）的 DataList 集成路径
+func TestSpaceFilter_DataList_WithTableIDConditionExpr(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+
+	testCases := map[string]struct {
+		tableIDConditionExpr *TableIDConditionExpr
+		fieldName            string
+		isSkipField          bool
+		expectTableIDs       []string
+		expectErr            bool
+	}{
+		// eq 匹配 —— ResultTableEs 的 Labels 包含 scene=log
+		"expr_eq_match_scene_log": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpEq, Value: "log"}},
+			},
+			isSkipField:    true,
+			expectTableIDs: []string{influxdb.ResultTableEs},
+		},
+		// neq 匹配 —— scene != "metric"，ResultTableEs 的 scene=log 满足
+		"expr_neq_match": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNeq, Value: "metric"}},
+			},
+			isSkipField:    true,
+			expectTableIDs: []string{influxdb.ResultTableEs},
+		},
+		// neq 不匹配 —— scene != "log"，ResultTableEs 的 scene=log 不满足
+		"expr_neq_no_match": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNeq, Value: "log"}},
+			},
+			isSkipField:    true,
+			expectTableIDs: nil,
+		},
+		// reg 匹配 —— scene 正则匹配 "lo."
+		"expr_reg_match": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpReg, Value: "lo."}},
+			},
+			isSkipField:    true,
+			expectTableIDs: []string{influxdb.ResultTableEs},
+		},
+		// nreg 匹配 —— scene 不正则匹配 "^k8s"，ResultTableEs 的 scene=log 满足
+		"expr_nreg_match": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{{Key: "scene", Op: LabelOpNreg, Value: "^k8s"}},
+			},
+			isSkipField:    true,
+			expectTableIDs: []string{influxdb.ResultTableEs},
+		},
+		// 多条件 AND —— scene=log AND cluster_id=BCS-K8S-00001
+		"expr_multi_conditions_match": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{
+					{Key: "scene", Op: LabelOpEq, Value: "log"},
+					{Key: "cluster_id", Op: LabelOpEq, Value: "BCS-K8S-00001"},
+				},
+			},
+			isSkipField:    true,
+			expectTableIDs: []string{influxdb.ResultTableEs},
+		},
+		// 多条件 AND 一个不满足
+		"expr_multi_conditions_one_fail": {
+			tableIDConditionExpr: &TableIDConditionExpr{
+				Conditions: []LabelCondition{
+					{Key: "scene", Op: LabelOpEq, Value: "log"},
+					{Key: "cluster_id", Op: LabelOpEq, Value: "OTHER"},
+				},
+			},
+			isSkipField:    true,
+			expectTableIDs: nil,
+		},
+		// expr 为空（Empty），回退到无条件路径 → 无 TableID 和 FieldName 时报错
+		"expr_empty_no_field_no_table_error": {
+			tableIDConditionExpr: &TableIDConditionExpr{Conditions: nil},
+			fieldName:            "",
+			expectErr:            true,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			influxdb.MockSpaceRouter(ctx)
+
+			sf, err := NewSpaceFilter(ctx, &TsDBOption{
+				SpaceUid: influxdb.SpaceUid,
+			})
+			assert.NoError(t, err)
+
+			tsdb, err := sf.DataList(&TsDBOption{
+				SpaceUid:             influxdb.SpaceUid,
+				TableIDConditionExpr: c.tableIDConditionExpr,
+				FieldName:            c.fieldName,
+				IsSkipField:          c.isSkipField,
+			})
+
+			if c.expectErr {
+				assert.Error(t, err)
+				return
+			}
+
+			if c.expectTableIDs == nil {
+				assert.Nil(t, tsdb)
+			} else {
+				assert.NotNil(t, tsdb)
+				actual := make([]string, 0, len(tsdb))
+				for _, db := range tsdb {
+					actual = append(actual, db.TableID)
+				}
+				sort.Strings(actual)
+				sort.Strings(c.expectTableIDs)
+				assert.Equal(t, c.expectTableIDs, actual)
+			}
+		})
+	}
+}

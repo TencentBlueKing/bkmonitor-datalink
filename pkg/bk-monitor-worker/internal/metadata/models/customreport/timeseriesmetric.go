@@ -53,12 +53,6 @@ func (s *TimeSeriesMetric) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// BeforeUpdate 更新前的钩子函数
-func (s *TimeSeriesMetric) BeforeUpdate(tx *gorm.DB) error {
-	s.LastModifyTime = time.Now()
-	return nil
-}
-
 // TableName table alias name
 func (TimeSeriesMetric) TableName() string {
 	return "metadata_timeseriesmetric"

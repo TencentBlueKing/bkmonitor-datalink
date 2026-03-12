@@ -294,7 +294,7 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]an
 func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
-	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
+	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v,metricInfoList: %d", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery, len(metricInfoList))
 
 	// 过滤非法的指标
 	metricInfoList = s.filterInvalidMetrics(metricInfoList)
@@ -304,12 +304,15 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (boo
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshTSScopes for table id [%s] failed", s.TableID)
 	}
+	logger.Infof("UpdateMetrics: BulkRefreshTSScopes for table id: %v, metricInfoList: %d", s.TableID, len(newMetricInfoList))
 
 	// 2. 刷新 ts 表中的指标和维度（使用带 scope_id 的列表）
 	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, newMetricInfoList, isAutoDiscovery)
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshTSMetrics for table id [%s] with metric info failed", s.TableID)
 	}
+	logger.Infof("UpdateMetrics: BulkRefreshTSMetrics for table id: %v, updated: %v", s.TableID, updated)
+
 	// 3. 刷新 rt 表中的指标和维度
 	err = s.BulkRefreshRtFields(s.TableID, metricInfoList)
 	if err != nil {

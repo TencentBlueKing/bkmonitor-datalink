@@ -77,11 +77,11 @@ var configData = &Config{
 			},
 		},
 		{
-			Name: "deamonset",
+			Name: "daemonset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
-				"deamonset",
+				"daemonset",
 			},
 		},
 		{
@@ -237,7 +237,7 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"deamonset", "pod",
+				"daemonset", "pod",
 			},
 		},
 		{

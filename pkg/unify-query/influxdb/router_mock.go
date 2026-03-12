@@ -554,7 +554,7 @@ func setRedisClient(ctx context.Context) {
 		Addrs:    []string{fmt.Sprintf("%s:%d", host, port)},
 		Password: pwd,
 	}
-	redis.SetInstance(ctx, "mock", options)
+	redis.SetInstance(ctx, "bkmonitorv3:unify-query", "mock", options)
 }
 
 func MockRouterWithHostInfo(hostInfo ir.HostInfo) *Router {

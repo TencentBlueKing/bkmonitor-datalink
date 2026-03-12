@@ -328,7 +328,6 @@ func BulkRefreshTSScopes(svc *TimeSeriesGroupSvc, metricInfoList []map[string]an
 			for k, v := range metricInfo {
 				newItem[k] = v
 			}
-			newItem["field_scope"] = scopeName
 			newItem["scope_id"] = scopeID
 			newMetricInfoList = append(newMetricInfoList, newItem)
 		}

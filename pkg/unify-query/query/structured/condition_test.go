@@ -931,3 +931,73 @@ func TestAllConditions_VMString(t *testing.T) {
 		})
 	}
 }
+
+// TestConditions_MatchLabels 表标签匹配：空条件、单 eq、缺 key、OR 组
+func TestConditions_MatchLabels(t *testing.T) {
+	t.Run("nil_empty_conditions", func(t *testing.T) {
+		var c *Conditions
+		ok, err := c.MatchLabels(map[string]string{"a": "1"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = (&Conditions{}).MatchLabels(map[string]string{"a": "1"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+	})
+	t.Run("single_eq_match", func(t *testing.T) {
+		c := &Conditions{
+			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			ConditionList: []string{},
+		}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("key_missing", func(t *testing.T) {
+		c := &Conditions{
+			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			ConditionList: []string{},
+		}
+		ok, err := c.MatchLabels(map[string]string{})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"other": "x"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("or_groups", func(t *testing.T) {
+		c := &Conditions{
+			FieldList: []ConditionField{
+				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+				{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual},
+			},
+			ConditionList: []string{ConditionOr},
+		}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "other"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("and_group", func(t *testing.T) {
+		c := &Conditions{
+			FieldList: []ConditionField{
+				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+				{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
+			},
+			ConditionList: []string{ConditionAnd},
+		}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+}

@@ -389,6 +389,70 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
+// MatchLabels 表标签匹配：labels 为 RT 的标签键值，多组 OR（任一组内全部条件满足即通过）；条件中的 key 必须在 labels 中存在才参与匹配，否则视为不满足。
+func (c *Conditions) MatchLabels(labels map[string]string) (bool, error) {
+	if c == nil || len(c.FieldList) == 0 {
+		return true, nil
+	}
+	totalBuffer, err := c.AnalysisConditions()
+	if err != nil || len(totalBuffer) == 0 {
+		return false, err
+	}
+	for _, cond := range totalBuffer {
+		andOk := true
+		for _, field := range cond {
+			val, ok := labels[field.DimensionName]
+			if !ok {
+				andOk = false
+				break
+			}
+			switch field.Operator {
+			case ConditionEqual, ConditionContains:
+				if !containElement(field.Value, val) {
+					andOk = false
+					break
+				}
+			case ConditionNotEqual, ConditionNotContains:
+				if containElement(field.Value, val) {
+					andOk = false
+					break
+				}
+			case ConditionRegEqual:
+				matched := false
+				for _, v := range field.Value {
+					reExp, err := regexp.Compile(v)
+					if err != nil {
+						return false, err
+					}
+					if reExp.Match([]byte(val)) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					andOk = false
+					break
+				}
+			case ConditionNotRegEqual:
+				for _, v := range field.Value {
+					reExp, err := regexp.Compile(v)
+					if err != nil {
+						return false, err
+					}
+					if reExp.Match([]byte(val)) {
+						andOk = false
+						break
+					}
+				}
+			}
+		}
+		if andOk {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ConvertToPromBuffer
 func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionField {
 	var promBuffer [][]promql.ConditionField

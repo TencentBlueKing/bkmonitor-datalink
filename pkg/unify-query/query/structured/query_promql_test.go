@@ -15,8 +15,12 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestQueryPromQLExpr(t *testing.T) {
@@ -147,4 +151,178 @@ func TestQueryPromQLExpr(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseQueryLabelSelector 覆盖 __query_label_selector 字符串解析：单/多条件、eq/neq/reg/nreg、AND（逗号）/OR（ or ）、引号与空串
+func TestParseQueryLabelSelector(t *testing.T) {
+	log.InitTestLogger()
+
+	t.Run("empty", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("")
+		assert.NoError(t, err)
+		assert.Nil(t, expr)
+	})
+	t.Run("whitespace_only", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("   ")
+		assert.NoError(t, err)
+		assert.Nil(t, expr)
+	})
+	t.Run("single_eq", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=log")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 1)
+		assert.Equal(t, "scene", expr.OrGroups[0][0].Key)
+		assert.Equal(t, "eq", expr.OrGroups[0][0].Op)
+		assert.Equal(t, "log", expr.OrGroups[0][0].Value)
+		assert.Equal(t, "scene=log", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("and_comma", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=log,cluster_id=BCS-K8S-00001")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 2)
+		assert.Equal(t, LabelCondition{Key: "scene", Op: "eq", Value: "log"}, expr.OrGroups[0][0])
+		assert.Equal(t, LabelCondition{Key: "cluster_id", Op: "eq", Value: "BCS-K8S-00001"}, expr.OrGroups[0][1])
+		assert.Equal(t, "scene=log,cluster_id=BCS-K8S-00001", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("or_groups", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=log or scene=k8s")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 2)
+		require.Len(t, expr.OrGroups[0], 1)
+		require.Len(t, expr.OrGroups[1], 1)
+		assert.Equal(t, "scene", expr.OrGroups[0][0].Key)
+		assert.Equal(t, "log", expr.OrGroups[0][0].Value)
+		assert.Equal(t, "k8s", expr.OrGroups[1][0].Value)
+		assert.Equal(t, "scene=log or scene=k8s", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("and_or_combined", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=log,cluster_id=1 or scene=k8s")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 2)
+		require.Len(t, expr.OrGroups[0], 2)
+		require.Len(t, expr.OrGroups[1], 1)
+		assert.Equal(t, "scene", expr.OrGroups[0][0].Key)
+		assert.Equal(t, "cluster_id", expr.OrGroups[0][1].Key)
+		assert.Equal(t, "scene", expr.OrGroups[1][0].Key)
+		assert.Equal(t, "k8s", expr.OrGroups[1][0].Value)
+		assert.Equal(t, "scene=log,cluster_id=1 or scene=k8s", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("invalid_no_key", func(t *testing.T) {
+		_, err := parseQueryLabelSelector("=log")
+		assert.Error(t, err)
+	})
+	t.Run("invalid_no_op", func(t *testing.T) {
+		_, err := parseQueryLabelSelector("scene")
+		assert.Error(t, err)
+	})
+}
+
+// TestPromQLWithQueryLabelSelector 覆盖完整 PromQL 带 __query_label_selector 的解析与往返：
+// 从 bklog:log_count{__query_label_selector="scene=log,cluster_id=1 or scene=k8s"} 解析出 TableIDConditions，再 ToPromExpr 写回。
+func TestPromQLWithQueryLabelSelector(t *testing.T) {
+	log.InitTestLogger()
+
+	promQL := `bklog:log_count{__query_label_selector="scene=log,cluster_id=1 or scene=k8s"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList, "QueryList should have at least one query")
+
+	q := ts.QueryList[0]
+	require.NotNil(t, q)
+	// PromQL 解析后应写入 TableIDConditions（Conditions）
+	require.Greater(t, len(q.TableIDConditions.FieldList), 0, "TableIDConditions should be filled from __query_label_selector")
+	require.Len(t, q.TableIDConditions.FieldList, 3, "scene=log, cluster_id=1, scene=k8s => 3 fields")
+	require.Equal(t, "scene", q.TableIDConditions.FieldList[0].DimensionName)
+	require.Equal(t, []string{"log"}, q.TableIDConditions.FieldList[0].Value)
+	require.Equal(t, "cluster_id", q.TableIDConditions.FieldList[1].DimensionName)
+	require.Equal(t, []string{"1"}, q.TableIDConditions.FieldList[1].Value)
+	require.Equal(t, "scene", q.TableIDConditions.FieldList[2].DimensionName)
+	require.Equal(t, []string{"k8s"}, q.TableIDConditions.FieldList[2].Value)
+	require.Equal(t, []string{"and", "or"}, q.TableIDConditions.ConditionList)
+
+	// 往返：从 Conditions 转回 PromQL 应包含 __query_label_selector
+	promExprOpt := &PromExprOption{}
+	promExprOpt.ReferenceNameMetric = make(map[string]string, len(ts.QueryList))
+	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(ts.QueryList))
+	for _, sub := range ts.QueryList {
+		router, _ := sub.ToRouter()
+		promExprOpt.ReferenceNameMetric[sub.ReferenceName] = router.RealMetricName()
+		labelsMatcher, _, _ := sub.Conditions.ToProm()
+		promExprOpt.ReferenceNameLabelMatcher[sub.ReferenceName] = labelsMatcher
+	}
+	result, err := ts.ToPromExpr(context.TODO(), promExprOpt)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	resultStr := result.String()
+	require.Contains(t, resultStr, "__query_label_selector=", "round-trip PromQL should contain __query_label_selector")
+	require.Contains(t, resultStr, "scene=log,cluster_id=1 or scene=k8s", "round-trip should preserve selector value")
+}
+
+// TestE2E_PromQL_QueryLabelSelector_ToQueryMetric_GetTsDBList 端到端：PromQL 带 __query_label_selector → QueryTs → ToQueryMetric(tsDBs=nil) 触发 GetTsDBList，链路打通且不报错
+func TestE2E_PromQL_QueryLabelSelector_ToQueryMetric_GetTsDBList(t *testing.T) {
+	log.InitTestLogger()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	promQL := `bklog:log_count{__query_label_selector="scene=log"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList)
+
+	q := ts.QueryList[0]
+	require.NotNil(t, q.ResolveTableIDConditionExpr(), "TableIDConditions 应解析为 TableIDConditionExpr")
+
+	// 不传 tsDBs，ToQueryMetric 内部会调用 GetTsDBList(opt)，opt 含 TableIDConditionExpr；mock 下 RT 无 Labels，会过滤得 0 个 TsDB
+	metric, err := q.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+	require.NotNil(t, metric)
+	// mock 中无 RT 带 scene=log 的 Labels，选表结果应为 0
+	assert.Empty(t, metric.QueryList, "表标签条件 scene=log 在 mock 下无匹配 RT，QueryList 应为空")
+}
+
+// TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList 端到端：PromQL → QueryTs → ToQueryMetric(GetTsDBList) 后再 ToPromExpr，__query_label_selector 仍被保留
+func TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList(t *testing.T) {
+	log.InitTestLogger()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	promQL := `metric_name{__query_label_selector="scene=k8s"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList)
+
+	// 走一遍 ToQueryMetric 触发 GetTsDBList（表标签参与选表）
+	_, err = ts.QueryList[0].ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+
+	// 再转回 PromQL，表标签条件应仍在
+	promExprOpt := &PromExprOption{}
+	promExprOpt.ReferenceNameMetric = make(map[string]string, len(ts.QueryList))
+	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(ts.QueryList))
+	for _, sub := range ts.QueryList {
+		router, _ := sub.ToRouter()
+		promExprOpt.ReferenceNameMetric[sub.ReferenceName] = router.RealMetricName()
+		labelsMatcher, _, _ := sub.Conditions.ToProm()
+		promExprOpt.ReferenceNameLabelMatcher[sub.ReferenceName] = labelsMatcher
+	}
+	result, err := ts.ToPromExpr(ctx, promExprOpt)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	resultStr := result.String()
+	require.Contains(t, resultStr, "__query_label_selector=", "端到端后 PromQL 仍应包含 __query_label_selector")
+	require.Contains(t, resultStr, "scene=k8s", "端到端后应保留 selector 值")
 }

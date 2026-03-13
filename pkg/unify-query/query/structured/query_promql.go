@@ -424,8 +424,18 @@ func vectorQuery(
 	if query == nil {
 		query = new(Query)
 	}
+	// 分离 __query_label_selector（仅用于路由）与其余 matchers
+	var otherMatchers []*labels.Matcher
+	var queryLabelSelectorValue string
+	for _, m := range e.LabelMatchers {
+		if m.Name == QueryLabelSelectorLabelName {
+			queryLabelSelectorValue = m.Value
+			continue
+		}
+		otherMatchers = append(otherMatchers, m)
+	}
 	conds := make([]ConditionField, 0)
-	route, matchers, err := MetricsToRouter(e.LabelMatchers...)
+	route, matchers, err := MetricsToRouter(otherMatchers...)
 	if err != nil {
 		return query, err
 	}
@@ -448,6 +458,17 @@ func vectorQuery(
 		}
 		cond.Operator = op
 		conds = append(conds, cond)
+	}
+	if queryLabelSelectorValue != "" {
+		expr, err := parseQueryLabelSelector(queryLabelSelectorValue)
+		if err != nil {
+			return query, err
+		}
+		if expr != nil {
+			if c := expr.ToConditions(); c != nil && len(c.FieldList) > 0 {
+				query.TableIDConditions = *c
+			}
+		}
 	}
 
 	// 匹配 Conditions 组合条件
@@ -483,6 +504,121 @@ func vectorQuery(
 	query.VectorOffset = e.Offset
 
 	return query, nil
+}
+
+// parseQueryLabelSelector 解析 __query_label_selector 的值，得到 TableIDConditionExpr（OrGroups）
+// 格式: scene=log,cluster_id=1 or scene=k8s；支持 = != =~ !~；值可双引号，内部 \" 转义
+func parseQueryLabelSelector(s string) (*TableIDConditionExpr, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	orParts := splitOutsideQuotes(s, " or ")
+	var orGroups [][]LabelCondition
+	for _, part := range orParts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		andParts := splitOutsideQuotes(part, ",")
+		var group []LabelCondition
+		for _, token := range andParts {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+			lc, err := parseOneLabelCondition(token)
+			if err != nil {
+				return nil, err
+			}
+			group = append(group, lc)
+		}
+		if len(group) > 0 {
+			orGroups = append(orGroups, group)
+		}
+	}
+	if len(orGroups) == 0 {
+		return nil, nil
+	}
+	return &TableIDConditionExpr{OrGroups: orGroups}, nil
+}
+
+func splitOutsideQuotes(s, sep string) []string {
+	var parts []string
+	var cur strings.Builder
+	inQuote := false
+	i := 0
+	for i < len(s) {
+		if inQuote {
+			if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+				cur.WriteByte(s[i+1])
+				i += 2
+				continue
+			}
+			if s[i] == '"' {
+				inQuote = false
+				cur.WriteByte(s[i])
+				i++
+				continue
+			}
+			cur.WriteByte(s[i])
+			i++
+			continue
+		}
+		if s[i] == '"' {
+			inQuote = true
+			cur.WriteByte(s[i])
+			i++
+			continue
+		}
+		if strings.HasPrefix(s[i:], sep) {
+			parts = append(parts, strings.TrimSpace(cur.String()))
+			cur.Reset()
+			i += len(sep)
+			continue
+		}
+		cur.WriteByte(s[i])
+		i++
+	}
+	if cur.Len() > 0 {
+		parts = append(parts, strings.TrimSpace(cur.String()))
+	}
+	return parts
+}
+
+func parseOneLabelCondition(token string) (LabelCondition, error) {
+	// 找 op: = != =~ !~
+	for _, opInfo := range []struct {
+		op      string
+		literal string
+	}{
+		{ConditionRegEqual, "=~"},
+		{ConditionNotRegEqual, "!~"},
+		{ConditionNotEqual, "!="},
+		{ConditionEqual, "="},
+	} {
+		idx := strings.Index(token, opInfo.literal)
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(token[:idx])
+		val := strings.TrimSpace(token[idx+len(opInfo.literal):])
+		if key == "" {
+			return LabelCondition{}, fmt.Errorf("invalid label condition: missing key in %s", token)
+		}
+		val = unquoteLabelValue(val)
+		return LabelCondition{Key: key, Op: opInfo.op, Value: val}, nil
+	}
+	return LabelCondition{}, fmt.Errorf("invalid label condition: %s", token)
+}
+
+func unquoteLabelValue(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+		return strings.ReplaceAll(s, `\"`, `"`)
+	}
+	return s
 }
 
 // convertOp

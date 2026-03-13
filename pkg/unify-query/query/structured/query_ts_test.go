@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -287,6 +288,30 @@ func TestQueryToMetric(t *testing.T) {
 			assert.Equal(t, string(a), string(b))
 		})
 	}
+}
+
+// TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：Query 带 TableIDConditions → ToQueryMetric(tsDBs=nil) → GetTsDBList 选表，链路打通；mock 下无匹配 Labels 时 QueryList 为空
+func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	query := &Query{
+		TableID:       "",
+		FieldName:     "kube_node_info",
+		ReferenceName: "a",
+		TableIDConditions: Conditions{
+			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			ConditionList: []string{},
+		},
+	}
+	require.NotNil(t, query.ResolveTableIDConditionExpr(), "ResolveTableIDConditionExpr 应有值")
+
+	metric, err := query.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, metric)
+	// mock 中 RT 未设置 Labels，scene=log 无法匹配，选表结果为 0，QueryList 为空
+	assert.Empty(t, metric.QueryList, "表标签 scene=log 在 mock 下无匹配，QueryList 应为空")
 }
 
 func TestQueryTs_ToQueryReference(t *testing.T) {

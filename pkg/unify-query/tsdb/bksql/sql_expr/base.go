@@ -300,7 +300,7 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 }
 
 func (d *DefaultSQLExpr) DescribeTableSQL(table string) string {
-	return ""
+	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
 // buildCondition 构建单个条件表达式

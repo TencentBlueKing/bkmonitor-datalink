@@ -32,11 +32,58 @@ type Relation struct {
 	V []Resource
 }
 
-// Path 关联路径
+// Path 关联路径 (v1)
 type Path []Relation
 
 // Paths 多组关联路径
 type Paths []Path
+
+// ========================================
+// V2 路径类型定义
+// ========================================
+
+// PathStepV2 路径中的一步 (v2)
+type PathStepV2 struct {
+	ResourceType string `json:"resource_type"`           // 资源类型
+	RelationType string `json:"relation_type,omitempty"` // 到达该资源的关系类型（第一步为空）
+	Category     string `json:"category,omitempty"`      // 关系类别
+	Direction    string `json:"direction,omitempty"`     // 遍历方向
+}
+
+// PathV2 一条完整的路径 (v2)
+type PathV2 struct {
+	Steps []PathStepV2 `json:"steps"`
+}
+
+// String 返回路径的字符串表示
+func (p *PathV2) String() string {
+	if len(p.Steps) == 0 {
+		return ""
+	}
+	result := p.Steps[0].ResourceType
+	for i := 1; i < len(p.Steps); i++ {
+		result += " -> " + p.Steps[i].ResourceType
+	}
+	return result
+}
+
+// ToResourceTypes 返回路径中的资源类型列表
+func (p *PathV2) ToResourceTypes() []string {
+	types := make([]string, len(p.Steps))
+	for i, step := range p.Steps {
+		types[i] = step.ResourceType
+	}
+	return types
+}
+
+// ToStringSlice 返回路径的字符串切片表示
+func (p *PathV2) ToStringSlice() []string {
+	result := make([]string, len(p.Steps))
+	for i, step := range p.Steps {
+		result[i] = step.ResourceType
+	}
+	return result
+}
 
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
@@ -110,4 +157,38 @@ type RelationMultiResourceRangeResponseData struct {
 type RelationMultiResourceRangeResponse struct {
 	TraceID string                                   `json:"trace_id"`
 	Data    []RelationMultiResourceRangeResponseData `json:"data"`
+}
+
+type RelationMultiResourceResponseDataV2 struct {
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList Matchers `json:"target_list"`
+	Path       []PathV2 `json:"path"`
+	Message    string   `json:"message"`
+}
+
+type RelationMultiResourceResponseV2 struct {
+	TraceID string                                `json:"trace_id"`
+	Data    []RelationMultiResourceResponseDataV2 `json:"data"`
+}
+
+type RelationMultiResourceRangeResponseDataV2 struct {
+	Code int `json:"code"`
+
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+	Path       []PathV2                `json:"path"`
+	Message    string                  `json:"message"`
+}
+
+type RelationMultiResourceRangeResponseV2 struct {
+	TraceID string                                     `json:"trace_id"`
+	Data    []RelationMultiResourceRangeResponseDataV2 `json:"data"`
 }

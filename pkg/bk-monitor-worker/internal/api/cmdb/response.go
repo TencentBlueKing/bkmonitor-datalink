@@ -88,6 +88,10 @@ type ListBizHostsTopoDataInfoHost struct {
 	DockerClientVersion string  `json:"docker_client_version" mapstructure:"docker_client_version"`
 	DockerServerVersion string  `json:"docker_server_version" mapstructure:"docker_server_version"`
 	VersionMeta         string  `json:"version_meta"  mapstructure:"version_meta"`
+	// ToResourceMap 资源映射关系
+	// 结构: map[拓扑层级]map[资源类型]map[属性名]属性值
+	// 示例: {"set": {"app_version": {"app_name": "myapp", "version": "1.0"}}}
+	ToResourceMap map[string]map[string]map[string]any `json:"to_resource_map" mapstructure:"to_resource_map"`
 }
 
 type ListBizHostsTopoDataInfoTopo struct {

@@ -33,9 +33,10 @@ import (
 )
 
 const (
-	TableFieldName     = "Field"
-	TableFieldType     = "Type"
-	TableFieldAnalyzed = "Analyzed"
+	TableFieldName       = "Field"
+	TableFieldNameColumn = "Column"
+	TableFieldType       = "Type"
+	TableFieldAnalyzed   = "Analyzed"
 
 	TableTypeVariant = "VARIANT"
 )
@@ -168,7 +169,11 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.Field
 		)
 		k, ok = list[TableFieldName].(string)
 		if !ok {
-			continue
+			// HDFS 使用 Column 名称标识
+			k, ok = list[TableFieldNameColumn].(string)
+			if !ok {
+				continue
+			}
 		}
 
 		fieldType, ok = list[TableFieldType].(string)
@@ -199,8 +204,8 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// 只有 Doris 才需要获取字段表结构
-	if query.Measurement == sql_expr.Doris {
+	// Doris / HDFS 均需获取字段表结构
+	if query.Measurement == sql_expr.Doris || query.Measurement == sql_expr.HDFS {
 		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
 			return nil, err

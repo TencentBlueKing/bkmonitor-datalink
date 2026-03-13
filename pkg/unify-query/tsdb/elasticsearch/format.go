@@ -813,10 +813,22 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return name, agg, err
 }
 
+// isIgnoreValueField 全表(*)或时间占位(_time)时视为忽略，映射到 _index 实现 COUNT(*)
+func isIgnoreValueField(s string) bool {
+	return s == "*" || s == FieldTime
+}
+
+const defaultCountField = "_index"
+
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
+	}
+
+	valueField := f.valueField
+	if isIgnoreValueField(valueField) {
+		valueField = defaultCountField
 	}
 
 	for _, am := range aggregates {
@@ -824,7 +836,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		case DateHistogram:
 			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
-			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
+			f.valueAgg(valueField, FieldValue, am.Name, am.Args...)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数

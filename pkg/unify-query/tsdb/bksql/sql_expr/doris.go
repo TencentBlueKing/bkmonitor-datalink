@@ -35,9 +35,9 @@ const (
 	DefaultKey = "log"
 )
 
-// isIgnoreValueField 取值字段为空、全表(SelectAll)或索引占位(SelectIndex)时视为忽略，不做字段变换
+// isIgnoreValueField 取值字段为空、全表(SelectAll)、索引占位(SelectIndex)或时间占位(FieldTime)时视为忽略，不做字段变换
 func isIgnoreValueField(s string) bool {
-	return s == "" || s == SelectAll || s == SelectIndex
+	return s == "" || s == SelectAll || s == SelectIndex || s == FieldTime
 }
 
 const (

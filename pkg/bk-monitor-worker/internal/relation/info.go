@@ -34,11 +34,12 @@ type Link []Item
 // expand 扩展信息 map[{资源类型}]map[{维度 Key}]{维度 value}
 // topo 拓扑关联
 type Info struct {
-	ID       string                       `json:"id,omitempty"`
-	Resource string                       `json:"resource,omitempty"`
-	Label    map[string]string            `json:"label,omitempty"`
-	Expands  map[string]map[string]string `json:"expands,omitempty"`
-	Links    []Link                       `json:"links,omitempty"`
+	ID             string                       `json:"id,omitempty"`
+	Resource       string                       `json:"resource,omitempty"`
+	Label          map[string]string            `json:"label,omitempty"`
+	Expands        map[string]map[string]string `json:"expands,omitempty"`
+	RelationConfig map[string]map[string]any    `json:"relation_config,omitempty"`
+	Links          []Link                       `json:"links,omitempty"`
 }
 
 // ResourceInfo 扩展信息 map[{资源ID}]Info

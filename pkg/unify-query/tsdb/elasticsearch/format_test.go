@@ -1587,6 +1587,26 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 			valueField: "events.name",
 			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"size":0}`,
 		},
+		"valueField * should use _index for count": {
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"name"},
+				},
+			},
+			valueField: "*",
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"_index"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
+		},
+		"valueField _time should use _index for count": {
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"name"},
+				},
+			},
+			valueField: "_time",
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"_index"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

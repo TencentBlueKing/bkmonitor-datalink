@@ -213,6 +213,62 @@ func TestParseQueryLabelSelector(t *testing.T) {
 		assert.Equal(t, "k8s", expr.OrGroups[1][0].Value)
 		assert.Equal(t, "scene=log,cluster_id=1 or scene=k8s", expr.ToQueryLabelSelectorString())
 	})
+	t.Run("neq", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene!=log")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 1)
+		assert.Equal(t, LabelCondition{Key: "scene", Op: ConditionNotEqual, Value: "log"}, expr.OrGroups[0][0])
+		assert.Equal(t, "scene!=log", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("reg", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=~log.*")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 1)
+		assert.Equal(t, LabelCondition{Key: "scene", Op: ConditionRegEqual, Value: "log.*"}, expr.OrGroups[0][0])
+		assert.Equal(t, "scene=~log.*", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("nreg", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene!~test.*")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 1)
+		assert.Equal(t, LabelCondition{Key: "scene", Op: ConditionNotRegEqual, Value: "test.*"}, expr.OrGroups[0][0])
+		assert.Equal(t, "scene!~test.*", expr.ToQueryLabelSelectorString())
+	})
+	t.Run("quoted_value", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector(`scene="hello world"`)
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		require.Len(t, expr.OrGroups[0], 1)
+		assert.Equal(t, "scene", expr.OrGroups[0][0].Key)
+		assert.Equal(t, ConditionEqual, expr.OrGroups[0][0].Op)
+		assert.Equal(t, "hello world", expr.OrGroups[0][0].Value)
+	})
+	t.Run("quoted_value_with_escape", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector(`scene="say \"hi\""`)
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 1)
+		assert.Equal(t, `say "hi"`, expr.OrGroups[0][0].Value)
+	})
+	t.Run("mixed_ops_and_or", func(t *testing.T) {
+		expr, err := parseQueryLabelSelector("scene=log,env!=prod or cluster_id=~bcs-.*")
+		assert.NoError(t, err)
+		require.NotNil(t, expr)
+		require.Len(t, expr.OrGroups, 2)
+		require.Len(t, expr.OrGroups[0], 2)
+		require.Len(t, expr.OrGroups[1], 1)
+		assert.Equal(t, LabelCondition{Key: "scene", Op: ConditionEqual, Value: "log"}, expr.OrGroups[0][0])
+		assert.Equal(t, LabelCondition{Key: "env", Op: ConditionNotEqual, Value: "prod"}, expr.OrGroups[0][1])
+		assert.Equal(t, LabelCondition{Key: "cluster_id", Op: ConditionRegEqual, Value: "bcs-.*"}, expr.OrGroups[1][0])
+		assert.Equal(t, "scene=log,env!=prod or cluster_id=~bcs-.*", expr.ToQueryLabelSelectorString())
+	})
 	t.Run("invalid_no_key", func(t *testing.T) {
 		_, err := parseQueryLabelSelector("=log")
 		assert.Error(t, err)
@@ -283,12 +339,12 @@ func TestE2E_PromQL_QueryLabelSelector_ToQueryMetric_GetTsDBList(t *testing.T) {
 	q := ts.QueryList[0]
 	require.NotNil(t, q.ResolveTableIDConditionExpr(), "TableIDConditions 应解析为 TableIDConditionExpr")
 
-	// 不传 tsDBs，ToQueryMetric 内部会调用 GetTsDBList(opt)，opt 含 TableIDConditionExpr；mock 下 RT 无 Labels，会过滤得 0 个 TsDB
+	// 不传 tsDBs，ToQueryMetric 内部会调用 GetTsDBList(opt)，opt 含 TableIDConditionExpr
 	metric, err := q.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
 	require.NoError(t, err)
 	require.NotNil(t, metric)
-	// mock 中无 RT 带 scene=log 的 Labels，选表结果应为 0
-	assert.Empty(t, metric.QueryList, "表标签条件 scene=log 在 mock 下无匹配 RT，QueryList 应为空")
+	// mock 中 result_table.influxdb 带 Labels scene=log，选表应命中
+	assert.NotEmpty(t, metric.QueryList, "表标签条件 scene=log 应匹配到带 Labels 的 RT")
 }
 
 // TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList 端到端：PromQL → QueryTs → ToQueryMetric(GetTsDBList) 后再 ToPromExpr，__query_label_selector 仍被保留

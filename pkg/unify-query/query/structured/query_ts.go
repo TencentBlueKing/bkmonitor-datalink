@@ -429,6 +429,8 @@ type Query struct {
 	Soffset int `json:"soffset,omitempty" example:"0" swaggerignore:"true"`
 	// Conditions 过滤条件
 	Conditions Conditions `json:"conditions,omitempty"`
+	// TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __query_label_selector 均写入此字段，用于路由选表）
+	TableIDConditions Conditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
 
@@ -541,6 +543,15 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	}
 
 	return aggs, err
+}
+
+// ResolveTableIDConditionExpr 从 TableIDConditions（Conditions）转换为 TableIDConditionExpr，供 TsDBOption 与选表使用；无表标签条件时返回 nil。
+func (q *Query) ResolveTableIDConditionExpr() *TableIDConditionExpr {
+	if len(q.TableIDConditions.FieldList) == 0 {
+		return nil
+	}
+	expr, _ := ConditionsToTableIDConditionExpr(&q.TableIDConditions)
+	return expr
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
@@ -681,14 +692,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 	if len(tsDBs) == 0 {
 		tsDBs, err = GetTsDBList(ctx, &TsDBOption{
-			SpaceUid:      spaceUid,
-			TableID:       tableID,
-			FieldName:     metricName,
-			IsRegexp:      q.IsRegexp,
-			AllConditions: allConditions,
-			IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
-			IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
-			IsSkipField:   isSkipField,
+			SpaceUid:             spaceUid,
+			TableID:              tableID,
+			FieldName:            metricName,
+			IsRegexp:             q.IsRegexp,
+			AllConditions:        allConditions,
+			IsSkipSpace:          metadata.GetUser(ctx).IsSkipSpace(),
+			IsSkipK8s:            metadata.GetQueryParams(ctx).IsSkipK8s,
+			IsSkipField:          isSkipField,
+			TableIDConditionExpr: q.ResolveTableIDConditionExpr(),
 		})
 		if err != nil {
 			return nil, err
@@ -1123,6 +1135,19 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 		matchers = append(matchers, metricMatcher)
 		metricName = ""
+	}
+
+	// 从 TableIDConditions 注入 __query_label_selector，供 TS→PromQL 往返一致
+	if len(q.TableIDConditions.FieldList) > 0 {
+		expr, err := ConditionsToTableIDConditionExpr(&q.TableIDConditions)
+		if err == nil && expr != nil {
+			if selVal := expr.ToQueryLabelSelectorString(); selVal != "" {
+				m, err := labels.NewMatcher(labels.MatchEqual, QueryLabelSelectorLabelName, selVal)
+				if err == nil {
+					matchers = append(matchers, m)
+				}
+			}
+		}
 	}
 
 	result = &parser.VectorSelector{

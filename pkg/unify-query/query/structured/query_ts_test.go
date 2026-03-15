@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -287,6 +288,108 @@ func TestQueryToMetric(t *testing.T) {
 			assert.Equal(t, string(a), string(b))
 		})
 	}
+}
+
+// TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：Query 带 TableIDConditions → ToQueryMetric(tsDBs=nil) → GetTsDBList 选表，链路打通；mock 下无匹配 Labels 时 QueryList 为空
+func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	query := &Query{
+		TableID:       "",
+		FieldName:     "kube_node_info",
+		ReferenceName: "a",
+		TableIDConditions: Conditions{
+			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			ConditionList: []string{},
+		},
+	}
+	require.NotNil(t, query.ResolveTableIDConditionExpr(), "ResolveTableIDConditionExpr 应有值")
+
+	metric, err := query.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, metric)
+	// mock 中 result_table.influxdb 带 Labels scene=log，选表应命中
+	assert.NotEmpty(t, metric.QueryList, "表标签 scene=log 应匹配到带 Labels 的 RT")
+}
+
+// TestQueryTs_StructToPromQL_WithTableIDConditions 独立方向：从 QueryTs 结构体（带 TableIDConditions）转为 PromQL，
+// 验证输出包含 __query_label_selector 且条件值正确。模拟 /query/ts/struct_to_promql 转换路径。
+func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
+	t.Run("single_eq", func(t *testing.T) {
+		ts := &QueryTs{
+			QueryList: []*Query{
+				{
+					FieldName:     "metric_name",
+					ReferenceName: "a",
+					TableIDConditions: Conditions{
+						FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+						ConditionList: []string{},
+					},
+				},
+			},
+			MetricMerge: "a",
+		}
+		result, err := ts.ToPromQL(context.TODO())
+		require.NoError(t, err)
+		assert.Contains(t, result, `__query_label_selector="scene=log"`)
+	})
+	t.Run("and_or_combined", func(t *testing.T) {
+		ts := &QueryTs{
+			QueryList: []*Query{
+				{
+					FieldName:     "metric_name",
+					ReferenceName: "a",
+					TableIDConditions: Conditions{
+						FieldList: []ConditionField{
+							{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+							{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
+							{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual},
+						},
+						ConditionList: []string{"and", "or"},
+					},
+				},
+			},
+			MetricMerge: "a",
+		}
+		result, err := ts.ToPromQL(context.TODO())
+		require.NoError(t, err)
+		assert.Contains(t, result, "__query_label_selector=")
+		assert.Contains(t, result, "scene=log,cluster_id=1 or scene=k8s")
+	})
+	t.Run("neq_operator", func(t *testing.T) {
+		ts := &QueryTs{
+			QueryList: []*Query{
+				{
+					FieldName:     "metric_name",
+					ReferenceName: "a",
+					TableIDConditions: Conditions{
+						FieldList:     []ConditionField{{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual}},
+						ConditionList: []string{},
+					},
+				},
+			},
+			MetricMerge: "a",
+		}
+		result, err := ts.ToPromQL(context.TODO())
+		require.NoError(t, err)
+		assert.Contains(t, result, `__query_label_selector="env!=prod"`)
+	})
+	t.Run("empty_conditions_no_selector", func(t *testing.T) {
+		ts := &QueryTs{
+			QueryList: []*Query{
+				{
+					FieldName:     "metric_name",
+					ReferenceName: "a",
+				},
+			},
+			MetricMerge: "a",
+		}
+		result, err := ts.ToPromQL(context.TODO())
+		require.NoError(t, err)
+		assert.NotContains(t, result, "__query_label_selector")
+	})
 }
 
 func TestQueryTs_ToQueryReference(t *testing.T) {

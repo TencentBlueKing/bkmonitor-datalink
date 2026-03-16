@@ -78,9 +78,9 @@ clause
     | ( fieldName ( OP_COLON | OP_EQUAL))? ( term | groupingExpr)
     ;
 
-// FieldRangeExpr ::= FieldName (':')? ('<' | '>' | '<=' | '>=') (<TERM> | <QUOTED> | <NUMBER>)
+// FieldRangeExpr ::= FieldName (':')? ('<' | '>' | '<=' | '>=' | '!=') (<TERM> | <QUOTED> | <NUMBER>)
 fieldRangeExpr
-    : fieldName OP_COLON? (OP_LESSTHAN | OP_MORETHAN | OP_LESSTHANEQ | OP_MORETHANEQ) (
+    : fieldName OP_COLON? (OP_LESSTHAN | OP_MORETHAN | OP_LESSTHANEQ | OP_MORETHANEQ | OP_NOTEQUAL) (
         TERM
         | QUOTED
         | NUMBER
@@ -98,6 +98,9 @@ term
     | quotedTerm ( CARAT NUMBER)?
     | NUMBER ( CARAT NUMBER)?
     | TERM ( CARAT NUMBER)?
+    | AND ( CARAT NUMBER)?
+    | OR ( CARAT NUMBER)?
+    | NOT ( CARAT NUMBER)?
     ;
 
 // GroupingExpr ::= '(' Query ')' ('^' <NUMBER>)?

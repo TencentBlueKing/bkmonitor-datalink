@@ -13,6 +13,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cast"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type ParamsQueryRange struct {
@@ -147,8 +149,9 @@ type VmResponse struct {
 		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
 		Device               string   `json:"device"`
 		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any    `json:"select_fields_order"`
-		SQL                  string   `json:"sql"`
+		SelectFieldsOrder    []any                   `json:"select_fields_order"`
+		SQL                  string                  `json:"sql"`
+		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`
@@ -175,8 +178,9 @@ type VmLableValuesResponse struct {
 		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
 		Device               string   `json:"device"`
 		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any    `json:"select_fields_order"`
-		SQL                  string   `json:"sql"`
+		SelectFieldsOrder    []any                   `json:"select_fields_order"`
+		SQL                  string                  `json:"sql"`
+		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`
@@ -203,8 +207,9 @@ type VmSeriesResponse struct {
 		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
 		Device               string   `json:"device"`
 		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any    `json:"select_fields_order"`
-		SQL                  string   `json:"sql"`
+		SelectFieldsOrder    []any                   `json:"select_fields_order"`
+		SQL                  string                  `json:"sql"`
+		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {
 		Error   string `json:"error"`

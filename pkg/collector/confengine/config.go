@@ -11,6 +11,7 @@ package confengine
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/elastic/beats/libbeat/common"
 
@@ -97,7 +98,7 @@ const (
 //
 // 一个子配置文件描述了某个唯一标识的应用的自定义配置
 type TierConfig struct {
-	m map[tierKey]any
+	m sync.Map
 }
 
 type tierKey struct {
@@ -107,35 +108,39 @@ type tierKey struct {
 }
 
 func NewTierConfig() *TierConfig {
-	return &TierConfig{m: map[tierKey]any{}}
+	return &TierConfig{}
 }
 
 func (tc *TierConfig) All() []any {
 	objs := make([]any, 0)
-	for _, v := range tc.m {
-		objs = append(objs, v)
-	}
+	tc.m.Range(func(key, value any) bool {
+		objs = append(objs, value)
+		return true
+	})
 	return objs
 }
 
 func (tc *TierConfig) Set(token, typ, id string, val any) {
-	tc.m[tierKey{Token: token, Type: typ, ID: id}] = val
+	tc.m.Store(tierKey{Token: token, Type: typ, ID: id}, val)
 }
 
 func (tc *TierConfig) SetGlobal(val any) {
-	tc.m[tierKey{Type: keyGlobal}] = val
+	tc.m.Store(tierKey{Type: keyGlobal}, val)
 }
 
 func (tc *TierConfig) Del(token, typ, id string) {
-	delete(tc.m, tierKey{Token: token, Type: typ, ID: id})
+	tc.m.Delete(tierKey{Token: token, Type: typ, ID: id})
 }
 
 func (tc *TierConfig) DelGlobal() {
-	delete(tc.m, tierKey{Type: keyGlobal})
+	tc.m.Delete(tierKey{Type: keyGlobal})
 }
 
 func (tc *TierConfig) GetGlobal() any {
-	return tc.m[tierKey{Type: keyGlobal}]
+	if val, ok := tc.m.Load(tierKey{Type: keyGlobal}); ok {
+		return val
+	}
+	return nil
 }
 
 func (tc *TierConfig) GetByToken(token string) any {
@@ -145,34 +150,35 @@ func (tc *TierConfig) GetByToken(token string) any {
 func (tc *TierConfig) Get(token, serviceID, instanceID string) any {
 	// 1) subconfigs.instance
 	if instanceID != "" {
-		v, ok := tc.m[tierKey{
+		if val, ok := tc.m.Load(tierKey{
 			Token: token,
 			Type:  define.SubConfigFieldInstance,
 			ID:    instanceID,
-		}]
-		if ok {
-			return v
+		}); ok {
+			return val
 		}
 	}
 
 	// 2) subconfigs.service
 	if serviceID != "" {
-		v, ok := tc.m[tierKey{
+		if val, ok := tc.m.Load(tierKey{
 			Token: token,
 			Type:  define.SubConfigFieldService,
 			ID:    serviceID,
-		}]
-		if ok {
-			return v
+		}); ok {
+			return val
 		}
 	}
 
 	// 3) subconfigs.default
-	v, ok := tc.m[tierKey{Token: token, Type: define.SubConfigFieldDefault}]
-	if ok {
-		return v
+	if val, ok := tc.m.Load(tierKey{Token: token, Type: define.SubConfigFieldDefault}); ok {
+		return val
 	}
 
 	// 4) global.config
-	return tc.m[tierKey{Type: keyGlobal}]
+	if val, ok := tc.m.Load(tierKey{Type: keyGlobal}); ok {
+		return val
+	}
+
+	return nil
 }

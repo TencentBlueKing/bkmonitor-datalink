@@ -89,8 +89,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "invalid syntax",
 			input: "name:test AND OR",
-			sql:   "`name` = 'test'",
-			dsl:   `{"term":{"name":"test"}}`,
+			sql:   "`name` = 'test' AND `log` MATCH_PHRASE 'OR'",
+			dsl:   `{"bool":{"must":[{"term":{"name":"test"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"OR"}}]}}`,
 		},
 		{
 			name:  "empty input",
@@ -204,6 +204,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			input: `!"WorldAttrPool free num (15) less than"`,
 			dsl:   `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"WorldAttrPool free num (15) less than\""}}}}`,
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
+		},
+		{
+			name:  "wildcard on analyzed field should lowercase",
+			input: "log: *TSpiderCreateTableException*",
+			sql:   "`log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
+		},
+		{
+			name:  "wildcard on non-analyzed field keeps case",
+			input: "status: *Active*",
+			sql:   "`status` LIKE '%Active%'",
+			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
 		},
 	}
 
@@ -497,14 +509,14 @@ func TestLuceneParser(t *testing.T) {
 		"test": {
 			q: `path: "/proz/logds/ds-5910974792526317*"`,
 
-			es:  `{"wildcard":{"path":{"value":"/proz/logds/ds-5910974792526317*"}}}`,
-			sql: "`path` LIKE '/proz/logds/ds-5910974792526317%'",
+			es:  `{"term":{"path":"/proz/logds/ds-5910974792526317*"}}`,
+			sql: "`path` = '/proz/logds/ds-5910974792526317*'",
 		},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
 
-			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
-			sql: "`log` MATCH_PHRASE '32221112' AND `path` LIKE '/data/home/user00/log/zonesvr%'",
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"32221112\""}},{"term":{"path":"/data/home/user00/log/zonesvr*"}}]}}`,
+			sql: "`log` MATCH_PHRASE '32221112' AND `path` = '/data/home/user00/log/zonesvr*'",
 		},
 		"test - 2": {
 			q:   `log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
@@ -518,8 +530,8 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"test - many tPHRASE ": {
 			q:   `loglevel: ("*TRACE*" OR "*DEBUG*" OR "*INFO*" OR "*WARN*" OR "*ERROR*") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			es:  `{"bool":{"must":[{"bool":{"should":[{"wildcard":{"loglevel":{"value":"*TRACE*"}}},{"wildcard":{"loglevel":{"value":"*DEBUG*"}}},{"wildcard":{"loglevel":{"value":"*INFO*"}}},{"wildcard":{"loglevel":{"value":"*WARN*"}}},{"wildcard":{"loglevel":{"value":"*ERROR*"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
-			sql: "(`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO%' OR `loglevel` LIKE '%WARN%' OR `loglevel` LIKE '%ERROR%') AND (`log` MATCH_PHRASE 'friendsvr' AND (`log` MATCH_PHRASE 'game_app' OR `log` MATCH_PHRASE 'testOr') AND `log` MATCH_PHRASE 'testAnd' OR `log` MATCH_PHRASE 'test111')",
+			es:  `{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"*TRACE*"}},{"term":{"loglevel":"*DEBUG*"}},{"term":{"loglevel":"*INFO*"}},{"term":{"loglevel":"*WARN*"}},{"term":{"loglevel":"*ERROR*"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
+			sql: "(`loglevel` = '*TRACE*' OR `loglevel` = '*DEBUG*' OR `loglevel` = '*INFO*' OR `loglevel` = '*WARN*' OR `loglevel` = '*ERROR*') AND (`log` MATCH_PHRASE 'friendsvr' AND (`log` MATCH_PHRASE 'game_app' OR `log` MATCH_PHRASE 'testOr') AND `log` MATCH_PHRASE 'testAnd' OR `log` MATCH_PHRASE 'test111')",
 		},
 		"test - Single Bracket And  ": {
 			q:   `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
@@ -564,13 +576,26 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sleep"}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"46"}}]}}`,
 			sql: "`log` NOT MATCH_PHRASE 'sleep' AND `log` MATCH_PHRASE '46'",
 		},
-		// 并不支持 _exists_ 语法糖,不存在于词法文件中
-		//"field_query_exists": {
-		//	q:   `_exists_:author`,
-		//	n:   &ConditionNode{field: &StringNode{Value: "_exists_"}, op: OpMatch, value: &StringNode{Value: "author"}},
-		//	es:  `{"exists":{"field":"author"}}`,
-		//	sql: "`author` IS NOT NULL",
-		//},
+		"field_query_exists": {
+			q:   `_exists_:author`,
+			es:  `{"exists":{"field":"author"}}`,
+			sql: "`author` IS NOT NULL",
+		},
+		"field_query_exists_not": {
+			q:   `NOT _exists_:author`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
+		"field_query_exists_or": {
+			q:   `_exists_: Dsa OR _exists_: Allocate`,
+			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
+			sql: "`Dsa` IS NOT NULL OR `Allocate` IS NOT NULL",
+		},
+		"field_query_exists_alias": {
+			q:   `_exists_: container_name`,
+			es:  `{"exists":{"field":"__ext.container_name"}}`,
+			sql: "CAST(__ext['container_name'] AS STRING) IS NOT NULL",
+		},
 		"basic_phrase_query": {
 			q:   `"hello world"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello world\""}}`,
@@ -1262,7 +1287,7 @@ func TestLuceneParser(t *testing.T) {
 		"edge_phrase_with_wildcard": {
 			q:   `"hello wor*"`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"hello wor*\""}}`,
-			sql: "`log` LIKE 'hello wor%'",
+			sql: "`log` MATCH_PHRASE 'hello wor*'",
 		},
 		"edge_nested_parentheses": {
 			q:   `((a OR b) AND (c OR d))`,
@@ -1371,6 +1396,16 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must":[{"range":{"age":{"from":18,"include_lower":true,"include_upper":true,"to":65}}},{"term":{"status":"active"}}]}}`,
 			sql: "`age` >= '18' AND `age` <= '65' AND `status` = 'active'",
 		},
+		"range_with_multiple_not": {
+			q:   `status:[500 TO 600] NOT status:501 AND NOT sIdeToken AND NOT "dify-api"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"501"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sIdeToken"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"dify-api\""}}}},{"range":{"status":{"from":500,"include_lower":true,"include_upper":true,"to":600}}}]}}`,
+			sql: "`status` >= '500' AND `status` <= '600' AND `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501' OR `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501'",
+		},
+		"field_value_with_multiple_not": {
+			q:   `log:error NOT status:active NOT "ECONNRESET" NOT "endsWith"`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"active"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"ECONNRESET\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"endsWith\""}}}},{"match_phrase":{"log":{"query":"error"}}}]}}`,
+			sql: "`log` MATCH_PHRASE 'error' AND `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith' OR `status` != 'active' AND `log` NOT MATCH_PHRASE 'ECONNRESET' AND `log` NOT MATCH_PHRASE 'endsWith'",
+		},
 
 		// =================================================================
 		// Test Suite: boost_query_variations - 权重查询变体测试
@@ -1469,6 +1504,30 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"wildcard":{"a":{"value":"b+?c"}}}`,
 			sql: "`a` LIKE 'b+_c'",
 		},
+
+		// =================================================================
+		// Test Suite: quoted_special_chars - 引号内特殊字符不应被识别为通配符
+		// =================================================================
+		"quoted_question_mark_not_wildcard": {
+			q:   `request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
+			sql: "`request_uri` = '/scm/api/proxy?serviceName=test'",
+		},
+		"negation_quoted_question_mark": {
+			q:   `!request_uri:"/scm/api/proxy?serviceName=test"`,
+			es:  `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}}}`,
+			sql: "`request_uri` != '/scm/api/proxy?serviceName=test'",
+		},
+		"quoted_star_as_literal": {
+			q:   `field:"value*with*stars"`,
+			es:  `{"term":{"field":"value*with*stars"}}`,
+			sql: "`field` = 'value*with*stars'",
+		},
+		"quoted_question_mark_analyzed_field": {
+			q:   `log:"/path?query=1"`,
+			es:  `{"match_phrase":{"log":{"query":"/path?query=1"}}}`,
+			sql: "`log` MATCH_PHRASE '/path?query=1'",
+		},
 	}
 
 	mock.Init()
@@ -1484,6 +1543,10 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"message": {
 			IsAnalyzed: true,
+		},
+		"__ext.container_name": {
+			AliasName: "container_name",
+			FieldType: "text",
 		},
 	}
 	aliasMap := make(map[string]string)
@@ -1530,4 +1593,281 @@ func queryToJSON(query elastic.Query) (string, error) {
 		return "", err
 	}
 	return string(jsonBytes), nil
+}
+
+func TestConvertSingleQuotes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"basic", `'hello world'`, `"hello world"`},
+		{"internal_double_quote_escaped", `'abc"def'`, `"abc\"def"`},
+		{"escaped_single_quote_unescaped", `'abc\'def'`, `"abc'def"`},
+		{"double_quote_preserved", `"already double"`, `"already double"`},
+		{"field_value", `field: 'value'`, `field: "value"`},
+		{"mixed_quotes", `log: 'error' AND msg: "ok"`, `log: "error" AND msg: "ok"`},
+		{"no_quotes", `plain query`, `plain query`},
+		{"empty_single_quote", `''`, `""`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertSingleQuotes(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSingleQuoteAdaptation(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldsMap := metadata.FieldsMap{
+		"log": {
+			IsAnalyzed: true,
+			FieldType:  "text",
+		},
+		"message": {
+			IsAnalyzed: true,
+		},
+	}
+
+	testCases := map[string]struct {
+		input string
+		sql   string
+		es    string
+	}{
+		"simple_single_quote": {
+			input: `log: 'hello world'`,
+			sql:   "`log` MATCH_PHRASE 'hello world'",
+			es:    `{"match_phrase":{"log":{"query":"hello world"}}}`,
+		},
+		"single_quote_with_and": {
+			input: `log: 'error and warning'`,
+			sql:   "`log` MATCH_PHRASE 'error and warning'",
+			es:    `{"match_phrase":{"log":{"query":"error and warning"}}}`,
+		},
+		"single_quote_field_value": {
+			input: `status: 'active'`,
+			sql:   "`status` = 'active'",
+			es:    `{"term":{"status":"active"}}`,
+		},
+		"single_quote_with_escaped_single": {
+			input: `log: 'it\'s working'`,
+			sql:   "`log` MATCH_PHRASE 'it's working'",
+			es:    `{"match_phrase":{"log":{"query":"it's working"}}}`,
+		},
+		"mixed_quotes": {
+			input: `log: 'error' AND message: "warning"`,
+			sql:   "`log` MATCH_PHRASE 'error' AND `message` MATCH_PHRASE 'warning'",
+			es:    `{"bool":{"must":[{"match_phrase":{"log":{"query":"error"}}},{"match_phrase":{"message":{"query":"warning"}}}]}}`,
+		},
+		"double_quote_preserved": {
+			input: `log: "hello world"`,
+			sql:   "`log` MATCH_PHRASE 'hello world'",
+			es:    `{"match_phrase":{"log":{"query":"hello world"}}}`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			node := ParseLuceneWithVisitor(ctx, tc.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			assert.Nil(t, node.Error(), "should parse without error for input: %s", tc.input)
+			assert.Equal(t, tc.sql, node.String(), "SQL mismatch for input: %s", tc.input)
+
+			node = ParseLuceneWithVisitor(ctx, tc.input, Option{FieldsMap: fieldsMap})
+			dsl := MergeQuery(node.DSL())
+			dslJSON, _ := queryToJSON(dsl)
+			assert.Equal(t, tc.es, dslJSON, "ES DSL mismatch for input: %s", tc.input)
+		})
+	}
+}
+
+func TestKeywordAsFieldValue(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldsMap := metadata.FieldsMap{
+		"log": {
+			IsAnalyzed: true,
+			FieldType:  "text",
+		},
+		"message": {
+			IsAnalyzed: true,
+		},
+	}
+
+	testCases := map[string]struct {
+		input string
+		sql   string
+		es    string
+	}{
+		"and_as_field_value": {
+			input: "log: and",
+			sql:   "`log` MATCH_PHRASE 'and'",
+			es:    `{"match_phrase":{"log":{"query":"and"}}}`,
+		},
+		"or_as_field_value": {
+			input: "status: or",
+			sql:   "`status` = 'or'",
+			es:    `{"term":{"status":"or"}}`,
+		},
+		"not_as_field_value": {
+			input: "status: not",
+			sql:   "`status` = 'not'",
+			es:    `{"term":{"status":"not"}}`,
+		},
+		"and_as_value_and_operator": {
+			input: "log: and and status: or",
+			sql:   "`log` MATCH_PHRASE 'and' AND `status` = 'or'",
+			es:    `{"bool":{"must":[{"match_phrase":{"log":{"query":"and"}}},{"term":{"status":"or"}}]}}`,
+		},
+		"uppercase_AND_as_value": {
+			input: "status: AND",
+			sql:   "`status` = 'AND'",
+			es:    `{"term":{"status":"AND"}}`,
+		},
+		"uppercase_OR_as_value": {
+			input: "status: OR",
+			sql:   "`status` = 'OR'",
+			es:    `{"term":{"status":"OR"}}`,
+		},
+		"uppercase_NOT_as_value": {
+			input: "status: NOT",
+			sql:   "`status` = 'NOT'",
+			es:    `{"term":{"status":"NOT"}}`,
+		},
+		"mixed_keyword_values_and_operators": {
+			input: "log: NOT AND status: OR",
+			sql:   "`log` MATCH_PHRASE 'NOT' AND `status` = 'OR'",
+			es:    `{"bool":{"must":[{"match_phrase":{"log":{"query":"NOT"}}},{"term":{"status":"OR"}}]}}`,
+		},
+		"and_operator_still_works": {
+			input: "A and B",
+			sql:   "`log` MATCH_PHRASE 'A' AND `log` MATCH_PHRASE 'B'",
+			es:    `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"A"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"B"}}]}}`,
+		},
+		"not_modifier_still_works": {
+			input: "NOT active",
+			sql:   "`log` NOT MATCH_PHRASE 'active'",
+			es:    `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"active"}}}}`,
+		},
+		"bang_not_still_works": {
+			input: `!status:active`,
+			sql:   "`status` != 'active'",
+			es:    `{"bool":{"must_not":{"term":{"status":"active"}}}}`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			node := ParseLuceneWithVisitor(ctx, tc.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			t.Logf("Input:      %q", tc.input)
+			t.Logf("Error:      %v", node.Error())
+			t.Logf("Actual SQL: %s", node.String())
+			t.Logf("Expect SQL: %s", tc.sql)
+			assert.Nil(t, node.Error(), "should parse without error for input: %s", tc.input)
+			assert.Equal(t, tc.sql, node.String(), "SQL mismatch for input: %s", tc.input)
+
+			node = ParseLuceneWithVisitor(ctx, tc.input, Option{FieldsMap: fieldsMap})
+			dsl := MergeQuery(node.DSL())
+			dslJSON, _ := queryToJSON(dsl)
+			t.Logf("Actual DSL: %s", dslJSON)
+			t.Logf("Expect DSL: %s", tc.es)
+			assert.Equal(t, tc.es, dslJSON, "ES DSL mismatch for input: %s", tc.input)
+		})
+	}
+}
+
+func TestNotEqualOperator(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldsMap := metadata.FieldsMap{
+		"log": {
+			IsAnalyzed: true,
+			FieldType:  "text",
+		},
+		"message": {
+			IsAnalyzed: true,
+		},
+	}
+
+	testCases := map[string]struct {
+		input string
+		sql   string
+		es    string
+	}{
+		"not_equal_number": {
+			input: "status != 200",
+			sql:   "`status` != '200'",
+			es:    `{"bool":{"must_not":{"term":{"status":"200"}}}}`,
+		},
+		"not_equal_string": {
+			input: "status != active",
+			sql:   "`status` != 'active'",
+			es:    `{"bool":{"must_not":{"term":{"status":"active"}}}}`,
+		},
+		"not_equal_analyzed_field": {
+			input: "log != error",
+			sql:   "`log` NOT MATCH_PHRASE 'error'",
+			es:    `{"bool":{"must_not":{"match_phrase":{"log":{"query":"error"}}}}}`,
+		},
+		"not_equal_with_colon": {
+			input: "status:!= 200",
+			sql:   "`status` != '200'",
+			es:    `{"bool":{"must_not":{"term":{"status":"200"}}}}`,
+		},
+		"not_equal_combined_and": {
+			input: "status != 200 AND log: error",
+			sql:   "`status` != '200' AND `log` MATCH_PHRASE 'error'",
+			es:    `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"200"}}}},{"match_phrase":{"log":{"query":"error"}}}]}}`,
+		},
+		"not_equal_combined_or": {
+			input: "status != 200 OR status != 500",
+			sql:   "`status` != '200' OR `status` != '500'",
+			es:    `{"bool":{"should":[{"bool":{"must_not":{"term":{"status":"200"}}}},{"bool":{"must_not":{"term":{"status":"500"}}}}]}}`,
+		},
+		"bang_not_still_works": {
+			input: "!status:active",
+			sql:   "`status` != 'active'",
+			es:    `{"bool":{"must_not":{"term":{"status":"active"}}}}`,
+		},
+		"greater_than_still_works": {
+			input: "status > 200",
+			sql:   "`status` > '200'",
+			es:    `{"range":{"status":{"from":200,"include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			node := ParseLuceneWithVisitor(ctx, tc.input, Option{
+				FieldsMap:       fieldsMap,
+				FieldEncodeFunc: fieldEncodeFunc,
+			})
+			t.Logf("Input:      %q", tc.input)
+			t.Logf("Error:      %v", node.Error())
+			t.Logf("Actual SQL: %s", node.String())
+			t.Logf("Expect SQL: %s", tc.sql)
+			assert.Nil(t, node.Error(), "should parse without error for input: %s", tc.input)
+			assert.Equal(t, tc.sql, node.String(), "SQL mismatch for input: %s", tc.input)
+
+			node = ParseLuceneWithVisitor(ctx, tc.input, Option{FieldsMap: fieldsMap})
+			dsl := MergeQuery(node.DSL())
+			dslJSON, _ := queryToJSON(dsl)
+			t.Logf("Actual DSL: %s", dslJSON)
+			t.Logf("Expect DSL: %s", tc.es)
+			assert.Equal(t, tc.es, dslJSON, "ES DSL mismatch for input: %s", tc.input)
+		})
+	}
 }

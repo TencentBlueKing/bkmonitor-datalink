@@ -12,6 +12,7 @@ package sql_expr
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,7 +46,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "trailing operators ignored",
 			input: "name:test AND OR",
-			want:  "`name` = 'test'",
+			want:  "`name` = 'test' AND `log` MATCH_PHRASE 'OR'",
 		},
 		{
 			name:  "empty input",
@@ -670,4 +671,80 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore 字段匹配时空/SelectIndex 应被忽略为 *，避免 COUNT(NULL) 导致 _value_ 恒为 0
+func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
+	fieldsMap := metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+		"log":              {FieldType: DorisTypeString},
+	}
+	encode := func(s string) string { return "`" + s + "`" }
+
+	t.Run("valueField 为空时生成 COUNT(*) 而非 COUNT(NULL)", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", "").
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "count", Dimensions: []string{}}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, selectFields)
+		valueExpr := ""
+		for _, s := range selectFields {
+			if strings.Contains(s, "AS `"+Value+"`") {
+				valueExpr = s
+				break
+			}
+		}
+		assert.Equal(t, "COUNT(*) AS `"+Value+"`", valueExpr, "空 valueField 应使用 COUNT(*)")
+		assert.NotContains(t, valueExpr, "COUNT(NULL)", "不得生成 COUNT(NULL)")
+	})
+
+	t.Run("valueField 为 SelectIndex(_index) 时生成 COUNT(*) 而非 COUNT(NULL)", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", SelectIndex).
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "count", Dimensions: []string{}}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, selectFields)
+		valueExpr := ""
+		for _, s := range selectFields {
+			if strings.Contains(s, "AS `"+Value+"`") {
+				valueExpr = s
+				break
+			}
+		}
+		assert.Equal(t, "COUNT(*) AS `"+Value+"`", valueExpr, "SelectIndex 应被忽略为 *，生成 COUNT(*)")
+		assert.NotContains(t, valueExpr, "COUNT(NULL)", "不得生成 COUNT(NULL)")
+	})
+
+	t.Run("valueField 为真实存在字段时使用该字段聚合", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", "log").
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "count", Dimensions: []string{}}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+		valueExpr := ""
+		for _, s := range selectFields {
+			if strings.Contains(s, "AS `"+Value+"`") {
+				valueExpr = s
+				break
+			}
+		}
+		assert.Equal(t, "COUNT(`log`) AS `"+Value+"`", valueExpr)
+	})
 }

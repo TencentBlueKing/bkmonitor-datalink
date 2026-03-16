@@ -11,14 +11,17 @@ package task
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
@@ -32,6 +35,7 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 	// 初始化模拟数据库配置
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
+	bkTenantID := "system"
 
 	// 准备数据
 	tsGroup := customreport.TimeSeriesGroup{
@@ -40,14 +44,17 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 			TableID:  "test_for_metric_update.base",
 			IsEnable: true,
 		},
+		BkTenantId:          bkTenantID,
 		TimeSeriesGroupID:   3343,
 		TimeSeriesGroupName: "test_for_metric_update_group",
 	}
-	db.Delete(&tsGroup, "bk_data_id = ?", tsGroup.BkDataID)
+	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsGroup.TimeSeriesGroupID)
+	db.Delete(&tsGroup, "time_series_group_id = ?", tsGroup.TimeSeriesGroupID)
 	err := tsGroup.Create(db)
 	assert.NoError(t, err)
 
 	ds := resulttable.DataSource{
+		BkTenantId:  bkTenantID,
 		BkDataId:    22112,
 		DataName:    "test_for_metric_update_name",
 		CreatedFrom: common.DataIdFromBkData,
@@ -59,12 +66,40 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 	// AccessVMRecord
 	vmTableName := "vm_table_name"
 	vmTable := storage.AccessVMRecord{
+		BkTenantId:      bkTenantID,
 		ResultTableId:   "test_for_metric_update.base",
 		VmResultTableId: vmTableName,
 	}
 	db.Delete(&vmTable)
 	err = vmTable.Create(db)
 	assert.NoError(t, err)
+
+	// Mock apiservice.Bkdata.QueryMetricAndDimension to prevent external API calls
+	bkdataPatch := gomonkey.ApplyMethod(reflect.TypeOf(apiservice.Bkdata), "QueryMetricAndDimension", func(_ apiservice.BkdataService, bkTenantId string, storage string, rt string, metricGroupDimensions string) ([]map[string]any, error) {
+		return []map[string]any{
+			{
+				"field_name": "metric_a",
+				"tag_value_list": map[string]any{
+					"d1":     map[string]any{"last_update_time": 1685503141},
+					"d2":     map[string]any{"last_update_time": 1685503141},
+					"target": map[string]any{"last_update_time": 1685503141},
+				},
+				"last_modify_time": float64(time.Now().Add(-600 * time.Second).Unix()),
+				"is_active":        true,
+			},
+			{
+				"field_name": "metric_b",
+				"tag_value_list": map[string]any{
+					"d3":     map[string]any{"last_update_time": 1685503141},
+					"d4":     map[string]any{"last_update_time": 1685503141},
+					"target": map[string]any{"last_update_time": 1685503141},
+				},
+				"last_modify_time": float64(time.Now().Add(-600 * time.Second).Unix()),
+				"is_active":        true,
+			},
+		}, nil
+	})
+	defer bkdataPatch.Reset()
 
 	// Mock Redis
 	mockerClient, redisPatch := mocker.DependenceRedisMocker()

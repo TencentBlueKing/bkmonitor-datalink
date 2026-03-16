@@ -10,6 +10,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -639,7 +640,12 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	db := mysql.GetDBSession().DB
 	// 获取结果表类型
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.SchemaType, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.TableId,
+		resulttable.ResultTableDBSchema.SchemaType,
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&rtList); err != nil {
 		return err
 	}
 	tableIdRtMap := make(map[string]resulttable.ResultTable)
@@ -702,8 +708,10 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {
 			detail["data_label"] = ""
+			detail["labels"] = map[string]any{}
 		} else {
 			detail["data_label"] = rt.DataLabel
+			detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -986,6 +994,30 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 	return fieldAliasMap, nil
 }
 
+func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[string]any {
+	if len(labels) == 0 {
+		return map[string]any{}
+	}
+
+	labelsStr := strings.TrimSpace(string(labels))
+	if labelsStr == "" || labelsStr == "null" {
+		return map[string]any{}
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(labelsStr), &parsed); err != nil {
+		logger.Errorf("normalizeResultTableLabels: unmarshal labels failed, table_id [%s], labels [%s], err [%s]", tableId, labelsStr, err)
+		return map[string]any{}
+	}
+
+	labelsMap, ok := parsed.(map[string]any)
+	if !ok {
+		logger.Errorf("normalizeResultTableLabels: labels is not object, table_id [%s], labels [%s]", tableId, labelsStr)
+		return map[string]any{}
+	}
+	return labelsMap
+}
+
 func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
@@ -1012,7 +1044,10 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	}
 
 	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 
@@ -1030,6 +1065,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
 		"data_label":              rt.DataLabel,
+		"labels":                  normalizeResultTableLabels(tableId, rt.Labels),
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1060,7 +1096,10 @@ func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId st
 	db := mysql.GetDBSession().DB
 
 	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 
@@ -1074,6 +1113,7 @@ func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId st
 		"db":           bkbaseTableId,
 		"measurement":  models.DorisMeasurement,
 		"data_label":   rt.DataLabel,
+		"labels":       normalizeResultTableLabels(tableId, rt.Labels),
 		"field_alias":  fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1591,31 +1631,32 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 		return make(map[string]string), nil
 	}
 	db := mysql.GetDBSession().DB
+
+	// 根据BCS集群使用的数据源 ID，获取结果表与集群的映射关系
+	// 获取结果表对应的数据源 ID
 	var dsrtList []resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId, resulttable.DataSourceResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&dsrtList); err != nil {
 		return nil, err
-	}
-	if len(dsrtList) == 0 {
-		return make(map[string]string), nil
 	}
 	var dataIds []uint
 	for _, dsrt := range dsrtList {
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
-	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义，已删除状态但是允许访问历史数据的集群依然进行推送
-	qs := bcs.NewBCSClusterInfoQuerySet(db)
-
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
-	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
-		return nil, err
-	}
-
 	var clusterListB []bcs.BCSClusterInfo
-	if err := qs.Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).CustomMetricDataIDIn(dataIds...).All(&clusterListB); err != nil {
-		return nil, err
+	if len(dataIds) > 0 {
+		// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义，已删除状态但是允许访问历史数据的集群依然进行推送
+		qs := bcs.NewBCSClusterInfoQuerySet(db)
+		if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
+			return nil, err
+		}
+		if err := qs.Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).BkTenantIdEq(bkTenantId).CustomMetricDataIDIn(dataIds...).All(&clusterListB); err != nil {
+			return nil, err
+		}
 	}
 
+	// 组装数据源 ID 到集群 ID 的映射
 	dataIdClusterIdMap := make(map[uint]string)
 	for _, c := range clusterListA {
 		dataIdClusterIdMap[c.K8sMetricDataID] = c.ClusterID
@@ -1628,6 +1669,19 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 	for _, dsrt := range dsrtList {
 		tableIdClusterIdMap[dsrt.TableId] = dataIdClusterIdMap[dsrt.BkDataId]
 	}
+
+	// 补充特殊配置，ResultTableOption中的binding_bcs_cluster_id
+	var rtoList []resulttable.ResultTableOption
+	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(tableIds...).NameEq(models.BindingBcsClusterId).All(&rtoList); err != nil {
+		return nil, err
+	}
+	for _, rto := range rtoList {
+		if rto.Value == "" {
+			continue
+		}
+		tableIdClusterIdMap[rto.TableID] = rto.Value
+	}
+
 	return tableIdClusterIdMap, nil
 }
 

@@ -81,9 +81,11 @@ type TLS struct {
 
 // Kubelet 采集配置
 type Kubelet struct {
-	Enable    bool   `yaml:"enable"`
-	Namespace string `yaml:"namespace"`
-	Name      string `yaml:"name"`
+	Enable               bool    `yaml:"enable"`
+	Namespace            string  `yaml:"namespace"`
+	Name                 string  `yaml:"name"`
+	MaxEndpointsPerSlice int     `yaml:"max_endpoints_per_slice"` // EndpointSlice 每个 slice 最多包含的 endpoints 数量，默认 100，最大 1000
+	RebalanceThreshold   float64 `yaml:"rebalance_threshold"`     // Rebalance 阈值（0.0-1.0），当总容量使用率低于此值时触发合并，默认 0.5（50%）
 }
 
 func (k Kubelet) String() string {
@@ -327,6 +329,36 @@ func setupTimeSync(c *Config) {
 	}
 }
 
+func setupKubelet(c *Config) {
+	// 设置 MaxEndpointsPerSlice 默认值为 100（Kubernetes 的默认值）
+	// 如果用户配置了该值（> 0），则使用用户配置
+	// 最大值限制为 1000（Kubernetes 的硬限制）
+	originalMaxEndpointsPerSlice := c.Kubelet.MaxEndpointsPerSlice
+	if c.Kubelet.MaxEndpointsPerSlice <= 0 {
+		c.Kubelet.MaxEndpointsPerSlice = 100
+		logger.Warnf("kubelet.max_endpoints_per_slice is invalid (%d), using default value: %d", originalMaxEndpointsPerSlice, c.Kubelet.MaxEndpointsPerSlice)
+	}
+	// 限制最大值为 1000，避免超过 Kubernetes 的限制
+	if originalMaxEndpointsPerSlice > 1000 {
+		c.Kubelet.MaxEndpointsPerSlice = 1000
+		logger.Warnf("kubelet.max_endpoints_per_slice exceeds maximum limit (%d > 1000), using maximum value: %d", originalMaxEndpointsPerSlice, c.Kubelet.MaxEndpointsPerSlice)
+	}
+
+	// 设置 RebalanceThreshold 默认值为 0.5（50%）
+	// 如果用户配置了该值（> 0），则使用用户配置
+	// 范围限制为 0.0-1.0
+	originalRebalanceThreshold := c.Kubelet.RebalanceThreshold
+	if c.Kubelet.RebalanceThreshold <= 0 {
+		c.Kubelet.RebalanceThreshold = 0.5
+		logger.Warnf("kubelet.rebalance_threshold is invalid (%.2f), using default value: %.2f", originalRebalanceThreshold, c.Kubelet.RebalanceThreshold)
+	}
+	// 限制最大值为 1.0（100%）
+	if originalRebalanceThreshold > 1.0 {
+		c.Kubelet.RebalanceThreshold = 1.0
+		logger.Warnf("kubelet.rebalance_threshold exceeds maximum limit (%.2f > 1.0), using maximum value: %.2f", originalRebalanceThreshold, c.Kubelet.RebalanceThreshold)
+	}
+}
+
 // GetTLS 转换 tls 配置为 restclinet tls
 func (c *Config) GetTLS() *rest.TLSClientConfig {
 	return &rest.TLSClientConfig{
@@ -346,6 +378,7 @@ func (c *Config) setup() {
 		setupStatefulSetWorker,
 		setupVCluster,
 		setupTimeSync,
+		setupKubelet,
 	}
 
 	for _, fn := range funcs {

@@ -87,6 +87,12 @@ func (f FieldOption) Existed() bool {
 
 type VmCondition string
 
+// VmQueryCluster holds VM query routing information returned by VM API response
+type VmQueryCluster struct {
+	QueryCluster       string   `json:"query_cluster,omitempty"`
+	StorageClusterList []string `json:"storage_cluster_list,omitempty"`
+}
+
 type FieldAlias map[string]string
 
 type TimeField struct {
@@ -230,8 +236,9 @@ func (q *Query) VMExpand() *VmExpand {
 }
 
 type HighLight struct {
-	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
-	Enable            bool `json:"enable,omitempty"`
+	MaxAnalyzedOffset int       `json:"max_analyzed_offset,omitempty"`
+	Enable            bool      `json:"enable,omitempty"`
+	FieldsMap         FieldsMap `json:"-"` // 用于高亮时判断字段的大小写敏感性
 }
 
 type Collapse struct {

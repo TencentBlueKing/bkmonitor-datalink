@@ -10,8 +10,8 @@ github.com/TencentBlueKing/beats v7.1.17-bk+incompatible h1:KsMFXnlBDdpgqkiLzfI5
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
 github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3 h1:qR2sSybI2Sx/AFdje+L03mHIYlNvQ5Lqwx6+aEdCmXA=
 github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3/go.mod h1:ocsvsjRwMLhVJlfty5Xwuywg8z6o1lfvzXgll9IlDS0=
-github.com/TencentBlueKing/gopsutil/v3 v3.26.1-bk h1:dyb4meLAMvq3DPRIUT3GNtuQ4ierEtN91hcXzfcVJ4U=
-github.com/TencentBlueKing/gopsutil/v3 v3.26.1-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
+github.com/TencentBlueKing/gopsutil/v3 v3.26.2-bk h1:+6J3xuZBtahojZd9GQTFiiYqfdhsSCFjMthWH6fqgHw=
+github.com/TencentBlueKing/gopsutil/v3 v3.26.2-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk h1:BgXW4Vm1fr90L70lPKU+K+N3ckaz10o5a3uNDZ0yWHQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk/go.mod h1:Ux0YzU4nV5yDET7dNIijd0VST0BCy8ijBf+gTVFQeaM=
 github.com/beevik/ntp v1.4.3 h1:PlbTvE5NNy4QHmA4Mg57n7mcFTmr1W1j3gcK7L1lqho=

@@ -181,13 +181,12 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	allMust := make([]elastic.Query, 0)
 	allShould := make([]elastic.Query, 0)
 	allMustNot := make([]elastic.Query, 0)
+	implicitShould := make([]elastic.Query, 0)
 
 	for i, c := range n.Nodes {
 		q := MergeQuery(c.DSL())
-		// 只有为显性的使用 AND 和 OR 才需要进行拼接
 		logic := ""
 		if i == 0 {
-			// 第一个根据后面的来判断
 			if len(n.logics) > 0 {
 				logic = n.logics[i]
 			}
@@ -200,7 +199,17 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 			continue
 		}
 
-		allShould = append(allShould, q)
+		if logic == logicOR {
+			allShould = append(allShould, q)
+		} else {
+			implicitShould = append(implicitShould, q)
+		}
+	}
+
+	if len(implicitShould) == 1 && len(allMust) > 1 {
+		allMust = append(allMust, implicitShould...)
+	} else {
+		allShould = append(allShould, implicitShould...)
 	}
 
 	return filterQuery(allMust, allShould, allMustNot)
@@ -328,6 +337,23 @@ func (n *ConditionNode) String() string {
 		field = DefaultLogField
 	}
 
+	if field == "_exists_" {
+		fieldName := ""
+		if n.value != nil {
+			fieldName = n.value.String()
+		}
+		if nf, ok := n.Option.reverseFieldAlias[fieldName]; ok {
+			fieldName = nf
+		}
+		if n.Option.FieldEncodeFunc != nil {
+			fieldName = n.Option.FieldEncodeFunc(fieldName)
+		}
+		if n.reverseOp {
+			return fmt.Sprintf("%s IS NULL", fieldName)
+		}
+		return fmt.Sprintf("%s IS NOT NULL", fieldName)
+	}
+
 	var fieldOption metadata.FieldOption
 	if n.Option.FieldsMap != nil {
 		fieldOption = n.Option.FieldsMap.Field(field)
@@ -371,7 +397,11 @@ func (n *ConditionNode) String() string {
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
-		op = "LIKE"
+		if n.isQuoted {
+			// 引号内的通配符应视为字面字符，与 ES query_string 语义一致
+		} else {
+			op = "LIKE"
+		}
 	case *RegexpNode:
 		op = "REGEXP"
 	case *StringNode:
@@ -401,6 +431,10 @@ func (n *ConditionNode) String() string {
 				op = "!="
 			}
 		}
+	case "!=":
+		if fieldOption.IsAnalyzed {
+			op = "NOT MATCH_PHRASE"
+		}
 	case "LIKE":
 		if n.reverseOp {
 			op = "NOT LIKE"
@@ -412,9 +446,15 @@ func (n *ConditionNode) String() string {
 }
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
-	var result elastic.Query
+	var (
+		result   elastic.Query
+		notEqual bool
+	)
 	defer func() {
-		if n.reverseOp {
+		if result == nil {
+			return
+		}
+		if n.reverseOp || notEqual {
 			allMustNot = append(allMustNot, result)
 		} else {
 			allMust = append(allMust, result)
@@ -489,6 +529,15 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 		value = strings.Trim(value, `"`)
 	}
 
+	if field == "_exists_" {
+		existsField := value
+		if nf, ok := n.Option.reverseFieldAlias[existsField]; ok {
+			existsField = nf
+		}
+		result = elastic.NewExistsQuery(existsField)
+		return allMust, allShould, allMustNot
+	}
+
 	// 别名替换
 	if nf, ok := n.Option.reverseFieldAlias[field]; ok {
 		field = nf
@@ -526,11 +575,32 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 		}
 		result = cq
 	case *WildCardNode:
-		cq := elastic.NewWildcardQuery(field, value)
-		if cv.Boost != "" {
-			cq.Boost(cast.ToFloat64(cv.Boost))
+		if n.isQuoted {
+			// 引号内的通配符应视为字面字符，与 ES query_string 语义一致
+			if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
+		} else {
+			// text 字段倒排索引为小写，wildcard 不经分词器，需手动小写化 pattern
+			if fieldOption.IsAnalyzed {
+				value = strings.ToLower(value)
+			}
+			cq := elastic.NewWildcardQuery(field, value)
+			if cv.Boost != "" {
+				cq.Boost(cast.ToFloat64(cv.Boost))
+			}
+			result = cq
 		}
-		result = cq
 	case *RegexpNode:
 		cq := elastic.NewRegexpQuery(field, value)
 		if cv.Boost != "" {
@@ -547,6 +617,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
 		case "<=":
 			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+		case "!=":
+			notEqual = true
+			if fieldOption.IsAnalyzed {
+				result = elastic.NewMatchPhraseQuery(field, value)
+			} else {
+				result = elastic.NewTermQuery(field, value)
+			}
 		default:
 			if n.fuzziness != "" {
 				result = elastic.NewFuzzyQuery(field, value).Fuzziness(n.fuzziness)
@@ -579,7 +656,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	switch ctx.GetText() {
-	case ">", "<", ">=", "<=":
+	case ">", "<", ">=", "<=", "!=":
 		n.op = n.MakeInitNode(&StringNode{
 			Value: ctx.GetText(),
 		})

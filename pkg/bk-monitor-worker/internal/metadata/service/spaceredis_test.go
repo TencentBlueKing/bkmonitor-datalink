@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
@@ -39,6 +42,30 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
+
+var storageRedisTestServer *miniredis.Miniredis
+
+func setupStorageRedisForTest(t *testing.T) {
+	t.Helper()
+
+	if storageRedisTestServer != nil {
+		return
+	}
+
+	server, err := miniredis.Run()
+	assert.NoError(t, err)
+
+	port, err := strconv.Atoi(server.Port())
+	assert.NoError(t, err)
+
+	cfg.StorageRedisMode = "standalone"
+	cfg.StorageRedisStandaloneHost = server.Host()
+	cfg.StorageRedisStandalonePort = port
+	cfg.StorageRedisStandalonePassword = ""
+	cfg.StorageRedisDatabase = 0
+
+	storageRedisTestServer = server
+}
 
 func TestSpacePusher_getMeasurementType(t *testing.T) {
 	type args struct {
@@ -1946,6 +1973,7 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 
 func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.AccessVMRecord{}, &resulttable.ResultTableField{}, &resulttable.ResultTableOption{})
 
@@ -1986,6 +2014,119 @@ func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
 	err = json.Unmarshal([]byte(detailStr), &detail)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 	assert.Equal(t, map[string]any{"env": "prod", "module": "worker"}, detail["labels"], "labels should be normalized as object")
+}
+
+func TestSpacePusher_PushTableIdDetailWithRecordRuleOverride(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(
+		&resulttable.ResultTable{},
+		&storage.AccessVMRecord{},
+		&resulttable.ResultTableField{},
+		&resulttable.ResultTableOption{},
+		&resulttable.DataSource{},
+		&resulttable.DataSourceResultTable{},
+		&storage.ClusterInfo{},
+	)
+
+	tableID := "demo.precalculate_rt"
+	dataLabel := "should_not_keep"
+	labels := json.RawMessage(`{"env":"prod"}`)
+
+	db.Exec("DELETE FROM "+recordrule.RecordRule{}.TableName()+" WHERE table_id = ?", tableID)
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+	db.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", tableID)
+	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tableID)
+	db.Delete(&resulttable.DataSourceResultTable{}, "table_id = ?", tableID)
+	db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", 61001)
+
+	rt := resulttable.ResultTable{
+		TableId:      tableID,
+		SchemaType:   models.ResultTableSchemaTypeFixed,
+		IsDeleted:    false,
+		IsEnable:     true,
+		BkTenantId:   tenant.DefaultTenantId,
+		DataLabel:    &dataLabel,
+		Labels:       labels,
+		BkBizIdAlias: "appid",
+	}
+	assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+	accessVmRecord := storage.AccessVMRecord{
+		BkTenantId:      tenant.DefaultTenantId,
+		ResultTableId:   tableID,
+		VmResultTableId: "vm_from_access_vm",
+		VmClusterId:     101,
+	}
+	assert.NoError(t, db.Create(&accessVmRecord).Error, "Failed to insert AccessVMRecord")
+
+	rtField := resulttable.ResultTableField{
+		TableID:    tableID,
+		FieldName:  "metric_from_rt_field",
+		Tag:        models.ResultTableFieldTagMetric,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	assert.NoError(t, db.Create(&rtField).Error, "Failed to insert ResultTableField")
+
+	ds := resulttable.DataSource{
+		BkDataId:   61001,
+		EtlConfig:  models.ETLConfigTypeBkStandard,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	assert.NoError(t, db.Create(&ds).Error, "Failed to insert DataSource")
+
+	dsrt := resulttable.DataSourceResultTable{
+		TableId:    tableID,
+		BkDataId:   ds.BkDataId,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	assert.NoError(t, db.Create(&dsrt).Error, "Failed to insert DataSourceResultTable")
+
+	assert.NoError(t, db.Exec(
+		"INSERT INTO "+recordrule.RecordRule{}.TableName()+" (space_type, space_id, table_id, record_name, rule_type, rule_config, bk_sql_config, rule_metrics, src_vm_table_ids, vm_cluster_id, dst_vm_table_id, status, count_freq, creator, updater, created_at, updated_at, bk_tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"bkcc",
+		"2",
+		tableID,
+		"test_record_rule",
+		"test",
+		"{}",
+		"[]",
+		`{"record_one":"metric_from_rule","record_two":"metric_from_rule_2"}`,
+		`[]`,
+		202,
+		"vm_from_record_rule",
+		"created",
+		60,
+		models.SystemUser,
+		models.SystemUser,
+		time.Now(),
+		time.Now(),
+		tenant.DefaultTenantId,
+	).Error, "Failed to insert RecordRule")
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	pusher := NewSpacePusher()
+	err := pusher.PushTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
+	assert.NoError(t, err, "PushTableIdDetail should not return an error")
+
+	detailStr := client.HGet(cfg.ResultTableDetailKey, tableID)
+	assert.NotEmpty(t, detailStr, "result_table_detail should be written to redis")
+
+	var detail map[string]any
+	err = json.Unmarshal([]byte(detailStr), &detail)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "vm_from_record_rule", detail["vm_rt"], "record rule vm_rt should override access vm data")
+	assert.EqualValues(t, 202, detail["storage_id"], "record rule storage_id should override access vm data")
+	assert.Equal(t, "", detail["storage_name"], "record rule detail should preserve empty storage_name when no cluster mapping exists")
+	assert.Equal(t, "", detail["measurement"], "record rule detail should clear measurement")
+	assert.Equal(t, models.MeasurementTypeBkSplit, detail["measurement_type"], "record rule detail should force split measurement")
+	assert.Equal(t, "", detail["data_label"], "record rule detail should clear data_label")
+	assert.Equal(t, map[string]any{}, detail["labels"], "record rule detail should clear labels")
+	assert.Nil(t, detail["bk_data_id"], "record rule detail should keep bk_data_id as null")
+	assert.Equal(t, []any{"metric_from_rule", "metric_from_rule_2"}, detail["fields"], "record rule metrics should override rt fields")
 }
 
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {

@@ -136,7 +136,7 @@ func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 			IsRegexp:          false,
 			IsSkipK8s:         true,
 			IsSkipField:       false,
-			TableIDConditions: MapToTableIDConditions(map[string]string{"scene": "other"}),
+			TableIDConditions: AllConditions{{{DimensionName: "scene", Value: []string{"other"}, Operator: ConditionEqual}}},
 		}
 		tsdb, err := sf.DataList(opt)
 		require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 
 	t.Run("scene_eq_log_returns_only_influxdb", func(t *testing.T) {
 		opt := *optBase
-		opt.TableIDConditions = MapToTableIDConditions(map[string]string{"scene": "log"})
+		opt.TableIDConditions = AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
 		require.Len(t, tsdb, 1, "scene=log 应只命中 result_table.influxdb")
@@ -188,7 +188,7 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 
 	t.Run("scene_eq_k8s_returns_only_vm", func(t *testing.T) {
 		opt := *optBase
-		opt.TableIDConditions = MapToTableIDConditions(map[string]string{"scene": "k8s"})
+		opt.TableIDConditions = AllConditions{{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}}}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
 		require.Len(t, tsdb, 1, "scene=k8s 应只命中 result_table.vm，若为 0 请确认 mock 中 ResultTableVM 已设置 Labels scene=k8s")
@@ -215,7 +215,10 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 	// AND 多标签：mock 中 influxdb=scene=log,cluster_id=1；vm=scene=k8s,cluster_id=2
 	t.Run("and_scene_log_cluster_id_1_returns_only_influxdb", func(t *testing.T) {
 		opt := *optBase
-		opt.TableIDConditions = MapToTableIDConditions(map[string]string{"scene": "log", "cluster_id": "1"})
+		opt.TableIDConditions = AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
+		}}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
 		require.Len(t, tsdb, 1, "scene=log AND cluster_id=1 应只命中 result_table.influxdb")
@@ -224,7 +227,10 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 
 	t.Run("and_scene_log_cluster_id_2_returns_none", func(t *testing.T) {
 		opt := *optBase
-		opt.TableIDConditions = MapToTableIDConditions(map[string]string{"scene": "log", "cluster_id": "2"})
+		opt.TableIDConditions = AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "cluster_id", Value: []string{"2"}, Operator: ConditionEqual},
+		}}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
 		assert.Len(t, tsdb, 0, "scene=log AND cluster_id=2 无匹配（influxdb 为 cluster_id=1）")

@@ -20,6 +20,9 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
+// QueryLabelSelectorLabelName PromQL 中用于表标签路由的指标标签名，仅用于 DataList 路由，不下发存储
+const QueryLabelSelectorLabelName = "__query_label_selector"
+
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
 	PromQL              string   `json:"promql"`

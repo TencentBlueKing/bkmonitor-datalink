@@ -389,68 +389,23 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
-// MatchLabels 表标签匹配：labels 为 RT 的标签键值，多组 OR（任一组内全部条件满足即通过）；条件中的 key 必须在 labels 中存在才参与匹配，否则视为不满足。
-func (c *Conditions) MatchLabels(labels map[string]string) (bool, error) {
-	if c == nil || len(c.FieldList) == 0 {
-		return true, nil
+// QueryLabelSelectorString 将 AllConditions 序列化为 __query_label_selector 的值，用于 TS→PromQL。
+// 格式: scene=log,cluster_id=1 or scene=k8s；组内 AND 用逗号，组间 OR 用 " or "。
+func (c AllConditions) QueryLabelSelectorString() string {
+	if len(c) == 0 {
+		return ""
 	}
-	totalBuffer, err := c.AnalysisConditions()
-	if err != nil || len(totalBuffer) == 0 {
-		return false, err
-	}
-	for _, cond := range totalBuffer {
-		andOk := true
-		for _, field := range cond {
-			val, ok := labels[field.DimensionName]
-			if !ok {
-				andOk = false
-				break
-			}
-			switch field.Operator {
-			case ConditionEqual, ConditionContains:
-				if !containElement(field.Value, val) {
-					andOk = false
-					break
-				}
-			case ConditionNotEqual, ConditionNotContains:
-				if containElement(field.Value, val) {
-					andOk = false
-					break
-				}
-			case ConditionRegEqual:
-				matched := false
-				for _, v := range field.Value {
-					reExp, err := regexp.Compile(v)
-					if err != nil {
-						return false, err
-					}
-					if reExp.Match([]byte(val)) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					andOk = false
-					break
-				}
-			case ConditionNotRegEqual:
-				for _, v := range field.Value {
-					reExp, err := regexp.Compile(v)
-					if err != nil {
-						return false, err
-					}
-					if reExp.Match([]byte(val)) {
-						andOk = false
-						break
-					}
-				}
-			}
+	var orParts []string
+	for _, group := range c {
+		var andParts []string
+		for _, f := range group {
+			andParts = append(andParts, f.queryLabelSelectorString())
 		}
-		if andOk {
-			return true, nil
+		if len(andParts) > 0 {
+			orParts = append(orParts, strings.Join(andParts, ","))
 		}
 	}
-	return false, nil
+	return strings.Join(orParts, " or ")
 }
 
 // MatchLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
@@ -511,6 +466,12 @@ func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// MatchesLabels 表标签过滤：语义同 MatchLabels，仅返回是否匹配（忽略 error）；空或 nil 视为不过滤（返回 true）。
+func (c AllConditions) MatchesLabels(labels map[string]string) bool {
+	ok, _ := c.MatchLabels(labels)
+	return ok
 }
 
 // ConvertToPromBuffer

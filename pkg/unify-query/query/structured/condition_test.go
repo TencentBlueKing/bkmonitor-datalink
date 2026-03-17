@@ -932,22 +932,19 @@ func TestAllConditions_VMString(t *testing.T) {
 	}
 }
 
-// TestConditions_MatchLabels 表标签匹配：空条件、单 eq、缺 key、OR 组
-func TestConditions_MatchLabels(t *testing.T) {
-	t.Run("nil_empty_conditions", func(t *testing.T) {
-		var c *Conditions
+// TestAllConditions_MatchLabels 表标签匹配：空条件、单 eq、缺 key、OR 组、AND 组（表标签路由统一使用 AllConditions.MatchLabels）
+func TestAllConditions_MatchLabels(t *testing.T) {
+	t.Run("nil_empty", func(t *testing.T) {
+		var c AllConditions
 		ok, err := c.MatchLabels(map[string]string{"a": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = (&Conditions{}).MatchLabels(map[string]string{"a": "1"})
+		ok, err = AllConditions{}.MatchLabels(map[string]string{"a": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
 	})
 	t.Run("single_eq_match", func(t *testing.T) {
-		c := &Conditions{
-			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-			ConditionList: []string{},
-		}
+		c := AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
 		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
@@ -956,10 +953,7 @@ func TestConditions_MatchLabels(t *testing.T) {
 		assert.False(t, ok)
 	})
 	t.Run("key_missing", func(t *testing.T) {
-		c := &Conditions{
-			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-			ConditionList: []string{},
-		}
+		c := AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
 		ok, err := c.MatchLabels(map[string]string{})
 		assert.NoError(t, err)
 		assert.False(t, ok)
@@ -968,12 +962,9 @@ func TestConditions_MatchLabels(t *testing.T) {
 		assert.False(t, ok)
 	})
 	t.Run("or_groups", func(t *testing.T) {
-		c := &Conditions{
-			FieldList: []ConditionField{
-				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-				{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual},
-			},
-			ConditionList: []string{ConditionOr},
+		c := AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
 		}
 		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
@@ -986,17 +977,113 @@ func TestConditions_MatchLabels(t *testing.T) {
 		assert.False(t, ok)
 	})
 	t.Run("and_group", func(t *testing.T) {
-		c := &Conditions{
-			FieldList: []ConditionField{
-				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-				{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
-			},
-			ConditionList: []string{ConditionAnd},
-		}
+		c := AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
+		}}
 		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
 		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	// 复杂情形：ne / req / nreq、多组 OR 内多条件 AND、混合操作符
+	t.Run("single_ne", func(t *testing.T) {
+		c := AllConditions{{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionNotEqual}}}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "metric"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+		ok, err = c.MatchLabels(map[string]string{}) // key 缺失视为不满足
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("single_req", func(t *testing.T) {
+		c := AllConditions{{{DimensionName: "scene", Value: []string{"log.*"}, Operator: ConditionRegEqual}}}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "log-api"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("single_nreq", func(t *testing.T) {
+		c := AllConditions{{{DimensionName: "scene", Value: []string{"metric.*"}, Operator: ConditionNotRegEqual}}}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "metric-api"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("and_group_with_ne", func(t *testing.T) {
+		c := AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual},
+		}}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log", "env": "staging"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "log", "env": "prod"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "k8s", "env": "staging"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("or_groups_with_and_each", func(t *testing.T) {
+		// (scene=log AND cluster_id=1) OR (scene=k8s)
+		c := AllConditions{
+			{
+				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+				{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
+			},
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+		}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"}) // 第一组不满足
+		assert.NoError(t, err)
+		assert.False(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "other"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("and_group_with_req", func(t *testing.T) {
+		c := AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "cluster_id", Value: []string{"BCS-.*"}, Operator: ConditionRegEqual},
+		}}
+		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "other"})
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+	t.Run("three_or_groups", func(t *testing.T) {
+		c := AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+			{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionEqual}},
+		}
+		for _, scene := range []string{"log", "k8s", "metric"} {
+			ok, err := c.MatchLabels(map[string]string{"scene": scene})
+			assert.NoError(t, err)
+			assert.True(t, ok)
+		}
+		ok, err := c.MatchLabels(map[string]string{"scene": "other"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})

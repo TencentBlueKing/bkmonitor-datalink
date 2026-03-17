@@ -1129,7 +1129,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	}
 
 	// 从 TableIDConditions 注入 __query_label_selector，供 TS→PromQL 往返一致
-	if selVal := AllConditionsToQueryLabelSelectorString(q.TableIDConditions); selVal != "" {
+	if selVal := q.TableIDConditions.QueryLabelSelectorString(); selVal != "" {
 		m, err := labels.NewMatcher(labels.MatchEqual, QueryLabelSelectorLabelName, selVal)
 		if err == nil {
 			matchers = append(matchers, m)

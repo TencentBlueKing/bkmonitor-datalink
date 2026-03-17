@@ -116,7 +116,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		if labels == nil {
 			labels = make(map[string]string)
 		}
-		if !matchLabelsForAllConditions(labels, tableIDConditions) {
+		if !tableIDConditions.MatchesLabels(labels) { // 如果标签不匹配，则直接返回 nil
 			return nil
 		}
 	}

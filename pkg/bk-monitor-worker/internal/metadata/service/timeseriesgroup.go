@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -33,18 +34,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var TSDefaultStorageConfig = map[string]any{"use_default_rp": true}
-
-var TSStorageFieldList = []map[string]any{
-	{
-		"field_name":        "target",
-		"field_type":        "string",
-		"tag":               models.ResultTableFieldTagDimension,
-		"option":            map[string]any{},
-		"is_config_by_user": true,
-	},
-}
-
 const metricNamePattern = `^[a-zA-Z0-9_]+$`
 
 // TimeSeriesGroupSvc time series group service
@@ -56,6 +45,54 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 	return TimeSeriesGroupSvc{
 		TimeSeriesGroup: obj,
 	}
+}
+
+// IsDefaultScopeInfo ：判断是否为默认分组并返回默认分组名
+func (s *TimeSeriesGroupSvc) IsDefaultScopeInfo(scopeName string) (isDefault bool, defaultScopeName string) {
+	const defaultName = "default"
+	if scopeName == defaultName {
+		return true, defaultName
+	}
+	if s.MetricGroupDimensions != "" && s.MetricGroupDimensions != "[]" {
+		var dims []map[string]any
+		if err := json.Unmarshal([]byte(s.MetricGroupDimensions), &dims); err != nil || len(dims) == 0 {
+			return false, defaultName
+		}
+		lastDefault := defaultName
+		if v, ok := dims[len(dims)-1]["default_value"].(string); ok && v != "" {
+			lastDefault = v
+		}
+		levels := strings.Split(scopeName, "||")
+		if len(levels) == 0 {
+			return false, defaultName
+		}
+		isDefault = levels[len(levels)-1] == lastDefault
+		var defaultScope string
+		if len(levels) > 1 {
+			levels[len(levels)-1] = lastDefault
+			defaultScope = strings.Join(levels, "||")
+		} else {
+			defaultScope = lastDefault
+		}
+		return isDefault, defaultScope
+	}
+	return false, defaultName
+}
+
+// GetScopeNamePrefix ：返回除最后一级外的前缀
+func GetScopeNamePrefix(scopeName string) string {
+	if scopeName == "" {
+		return ""
+	}
+	s := scopeName
+	if strings.HasSuffix(s, "||") {
+		s = s[:len(s)-2]
+	}
+	if !strings.Contains(s, "||") {
+		return ""
+	}
+	idx := strings.LastIndex(s, "||")
+	return s[:idx]
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
@@ -128,7 +165,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *
 	// NOTE: 现阶段仅支持 vm 存储
 	vmStorage := "vm"
 
-	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(s.BkTenantId, vmStorage, vmRt)
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(s.BkTenantId, vmStorage, vmRt, s.MetricGroupDimensions)
 	if err != nil {
 		return nil, err
 	}
@@ -257,17 +294,26 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]an
 func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
-	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
+	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v,metricInfoList: %d", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery, len(metricInfoList))
 
 	// 过滤非法的指标
 	metricInfoList = s.filterInvalidMetrics(metricInfoList)
 
-	// 刷新 ts 表中的指标和维度
-	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
+	// 1. 刷新 tsScope，得到带 scope_id 的指标列表
+	newMetricInfoList, err := BulkRefreshTSScopes(s, metricInfoList)
 	if err != nil {
-		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, metricInfoList)
+		return false, errors.Wrapf(err, "BulkRefreshTSScopes for table id [%s] failed", s.TableID)
 	}
-	// 刷新 rt 表中的指标和维度
+	logger.Infof("UpdateMetrics: BulkRefreshTSScopes for table id: %v, metricInfoList: %d", s.TableID, len(newMetricInfoList))
+
+	// 2. 刷新 ts 表中的指标和维度（使用带 scope_id 的列表）
+	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, newMetricInfoList, isAutoDiscovery)
+	if err != nil {
+		return false, errors.Wrapf(err, "BulkRefreshTSMetrics for table id [%s] with metric info failed", s.TableID)
+	}
+	logger.Infof("UpdateMetrics: BulkRefreshTSMetrics for table id: %v, updated: %v", s.TableID, updated)
+
+	// 3. 刷新 rt 表中的指标和维度
 	err = s.BulkRefreshRtFields(s.TableID, metricInfoList)
 	if err != nil {
 		return false, errors.Wrapf(err, "refresh rt fields for [%s] failed", s.TableID)
@@ -275,9 +321,93 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (boo
 	return updated, nil
 }
 
+// aggregateMetricInfoByFieldName 根据 field_name 聚合 metric_info，合并 tag_value_list
+func (s *TimeSeriesGroupSvc) aggregateMetricInfoByFieldName(metricInfoList []map[string]any) []map[string]any {
+	aggregated := make(map[string]map[string]any)
+	for _, item := range metricInfoList {
+		fieldName, ok := item["field_name"].(string)
+		if !ok || fieldName == "" {
+			continue
+		}
+		var tagList []any
+		if tagList, ok = item["tag_list"].([]any); !ok {
+			tagList = []any{}
+		}
+		if aggregated[fieldName] == nil {
+			aggregated[fieldName] = map[string]any{
+				"field_name":       fieldName,
+				"tag_value_list":   make(map[string]any),
+				"tag_list":         tagList,
+				"last_modify_time": item["last_modify_time"],
+				"is_active":        item["is_active"],
+			}
+		}
+		tagValueList, ok := item["tag_value_list"].(map[string]any)
+		if !ok {
+			continue
+		}
+		aggTagList := aggregated[fieldName]["tag_value_list"].(map[string]any)
+		for tagName, tagInfoRaw := range tagValueList {
+			tagInfoMap, ok := tagInfoRaw.(map[string]any)
+			if !ok {
+				aggTagList[tagName] = tagInfoRaw
+				continue
+			}
+
+			newValues := mapset.NewSet[string]()
+			if v, ok := tagInfoMap["values"].([]any); ok && v != nil {
+				for _, val := range v {
+					if str, ok := val.(string); ok {
+						newValues.Add(str)
+					}
+				}
+			}
+			newUpdateTime := int64(0)
+			if t, ok := tagInfoMap["last_update_time"].(float64); ok {
+				newUpdateTime = int64(t)
+			}
+			existing, exists := aggTagList[tagName].(map[string]any)
+			if exists {
+				if v, ok := existing["values"].([]any); ok && v != nil {
+					for _, val := range v {
+						if str, ok := val.(string); ok {
+							newValues.Add(str)
+						}
+					}
+				}
+				if t, ok := existing["last_update_time"].(float64); ok && int64(t) > newUpdateTime {
+					newUpdateTime = int64(t)
+				}
+			}
+			valuesSlice := newValues.ToSlice()
+			valuesAny := make([]any, len(valuesSlice))
+			for i, v := range valuesSlice {
+				valuesAny[i] = v
+			}
+			aggTagList[tagName] = map[string]any{
+				"last_update_time": newUpdateTime,
+				"values":           valuesAny,
+			}
+		}
+		if lm, ok := item["last_modify_time"].(float64); ok {
+			aggregated[fieldName]["last_modify_time"] = lm
+		}
+		if active, ok := item["is_active"].(bool); ok {
+			aggregated[fieldName]["is_active"] = active
+		}
+	}
+	result := make([]map[string]any, 0, len(aggregated))
+	for _, m := range aggregated {
+		result = append(result, m)
+	}
+	return result
+}
+
 // BulkRefreshRtFields 批量刷新结果表打平的指标和维度
 func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList []map[string]any) error {
-	metricTagInfo, err := s.refineMetricTags(metricInfoList)
+	// 根据 field_name 聚合 metric_info，合并 tag_value_list
+	aggregatedList := s.aggregateMetricInfoByFieldName(metricInfoList)
+	metricTagInfo, err := s.refineMetricTags(aggregatedList)
 	if err != nil {
 		return errors.Wrap(err, "refineMetricTags failed")
 	}

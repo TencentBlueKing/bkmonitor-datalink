@@ -376,21 +376,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}()
 
-	// 检查es是否有响应错误
-	if err == nil && res.Error != nil {
-		err = &elastic.Error{
-			Status:  res.Status,
-			Details: res.Error,
-		}
-	}
-	// 检查 shard failures
-	var shardFailures []*elastic.ShardOperationFailedException
-	if res.Shards != nil && len(res.Shards.Failures) > 0 {
-		shardFailures = res.Shards.Failures
-	}
-	// 如果有错误或 shard failures，返回错误
-	if err != nil || len(shardFailures) > 0 {
-		err = handleESError(ctx, qo.conn.Address, err, shardFailures)
+	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err
 	}
 	if res.Hits != nil {

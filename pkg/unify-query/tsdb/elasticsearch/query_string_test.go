@@ -54,6 +54,7 @@ func TestQsToDsl(t *testing.T) {
 			AliasName:   "event_detail",
 			OriginField: "events",
 			FieldType:   Text,
+			IsAnalyzed:  true,
 		},
 		"nested.key": {
 			FieldName:   "nested.key",
@@ -76,6 +77,10 @@ func TestQsToDsl(t *testing.T) {
 		},
 		"request_uri": {
 			FieldName: "request_uri",
+			FieldType: KeyWord,
+		},
+		"__ext.io_kubernetes_workload_name": {
+			FieldName: "__ext.io_kubernetes_workload_name",
 			FieldType: KeyWord,
 		},
 	}
@@ -141,12 +146,12 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,
-			expected: `{"nested":{"path":"events","query":{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}}}`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
 		// 测试别名
 		{
 			q:        `event_detail: "*66036*"`,
-			expected: `{"nested":{"path":"events","query":{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}}}`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
 		{
 			q:        `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" AND level: "error" AND "2_bklog.bkunify_query"`, // lucene是大小写不敏感的
@@ -172,6 +177,11 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `request_uri:"/scm/api/proxy?serviceName=test"`,
 			expected: `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
+		},
+		// 引号内 * 不应生成 wildcard 查询，应生成 match_phrase（与 ES query_string 语义一致）
+		{
+			q:        `__ext.io_kubernetes_workload_name: "prod-roomjob-sts" AND level: "ERROR" AND NOT log:"err*" AND log:"error*"`,
+			expected: `{"bool":{"must":[{"term":{"__ext.io_kubernetes_workload_name":"prod-roomjob-sts"}},{"term":{"level":"ERROR"}},{"bool":{"must_not":{"match_phrase":{"log":{"query":"err*"}}}}},{"match_phrase":{"log":{"query":"error*"}}}]}}`,
 		},
 		{
 			q:        `_exists_:level`,

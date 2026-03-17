@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -34,7 +35,26 @@ const (
 	MsgLengthLimit = 500
 )
 
-func handleESError(ctx context.Context, url string, err error, shardFailures []*elastic.ShardOperationFailedException) error {
+func extractESResult(err error, res *elastic.SearchResult) ([]*elastic.ShardOperationFailedException, error) {
+	if res != nil {
+		if err == nil && res.Error != nil {
+			err = &elastic.Error{
+				Status:  res.Status,
+				Details: res.Error,
+			}
+		}
+		if res.Shards != nil && len(res.Shards.Failures) > 0 {
+			return res.Shards.Failures, err
+		}
+	} else if err == nil {
+		err = fmt.Errorf("unexpected nil SearchResult")
+	}
+	return nil, err
+}
+
+func handleESError(ctx context.Context, url string, err error, res *elastic.SearchResult) error {
+	shardFailures, err := extractESResult(err, res)
+
 	if err == nil && len(shardFailures) == 0 {
 		return nil
 	}

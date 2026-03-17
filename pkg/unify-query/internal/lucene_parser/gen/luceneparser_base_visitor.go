@@ -7,58 +7,58 @@ type BaseLuceneParserVisitor struct {
 	*antlr.BaseParseTreeVisitor
 }
 
-func (v *BaseLuceneParserVisitor) VisitTopLevelQuery(ctx *TopLevelQueryContext) any {
+func (v *BaseLuceneParserVisitor) VisitTopLevelQuery(ctx *TopLevelQueryContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitQuery(ctx *QueryContext) any {
+func (v *BaseLuceneParserVisitor) VisitQuery(ctx *QueryContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitDisjQuery(ctx *DisjQueryContext) any {
+func (v *BaseLuceneParserVisitor) VisitDisjQuery(ctx *DisjQueryContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitConjQuery(ctx *ConjQueryContext) any {
+func (v *BaseLuceneParserVisitor) VisitConjQuery(ctx *ConjQueryContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitModClause(ctx *ModClauseContext) any {
+func (v *BaseLuceneParserVisitor) VisitModClause(ctx *ModClauseContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitModifier(ctx *ModifierContext) any {
+func (v *BaseLuceneParserVisitor) VisitModifier(ctx *ModifierContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitClause(ctx *ClauseContext) any {
+func (v *BaseLuceneParserVisitor) VisitClause(ctx *ClauseContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitFieldRangeExpr(ctx *FieldRangeExprContext) any {
+func (v *BaseLuceneParserVisitor) VisitFieldRangeExpr(ctx *FieldRangeExprContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitTerm(ctx *TermContext) any {
+func (v *BaseLuceneParserVisitor) VisitTerm(ctx *TermContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitGroupingExpr(ctx *GroupingExprContext) any {
+func (v *BaseLuceneParserVisitor) VisitGroupingExpr(ctx *GroupingExprContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitFieldName(ctx *FieldNameContext) any {
+func (v *BaseLuceneParserVisitor) VisitFieldName(ctx *FieldNameContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitTermRangeExpr(ctx *TermRangeExprContext) any {
+func (v *BaseLuceneParserVisitor) VisitTermRangeExpr(ctx *TermRangeExprContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitQuotedTerm(ctx *QuotedTermContext) any {
+func (v *BaseLuceneParserVisitor) VisitQuotedTerm(ctx *QuotedTermContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseLuceneParserVisitor) VisitFuzzy(ctx *FuzzyContext) any {
+func (v *BaseLuceneParserVisitor) VisitFuzzy(ctx *FuzzyContext) interface{} {
 	return v.VisitChildren(ctx)
 }

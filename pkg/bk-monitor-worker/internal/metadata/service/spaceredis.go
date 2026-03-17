@@ -10,6 +10,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -639,7 +640,12 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	db := mysql.GetDBSession().DB
 	// 获取结果表类型
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.SchemaType, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.TableId,
+		resulttable.ResultTableDBSchema.SchemaType,
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&rtList); err != nil {
 		return err
 	}
 	tableIdRtMap := make(map[string]resulttable.ResultTable)
@@ -702,8 +708,10 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {
 			detail["data_label"] = ""
+			detail["labels"] = map[string]any{}
 		} else {
 			detail["data_label"] = rt.DataLabel
+			detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -986,6 +994,30 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 	return fieldAliasMap, nil
 }
 
+func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[string]any {
+	if len(labels) == 0 {
+		return map[string]any{}
+	}
+
+	labelsStr := strings.TrimSpace(string(labels))
+	if labelsStr == "" || labelsStr == "null" {
+		return map[string]any{}
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(labelsStr), &parsed); err != nil {
+		logger.Errorf("normalizeResultTableLabels: unmarshal labels failed, table_id [%s], labels [%s], err [%s]", tableId, labelsStr, err)
+		return map[string]any{}
+	}
+
+	labelsMap, ok := parsed.(map[string]any)
+	if !ok {
+		logger.Errorf("normalizeResultTableLabels: labels is not object, table_id [%s], labels [%s]", tableId, labelsStr)
+		return map[string]any{}
+	}
+	return labelsMap
+}
+
 func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
@@ -1012,7 +1044,10 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	}
 
 	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 
@@ -1030,6 +1065,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
 		"data_label":              rt.DataLabel,
+		"labels":                  normalizeResultTableLabels(tableId, rt.Labels),
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1060,7 +1096,10 @@ func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId st
 	db := mysql.GetDBSession().DB
 
 	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(
+		resulttable.ResultTableDBSchema.DataLabel,
+		resulttable.ResultTableDBSchema.Labels,
+	).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 
@@ -1074,6 +1113,7 @@ func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId st
 		"db":           bkbaseTableId,
 		"measurement":  models.DorisMeasurement,
 		"data_label":   rt.DataLabel,
+		"labels":       normalizeResultTableLabels(tableId, rt.Labels),
 		"field_alias":  fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {

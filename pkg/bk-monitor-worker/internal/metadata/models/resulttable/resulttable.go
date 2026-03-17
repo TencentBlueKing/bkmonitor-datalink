@@ -10,6 +10,7 @@
 package resulttable
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/jinzhu/gorm"
@@ -20,23 +21,24 @@ import (
 // ResultTable result table model
 // gen:qs
 type ResultTable struct {
-	TableId        string    `gorm:"table_id;primary_key" json:"table_id"`
-	TableNameZh    string    `gorm:"table_name_zh;size:128" json:"table_name_zh"`
-	IsCustomTable  bool      `gorm:"is_custom_table" json:"is_custom_table"`
-	SchemaType     string    `gorm:"schema_type;size:64" json:"schema_type"`
-	DefaultStorage string    `gorm:"default_storage" json:"default_storage"`
-	Creator        string    `gorm:"creator;size:32" json:"creator"`
-	CreateTime     time.Time `gorm:"create_time;" json:"create_time"`
-	LastModifyUser string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
-	LastModifyTime time.Time `gorm:"last_modify_time" json:"last_modify_time"`
-	BkBizId        int       `gorm:"bk_biz_id" json:"bk_biz_id"`
-	IsDeleted      bool      `gorm:"is_deleted" json:"is_deleted"`
-	Label          string    `gorm:"label;size:128" json:"label"`
-	IsEnable       bool      `gorm:"is_enable" json:"is_enable"`
-	DataLabel      *string   `gorm:"data_label;size:128" json:"data_label"`
-	IsBuiltin      bool      `gorm:"column:is_builtin" json:"is_builtin"`
-	BkBizIdAlias   string    `gorm:"bk_biz_id_alias;size:128" json:"bk_biz_id_alias"`
-	BkTenantId     string    `gorm:"bk_tenant_id;size:256" json:"bk_tenant_id"`
+	TableId        string          `gorm:"table_id;primary_key" json:"table_id"`
+	TableNameZh    string          `gorm:"table_name_zh;size:128" json:"table_name_zh"`
+	IsCustomTable  bool            `gorm:"is_custom_table" json:"is_custom_table"`
+	SchemaType     string          `gorm:"schema_type;size:64" json:"schema_type"`
+	DefaultStorage string          `gorm:"default_storage" json:"default_storage"`
+	Creator        string          `gorm:"creator;size:32" json:"creator"`
+	CreateTime     time.Time       `gorm:"create_time;" json:"create_time"`
+	LastModifyUser string          `gorm:"last_modify_user;size:32" json:"last_modify_user"`
+	LastModifyTime time.Time       `gorm:"last_modify_time" json:"last_modify_time"`
+	BkBizId        int             `gorm:"bk_biz_id" json:"bk_biz_id"`
+	IsDeleted      bool            `gorm:"is_deleted" json:"is_deleted"`
+	Label          string          `gorm:"label;size:128" json:"label"`
+	Labels         json.RawMessage `gorm:"column:labels;type:json" json:"labels"`
+	IsEnable       bool            `gorm:"is_enable" json:"is_enable"`
+	DataLabel      *string         `gorm:"data_label;size:128" json:"data_label"`
+	IsBuiltin      bool            `gorm:"column:is_builtin" json:"is_builtin"`
+	BkBizIdAlias   string          `gorm:"bk_biz_id_alias;size:128" json:"bk_biz_id_alias"`
+	BkTenantId     string          `gorm:"bk_tenant_id;size:256" json:"bk_tenant_id"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

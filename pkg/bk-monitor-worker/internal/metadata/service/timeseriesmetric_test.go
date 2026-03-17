@@ -438,14 +438,14 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 			GroupID:        100376,
 			FieldName:      "active_tasks",
 			TagList:        `["target", "module", "location"]`,
-			LastModifyTime: time.Unix(1722942000, 0), // 2024-08-06 19:00:00 UTC
+			LastModifyTime: time.Unix(1722970800, 0), // 2024-08-06 19:00:00 UTC
 			IsActive:       true,
 		},
 		{
 			GroupID:        100376,
 			FieldName:      "backup_tasks_count",
 			TagList:        `["target", "module", "location"]`,
-			LastModifyTime: time.Unix(1722942000, 0), // 2024-09-17 15:37:00 UTC
+			LastModifyTime: time.Unix(1726587420, 0), // 2024-09-17 15:37:00 UTC
 			IsActive:       true,
 		},
 	}
@@ -467,18 +467,18 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	metricInfoList := []map[string]any{
 		{
 			"field_name":       "active_tasks",
-			"last_modify_time": 1726728019, // 2024-09-19 14:40:19 UTC
+			"last_modify_time": 1726728019.0, // 2024-09-19 14:40:19 UTC
 			"tag_value_list": map[string]any{
 				"location": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 				"module": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 				"target": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 			},
@@ -486,18 +486,18 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 		},
 		{
 			"field_name":       "backup_tasks_count",
-			"last_modify_time": 1726728019, // 2024-09-19 14:40:19 UTC
+			"last_modify_time": 1726728019.0, // 2024-09-19 14:40:19 UTC
 			"tag_value_list": map[string]any{
 				"location": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 				"module": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 				"target": map[string]any{
-					"last_update_time": 1726728019,
+					"last_update_time": 1726728019.0,
 					"values":           []any{},
 				},
 			},
@@ -510,7 +510,7 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	// 调用 BulkRefreshTSMetrics
 	needPush, err := svc.BulkRefreshTSMetrics("system", 100376, "test_table", metricInfoList, true)
 	assert.NoError(t, err)
-	assert.False(t, needPush)
+	assert.True(t, needPush)
 
 	// 验证数据库中的记录
 	var updatedMetrics []customreport.TimeSeriesMetric

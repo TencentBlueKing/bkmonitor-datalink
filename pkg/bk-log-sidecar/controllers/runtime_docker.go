@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
@@ -46,7 +47,7 @@ func (r *DockerRuntime) Type() define.RuntimeType {
 
 // Containers list of containers
 func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.cli.ContainerList(ctx, types.ContainerListOptions{Filters: filters.NewArgs()})
+	containers, err := r.cli.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
 
 	if err != nil {
 		return nil, err

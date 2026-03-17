@@ -15,15 +15,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 const (
@@ -46,7 +47,7 @@ func (r *DockerRuntime) Type() define.RuntimeType {
 
 // Containers list of containers
 func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.cli.ContainerList(ctx, types.ContainerListOptions{Filters: filters.NewArgs()})
+	containers, err := r.cli.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
 
 	if err != nil {
 		return nil, err
@@ -62,7 +63,7 @@ func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContaine
 
 // Inspect docker container inspect
 func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
-	containerCh := make(chan types.ContainerJSON)
+	containerCh := make(chan container.InspectResponse)
 	ctx, cancelFunc := context.WithTimeout(ctx, 3*time.Second)
 
 	defer func() {
@@ -139,7 +140,7 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 	filter.Add("event", DockerStopEvent)
 	filter.Add("event", DockerStartEvent)
 	filter.Add("event", DockerDieEvent)
-	options := types.EventsOptions{Filters: filter}
+	options := events.ListOptions{Filters: filter}
 
 	events, errors := r.cli.Events(ctx, options)
 

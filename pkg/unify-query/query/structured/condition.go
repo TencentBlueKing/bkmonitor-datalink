@@ -413,26 +413,26 @@ func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
 	if len(c) == 0 {
 		return true, nil
 	}
-	for _, group := range c {
+	for _, group := range c { //外层：OR 组
 		andOk := true
-		for _, field := range group {
-			val, ok := labels[field.DimensionName]
+		for _, field := range group { // 内层：AND 条件
+			val, ok := labels[field.DimensionName] // 判断 field 是否满足 labels
 			if !ok {
 				andOk = false
 				break
 			}
 			switch field.Operator {
-			case ConditionEqual, ConditionContains:
+			case ConditionEqual: // eq
 				if !containElement(field.Value, val) {
 					andOk = false
 					break
 				}
-			case ConditionNotEqual, ConditionNotContains:
+			case ConditionNotEqual: // ne
 				if containElement(field.Value, val) {
 					andOk = false
 					break
 				}
-			case ConditionRegEqual:
+			case ConditionRegEqual: // req
 				matched := false
 				for _, v := range field.Value {
 					reExp, err := regexp.Compile(v)
@@ -448,7 +448,7 @@ func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
 					andOk = false
 					break
 				}
-			case ConditionNotRegEqual:
+			case ConditionNotRegEqual: // nreq
 				for _, v := range field.Value {
 					reExp, err := regexp.Compile(v)
 					if err != nil {
@@ -459,9 +459,13 @@ func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
 						break
 					}
 				}
+			default:
+				// 表标签匹配仅支持 eq/ne/req/nreq，其他 op 视为不满足
+				andOk = false
+				break
 			}
 		}
-		if andOk {
+		if andOk { // 该 OR 组通过
 			return true, nil
 		}
 	}

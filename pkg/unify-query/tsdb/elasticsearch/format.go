@@ -32,10 +32,12 @@ import (
 )
 
 const (
-	KeyValue   = "_key"
-	FieldValue = "_value"
-	FieldTime  = "_time"
+	KeyValue          = "_key"
+	FieldValue        = "_value"
+	FieldTime         = "_time"
+	defaultCountField = "_index"
 
+	SelectAll            = "*"
 	DefaultTimeFieldName = "dtEventTimeStamp"
 	DefaultTimeFieldType = TimeFieldTypeTime
 	DefaultTimeFieldUnit = function.Millisecond
@@ -813,22 +815,21 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return name, agg, err
 }
 
-// isIgnoreValueField 全表(*)或时间占位(_time)时视为忽略，映射到 _index 实现 COUNT(*)
-func isIgnoreValueField(s string) bool {
-	return s == "*" || s == FieldTime
-}
-
-const defaultCountField = "_index"
-
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
 	}
 
+	// 解析取值字段："*" 映射到 _index 实现 COUNT(*)，"_time" 替换为内置时间字段
 	valueField := f.valueField
-	if isIgnoreValueField(valueField) {
+	switch valueField {
+	case SelectAll:
 		valueField = defaultCountField
+	case FieldTime:
+		if f.timeField.Name != "" {
+			valueField = f.timeField.Name
+		}
 	}
 
 	for _, am := range aggregates {

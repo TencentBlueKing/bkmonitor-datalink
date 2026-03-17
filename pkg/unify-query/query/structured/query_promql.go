@@ -460,14 +460,12 @@ func vectorQuery(
 		conds = append(conds, cond)
 	}
 	if queryLabelSelectorValue != "" {
-		expr, err := parseQueryLabelSelector(queryLabelSelectorValue)
+		all, err := parseQueryLabelSelector(queryLabelSelectorValue)
 		if err != nil {
 			return query, err
 		}
-		if expr != nil {
-			if c := expr.ToConditions(); c != nil && len(c.FieldList) > 0 {
-				query.TableIDConditions = *c
-			}
+		if len(all) > 0 {
+			query.TableIDConditions = all
 		}
 	}
 
@@ -506,41 +504,38 @@ func vectorQuery(
 	return query, nil
 }
 
-// parseQueryLabelSelector 解析 __query_label_selector 的值，得到 TableIDConditionExpr（OrGroups）
+// parseQueryLabelSelector 解析 __query_label_selector 的值，得到 AllConditions。
 // 格式: scene=log,cluster_id=1 or scene=k8s；支持 = != =~ !~；值可双引号，内部 \" 转义
-func parseQueryLabelSelector(s string) (*TableIDConditionExpr, error) {
+func parseQueryLabelSelector(s string) (AllConditions, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
 	orParts := splitOutsideQuotes(s, " or ")
-	var orGroups [][]LabelCondition
+	var out AllConditions
 	for _, part := range orParts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 		andParts := splitOutsideQuotes(part, ",")
-		var group []LabelCondition
+		var group []ConditionField
 		for _, token := range andParts {
 			token = strings.TrimSpace(token)
 			if token == "" {
 				continue
 			}
-			lc, err := parseOneLabelCondition(token)
+			cf, err := parseOneConditionField(token)
 			if err != nil {
 				return nil, err
 			}
-			group = append(group, lc)
+			group = append(group, cf)
 		}
 		if len(group) > 0 {
-			orGroups = append(orGroups, group)
+			out = append(out, group)
 		}
 	}
-	if len(orGroups) == 0 {
-		return nil, nil
-	}
-	return &TableIDConditionExpr{OrGroups: orGroups}, nil
+	return out, nil
 }
 
 func splitOutsideQuotes(s, sep string) []string {
@@ -586,8 +581,8 @@ func splitOutsideQuotes(s, sep string) []string {
 	return parts
 }
 
-func parseOneLabelCondition(token string) (LabelCondition, error) {
-	// 找 op: = != =~ !~
+// parseOneConditionField 解析单个 key op value 为 ConditionField（eq/ne/req/nreq）
+func parseOneConditionField(token string) (ConditionField, error) {
 	for _, opInfo := range []struct {
 		op      string
 		literal string
@@ -604,12 +599,16 @@ func parseOneLabelCondition(token string) (LabelCondition, error) {
 		key := strings.TrimSpace(token[:idx])
 		val := strings.TrimSpace(token[idx+len(opInfo.literal):])
 		if key == "" {
-			return LabelCondition{}, fmt.Errorf("invalid label condition: missing key in %s", token)
+			return ConditionField{}, fmt.Errorf("invalid label condition: missing key in %s", token)
 		}
 		val = unquoteLabelValue(val)
-		return LabelCondition{Key: key, Op: opInfo.op, Value: val}, nil
+		return ConditionField{
+			DimensionName: key,
+			Value:         []string{val},
+			Operator:      opInfo.op,
+		}, nil
 	}
-	return LabelCondition{}, fmt.Errorf("invalid label condition: %s", token)
+	return ConditionField{}, fmt.Errorf("invalid label condition: %s", token)
 }
 
 func unquoteLabelValue(s string) string {

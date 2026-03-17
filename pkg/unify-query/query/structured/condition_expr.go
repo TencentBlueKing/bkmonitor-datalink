@@ -16,75 +16,9 @@ import (
 // QueryLabelSelectorLabelName PromQL 中用于表标签路由的指标标签名，仅用于 DataList 路由，不下发存储
 const QueryLabelSelectorLabelName = "__query_label_selector"
 
-// LabelCondition 表标签单条条件，用于 TableIDConditionExpr
-type LabelCondition struct {
-	Key   string // 标签名
-	Op    string // eq / ne / req / nreq
-	Value string // 标签值
-}
-
-// TableIDConditionExpr 表标签条件表达式：OrGroups 外层为 OR，内层 []LabelCondition 为 AND
-type TableIDConditionExpr struct {
-	OrGroups [][]LabelCondition
-}
-
-// ToConditions 将 OrGroups 转为 Conditions，供 MatchLabels 使用
-func (e *TableIDConditionExpr) ToConditions() *Conditions {
-	if e == nil || len(e.OrGroups) == 0 {
-		return &Conditions{}
-	}
-	var fieldList []ConditionField
-	var conditionList []string
-	for groupIdx, group := range e.OrGroups {
-		for _, lc := range group {
-			op := lc.Op
-			if op == "" {
-				op = ConditionEqual
-			}
-			fieldList = append(fieldList, ConditionField{
-				DimensionName: lc.Key,
-				Value:         []string{lc.Value},
-				Operator:      op,
-			})
-		}
-		if groupIdx < len(e.OrGroups)-1 {
-			if len(group) > 1 {
-				for i := 0; i < len(group)-1; i++ {
-					conditionList = append(conditionList, ConditionAnd)
-				}
-			}
-			conditionList = append(conditionList, ConditionOr)
-		} else if len(group) > 1 {
-			for i := 0; i < len(group)-1; i++ {
-				conditionList = append(conditionList, ConditionAnd)
-			}
-		}
-	}
-	return &Conditions{
-		FieldList:     fieldList,
-		ConditionList: conditionList,
-	}
-}
-
-// ToQueryLabelSelectorString 序列化为 __query_label_selector 的值，用于 TS→PromQL
-// 格式: scene=log,cluster_id=1 or scene=k8s
-func (e *TableIDConditionExpr) ToQueryLabelSelectorString() string {
-	if e == nil || len(e.OrGroups) == 0 {
-		return ""
-	}
-	var orParts []string
-	for _, group := range e.OrGroups {
-		var andParts []string
-		for _, lc := range group {
-			andParts = append(andParts, oneLabelConditionString(lc))
-		}
-		orParts = append(orParts, strings.Join(andParts, ","))
-	}
-	return strings.Join(orParts, " or ")
-}
-
-func oneLabelConditionString(lc LabelCondition) string {
-	op := lc.Op
+// oneConditionFieldSelectorString 将 ConditionField 格式化为 __query_label_selector 的一个条件片段；正则时值用双引号包裹。
+func oneConditionFieldSelectorString(f ConditionField) string {
+	op := f.Operator
 	if op == "" {
 		op = ConditionEqual
 	}
@@ -101,60 +35,56 @@ func oneLabelConditionString(lc LabelCondition) string {
 	default:
 		promOp = "="
 	}
-	return lc.Key + promOp + lc.Value
+	val := ""
+	if len(f.Value) > 0 {
+		val = f.Value[0]
+	}
+	if op == ConditionRegEqual || op == ConditionNotRegEqual {
+		val = `"` + strings.ReplaceAll(val, `"`, `\"`) + `"`
+	}
+	return f.DimensionName + promOp + val
 }
 
-// ConditionsToTableIDConditionExpr 将 Conditions 转为 TableIDConditionExpr（OrGroups）
-func ConditionsToTableIDConditionExpr(c *Conditions) (*TableIDConditionExpr, error) {
-	if c == nil || len(c.FieldList) == 0 {
-		return nil, nil
+// AllConditionsToQueryLabelSelectorString 将 AllConditions 序列化为 __query_label_selector 的值，用于 TS→PromQL。
+// 格式: scene=log,cluster_id=1 or scene=k8s；组内 AND 用逗号，组间 OR 用 " or "。
+func AllConditionsToQueryLabelSelectorString(all AllConditions) string {
+	if len(all) == 0 {
+		return ""
 	}
-	all, err := c.AnalysisConditions()
-	if err != nil || len(all) == 0 {
-		return nil, err
-	}
-	orGroups := make([][]LabelCondition, 0, len(all))
-	for _, row := range all {
-		group := make([]LabelCondition, 0, len(row))
-		for _, f := range row {
-			val := ""
-			if len(f.Value) > 0 {
-				val = f.Value[0]
-			}
-			op := f.Operator
-			if op == "" {
-				op = ConditionEqual
-			}
-			group = append(group, LabelCondition{Key: f.DimensionName, Op: op, Value: val})
+	var orParts []string
+	for _, group := range all {
+		var andParts []string
+		for _, f := range group {
+			andParts = append(andParts, oneConditionFieldSelectorString(f))
 		}
-		if len(group) > 0 {
-			orGroups = append(orGroups, group)
+		if len(andParts) > 0 {
+			orParts = append(orParts, strings.Join(andParts, ","))
 		}
 	}
-	if len(orGroups) == 0 {
-		return nil, nil
-	}
-	return &TableIDConditionExpr{OrGroups: orGroups}, nil
+	return strings.Join(orParts, " or ")
 }
 
-// matchLabelsExpr 表标签过滤：expr 为空或 OrGroups 为空时不过滤（返回 true）；否则用 expr.ToConditions().MatchLabels(labels)。
-func matchLabelsExpr(labels map[string]string, expr *TableIDConditionExpr) bool {
-	if expr == nil || len(expr.OrGroups) == 0 {
+// matchLabelsForAllConditions 表标签过滤：all 为空时不过滤（返回 true）；否则用 AllConditions.MatchLabels。
+func matchLabelsForAllConditions(labels map[string]string, all AllConditions) bool {
+	if len(all) == 0 {
 		return true
 	}
-	c := expr.ToConditions()
-	ok, _ := c.MatchLabels(labels)
+	ok, _ := all.MatchLabels(labels)
 	return ok
 }
 
-// MapToTableIDConditionExpr 将 map[string]string 转为单组 AND 的 TableIDConditionExpr（仅 eq），用于测试或简单 eq 场景。
-func MapToTableIDConditionExpr(m map[string]string) *TableIDConditionExpr {
+// MapToTableIDConditions 将 map[string]string 转为单组 AND 的 AllConditions（仅 eq），用于测试或简单 eq 场景。
+func MapToTableIDConditions(m map[string]string) AllConditions {
 	if len(m) == 0 {
 		return nil
 	}
-	group := make([]LabelCondition, 0, len(m))
+	group := make([]ConditionField, 0, len(m))
 	for k, v := range m {
-		group = append(group, LabelCondition{Key: k, Op: ConditionEqual, Value: v})
+		group = append(group, ConditionField{
+			DimensionName: k,
+			Value:         []string{v},
+			Operator:      ConditionEqual,
+		})
 	}
-	return &TableIDConditionExpr{OrGroups: [][]LabelCondition{group}}
+	return AllConditions{group}
 }

@@ -105,18 +105,18 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditionExpr *TableIDConditionExpr,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions AllConditions,
 ) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
 	}
-	if tableIDConditionExpr != nil && len(tableIDConditionExpr.OrGroups) > 0 {
+	if len(tableIDConditions) > 0 {
 		labels := rtDetail.Labels
 		if labels == nil {
 			labels = make(map[string]string)
 		}
-		if !matchLabelsExpr(labels, tableIDConditionExpr) {
+		if !matchLabelsForAllConditions(labels, tableIDConditions) {
 			return nil
 		}
 	}
@@ -332,7 +332,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditionExpr)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditions)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -357,8 +357,8 @@ type TsDBOption struct {
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp      bool
 	AllConditions AllConditions
-	// TableIDConditionExpr 表标签条件（由 ResolveTableIDConditionExpr 填入），用于 DataList 按表标签过滤 RT
-	TableIDConditionExpr *TableIDConditionExpr
+	// TableIDConditions 表标签条件（AllConditions），用于 DataList 按表标签过滤 RT
+	TableIDConditions AllConditions
 }
 
 type TsDBs []*query.TsDBV2

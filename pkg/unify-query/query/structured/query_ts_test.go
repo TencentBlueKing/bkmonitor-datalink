@@ -300,12 +300,11 @@ func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 		TableID:       "",
 		FieldName:     "kube_node_info",
 		ReferenceName: "a",
-		TableIDConditions: Conditions{
-			FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-			ConditionList: []string{},
+		TableIDConditions: AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
 		},
 	}
-	require.NotNil(t, query.ResolveTableIDConditionExpr(), "ResolveTableIDConditionExpr 应有值")
+	require.NotEmpty(t, query.TableIDConditions, "TableIDConditions 应有值")
 
 	metric, err := query.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
 	assert.NoError(t, err)
@@ -323,9 +322,8 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 				{
 					FieldName:     "metric_name",
 					ReferenceName: "a",
-					TableIDConditions: Conditions{
-						FieldList:     []ConditionField{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-						ConditionList: []string{},
+					TableIDConditions: AllConditions{
+						{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
 					},
 				},
 			},
@@ -341,13 +339,12 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 				{
 					FieldName:     "metric_name",
 					ReferenceName: "a",
-					TableIDConditions: Conditions{
-						FieldList: []ConditionField{
+					TableIDConditions: AllConditions{
+						{
 							{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
 							{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
-							{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual},
 						},
-						ConditionList: []string{"and", "or"},
+						{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
 					},
 				},
 			},
@@ -364,9 +361,8 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 				{
 					FieldName:     "metric_name",
 					ReferenceName: "a",
-					TableIDConditions: Conditions{
-						FieldList:     []ConditionField{{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual}},
-						ConditionList: []string{},
+					TableIDConditions: AllConditions{
+						{{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual}},
 					},
 				},
 			},

@@ -408,8 +408,8 @@ func (c AllConditions) QueryLabelSelectorString() string {
 	return strings.Join(orParts, " or ")
 }
 
-// MatchLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
-func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
+// MatchResultTableLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
+func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, error) {
 	if len(c) == 0 {
 		return true, nil
 	}
@@ -472,9 +472,9 @@ func (c AllConditions) MatchLabels(labels map[string]string) (bool, error) {
 	return false, nil
 }
 
-// MatchesLabels 表标签过滤：语义同 MatchLabels，仅返回是否匹配（忽略 error）；空或 nil 视为不过滤（返回 true）。
-func (c AllConditions) MatchesLabels(labels map[string]string) bool {
-	ok, _ := c.MatchLabels(labels)
+// MatchesResultTableLabels 表标签过滤：语义同 MatchResultTableLabels，仅返回是否匹配（忽略 error）；空或 nil 视为不过滤（返回 true）。
+func (c AllConditions) MatchesResultTableLabels(labels map[string]string) bool {
+	ok, _ := c.MatchResultTableLabels(labels)
 	return ok
 }
 

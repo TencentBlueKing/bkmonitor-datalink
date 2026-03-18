@@ -932,32 +932,32 @@ func TestAllConditions_VMString(t *testing.T) {
 	}
 }
 
-// TestAllConditions_MatchLabels 表标签匹配：空条件、单 eq、缺 key、OR 组、AND 组（表标签路由统一使用 AllConditions.MatchLabels）
-func TestAllConditions_MatchLabels(t *testing.T) {
+// TestAllConditions_MatchResultTableLabels 表标签匹配：空条件、单 eq、缺 key、OR 组、AND 组（表标签路由统一使用 AllConditions.MatchResultTableLabels）
+func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 	t.Run("nil_empty", func(t *testing.T) {
 		var c AllConditions
-		ok, err := c.MatchLabels(map[string]string{"a": "1"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"a": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = AllConditions{}.MatchLabels(map[string]string{"a": "1"})
+		ok, err = AllConditions{}.MatchResultTableLabels(map[string]string{"a": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
 	})
 	t.Run("single_eq_match", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
 	t.Run("key_missing", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
-		ok, err := c.MatchLabels(map[string]string{})
+		ok, err := c.MatchResultTableLabels(map[string]string{})
 		assert.NoError(t, err)
 		assert.False(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"other": "x"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"other": "x"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -966,13 +966,13 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
 			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
 		}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "other"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "other"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -981,10 +981,10 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
 			{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
 		}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "2"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -992,34 +992,34 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 	// 复杂情形：ne / req / nreq、多组 OR 内多条件 AND、混合操作符
 	t.Run("single_ne", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionNotEqual}}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "metric"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "metric"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
-		ok, err = c.MatchLabels(map[string]string{}) // key 缺失视为不满足
+		ok, err = c.MatchResultTableLabels(map[string]string{}) // key 缺失视为不满足
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
 	t.Run("single_req", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"log.*"}, Operator: ConditionRegEqual}}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "log-api"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log-api"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
 	t.Run("single_nreq", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"metric.*"}, Operator: ConditionNotRegEqual}}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "metric-api"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "metric-api"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -1028,13 +1028,13 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
 			{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual},
 		}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log", "env": "staging"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log", "env": "staging"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "log", "env": "prod"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "env": "prod"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "k8s", "env": "staging"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s", "env": "staging"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -1047,16 +1047,16 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			},
 			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
 		}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "1"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "1"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "k8s"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "2"}) // 第一组不满足
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "2"}) // 第一组不满足
 		assert.NoError(t, err)
 		assert.False(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "other"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "other"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -1065,10 +1065,10 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
 			{DimensionName: "cluster_id", Value: []string{"BCS-.*"}, Operator: ConditionRegEqual},
 		}}
-		ok, err := c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "BCS-K8S-00001"})
 		assert.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = c.MatchLabels(map[string]string{"scene": "log", "cluster_id": "other"})
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "other"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -1079,11 +1079,11 @@ func TestAllConditions_MatchLabels(t *testing.T) {
 			{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionEqual}},
 		}
 		for _, scene := range []string{"log", "k8s", "metric"} {
-			ok, err := c.MatchLabels(map[string]string{"scene": scene})
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": scene})
 			assert.NoError(t, err)
 			assert.True(t, ok)
 		}
-		ok, err := c.MatchLabels(map[string]string{"scene": "other"})
+		ok, err := c.MatchResultTableLabels(map[string]string{"scene": "other"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
@@ -1176,24 +1176,24 @@ func TestAllConditions_QueryLabelSelectorString(t *testing.T) {
 	})
 }
 
-// TestAllConditions_MatchesLabels 表标签过滤：仅返回 bool，空或 nil 视为通过（与 MatchLabels 语义一致）。
-func TestAllConditions_MatchesLabels(t *testing.T) {
+// TestAllConditions_MatchesResultTableLabels 表标签过滤：仅返回 bool，空或 nil 视为通过（与 MatchResultTableLabels 语义一致）。
+func TestAllConditions_MatchesResultTableLabels(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		assert.True(t, AllConditions(nil).MatchesLabels(map[string]string{"a": "1"}))
-		assert.True(t, AllConditions{}.MatchesLabels(map[string]string{"a": "1"}))
+		assert.True(t, AllConditions(nil).MatchesResultTableLabels(map[string]string{"a": "1"}))
+		assert.True(t, AllConditions{}.MatchesResultTableLabels(map[string]string{"a": "1"}))
 	})
 	t.Run("match_single", func(t *testing.T) {
 		all := AllConditions{{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}}}
-		assert.True(t, all.MatchesLabels(map[string]string{"scene": "log"}))
-		assert.False(t, all.MatchesLabels(map[string]string{"scene": "k8s"}))
+		assert.True(t, all.MatchesResultTableLabels(map[string]string{"scene": "log"}))
+		assert.False(t, all.MatchesResultTableLabels(map[string]string{"scene": "k8s"}))
 	})
 	t.Run("or_groups", func(t *testing.T) {
 		all := AllConditions{
 			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
 			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
 		}
-		assert.True(t, all.MatchesLabels(map[string]string{"scene": "log"}))
-		assert.True(t, all.MatchesLabels(map[string]string{"scene": "k8s"}))
-		assert.False(t, all.MatchesLabels(map[string]string{"scene": "other"}))
+		assert.True(t, all.MatchesResultTableLabels(map[string]string{"scene": "log"}))
+		assert.True(t, all.MatchesResultTableLabels(map[string]string{"scene": "k8s"}))
+		assert.False(t, all.MatchesResultTableLabels(map[string]string{"scene": "other"}))
 	})
 }

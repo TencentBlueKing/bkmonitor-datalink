@@ -155,6 +155,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 				d["bk_biz_id"] = bkBizID
 				d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
 				d["cluster_name"] = c.ClusterName
+				d["display_name"] = c.DisplayName
 				if index, ok := d["index"].(string); ok {
 					bizMatch := targetBizRe.FindStringSubmatch(index)
 					if len(bizMatch) > 0 {

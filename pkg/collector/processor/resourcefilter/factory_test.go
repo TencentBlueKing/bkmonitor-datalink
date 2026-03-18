@@ -903,6 +903,98 @@ processor:
 	})
 }
 
+func TestReplaceActionWithExtraction(t *testing.T) {
+	// 测试正则表达式提取
+	t.Run("regex extraction", func(t *testing.T) {
+		content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        replace:
+          - source: telemetry.target
+            destination: service.name
+            extract_pattern: '.*\.(.*\..*)'
+`
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       makeTracesRecord(1, "string"),
+		}
+
+		// 修改原始值以包含前缀和后缀
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+
+		testkits.MustProcess(t, factory, record)
+
+		processedAttrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsNotFound(t, processedAttrs, "telemetry.target")
+		testkits.AssertAttrsStringKeyVal(t, processedAttrs, "service.name", "test.helloworld")
+	})
+
+	// 测试所有数据类型
+	t.Run("all data types", func(t *testing.T) {
+		content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        replace:
+          - source: telemetry.target
+            destination: service.name
+            extract_pattern: '.*\.(.*\..*)'
+`
+		assertFunc := func(t *testing.T, attrs pcommon.Map) {
+			testkits.AssertAttrsNotFound(t, attrs, "telemetry.target")
+			testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "test.helloworld")
+		}
+
+		t.Run("traces", func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType: define.RecordTraces,
+				Data:       makeTracesRecord(1, "string"),
+			}
+			// 修改原始值以包含前缀和后缀
+			attrs := testkits.FirstSpanAttrs(record.Data)
+			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+
+			testkits.MustProcess(t, factory, record)
+
+			assertFunc(t, testkits.FirstSpanAttrs(record.Data))
+		})
+
+		t.Run("metrics", func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType: define.RecordMetrics,
+				Data:       makeMetricsRecord(1, "string"),
+			}
+			// 修改原始值以包含前缀和后缀
+			attrs := testkits.FirstMetricAttrs(record.Data)
+			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+
+			testkits.MustProcess(t, factory, record)
+
+			assertFunc(t, testkits.FirstMetricAttrs(record.Data))
+		})
+
+		t.Run("logs", func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType: define.RecordLogs,
+				Data:       makeLogsRecord(10, 10, "string"),
+			}
+			// 修改原始值以包含前缀和后缀
+			attrs := testkits.FirstLogRecordAttrs(record.Data)
+			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+
+			testkits.MustProcess(t, factory, record)
+
+			assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
+		})
+	})
+}
+
 func TestRegroupResourceSpansByTraceID(t *testing.T) {
 	t.Run("empty traces", func(t *testing.T) {
 		empty := ptrace.NewTraces()

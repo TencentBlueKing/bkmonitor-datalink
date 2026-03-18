@@ -115,7 +115,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `(count by (host_id) (bkmonitor:host_with_system_relation{bk_target_ip!="",host_id!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (host_id) group_left (version, env_name, env_type, service_version, service_type) bkmonitor:host_info_relation{host_id!=""}`,
+			promQL: `(count by (bk_host_id) (bkmonitor:host_with_system_relation{bk_host_id!="",bk_target_ip!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (bk_host_id) group_left (version, env_name, env_type, service_version, service_type) bkmonitor:host_info_relation{bk_host_id!=""}`,
 		},
 		{
 			name: "level 2 and 1m with expand info and expand show",

@@ -19,16 +19,16 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
 // ContainerRootPath gey container root path
-func ContainerRootPath(container types.ContainerJSON) string {
-	switch container.Driver {
+func ContainerRootPath(c container.InspectResponse) string {
+	switch c.Driver {
 	case "overlay2":
-		return container.GraphDriver.Data["MergedDir"]
+		return c.GraphDriver.Data["MergedDir"]
 	default:
-		return fmt.Sprintf("/proc/%d/root", container.State.Pid)
+		return fmt.Sprintf("/proc/%d/root", c.State.Pid)
 	}
 }
 

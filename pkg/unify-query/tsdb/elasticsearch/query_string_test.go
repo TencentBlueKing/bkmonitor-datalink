@@ -54,6 +54,7 @@ func TestQsToDsl(t *testing.T) {
 			AliasName:   "event_detail",
 			OriginField: "events",
 			FieldType:   Text,
+			IsAnalyzed:  true,
 		},
 		"nested.key": {
 			FieldName:   "nested.key",
@@ -73,6 +74,14 @@ func TestQsToDsl(t *testing.T) {
 		},
 		"group": {
 			FieldType: Text,
+		},
+		"request_uri": {
+			FieldName: "request_uri",
+			FieldType: KeyWord,
+		},
+		"__ext.io_kubernetes_workload_name": {
+			FieldName: "__ext.io_kubernetes_workload_name",
+			FieldType: KeyWord,
 		},
 	}
 
@@ -137,12 +146,12 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,
-			expected: `{"nested":{"path":"events","query":{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}}}`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
 		// 测试别名
 		{
 			q:        `event_detail: "*66036*"`,
-			expected: `{"nested":{"path":"events","query":{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}}}`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
 		{
 			q:        `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" AND level: "error" AND "2_bklog.bkunify_query"`, // lucene是大小写不敏感的
@@ -159,6 +168,36 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
 			expected: `{"bool":{"must":[{"bool":{"should":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO "}},{"term":{"loglevel":"WARN "}},{"term":{"loglevel":"ERROR"}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"bool":{"should":[{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testOr"}}}]}},{"match_phrase":{"log":{"query":"testAnd"}}}],"should":{"match_phrase":{"log":{"query":"test111"}}}}}]}}`,
+		},
+		// 引号内 ? 不应被视为通配符（URL 查询参数场景）
+		{
+			q:        `!request_uri:"/scm/api/proxy?serviceName=test&methodName=hook"`,
+			expected: `{"bool":{"must_not":{"term":{"request_uri":"/scm/api/proxy?serviceName=test\u0026methodName=hook"}}}}`,
+		},
+		{
+			q:        `request_uri:"/scm/api/proxy?serviceName=test"`,
+			expected: `{"term":{"request_uri":"/scm/api/proxy?serviceName=test"}}`,
+		},
+		// 引号内 * 不应生成 wildcard 查询，应生成 match_phrase（与 ES query_string 语义一致）
+		{
+			q:        `__ext.io_kubernetes_workload_name: "prod-roomjob-sts" AND level: "ERROR" AND NOT log:"err*" AND log:"error*"`,
+			expected: `{"bool":{"must":[{"term":{"__ext.io_kubernetes_workload_name":"prod-roomjob-sts"}},{"term":{"level":"ERROR"}},{"bool":{"must_not":{"match_phrase":{"log":{"query":"err*"}}}}},{"match_phrase":{"log":{"query":"error*"}}}]}}`,
+		},
+		{
+			q:        `_exists_:level`,
+			expected: `{"exists":{"field":"level"}}`,
+		},
+		{
+			q:        `NOT _exists_:level`,
+			expected: `{"bool":{"must_not":{"exists":{"field":"level"}}}}`,
+		},
+		{
+			q:        `_exists_: log OR _exists_: level`,
+			expected: `{"bool":{"should":[{"exists":{"field":"log"}},{"exists":{"field":"level"}}]}}`,
+		},
+		{
+			q:        `_exists_: event_detail`,
+			expected: `{"exists":{"field":"events.attributes.message.detail"}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

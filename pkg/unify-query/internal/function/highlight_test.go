@@ -434,3 +434,100 @@ func TestHighLightFactory_process(t *testing.T) {
 	nd := h.Process(data)
 	assert.Equal(t, expected, nd)
 }
+
+func TestHighLightFactory_CaseSensitive(t *testing.T) {
+	testCases := []struct {
+		name      string
+		data      map[string]any
+		labelMap  map[string][]LabelMapValue
+		fieldsMap metadata.FieldsMap
+		expected  map[string]any
+	}{
+		{
+			name: "大小写不敏感（默认）",
+			data: map[string]any{
+				"log": "ERROR: Something went wrong, error occurred",
+			},
+			labelMap: map[string][]LabelMapValue{
+				"log": {
+					{Value: "error", Operator: metadata.ConditionContains},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{
+					FieldName:       "log",
+					FieldType:       "text",
+					IsCaseSensitive: false,
+				},
+			},
+			expected: map[string]any{
+				"log": []string{"<mark>ERROR</mark>: Something went wrong, <mark>error</mark> occurred"},
+			},
+		},
+		{
+			name: "大小写敏感",
+			data: map[string]any{
+				"log": "ERROR: Something went wrong, error occurred",
+			},
+			labelMap: map[string][]LabelMapValue{
+				"log": {
+					{Value: "error", Operator: metadata.ConditionContains},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{
+					FieldName:       "log",
+					FieldType:       "text",
+					IsCaseSensitive: true,
+				},
+			},
+			expected: map[string]any{
+				"log": []string{"ERROR: Something went wrong, <mark>error</mark> occurred"},
+			},
+		},
+		{
+			name: "大小写敏感 - 匹配大写",
+			data: map[string]any{
+				"log": "ERROR: Something went wrong, error occurred",
+			},
+			labelMap: map[string][]LabelMapValue{
+				"log": {
+					{Value: "ERROR", Operator: metadata.ConditionContains},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{
+					FieldName:       "log",
+					FieldType:       "text",
+					IsCaseSensitive: true,
+				},
+			},
+			expected: map[string]any{
+				"log": []string{"<mark>ERROR</mark>: Something went wrong, error occurred"},
+			},
+		},
+		{
+			name: "fieldsMap 为空时默认大小写不敏感",
+			data: map[string]any{
+				"log": "ERROR: error",
+			},
+			labelMap: map[string][]LabelMapValue{
+				"log": {
+					{Value: "error", Operator: metadata.ConditionContains},
+				},
+			},
+			fieldsMap: nil,
+			expected: map[string]any{
+				"log": []string{"<mark>ERROR</mark>: <mark>error</mark>"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHighLightFactory(tc.labelMap, tc.fieldsMap, 0)
+			result := h.Process(tc.data)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

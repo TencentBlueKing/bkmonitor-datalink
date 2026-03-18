@@ -31,6 +31,7 @@ var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果
 type ClusterInfo struct {
 	ClusterID                 uint      `gorm:"primary_key" json:"cluster_id"`
 	ClusterName               string    `gorm:"size:128;unique" json:"cluster_name"`
+	DisplayName               string    `gorm:"size:128" json:"display_name"`
 	ClusterType               string    `gorm:"size:32;index" json:"cluster_type"`
 	DomainName                string    `gorm:"size:128" json:"domain_name"`
 	Port                      uint      `json:"port"`

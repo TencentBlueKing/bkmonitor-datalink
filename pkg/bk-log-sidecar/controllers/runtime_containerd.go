@@ -14,8 +14,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 )
@@ -26,14 +26,14 @@ type CRIClient interface {
 }
 
 type CRIClientV1Alpha2 struct {
-	client v1alpha2.RuntimeServiceClient
+	client v1.RuntimeServiceClient
 }
 
 func (c *CRIClientV1Alpha2) ListContainers(ctx context.Context) ([]define.SimpleContainer, error) {
-	resp, err := c.client.ListContainers(ctx, &v1alpha2.ListContainersRequest{
-		Filter: &v1alpha2.ContainerFilter{
-			State: &v1alpha2.ContainerStateValue{
-				State: v1alpha2.ContainerState_CONTAINER_RUNNING,
+	resp, err := c.client.ListContainers(ctx, &v1.ListContainersRequest{
+		Filter: &v1.ContainerFilter{
+			State: &v1.ContainerStateValue{
+				State: v1.ContainerState_CONTAINER_RUNNING,
 			},
 		},
 	})
@@ -51,7 +51,7 @@ func (c *CRIClientV1Alpha2) ListContainers(ctx context.Context) ([]define.Simple
 }
 
 func (c *CRIClientV1Alpha2) ContainerStatus(ctx context.Context, containerID string) (interface{}, error) {
-	return c.client.ContainerStatus(ctx, &v1alpha2.ContainerStatusRequest{
+	return c.client.ContainerStatus(ctx, &v1.ContainerStatusRequest{
 		ContainerId: containerID,
 		Verbose:     true,
 	})
@@ -103,9 +103,9 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 	if err != nil {
 		return define.Container{}, err
 	}
-	containerStatus, ok := resp.(*v1alpha2.ContainerStatusResponse)
+	containerStatus, ok := resp.(*v1.ContainerStatusResponse)
 	if !ok {
-		return define.Container{}, fmt.Errorf("unexpected response type for v1alpha2.ContainerStatusResponse")
+		return define.Container{}, fmt.Errorf("unexpected response type for v1.ContainerStatusResponse")
 	}
 	var mounts []define.Mount
 	for _, mount := range containerStatus.Status.Mounts {
@@ -125,7 +125,7 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 	if err != nil {
 		r.log.Info(fmt.Sprintf("container [%s] info unmarshal error: %s", containerID, containerStatus.Info["info"]))
 	}
-	rootPath, logPath, err := resolveContainerdPath(containerStatus, containerInfo.Pid)
+	rootPath, logPath, err := resolveContainerdV2Path(containerStatus, containerInfo.Pid)
 	if err != nil {
 		r.log.Error(err, fmt.Sprintf("container [%s] failed to eval symlink for log path [%s]", containerID, logPath))
 	}

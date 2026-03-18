@@ -29,7 +29,9 @@ const (
 
 type HighLightFactory struct {
 	labelMap          map[string][]LabelMapValue
+	fieldsMap         metadata.FieldsMap
 	maxAnalyzedOffset int
+	isCaseSensitive   bool
 }
 
 type LabelMapValue struct {
@@ -92,9 +94,10 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	return labelMap
 }
 
-func NewHighLightFactory(labelMap map[string][]LabelMapValue, maxAnalyzedOffset int) *HighLightFactory {
+func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata.FieldsMap, maxAnalyzedOffset int) *HighLightFactory {
 	return &HighLightFactory{
 		labelMap:          labelMap,
+		fieldsMap:         fieldsMap,
 		maxAnalyzedOffset: maxAnalyzedOffset,
 	}
 }
@@ -111,6 +114,15 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 		keywords := append([]LabelMapValue{}, h.labelMap[""]...)
 		// 获取使用字段查询的值
 		keywords = append(keywords, h.labelMap[key]...)
+
+		// 从 fieldsMap 中获取字段的大小写敏感性配置
+		h.isCaseSensitive = false
+		if h.fieldsMap != nil {
+			fieldOption := h.fieldsMap.Field(key)
+			if fieldOption.Existed() {
+				h.isCaseSensitive = fieldOption.IsCaseSensitive
+			}
+		}
 
 		if highlightedValue := h.processField(value, keywords); highlightedValue != nil {
 			newData[key] = highlightedValue
@@ -148,8 +160,11 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	for _, kw := range keywords {
 		switch kw.Operator {
 		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains:
-			// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
-			value := strings.ToLower(kw.Value)
+			value := kw.Value
+			// 如果大小写不敏感，则统一转换为小写进行去重
+			if !h.isCaseSensitive {
+				value = strings.ToLower(value)
+			}
 			if value == "" {
 				continue
 			}
@@ -157,7 +172,11 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 			check := func() bool {
 				// 检查是否已经叠加
 				for _, newKeyword := range newKeywords {
-					if strings.Contains(newKeyword.Value, value) {
+					newKeywordValue := newKeyword.Value
+					if !h.isCaseSensitive {
+						newKeywordValue = strings.ToLower(newKeywordValue)
+					}
+					if strings.Contains(newKeywordValue, value) {
 						return true
 					}
 				}
@@ -175,9 +194,19 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	for _, kw := range newKeywords {
 		var re *regexp.Regexp
 		if kw.Operator == metadata.ConditionRegEqual {
-			re = regexp.MustCompile(kw.Value)
+			if h.isCaseSensitive {
+				re = regexp.MustCompile(kw.Value)
+			} else {
+				re = regexp.MustCompile(`(?i)` + kw.Value)
+			}
 		} else {
-			re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
+			if h.isCaseSensitive {
+				// 大小写敏感：精确匹配
+				re = regexp.MustCompile(regexp.QuoteMeta(kw.Value))
+			} else {
+				// 大小写不敏感：忽略大小写匹配
+				re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
+			}
 		}
 		matchs := re.FindAllString(analyzablePart, -1)
 

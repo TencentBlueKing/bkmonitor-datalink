@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"net"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -207,6 +208,15 @@ var GetMemoryStatus = func(ctx context.Context) (*Memory, error) {
 	return &Memory{Total: info.Total}, nil
 }
 
+func checkBlacklist(name string, blacklist []string) bool {
+	for _, pattern := range blacklist {
+		if strings.Contains(name, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetNetStatus :
 var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Net, error) {
 	interfaces, err := net.Interfaces()
@@ -221,6 +231,8 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 
 	whiteList := make(map[string]struct{})
 	if cfg != nil && len(cfg.VirtualIfaceWhitelist) > 0 {
+		logger.Debug("VirtualIfaceWhitelist: %v", cfg.VirtualIfaceWhitelist)
+
 		for _, iface := range cfg.VirtualIfaceWhitelist {
 			whiteList[iface] = struct{}{}
 		}
@@ -231,6 +243,17 @@ var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Ne
 		// 排除虚拟网卡（有额外白名单机制）
 		if virtualInterfaces.Exist(inter.Name) {
 			if _, ok := whiteList[inter.Name]; !ok {
+				continue
+			}
+
+			logger.Debug("Hit whitelist: %s", inter.Name)
+		}
+
+		// 排除黑名单网卡
+		if cfg != nil && len(cfg.VirtualIfaceBlacklist) > 0 {
+			logger.Debug("VirtualIfaceBlacklist: %v", cfg.VirtualIfaceBlacklist)
+			if checkBlacklist(inter.Name, cfg.VirtualIfaceBlacklist) {
+				logger.Debug("Hit blacklist: %s", inter.Name)
 				continue
 			}
 		}

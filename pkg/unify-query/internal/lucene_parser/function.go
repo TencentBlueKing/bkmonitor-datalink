@@ -148,6 +148,12 @@ func extractRegexp(s string, boost string) (node Node, matched bool) {
 	return node, matched
 }
 
+// containsUnescapedStar 检查字符串是否包含未转义的 * 通配符
+func containsUnescapedStar(s string) bool {
+	unescaped := strings.ReplaceAll(s, `\*`, "")
+	return strings.Contains(unescaped, "*")
+}
+
 func extractWildCard(s string, boost string) (node Node, matched bool) {
 	// 检查通配符: 移除转义后的通配符
 	unescapeStr := strings.ReplaceAll(s, `\*`, "")

@@ -220,3 +220,271 @@ func TestInstance_QueryLabelValues(t *testing.T) {
 		})
 	}
 }
+
+func TestVmResponse_VmQueryCluster(t *testing.T) {
+	t.Run("with vm_query_cluster", func(t *testing.T) {
+		raw := `{
+			"result": true,
+			"message": "成功",
+			"code": "00",
+			"data": {
+				"result_table_scan_range": null,
+				"cluster": "monitor-op",
+				"totalRecords": 1,
+				"list": [{
+					"status": "success",
+					"isPartial": false,
+					"data": {
+						"resultType": "vector",
+						"result": [{"metric": {"pod": "test-pod"}, "value": [1730184058, "1.0"]}]
+					}
+				}],
+				"select_fields_order": [],
+				"sql": "test",
+				"timetaken": 0.0,
+				"bksql_call_elapsed_time": 0,
+				"device": "vm",
+				"result_table_ids": ["2_test_rt"],
+				"vm_query_cluster": {
+					"query_cluster": "vm-monitor-op-history2.bkop.woa.com",
+					"storage_cluster_list": ["vm-op1", "vm-op2"]
+				}
+			},
+			"errors": null
+		}`
+
+		var resp VmResponse
+		err := json.Unmarshal([]byte(raw), &resp)
+		assert.NoError(t, err)
+
+		assert.True(t, resp.Result)
+		assert.Equal(t, OK, resp.Code)
+		assert.NotNil(t, resp.Data.VmQueryCluster)
+		assert.Equal(t, "vm-monitor-op-history2.bkop.woa.com", resp.Data.VmQueryCluster.QueryCluster)
+		assert.Equal(t, []string{"vm-op1", "vm-op2"}, resp.Data.VmQueryCluster.StorageClusterList)
+	})
+
+	t.Run("without vm_query_cluster", func(t *testing.T) {
+		raw := `{
+			"result": true,
+			"message": "成功",
+			"code": "00",
+			"data": {
+				"result_table_scan_range": null,
+				"cluster": "monitor-op",
+				"totalRecords": 1,
+				"list": [{
+					"status": "success",
+					"isPartial": false,
+					"data": {
+						"resultType": "vector",
+						"result": [{"metric": {"pod": "test-pod"}, "value": [1730184058, "1.0"]}]
+					}
+				}],
+				"select_fields_order": [],
+				"sql": "test",
+				"timetaken": 0.0,
+				"bksql_call_elapsed_time": 0,
+				"device": "vm",
+				"result_table_ids": ["2_test_rt"]
+			},
+			"errors": null
+		}`
+
+		var resp VmResponse
+		err := json.Unmarshal([]byte(raw), &resp)
+		assert.NoError(t, err)
+
+		assert.True(t, resp.Result)
+		assert.Nil(t, resp.Data.VmQueryCluster)
+	})
+
+	t.Run("with full vm_query_cluster fields", func(t *testing.T) {
+		raw := `{
+			"result": true,
+			"message": "成功",
+			"code": "00",
+			"data": {
+				"result_table_scan_range": null,
+				"cluster": "monitor-op",
+				"totalRecords": 0,
+				"list": [],
+				"select_fields_order": [],
+				"sql": "test",
+				"timetaken": 0.0,
+				"bksql_call_elapsed_time": 0,
+				"device": "vm",
+				"result_table_ids": ["2_test_rt"],
+				"vm_query_cluster": {
+					"query_cluster": "vm-monitor-op-history2.bkop.woa.com",
+					"storage_cluster_list": ["vm-op1", "vm-op2"]
+				}
+			},
+			"errors": null
+		}`
+
+		var resp VmResponse
+		err := json.Unmarshal([]byte(raw), &resp)
+		assert.NoError(t, err)
+
+		assert.NotNil(t, resp.Data.VmQueryCluster)
+		assert.Equal(t, "vm-monitor-op-history2.bkop.woa.com", resp.Data.VmQueryCluster.QueryCluster)
+		assert.Equal(t, []string{"vm-op1", "vm-op2"}, resp.Data.VmQueryCluster.StorageClusterList)
+	})
+
+	t.Run("with empty storage_cluster_list", func(t *testing.T) {
+		raw := `{
+			"result": true,
+			"message": "成功",
+			"code": "00",
+			"data": {
+				"result_table_scan_range": null,
+				"cluster": "monitor-op",
+				"totalRecords": 0,
+				"list": [],
+				"select_fields_order": [],
+				"sql": "test",
+				"timetaken": 0.0,
+				"bksql_call_elapsed_time": 0,
+				"device": "vm",
+				"result_table_ids": ["2_test_rt"],
+				"vm_query_cluster": {
+					"query_cluster": "vm-monitor-op.woa.com",
+					"storage_cluster_list": []
+				}
+			},
+			"errors": null
+		}`
+
+		var resp VmResponse
+		err := json.Unmarshal([]byte(raw), &resp)
+		assert.NoError(t, err)
+
+		assert.NotNil(t, resp.Data.VmQueryCluster)
+		assert.Equal(t, "vm-monitor-op.woa.com", resp.Data.VmQueryCluster.QueryCluster)
+		assert.Empty(t, resp.Data.VmQueryCluster.StorageClusterList)
+	})
+}
+
+func TestVmLableValuesResponse_VmQueryCluster(t *testing.T) {
+	raw := `{
+		"result": true,
+		"message": "成功",
+		"code": "00",
+		"data": {
+			"result_table_scan_range": null,
+			"cluster": "monitor-op",
+			"totalRecords": 2,
+			"list": [{
+				"status": "success",
+				"isPartial": false,
+				"data": ["val1", "val2"]
+			}],
+			"select_fields_order": [],
+			"sql": "test",
+			"timetaken": 0.0,
+			"bksql_call_elapsed_time": 0,
+			"device": "vm",
+			"result_table_ids": ["2_test_rt"],
+			"vm_query_cluster": {
+				"query_cluster": "vm-query.example.com",
+				"storage_cluster_list": ["storage-1"]
+			}
+		},
+		"errors": null
+	}`
+
+	var resp VmLableValuesResponse
+	err := json.Unmarshal([]byte(raw), &resp)
+	assert.NoError(t, err)
+
+	assert.NotNil(t, resp.Data.VmQueryCluster)
+	assert.Equal(t, "vm-query.example.com", resp.Data.VmQueryCluster.QueryCluster)
+	assert.Equal(t, []string{"storage-1"}, resp.Data.VmQueryCluster.StorageClusterList)
+}
+
+func TestVmSeriesResponse_VmQueryCluster(t *testing.T) {
+	raw := `{
+		"result": true,
+		"message": "成功",
+		"code": "00",
+		"data": {
+			"result_table_scan_range": null,
+			"cluster": "monitor-op",
+			"totalRecords": 1,
+			"list": [{
+				"status": "success",
+				"isPartial": false,
+				"data": [{"__name__": "cpu_usage", "pod": "test-pod"}]
+			}],
+			"select_fields_order": [],
+			"sql": "test",
+			"timetaken": 0.0,
+			"bksql_call_elapsed_time": 0,
+			"device": "vm",
+			"result_table_ids": ["2_test_rt"],
+			"vm_query_cluster": {
+				"query_cluster": "vm-series.example.com",
+				"storage_cluster_list": ["s1", "s2", "s3"]
+			}
+		},
+		"errors": null
+	}`
+
+	var resp VmSeriesResponse
+	err := json.Unmarshal([]byte(raw), &resp)
+	assert.NoError(t, err)
+
+	assert.NotNil(t, resp.Data.VmQueryCluster)
+	assert.Equal(t, "vm-series.example.com", resp.Data.VmQueryCluster.QueryCluster)
+	assert.Equal(t, []string{"s1", "s2", "s3"}, resp.Data.VmQueryCluster.StorageClusterList)
+}
+
+func TestInstance_DirectQuery_WithVmQueryCluster(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	// mock response 携带 vm_query_cluster
+	mock.Vm.Set(map[string]any{
+		`query:1730184058sum(increase({__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}[1m])) by (pod)`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":1,"list":[{"status":"success","isPartial":false,"data":{"resultType":"vector","result":[{"metric":{"pod":"test-pod"},"value":[1730184058,"1.5"]}]}}],"select_fields_order":[],"sql":"test","timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","result_table_ids":["2_bcs_prom_computation_result_table_00000"],"vm_query_cluster":{"query_cluster":"vm-monitor-op-history2.bkop.woa.com","storage_cluster_list":["vm-op1","vm-op2"]}},"errors":null}`,
+	})
+
+	end := time.Unix(1730184058, 0)
+
+	ctx = metadata.InitHashID(ctx)
+	expand := &metadata.VmExpand{
+		ResultTableList: []string{"2_bcs_prom_computation_result_table_00000"},
+	}
+	metadata.SetExpand(ctx, expand)
+
+	res, err := instance.DirectQuery(ctx, fmt.Sprintf(`sum(increase(%s[1m])) by (pod)`, vmCondition.ToMatch()), end)
+	assert.NoError(t, err)
+	assert.Len(t, res, 1)
+
+	actual, _ := json.Marshal(res)
+	assert.Equal(t, `[{"metric":{"pod":"test-pod"},"value":[1730184058,"1.5"]}]`, string(actual))
+}
+
+func TestInstance_DirectQueryRange_WithVmQueryCluster(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	// mock response 携带 vm_query_cluster
+	mock.Vm.Set(map[string]any{
+		`query_range:17301804581730184058300sum(increase({__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}[1m])) by (pod)`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":1,"list":[{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod":"test-pod"},"values":[[1730181358,"0.5"],[1730181658,"1.0"]]}]}}],"select_fields_order":[],"sql":"test","timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","result_table_ids":["2_bcs_prom_computation_result_table_00000"],"vm_query_cluster":{"query_cluster":"vm-monitor-op-history2.bkop.woa.com","storage_cluster_list":["vm-op1","vm-op2"]}},"errors":null}`,
+	})
+
+	start := time.Unix(1730180458, 0)
+	end := time.Unix(1730184058, 0)
+	step := time.Minute * 5
+
+	ctx = metadata.InitHashID(ctx)
+	expand := &metadata.VmExpand{
+		ResultTableList: []string{"2_bcs_prom_computation_result_table_00000"},
+	}
+	metadata.SetExpand(ctx, expand)
+
+	res, _, err := instance.DirectQueryRange(ctx, fmt.Sprintf(`sum(increase(%s[1m])) by (pod)`, vmCondition.ToMatch()), start, end, step)
+	assert.NoError(t, err)
+	assert.Len(t, res, 1)
+}

@@ -34,7 +34,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "bklogconfig", "business", "container", "datasource", "deamonset", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "bklogconfig", "business", "container", "daemonset", "datasource", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "p4_changelist", "pod", "replicaset", "service", "set", "statefulset", "svn_revision", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -298,6 +298,69 @@ func TestModel_GetPath(t *testing.T) {
 			},
 			expected: [][]string{
 				{"container"},
+			},
+		},
+		"pod to git_commit": {
+			target: "git_commit",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "git_commit"},
+				{"pod", "node", "system", "host", "app_version", "git_commit"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "git_commit"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "git_commit"},
+			},
+		},
+		"pod to p4_changelist": {
+			target: "p4_changelist",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "p4_changelist"},
+				{"pod", "node", "system", "host", "app_version", "p4_changelist"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "p4_changelist"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "p4_changelist"},
+			},
+		},
+		"pod to svn_revision": {
+			target: "svn_revision",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"namespace":      "ns-1",
+				"pod":            "pod-1",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "container", "app_version", "svn_revision"},
+				{"pod", "node", "system", "host", "app_version", "svn_revision"},
+				{"pod", "datasource", "node", "system", "host", "app_version", "svn_revision"},
+				{"pod", "apm_service_instance", "system", "host", "app_version", "svn_revision"},
 			},
 		},
 	}
@@ -572,7 +635,7 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 
 	mock.Vm.Set(map[string]any{
 		// host info
-		"query_range:1693973987169397440760count by (host_id, version, env_name, env_type, service_version, service_type) (count_over_time(a[1m]))": victoriaMetrics.Data{
+		"query_range:1693973987169397440760count by (bk_host_id, version, env_name, env_type, service_version, service_type) (count_over_time(a[1m]))": victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -631,13 +694,13 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		"host info": {
 			source: "host",
 			indexMatcher: cmdb.Matcher{
-				"host_id": "12345",
+				"bk_host_id": "12345",
 			},
 			targetInfoShow: true,
 			expectedPath:   []string{"host"},
 			expectedSource: "host",
 			expectedSourceInfo: map[string]string{
-				"host_id": "12345",
+				"bk_host_id": "12345",
 			},
 			expectedTarget: "host",
 			expectedTargetList: []cmdb.MatchersWithTimestamp{

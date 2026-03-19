@@ -85,10 +85,12 @@ func (d *PromData) Fill(tables *promql.Tables) error {
 	return nil
 }
 
-// Downsample 对结果数据进行降采样
+// Downsample 对结果数据进行降采样，并填充分降采样前的 Stat（有降采样时调用，Stat 表示降采样前点集的统计）
 func (d *PromData) Downsample(factor float64) {
 	for _, table := range d.Tables {
-		points := downsample.Downsample(table.GetPromPoints(), factor)
+		points := table.GetPromPoints()
+		table.Stat = ComputeStatFromPoints(points)
+		points = downsample.Downsample(points, factor)
 		table.SetValuesByPoints(points)
 	}
 }

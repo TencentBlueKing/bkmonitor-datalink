@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -31,6 +32,22 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
+
+// stripStatFromPromDataJSON 从 PromData 的 JSON 响应中去掉 series 中每项的 stat，便于与不含 stat 的预期对比
+func stripStatFromPromDataJSON(body []byte) ([]byte, error) {
+	var m map[string]any
+	if err := stdjson.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+	if series, _ := m["series"].([]any); series != nil {
+		for _, s := range series {
+			if sm, ok := s.(map[string]any); ok {
+				delete(sm, "stat")
+			}
+		}
+	}
+	return stdjson.Marshal(m)
+}
 
 type Writer struct {
 	h http.Header
@@ -698,7 +715,9 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 
 			HandlerQueryReference(ginC)
 			b := w.body()
-			assert.Equal(t, c.expected, b)
+			b2, err := stripStatFromPromDataJSON([]byte(b))
+			assert.NoError(t, err)
+			assert.JSONEq(t, c.expected, string(b2))
 		})
 	}
 }
@@ -879,7 +898,9 @@ func TestPromQLQueryHandler(t *testing.T) {
 			if c.handler != nil {
 				c.handler(ginC)
 				b := w.body()
-				assert.Equal(t, c.expected, b)
+				b2, err := stripStatFromPromDataJSON([]byte(b))
+				assert.NoError(t, err)
+				assert.JSONEq(t, c.expected, string(b2))
 			}
 		})
 	}

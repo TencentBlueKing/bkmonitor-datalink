@@ -42,6 +42,16 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+// stripStatFromPromData 在比较预期结果前去掉 Stat，使旧快照不包含 stat 的用例仍能通过
+func stripStatFromPromData(p *PromData) {
+	if p == nil {
+		return
+	}
+	for _, t := range p.Tables {
+		t.Stat = nil
+	}
+}
+
 func TestQueryTsWithDoris(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
@@ -149,6 +159,9 @@ func TestQueryTsWithDoris(t *testing.T) {
 
 			res, err := queryTsWithPromEngine(ctx, c.queryTs)
 			assert.Nil(t, err)
+			if pd, ok := res.(*PromData); ok {
+				stripStatFromPromData(pd)
+			}
 			excepted, err := json.Marshal(res)
 			assert.Nil(t, err)
 			assert.JSONEq(t, c.result, string(excepted))
@@ -874,6 +887,9 @@ func TestQueryReferenceWithEs(t *testing.T) {
 				return
 			}
 
+			for _, t := range data.Tables {
+				t.Stat = nil
+			}
 			actual, _ := json.Marshal(data.Tables)
 			assert.Equal(t, c.result, string(actual))
 		})
@@ -1358,6 +1374,9 @@ func TestQueryTs(t *testing.T) {
 
 			res, err := queryTsWithPromEngine(ctx, qts)
 			assert.Nil(t, err)
+			if pd, ok := res.(*PromData); ok {
+				stripStatFromPromData(pd)
+			}
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
 			actual := string(out)
@@ -4404,6 +4423,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					b := d.Tables[j]
 					return a.Name < b.Name
 				})
+				stripStatFromPromData(d)
 			}
 
 			t.Logf("QueryTsClusterMetrics error: %+v", err)

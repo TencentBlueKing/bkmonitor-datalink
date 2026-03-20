@@ -41,14 +41,18 @@ var lastCPUTimeSlice lastTimeSlice
 
 func init() {
 	lastCPUTimeSlice.Lock()
-	lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
-	lastCPUTimeSlice.lastPerCPUTimes, _ = cpu.Times(true)
+	lastCPUTimeSlice.lastPerCPUTimes, _ = getWindowsCPUTimes()
+	if len(lastCPUTimeSlice.lastPerCPUTimes) > 0 {
+		lastCPUTimeSlice.lastCPUTimes = []cpu.TimesStat{sumWindowsTotalCPUTimes(lastCPUTimeSlice.lastPerCPUTimes)}
+	} else {
+		lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
+	}
 	lastCPUTimeSlice.Unlock()
 }
 
 func getCPUStatUsage(report *CpuReport) error {
 	// per stat
-	perStat, err := cpu.Times(true)
+	perStat, err := getWindowsCPUTimes()
 	if err != nil {
 		logger.Error("get CPU Stat fail")
 		return err
@@ -58,7 +62,7 @@ func getCPUStatUsage(report *CpuReport) error {
 	defer lastCPUTimeSlice.Unlock()
 	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perStat) != len(lastCPUTimeSlice.lastPerCPUTimes) {
-		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
+		lastCPUTimeSlice.lastPerCPUTimes, err = getWindowsCPUTimes()
 		if err != nil {
 			return err
 		}
@@ -76,38 +80,21 @@ func getCPUStatUsage(report *CpuReport) error {
 		report.Stat = append(report.Stat, tmp)
 	}
 	// total stat
-	totalstat, err := cpu.Times(false)
-	if err != nil {
-		logger.Error("get CPU Total Stat fail")
-		return err
-	}
-	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
-		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
-		if err != nil {
-			return err
-		}
-	}
-	cpuTimeStat := totalstat[0]
-	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
+	cpuTimeStat := sumWindowsTotalCPUTimes(perStat)
+	lastCpuTimeStat := sumWindowsTotalCPUTimes(lastCPUTimeSlice.lastPerCPUTimes)
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
-	// 将此次获取的timeState重新写入公共变量
-	lastCPUTimeSlice.lastCPUTimes = totalstat
-	lastCPUTimeSlice.lastPerCPUTimes = perStat
-	perUsage, err := cpu.Percent(0, true)
+	perUsage, err := calculateAllCPUBusyPercent(lastCPUTimeSlice.lastPerCPUTimes, perStat)
 	if err != nil {
 		logger.Error("get CPU Percent fail")
 		return err
 	}
+	// 将此次获取的timeState重新写入公共变量
+	lastCPUTimeSlice.lastCPUTimes = []cpu.TimesStat{cpuTimeStat}
+	lastCPUTimeSlice.lastPerCPUTimes = perStat
 
 	report.Usage = perUsage
 	// get total cpu percent
-	total, err := cpu.Percent(0, false)
-	if err != nil {
-		logger.Error("get CPU Total Percent fail")
-		return err
-	}
-	report.TotalUsage = total[0]
+	report.TotalUsage = calculateCPUBusyPercent(lastCpuTimeStat, cpuTimeStat)
 
 	// protect code
 	for i := range report.Usage {

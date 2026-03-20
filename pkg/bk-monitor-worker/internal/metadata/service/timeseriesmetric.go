@@ -204,28 +204,26 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetricsByKeys(bkTenantId string, metricM
 // BulkUpdateMetricsByKeys 按 (field_name, field_scope) key 批量更新指标
 func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricMap map[string]map[string]any, keys []string, groupId uint, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
-	fieldNames := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts := strings.SplitN(key, "\x00", 2)
-		if len(parts) >= 1 && parts[0] != "" {
-			fieldNames = append(fieldNames, parts[0])
-		}
-	}
-	if len(fieldNames) == 0 {
-		return false, nil
-	}
 	keySet := mapset.NewSet(keys...)
-	var tsmList []customreport.TimeSeriesMetric
-	for _, chunk := range slicex.ChunkSlice(fieldNames, 0) {
-		var tempList []customreport.TimeSeriesMetric
-		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunk...).GroupIDEq(groupId).All(&tempList); err != nil {
-			return false, errors.Wrapf(err, "BulkUpdateMetricsByKeys: query TimeSeriesMetric group_id [%v] failed", groupId)
-		}
-		for i := range tempList {
-			k := metricKey(tempList[i].FieldName, tempList[i].FieldScope)
-			if keySet.Contains(k) {
-				tsmList = append(tsmList, tempList[i])
-			}
+	var allTSMetricList []customreport.TimeSeriesMetric
+	// 查询该group_id下的所有记录，只拉取需要的字段，然后在内存中过滤，避免SQL中的IN操作
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(
+		customreport.TimeSeriesMetricDBSchema.FieldID,
+		customreport.TimeSeriesMetricDBSchema.FieldName,
+		customreport.TimeSeriesMetricDBSchema.FieldScope,
+		customreport.TimeSeriesMetricDBSchema.TagList,
+		customreport.TimeSeriesMetricDBSchema.LastModifyTime,
+		customreport.TimeSeriesMetricDBSchema.IsActive,
+		customreport.TimeSeriesMetricDBSchema.ScopeID,
+	).GroupIDEq(groupId).All(&allTSMetricList); err != nil {
+		return false, errors.Wrapf(err, "BulkUpdateMetricsByKeys: query TimeSeriesMetric group_id [%v] failed", groupId)
+	}
+	// 在内存中根据keys进行过滤
+	tsmList := make([]customreport.TimeSeriesMetric, 0, len(allTSMetricList))
+	for i := range allTSMetricList {
+		k := metricKey(allTSMetricList[i].FieldName, allTSMetricList[i].FieldScope)
+		if keySet.Contains(k) {
+			tsmList = append(tsmList, allTSMetricList[i])
 		}
 	}
 	updated := false
@@ -257,20 +255,20 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 		isNeedUpdate := false
 		// 先设置最后更新时间 1 天更新一次，减少对 db 的操作
 		if lastTime.Sub(tsm.LastModifyTime).Hours() >= 24 {
-			logger.Infof("BulkUpdateMetrics: group_id:[%v],table_id:[%v],last_modify_time [%v],last modify time larger than 24 hours,need update", tsm.GroupID, tsm.TableID, lastModifyTime)
+			logger.Infof("BulkUpdateMetrics: group_id:[%v],last_modify_time [%v],last modify time larger than 24 hours,need update", groupId, lastModifyTime)
 			isNeedUpdate = true
 			tsm.LastModifyTime = lastTime
 		}
 		// NOTE: 仅当时间变更超过有效期阈值时，才进行更新
 		if lastTime.Sub(tsm.LastModifyTime).Hours() >= float64(config.GlobalTimeSeriesMetricExpiredSeconds/3600) {
-			logger.Infof("BulkUpdateMetrics: group_id:[%v],table_id:[%v],last_modify_time [%v],last modify time larger than 30 days,need update", tsm.GroupID, tsm.TableID, lastModifyTime)
+			logger.Infof("BulkUpdateMetrics: group_id:[%v],last_modify_time [%v],last modify time larger than 30 days,need update", groupId, lastModifyTime)
 			updated = true
 		}
 
 		// 如果 tag 不一致，则进行更新
 		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
-			logger.Errorf("BulkUpdateMetrics:getMetricTagFromMetricInfo from [%#v] failed, %v", metricInfo, tagList)
+			logger.Errorf("BulkUpdateMetrics: group_id:[%v],getMetricTagFromMetricInfo from [%#v] failed, %v", groupId, metricInfo, err)
 			continue
 		}
 		var dbTagList []string
@@ -305,16 +303,17 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.ScopeID)
 			}
 			if tsm.Update(db, updateFields...) != nil {
-				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
+				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", groupId, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)
 				continue
 			}
 			updated = true
-			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v]", tsm.GroupID, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
+			logger.Infof("BulkUpdateMetrics:updated TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v]", groupId, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive)
 		}
 	}
 	disabledList := whiteListDisabledMetricSet.ToSlice()
 	if len(disabledList) > 0 {
 		_ = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldIDIn(disabledList...).Delete()
+		logger.Infof("BulkUpdateMetrics:delete TimeSeriesMetric group_id [%v] [%v] metrics", groupId, len(disabledList))
 	}
 	return updated && isAutoDiscovery, nil
 }

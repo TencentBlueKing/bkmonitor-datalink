@@ -11,10 +11,11 @@
 package controllers
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
-	"k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	"os"
+
+	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 )
 
 func (s *BkLogSidecar) reloadBkunifylogbeat() error {
@@ -26,10 +27,6 @@ func (s *BkLogSidecar) reloadBkunifylogbeat() error {
 
 	_, err = f.Write([]byte("signal"))
 	return err
-}
-
-func resolveContainerdPath(containerStatus *v1alpha2.ContainerStatusResponse, pid int) (string, string, error) {
-	return "", containerStatus.Status.LogPath, nil
 }
 
 func resolveContainerdV2Path(containerStatus *v1.ContainerStatusResponse, pid int) (string, string, error) {

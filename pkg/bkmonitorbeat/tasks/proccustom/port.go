@@ -142,7 +142,7 @@ func (e portEvent) touch(ip string, port int) error {
 		ip = ips[0]
 		logger.Infof("%d(%s) touch using ip %s", e.pid, e.procName, ip)
 	}
-	conn, err := net.Dial("tcp", fmt.Sprintf("[%s]:%d", ip, port))
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", ip, port), 3*time.Second)
 	if err != nil {
 		return err
 	}

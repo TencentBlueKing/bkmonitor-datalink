@@ -35,6 +35,10 @@ var (
 	AddToScheme = SchemeBuilder.AddToScheme
 )
 
+func Resource(resource string) schema.GroupResource {
+	return SchemeGroupVersion.WithResource(resource).GroupResource()
+}
+
 // 必须实现此方法注册具体类型
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,

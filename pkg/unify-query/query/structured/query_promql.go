@@ -20,8 +20,8 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-// QueryLabelSelectorLabelName PromQL 中用于表标签路由的指标标签名，仅用于 DataList 路由，不下发存储
-const QueryLabelSelectorLabelName = "__query_label_selector"
+// QueryBkLabelSelectorPrefix PromQL 表标签路由：__bk_query_label_selector_<维度>，同 {} 内多条为 AND，仅表达单组；多组 OR 请用结构化 table_id_conditions。
+const QueryBkLabelSelectorPrefix = "__bk_query_label_selector_"
 
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
@@ -427,12 +427,24 @@ func vectorQuery(
 	if query == nil {
 		query = new(Query)
 	}
-	// 分离 __query_label_selector（仅用于路由）与其余 matchers
+	// 分离 __bk_query_label_selector_<维度>（仅用于路由）与其余 matchers
 	var otherMatchers []*labels.Matcher
-	var queryLabelSelectorValue string
+	var bkTableRouteGroup []ConditionField
 	for _, m := range e.LabelMatchers {
-		if m.Name == QueryLabelSelectorLabelName {
-			queryLabelSelectorValue = m.Value
+		if strings.HasPrefix(m.Name, QueryBkLabelSelectorPrefix) {
+			dim := strings.TrimPrefix(m.Name, QueryBkLabelSelectorPrefix)
+			if dim == "" {
+				return query, fmt.Errorf("invalid table routing label name: %q", m.Name)
+			}
+			op := convertOp(m.Type)
+			if op == "" {
+				return query, fmt.Errorf("failed to decode the '%s' operation symbol", m.Type)
+			}
+			bkTableRouteGroup = append(bkTableRouteGroup, ConditionField{
+				DimensionName: dim,
+				Value:         []string{m.Value},
+				Operator:      op,
+			})
 			continue
 		}
 		otherMatchers = append(otherMatchers, m)
@@ -462,14 +474,8 @@ func vectorQuery(
 		cond.Operator = op
 		conds = append(conds, cond)
 	}
-	if queryLabelSelectorValue != "" {
-		all, err := parseQueryLabelSelector(queryLabelSelectorValue)
-		if err != nil {
-			return query, err
-		}
-		if len(all) > 0 {
-			query.TableIDConditions = all
-		}
+	if len(bkTableRouteGroup) > 0 {
+		query.TableIDConditions = AllConditions{bkTableRouteGroup}
 	}
 
 	// 匹配 Conditions 组合条件
@@ -505,122 +511,6 @@ func vectorQuery(
 	query.VectorOffset = e.Offset
 
 	return query, nil
-}
-
-// parseQueryLabelSelector 解析 __query_label_selector 的值，得到 AllConditions。
-// 格式: scene=log,cluster_id=1 or scene=k8s；支持 = != =~ !~；值可双引号，内部 \" 转义
-func parseQueryLabelSelector(s string) (AllConditions, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	orParts := splitOutsideQuotes(s, " or ")
-	var out AllConditions
-	for _, part := range orParts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		andParts := splitOutsideQuotes(part, ",")
-		var group []ConditionField
-		for _, token := range andParts {
-			token = strings.TrimSpace(token)
-			if token == "" {
-				continue
-			}
-			cf, err := parseOneConditionField(token)
-			if err != nil {
-				return nil, err
-			}
-			group = append(group, cf)
-		}
-		if len(group) > 0 {
-			out = append(out, group)
-		}
-	}
-	return out, nil
-}
-
-func splitOutsideQuotes(s, sep string) []string {
-	var parts []string
-	var cur strings.Builder
-	inQuote := false
-	i := 0
-	for i < len(s) {
-		if inQuote {
-			if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
-				cur.WriteByte(s[i+1])
-				i += 2
-				continue
-			}
-			if s[i] == '"' {
-				inQuote = false
-				cur.WriteByte(s[i])
-				i++
-				continue
-			}
-			cur.WriteByte(s[i])
-			i++
-			continue
-		}
-		if s[i] == '"' {
-			inQuote = true
-			cur.WriteByte(s[i])
-			i++
-			continue
-		}
-		if strings.HasPrefix(s[i:], sep) {
-			parts = append(parts, strings.TrimSpace(cur.String()))
-			cur.Reset()
-			i += len(sep)
-			continue
-		}
-		cur.WriteByte(s[i])
-		i++
-	}
-	if cur.Len() > 0 {
-		parts = append(parts, strings.TrimSpace(cur.String()))
-	}
-	return parts
-}
-
-// parseOneConditionField 解析单个 key op value 为 ConditionField（eq/ne/req/nreq）
-func parseOneConditionField(token string) (ConditionField, error) {
-	for _, opInfo := range []struct {
-		op      string
-		literal string
-	}{
-		{ConditionRegEqual, "=~"},
-		{ConditionNotRegEqual, "!~"},
-		{ConditionNotEqual, "!="},
-		{ConditionEqual, "="},
-	} {
-		idx := strings.Index(token, opInfo.literal)
-		if idx < 0 {
-			continue
-		}
-		key := strings.TrimSpace(token[:idx])
-		val := strings.TrimSpace(token[idx+len(opInfo.literal):])
-		if key == "" {
-			return ConditionField{}, fmt.Errorf("invalid label condition: missing key in %s", token)
-		}
-		val = unquoteLabelValue(val)
-		return ConditionField{
-			DimensionName: key,
-			Value:         []string{val},
-			Operator:      opInfo.op,
-		}, nil
-	}
-	return ConditionField{}, fmt.Errorf("invalid label condition: %s", token)
-}
-
-func unquoteLabelValue(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		s = s[1 : len(s)-1]
-		return strings.ReplaceAll(s, `\"`, `"`)
-	}
-	return s
 }
 
 // convertOp

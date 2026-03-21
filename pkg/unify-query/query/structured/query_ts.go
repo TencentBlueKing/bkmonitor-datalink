@@ -429,7 +429,7 @@ type Query struct {
 	Soffset int `json:"soffset,omitempty" example:"0" swaggerignore:"true"`
 	// Conditions 过滤条件
 	Conditions Conditions `json:"conditions,omitempty"`
-	// TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __query_label_selector 均写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。
+	// TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_<维度> 写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。
 	TableIDConditions AllConditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
@@ -1128,13 +1128,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		metricName = ""
 	}
 
-	// 从 TableIDConditions 注入 __query_label_selector，供 TS→PromQL 往返一致
-	if selVal := q.TableIDConditions.QueryLabelSelectorString(); selVal != "" {
-		m, err := labels.NewMatcher(labels.MatchEqual, QueryLabelSelectorLabelName, selVal)
-		if err == nil {
-			matchers = append(matchers, m)
-		}
+	routeMs, err := q.TableIDConditions.ToPromMatchers(ctx, encodeFunc)
+	if err != nil {
+		return nil, err
 	}
+	matchers = append(matchers, routeMs...)
 
 	result = &parser.VectorSelector{
 		Name:          metricName,

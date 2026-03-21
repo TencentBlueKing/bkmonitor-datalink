@@ -213,35 +213,6 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	return c
 }
 
-// queryLabelSelectorString 将 ConditionField 格式化为 __query_label_selector 的一个条件片段；正则时值用双引号包裹。
-func (c ConditionField) queryLabelSelectorString() string {
-	op := c.Operator
-	if op == "" {
-		op = ConditionEqual
-	}
-	var promOp string
-	switch op {
-	case ConditionEqual:
-		promOp = "="
-	case ConditionNotEqual:
-		promOp = "!="
-	case ConditionRegEqual:
-		promOp = "=~"
-	case ConditionNotRegEqual:
-		promOp = "!~"
-	default:
-		promOp = "="
-	}
-	val := ""
-	if len(c.Value) > 0 {
-		val = c.Value[0]
-	}
-	if op == ConditionRegEqual || op == ConditionNotRegEqual {
-		val = `"` + strings.ReplaceAll(val, `"`, `\"`) + `"`
-	}
-	return c.DimensionName + promOp + val
-}
-
 // LabelMatcherToConditions
 func LabelMatcherToConditions(lm []*labels.Matcher) (string, []ConditionField, error) {
 	var (

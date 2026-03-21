@@ -10,6 +10,7 @@
 package structured
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -1089,93 +1091,6 @@ func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 	})
 }
 
-// TestAllConditions_QueryLabelSelectorString 将 AllConditions 序列化为 __query_label_selector 字符串的往返与边界。
-func TestAllConditions_QueryLabelSelectorString(t *testing.T) {
-	t.Run("empty", func(t *testing.T) {
-		assert.Empty(t, AllConditions(nil).QueryLabelSelectorString())
-		assert.Empty(t, AllConditions{}.QueryLabelSelectorString())
-	})
-	t.Run("single_group", func(t *testing.T) {
-		all := AllConditions{
-			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-		}
-		assert.Equal(t, "scene=log", all.QueryLabelSelectorString())
-	})
-	t.Run("single_group_and", func(t *testing.T) {
-		all := AllConditions{
-			{
-				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-				{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
-			},
-		}
-		assert.Equal(t, "scene=log,cluster_id=1", all.QueryLabelSelectorString())
-	})
-	t.Run("or_groups", func(t *testing.T) {
-		all := AllConditions{
-			{
-				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-				{DimensionName: "cluster_id", Value: []string{"1"}, Operator: ConditionEqual},
-			},
-			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
-		}
-		assert.Equal(t, "scene=log,cluster_id=1 or scene=k8s", all.QueryLabelSelectorString())
-	})
-	t.Run("single_ne", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionNotEqual}}}
-		assert.Equal(t, "scene!=metric", all.QueryLabelSelectorString())
-	})
-	t.Run("single_req", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "scene", Value: []string{"log.*"}, Operator: ConditionRegEqual}}}
-		assert.Equal(t, `scene=~"log.*"`, all.QueryLabelSelectorString())
-	})
-	t.Run("single_nreq", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "scene", Value: []string{"metric.*"}, Operator: ConditionNotRegEqual}}}
-		assert.Equal(t, `scene!~"metric.*"`, all.QueryLabelSelectorString())
-	})
-	t.Run("req_value_with_quote_escaped", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "key", Value: []string{`say "hi"`}, Operator: ConditionRegEqual}}}
-		assert.Equal(t, `key=~"say \"hi\""`, all.QueryLabelSelectorString())
-	})
-	t.Run("mixed_ops_in_group", func(t *testing.T) {
-		all := AllConditions{{
-			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-			{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual},
-		}}
-		assert.Equal(t, "scene=log,env!=prod", all.QueryLabelSelectorString())
-	})
-	t.Run("three_or_groups", func(t *testing.T) {
-		all := AllConditions{
-			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
-			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
-			{{DimensionName: "scene", Value: []string{"metric"}, Operator: ConditionEqual}},
-		}
-		assert.Equal(t, "scene=log or scene=k8s or scene=metric", all.QueryLabelSelectorString())
-	})
-	t.Run("empty_group_skipped", func(t *testing.T) {
-		all := AllConditions{
-			{{DimensionName: "a", Value: []string{"1"}, Operator: ConditionEqual}},
-			{},
-			{{DimensionName: "b", Value: []string{"2"}, Operator: ConditionEqual}},
-		}
-		assert.Equal(t, "a=1 or b=2", all.QueryLabelSelectorString())
-	})
-	t.Run("group_with_req_and_eq", func(t *testing.T) {
-		all := AllConditions{{
-			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
-			{DimensionName: "cluster_id", Value: []string{"BCS-.*"}, Operator: ConditionRegEqual},
-		}}
-		assert.Equal(t, `scene=log,cluster_id=~"BCS-.*"`, all.QueryLabelSelectorString())
-	})
-	t.Run("empty_value", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "key", Value: []string{}, Operator: ConditionEqual}}}
-		assert.Equal(t, "key=", all.QueryLabelSelectorString())
-	})
-	t.Run("nil_value_slice", func(t *testing.T) {
-		all := AllConditions{{{DimensionName: "key", Value: nil, Operator: ConditionEqual}}}
-		assert.Equal(t, "key=", all.QueryLabelSelectorString())
-	})
-}
-
 // TestAllConditions_MatchesResultTableLabels 表标签过滤：仅返回 bool，空或 nil 视为通过（与 MatchResultTableLabels 语义一致）。
 func TestAllConditions_MatchesResultTableLabels(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
@@ -1195,5 +1110,77 @@ func TestAllConditions_MatchesResultTableLabels(t *testing.T) {
 		assert.True(t, all.MatchesResultTableLabels(map[string]string{"scene": "log"}))
 		assert.True(t, all.MatchesResultTableLabels(map[string]string{"scene": "k8s"}))
 		assert.False(t, all.MatchesResultTableLabels(map[string]string{"scene": "other"}))
+	})
+}
+
+func TestAllConditions_ToPromMatchers(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil", func(t *testing.T) {
+		ms, err := AllConditions(nil).ToPromMatchers(ctx, nil)
+		assert.NoError(t, err)
+		assert.Nil(t, ms)
+	})
+	t.Run("empty", func(t *testing.T) {
+		ms, err := AllConditions{}.ToPromMatchers(ctx, nil)
+		assert.NoError(t, err)
+		assert.Nil(t, ms)
+	})
+	t.Run("empty_group", func(t *testing.T) {
+		ms, err := AllConditions{{}}.ToPromMatchers(ctx, nil)
+		assert.NoError(t, err)
+		assert.Nil(t, ms)
+	})
+	t.Run("single_eq", func(t *testing.T) {
+		all := AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+		}
+		ms, err := all.ToPromMatchers(ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, ms, 1)
+		assert.Equal(t, "__bk_query_label_selector_scene", ms[0].Name)
+		assert.Equal(t, labels.MatchEqual, ms[0].Type)
+		assert.Equal(t, "log", ms[0].Value)
+	})
+	t.Run("multi_and", func(t *testing.T) {
+		all := AllConditions{{
+			{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+			{DimensionName: "cluster_id", Value: []string{"BCS-.*"}, Operator: ConditionRegEqual},
+		}}
+		ms, err := all.ToPromMatchers(ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, ms, 2)
+		assert.Equal(t, labels.MatchEqual, ms[0].Type)
+		assert.Equal(t, labels.MatchRegexp, ms[1].Type)
+		assert.Equal(t, "BCS-.*", ms[1].Value)
+	})
+	t.Run("neq_nreg", func(t *testing.T) {
+		all := AllConditions{{
+			{DimensionName: "env", Value: []string{"prod"}, Operator: ConditionNotEqual},
+			{DimensionName: "zone", Value: []string{"test.*"}, Operator: ConditionNotRegEqual},
+		}}
+		ms, err := all.ToPromMatchers(ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, ms, 2)
+		assert.Equal(t, labels.MatchNotEqual, ms[0].Type)
+		assert.Equal(t, labels.MatchNotRegexp, ms[1].Type)
+	})
+	t.Run("or_groups_error", func(t *testing.T) {
+		all := AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+		}
+		_, err := all.ToPromMatchers(ctx, nil)
+		assert.Error(t, err)
+	})
+	t.Run("encode_func", func(t *testing.T) {
+		all := AllConditions{
+			{{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual}},
+		}
+		enc := func(s string) string { return "PREFIX_" + s }
+		ms, err := all.ToPromMatchers(ctx, enc)
+		require.NoError(t, err)
+		require.Len(t, ms, 1)
+		assert.Equal(t, "PREFIX___bk_query_label_selector_scene", ms[0].Name)
 	})
 }

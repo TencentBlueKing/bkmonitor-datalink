@@ -314,7 +314,7 @@ func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 }
 
 // TestQueryTs_StructToPromQL_WithTableIDConditions 独立方向：从 QueryTs 结构体（带 TableIDConditions）转为 PromQL，
-// 验证输出包含 __query_label_selector 且条件值正确。模拟 /query/ts/struct_to_promql 转换路径。
+// 单组 AND 输出 __bk_query_label_selector_<维度>；多组 OR 无法写进单条 PromQL，应报错。
 func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 	t.Run("single_eq", func(t *testing.T) {
 		ts := &QueryTs{
@@ -331,7 +331,7 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 		}
 		result, err := ts.ToPromQL(context.TODO())
 		require.NoError(t, err)
-		assert.Contains(t, result, `__query_label_selector="scene=log"`)
+		assert.Contains(t, result, `__bk_query_label_selector_scene="log"`)
 	})
 	t.Run("and_or_combined", func(t *testing.T) {
 		ts := &QueryTs{
@@ -350,10 +350,8 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 			},
 			MetricMerge: "a",
 		}
-		result, err := ts.ToPromQL(context.TODO())
-		require.NoError(t, err)
-		assert.Contains(t, result, "__query_label_selector=")
-		assert.Contains(t, result, "scene=log,cluster_id=1 or scene=k8s")
+		_, err := ts.ToPromQL(context.TODO())
+		require.Error(t, err, "多组 OR 的 table_id_conditions 不应能转为单条 PromQL")
 	})
 	t.Run("neq_operator", func(t *testing.T) {
 		ts := &QueryTs{
@@ -370,7 +368,7 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 		}
 		result, err := ts.ToPromQL(context.TODO())
 		require.NoError(t, err)
-		assert.Contains(t, result, `__query_label_selector="env!=prod"`)
+		assert.Contains(t, result, `__bk_query_label_selector_env!="prod"`)
 	})
 	t.Run("empty_conditions_no_selector", func(t *testing.T) {
 		ts := &QueryTs{
@@ -385,6 +383,7 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 		result, err := ts.ToPromQL(context.TODO())
 		require.NoError(t, err)
 		assert.NotContains(t, result, "__query_label_selector")
+		assert.NotContains(t, result, "__bk_query_label_selector_")
 	})
 }
 

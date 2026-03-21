@@ -389,25 +389,6 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
-// QueryLabelSelectorString 将 AllConditions 序列化为 __query_label_selector 的值，用于 TS→PromQL。
-// 格式: scene=log,cluster_id=1 or scene=k8s；组内 AND 用逗号，组间 OR 用 " or "。
-func (c AllConditions) QueryLabelSelectorString() string {
-	if len(c) == 0 {
-		return ""
-	}
-	var orParts []string
-	for _, group := range c {
-		var andParts []string
-		for _, f := range group {
-			andParts = append(andParts, f.queryLabelSelectorString())
-		}
-		if len(andParts) > 0 {
-			orParts = append(orParts, strings.Join(andParts, ","))
-		}
-	}
-	return strings.Join(orParts, " or ")
-}
-
 // MatchResultTableLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
 func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, error) {
 	if len(c) == 0 {
@@ -476,6 +457,53 @@ func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, e
 func (c AllConditions) MatchesResultTableLabels(labels map[string]string) bool {
 	ok, _ := c.MatchResultTableLabels(labels)
 	return ok
+}
+
+// ToPromMatchers 将单组表标签路由条件转为 __bk_query_label_selector_* matchers，与 Conditions.ToProm 单组 AND 分支一致。
+// 多组 OR 无法写入单条 PromQL，返回错误。
+func (c AllConditions) ToPromMatchers(ctx context.Context, encodeFunc func(string) string) ([]*labels.Matcher, error) {
+	if len(c) == 0 {
+		return nil, nil
+	}
+	if len(c) > 1 {
+		return nil, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"多组表标签路由条件(OR)无法转换为单条 PromQL，请使用结构化查询或拆分为多次查询",
+		).Error(ctx, errors.New("table_id_conditions OR"))
+	}
+	group := c[0]
+	if len(group) == 0 {
+		return nil, nil
+	}
+	if encodeFunc == nil {
+		encodeFunc = func(s string) string { return s }
+	}
+	out := make([]*labels.Matcher, 0, len(group))
+	for _, f := range group {
+		cf := f
+		cf.Value = append([]string(nil), cf.Value...)
+		cf.ContainsToPromReg()
+		if cf.Operator == ConditionContains || cf.Operator == ConditionNotContains {
+			return nil, metadata.NewMessage(
+				metadata.MsgQueryTs,
+				"表标签路由条件无法转换为 PromQL matcher，请使用结构化查询",
+			).Error(ctx, errors.New("table_id_conditions contains"))
+		}
+		val := ""
+		if len(cf.Value) > 0 {
+			val = cf.Value[0]
+		}
+		name := encodeFunc(QueryBkLabelSelectorPrefix + cf.DimensionName)
+		m, err := labels.NewMatcher(cf.ToPromOperator(), name, val)
+		if err != nil {
+			return nil, metadata.NewMessage(
+				metadata.MsgParserPromQL,
+				"创建标签匹配器失败",
+			).Error(ctx, err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 // ConvertToPromBuffer

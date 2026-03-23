@@ -325,6 +325,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 			v.FieldName = k
 			ks := strings.Split(k, ".")
 			v.OriginField = ks[0]
+			v.TokenizeOnChars = make([]string, 0)
 
 			fieldsMap[k] = v
 		}

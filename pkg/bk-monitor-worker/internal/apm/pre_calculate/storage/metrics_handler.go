@@ -11,8 +11,10 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,7 +22,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -150,21 +154,13 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 ) *MetricDimensionsHandler {
 	token := core.GetMetadataCenter().GetToken(dataId)
 	bkBizId := core.GetMetadataCenter().GetBaseInfo(dataId).BkBizId
-	relationSpaceUID := ""
-	if bkBizId != "" {
-		relationSpaceUID = "bkcc__" + bkBizId
-	}
+	relationSpaceUID := bkBizIdToSpaceUID(bkBizId)
 	relationReporter, _ := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, writerConfig.Url)
-	relationMetricRoute := "apm_dataid_token"
-
-	if relationReporter != nil && relationSpaceUID != "" {
-		relationMetricRoute = relationSpaceUID
-	}
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %v \ndataId(%s) -> token: %s \nrelationMetricRoute: %s \n"+
+			"prometheus host: %s \nconfigHeaders: %v \ndataId(%s) -> token: %s \nrelationSpaceUID: %s \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		writerConfig.Url, writerConfig.Headers, dataId, token, relationMetricRoute,
+		writerConfig.Url, writerConfig.Headers, dataId, token, relationSpaceUID,
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
@@ -181,4 +177,24 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 	go h.LoopCollect(PromRelationMetric, h.relationMetricDimensions)
 	go h.LoopCollect(PromFlowMetric, h.flowMetricCollector)
 	return h
+}
+
+// 根据业务ID获取空间UID
+// 正数业务ID为bkcc类型，直接拼接；非正数业务ID需要查询Space表获取真实的空间类型和空间ID
+func bkBizIdToSpaceUID(bkBizId string) string {
+	bizId, err := strconv.Atoi(bkBizId)
+	if err != nil {
+		return ""
+	}
+
+	if bizId > 0 {
+		return fmt.Sprintf("bkcc__%d", bizId)
+	}
+
+	var s space.Space
+	if err := mysql.GetDBSession().DB.Where("id = ?", -bizId).First(&s).Error; err != nil {
+		monitorLogger.Errorf("[MetricDimension] failed to get space by id(%d), error: %s", -bizId, err)
+		return ""
+	}
+	return s.SpaceUid()
 }

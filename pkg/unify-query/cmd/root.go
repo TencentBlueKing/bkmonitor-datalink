@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
@@ -56,6 +57,7 @@ var rootCmd = &cobra.Command{
 		serviceList = []define.Service{
 			&consul.Service{},
 			&redis.Service{},
+			&cmdb.Service{},
 			&trace.Service{},
 			&influxdb.Service{},
 			&tsdb.Service{},

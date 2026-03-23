@@ -162,7 +162,7 @@ func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expa
 
 	allIndex := ResourcesIndex(resource)
 
-	field := fmt.Sprintf("%s_info_relation", resource)
+	field := fmt.Sprintf("%s_info_relation_value", resource)
 	ref := string(rune(ascii + q.index))
 	query = &structured.Query{
 		FieldName:     field,
@@ -190,7 +190,7 @@ func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*stru
 
 	resources := []string{string(source), string(target)}
 	sort.Strings(resources)
-	field := fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
+	field := fmt.Sprintf("%s_relation_value", strings.Join(resources, "_with_"))
 
 	ref := string(rune(ascii + q.index))
 

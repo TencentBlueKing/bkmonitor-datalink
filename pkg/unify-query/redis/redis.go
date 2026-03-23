@@ -134,3 +134,20 @@ var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Me
 	p := globalInstance.client.Subscribe(ctx, channels...)
 	return p.Channel()
 }
+
+// Scan 迭代式扫描 key，避免阻塞 Redis
+// cursor: 游标位置，首次调用传 0
+// match: 匹配模式
+// count: 建议返回的 key 数量（实际可能更多或更少）
+var Scan = func(ctx context.Context, cursor uint64, match string, count int64) (keys []string, nextCursor uint64, err error) {
+	log.Debugf(ctx, "[redis] scan cursor=%d match=%s count=%d", cursor, match, count)
+	res := globalInstance.client.Scan(ctx, cursor, match, count)
+	return res.Result()
+}
+
+// Publish 发布消息到指定通道
+var Publish = func(ctx context.Context, channel string, message interface{}) (int64, error) {
+	log.Debugf(ctx, "[redis] publish %s", channel)
+	res := globalInstance.client.Publish(ctx, channel, message)
+	return res.Result()
+}

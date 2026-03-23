@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -35,15 +36,28 @@ const (
 )
 
 var (
-	mdl *model
-	mtx sync.Mutex
+	mdl      *model
+	mtx      sync.Mutex
+	provider cmdb.SchemaProvider
 )
+
+// InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用
+// 设置后，GetModel 会优先从 SchemaProvider 获取配置，获取失败则回退到硬编码 configData
+func InitSchemaProvider(p cmdb.SchemaProvider) {
+	mtx.Lock()
+	defer mtx.Unlock()
+	provider = p
+	// 重置 model，下次 GetModel 调用时会用新的 provider 重建
+	mdl = nil
+}
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	var err error
 	if mdl == nil {
 		mtx.Lock()
-		mdl, err = newModel(ctx)
+		if mdl == nil {
+			mdl, err = newModel(ctx)
+		}
 		mtx.Unlock()
 	}
 	return mdl, err
@@ -56,11 +70,65 @@ type model struct {
 }
 
 // newModel 初始化
+// 优先从 SchemaProvider 获取配置，失败则回退到硬编码 configData
 func newModel(ctx context.Context) (*model, error) {
 	var (
-		err error
-		cfg = configData
+		err        error
+		cfg        *Config
+		configSource string
 	)
+
+	ctx, span := trace.NewSpan(ctx, "v1beta1-new-model")
+	defer span.End(&err)
+
+	// 尝试从 SchemaProvider 获取动态配置
+	if provider != nil {
+		span.Set("schema_provider.available", true)
+		adapter := NewConfigAdapter(provider)
+		cfg, err = adapter.GetConfig(ctx, "")
+		if err != nil {
+			log.Warnf(ctx, "failed to get config from SchemaProvider, falling back to hardcoded config: %v", err)
+			span.Set("schema_provider.error", err.Error())
+			cfg = nil
+			err = nil // 清除错误，允许回退
+		} else {
+			configSource = "schema_provider"
+			log.Infof(ctx, "v1beta1 model loaded from SchemaProvider: %d resources, %d relations",
+				len(cfg.Resource), len(cfg.Relation))
+		}
+	} else {
+		span.Set("schema_provider.available", false)
+	}
+
+	// 回退到硬编码配置
+	if cfg == nil {
+		cfg = configData
+		configSource = "hardcoded"
+		log.Infof(ctx, "v1beta1 model using hardcoded config: %d resources, %d relations",
+			len(cfg.Resource), len(cfg.Relation))
+	}
+
+	// 记录 trace 信息：配置来源、资源/关联数量和名称
+	span.Set("config_source", configSource)
+	span.Set("resource_count", len(cfg.Resource))
+	span.Set("relation_count", len(cfg.Relation))
+
+	resourceNames := make([]string, 0, len(cfg.Resource))
+	for _, r := range cfg.Resource {
+		resourceNames = append(resourceNames, string(r.Name))
+	}
+	span.Set("resource_names", resourceNames)
+
+	relationNames := make([]string, 0, len(cfg.Relation))
+	for _, r := range cfg.Relation {
+		if len(r.Resources) == 2 {
+			relationNames = append(relationNames, fmt.Sprintf("%s->%s", r.Resources[0], r.Resources[1]))
+		}
+	}
+	span.Set("relation_names", relationNames)
+
+	// 更新全局 resourceConfig 映射（供 ResourcesIndex/ResourcesInfo/AllResources 使用）
+	updateResourceConfig(cfg)
 
 	// 初始化 graph 存储结构
 	g := graph.New(graph.StringHash)
@@ -508,4 +576,44 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
+}
+
+func (r *model) QueryDynamicPaths(ctx context.Context, lookBackDelta, spaceUid string, timestamp string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, cmdb.Matchers, error) {
+	resSource, resIndexMatcher, pathStrings, resTarget, resMatchers, err := r.QueryResourceMatcher(ctx, lookBackDelta, spaceUid, timestamp, target, source, indexesMatcher, expandMatcher, expandShow, pathResource)
+	if err != nil {
+		return resSource, resIndexMatcher, nil, resTarget, resMatchers, err
+	}
+
+	return resSource, resIndexMatcher, convertStringsToPathsV2(pathStrings), resTarget, resMatchers, nil
+}
+
+func (r *model) QueryDynamicPathsRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	resSource, resIndexMatcher, pathStrings, resTarget, result, err := r.QueryResourceMatcherRange(ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexesMatcher, expandMatcher, expandShow, pathResource)
+	if err != nil {
+		return resSource, resIndexMatcher, nil, resTarget, result, err
+	}
+
+	return resSource, resIndexMatcher, convertStringsToPathsV2(pathStrings), resTarget, result, nil
+}
+
+func convertStringsToPathsV2(pathStrings []string) []cmdb.PathV2 {
+	if len(pathStrings) == 0 {
+		return nil
+	}
+
+	pathsV2 := make([]cmdb.PathV2, len(pathStrings))
+	for i, pathStr := range pathStrings {
+		// pathStr 格式为 "resource1 -> resource2 -> resource3"
+		// 将其转换为 PathV2 结构
+		pathV2 := cmdb.PathV2{
+			Steps: []cmdb.PathStepV2{
+				{
+					ResourceType: pathStr,
+					// v1beta1 没有详细的关系类型信息，只存储完整路径字符串
+				},
+			},
+		}
+		pathsV2[i] = pathV2
+	}
+	return pathsV2
 }

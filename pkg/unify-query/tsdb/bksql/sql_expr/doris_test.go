@@ -727,6 +727,51 @@ func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
 		assert.NotContains(t, valueExpr, "COUNT(NULL)", "不得生成 COUNT(NULL)")
 	})
 
+	t.Run("valueField 为 FieldTime(_time) 时使用内置时间字段替换", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", FieldTime).
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "count", Dimensions: []string{}}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, selectFields)
+		valueExpr := ""
+		for _, s := range selectFields {
+			if strings.Contains(s, "AS `"+Value+"`") {
+				valueExpr = s
+				break
+			}
+		}
+		assert.Equal(t, "COUNT(`dtEventTimeStamp`) AS `"+Value+"`", valueExpr, "FieldTime 应替换为内置时间字段")
+		assert.NotContains(t, valueExpr, "COUNT(NULL)", "不得生成 COUNT(NULL)")
+	})
+
+	t.Run("valueField 为 SelectAll(*) 时生成 COUNT(*)", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", SelectAll).
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "count", Dimensions: []string{}}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, selectFields)
+		valueExpr := ""
+		for _, s := range selectFields {
+			if strings.Contains(s, "AS `"+Value+"`") {
+				valueExpr = s
+				break
+			}
+		}
+		assert.Equal(t, "COUNT(*) AS `"+Value+"`", valueExpr, "SelectAll 应生成 COUNT(*)")
+	})
+
 	t.Run("valueField 为真实存在字段时使用该字段聚合", func(t *testing.T) {
 		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
 			WithInternalFields("dtEventTimeStamp", "log").

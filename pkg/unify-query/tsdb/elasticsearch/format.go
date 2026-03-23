@@ -32,10 +32,12 @@ import (
 )
 
 const (
-	KeyValue   = "_key"
-	FieldValue = "_value"
-	FieldTime  = "_time"
+	KeyValue          = "_key"
+	FieldValue        = "_value"
+	FieldTime         = "_time"
+	defaultCountField = "_index"
 
+	SelectAll            = "*"
 	DefaultTimeFieldName = "dtEventTimeStamp"
 	DefaultTimeFieldType = TimeFieldTypeTime
 	DefaultTimeFieldUnit = function.Millisecond
@@ -819,12 +821,23 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		return "", nil, err
 	}
 
+	// 解析取值字段："*" 映射到 _index 实现 COUNT(*)，"_time" 替换为内置时间字段
+	valueField := f.valueField
+	switch valueField {
+	case SelectAll:
+		valueField = defaultCountField
+	case FieldTime:
+		if f.timeField.Name != "" {
+			valueField = f.timeField.Name
+		}
+	}
+
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
 			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
-			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
+			f.valueAgg(valueField, FieldValue, am.Name, am.Args...)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数

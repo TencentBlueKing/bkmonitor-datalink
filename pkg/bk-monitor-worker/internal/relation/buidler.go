@@ -607,3 +607,20 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 
 	return metrics
 }
+
+// InitSchemaProvider 初始化全局 MetricsBuilder 的 SchemaProvider
+// 应在服务启动时调用，用于注入 SchemaProvider
+func InitSchemaProvider(provider relation.SchemaProvider) {
+	if provider == nil {
+		logger.Warnf("[relation] InitSchemaProvider called with nil provider, ignored")
+		return
+	}
+	
+	defaultRelationMetricsBuilder.WithSchemaProvider(provider)
+	logger.Infof("[relation] SchemaProvider initialized successfully")
+}
+
+// GetSchemaProvider 获取当前 SchemaProvider（用于测试和调试）
+func GetSchemaProvider() relation.SchemaProvider {
+	return defaultRelationMetricsBuilder.schemaProvider
+}

@@ -20,8 +20,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"google.golang.org/grpc"
-	"k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
@@ -43,7 +42,7 @@ func NewContainerdRuntime() define.Runtime {
 			containerdClient: client,
 			log:              ctrl.Log.WithName("containerd"),
 		},
-		criClient: &CRIClientV1Alpha2{client: v1alpha2.NewRuntimeServiceClient(conn)},
+		criClient: &CRIClientV1Alpha2{client: v1.NewRuntimeServiceClient(conn)},
 	}
 }
 

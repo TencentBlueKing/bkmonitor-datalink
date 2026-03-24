@@ -679,22 +679,45 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		logger.Errorf("PushTableIdDetail: compose table id fields failed, err: %s", err.Error())
 		return err
 	}
+	recordRuleTableIdDetail, err := s.composeRecordRuleTableIdDetail(bkTenantId)
+	if err != nil {
+		logger.Errorf("PushTableIdDetail: compose record rule table id detail failed, err: %s", err.Error())
+		return err
+	}
+	for tableId, detail := range recordRuleTableIdDetail {
+		tableIdDetail[tableId] = detail
+	}
 
 	client := redis.GetStorageRedisInstance()
 	// 推送数据
 	rtDetailKey := cfg.ResultTableDetailKey
 	for tableId, detail := range tableIdDetail {
-		var ok bool
-		// fields
-		detail["fields"], ok = tableIdFields[tableId]
-		metricNum := 0
-		if !ok {
-			detail["fields"] = []string{}
+		if recordRuleDetail, ok := recordRuleTableIdDetail[tableId]; ok {
+			detail = recordRuleDetail
 		} else {
-			metricNum = len(tableIdFields[tableId])
+			var ok bool
+			// fields
+			detail["fields"], ok = tableIdFields[tableId]
+			if !ok {
+				detail["fields"] = []string{}
+			}
+
+			// data_label
+			rt, ok := tableIdRtMap[tableId]
+			if !ok {
+				detail["data_label"] = ""
+				detail["labels"] = map[string]any{}
+			} else {
+				detail["data_label"] = rt.DataLabel
+				detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
+			}
+			detail["measurement_type"] = measurementTypeMap[tableId]
+			detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
+			detail["bk_data_id"] = tableIdDataIdMap[tableId]
 		}
+
 		// 添加结果表的指标数量
-		metadataMetrics.RtMetricNum(tableId, float64(metricNum))
+		metadataMetrics.RtMetricNum(tableId, float64(getTableDetailMetricNum(detail["fields"])))
 
 		// 多租户模式下，需要加上租户ID后缀
 		var redisKey string
@@ -703,19 +726,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		} else {
 			redisKey = tableId
 		}
-
-		// data_label
-		rt, ok := tableIdRtMap[tableId]
-		if !ok {
-			detail["data_label"] = ""
-			detail["labels"] = map[string]any{}
-		} else {
-			detail["data_label"] = rt.DataLabel
-			detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
-		}
-		detail["measurement_type"] = measurementTypeMap[tableId]
-		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
-		detail["bk_data_id"] = tableIdDataIdMap[tableId]
 		detailStr, err := jsonx.MarshalString(detail)
 		if err != nil {
 			logger.Errorf("PushTableIdDetail:marshal result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
@@ -1016,6 +1026,112 @@ func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[stri
 		return map[string]any{}
 	}
 	return labelsMap
+}
+
+type recordRuleTableIdDetailRow struct {
+	TableId      string `gorm:"column:table_id"`
+	VmClusterId  int    `gorm:"column:vm_cluster_id"`
+	DstVmTableId string `gorm:"column:dst_vm_table_id"`
+	RuleMetrics  string `gorm:"column:rule_metrics"`
+}
+
+func getTableDetailMetricNum(fields any) int {
+	switch typed := fields.(type) {
+	case []string:
+		return len(typed)
+	case []any:
+		return len(typed)
+	default:
+		return 0
+	}
+}
+
+func parseRecordRuleMetricValues(ruleMetrics string) ([]string, error) {
+	ruleMetrics = strings.TrimSpace(ruleMetrics)
+	if ruleMetrics == "" || ruleMetrics == "null" {
+		return []string{}, nil
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(ruleMetrics))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, errors.Errorf("rule_metrics must be a json object")
+	}
+
+	metrics := make([]string, 0)
+	for decoder.More() {
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+
+		var metricName string
+		if err := decoder.Decode(&metricName); err != nil {
+			return nil, err
+		}
+		metrics = append(metrics, metricName)
+	}
+
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	return metrics, nil
+}
+
+func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[string]map[string]any, error) {
+	logger.Infof("composeRecordRuleTableIdDetail:start to compose record rule table detail, bk_tenant_id [%s]", bkTenantId)
+
+	db := mysql.GetDBSession().DB
+	var recordRuleList []recordRuleTableIdDetailRow
+	if err := db.Table(recordrule.RecordRule{}.TableName()).
+		Select("table_id, vm_cluster_id, dst_vm_table_id, rule_metrics").
+		Where("bk_tenant_id = ?", bkTenantId).
+		Scan(&recordRuleList).Error; err != nil {
+		return nil, err
+	}
+
+	var vmClusterList []storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).
+		Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).
+		ClusterTypeEq(models.StorageTypeVM).
+		All(&vmClusterList); err != nil {
+		return nil, err
+	}
+	vmClusterIdNameMap := make(map[int]string)
+	for _, cluster := range vmClusterList {
+		vmClusterIdNameMap[int(cluster.ClusterID)] = cluster.ClusterName
+	}
+
+	tableIdDetail := make(map[string]map[string]any, len(recordRuleList))
+	for _, recordRule := range recordRuleList {
+		fields, err := parseRecordRuleMetricValues(recordRule.RuleMetrics)
+		if err != nil {
+			return nil, err
+		}
+
+		tableIdDetail[recordRule.TableId] = map[string]any{
+			"vm_rt":            recordRule.DstVmTableId,
+			"storage_id":       recordRule.VmClusterId,
+			"cluster_name":     "",
+			"storage_name":     vmClusterIdNameMap[recordRule.VmClusterId],
+			"db":               "",
+			"measurement":      "",
+			"tags_key":         []string{},
+			"fields":           fields,
+			"measurement_type": models.MeasurementTypeBkSplit,
+			"bcs_cluster_id":   "",
+			"data_label":       "",
+			"labels":           map[string]any{},
+			"storage_type":     models.StorageTypeVM,
+			"bk_data_id":       nil,
+		}
+	}
+
+	return tableIdDetail, nil
 }
 
 func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {

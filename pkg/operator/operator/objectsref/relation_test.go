@@ -58,6 +58,65 @@ container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-no
 	assert.Equal(t, expected, buf.String())
 }
 
+func TestWritePodRelationsWithStatefulSet(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cases := []struct {
+		name       string
+		ownerKind  string
+		setupObjs  func() (*Objects, *Objects) // statefulSetObjs, gameStatefulSetObjs
+	}{
+		{
+			name:      "standard StatefulSet",
+			ownerKind: kindStatefulSet,
+			setupObjs: func() (*Objects, *Objects) {
+				sts := NewObjects(kindStatefulSet)
+				sts.Set(Object{ID: ObjectID{Name: "test-sts-1", Namespace: "test-ns-1"}})
+				return sts, nil
+			},
+		},
+		{
+			name:      "GameStatefulSet",
+			ownerKind: kindGameStatefulSet,
+			setupObjs: func() (*Objects, *Objects) {
+				gsts := NewObjects(kindGameStatefulSet)
+				gsts.Set(Object{ID: ObjectID{Name: "test-sts-1", Namespace: "test-ns-1"}})
+				return nil, gsts
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			podObject := PodObject{
+				ID:         ObjectID{Name: "test-pod-0", Namespace: "test-ns-1"},
+				NodeName:   "test-node-1",
+				Containers: []ContainerKey{{Name: "test-container-1"}},
+				OwnerRefs:  []OwnerRef{{Kind: tc.ownerKind, Name: "test-sts-1"}},
+			}
+
+			stsObjs, gstsObjs := tc.setupObjs()
+			objectsController := &ObjectsController{
+				ctx:    ctx,
+				cancel: cancel,
+				podObjs: &PodMap{
+					objs: map[string]PodObject{podObject.ID.String(): podObject},
+				},
+				statefulSetObjs:     stsObjs,
+				gameStatefulSetObjs: gstsObjs,
+			}
+
+			buf := &bytes.Buffer{}
+			objectsController.WritePodRelations(buf)
+
+			output := buf.String()
+			assert.Contains(t, output, `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-0",node="test-node-1"} 1`)
+			assert.Contains(t, output, `pod_with_statefulset_relation{namespace="test-ns-1",pod="test-pod-0",statefulset="test-sts-1"} 1`)
+		})
+	}
+}
+
 func TestWriteDataSourceRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

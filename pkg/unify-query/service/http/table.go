@@ -10,7 +10,9 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/prometheus/prometheus/promql"
@@ -21,15 +23,37 @@ const (
 	DefaultValue = "_value"
 )
 
+// StatPoint 表示 [时间戳, value]，时间戳 int64，数值 float64，JSON 序列化为 [t, v]
+type StatPoint struct {
+	T int64   `json:"-"` // 时间戳，序列化时写入数组第 0 位
+	V float64 `json:"-"` // 数值，序列化时写入数组第 1 位
+}
+
+// MarshalJSON 输出为 [T, V]
+func (p StatPoint) MarshalJSON() ([]byte, error) {
+	return json.Marshal([2]any{p.T, p.V})
+}
+
+// StatItem 统计点集的 Count/Sum/Min/Max/Avg/Last，每项为 [时间戳, value]；Last 为按顺序的最后一个点
+type StatItem struct {
+	Count StatPoint `json:"count"`
+	Sum   StatPoint `json:"sum"`
+	Min   StatPoint `json:"min"`
+	Max   StatPoint `json:"max"`
+	Avg   StatPoint `json:"avg"`
+	Last  StatPoint `json:"last"`
+}
+
 // TablesItem
 type TablesItem struct {
-	Name        string   `json:"name"`
-	MetricName  string   `json:"metric_name"`
-	Columns     []string `json:"columns"`
-	Types       []string `json:"types"`
-	GroupKeys   []string `json:"group_keys"`
-	GroupValues []string `json:"group_values"`
-	Values      [][]any  `json:"values"`
+	Name        string    `json:"name"`
+	MetricName  string    `json:"metric_name"`
+	Columns     []string  `json:"columns"`
+	Types       []string  `json:"types"`
+	GroupKeys   []string  `json:"group_keys"`
+	GroupValues []string  `json:"group_values"`
+	Values      [][]any   `json:"values"`
+	Stat        *StatItem `json:"stat,omitempty"`
 }
 
 // String
@@ -97,4 +121,36 @@ func (t *TablesItem) SetValuesByPoints(points []promql.Point) {
 		}
 	}
 	t.Values = values
+}
+
+// ComputeStatFromPoints 根据点集计算 Stat（Count/Sum/Min/Max/Avg/Last），基于全部点
+func ComputeStatFromPoints(points []promql.Point) *StatItem {
+	if len(points) == 0 {
+		return nil
+	}
+	var sum float64
+	minV, maxV := math.MaxFloat64, -math.MaxFloat64
+	minIdx, maxIdx := 0, 0
+	for i, p := range points {
+		sum += p.V
+		if p.V < minV {
+			minV = p.V
+			minIdx = i
+		}
+		if p.V > maxV {
+			maxV = p.V
+			maxIdx = i
+		}
+	}
+	n := float64(len(points))
+	avg := sum / n
+	last := points[len(points)-1]
+	return &StatItem{
+		Count: StatPoint{T: 0, V: n},
+		Sum:   StatPoint{T: 0, V: sum},
+		Min:   StatPoint{T: points[minIdx].T, V: minV},
+		Max:   StatPoint{T: points[maxIdx].T, V: maxV},
+		Avg:   StatPoint{T: 0, V: avg},
+		Last:  StatPoint{T: last.T, V: last.V},
+	}
 }

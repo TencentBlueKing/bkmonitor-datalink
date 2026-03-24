@@ -1,5 +1,5 @@
 # Build the bk-log-sidecar binary
-FROM golang:1.16 as builder
+FROM golang:1.25 as builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests

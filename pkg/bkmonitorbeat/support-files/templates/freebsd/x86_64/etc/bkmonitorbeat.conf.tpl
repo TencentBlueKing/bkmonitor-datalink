@@ -28,9 +28,11 @@ logging.backups: 5
 
 
 # ============================= Resource ==================================
-{% if cmdb_instance.host.bk_cpu and cmdb_instance.host.bk_mem %}
-{%- set resource_limit = resource_limit | default({}) -%}
 resource_limit:
+{%- if extra_vars is defined and extra_vars.disable_resource_limit is defined and extra_vars.disable_resource_limit == "true" %}
+  enabled: false
+{%- elif cmdb_instance.host.bk_cpu and cmdb_instance.host.bk_mem %}
+{%- set resource_limit = resource_limit | default({}) -%}
   enabled: true
   cpu: {{
     [
@@ -50,7 +52,11 @@ resource_limit:
         resource_limit.get('mem', {}).get('max', 1000)
     ] | min | int
   }}
-{% endif %}
+{%- else %}
+  enabled: true
+  cpu: 1
+  mem: -1
+{%- endif %}
 
 # ================================= Tasks =======================================
 bkmonitorbeat:

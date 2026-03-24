@@ -1501,9 +1501,15 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 		iof.Parse(nil, mapping)
 	}
 
+	defaultTimeField := metadata.TimeField{
+		Name: DefaultTimeFieldName,
+		Type: DefaultTimeFieldType,
+		Unit: DefaultTimeFieldUnit,
+	}
 	for name, c := range map[string]struct {
 		aggregates  metadata.Aggregates
 		valueField  string
+		timeField   *metadata.TimeField // nil 表示用 defaultTimeField
 		expected    string
 		shouldError bool
 	}{
@@ -1587,17 +1593,51 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 			valueField: "events.name",
 			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"size":0}`,
 		},
+		"valueField * should use _index for count": {
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"name"},
+				},
+			},
+			valueField: "*",
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"_index"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
+		},
+		"valueField _time should use time field for count": {
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"name"},
+				},
+			},
+			valueField: "_time",
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
+		},
+		"valueField _time when timeField empty should keep _time not _index": {
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"name"},
+				},
+			},
+			valueField: "_time",
+			timeField:  &metadata.TimeField{}, // Name 为空，不替换为 _index
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"_time"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
+			tf := defaultTimeField
+			if c.timeField != nil {
+				tf = *c.timeField
+			}
 			fact := NewFormatFactory(ctx).
-				WithQuery("", metadata.TimeField{
-					Name: DefaultTimeFieldName,
-					Type: DefaultTimeFieldType,
-					Unit: DefaultTimeFieldUnit,
-				}, time.Time{}, time.Time{}, "", 0).
+				WithQuery("", tf, time.Time{}, time.Time{}, "", 0).
 				WithFieldMap(iof.FieldsMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
+			if c.timeField != nil {
+				fact.timeField = *c.timeField // WithQuery 会把空 Name 填成默认值，这里覆盖为真正的空
+			}
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()
 			aggName, agg, aggErr := fact.EsAgg(c.aggregates)

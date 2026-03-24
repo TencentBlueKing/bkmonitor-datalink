@@ -25,6 +25,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
@@ -2717,21 +2718,56 @@ func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
 	}, actualData, "composeTableIdFields should return the expected data")
 }
 
-// setupFilterTestData 设置测试数据用于 filterTsInfo 测试
-func setupFilterTsInfoTestData(t *testing.T, groupID uint) func() {
+func ensureColumnExists(db *gorm.DB, table, column, colType string) {
+	var count int
+	db.Raw(
+		"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+		table, column,
+	).Count(&count)
+	if count == 0 {
+		db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, colType))
+	}
+}
+
+// setupFilterTsInfoTestData 设置测试数据用于 filterTsInfo 测试
+// createdFrom 参数决定数据源的链路类型: common.DataIdFromBkGse(V3) 或 common.DataIdFromBkData(V4)
+func setupFilterTsInfoTestData(t *testing.T, groupID uint, createdFrom string) func() {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
+
+	// 确保测试表 schema 包含所需列
+	ensureColumnExists(db, "metadata_timeseriesgroup", "metric_group_dimensions", "JSON")
+	ensureColumnExists(db, "metadata_timeseriesmetric", "field_config", "JSON")
+	ensureColumnExists(db, "metadata_timeseriesmetric", "is_active", "TINYINT(1) DEFAULT 1")
+	ensureColumnExists(db, "metadata_timeseriesmetric", "field_scope", "VARCHAR(255) DEFAULT 'default'")
+	ensureColumnExists(db, "metadata_datasource", "created_from", "VARCHAR(16) DEFAULT ''")
+	ensureColumnExists(db, "metadata_datasource", "is_tenant_specific_global", "TINYINT(1) DEFAULT 0")
+
+	dataId := 50000 + groupID
 
 	// 清理旧数据
 	db.Delete(&customreport.TimeSeriesGroup{}, "time_series_group_id = ?", groupID)
 	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", groupID)
+	db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", dataId)
+
+	// 创建 DataSource（用于区分 V3/V4 链路）
+	ds := resulttable.DataSource{
+		BkDataId:    dataId,
+		BkTenantId:  tenant.DefaultTenantId,
+		DataName:    fmt.Sprintf("test_ds_%d", dataId),
+		CreatedFrom: createdFrom,
+		Token:       fmt.Sprintf("token_%d", dataId),
+		IsEnable:    true,
+	}
+	err := db.Create(&ds).Error
+	assert.NoError(t, err)
 
 	// 创建 TimeSeriesGroup
 	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
 	tsGroup := customreport.TimeSeriesGroup{
 		CustomGroupBase: customreport.CustomGroupBase{
 			TableID:  tableID,
-			BkDataID: 50000 + groupID,
+			BkDataID: dataId,
 			BkBizID:  1001,
 			Label:    "test_label",
 		},
@@ -2739,7 +2775,7 @@ func setupFilterTsInfoTestData(t *testing.T, groupID uint) func() {
 		BkTenantId:          tenant.DefaultTenantId,
 		TimeSeriesGroupName: fmt.Sprintf("test_filter_group_%d", groupID),
 	}
-	err := db.Create(&tsGroup).Error
+	err = db.Create(&tsGroup).Error
 	assert.NoError(t, err)
 
 	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
@@ -2790,23 +2826,15 @@ func setupFilterTsInfoTestData(t *testing.T, groupID uint) func() {
 	return func() {
 		db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", groupID)
 		db.Delete(&customreport.TimeSeriesGroup{}, "time_series_group_id = ?", groupID)
+		db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", dataId)
 	}
 }
 
-// TestFilterTsInfoWithIsActiveEnabled 测试启用 is_active 过滤时的行为
-func TestFilterTsInfoWithIsActiveEnabled(t *testing.T) {
+// TestFilterTsInfoV3BkGse 测试 V3 链路（bkgse）: 严格根据 last_modify_time 过滤
+func TestFilterTsInfoV3BkGse(t *testing.T) {
 	groupID := uint(300)
-	cleanup := setupFilterTsInfoTestData(t, groupID)
+	cleanup := setupFilterTsInfoTestData(t, groupID, common.DataIdFromBkGse)
 	defer cleanup()
-
-	// 保存原始配置
-	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
-	defer func() {
-		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
-	}()
-
-	// 启用 is_active 过滤
-	cfg.GlobalEnableTsMetricFilterByIsActive = true
 
 	spacePusher := &SpacePusher{}
 	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
@@ -2814,90 +2842,67 @@ func TestFilterTsInfoWithIsActiveEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, tsInfo)
 
-	// 验证结果: 只应该包含 is_active=true 的指标
-	fieldNames := tsInfo.GroupIdFieldsMap[groupID]
-	assert.Contains(t, fieldNames, "active_metric", "should contain active metric")
-	assert.Contains(t, fieldNames, "expired_metric", "should contain expired but active metric")
-	assert.NotContains(t, fieldNames, "inactive_metric", "should not contain inactive metric")
-	assert.Equal(t, 2, len(fieldNames), "should have exactly 2 active metrics")
-}
-
-// TestFilterTsInfoWithIsActiveDisabled 测试禁用 is_active 过滤时的行为（原有逻辑）
-func TestFilterTsInfoWithIsActiveDisabled(t *testing.T) {
-	groupID := uint(301)
-	cleanup := setupFilterTsInfoTestData(t, groupID)
-	defer cleanup()
-
-	// 保存原始配置
-	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
-	defer func() {
-		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
-	}()
-
-	// 禁用 is_active 过滤
-	cfg.GlobalEnableTsMetricFilterByIsActive = false
-
-	spacePusher := &SpacePusher{}
-	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
-	tsInfo, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
-	assert.NoError(t, err)
-	assert.NotNil(t, tsInfo)
-
-	// 验证结果: 只应该包含最近更新的指标（不管 is_active 状态）
+	// V3 链路只根据 last_modify_time 过滤: 只包含最近更新的指标
 	fieldNames := tsInfo.GroupIdFieldsMap[groupID]
 	assert.Contains(t, fieldNames, "active_metric", "should contain recently updated active metric")
-	assert.Contains(t, fieldNames, "inactive_metric", "should contain recently updated inactive metric")
+	assert.Contains(t, fieldNames, "inactive_metric", "should contain recently updated inactive metric (V3 ignores is_active)")
 	assert.NotContains(t, fieldNames, "expired_metric", "should not contain expired metric")
 	assert.Equal(t, 2, len(fieldNames), "should have exactly 2 recently updated metrics")
 }
 
-// TestFilterTsInfoBehaviorComparison 测试两种模式的行为差异
-func TestFilterTsInfoBehaviorComparison(t *testing.T) {
-	groupID := uint(302)
-	cleanup := setupFilterTsInfoTestData(t, groupID)
+// TestFilterTsInfoV4BkData 测试 V4 链路（bkdata）: 根据 last_modify_time 或 is_active 过滤
+func TestFilterTsInfoV4BkData(t *testing.T) {
+	groupID := uint(301)
+	cleanup := setupFilterTsInfoTestData(t, groupID, common.DataIdFromBkData)
 	defer cleanup()
-
-	// 保存原始配置
-	originalConfig := cfg.GlobalEnableTsMetricFilterByIsActive
-	defer func() {
-		cfg.GlobalEnableTsMetricFilterByIsActive = originalConfig
-	}()
 
 	spacePusher := &SpacePusher{}
 	tableID := fmt.Sprintf("test_filter_%d.__default__", groupID)
-
-	// 测试模式 1: is_active 过滤
-	cfg.GlobalEnableTsMetricFilterByIsActive = true
-	tsInfoIsActive, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	tsInfo, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
 	assert.NoError(t, err)
-	assert.NotNil(t, tsInfoIsActive)
+	assert.NotNil(t, tsInfo)
 
-	// 测试模式 2: last_modify_time 过滤
-	cfg.GlobalEnableTsMetricFilterByIsActive = false
-	tsInfoLastModifyTime, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{tableID})
+	// V4 链路根据 last_modify_time OR is_active 过滤: 包含最近更新的或活跃的指标
+	fieldNames := tsInfo.GroupIdFieldsMap[groupID]
+	assert.Contains(t, fieldNames, "active_metric", "should contain active and recently updated metric")
+	assert.Contains(t, fieldNames, "inactive_metric", "should contain recently updated metric (even if inactive)")
+	assert.Contains(t, fieldNames, "expired_metric", "should contain expired but is_active=true metric")
+	assert.Equal(t, 3, len(fieldNames), "should have all 3 metrics (last_modify_time OR is_active)")
+}
+
+// TestFilterTsInfoV3V4Comparison 测试 V3 和 V4 链路的行为差异
+func TestFilterTsInfoV3V4Comparison(t *testing.T) {
+	v3GroupID := uint(302)
+	v4GroupID := uint(303)
+	cleanupV3 := setupFilterTsInfoTestData(t, v3GroupID, common.DataIdFromBkGse)
+	defer cleanupV3()
+	cleanupV4 := setupFilterTsInfoTestData(t, v4GroupID, common.DataIdFromBkData)
+	defer cleanupV4()
+
+	spacePusher := &SpacePusher{}
+	v3TableID := fmt.Sprintf("test_filter_%d.__default__", v3GroupID)
+	v4TableID := fmt.Sprintf("test_filter_%d.__default__", v4GroupID)
+
+	// 同时查询 V3 和 V4 的结果表
+	tsInfo, err := spacePusher.filterTsInfo(tenant.DefaultTenantId, []string{v3TableID, v4TableID})
 	assert.NoError(t, err)
-	assert.NotNil(t, tsInfoLastModifyTime)
+	assert.NotNil(t, tsInfo)
 
-	// 比较两种模式的结果
-	isActiveFields := tsInfoIsActive.GroupIdFieldsMap[groupID]
-	lastModifyTimeFields := tsInfoLastModifyTime.GroupIdFieldsMap[groupID]
+	v3Fields := tsInfo.GroupIdFieldsMap[v3GroupID]
+	v4Fields := tsInfo.GroupIdFieldsMap[v4GroupID]
 
-	t.Logf("is_active mode returned fields: %v", isActiveFields)
-	t.Logf("last_modify_time mode returned fields: %v", lastModifyTimeFields)
+	t.Logf("V3 (bkgse) returned fields: %v", v3Fields)
+	t.Logf("V4 (bkdata) returned fields: %v", v4Fields)
 
-	// 验证 is_active 模式的结果
-	assert.Equal(t, 2, len(isActiveFields), "is_active mode should return 2 metrics")
-	assert.Contains(t, isActiveFields, "active_metric", "is_active mode should contain active_metric")
-	assert.Contains(t, isActiveFields, "expired_metric", "is_active mode should contain expired_metric (still active)")
-	assert.NotContains(t, isActiveFields, "inactive_metric", "is_active mode should not contain inactive_metric")
+	// V3 链路: 严格 last_modify_time，只有最近更新的 2 个指标
+	assert.Equal(t, 2, len(v3Fields), "V3 should return 2 metrics (by last_modify_time only)")
+	assert.Contains(t, v3Fields, "active_metric")
+	assert.Contains(t, v3Fields, "inactive_metric")
+	assert.NotContains(t, v3Fields, "expired_metric")
 
-	// 验证 last_modify_time 模式的结果
-	assert.Equal(t, 2, len(lastModifyTimeFields), "last_modify_time mode should return 2 metrics")
-	assert.Contains(t, lastModifyTimeFields, "active_metric", "last_modify_time mode should contain active_metric")
-	assert.Contains(t, lastModifyTimeFields, "inactive_metric", "last_modify_time mode should contain inactive_metric (recently updated)")
-	assert.NotContains(t, lastModifyTimeFields, "expired_metric", "last_modify_time mode should not contain expired_metric")
-
-	// 两种模式应该返回不同的指标集合
-	assert.NotEqual(t, isActiveFields, lastModifyTimeFields,
-		"two filter modes should return different sets of metrics")
+	// V4 链路: last_modify_time OR is_active，包含所有 3 个指标
+	assert.Equal(t, 3, len(v4Fields), "V4 should return 3 metrics (by last_modify_time OR is_active)")
+	assert.Contains(t, v4Fields, "active_metric")
+	assert.Contains(t, v4Fields, "inactive_metric")
+	assert.Contains(t, v4Fields, "expired_metric")
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
-func TestPromData_NoDownsample_NoStat(t *testing.T) {
+func TestPromData_Fill_FillsStat(t *testing.T) {
 	tables := promql.NewTables()
 	tables.Add(&promql.Table{
 		Headers:     []string{"_time", "_value"},
@@ -33,11 +33,19 @@ func TestPromData_NoDownsample_NoStat(t *testing.T) {
 	err := d.Fill(tables)
 	assert.NoError(t, err)
 	assert.Len(t, d.Tables, 1)
-	// 未调用 Downsample 时不应有 Stat
-	assert.Nil(t, d.Tables[0].Stat)
+	stat := d.Tables[0].Stat
+	assert.NotNil(t, stat)
+	assert.Equal(t, float64(2), stat.Count.V)
+	assert.Equal(t, float64(30), stat.Sum.V)
+	assert.Equal(t, int64(1000), stat.Min.T)
+	assert.Equal(t, float64(10), stat.Min.V)
+	assert.Equal(t, int64(2000), stat.Max.T)
+	assert.Equal(t, float64(20), stat.Max.V)
+	assert.Equal(t, float64(15), stat.Avg.V)
 }
 
-func TestPromData_Downsample_FillsStatAndReducesPoints(t *testing.T) {
+// Fill 已写入 Stat；Downsample 只缩减 Values，Stat 仍为降采样前点集统计。
+func TestPromData_Downsample_PreservesStatAndReducesPoints(t *testing.T) {
 	tables := promql.NewTables()
 	// 10 个点，降采样后应少于 10 个
 	data := make([][]any, 10)
@@ -59,8 +67,12 @@ func TestPromData_Downsample_FillsStatAndReducesPoints(t *testing.T) {
 	origLen := len(d.Tables[0].Values)
 	assert.Equal(t, 10, origLen)
 
+	statAfterFill := d.Tables[0].Stat
+	assert.NotNil(t, statAfterFill)
+
 	// factor 0.3 => threshold = ceil(10*0.3) = 3，降采样后 3 个点
 	d.Downsample(0.3)
+	assert.Same(t, statAfterFill, d.Tables[0].Stat, "Downsample 不应替换 Stat，仅缩减 Values")
 	assert.NotNil(t, d.Tables[0].Stat)
 	// Stat 应为降采样前的统计：10 个点
 	assert.Equal(t, float64(10), d.Tables[0].Stat.Count.V)

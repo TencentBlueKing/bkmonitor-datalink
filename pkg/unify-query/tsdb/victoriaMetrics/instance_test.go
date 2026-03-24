@@ -18,6 +18,11 @@ import (
 
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -25,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	uqtrace "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
@@ -487,4 +493,77 @@ func TestInstance_DirectQueryRange_WithVmQueryCluster(t *testing.T) {
 	res, _, err := instance.DirectQueryRange(ctx, fmt.Sprintf(`sum(increase(%s[1m])) by (pod)`, vmCondition.ToMatch()), start, end, step)
 	assert.NoError(t, err)
 	assert.Len(t, res, 1)
+}
+
+func spanAttrString(attrs []attribute.KeyValue, key string) (string, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
+}
+
+func TestSpanSetVmQueryClusterIfPresent(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+	})
+
+	t.Run("writes JSON for vm-data prefix", func(t *testing.T) {
+		rec.Reset()
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		vc := &metadata.VmQueryCluster{
+			QueryCluster:       "vm-query.example.com",
+			StorageClusterList: []string{"s1", "s2"},
+		}
+		spanSetVmQueryClusterIfPresent(span, "vm-data", vc)
+		var err error
+		span.End(&err)
+
+		ended := rec.Ended()
+		require.Len(t, ended, 1)
+		got, ok := spanAttrString(ended[0].Attributes(), "vm-data-vm-query-cluster")
+		require.True(t, ok)
+		want, jerr := json.Marshal(vc)
+		require.NoError(t, jerr)
+		assert.JSONEq(t, string(want), got)
+	})
+
+	t.Run("writes JSON for response- prefix", func(t *testing.T) {
+		rec.Reset()
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		vc := &metadata.VmQueryCluster{
+			QueryCluster:       "vm-instant.example.com",
+			StorageClusterList: []string{"a"},
+		}
+		spanSetVmQueryClusterIfPresent(span, "response-", vc)
+		var err error
+		span.End(&err)
+
+		ended := rec.Ended()
+		require.Len(t, ended, 1)
+		got, ok := spanAttrString(ended[0].Attributes(), "response--vm-query-cluster")
+		require.True(t, ok)
+		want, jerr := json.Marshal(vc)
+		require.NoError(t, jerr)
+		assert.JSONEq(t, string(want), got)
+	})
+
+	t.Run("nil does not set attribute", func(t *testing.T) {
+		rec.Reset()
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		spanSetVmQueryClusterIfPresent(span, "vm-data", nil)
+		var err error
+		span.End(&err)
+
+		ended := rec.Ended()
+		require.Len(t, ended, 1)
+		_, ok := spanAttrString(ended[0].Attributes(), "vm-data-vm-query-cluster")
+		assert.False(t, ok)
+	})
 }

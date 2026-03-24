@@ -25,8 +25,6 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"golang.org/x/time/rate"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -111,9 +109,8 @@ func StartStreamSeriesSet(
 				span.Set("resp-series-num", seriesNum)
 				span.Set("resp-point-num", pointsNum)
 
-				user := metadata.GetUser(ctx)
 				metric.TsDBRequestSecond(
-					ctx, sub, user.SpaceUid, user.Source, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
+					ctx, sub, fmt.Sprintf("%s_grpc", metadata.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)
@@ -130,10 +127,10 @@ func StartStreamSeriesSet(
 			for {
 				r, err := s.stream.Recv()
 				if r != nil {
-					if opt.MetricLabel != nil {
+					if opt.MetricName != "" {
 						r.Labels = append(r.Labels, &remote.LabelPair{
-							Name:  opt.MetricLabel.Name,
-							Value: opt.MetricLabel.Value,
+							Name:  labels.MetricName,
+							Value: opt.MetricName,
 						})
 					}
 
@@ -202,7 +199,11 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	defer close(done)
 
 	s.errMtx.Lock()
-	log.Errorf(s.ctx, "StartStreamSeriesSet handle err: %s", err.Error())
+	_ = metadata.NewMessage(
+		metadata.MsgQueryInfluxDB,
+		"查询异常",
+	).Error(s.ctx, err)
+
 	s.err = nil
 	s.errMtx.Unlock()
 }
@@ -241,7 +242,10 @@ func (s *streamSeriesSet) Err() error {
 	defer s.errMtx.Unlock()
 
 	if s.err != nil {
-		log.Errorf(s.ctx, s.err.Error())
+		_ = metadata.NewMessage(
+			metadata.MsgQueryInfluxDB,
+			"查询异常",
+		).Error(s.ctx, s.err)
 	}
 	return errors.Wrap(s.err, s.name)
 }

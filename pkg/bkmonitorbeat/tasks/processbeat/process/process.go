@@ -99,7 +99,7 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 	}
 
 	if stat.CPU != nil {
-		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000))
+		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000)) // ms -> ns
 
 		mstr.Put("cpu", common.MapStr{
 			"total": common.MapStr{
@@ -112,7 +112,6 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 			"start_time": startTime,
 		})
 
-		mstr.Put("uptime", time.Now().Unix()-startTime.Unix())
 		mstr.Put("cpu.user.ticks", stat.CPU.User)
 		mstr.Put("cpu.system.ticks", stat.CPU.Sys)
 		mstr.Put("cpu.total.ticks", stat.CPU.Total)
@@ -198,12 +197,7 @@ func (pc *ProcCollector) CollectProcStat(metas []define.ProcStat) ([]common.MapS
 		names := pc.cmdbConf.MatchNames(metaMapStr)
 
 		for _, matched := range pc.cmdbConf.MatchRegex(names, metaMapStr["cmdline"].(string)) {
-			perf, err := pc.GetOnePerfStat(meta.Pid)
-			if err != nil {
-				logger.Warnf("failed to fetch process perf meta: %+v id: %s stat: %+v", meta, err)
-				continue
-			}
-
+			perf := pc.GetOnePerfStat(meta.Pid)
 			cloned := pc.AsOneCmdbConfMapStr(pc.MergeMetaDataPerfStat(meta, perf))
 			cloned["name"] = matched.Name
 			cloned["exists"] = true
@@ -264,7 +258,7 @@ func (pc *ProcCollector) Snapshot() ([]define.ProcStat, int64, error) {
 	return pc.snapshot, pc.updatedTs, pc.updatedErr
 }
 
-func (pc *ProcCollector) GetOnePerfStat(pid int32) (define.ProcStat, error) {
+func (pc *ProcCollector) GetOnePerfStat(pid int32) define.ProcStat {
 	return pc.mgr.GetOnePerfStat(pid)
 }
 

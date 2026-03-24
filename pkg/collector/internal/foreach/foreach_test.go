@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestMetrics(t *testing.T) {
@@ -30,16 +31,24 @@ func TestMetrics(t *testing.T) {
 		SummaryCount:   2,
 	})
 
-	n := 0
-	Metrics(g.Generate().ResourceMetrics(), func(metric pmetric.Metric) {
-		n++
-	})
+	var n int
+
+	n = 0
+	Metrics(g.Generate(), func(metric pmetric.Metric) { n++ })
+	assert.Equal(t, 8, n)
+
+	n = 1
+	MetricsSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
+
+	n = 0
+	MetricsWithResource(g.Generate(), func(rs pcommon.Map, metric pmetric.Metric) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	MetricsWithResourceAttrs(g.Generate().ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
-		n++
-	})
+	MetricsDataPoint(testkits.FirstMetric(g.Generate()), func(attrs pcommon.Map) { n++ })
+
+	n = 0
+	MetricsDataPointWithResource(g.Generate(), func(metric pmetric.Metric, rs, attrs pcommon.Map) { n++ })
 	assert.Equal(t, 8, n)
 }
 
@@ -48,23 +57,23 @@ func TestTraces(t *testing.T) {
 		SpanCount: 8,
 	})
 
-	n := 0
-	Spans(g.Generate().ResourceSpans(), func(span ptrace.Span) {
-		n++
-	})
+	var n int
+
+	n = 0
+	Spans(g.Generate(), func(span ptrace.Span) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	SpansWithResourceAttrs(g.Generate().ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
-		n++
-	})
+	SpansSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
+	assert.Equal(t, 1, n)
+
+	n = 0
+	SpansWithResource(g.Generate(), func(rs pcommon.Map, span ptrace.Span) { n++ })
 	assert.Equal(t, 8, n)
 
-	spans := g.Generate().ResourceSpans()
-	SpansRemoveIf(spans, func(span ptrace.Span) bool {
-		return true
-	})
-	assert.Equal(t, 0, spans.Len())
+	spans := g.Generate()
+	SpansRemoveIf(spans, func(span ptrace.Span) bool { return true })
+	assert.Equal(t, 0, spans.ResourceSpans().Len())
 }
 
 func TestLogs(t *testing.T) {
@@ -72,15 +81,17 @@ func TestLogs(t *testing.T) {
 		LogCount: 8,
 	})
 
-	n := 0
-	Logs(g.Generate().ResourceLogs(), func(logRecord plog.LogRecord) {
-		n++
-	})
+	var n int
+
+	n = 0
+	Logs(g.Generate(), func(logRecord plog.LogRecord) { n++ })
 	assert.Equal(t, 8, n)
 
 	n = 0
-	LogsWithResourceAttrs(g.Generate().ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) {
-		n++
-	})
+	LogsSliceResource(g.Generate(), func(rs pcommon.Resource) { n++ })
+	assert.Equal(t, 1, n)
+
+	n = 0
+	LogsWithResource(g.Generate(), func(rs pcommon.Map, logRecord plog.LogRecord) { n++ })
 	assert.Equal(t, 8, n)
 }

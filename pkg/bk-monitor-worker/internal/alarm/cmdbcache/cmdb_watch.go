@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -36,6 +23,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -65,8 +54,29 @@ var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeProcess:          {"bk_biz_id"},
 }
 
+// Redis Key 前缀
+type redisKeyPrefix string
+
+const (
+	RedisKeyPrefixCmdbResourceWatchCursor redisKeyPrefix = "cmdb_resource_watch_cursor"
+	RedisKeyPrefixCmdbResourceWatchEvent  redisKeyPrefix = "cmdb_resource_watch_event"
+	RedisKeyPrefixCmdbLastRefreshAllTime  redisKeyPrefix = "cmdb_last_refresh_all_time"
+)
+
+// buildRedisKey 构建带租户ID的Redis key，默认租户保持向前兼容
+func buildRedisKey(bkTenantId, prefix string, keyType redisKeyPrefix, suffix string) string {
+	if bkTenantId == "" || bkTenantId == tenant.DefaultTenantId {
+		// 默认租户向前兼容，保持原有key格式
+		return fmt.Sprintf("%s.%s.%s", prefix, keyType, suffix)
+	}
+	// 其他租户包含租户ID
+	return fmt.Sprintf("%s.%s.%s.%s", bkTenantId, prefix, keyType, suffix)
+}
+
 // CmdbResourceWatcher cmdb资源监听器
 type CmdbResourceWatcher struct {
+	// 租户ID
+	bkTenantId string
 	// 缓存key前缀
 	prefix string
 	// cmdb api client
@@ -77,32 +87,32 @@ type CmdbResourceWatcher struct {
 }
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
-func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
+func NewCmdbResourceWatcher(bkTenantId string, prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create redis client")
+		return nil, errors.Wrapf(err, "failed to create redis client, bkTenantId: %s", bkTenantId)
 	}
 
 	// 创建cmdb api client
-	cmdbApi := getCmdbApi()
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	return &CmdbResourceWatcher{
+		bkTenantId:  bkTenantId,
 		prefix:      prefix,
 		redisClient: redisClient,
 		cmdbApi:     cmdbApi,
 	}, nil
-
 }
 
 // getBkCursor 获取cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType CmdbResourceType) string {
 	// 从redis中获取cmdb资源变更游标
-	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
+	bkCursorKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchCursor, string(resourceType))
 	bkCursorResult := w.redisClient.Get(ctx, bkCursorKey)
 	if bkCursorResult.Err() != nil {
 		if !errors.Is(bkCursorResult.Err(), redis.Nil) {
-			logger.Errorf("get cmdb resource watch cursor error: %v", bkCursorResult.Err())
+			logger.Errorf("get cmdb resource watch cursor error: %v, bkTenantId: %s", bkCursorResult.Err(), w.bkTenantId)
 			return ""
 		}
 	}
@@ -112,16 +122,16 @@ func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType Cmdb
 // setBkCursor 记录cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType CmdbResourceType, cursor string) error {
 	// 设置cmdb资源变更游标
-	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
+	bkCursorKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchCursor, string(resourceType))
 	if _, err := w.redisClient.Set(ctx, bkCursorKey, cursor, time.Hour).Result(); err != nil {
-		return errors.Wrap(err, "set cmdb resource watch cursor error")
+		return errors.Wrapf(err, "set cmdb resource watch cursor error, bkTenantId: %s", w.bkTenantId)
 	}
 	return nil
 }
 
 // Watch 监听资源变更事件并记录
 func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_fields":           CmdbResourceTypeFields[resourceType],
 		"bk_resource":         resourceType,
 		"bk_supplier_account": "0",
@@ -135,7 +145,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 
 	// 请求监听资源变化事件API
 	var resp cmdb.ResourceWatchResp
-	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetBody(params).SetResult(&resp).Request()
+	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetPathParams(map[string]string{"bk_resource": string(resourceType)}).SetBody(params).SetResult(&resp).Request()
 	err = api.HandleApiResultError(resp.ApiCommonRespMeta, err, "watch cmdb resource api failed")
 	if err != nil {
 		return false, err
@@ -151,7 +161,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		newCursor := resp.Data.BkEvents[len(resp.Data.BkEvents)-1].BkCursor
 		if newCursor != "" && newCursor != bkCursor {
 			if err := w.setBkCursor(ctx, resourceType, newCursor); err != nil {
-				logger.Error("set cmdb resource watch cursor error: %v", err)
+				logger.Errorf("set cmdb resource watch cursor error: %v, bkTenantId: %s", err, w.bkTenantId)
 			}
 		}
 
@@ -164,14 +174,14 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		val, _ := json.Marshal(event)
 		events = append(events, string(val))
 	}
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, resourceType)
+	bkEventKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchEvent, string(resourceType))
 	w.redisClient.RPush(ctx, bkEventKey, events)
 
 	// 记录最后一个cmdb资源变更事件游标
 	if len(resp.Data.BkEvents) > 0 {
 		err = w.setBkCursor(ctx, resourceType, resp.Data.BkEvents[len(resp.Data.BkEvents)-1].BkCursor)
 		if err != nil {
-			logger.Error("set cmdb resource watch cursor error: %v", err)
+			logger.Errorf("set cmdb resource watch cursor error: %v, bkTenantId: %s", err, w.bkTenantId)
 		}
 	}
 
@@ -181,7 +191,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 // Run 启动cmdb资源监听任务
 func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 	waitGroup := sync.WaitGroup{}
-	logger.Info("start watch cmdb resource")
+	logger.Infof("start watch cmdb resource, bkTenantId: %s", w.bkTenantId)
 
 	// 按资源类型启动处理任务
 	for resourceType := range CmdbResourceTypeFields {
@@ -198,13 +208,13 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 					return
 				default:
 					// 如果上次监听时间小于5秒且监听无事件，则等待到5秒
-					if !haveEvent && time.Now().Sub(lastTime) < time.Second*5 {
-						time.Sleep(time.Second*5 - time.Now().Sub(lastTime))
+					if !haveEvent && time.Since(lastTime) < time.Second*5 {
+						time.Sleep(time.Second*5 - time.Since(lastTime))
 					}
 
 					haveEvent, err = w.Watch(ctx, resourceType)
 					if err != nil {
-						logger.Errorf("watch cmdb resource(%s) error: %v", resourceType, err)
+						logger.Errorf("watch cmdb resource(%s) error: %v, bkTenantId: %s", resourceType, err, w.bkTenantId)
 					}
 				}
 				// 记录上次监听时间
@@ -219,8 +229,9 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 
 // WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
 type WatchCmdbResourceChangeEventTaskParams struct {
-	Prefix string        `json:"prefix" mapstructure:"prefix"`
-	Redis  redis.Options `json:"redis" mapstructure:"redis"`
+	BkTenantId string        `json:"bk_tenant_id" mapstructure:"bk_tenant_id"`
+	Prefix     string        `json:"prefix" mapstructure:"prefix"`
+	Redis      redis.Options `json:"redis" mapstructure:"redis"`
 }
 
 // WatchCmdbResourceChangeEventTask 监听cmdb资源变更任务
@@ -229,13 +240,18 @@ func WatchCmdbResourceChangeEventTask(ctx context.Context, payload []byte) error
 	var params WatchCmdbResourceChangeEventTaskParams
 	err := json.Unmarshal(payload, &params)
 	if err != nil {
-		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(payload))
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s, bkTenantId: %s", string(payload), params.BkTenantId)
+	}
+
+	// 默认租户id
+	if params.BkTenantId == "" {
+		params.BkTenantId = tenant.DefaultTenantId
 	}
 
 	// 创建cmdb资源变更事件监听器
-	watcher, err := NewCmdbResourceWatcher(params.Prefix, &params.Redis)
+	watcher, err := NewCmdbResourceWatcher(params.BkTenantId, params.Prefix, &params.Redis)
 	if err != nil {
-		return errors.Wrap(err, "new cmdb resource watcher failed")
+		return errors.Wrapf(err, "new cmdb resource watcher failed, bkTenantId: %s", params.BkTenantId)
 	}
 
 	watcher.Run(ctx)
@@ -244,6 +260,9 @@ func WatchCmdbResourceChangeEventTask(ctx context.Context, payload []byte) error
 
 // CmdbEventHandler cmdb资源变更事件处理器
 type CmdbEventHandler struct {
+	// 租户id
+	bkTenantId string
+
 	// 缓存key前缀
 	prefix string
 
@@ -261,26 +280,27 @@ type CmdbEventHandler struct {
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
-func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
+func NewCmdbEventHandler(bkTenantId string, prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create redis client")
+		return nil, errors.Wrapf(err, "failed to create redis client, bkTenantId: %s", bkTenantId)
 	}
 
 	// 创建缓存管理器
-	cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType, concurrentLimit)
+	cacheManager, err := NewCacheManagerByType(bkTenantId, rOpt, prefix, cacheType, concurrentLimit)
 	if err != nil {
-		return nil, errors.Wrap(err, "new cache Manager failed")
+		return nil, errors.Wrapf(err, "new cache Manager failed, bkTenantId: %s", bkTenantId)
 	}
 
 	// 获取关联资源类型
 	resourceTypes, ok := cmdbEventHandlerResourceTypeMap[cacheType]
 	if !ok {
-		return nil, errors.Errorf("unsupported cache type: %s", cacheType)
+		return nil, errors.Errorf("unsupported cache type: %s, bkTenantId: %s", cacheType, bkTenantId)
 	}
 
 	return &CmdbEventHandler{
+		bkTenantId:          bkTenantId,
 		prefix:              prefix,
 		redisClient:         redisClient,
 		cacheManager:        cacheManager,
@@ -291,13 +311,13 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 
 // Close 关闭操作
 func (h *CmdbEventHandler) Close() {
-	GetRelationMetricsBuilder().ClearAllMetrics()
+	relation.GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
 // getBkEvents 获取全部资源变更事件
 func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbResourceType) ([]cmdb.ResourceWatchEvent, error) {
 	// 获取资源变更事件
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", h.prefix, resourceType)
+	bkEventKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbResourceWatchEvent, string(resourceType))
 
 	// 从redis中获取该资源类型的所有事件
 	eventStrings := make([]string, 0)
@@ -305,7 +325,7 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 		result, err := h.redisClient.LPop(ctx, bkEventKey).Result()
 		if err != nil {
 			if !errors.Is(err, redis.Nil) {
-				logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
+				logger.Errorf("get cmdb resource(%s) watch event error: %v, bkTenantId: %s", resourceType, err, h.bkTenantId)
 				break
 			}
 		}
@@ -323,7 +343,7 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 		var event cmdb.ResourceWatchEvent
 		err := json.Unmarshal([]byte(eventStr), &event)
 		if err != nil {
-			logger.Errorf("unmarshal cmdb resource(%s) watch event error: %v", resourceType, err)
+			logger.Errorf("unmarshal cmdb resource(%s) watch event error: %v, bkTenantId: %s", resourceType, err, h.bkTenantId)
 			continue
 		}
 		events = append(events, event)
@@ -335,17 +355,17 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 // ifRunRefreshAll 判断是否执行全量刷新
 func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string) bool {
 	// 获取最后一次全量刷新时间
-	lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheType)
+	lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, cacheType)
 	lastUpdateTime, err := h.redisClient.Get(ctx, lastUpdateTimeKey).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			logger.Errorf("get last update time error: %v", err)
+			logger.Errorf("get last update time error: %v, bkTenantId: %s", err, h.bkTenantId)
 			return false
 		}
 	}
 	var lastUpdateTimestamp int64
 	if lastUpdateTime != "" {
-		lastUpdateTimestamp, err = strconv.ParseInt(lastUpdateTime, 10, 64)
+		lastUpdateTimestamp, _ = strconv.ParseInt(lastUpdateTime, 10, 64)
 	} else {
 		lastUpdateTimestamp = 0
 	}
@@ -365,16 +385,16 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		// 全量刷新
 		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 		if err != nil {
-			logger.Errorf("refresh all cache failed: %v", err)
+			logger.Errorf("refresh all cache failed: %v, bkTenantId: %s", err, h.bkTenantId)
 		}
 
-		logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
+		logger.Infof("refresh all cmdb resource(%s) cache, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
 
 		// 记录全量刷新时间
-		lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
+		lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, h.cacheManager.Type())
 		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
 		if err != nil {
-			logger.Errorf("set last update time error: %v", err)
+			logger.Errorf("set last update time error: %v, bkTenantId: %s", err, h.bkTenantId)
 		}
 
 		return
@@ -385,11 +405,11 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		// 获取资源变更事件
 		events, err := h.getBkEvents(ctx, resourceType)
 		if err != nil {
-			logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
+			logger.Errorf("get cmdb resource(%s) watch event error: %v, bkTenantId: %s", resourceType, err, h.bkTenantId)
 			continue
 		}
 
-		logger.Infof("get cmdb resource(%s) watch event: %d", resourceType, len(events))
+		logger.Infof("get cmdb resource(%s) watch event: %d, bkTenantId: %s", resourceType, len(events), h.bkTenantId)
 
 		// 重置
 		h.cacheManager.Reset()
@@ -399,8 +419,8 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 			continue
 		}
 
-		updateEvents := make([]map[string]interface{}, 0)
-		cleanEvents := make([]map[string]interface{}, 0)
+		updateEvents := make([]map[string]any, 0)
+		cleanEvents := make([]map[string]any, 0)
 
 		for _, event := range events {
 			switch event.BkEventType {
@@ -413,19 +433,19 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 
 		// 更新缓存
 		if len(updateEvents) > 0 {
-			logger.Infof("update cmdb resource(%s) cache by events: %d", resourceType, len(updateEvents))
+			logger.Infof("update cmdb resource(%s) cache by events: %d, bkTenantId: %s", resourceType, len(updateEvents), h.bkTenantId)
 			err := h.cacheManager.UpdateByEvents(ctx, string(resourceType), updateEvents)
 			if err != nil {
-				logger.Errorf("update cache by events failed: %v", err)
+				logger.Errorf("update cache by events failed: %v, bkTenantId: %s", err, h.bkTenantId)
 			}
 		}
 
 		// 清理缓存
 		if len(cleanEvents) > 0 {
-			logger.Infof("clean cmdb resource(%s) cache by events: %d", resourceType, len(cleanEvents))
+			logger.Infof("clean cmdb resource(%s) cache by events: %d, bkTenantId: %s", resourceType, len(cleanEvents), h.bkTenantId)
 			err := h.cacheManager.CleanByEvents(ctx, string(resourceType), cleanEvents)
 			if err != nil {
-				logger.Errorf("clean cache by events failed: %v", err)
+				logger.Errorf("clean cache by events failed: %v, bkTenantId: %s", err, h.bkTenantId)
 			}
 		}
 	}
@@ -443,6 +463,8 @@ var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
 
 // RefreshTaskParams cmdb缓存刷新任务参数
 type RefreshTaskParams struct {
+	// 租户id
+	BkTenantId string `json:"bk_tenant_id" mapstructure:"bk_tenant_id"`
 	// 缓存key前缀
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// redis配置
@@ -465,13 +487,18 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	var params RefreshTaskParams
 	err := json.Unmarshal(payload, &params)
 	if err != nil {
-		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(payload))
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s, bkTenantId: %s", string(payload), params.BkTenantId)
 	}
 
 	// 业务执行并发数
 	bizConcurrent := params.BizConcurrent
 	if bizConcurrent <= 0 {
 		bizConcurrent = 5
+	}
+
+	// 默认租户id
+	if params.BkTenantId == "" {
+		params.BkTenantId = tenant.DefaultTenantId
 	}
 
 	// 事件处理间隔时间，最低1分钟
@@ -495,48 +522,56 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	} else {
 		for _, cacheType := range cacheTypes {
 			if _, ok := cmdbEventHandlerResourceTypeMap[cacheType]; !ok {
-				return errors.Errorf("unsupported cache type: %s", cacheType)
+				return errors.Errorf("unsupported cache type: %s, bkTenantId: %s", cacheType, params.BkTenantId)
 			}
 		}
 	}
+	initialMaxWaitTime, err := time.ParseDuration(config.InitialMaxWaitTime)
+	if err != nil {
+		return err
+	}
+	initialCtx, cancel := context.WithTimeout(ctx, initialMaxWaitTime)
+	defer cancel()
+	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, "host_topo", "set", "module")
 
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// 推送自定义上报数据
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// 启动指标上报
-		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
-		if err != nil {
-			logger.Errorf("[cmdb_relation] new space reporter: %v", err)
-			return
-		}
-		defer func() {
-			err = reporter.Close(ctx)
-		}()
-		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
-
-		for {
-			ticker := time.NewTicker(time.Minute)
-
-			// 事件处理间隔时间
-			select {
-			case <-cancelCtx.Done():
-				GetRelationMetricsBuilder().ClearAllMetrics()
-				ticker.Stop()
+	// 推送自定义上报数据，如果没有配置则不启动
+	if config.PromRemoteWriteUrl != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// 启动指标上报
+			reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+			if err != nil {
+				logger.Errorf("[cmdb_relation] new space reporter: %v", err)
 				return
-			case <-ticker.C:
-				// 上报指标
-				logger.Infof("[cmdb_relation] space report push all")
-				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
-					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+			}
+			defer func() {
+				err = reporter.Close(ctx)
+			}()
+			spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
+
+			for {
+				ticker := time.NewTicker(time.Minute)
+
+				// 事件处理间隔时间
+				select {
+				case <-cancelCtx.Done():
+					relation.GetRelationMetricsBuilder().ClearAllMetrics()
+					ticker.Stop()
+					return
+				case <-ticker.C:
+					// 上报指标
+					if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+						logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
@@ -551,15 +586,12 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			defer wg.Done()
 
 			// 创建资源变更事件处理器
-			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
+			handler, err := NewCmdbEventHandler(params.BkTenantId, params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
 				logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 				cancel()
 				return
 			}
-
-			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

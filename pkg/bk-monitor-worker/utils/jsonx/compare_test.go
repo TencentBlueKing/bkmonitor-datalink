@@ -15,8 +15,8 @@ import (
 
 func TestCompareObjects(t *testing.T) {
 	type args struct {
-		objA interface{}
-		objB interface{}
+		objA any
+		objB any
 	}
 	tests := []struct {
 		name    string
@@ -25,15 +25,15 @@ func TestCompareObjects(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "nil", args: args{objA: nil, objB: nil}, want: true, wantErr: false},
-		{name: "list-true", args: args{objA: []interface{}{1, 2, 3}, objB: []interface{}{3, 2, 1}}, want: true, wantErr: false},
-		{name: "list-false", args: args{objA: []interface{}{1, 2, 3}, objB: []interface{}{3, 2, 1, 0}}, want: false, wantErr: false},
-		{name: "map-true", args: args{objA: map[string]interface{}{"a": "a1"}, objB: map[string]interface{}{"a": "a1"}}, want: true, wantErr: false},
-		{name: "map-false", args: args{objA: map[string]interface{}{"a": "a1"}, objB: map[string]interface{}{"a": "a2"}}, want: false, wantErr: false},
-		{name: "map-false2", args: args{objA: map[string]interface{}{"a": "a1"}, objB: map[string]interface{}{"b": "a1"}}, want: false, wantErr: false},
-		{name: "map-false3", args: args{objA: map[string]interface{}{"a": "a1"}, objB: map[string]interface{}{"b": "b1", "a": "a1"}}, want: false, wantErr: false},
-		{name: "map-list-true", args: args{objA: map[string]interface{}{"a": []string{"1", "2"}}, objB: map[string]interface{}{"a": []string{"2", "1"}}}, want: true, wantErr: false},
-		{name: "map-list-false", args: args{objA: map[string]interface{}{"a": []string{"1", "2"}}, objB: map[string]interface{}{"a": []string{"2", "1", "3"}}}, want: false, wantErr: false},
-		{name: "map-map-true", args: args{objA: map[string]interface{}{"a": map[string]interface{}{"b": "2"}}, objB: map[string]interface{}{"a": map[string]interface{}{"b": "2"}}}, want: true, wantErr: false},
+		{name: "list-true", args: args{objA: []any{1, 2, 3}, objB: []any{3, 2, 1}}, want: true, wantErr: false},
+		{name: "list-false", args: args{objA: []any{1, 2, 3}, objB: []any{3, 2, 1, 0}}, want: false, wantErr: false},
+		{name: "map-true", args: args{objA: map[string]any{"a": "a1"}, objB: map[string]any{"a": "a1"}}, want: true, wantErr: false},
+		{name: "map-false", args: args{objA: map[string]any{"a": "a1"}, objB: map[string]any{"a": "a2"}}, want: false, wantErr: false},
+		{name: "map-false2", args: args{objA: map[string]any{"a": "a1"}, objB: map[string]any{"b": "a1"}}, want: false, wantErr: false},
+		{name: "map-false3", args: args{objA: map[string]any{"a": "a1"}, objB: map[string]any{"b": "b1", "a": "a1"}}, want: false, wantErr: false},
+		{name: "map-list-true", args: args{objA: map[string]any{"a": []string{"1", "2"}}, objB: map[string]any{"a": []string{"2", "1"}}}, want: true, wantErr: false},
+		{name: "map-list-false", args: args{objA: map[string]any{"a": []string{"1", "2"}}, objB: map[string]any{"a": []string{"2", "1", "3"}}}, want: false, wantErr: false},
+		{name: "map-map-true", args: args{objA: map[string]any{"a": map[string]any{"b": "2"}}, objB: map[string]any{"a": map[string]any{"b": "2"}}}, want: true, wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

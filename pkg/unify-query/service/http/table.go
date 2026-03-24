@@ -23,13 +23,13 @@ const (
 
 // TablesItem
 type TablesItem struct {
-	Name        string          `json:"name"`
-	MetricName  string          `json:"metric_name"`
-	Columns     []string        `json:"columns"`
-	Types       []string        `json:"types"`
-	GroupKeys   []string        `json:"group_keys"`
-	GroupValues []string        `json:"group_values"`
-	Values      [][]interface{} `json:"values"`
+	Name        string   `json:"name"`
+	MetricName  string   `json:"metric_name"`
+	Columns     []string `json:"columns"`
+	Types       []string `json:"types"`
+	GroupKeys   []string `json:"group_keys"`
+	GroupValues []string `json:"group_values"`
+	Values      [][]any  `json:"values"`
 }
 
 // String
@@ -84,14 +84,14 @@ func (t *TablesItem) GetPromPoints() []promql.Point {
 
 // SetValuesByPoints
 func (t *TablesItem) SetValuesByPoints(points []promql.Point) {
-	values := make([][]interface{}, 0, len(points))
+	values := make([][]any, 0, len(points))
 	for _, point := range points {
 		if t.Columns[0] == DefaultTime && t.Columns[1] == DefaultValue {
-			values = append(values, []interface{}{
+			values = append(values, []any{
 				point.T, point.V,
 			})
 		} else {
-			values = append(values, []interface{}{
+			values = append(values, []any{
 				point.V, point.T,
 			})
 		}

@@ -300,9 +300,9 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 	logp.Info("No non-zero metrics in the last %v", r.period)
 }
 
-func makeSnapshot(R *monitoring.Registry) monitoring.FlatSnapshot {
+func makeSnapshot(r *monitoring.Registry) monitoring.FlatSnapshot {
 	mode := monitoring.Full
-	return monitoring.CollectFlatSnapshot(R, mode, true)
+	return monitoring.CollectFlatSnapshot(r, mode, true)
 }
 
 func (r *reporter) makeDeltaSnapshot(prev, cur monitoring.FlatSnapshot) monitoring.FlatSnapshot {

@@ -28,9 +28,9 @@ func (e profilesEvent) RecordType() define.RecordType {
 	return define.RecordProfiles
 }
 
-var ProfilesConverter EventConverter = profilesConverter{}
-
 type profilesConverter struct{}
+
+func (c profilesConverter) Clean() {}
 
 func (c profilesConverter) ToDataID(record *define.Record) int32 {
 	return record.Token.ProfilesDataId
@@ -73,7 +73,6 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			"biz_id":       record.Token.BizId,
 			"service_name": svrName,
 		})
-
 		f(event)
 	}
 }
@@ -116,7 +115,6 @@ func (c profilesConverter) mergeTagsToLabels(pd *profile.Profile, tags map[strin
 		if pd.Sample[i].Label == nil {
 			pd.Sample[i].Label = make(map[string][]string)
 		}
-
 		maps.Copy(pd.Sample[i].Label, tags)
 	}
 }

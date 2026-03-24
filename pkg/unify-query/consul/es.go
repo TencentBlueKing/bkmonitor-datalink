@@ -11,11 +11,12 @@ package consul
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 const (
@@ -51,7 +52,7 @@ func FormatESTableInfo(kvPairs api.KVPairs) (map[string]*ESTableInfo, error) {
 }
 
 // WatchESTableInfo
-func WatchESTableInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchESTableInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, esInfoPath)
 	return WatchChange(ctx, path)
 }

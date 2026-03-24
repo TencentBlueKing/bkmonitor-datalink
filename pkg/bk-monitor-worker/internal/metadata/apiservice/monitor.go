@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var Monitor MonitorService
@@ -21,14 +22,19 @@ var Monitor MonitorService
 type MonitorService struct{}
 
 // SearchAlert 获取告警数据
-func (MonitorService) SearchAlert(conditions []map[string]interface{}, startTime int64, endTime int64, page int, pageSize int, BkBizID int32) (*monitor.SearchAlertData, error) {
-	monitorApi, err := api.GetMonitorApi()
+func (MonitorService) SearchAlert(conditions []map[string]any, startTime int64, endTime int64, page int, pageSize int, bkBizID int32) (*monitor.SearchAlertData, error) {
+	tenantId, err := tenant.GetTenantIdByBkBizId(int(bkBizID))
+	if err != nil {
+		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, bkBizID: %d", bkBizID)
+	}
+
+	monitorApi, err := api.GetMonitorApi(tenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetMonitorApi failed")
 	}
 	var resp monitor.SearchAlertResp
-	var params = map[string]interface{}{
-		"bk_biz_ids": []int{int(BkBizID)},
+	params := map[string]any{
+		"bk_biz_ids": []int{int(bkBizID)},
 		"start_time": startTime,
 		"end_time":   endTime,
 		"page":       page,

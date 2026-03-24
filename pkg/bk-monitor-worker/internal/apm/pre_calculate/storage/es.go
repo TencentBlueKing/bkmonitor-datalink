@@ -17,7 +17,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/elastic/go-elasticsearch/v7"
+	elasticsearch "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"go.uber.org/zap"
 
@@ -135,7 +135,6 @@ type esStorage struct {
 }
 
 func (e *esStorage) Save(data EsStorageData) error {
-
 	buf := bytes.NewBuffer(data.Value)
 	req := esapi.IndexRequest{Index: e.getSaveIndexName(e.indexName), DocumentID: data.DocumentId, Body: buf}
 	res, err := req.Do(e.ctx, e.client)

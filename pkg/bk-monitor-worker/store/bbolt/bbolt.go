@@ -24,9 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 )
 
-var (
-	mutex *sync.RWMutex
-)
+var mutex *sync.RWMutex
 
 // Client bbolt client struct
 type Instance struct {
@@ -82,7 +80,7 @@ func (c *Instance) Open() error {
 	}
 
 	// check dir exist
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("unable to create directory %s: %v", c.Path, err)
 	}
 
@@ -92,7 +90,7 @@ func (c *Instance) Open() error {
 	}
 
 	// Open database file.
-	db, err := bolt.Open(path, 0666, &bolt.Options{Timeout: 10 * time.Second})
+	db, err := bolt.Open(path, 0o666, &bolt.Options{Timeout: 10 * time.Second})
 	if err != nil {
 		return fmt.Errorf("unable to open boltdb: %w", err)
 	}

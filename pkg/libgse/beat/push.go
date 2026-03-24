@@ -41,6 +41,7 @@ const (
 type Pusher interface {
 	Error() error
 	Push() error
+	GatherEvents() (<-chan Event, error)
 	StartPeriodPush()
 	Stop()
 	Disabled() bool
@@ -206,7 +207,7 @@ func (p *gsePusher) Push() error {
 			return err
 		}
 	}
-	events, err := p.gatherEvents()
+	events, err := p.GatherEvents()
 	if err != nil {
 		return err
 	}
@@ -241,7 +242,7 @@ func (p *gsePusher) Client(c beat.Client) Pusher {
 	return p
 }
 
-func (p *gsePusher) gatherEvents() (<-chan Event, error) {
+func (p *gsePusher) GatherEvents() (<-chan Event, error) {
 	mfs, err := p.gatherers.Gather()
 	if err != nil {
 		return nil, err
@@ -288,7 +289,7 @@ func (p *gsePusher) processLabels(name string, lps []*dto.LabelPair) labels.Labe
 		lbs = append(lbs, labels.Label{Name: lp.GetName(), Value: lp.GetValue()})
 	}
 	lbs = append(lbs, labels.Label{Name: model.MetricNameLabel, Value: name})
-	lbs = relabel.Process(lbs, p.config.MetricRelabelConfigs...)
+	lbs, _ = relabel.Process(lbs, p.config.MetricRelabelConfigs...)
 	return lbs
 }
 

@@ -31,6 +31,9 @@ exporter:
     {% if queue_config.traces_batch_size is defined %}
     traces_batch_size: {{ queue_config.traces_batch_size }}
     {%- endif %}
+    {% if queue_config.profiles_batch_size is defined %}
+    profiles_batch_size: {{ queue_config.profiles_batch_size }}
+    {%- endif %}
 {%- endif %}
 
 default:
@@ -80,6 +83,28 @@ default:
           enabled: {{ profiles_drop_sampler_config.enabled }}
 {%- endif %}
 
+{% if metrics_filter_config is defined %}
+      - name: "{{ metrics_filter_config.name }}"
+        config:
+          code_relabel:
+            {%- for item in metrics_filter_config.code_relabel %}
+            - metrics: {{ item.metrics | tojson }}
+              source: "{{ item.source }}"
+              services:
+              {%- for svc in item.services %}
+              - name: "{{ svc.name }}"
+                codes:
+                {%- for c in svc.codes %}
+                - rule: "{{ c.rule }}"
+                  target:
+                    action: "{{ c.target.action }}"
+                    label: "{{ c.target.label }}"
+                    value: "{{ c.target.value }}"
+                {%- endfor %}
+              {%- endfor %}
+            {%- endfor %}
+{%- endif %}
+
 {% if db_slow_command_config is defined %}
       - name: "{{ db_slow_command_config.name }}"
         config:
@@ -116,6 +141,20 @@ default:
 {% if attribute_config is defined %}
       - name: "{{ attribute_config.name }}"
         config:
+          {%- if attribute_config.as_string is defined %}
+          as_string:
+            keys:
+              {%- for key in attribute_config.as_string %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          {%- if attribute_config.as_int is defined %}
+          as_int:
+            keys:
+              {%- for key in attribute_config.as_int %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
           cut:
             {%- for config in attribute_config.cut %}
             - predicate_key: "{{ config.predicate_key }}"
@@ -142,6 +181,51 @@ default:
                 {%- endfor %}
             {%- endfor %}
 {%- endif %}
+
+{% if attribute_config_logs is defined %}
+      - name: "{{ attribute_config_logs.name }}"
+        config:
+          {%- if attribute_config_logs.as_string is defined %}
+          as_string:
+            keys:
+              {%- for key in attribute_config_logs.as_string %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          {%- if attribute_config_logs.as_int is defined %}
+          as_int:
+            keys:
+              {%- for key in attribute_config_logs.as_int %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          cut:
+            {%- for config in attribute_config_logs.cut %}
+            - predicate_key: "{{ config.predicate_key }}"
+              max_length: {{ config.max_length }}
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            {%- for config in attribute_config_logs.drop %}
+            - predicate_key: "{{ config.predicate_key }}"
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+{%- endif %}
+
 
 {% if sampler_config is defined %}
       - name: '{{ sampler_config.name }}'
@@ -177,6 +261,67 @@ default:
               {%- endfor %}
 {%- endif %}
 
+{% if resource_filter_config_logs is defined %}
+      - name: '{{ resource_filter_config_logs.name }}'
+        config:
+          assemble:
+            {%- for as_config in  resource_filter_config_logs.assemble %}
+            - destination: '{{ as_config.destination }}'
+              separator: '{{ as_config.separator }}'
+              keys:
+                {%- for key in as_config.get("keys", []) %}
+                - '{{ key }}'
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            keys:
+              {%- for drop_key in resource_filter_config_logs.get("drop", {}).get("keys", []) %}
+              - '{{ drop_key }}'
+              {%- endfor %}
+{%- endif %}
+
+{% if resource_filter_config_metrics is defined %}
+      - name: '{{ resource_filter_config_metrics.name }}'
+        config:
+          {%- if resource_filter_config_metrics.get("assemble") %}
+          assemble:
+            {%- for as_config in resource_filter_config_metrics.assemble %}
+            - destination: '{{ as_config.destination }}'
+              separator: '{{ as_config.separator }}'
+              keys:
+                {%- for key in as_config.get("keys", []) %}
+                - '{{ key }}'
+                {%- endfor %}
+            {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("drop") %}
+          drop:
+            keys:
+              {%- for drop_key in resource_filter_config_metrics.drop.get("keys", []) %}
+              - '{{ drop_key }}'
+              {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_token") %}
+          from_token:
+            keys:
+              {%- for token_key in resource_filter_config_metrics.from_token.get("keys", []) %}
+              - '{{ token_key }}'
+              {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_record") %}
+          from_record:
+            {%- for record_item in resource_filter_config_metrics.from_record %}
+            - source: '{{ record_item.source }}'
+              destination: '{{ record_item.destination }}'
+            {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_metrics.get("from_cache") %}
+          from_cache:
+            key: '{{ resource_filter_config_metrics.from_cache.get("key", "") }}'
+            cache_name: '{{ resource_filter_config_metrics.from_cache.get("cache_name", "") }}'
+          {%- endif %}
+{%- endif %}
+
 {% if custom_service_config is defined %}
       - name: '{{ custom_service_config.name }}'
         config:
@@ -193,8 +338,13 @@ default:
 {%- if item.match_groups is defined %}
               match_groups:
 {%- for group in item.match_groups %}
-                - source: '{{ group.source }}'
-                  destination: '{{ group.destination }}'
+                - destination: '{{ group.destination }}'
+{%- if group.source is defined %}
+                  source: '{{ group.source }}'
+{%- endif %}
+{%- if group.const_val is defined %}
+                  const_val: '{{ group.const_val }}'
+{%- endif %}
 {%- endfor %}
 {%- endif %}
               rule:
@@ -220,6 +370,20 @@ default:
                 regex: '{{ item.rule.regex }}'
 {%- endif %}
 {%- endfor %}
+{%- endif %}
+
+{% if method_filter_config is defined %}
+      - name: '{{ method_filter_config.name }}'
+        config:
+          drop_span:
+            rules:
+              {%- for item in method_filter_config.get("drop_span", {}).get("rules", []) %}
+              - predicate_key: '{{ item.predicate_key }}'
+                kind: '{{ item.span_kind }}'
+                match:
+                  op: '{{ item.match.op }}'
+                  value: '{{ item.match.value }}'
+              {%- endfor %}
 {%- endif %}
 
 {% if service_configs is defined %}

@@ -20,7 +20,6 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -29,11 +28,6 @@ var (
 	FilePath = "./bmw.yaml"
 	// EnvKeyPrefix env prefix
 	EnvKeyPrefix = "bmw"
-
-	// BypassSuffixPath 旁路路径后缀，用于consul/redis等数据写入测试
-	BypassSuffixPath string
-	// SkipBypassTasks 跳过旁路配置的任务
-	SkipBypassTasks []string
 
 	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
@@ -98,7 +92,7 @@ var (
 	StorageDependentRedisSentinelMasterName string
 	// StorageDependentRedisSentinelAddress dependent redis address
 	StorageDependentRedisSentinelAddress []string
-	//StorageDependentRedisSentinelPassword dependent redis password
+	// StorageDependentRedisSentinelPassword dependent redis password
 	StorageDependentRedisSentinelPassword string
 	// StorageDependentRedisStandaloneHost dependent redis host
 	StorageDependentRedisStandaloneHost string
@@ -169,10 +163,6 @@ var (
 	WorkerDaemonTaskMaintainerInterval time.Duration
 	// WorkerDaemonTaskRetryTolerateCount max retry of task
 	WorkerDaemonTaskRetryTolerateCount int
-	// WorkerDaemonTaskRetryTolerateInterval retry interval of failed task
-	WorkerDaemonTaskRetryTolerateInterval time.Duration
-	// WorkerDaemonTaskRetryIntolerantFactor retry duration factor of failed task
-	WorkerDaemonTaskRetryIntolerantFactor int
 
 	// SchedulerTaskWatchChanSize Listen for the maximum number of concurrent tasks in the broker queue
 	SchedulerTaskWatchChanSize int
@@ -207,6 +197,8 @@ var (
 	// BkdataAESKey bkdata AES Key
 	BkdataAESKey string
 
+	// enable multi-tenant mode
+	EnableMultiTenantMode bool
 	// BkApiEnabled enabled bk-apigw
 	BkApiEnabled bool
 	// BkApiUrl bk-apigw host
@@ -217,24 +209,12 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
-	// BkApiBcsApiMicroGwUrl bk-apigw bcs micro gateway url
-	BkApiBcsApiMicroGwUrl string
-	// BkApiBcsApiGatewayToken bk-apigw bcs token
-	BkApiBcsApiGatewayToken string
-	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
-	BkApiBcsApiGatewayBaseUrl string
-	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
-	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
 	BkApiBkdataApiBaseUrl string
-	// BkApiBkssmUrl bk-api bkssm url
-	BkApiBkssmUrl string
-	// BkApiBcsCcApiUrl bk-api bcs cc url
-	BkApiBcsCcApiUrl string
 	// BkApiGseApiGwUrl bk-apigw bkgse base url
 	BkApiGseApiGwUrl string
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled bool
+	// BkApiCmdbApiGatewayUrl bk-apigw cmdb base url
+	BkApiCmdbApiGatewayUrl string
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
 	BkMonitorApiGatewayBaseUrl string
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
@@ -254,10 +234,6 @@ var (
 )
 
 func initVariables() {
-	// 旁路路径后缀，用于consul/redis等数据写入测试
-	BypassSuffixPath = GetValue("bypassSuffixPath", "")
-	SkipBypassTasks = GetValue("skipBypassTasks", []string{})
-
 	// LoggerEnabledStdout 是否开启日志文件输出
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)
 	// LoggerLevel 日志等级
@@ -351,14 +327,6 @@ func initVariables() {
 	)
 	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试间隔就不断动态增长
 	WorkerDaemonTaskRetryTolerateCount = GetValue("worker.daemonTask.maintainer.tolerateCount", 60)
-	// WorkerDaemonTaskRetryTolerateInterval worker常驻任务当任务执行失败并且重试次数未超过 WorkerDaemonTaskRetryTolerateCount 时
-	// 下次重试时间间隔
-	WorkerDaemonTaskRetryTolerateInterval = GetValue(
-		"worker.daemonTask.maintainer.tolerateInterval", 10*time.Second, viper.GetDuration,
-	)
-	// WorkerDaemonTaskRetryIntolerantFactor worker常驻任务当任务重试次数超过 WorkerDaemonTaskRetryTolerateCount 时
-	// 下次重试按照Nx倍数增长 设置倍数因子
-	WorkerDaemonTaskRetryIntolerantFactor = GetValue("worker.daemonTask.maintainer.intolerantFactor", 2)
 	/*
 		Worker配置 ----- END
 	*/
@@ -397,26 +365,20 @@ func initVariables() {
 	BkdataAESIv = GetValue("aes.bkdataAESIv", "bkbkbkbkbkbkbkbk")
 	BkdataAESKey = GetValue("aes.bkdataAESKey", "")
 
+	EnableMultiTenantMode = GetValue("taskConfig.common.enableMultiTenantMode", false)
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
 	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
-	BkApiBcsApiMicroGwUrl = GetValue("taskConfig.common.bkapi.bcsApiMicroGwUrl", "")
-	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
-	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
-	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
-	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
-	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
+	BkApiCmdbApiGatewayUrl = GetValue("taskConfig.common.bkapi.cmdbApiGatewayUrl", "")
 
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayEnabled", false)
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
-	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", BkApiUrl)
+	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", "")
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
-	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "stag")
+	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "prod")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 
@@ -428,9 +390,7 @@ func initVariables() {
 	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
-var (
-	keys []string
-)
+var keys []string
 
 // GetValue get value from config file
 func GetValue[T any](key string, def T, getter ...func(string) T) T {
@@ -513,11 +473,4 @@ func InitConfig() {
 	initClusterMetricVariables()
 	initApmVariables()
 	initAlarmConfig()
-
-	prettyPrintSettings()
-}
-
-func prettyPrintSettings() {
-	b, _ := jsonx.MarshalIndent(viper.AllSettings(), "", "  ")
-	logger.Infof("settings: \n------\n%s\n------\n", b)
 }

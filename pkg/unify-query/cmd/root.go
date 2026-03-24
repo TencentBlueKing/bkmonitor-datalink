@@ -49,7 +49,7 @@ var rootCmd = &cobra.Command{
 
 		// 启动 gops
 		if err := agent.Listen(agent.Options{}); err != nil {
-			log.Warnf(ctx, err.Error())
+			log.Warnf(ctx, "%s", err.Error())
 		}
 
 		// 初始化启动任务

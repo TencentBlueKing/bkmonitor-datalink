@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/bytedance/sonic"
 	"github.com/xdg-go/scram"
 	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 )
 
@@ -164,7 +164,7 @@ func (c consumeHandler) sendSpans(message []byte) {
 	var res []window.StandardSpan
 
 	var msg window.OriginMessage
-	if err := sonic.Unmarshal(message, &msg); err != nil {
+	if err := jsonx.Unmarshal(message, &msg); err != nil {
 		logger.Errorf("kafka received a abnormal message! dataId: %s error: %s message: %s", c.dataId, err, message)
 		return
 	}
@@ -179,7 +179,6 @@ func (c consumeHandler) sendSpans(message []byte) {
 }
 
 func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
-
 	args := &Options{}
 
 	for _, setter := range setters {
@@ -228,7 +227,6 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 			topic:   config.KafkaTopic,
 		},
 	}, nil
-
 }
 
 // getConnectionSASLConfig Establish a connection by SHA512
@@ -251,9 +249,7 @@ func getConnectionSASLConfig(username, password string) *sarama.Config {
 	return config
 }
 
-var (
-	SHA512 scram.HashGeneratorFcn = sha512.New
-)
+var SHA512 scram.HashGeneratorFcn = sha512.New
 
 // SCRAMSHA512Client SHA 512 implements
 type SCRAMSHA512Client struct {
@@ -275,5 +271,5 @@ func (x *SCRAMSHA512Client) Begin(userName, password, authzID string) (err error
 // Step SHA512
 func (x *SCRAMSHA512Client) Step(challenge string) (response string, err error) {
 	response, err = x.ClientConversation.Step(challenge)
-	return
+	return response, err
 }

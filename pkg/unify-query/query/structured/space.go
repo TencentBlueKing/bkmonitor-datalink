@@ -13,11 +13,13 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -35,7 +37,7 @@ type SpaceFilter struct {
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
 func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) {
 	if opt == nil {
-		return nil, fmt.Errorf("%s", ErrMetricMissing)
+		return nil, ErrMetricMissing
 	}
 
 	router, err := influxdb.GetSpaceTsDbRouter()
@@ -50,10 +52,11 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	if !opt.IsSkipSpace {
 		if space == nil {
 			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
-
-			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
-			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-			log.Warnf(ctx, msg)
+			metadata.NewMessage(
+				metadata.MsgQueryRouter,
+				"空间 %s 不存在",
+				opt.SpaceUid,
+			).Status(ctx, metadata.SpaceIsNotExists)
 		}
 	}
 
@@ -65,11 +68,47 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	}, nil
 }
 
-func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, conditions Conditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
+func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfluxdb.ResultTableDetail) query.TsDBV2 {
+	t.Field = d.Fields
+	t.FieldAlias = d.FieldAlias
+	t.MeasurementType = d.MeasurementType
+	t.DataLabel = d.DataLabel
+	t.StorageType = d.StorageType
+	t.StorageID = strconv.Itoa(int(d.StorageId))
+	t.ClusterName = d.ClusterName
+	t.TagsKey = d.TagsKey
+	t.DB = d.DB
+	t.Measurement = d.Measurement
+	t.VmRt = d.VmRt
+	t.CmdbLevelVmRt = d.CmdbLevelVmRt
+	t.StorageName = d.StorageName
+	t.TimeField = metadata.TimeField{
+		Name: d.Options.TimeField.Name,
+		Type: d.Options.TimeField.Type,
+		Unit: d.Options.TimeField.Unit,
+	}
+	t.NeedAddTime = d.Options.NeedAddTime
+	t.SourceType = d.SourceType
+
+	sort.SliceStable(d.StorageClusterRecords, func(i, j int) bool {
+		return d.StorageClusterRecords[i].EnableTime > d.StorageClusterRecords[j].EnableTime
+	})
+
+	for _, record := range d.StorageClusterRecords {
+		t.StorageClusterRecords = append(t.StorageClusterRecords, query.Record{
+			StorageID:  strconv.Itoa(int(record.StorageID)),
+			EnableTime: record.EnableTime,
+		})
+	}
+
+	return t
+}
+
+func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool,
+) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
-		log.Debugf(s.ctx, "skip rt(%s), rt detail is empty", tableID)
 		return nil
 	}
 
@@ -80,13 +119,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			log.Debugf(s.ctx, "skip rt(%s), measurement type (%s) is not split", tableID, rtDetail.MeasurementType)
-			return nil
-		}
-
-		allConditions, err := conditions.AnalysisConditions()
-		if err != nil {
-			log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
 			return nil
 		}
 
@@ -94,19 +126,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
 		compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
 		if err != nil {
-			log.Errorf(s.ctx, "allCondition Compare error: %s", err)
 			return nil
 		}
 
 		if !compareResult {
-			log.Debugf(s.ctx, "skip rt(%s), clusterID: %s, allConditions: %+v", tableID, rtDetail.BcsClusterID, allConditions)
 			return nil
 		}
 
 		if isK8sFeatureFlag {
 			// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
 			if rtDetail.BcsClusterID == "" {
-				log.Debugf(s.ctx, "skip rt(%s), clusterID is empty", tableID)
 				return nil
 			}
 		}
@@ -128,36 +157,19 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 	tsDBs := make([]*query.TsDBV2, 0)
 	defaultMetricNames := make([]string, 0)
+
 	// 原 Space(Type、BKDataID) 字段去掉，SegmentedEnable 设置了默认值 false
 	// 原 Proxy(RetentionPolicies、BKBizID、DataID）直接去掉
-	defaultTsDB := query.TsDBV2{
-		TableID:         tableID,
-		Field:           rtDetail.Fields,
-		MeasurementType: rtDetail.MeasurementType,
-		Filters:         filters,
-		SegmentedEnable: false,
-		DataLabel:       rtDetail.DataLabel,
-		StorageID:       strconv.Itoa(int(rtDetail.StorageId)),
-		ClusterName:     rtDetail.ClusterName,
-		TagsKey:         rtDetail.TagsKey,
-		DB:              rtDetail.DB,
-		Measurement:     rtDetail.Measurement,
-		VmRt:            rtDetail.VmRt,
-		StorageName:     rtDetail.StorageName,
-		MetricName:      fieldName,
-		TimeField: metadata.TimeField{
-			Name: rtDetail.Options.TimeField.Name,
-			Type: rtDetail.Options.TimeField.Type,
-			Unit: rtDetail.Options.TimeField.Unit,
-		},
-		NeedAddTime: rtDetail.Options.NeedAddTime,
-		SourceType:  rtDetail.SourceType,
-		StorageType: rtDetail.StorageType,
-	}
+	defaultTsDB := s.getTsDBWithResultTableDetail(query.TsDBV2{
+		TableID:    tableID,
+		Filters:    filters,
+		MetricName: fieldName,
+	}, rtDetail)
 
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {
+		defaultTsDB.ExpandMetricNames = []string{fieldName}
 		tsDBs = append(tsDBs, &defaultTsDB)
 		return tsDBs
 	}
@@ -176,29 +188,26 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	if !defaultTsDB.IsSplit() {
 		defaultMetricNames = metricNames
 	} else {
-		//当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
+		// 当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				sepTsDB := defaultTsDB
-				sepTsDB.DB = sepRt.DB
-				sepTsDB.StorageID = strconv.FormatInt(sepRt.StorageId, 10)
-				sepTsDB.ClusterName = sepRt.ClusterName
-				sepTsDB.TagsKey = sepRt.TagsKey
-				sepTsDB.Measurement = sepRt.Measurement
-				sepTsDB.VmRt = sepRt.VmRt
-				sepTsDB.ExpandMetricNames = []string{mName}
+				defaultTsDB.ExpandMetricNames = []string{mName}
+				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
+
 				tsDBs = append(tsDBs, &sepTsDB)
 			} else {
 				defaultMetricNames = append(defaultMetricNames, mName)
 			}
 		}
 	}
+
 	// 如果这里出现指标列表为空，则说明指标都有独立的配置，不需要将默认的结果表配置写入
 	if len(defaultMetricNames) > 0 {
 		defaultTsDB.ExpandMetricNames = defaultMetricNames
 		tsDBs = append(tsDBs, &defaultTsDB)
 	}
+
 	return tsDBs
 }
 
@@ -206,7 +215,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
 	route := strings.Split(tableID, ".")
 	if len(route) != 2 {
-		log.Errorf(s.ctx, "TableID(%s) format is wrong", tableID)
+		metadata.NewMessage(
+			metadata.MsgQueryRouter,
+			"表ID格式不符合规范",
+		).Warn(s.ctx)
 		return nil
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
@@ -237,12 +249,15 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	var routerMessage string
+
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
-
-			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
-			log.Warnf(s.ctx, routerMessage)
+			metadata.NewMessage(
+				metadata.MsgQueryRouter,
+				"%s",
+				routerMessage,
+			).Status(s.ctx, metadata.SpaceTableIDFieldIsNotExists)
 		}
 	}()
 
@@ -268,44 +283,47 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	if opt.IsRegexp {
 		fieldNameExp = regexp.MustCompile(opt.FieldName)
 	}
-	tableIDs := make([]string, 0)
+
+	// tableID 去重，防止重复获取
+	tableIDs := set.New[string]()
 	isK8s := false
 
-	if db != "" && measurement != "" {
-		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
-		tableIDs = append(tableIDs, string(opt.TableID))
-	} else if db != "" {
-		// 指标二段式，仅传递 data-label
-		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
-		if tIDs != nil {
-			tableIDs = tIDs
+	if db != "" {
+		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
+		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
+		tableIDs.Add(tIDs...)
+
+		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
+		if measurement != "" {
+			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
 		}
 
-		if len(tableIDs) == 0 {
+		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
 			return nil, nil
 		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = !opt.IsSkipK8s
-		tableIDs = s.GetSpaceRtIDs()
+		tIDs := s.GetSpaceRtIDs()
+		tableIDs.Add(tIDs...)
 
-		if len(tableIDs) == 0 {
+		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
 			return nil, nil
 		}
 	}
 
-	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
+	isK8sFeatureFlag := featureFlag.GetIsK8sFeatureFlag(s.ctx)
 
-	for _, tID := range tableIDs {
+	for _, tID := range tableIDs.ToArray() {
 		spaceRt := s.GetSpaceRtInfo(tID)
 		// 如果不跳过空间，则取 space 和 tableIDs 的交集
 		if !opt.IsSkipSpace && spaceRt == nil {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -328,19 +346,11 @@ type TsDBOption struct {
 	TableID   TableID
 	FieldName string
 	// IsRegexp 指标是否使用正则查询
-	IsRegexp   bool
-	Conditions Conditions
+	IsRegexp      bool
+	AllConditions AllConditions
 }
 
 type TsDBs []*query.TsDBV2
-
-func (t TsDBs) StringSlice() []string {
-	arr := make([]string, len(t))
-	for i, tsDB := range t {
-		arr[i] = tsDB.String()
-	}
-	return arr
-}
 
 // GetTsDBList : 通过 spaceUid  约定该空间查询范围
 func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {

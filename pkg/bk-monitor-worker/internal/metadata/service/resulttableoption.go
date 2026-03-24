@@ -10,18 +10,8 @@
 package service
 
 import (
-	"strings"
-	"time"
-
-	"github.com/pkg/errors"
-
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ResultTableOptionSvc result table option service
@@ -36,13 +26,13 @@ func NewResultTableOptionSvc(obj *resulttable.ResultTableOption) ResultTableOpti
 }
 
 // BathResultTableOption 返回批量的result table option
-func (ResultTableOptionSvc) BathResultTableOption(tableIdList []string) (map[string]map[string]interface{}, error) {
+func (ResultTableOptionSvc) BathResultTableOption(tableIdList []string) (map[string]map[string]any, error) {
 	var resultTableOption []resulttable.ResultTableOption
 	if err := resulttable.NewResultTableOptionQuerySet(mysql.GetDBSession().DB).
 		TableIDIn(tableIdList...).All(&resultTableOption); err != nil {
 		return nil, err
 	}
-	optionData := make(map[string]map[string]interface{})
+	optionData := make(map[string]map[string]any)
 	for _, option := range resultTableOption {
 		value, err := option.InterfaceValue()
 		if err != nil {
@@ -51,73 +41,8 @@ func (ResultTableOptionSvc) BathResultTableOption(tableIdList []string) (map[str
 		if rtOpts, ok := optionData[option.TableID]; ok {
 			rtOpts[option.Name] = value
 		} else {
-			optionData[option.TableID] = map[string]interface{}{option.Name: value}
+			optionData[option.TableID] = map[string]any{option.Name: value}
 		}
 	}
 	return optionData, nil
-}
-
-// BulkCreateOptions 批量创建结果表级别的选项内容
-func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string]interface{}, operator string) error {
-	var rtoList []resulttable.ResultTableOption
-	var optionNameList []string
-	for optionName, optionValue := range options {
-		valueStr, valueType, err := models.ParseOptionValue(optionValue)
-		if err != nil {
-			return err
-		}
-		rto := resulttable.ResultTableOption{
-			OptionBase: models.OptionBase{
-				ValueType:  valueType,
-				Value:      valueStr,
-				Creator:    operator,
-				CreateTime: time.Now(),
-			},
-			TableID: tableId,
-			Name:    optionName,
-		}
-		rtoList = append(rtoList, rto)
-		optionNameList = append(optionNameList, optionName)
-	}
-	if len(optionNameList) == 0 {
-		logger.Infof("table_id [%s] options is null", tableId)
-		return nil
-	}
-	// 判断是否存在
-	db := mysql.GetDBSession().DB
-	var existOptions []resulttable.ResultTableOption
-	if err := resulttable.NewResultTableOptionQuerySet(db).
-		TableIDEq(tableId).NameIn(optionNameList...).All(&existOptions); err != nil {
-		return err
-	}
-	if len(existOptions) != 0 {
-		var existOptionsNames []string
-		for _, o := range existOptions {
-			existOptionsNames = append(existOptionsNames, o.Name)
-		}
-		return errors.Errorf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ","))
-	}
-	tx := db.Begin()
-	for _, option := range rtoList {
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(option.TableName(), map[string]interface{}{
-				resulttable.ResultTableOptionDBSchema.TableID.String():   option.TableID,
-				resulttable.ResultTableOptionDBSchema.Name.String():      option.Name,
-				resulttable.ResultTableOptionDBSchema.ValueType.String(): option.ValueType,
-				resulttable.ResultTableOptionDBSchema.Value.String():     option.Value,
-			}), ""))
-		} else {
-			if err := option.Create(tx); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		tx.Rollback()
-	} else {
-		tx.Commit()
-	}
-	logger.Infof("table_id [%s] now has options [%#v]", tableId, options)
-	return nil
 }

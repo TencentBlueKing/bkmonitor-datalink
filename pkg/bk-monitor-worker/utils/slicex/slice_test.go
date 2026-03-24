@@ -66,5 +66,4 @@ func TestChunkSlice(t *testing.T) {
 		}
 		assert.ElementsMatch(t, all, bigSlice)
 	}
-
 }

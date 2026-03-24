@@ -10,15 +10,16 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/gin-gonic/gin"
+	ants "github.com/panjf2000/ants/v2"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -45,7 +46,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		}
 	)
 
-	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource")
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource")
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRequest)
@@ -56,7 +57,8 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	span.Set("params-body", string(paramsBody))
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {
@@ -65,19 +67,44 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceResponse)
-	data.Data = make([]cmdb.RelationMultiResourceResponseData, 0, len(request.QueryList))
-	for _, qry := range request.QueryList {
-		d := cmdb.RelationMultiResourceResponseData{
-			Code: http.StatusOK,
-		}
+	data.TraceID = span.TraceID()
+	data.Data = make([]cmdb.RelationMultiResourceResponseData, len(request.QueryList))
 
-		d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
-		if err != nil {
-			d.Message = err.Error()
-			d.Code = http.StatusBadRequest
-		}
-		data.Data = append(data.Data, d)
+	var (
+		sendWg sync.WaitGroup
+		lock   sync.Mutex
+	)
+	p, _ := ants.NewPool(RelationMaxRouting)
+	defer p.Release()
+
+	for idx, qry := range request.QueryList {
+		idx := idx
+		qry := qry
+		sendWg.Add(1)
+		_ = p.Submit(func() {
+			defer sendWg.Done()
+			d := cmdb.RelationMultiResourceResponseData{
+				Code: http.StatusOK,
+			}
+
+			timestamp := cast.ToString(qry.Timestamp)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if err != nil {
+				d.Message = err.Error()
+				d.Code = http.StatusBadRequest
+			}
+
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
+			if d.TargetList == nil {
+				d.TargetList = make(cmdb.Matchers, 0)
+			}
+
+			lock.Lock()
+			data.Data[idx] = d
+			lock.Unlock()
+		})
 	}
+	sendWg.Wait()
 
 	resp.success(ctx, data)
 }
@@ -104,7 +131,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		}
 	)
 
-	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource-range")
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range")
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRangeRequest)
@@ -115,7 +142,8 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	span.Set("params-body", string(paramsBody))
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {
@@ -124,33 +152,53 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceRangeResponse)
-	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, 0, len(request.QueryList))
-	for _, qry := range request.QueryList {
-		d := cmdb.RelationMultiResourceRangeResponseData{
-			Code: http.StatusOK,
-		}
+	data.TraceID = span.TraceID()
+	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, len(request.QueryList))
 
-		if qry.Step == "" {
-			qry.Step = "1m"
-		}
+	var (
+		sendWg sync.WaitGroup
+		lock   sync.Mutex
+	)
+	p, _ := ants.NewPool(RelationMaxRouting)
+	defer p.Release()
 
-		step, err := time.ParseDuration(qry.Step)
-		if err != nil {
-			d.Message = err.Error()
-			d.Code = http.StatusBadRequest
-			data.Data = append(data.Data, d)
-			continue
-		}
+	for idx, qry := range request.QueryList {
+		idx := idx
+		qry := qry
+		sendWg.Add(1)
+		_ = p.Submit(func() {
+			defer sendWg.Done()
+			d := cmdb.RelationMultiResourceRangeResponseData{
+				Code: http.StatusOK,
+			}
 
-		d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
-		if err != nil {
-			log.Errorf(ctx, err.Error())
+			startTs := cast.ToString(qry.StartTs)
+			endTs := cast.ToString(qry.EndTs)
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if err != nil {
+				d.Message = metadata.NewMessage(
+					metadata.MsgQueryRelation,
+					"关联数据查询异常",
+				).Error(ctx, err).Error()
+				d.Code = http.StatusBadRequest
+			}
 
-			d.Message = err.Error()
-			d.Code = http.StatusBadRequest
-		}
-		data.Data = append(data.Data, d)
+			if len(d.Path) > 0 {
+				d.SourceType = cmdb.Resource(d.Path[0])
+				d.TargetType = cmdb.Resource(d.Path[len(d.Path)-1])
+			}
+
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
+			if d.TargetList == nil {
+				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
+			}
+
+			lock.Lock()
+			data.Data[idx] = d
+			lock.Unlock()
+		})
 	}
+	sendWg.Wait()
 
 	resp.success(ctx, data)
 }

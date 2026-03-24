@@ -12,6 +12,7 @@ package operator
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -20,22 +21,21 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/bytebufferpool"
 	"gopkg.in/yaml.v2"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor/instance"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
 )
 
-func writeResponse(w http.ResponseWriter, data interface{}) {
+func writeResponse(w http.ResponseWriter, data any) {
 	bs, err := json.Marshal(data)
 	if err != nil {
 		w.Write([]byte(fmt.Sprintf(`{"msg": "%s"}`, err.Error())))
@@ -114,16 +114,17 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 
 	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
 	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
+	endpoint := r.URL.Query().Get("endpoint")
 
 	analyze := r.URL.Query().Get("analyze") // 分析指标
 	if analyze == "true" {
-		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, worker, topn)
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, endpoint, worker, topn)
 		b, _ := json.Marshal(ret)
 		w.Write(b)
 		return
 	}
 
-	ch := c.scrapeLines(r.Context(), namespace, monitor, worker)
+	ch := c.scrapeLines(r.Context(), namespace, monitor, endpoint, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -162,6 +163,11 @@ const (
 	formatOperatorVersion = `
 [√] check operator version
 - Description: bkmonitor-operator 版本信息
+%s
+`
+	formatHelmChartsVersion = `
+[√] check helmcharts version
+- Description: helmcharts 版本信息
 %s
 `
 	formatKubernetesVersionSuccess = `
@@ -262,6 +268,7 @@ const (
 //
 // 检查 kubernetes 版本信息
 // 检查 bkmonitor-operator 版本信息
+// 检查 helmcharts 版本信息
 // 检查 dataids 是否符合预期
 // 检查集群信息
 // 检查 dryrun 标识是否打开
@@ -272,11 +279,8 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	writef := func(format string, a ...interface{}) {
-		buf.WriteString(fmt.Sprintf(format, a...))
+	writef := func(format string, a ...any) {
+		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 
 	metaEnv := configs.G().MetaEnv
@@ -291,6 +295,11 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	// 检查 bkmonitor-operator 版本信息
 	b, _ := json.MarshalIndent(c.buildInfo, "", "  ")
 	writef(formatOperatorVersion, string(b))
+
+	// 检查 helmcharts 版本信息
+	eles := c.helmchartsController.GetByNamespace(configs.G().MonitorNamespace)
+	b, _ = json.MarshalIndent(eles, "", "  ")
+	writef(formatHelmChartsVersion, string(b))
 
 	// 检查 dataids 是否符合预期
 	dataids := c.checkDataIdRoute()
@@ -337,7 +346,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(true)
 	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
 	for _, v := range endpoints {
@@ -408,7 +417,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writef(formatLogContent, metaEnv.Namespace, metaEnv.PodName)
-	w.Write(buf.Bytes())
 }
 
 func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
@@ -421,26 +429,6 @@ func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
 	level := r.FormValue("level")
 	logger.SetLoggerLevel(level)
 	w.Write([]byte(`{"status": "success"}`))
-}
-
-func (c *Operator) AdminReloadRoute(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte(`{"msg": "/-/reload route only POST method supported"}`))
-		return
-	}
-
-	timer := time.NewTimer(time.Second * 15)
-	select {
-	case <-timer.C:
-		w.Write([]byte(`{"status": "failed"}`))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-
-	case beat.ReloadChan <- true:
-		w.Write([]byte(`{"status": "success"}`))
-		return
-	}
 }
 
 func (c *Operator) AdminDispatchRoute(w http.ResponseWriter, r *http.Request) {
@@ -474,7 +462,6 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
-	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -482,29 +469,40 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 无此参数默认按 0 处理
+	rv, _ := strconv.Atoi(r.URL.Query().Get("resourceVersion"))
 	type podsResponse struct {
-		ClusterID string `json:"k8s.bcs.cluster.id"`
-		Name      string `json:"k8s.pod.name"`
-		Namespace string `json:"k8s.namespace.name"`
-		IP        string `json:"k8s.pod.ip"`
+		Action    string `json:"action"`
+		ClusterID string `json:"cluster"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		IP        string `json:"ip"`
 	}
 
-	nodes := c.objectsController.NodeIPs()
-	all := r.URL.Query().Get("all")
+	all := r.URL.Query().Get("all") // all 则返回所有 pods 不进行任何过滤
 
+	// 只返回已经就绪的 Pod
+	podEvents, lastRv := c.objectsController.FetchPodEvents(rv)
+	nodes := c.objectsController.NodeIPs()
 	var ret []podsResponse
-	for _, pod := range pods {
-		_, ok := nodes[pod.IP]
+	for _, podEvent := range podEvents {
+		_, ok := nodes[podEvent.IP]
 		if !ok || all == "true" {
 			ret = append(ret, podsResponse{
+				Action:    string(podEvent.Action),
 				ClusterID: info.BcsClusterID,
-				Name:      pod.Name,
-				Namespace: pod.Namespace,
-				IP:        pod.IP,
+				Name:      podEvent.Name,
+				Namespace: podEvent.Namespace,
+				IP:        podEvent.IP,
 			})
 		}
 	}
-	writeResponse(w, ret)
+
+	type R struct {
+		Pods            []podsResponse `json:"pods"`
+		ResourceVersion int            `json:"resourceVersion"`
+	}
+	writeResponse(w, R{Pods: ret, ResourceVersion: lastRv})
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
@@ -512,11 +510,18 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	nodeName := vars["node"]
 
 	query := httpx.UnwindParams(r.URL.Query().Get("q"))
-	podName := query.Get("podName")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
-
 	var cfgs []objectsref.RelabelConfig
+
+	// 补充 container 维度信息（兼容 windows 系统）
+	containerFlag := query.Get("container_info")
+	if containerFlag == "true" {
+		cfgs = append(cfgs, c.objectsController.ContainersRelabelConfigs(nodeName)...)
+	}
+
+	// 补充 workload 维度信息
+	podName := query.Get("podName")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 	cfgs = append(cfgs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
 
 	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
@@ -535,8 +540,8 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 
 	switch kind {
 	case "Pod":
@@ -547,36 +552,154 @@ func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	c.objectsController.GetNodeRelations(buf)
-	c.objectsController.GetServiceRelations(buf)
-	c.objectsController.GetPodRelations(buf)
-	c.objectsController.GetReplicasetRelations(buf)
-	c.objectsController.GetDataSourceRelations(buf)
-
-	w.Write(buf.Bytes())
-}
-
-func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	if configs.G().EnablePromRule {
-		lines := c.promsliController.RuleMetrics()
-		w.Write(lines)
-	}
+	c.objectsController.WriteNodeRelations(w)
+	c.objectsController.WriteServiceRelations(w)
+	c.objectsController.WritePodRelations(w)
+	c.objectsController.WriteReplicasetRelations(w)
+	c.objectsController.WriteDataSourceRelations(w)
+	c.objectsController.WriteAppVersionWithContainerRelation(w)
 }
 
 func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	b, _ := yaml.Marshal(configs.G())
 
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
+	w.Write([]byte("# " + define.ConfigFilePath))
+	w.Write([]byte("\n"))
+	w.Write(b)
+}
 
-	buf.WriteString("# " + define.ConfigFilePath)
-	buf.WriteString("\n")
-	buf.Write(b)
+func (c *Operator) QCloudMonitorInstancesRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 
-	w.Write(buf.Bytes())
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var params instance.Parameters
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	data, err := q.Query(&params)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"%s\"}", err)))
+		return
+	}
+
+	type R struct {
+		Total int   `json:"total"`
+		Data  []any `json:"data"`
+	}
+	b, _ := json.Marshal(R{
+		Total: len(data),
+		Data:  data,
+	})
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorNamespacesRoute(w http.ResponseWriter, _ *http.Request) {
+	b, _ := json.Marshal(instance.Namespaces())
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorParametersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string            `json:"namespace"`
+		Tags      []instance.Tag    `json:"tags"`
+		Filters   []instance.Filter `json:"filters"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	b, _ := q.ParametersJSON(&instance.Parameters{
+		Namespace: params.Namespace,
+		Tags:      params.Tags,
+		Filters:   params.Filters,
+	})
+	w.Write([]byte(b))
+}
+
+func (c *Operator) QCloudMonitorInstancesFiltersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string `json:"namespace"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]string{
+			"msg": fmt.Sprintf("namespace (%s) not found", params.Namespace),
+		})
+		w.Write(b)
+		return
+	}
+
+	type R struct {
+		Namespace string   `json:"namespace"`
+		Filters   []string `json:"filters"`
+	}
+	b, _ := json.Marshal(R{
+		Namespace: params.Namespace,
+		Filters:   q.Filters(),
+	})
+	w.Write(b)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
@@ -584,7 +707,6 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 # Admin Routes
 --------------
 * POST /-/logger
-* POST /-/reload
 * POST /-/dispatch
 
 # Metadata Routes
@@ -594,18 +716,25 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
-* GET /pods?all=true|false
+* GET /pods?resourceVersion=N&all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
+
+# QCloudMonitor Routes
+----------------------
+* GET /qcloudmonitor/namespaces
+* POST /qcloudmonitor/parameters
+* POST /qcloudmonitor/instances
+* POST /qcloudmonitor/instances/filters
 
 # Check Routes
 --------------
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M
-* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover
@@ -631,7 +760,6 @@ func (c *Operator) ListenAndServe() error {
 
 	// admin 路由
 	router.HandleFunc("/-/logger", c.AdminLoggerRoute)
-	router.HandleFunc("/-/reload", c.AdminReloadRoute)
 	router.HandleFunc("/-/dispatch", c.AdminDispatchRoute)
 
 	// metadata 路由
@@ -643,8 +771,13 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
-	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
+
+	// qcloudmonitor 路由
+	router.HandleFunc("/qcloudmonitor/namespaces", c.QCloudMonitorNamespacesRoute)
+	router.HandleFunc("/qcloudmonitor/parameters", c.QCloudMonitorParametersRoute)
+	router.HandleFunc("/qcloudmonitor/instances", c.QCloudMonitorInstancesRoute)
+	router.HandleFunc("/qcloudmonitor/instances/filters", c.QCloudMonitorInstancesFiltersRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

@@ -17,15 +17,15 @@ import (
 
 func TestNewOptions(t *testing.T) {
 	type args struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	tests := []struct {
 		name string
 		args args
 		want *Options
 	}{
-		{name: "empty map", args: args{params: make(map[string]interface{})}, want: &Options{params: make(map[string]interface{})}},
-		{name: "nil", args: args{params: nil}, want: &Options{params: make(map[string]interface{})}},
+		{name: "empty map", args: args{params: make(map[string]any)}, want: &Options{params: make(map[string]any)}},
+		{name: "nil", args: args{params: nil}, want: &Options{params: make(map[string]any)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,16 +38,16 @@ func TestNewOptions(t *testing.T) {
 
 func TestOptions_AllKeys(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		want   []string
 	}{
-		{name: "[a,b]", fields: fields{params: map[string]interface{}{"a": 1, "b": 2}}, want: []string{"a", "b"}},
-		{name: "empty", fields: fields{params: map[string]interface{}{}}, want: nil},
-		{name: "nil", fields: fields{params: map[string]interface{}{}}, want: nil},
+		{name: "[a,b]", fields: fields{params: map[string]any{"a": 1, "b": 2}}, want: []string{"a", "b"}},
+		{name: "empty", fields: fields{params: map[string]any{}}, want: nil},
+		{name: "nil", fields: fields{params: map[string]any{}}, want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestOptions_AllKeys(t *testing.T) {
 
 func TestOptions_Get(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -72,13 +72,13 @@ func TestOptions_Get(t *testing.T) {
 		name   string
 		fields fields
 		args   args
-		want   interface{}
+		want   any
 		want1  bool
 	}{
-		{name: "real nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: true},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
-		{name: "number", fields: fields{params: map[string]interface{}{"a": 1}}, args: args{key: "a"}, want: interface{}(1), want1: true},
-		{name: "string", fields: fields{params: map[string]interface{}{"a": "string"}}, args: args{key: "a"}, want: interface{}("string"), want1: true},
+		{name: "real nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: true},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
+		{name: "number", fields: fields{params: map[string]any{"a": 1}}, args: args{key: "a"}, want: any(1), want1: true},
+		{name: "string", fields: fields{params: map[string]any{"a": "string"}}, args: args{key: "a"}, want: any("string"), want1: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestOptions_Get(t *testing.T) {
 
 func TestOptions_GetBool(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -110,11 +110,11 @@ func TestOptions_GetBool(t *testing.T) {
 		want   bool
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: false, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: false, want1: false},
-		{name: "true", fields: fields{params: map[string]interface{}{"a": true}}, args: args{key: "a"}, want: true, want1: true},
-		{name: "false", fields: fields{params: map[string]interface{}{"a": false}}, args: args{key: "a"}, want: false, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: false, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: false, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: false, want1: false},
+		{name: "true", fields: fields{params: map[string]any{"a": true}}, args: args{key: "a"}, want: true, want1: true},
+		{name: "false", fields: fields{params: map[string]any{"a": false}}, args: args{key: "a"}, want: false, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: false, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -134,7 +134,7 @@ func TestOptions_GetBool(t *testing.T) {
 
 func TestOptions_GetDuration(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -146,11 +146,10 @@ func TestOptions_GetDuration(t *testing.T) {
 		want   time.Duration
 		want1  bool
 	}{
-
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": time.Duration(10)}}, args: args{key: "a"}, want: time.Duration(10), want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": time.Duration(10)}}, args: args{key: "a"}, want: time.Duration(10), want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,7 +169,7 @@ func TestOptions_GetDuration(t *testing.T) {
 
 func TestOptions_GetFloat64(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -182,11 +181,10 @@ func TestOptions_GetFloat64(t *testing.T) {
 		want   float64
 		want1  bool
 	}{
-
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": 10.1}}, args: args{key: "a"}, want: 10.1, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": 10.1}}, args: args{key: "a"}, want: 10.1, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,7 +204,7 @@ func TestOptions_GetFloat64(t *testing.T) {
 
 func TestOptions_GetInt(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -218,11 +216,10 @@ func TestOptions_GetInt(t *testing.T) {
 		want   int
 		want1  bool
 	}{
-
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": 10}}, args: args{key: "a"}, want: 10, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": 10}}, args: args{key: "a"}, want: 10, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -242,7 +239,7 @@ func TestOptions_GetInt(t *testing.T) {
 
 func TestOptions_GetInt64(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -254,11 +251,10 @@ func TestOptions_GetInt64(t *testing.T) {
 		want   int64
 		want1  bool
 	}{
-
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": int64(10)}}, args: args{key: "a"}, want: 10, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": int64(10)}}, args: args{key: "a"}, want: 10, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -278,7 +274,7 @@ func TestOptions_GetInt64(t *testing.T) {
 
 func TestOptions_GetInt8(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -290,10 +286,10 @@ func TestOptions_GetInt8(t *testing.T) {
 		want   int8
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": int8(10)}}, args: args{key: "a"}, want: 10, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": int8(10)}}, args: args{key: "a"}, want: 10, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -313,7 +309,7 @@ func TestOptions_GetInt8(t *testing.T) {
 
 func TestOptions_GetString(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -325,10 +321,10 @@ func TestOptions_GetString(t *testing.T) {
 		want   string
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: "", want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: "", want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": "10"}}, args: args{key: "a"}, want: "10", want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": true}}, args: args{key: "a"}, want: "", want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: "", want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: "", want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": "10"}}, args: args{key: "a"}, want: "10", want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": true}}, args: args{key: "a"}, want: "", want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -348,7 +344,7 @@ func TestOptions_GetString(t *testing.T) {
 
 func TestOptions_GetStringMap(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -357,13 +353,13 @@ func TestOptions_GetStringMap(t *testing.T) {
 		name   string
 		fields fields
 		args   args
-		want   map[string]interface{}
+		want   map[string]any
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": map[string]interface{}{"q": 1}}}, args: args{key: "a"}, want: map[string]interface{}{"q": 1}, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": map[string]any{"q": 1}}}, args: args{key: "a"}, want: map[string]any{"q": 1}, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -383,7 +379,7 @@ func TestOptions_GetStringMap(t *testing.T) {
 
 func TestOptions_GetStringMapString(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -395,10 +391,10 @@ func TestOptions_GetStringMapString(t *testing.T) {
 		want   map[string]string
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": map[string]string{"q": "1"}}}, args: args{key: "a"}, want: map[string]string{"q": "1"}, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": map[string]string{"q": "1"}}}, args: args{key: "a"}, want: map[string]string{"q": "1"}, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -418,7 +414,7 @@ func TestOptions_GetStringMapString(t *testing.T) {
 
 func TestOptions_GetStringMapStringSlice(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -430,10 +426,10 @@ func TestOptions_GetStringMapStringSlice(t *testing.T) {
 		want   map[string][]string
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": map[string][]string{"q": {"1"}}}}, args: args{key: "a"}, want: map[string][]string{"q": {"1"}}, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": map[string][]string{"q": {"1"}}}}, args: args{key: "a"}, want: map[string][]string{"q": {"1"}}, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -453,7 +449,7 @@ func TestOptions_GetStringMapStringSlice(t *testing.T) {
 
 func TestOptions_GetStringSlice(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -465,10 +461,10 @@ func TestOptions_GetStringSlice(t *testing.T) {
 		want   []string
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": []string{"1"}}}, args: args{key: "a"}, want: []string{"1"}, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": []string{"1"}}}, args: args{key: "a"}, want: []string{"1"}, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -488,7 +484,7 @@ func TestOptions_GetStringSlice(t *testing.T) {
 
 func TestOptions_GetInterfaceSliceWithString(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -500,9 +496,9 @@ func TestOptions_GetInterfaceSliceWithString(t *testing.T) {
 		want   []string
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": []interface{}{"1"}}}, args: args{key: "a"}, want: []string{"1"}, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": []any{"1"}}}, args: args{key: "a"}, want: []string{"1"}, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -523,7 +519,7 @@ func TestOptions_GetInterfaceSliceWithString(t *testing.T) {
 func TestOptions_GetTime(t *testing.T) {
 	tm := time.Now()
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -535,10 +531,10 @@ func TestOptions_GetTime(t *testing.T) {
 		want   time.Time
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: time.Time{}, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: time.Time{}, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": tm}}, args: args{key: "a"}, want: tm, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: time.Time{}, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: time.Time{}, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: time.Time{}, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": tm}}, args: args{key: "a"}, want: tm, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: time.Time{}, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -558,7 +554,7 @@ func TestOptions_GetTime(t *testing.T) {
 
 func TestOptions_GetUint(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -570,10 +566,10 @@ func TestOptions_GetUint(t *testing.T) {
 		want   uint
 		want1  bool
 	}{
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
-		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
-		{name: "right", fields: fields{params: map[string]interface{}{"a": uint(10)}}, args: args{key: "a"}, want: 10, want1: true},
-		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: 0, want1: false},
+		{name: "nil", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: 0, want1: false},
+		{name: "right", fields: fields{params: map[string]any{"a": uint(10)}}, args: args{key: "a"}, want: 10, want1: true},
+		{name: "other", fields: fields{params: map[string]any{"a": "true"}}, args: args{key: "a"}, want: 0, want1: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -593,7 +589,7 @@ func TestOptions_GetUint(t *testing.T) {
 
 func TestOptions_IsSet(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key string
@@ -604,8 +600,8 @@ func TestOptions_IsSet(t *testing.T) {
 		args   args
 		want   bool
 	}{
-		{name: "true", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: true},
-		{name: "false", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "b"}, want: false},
+		{name: "true", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "a"}, want: true},
+		{name: "false", fields: fields{params: map[string]any{"a": nil}}, args: args{key: "b"}, want: false},
 		{name: "false_nil", fields: fields{params: nil}, args: args{key: "a"}, want: false},
 	}
 	for _, tt := range tests {
@@ -622,11 +618,11 @@ func TestOptions_IsSet(t *testing.T) {
 
 func TestOptions_Set(t *testing.T) {
 	type fields struct {
-		params map[string]interface{}
+		params map[string]any
 	}
 	type args struct {
 		key   string
-		value interface{}
+		value any
 	}
 	tests := []struct {
 		name   string
@@ -634,7 +630,7 @@ func TestOptions_Set(t *testing.T) {
 		args   args
 		want   bool
 	}{
-		{name: "set", fields: fields{params: map[string]interface{}{}}, args: args{key: "a", value: "v"}, want: true},
+		{name: "set", fields: fields{params: map[string]any{}}, args: args{key: "a", value: "v"}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

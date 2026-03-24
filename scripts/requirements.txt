@@ -1,4 +1,4 @@
-certifi==2024.2.2
+certifi==2024.7.4
 cfgv==3.4.0
 charset-normalizer==3.1.0
 distlib==0.3.7
@@ -8,12 +8,12 @@ filelock==3.13.1
 gitdb==4.0.11
 GitPython==3.1.40
 identify==2.5.31
-idna==3.4
+idna==3.7
 nodeenv==1.8.0
 platformdirs==3.11.0
 pre-commit==3.5.0
 PyYAML==6.0.1
-requests==2.31.0
+requests==2.32.4
 smmap==5.0.1
-urllib3==1.26.16
-virtualenv==20.24.6
+urllib3==2.5.0
+virtualenv==20.26.6

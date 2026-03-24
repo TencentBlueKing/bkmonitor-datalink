@@ -86,6 +86,11 @@ func GetMaxFiles() (int, error) {
 	return int(decimal), nil
 }
 
+// GetAllocatedFiles windows 系统下无对应的实现
+func GetAllocatedFiles() (int, error) {
+	return 0, nil
+}
+
 func GetUname() (string, error) {
 	infoStat, err := host.Info()
 	if err != nil {

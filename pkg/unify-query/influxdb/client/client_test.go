@@ -11,7 +11,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 // TestDecodeResp
@@ -42,7 +42,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1"},
 									{"2022-04-14T01:01:00Z", "1"},
 									{"2022-04-14T01:02:00Z", "1"},
@@ -55,7 +55,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "2"},
 									{"2022-04-14T01:01:00Z", "2"},
 									{"2022-04-14T01:02:00Z", "2"},
@@ -79,7 +79,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1"},
 									{"2022-04-14T01:01:00Z", "1"},
 								},
@@ -96,7 +96,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "1"},
 									{"2022-04-14T01:03:00Z", "1"},
 								},
@@ -113,7 +113,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "1"},
 									{"2022-04-14T01:05:00Z", "1"},
 								},
@@ -130,7 +130,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "1"},
 								},
 								Partial: false,
@@ -145,7 +145,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "2"},
 									{"2022-04-14T01:01:00Z", "2"},
 								},
@@ -161,7 +161,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "2"},
 									{"2022-04-14T01:03:00Z", "2"},
 								},
@@ -169,14 +169,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "2"},
 									{"2022-04-14T01:05:00Z", "2"},
 								},
@@ -184,14 +185,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "2"},
 								},
 								Partial: false,
@@ -215,7 +217,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:00:00Z", "2", "127.0.0.1"},
 									{"2022-04-14T01:01:00Z", "1", "127.0.0.1"},
@@ -245,7 +247,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:00:00Z", "2", "127.0.0.1"},
 								},
@@ -261,7 +263,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:01:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:01:00Z", "2", "127.0.0.1"},
 								},
@@ -277,7 +279,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:02:00Z", "2", "127.0.0.1"},
 								},
@@ -285,14 +287,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:03:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:03:00Z", "2", "127.0.0.1"},
 								},
@@ -300,14 +303,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:04:00Z", "2", "127.0.0.1"},
 								},
@@ -315,14 +319,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:05:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:05:00Z", "2", "127.0.0.1"},
 								},
@@ -330,14 +335,15 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:06:00Z", "2", "127.0.0.1"},
 								},
@@ -355,7 +361,6 @@ func TestDecodeResp(t *testing.T) {
 
 	handlerGen := func(clientResp *decoder.Response, expectChunk bool, expectChunkSize int) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-
 			assert.Equal(t, "db", r.FormValue("db"))
 			assert.Equal(t, "sql", r.FormValue("q"))
 			chunkedStr := r.FormValue("chunked")
@@ -381,7 +386,7 @@ func TestDecodeResp(t *testing.T) {
 			}
 
 			for _, res := range clientResp.Results {
-				var baseResult = decoder.Result{
+				baseResult := decoder.Result{
 					StatementID: res.StatementID,
 					Messages:    res.Messages,
 					Err:         res.Err,
@@ -390,7 +395,7 @@ func TestDecodeResp(t *testing.T) {
 
 				// 否则按照chunkSize按点数返回
 				for si, series := range res.Series {
-					var resp = new(decoder.Response)
+					resp := new(decoder.Response)
 					resp.Err = clientResp.Err
 
 					// chunkSize 等于0，一条条的series返回
@@ -412,7 +417,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    series.Name,
 								Tags:    series.Tags,
 								Columns: series.Columns,
-								Values:  make([][]interface{}, 0),
+								Values:  make([][]any, 0),
 							},
 						}
 						if i+chunkSize < lenVals {
@@ -438,7 +443,6 @@ func TestDecodeResp(t *testing.T) {
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-
 			mux := http.NewServeMux()
 			mux.Handle("/query", handlerGen(testCase.data, testCase.chunked, testCase.chunkSize))
 			s := httptest.NewServer(mux)
@@ -460,8 +464,8 @@ func TestDecodeResp(t *testing.T) {
 
 				actualSeries := resp.Results[i].Series
 				for j, series := range r.Series {
-					//series.SameSeries(actualSeries[j])
-					//assert.Equal(t, tagsHash(series), tagsHash(actualSeries[j]))
+					// series.SameSeries(actualSeries[j])
+					// assert.Equal(t, tagsHash(series), tagsHash(actualSeries[j]))
 					assert.Equal(t, series.Name, actualSeries[j].Name)
 					assert.Equal(t, series.Columns, actualSeries[j].Columns)
 					assert.Equal(t, series.Partial, actualSeries[j].Partial)
@@ -469,8 +473,6 @@ func TestDecodeResp(t *testing.T) {
 					assert.Equal(t, series.Values, actualSeries[j].Values)
 				}
 			}
-
 		})
 	}
-
 }

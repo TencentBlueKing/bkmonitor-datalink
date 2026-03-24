@@ -31,10 +31,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceRemoteWrite, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.RemoteWrite.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceRemoteWrite, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -55,7 +52,7 @@ var httpSvc HttpService
 
 func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 

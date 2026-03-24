@@ -88,14 +88,14 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func makeTracesAttributesGenerator(n int, attrs map[string]string) *generator.TracesGenerator {
+func makeTracesAttrsRecord(n int, attrs map[string]string) ptrace.Traces {
 	opts := define.TracesOptions{SpanKind: n}
 	opts.SpanCount = 1
 	opts.Attributes = attrs
 	opts.Resources = map[string]string{
 		"service.name": "account",
 	}
-	return generator.NewTracesGenerator(opts)
+	return generator.NewTracesGenerator(opts).Generate()
 }
 
 func TestAddAttrsActionWithService(t *testing.T) {
@@ -122,16 +122,14 @@ processor:
 		"http.params":    "from=[actor] to=[order]",
 		"sw8.span_layer": "Http",
 	}
-	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       g.Generate(),
+		Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 	}
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
 
+	testkits.MustProcess(t, factory, record)
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.Accept", "Application/json")
+	testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "custom_tag.Accept", "Application/json")
 }
 
 func TestAddAttrsActionWithInterface(t *testing.T) {
@@ -158,17 +156,14 @@ processor:
 		"sw8.span_layer": "Http",
 		"api_name":       "TestApiName",
 	}
-	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       g.Generate(),
+		Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.language", "ZH-TEST")
+	testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "custom_tag.language", "ZH-TEST")
 }
 
 func TestAddAttrsActionWithQueryParams(t *testing.T) {
@@ -196,15 +191,12 @@ processor:
 		"api_name":       "TestApiName",
 	}
 
-	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       g.Generate(),
+		Data:       makeTracesAttrsRecord(int(ptrace.SpanKindUnspecified), m),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.from", "TestFrom")
+	testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "custom_tag.from", "TestFrom")
 }

@@ -31,7 +31,7 @@ func HandleExampleTask(ctx context.Context, t *task.Task) error {
 		return fmt.Errorf("json.Unmarshal failed: %v", err)
 	}
 
-	//逻辑处理start...
+	// 逻辑处理start...
 	logger.Printf("print user info: user_id=%d", p.UserID)
 	return errors.New("this is a test")
 }

@@ -67,7 +67,7 @@ func (s *ClientSuite) TestAgent() {
 	req, err := s.client.Agent().Request()
 
 	s.NoError(err)
-	s.Equal("http://paas.service.consul/api/c/compapi/v2/", req.URL.String())
+	s.Equal("http://paas.service.consul", req.URL.String())
 }
 
 // TestCommonArgs :

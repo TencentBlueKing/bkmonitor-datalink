@@ -15,12 +15,12 @@ import (
 
 // Task
 type Task struct {
-	Handler func(v ...interface{})
-	Params  []interface{}
+	Handler func(v ...any)
+	Params  []any
 }
 
 // NewTask
-func NewTask(handler func(v ...interface{}), params ...interface{}) *Task {
+func NewTask(handler func(v ...any), params ...any) *Task {
 	return &Task{
 		Handler: handler,
 		Params:  params,

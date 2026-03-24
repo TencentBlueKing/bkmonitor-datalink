@@ -15,21 +15,27 @@ import (
 	"fmt"
 	"strings"
 
-	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
-	"github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
-	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
+	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
+	promv1iface "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned/typed/monitoring/v1"
+	promk8sutil "github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
+	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/operator"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	clientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	appsv1iface "k8s.io/client-go/kubernetes/typed/apps/v1"
+	corev1iface "k8s.io/client-go/kubernetes/typed/core/v1"
+	discoveryv1iface "k8s.io/client-go/kubernetes/typed/discovery/v1"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 )
 
@@ -38,7 +44,7 @@ const (
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +53,7 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 }
 
 func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +62,7 @@ func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.I
 }
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig("", true, nil)
+	cfg, err := promk8sutil.NewClusterConfig("", true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -64,39 +70,25 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
 }
 
-// NewPromClient 操作 ServiceMonitor/PodMonitor/Probe CRD
-func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promversioned.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interface, error) {
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	cfg.ContentType = contentTypeProtobuf
-	return promversioned.NewForConfig(cfg)
+	return promcli.NewForConfig(cfg)
 }
 
-// NewBKClient 操作 DataID CRD
-func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkversioned.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface, error) {
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
 	cfg.ContentType = contentTypeProtobuf
-	return bkversioned.NewForConfig(cfg)
+	return bkcli.NewForConfig(cfg)
 }
 
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {
-	return operator.WaitForNamedCacheSync(ctx, controllerName, logx.New(controllerName), inf)
-}
-
-func CreateOrUpdateSecret(ctx context.Context, secretClient clientv1.SecretInterface, desired *corev1.Secret) error {
-	return k8sutil.CreateOrUpdateSecret(ctx, secretClient, desired)
-}
-
-func mergeMetadata(new *metav1.ObjectMeta, old metav1.ObjectMeta) {
-	new.ResourceVersion = old.ResourceVersion
-
-	new.SetLabels(mergeMaps(new.Labels, old.Labels))
-	new.SetAnnotations(mergeMaps(new.Annotations, old.Annotations))
+	return promoperator.WaitForNamedCacheSync(ctx, controllerName, logx.New(controllerName), inf)
 }
 
 func mergeMaps(new map[string]string, old map[string]string) map[string]string {
@@ -121,37 +113,131 @@ func mergeMapsByPrefix(from map[string]string, to map[string]string, prefix stri
 	return to
 }
 
-func CreateOrUpdateConfigMap(ctx context.Context, cmClient clientv1.ConfigMapInterface, desired *corev1.ConfigMap) error {
+func mergeMetadata(new *metav1.ObjectMeta, old metav1.ObjectMeta) {
+	new.ResourceVersion = old.ResourceVersion
+
+	new.SetLabels(mergeMaps(new.Labels, old.Labels))
+	new.SetAnnotations(mergeMaps(new.Annotations, old.Annotations))
+}
+
+func mergeKubectlAnnotations(from *metav1.ObjectMeta, to metav1.ObjectMeta) {
+	from.SetAnnotations(mergeMapsByPrefix(from.Annotations, to.Annotations, "kubectl.kubernetes.io/"))
+}
+
+func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {
+	return promk8sutil.CreateOrUpdateEndpoints(ctx, cli, desired)
+}
+
+func CreateOrUpdateEndpointSlice(ctx context.Context, cli discoveryv1iface.EndpointSliceInterface, desired *discoveryv1.EndpointSlice) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		existingSecret, err := cmClient.Get(ctx, desired.Name, metav1.GetOptions{})
+		existing, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
 				return err
 			}
-
-			_, err = cmClient.Create(ctx, desired, metav1.CreateOptions{})
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
 			return err
 		}
-
-		mutated := existingSecret.DeepCopyObject().(*corev1.ConfigMap)
-		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
-		if apiequality.Semantic.DeepEqual(existingSecret, desired) {
+		mergeMetadata(&desired.ObjectMeta, existing.ObjectMeta)
+		// 使用 DeepEqual 检查是否需要更新，避免不必要的 API 调用
+		// 注意：有序的 address 列表可以确保 DeepEqual 比较的准确性
+		if apiequality.Semantic.DeepEqual(existing, desired) {
 			return nil
 		}
-		_, err = cmClient.Update(ctx, desired, metav1.UpdateOptions{})
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	})
 }
 
-func CreateOrUpdateService(ctx context.Context, serviceClient clientv1.ServiceInterface, desired *corev1.Service) error {
-	return k8sutil.CreateOrUpdateService(ctx, serviceClient, desired)
+func CreateOrUpdateSecret(ctx context.Context, cli corev1iface.SecretInterface, desired *corev1.Secret) error {
+	return promk8sutil.CreateOrUpdateSecret(ctx, cli, desired)
 }
 
-func CreateOrUpdateEndpoints(ctx context.Context, endpointClient clientv1.EndpointsInterface, desired *corev1.Endpoints) error {
-	return k8sutil.CreateOrUpdateEndpoints(ctx, endpointClient, desired)
+func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface, desired *corev1.Service) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		service, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+		// Apply immutable fields from the existing service.
+		desired.Spec.IPFamilies = service.Spec.IPFamilies
+		desired.Spec.IPFamilyPolicy = service.Spec.IPFamilyPolicy
+		desired.Spec.ClusterIP = service.Spec.ClusterIP
+		desired.Spec.ClusterIPs = service.Spec.ClusterIPs
+
+		mergeMetadata(&desired.ObjectMeta, service.ObjectMeta)
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
 }
 
-func GetSecretDataBySecretKeySelector(ctx context.Context, secretClient clientv1.SecretInterface, selector corev1.SecretKeySelector) (string, error) {
+func CreateOrUpdateServiceMonitor(ctx context.Context, cli promv1iface.ServiceMonitorInterface, desired *promv1.ServiceMonitor) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		serviceMonitor, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+
+		mutated := serviceMonitor.DeepCopyObject().(*promv1.ServiceMonitor)
+		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
+		if apiequality.Semantic.DeepEqual(serviceMonitor, desired) {
+			return nil
+		}
+
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func CreateOrUpdateConfigMap(ctx context.Context, cli corev1iface.ConfigMapInterface, desired *corev1.ConfigMap) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		configMap, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+
+		mutated := configMap.DeepCopyObject().(*corev1.ConfigMap)
+		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
+		if apiequality.Semantic.DeepEqual(configMap, desired) {
+			return nil
+		}
+
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func CreateOrUpdateDeployment(ctx context.Context, cli appsv1iface.DeploymentInterface, desired *appsv1.Deployment) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+
+		mergeMetadata(&desired.ObjectMeta, deployment.ObjectMeta)
+		mergeKubectlAnnotations(&deployment.Spec.Template.ObjectMeta, desired.Spec.Template.ObjectMeta)
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func GetSecretDataBySecretKeySelector(ctx context.Context, secretClient corev1iface.SecretInterface, selector corev1.SecretKeySelector) (string, error) {
 	secret, err := secretClient.Get(ctx, selector.Name, metav1.GetOptions{})
 	if err != nil {
 		return "", err

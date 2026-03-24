@@ -31,8 +31,8 @@ type Config struct {
 	MetricsDataId  int32  `config:"metrics_dataid" mapstructure:"metrics_dataid"`
 	LogsDataId     int32  `config:"logs_dataid" mapstructure:"logs_dataid"`
 	ProfilesDataId int32  `config:"profiles_dataid" mapstructure:"profiles_dataid"`
-	BizId          int32  `config:"biz_id" mapstructure:"biz_id"`
-	AppName        string `config:"app_name" mapstructure:"app_name"`
+	BizId          int32  `config:"bk_biz_id" mapstructure:"bk_biz_id"`
+	AppName        string `config:"bk_app_name" mapstructure:"bk_app_name"`
 
 	// type: proxy
 	ProxyDataId int32  `config:"dataid" mapstructure:"proxy_dataid"`

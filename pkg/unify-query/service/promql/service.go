@@ -12,13 +12,11 @@ package promql
 import (
 	"context"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
 // Service 服务侧初始化consul实例使用
-type Service struct {
-}
+type Service struct{}
 
 // Type
 func (s *Service) Type() string {
@@ -50,5 +48,4 @@ func (s *Service) Wait() {
 
 // Close
 func (s *Service) Close() {
-	log.Infof(context.TODO(), "promql service context canceled")
 }

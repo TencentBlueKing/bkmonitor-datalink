@@ -64,14 +64,12 @@ func (g *Gather) AsPerfEvents(metas []define.ProcStat) []Event {
 
 	for _, meta := range metas {
 		procname := g.config.ExtractProcessName(meta.Cmd)
-		perfstat, err := g.ctr.GetOnePerfStat(meta.Pid)
-		if err != nil {
-			logger.Warnf("failed to fetch process perf stat: %+v", err)
-			continue
-		}
+		perfstat := g.ctr.GetOnePerfStat(meta.Pid)
+
 		e := perfEvent{
 			stat:     g.ctr.MergeMetaDataPerfStat(meta, perfstat),
 			procName: procname,
+			username: meta.Username,
 			dims:     g.config.ExtractDimensions(meta.Cmd),
 			tags:     g.config.Tags,
 			labels:   g.config.Labels,
@@ -89,12 +87,13 @@ func (g *Gather) AsPerfEvents(metas []define.ProcStat) []Event {
 	return ret
 }
 
-func (g *Gather) AsPortEvents(pid int32, cmd string, conns []process.FileSocket) []Event {
+func (g *Gather) AsPortEvents(pid int32, cmd, username string, conns []process.FileSocket) []Event {
 	procname := g.config.ExtractProcessName(cmd)
 	e := portEvent{
 		conns:    conns,
 		pid:      pid,
 		procName: procname,
+		username: username,
 		dims:     g.config.ExtractDimensions(cmd),
 		tags:     g.config.Tags,
 		labels:   g.config.Labels,
@@ -258,7 +257,7 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 				socketList = append(socketList, conn.UDP[m.Pid]...)
 				socketList = append(socketList, conn.TCP6[m.Pid]...)
 				socketList = append(socketList, conn.UDP6[m.Pid]...)
-				events := g.AsPortEvents(m.Pid, m.Cmd, socketList)
+				events := g.AsPortEvents(m.Pid, m.Cmd, m.Username, socketList)
 				if !g.config.DisableMapping {
 					events = g.aggregateStats(events, !refresh)
 				}

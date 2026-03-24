@@ -22,6 +22,7 @@ import (
 	"github.com/elastic/beats/libbeat/publisher"
 	"github.com/spf13/cast"
 
+	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	gseinfo "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
@@ -46,6 +47,7 @@ type Config struct {
 	EventBufferMax      int           `config:"eventbuffermax"`
 	MaxIdleConns        int           `config:"maxidleconns"`
 	MaxIdleConnsPerHost int           `config:"maxidleconnsperhost"`
+	FlowLimit           int           `config:"flowlimit"` // unit: Bytes（仅在大于 0 时生效）
 }
 
 func (c *Config) Validate() error {
@@ -79,6 +81,7 @@ type Record struct {
 type Output struct {
 	config *Config
 	client *http.Client
+	fl     *bkcommon.FlowLimiter
 	ch     chan *Record
 	stop   chan struct{}
 }
@@ -118,6 +121,11 @@ func New(cfg *common.Config) (*Output, error) {
 		ch:     make(chan *Record, config.Concurrency),
 		stop:   make(chan struct{}),
 	}
+
+	if config.FlowLimit > 0 {
+		o.fl = bkcommon.NewFlowLimiter(config.FlowLimit)
+	}
+
 	for i := 0; i < config.Concurrency; i++ {
 		go o.loopHandle()
 	}
@@ -198,6 +206,10 @@ func (o *Output) doRequest(record *Record) error {
 	buf, err := gse.MarshalFunc(record.Data)
 	if err != nil {
 		return err
+	}
+
+	if o.fl != nil {
+		o.fl.Consume(len(buf))
 	}
 
 	req, _ := http.NewRequest(http.MethodPost, o.config.Endpoint, bytes.NewBuffer(buf))

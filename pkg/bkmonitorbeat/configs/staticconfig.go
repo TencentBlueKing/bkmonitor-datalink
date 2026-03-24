@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
 // config类型定义
@@ -27,10 +28,15 @@ type StaticTaskConfig struct {
 	CheckPeriod           time.Duration `config:"check_period"`
 	ReportPeriod          time.Duration `config:"report_period"`
 	VirtualIfaceWhitelist []string      `config:"virtual_iface_whitelist"`
+	VirtualIfaceBlacklist []string      `config:"virtual_iface_blacklist"`
 }
 
 // InitIdent :
 func (c *StaticTaskConfig) InitIdent() error {
+	info, _ := gse.GetAgentInfo()
+	if info.StaticDataID != 0 {
+		c.DataID = info.StaticDataID
+	}
 	return c.initIdent(c)
 }
 

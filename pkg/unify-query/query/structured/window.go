@@ -17,8 +17,8 @@ import (
 
 type Window string
 
-// ToTime
-func (i Window) ToTime() (time.Duration, error) {
+// Duration converts a window to a duration.
+func (i Window) Duration() (time.Duration, error) {
 	duration, err := model.ParseDuration(string(i))
 	if err != nil {
 		return 0, err

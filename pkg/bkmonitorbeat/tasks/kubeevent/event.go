@@ -12,6 +12,7 @@ package kubeevent
 import (
 	"crypto/md5"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -173,6 +174,12 @@ func toEventMapStr(e k8sEvent, externalLabels []map[string]string) common.MapStr
 		"host":       e.Source.Host,
 		"type":       e.Type,
 	}
+
+	relKey := strings.ToLower(e.InvolvedObject.Kind)
+	if _, ok := dimensions[relKey]; !ok {
+		dimensions[relKey] = e.InvolvedObject.Name
+	}
+
 	for i := 0; i < len(externalLabels); i++ {
 		for k, v := range externalLabels[i] {
 			dimensions[k] = v

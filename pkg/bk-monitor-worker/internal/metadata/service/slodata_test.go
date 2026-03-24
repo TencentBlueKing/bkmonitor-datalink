@@ -23,9 +23,9 @@ import (
 func TestQueryBiz(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	//标签前缀
+	// 标签前缀
 	prefix := "/slo/"
-	//标签后缀
+	// 标签后缀
 	suffixes := []string{"volume_test", "error_test", "latency_test", "availability_test"}
 	labels := slo.AlarmStrategyLabel{
 		LabelName:  "/slo/场景1/volume_test/",
@@ -67,7 +67,7 @@ func TestQueryBiz(t *testing.T) {
 	// 初始化键 5000140 对应的值为 [“场景1”]
 	alarmMap[5000140] = []string{"场景1"}
 
-	//寻找符合标签规范的全部策略。然后统计其上层全部业务
+	// 寻找符合标签规范的全部策略。然后统计其上层全部业务
 	allBizIds, err := QueryBizV2(db, prefix, suffixes)
 	assert.NoError(t, err)
 	assert.Equal(t, alarmMap, allBizIds)
@@ -76,11 +76,11 @@ func TestQueryBiz(t *testing.T) {
 func TestQueryAndDeduplicateStrategies(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	//标签前缀
+	// 标签前缀
 	prefix := "/slo/"
-	//场景
+	// 场景
 	scene := "场景1"
-	//标签后缀
+	// 标签后缀
 	sloName := "volume_test"
 	// 业务id
 	bkBizId := 5000140
@@ -131,5 +131,4 @@ func TestQueryAndDeduplicateStrategies(t *testing.T) {
 	allBkBizStrategies, err := QueryAndDeduplicateStrategies(db, prefix, scene, sloName, bkBizId)
 	assert.NoError(t, err)
 	assert.Equal(t, strategies, allBkBizStrategies)
-
 }

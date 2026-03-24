@@ -15,7 +15,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
@@ -39,9 +38,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var (
-		err error
-	)
+	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}
@@ -60,17 +57,11 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload storage failed for->[%s]", err)
+		log.Errorf(context.TODO(), "prometheus service close success")
 		return
 	}
 
-	err = metadata.GetQueryRouter().Reload(ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload query router failed for->[%s]", err)
-		return
-	}
-
-	log.Warnf(context.TODO(), "prometheus service reloaded or start success.")
+	log.Infof(ctx, "prometheus service start success.")
 }
 
 // Wait
@@ -81,14 +72,14 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	log.Infof(context.TODO(), "prometheus service context cancel func called.")
+	log.Infof(context.TODO(), "prometheus service close success")
 }
 
 // loopReloadStorage
 func (s *Service) loopReloadStorage(ctx context.Context) error {
 	err := s.reloadStorage()
 	if err != nil {
-		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
+		log.Errorf(context.TODO(), "reload storage failed")
 		return err
 	}
 	ch, err := consul.WatchStorageInfo(ctx)
@@ -101,13 +92,13 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "storage reload loop exit")
+				log.Warnf(context.TODO(), "prometheus service close success")
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get storage info changed notify")
 				err = s.reloadStorage()
 				if err != nil {
-					log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
+					log.Errorf(context.TODO(), "reload storage failed %v", err)
 				}
 			}
 		}
@@ -119,7 +110,7 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 func (s *Service) reloadStorage() error {
 	consulData, err := consul.GetTsDBStorageInfo()
 	if err != nil {
-		log.Errorf(context.TODO(), "get storage info from consul failed,error:%s", err)
+		log.Errorf(context.TODO(), "get storage info failed %v", err)
 		return err
 	}
 	hash := consul.HashIt(consulData)
@@ -150,7 +141,7 @@ func (s *Service) reloadStorage() error {
 	}
 	err = inner.ReloadTsDBStorage(s.ctx, consulData, options)
 	if err != nil {
-		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
+		log.Errorf(context.TODO(), "reload storage failed %v", err)
 		return err
 	}
 

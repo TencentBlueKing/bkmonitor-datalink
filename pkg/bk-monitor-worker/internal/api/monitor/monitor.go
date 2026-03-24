@@ -17,17 +17,16 @@ import (
 // Client for metadata
 type Client struct {
 	define.BkApiClient
-	useBkMonitorApigw bool
 }
 
 // New monitor client
-func New(useBkMonitorApigw bool, configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
+func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
 	client, err := bkapi.NewBkApiClient("monitor_v3", configProvider, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{BkApiClient: client, useBkMonitorApigw: useBkMonitorApigw}, nil
+	return &Client{BkApiClient: client}, nil
 }
 
 // SearchAlert for monitor resource search_alert

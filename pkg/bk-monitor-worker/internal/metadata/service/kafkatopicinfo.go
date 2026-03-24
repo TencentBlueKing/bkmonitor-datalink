@@ -10,16 +10,11 @@
 package service
 
 import (
-	"fmt"
-
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -32,49 +27,6 @@ func NewKafkaTopicInfoSvc(obj *storage.KafkaTopicInfo) KafkaTopicInfoSvc {
 	return KafkaTopicInfoSvc{
 		KafkaTopicInfo: obj,
 	}
-}
-
-// CreateInfo 创建一个新的Topic信息
-func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize *int64, flushInterval *string, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
-	db := mysql.GetDBSession().DB
-	count, err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdEq(bkDataId).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count != 0 {
-		return nil, errors.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
-	}
-	if topic == "" {
-		topic = fmt.Sprintf("%s%v0", "0bkmonitor_", bkDataId)
-	}
-	if partition == 0 {
-		partition = 1
-	}
-	info := storage.KafkaTopicInfo{
-		BkDataId:      bkDataId,
-		Topic:         topic,
-		Partition:     partition,
-		BatchSize:     batchSize,
-		FlushInterval: flushInterval,
-		ConsumeRate:   consumeRate,
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(info.TableName(), map[string]interface{}{
-			storage.KafkaTopicInfoDBSchema.BkDataId.String():      info.BkDataId,
-			storage.KafkaTopicInfoDBSchema.Topic.String():         info.Topic,
-			storage.KafkaTopicInfoDBSchema.Partition.String():     info.Partition,
-			storage.KafkaTopicInfoDBSchema.BatchSize.String():     info.BatchSize,
-			storage.KafkaTopicInfoDBSchema.FlushInterval.String(): info.FlushInterval,
-			storage.KafkaTopicInfoDBSchema.ConsumeRate.String():   info.ConsumeRate,
-		}), ""))
-	} else {
-		err = info.Create(db)
-		if err != nil {
-			return nil, err
-		}
-	}
-	logger.Infof("new kafka topic is set for data_id [%v] topic [%s] partition [%v]", info.BkDataId, info.Topic, info.Partition)
-	return &info, nil
 }
 
 func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo, kafkaClient sarama.Client) error {
@@ -106,15 +58,8 @@ func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo, kaf
 	}
 
 	s.Partition = partitionLen
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_kafka_topic_info") {
-		logger.Info(diffutil.BuildLogStr("refresh_kafka_topic_info", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
-			storage.KafkaTopicInfoDBSchema.Id.String():        s.Id,
-			storage.KafkaTopicInfoDBSchema.Partition.String(): s.Partition,
-		}), ""))
-	} else {
-		if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
-			return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
-		}
+	if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
+		return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
 	}
 	logger.Infof("kafka topic info for partition of topic [%s] with partition [%v] has been refreshed", s.Topic, s.Partition)
 	return nil

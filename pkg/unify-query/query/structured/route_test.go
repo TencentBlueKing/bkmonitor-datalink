@@ -160,7 +160,6 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 
 // TestMakeRouteFromLabelMatch
 func TestMakeRouteFromLabelMatch(t *testing.T) {
-
 	miss := []*labels.Matcher{}
 	miss = append(miss, labels.MustNewMatcher(labels.MatchEqual, "__name__", "usage"))
 

@@ -23,7 +23,14 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
-func ParseRequestIP(source string) string {
+func ParseRequestIP(source string, header http.Header) string {
+	if header != nil {
+		forwarded := header.Get("X-Forwarded-For")
+		if forwarded != "" {
+			return forwarded
+		}
+	}
+
 	s, _, err := net.SplitHostPort(source)
 	if err == nil {
 		return s
@@ -43,7 +50,7 @@ func GetContentLength(header http.Header) int {
 
 func GetGrpcIpFromContext(ctx context.Context) string {
 	if p, ok := peer.FromContext(ctx); ok {
-		return ParseRequestIP(p.Addr.String())
+		return ParseRequestIP(p.Addr.String(), nil)
 	}
 	return ""
 }

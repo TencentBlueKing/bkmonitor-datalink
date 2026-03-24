@@ -17,57 +17,54 @@ import (
 	"github.com/grafana/jfr-parser/parser/types"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/builder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/models"
 )
 
 type jfrPprofBuilder struct {
-	startTime       int64
-	endTime         int64
-	labelMapping    map[uint64]models.Labels
-	buildersMapping models.LabelsCache[builder.ProfileBuilder]
-	jfrLabels       *LabelsSnapshot
+	builders      map[int64]*ProfileBuilder
+	timeNanos     int64
+	durationNanos int64
+	jfrLabels     *LabelsSnapshot
 
 	samplerPeriod int64
 	parser        *parser.Parser
 }
 
-func (j *jfrPprofBuilder) addStacktrace(sampleType int64, contextID uint64, ref types.StackTraceRef, values []int64) {
-	// Step1: 获取事件对应的 Label 信息
+func (j *jfrPprofBuilder) addStacktrace(
+	sampleType int64,
+	correlation StacktraceCorrelation,
+	ref types.StackTraceRef,
+	values []int64,
+) {
+	p := j.profileBuilderForSampleType(sampleType)
 	stacktrace := j.parser.GetStacktrace(ref)
 	if stacktrace == nil {
 		return
 	}
 
-	contextIdLabels := j.getLabels(contextID)
-	// Step2: 根据时间 ContextId 获取 ProfileBuilder
-	pb := j.buildersMapping.GetOrCreate(sampleType, contextIdLabels)
-
-	var factor int64 = 1
-	if sampleType == sampleTypeCPU || sampleType == sampleTypeWall {
-		factor = j.samplerPeriod
-	}
-	addValues := func(d []int64) {
+	addValues := func(dst []int64) {
+		mul := 1
+		if sampleType == sampleTypeCPU || sampleType == sampleTypeWall {
+			mul = int(j.samplerPeriod)
+		}
 		for i, value := range values {
-			d[i] += value * factor
+			dst[i] += value * int64(mul)
 		}
 	}
 
-	visitedSample := pb.Value.FindExternalSample(ref)
+	visitedSample := p.FindExternalSample(ref)
 	if visitedSample != nil {
 		addValues(visitedSample.Value)
 		return
 	}
 
 	locations := make([]*profile.Location, 0, len(stacktrace.Frames))
-
-	// Step3: 逐个解析堆栈
 	for _, frame := range stacktrace.Frames {
-		locationId, exist := pb.Value.FindLocationId(frame.Method)
+		locationId, exist := p.FindLocationId(frame.Method)
 		if exist {
 			locations = append(locations, locationId)
 			continue
 		}
+
 		method := j.parser.GetMethod(frame.Method)
 		if method == nil {
 			continue
@@ -79,7 +76,7 @@ func (j *jfrPprofBuilder) addStacktrace(sampleType int64, contextID uint64, ref 
 		}
 
 		locations = append(
-			locations, pb.Value.AddExternalFunction(
+			locations, p.AddExternalFunction(
 				fmt.Sprintf("%s.%s", j.parser.GetSymbolString(clz.Name), j.parser.GetSymbolString(method.Name)),
 				frame.Method),
 		)
@@ -87,98 +84,92 @@ func (j *jfrPprofBuilder) addStacktrace(sampleType int64, contextID uint64, ref 
 
 	vs := make([]int64, len(values))
 	addValues(vs)
-	pb.Value.AddExternalSample(locations, vs, ref)
+	p.AddExternalSampleWithLabels(locations, vs, ref, j.contextLabels(correlation.ContextId), j.jfrLabels, correlation)
 }
 
-func (j *jfrPprofBuilder) getLabels(contextId uint64) models.Labels {
-	res, exist := j.labelMapping[contextId]
-	if exist {
-		return res
+func (j *jfrPprofBuilder) profileBuilderForSampleType(sampleType int64) *ProfileBuilder {
+	if build, ok := j.builders[sampleType]; ok {
+		return build
 	}
 
-	labels, success := j.getLabelsFromSnapshot(contextId)
-	if !success {
-		return models.NewLabels(nil)
+	newBuilder := NewProfileBuilder()
+	newBuilder.TimeNanos = j.timeNanos
+	newBuilder.DurationNanos = j.durationNanos
+	switch sampleType {
+	case sampleTypeCPU:
+		newBuilder.AddSampleType("cpu", "nanoseconds")
+		newBuilder.AddPeriodType("cpu", "nanoseconds")
+
+	case sampleTypeWall:
+		newBuilder.AddSampleType("wall", "nanoseconds")
+		newBuilder.AddPeriodType("wall", "nanoseconds")
+
+	case sampleTypeInTLAB:
+		newBuilder.AddSampleType("alloc_in_new_tlab_objects", "count")
+		newBuilder.AddSampleType("alloc_in_new_tlab_bytes", "bytes")
+		newBuilder.AddPeriodType("space", "bytes")
+
+	case sampleTypeOutTLAB:
+		newBuilder.AddSampleType("alloc_outside_tlab_objects", "count")
+		newBuilder.AddSampleType("alloc_outside_tlab_bytes", "bytes")
+		newBuilder.AddPeriodType("space", "bytes")
+
+	case sampleTypeLock:
+		newBuilder.AddSampleType("contentions", "count")
+		newBuilder.AddSampleType("delay", "nanoseconds")
+		newBuilder.AddPeriodType("mutex", "count")
+
+	case sampleTypeThreadPark:
+		newBuilder.AddSampleType("contentions", "count")
+		newBuilder.AddSampleType("delay", "nanoseconds")
+		newBuilder.AddPeriodType("block", "count")
+
+	case sampleTypeLiveObject:
+		newBuilder.AddSampleType("live", "count")
+		newBuilder.AddPeriodType("objects", "count")
+
+	case sampleTypeAllocSample:
+		newBuilder.AddSampleType("alloc_sample_objects", "count")
+		newBuilder.AddSampleType("alloc_sample_bytes", "bytes")
+		newBuilder.AddPeriodType("space", "bytes")
+
+	case sampleTypeMalloc:
+		newBuilder.AddSampleType("malloc_objects", "count")
+		newBuilder.AddSampleType("malloc_bytes", "bytes")
 	}
-	j.labelMapping[contextId] = labels
-	return labels
+	j.builders[sampleType] = newBuilder
+	return newBuilder
 }
 
-func (j *jfrPprofBuilder) getLabelsFromSnapshot(contextId uint64) (models.Labels, bool) {
-	if contextId == 0 {
-		return models.Labels{}, false
+func (j *jfrPprofBuilder) contextLabels(contextID uint64) *Context {
+	if j.jfrLabels == nil {
+		return nil
 	}
-	ctx, exist := j.jfrLabels.Contexts[int64(contextId)]
-	if !exist {
-		return models.Labels{}, false
-	}
-	var res []*models.Label
-	for k, v := range ctx.Labels {
-		res = append(res, &models.Label{Key: k, Value: v})
-	}
-	return models.NewLabels(res), true
+	return j.jfrLabels.Contexts[int64(contextID)]
 }
 
 func (j *jfrPprofBuilder) build() []*profile.Profile {
-	res := make([]*profile.Profile, 0, len(j.buildersMapping.Map))
-
-	for sampleType, entries := range j.buildersMapping.Map {
-		for _, pb := range entries {
-			pb.Value.TimeNanos = j.startTime
-			pb.Value.DurationNanos = j.endTime - j.startTime
-			switch sampleType {
-			case sampleTypeCPU:
-				pb.Value.AddSampleType(TypeCpu, UnitNanoseconds)
-				pb.Value.AddPeriodType(TypeCpu, UnitNanoseconds)
-			case sampleTypeWall:
-				pb.Value.AddSampleType(TypeWall, UnitNanoseconds)
-				pb.Value.AddPeriodType(TypeWall, UnitNanoseconds)
-			case sampleTypeInTLAB:
-				pb.Value.AddSampleType(TypeInTlabObjects, UnitCount)
-				pb.Value.AddSampleType(TypeInTlabBytes, UnitBytes)
-				pb.Value.AddPeriodType(TypeSpace, UnitBytes)
-			case sampleTypeOutTLAB:
-				pb.Value.AddSampleType(TypeOutTlabObjects, UnitCount)
-				pb.Value.AddSampleType(TypeOutTlabBytes, UnitBytes)
-				pb.Value.AddPeriodType(TypeSpace, UnitBytes)
-			case sampleTypeLock:
-				pb.Value.AddSampleType(TypeContentions, UnitCount)
-				pb.Value.AddSampleType(TypeDelay, UnitNanoseconds)
-				pb.Value.AddPeriodType(TypeMutex, UnitCount)
-			case sampleTypeThreadPark:
-				pb.Value.AddSampleType(TypeContentions, UnitCount)
-				pb.Value.AddSampleType(TypeDelay, UnitNanoseconds)
-				pb.Value.AddPeriodType(TypeBlock, UnitCount)
-			case sampleTypeLiveObject:
-				pb.Value.AddSampleType(TypeLive, UnitCount)
-				pb.Value.AddPeriodType(TypeObjects, UnitCount)
-			}
-			res = append(res, pb.Value.Profile)
-		}
+	profiles := make([]*profile.Profile, 0, len(j.builders))
+	for _, build := range j.builders {
+		profiles = append(profiles, build.Profile)
 	}
-
-	return res
+	return profiles
 }
 
 func newJfrPprofBuilders(p *parser.Parser, jfrLabels *LabelsSnapshot, m define.ProfileMetadata) *jfrPprofBuilder {
+	st := m.StartTime.UnixNano()
+	et := m.EndTime.UnixNano()
 	var period int64
 	if m.SampleRate == 0 {
 		period = 0
 	} else {
-		// 周期单位: 纳秒
 		period = 1e9 / int64(m.SampleRate)
 	}
 
 	return &jfrPprofBuilder{
-		startTime: m.StartTime.UnixNano(),
-		endTime:   m.EndTime.UnixNano(),
-
-		buildersMapping: models.NewLabelsCache[builder.ProfileBuilder](
-			func() *builder.ProfileBuilder {
-				return builder.NewProfileBuilder()
-			},
-		),
-		labelMapping:  make(map[uint64]models.Labels),
+		builders:      make(map[int64]*ProfileBuilder),
+		timeNanos:     st,
+		durationNanos: et - st,
 		jfrLabels:     jfrLabels,
 		samplerPeriod: period,
 		parser:        p,

@@ -13,7 +13,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/agiledragon/gomonkey/v2"
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -39,7 +39,7 @@ func TestClusterInfo_GetESClient(t *testing.T) {
 	assert.Nil(t, client)
 	cluster.ClusterType = models.StorageTypeES
 	// 测试获取客户端
-	patchESPing := gomonkey.ApplyFuncReturn(elasticsearch.Elasticsearch.Ping, nil, nil)
+	patchESPing := gomonkey.ApplyFuncReturn(elasticsearch.Elasticsearch.Ping, &elasticsearch.Response{}, nil)
 	defer patchESPing.Reset()
 	client, err = cluster.GetESClient(context.TODO())
 	assert.Nil(t, err)

@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis"
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
@@ -28,7 +28,6 @@ var rs *Instance
 func newRedisClient() {
 	// 启动 server
 	s, err := miniredis.Run()
-
 	if err != nil {
 		panic(err)
 	}

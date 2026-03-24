@@ -33,6 +33,18 @@ var configData = &Config{
 			},
 		},
 		{
+			Name: "container",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"namespace",
+				"pod",
+				"container",
+			},
+			Info: cmdb.Index{
+				"version",
+			},
+		},
+		{
 			Name: "pod",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -63,12 +75,13 @@ var configData = &Config{
 				"namespace",
 				"deployment",
 			},
-		}, {
-			Name: "deamonset",
+		},
+		{
+			Name: "daemonset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
-				"deamonset",
+				"daemonset",
 			},
 		},
 		{
@@ -131,6 +144,65 @@ var configData = &Config{
 				"bklogconfig_name",
 			},
 		},
+		{
+			Name: "business",
+			Index: cmdb.Index{
+				"bk_biz_id",
+			},
+		},
+		{
+			Name: "set",
+			Index: cmdb.Index{
+				"bk_set_id",
+			},
+		},
+		{
+			Name: "module",
+			Index: cmdb.Index{
+				"bk_module_id",
+			},
+		},
+		{
+			Name: "app_version",
+			Index: cmdb.Index{
+				"app_name",
+				"version",
+			},
+		},
+		{
+			Name: "git_commit",
+			Index: cmdb.Index{
+				"git_repo",
+				"commit_id",
+			},
+		},
+		{
+			Name: "p4_changelist",
+			Index: cmdb.Index{
+				"p4_port",
+				"changelist_id",
+			},
+		},
+		{
+			Name: "svn_revision",
+			Index: cmdb.Index{
+				"svn_repo",
+				"revision",
+			},
+		},
+		{
+			Name: "host",
+			Index: cmdb.Index{
+				"bk_host_id",
+			},
+			Info: cmdb.Index{
+				"version",
+				"env_name",
+				"env_type",
+				"service_version",
+				"service_type",
+			},
+		},
 	},
 	Relation: []RelationConf{
 		{
@@ -150,6 +222,11 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
+				"container", "pod",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
 				"pod", "replicaset",
 			},
 		},
@@ -160,7 +237,7 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"deamonset", "pod",
+				"daemonset", "pod",
 			},
 		},
 		{
@@ -218,5 +295,78 @@ var configData = &Config{
 				"bklogconfig", "datasource",
 			},
 		},
+		{
+			Resources: []cmdb.Resource{
+				"business", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"module", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "module",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "system",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "host",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "container",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "git_commit",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "p4_changelist",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"app_version", "svn_revision",
+			},
+		},
 	},
+}
+
+var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+
+func init() {
+	for _, c := range configData.Resource {
+		resourceConfig[c.Name] = c
+	}
+}
+
+func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
+	var index cmdb.Index
+	for _, r := range resources {
+		index = append(index, resourceConfig[r].Index...)
+	}
+	return index
+}
+
+func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
+	var index []string
+	for _, r := range resources {
+		index = append(index, resourceConfig[r].Info...)
+	}
+	return index
+}
+
+func AllResources() map[cmdb.Resource]ResourceConf {
+	return resourceConfig
 }

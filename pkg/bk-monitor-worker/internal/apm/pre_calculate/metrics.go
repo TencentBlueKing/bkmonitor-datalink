@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/grafana/pyroscope-go"
+	pyroscope "github.com/grafana/pyroscope-go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -112,7 +112,6 @@ func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 			pyroscope.ProfileBlockDuration,
 		},
 	})
-
 	if err != nil {
 		apmLogger.Errorf("Start pyroscope failed, profile data not be reported, error: %s", err)
 		return

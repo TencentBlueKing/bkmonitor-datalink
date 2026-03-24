@@ -17,58 +17,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
-func TestFromMap(t *testing.T) {
-	excepted := Labels{
-		{Name: "baz", Value: "qux"},
-		{Name: "foo", Value: "bar"},
-	}
-	m := map[string]string{
-		"foo": "bar",
-		"baz": "qux",
-	}
-	lbs := FromMap(m)
-	assert.Equal(t, excepted, lbs)
-}
-
-func TestLabelsHash(t *testing.T) {
-	lbls := Labels{
-		{Name: "foo", Value: "bar"},
-		{Name: "baz", Value: "qux"},
-	}
-	assert.Equal(t, lbls.Hash(), lbls.Hash())
-	assert.NotEqual(t, lbls.Hash(), Labels{lbls[1], lbls[0]}.Hash(), "unordered labels match.")
-	assert.NotEqual(t, lbls.Hash(), Labels{lbls[0]}.Hash(), "different labels match.")
-}
-
-func TestLabelsMap(t *testing.T) {
-	assert.Equal(t, map[string]string{
-		"aaa": "111",
-		"bbb": "222",
-	}, Labels{
-		{Name: "aaa", Value: "111"},
-		{Name: "bbb", Value: "222"},
-	}.Map())
-}
-
 func TestHashFromMap(t *testing.T) {
-	m := map[string]string{
-		"aaa": "111",
-		"bbb": "222",
+	m1 := map[string]string{
+		"a": "1",
+		"b": "2",
+		"c": "3",
 	}
-	h1 := HashFromMap(m)
-	h2 := HashFromMap(m)
-	assert.Equal(t, h1, h2)
-}
+	h1 := HashFromMap(m1)
+	assert.Equal(t, h1, HashFromMap(m1))
 
-func BenchmarkLabelsHash(b *testing.B) {
-	m := random.Dimensions(6)
-	for i := 0; i < b.N; i++ {
-		lbs := FromMap(m)
-		lbs.Hash()
+	m2 := map[string]string{
+		"a": "1",
+		"b": "2",
+		"c": "4",
 	}
+	h2 := HashFromMap(m2)
+	assert.NotEqual(t, h1, h2)
 }
 
 func BenchmarkLabelsHashPool(b *testing.B) {
+	b.ReportAllocs()
 	m := random.Dimensions(6)
 	for i := 0; i < b.N; i++ {
 		HashFromMap(m)

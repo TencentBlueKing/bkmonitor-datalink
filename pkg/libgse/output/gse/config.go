@@ -43,6 +43,7 @@ type Config struct {
 	WriteTimeout   time.Duration `config:"writetimeout"` // unit: second
 	FastMode       bool          `config:"fastmode"`     // 是否启用高性能模式（默认不启用）
 	Concurrency    int           `config:"concurrency"`  // 并发数（仅在高性能模式下生效）
+	FlowLimit      int           `config:"flowlimit"`    // unit: Bytes（仅在大于 0 时生效）
 
 	BKAddressing BKAddressingType `config:"bk_addressing"`
 	HostIP       string           `config:"hostip"`
@@ -119,6 +120,12 @@ func (aif *AgentInfoFetcher) Fetch() (gse.AgentInfo, error) {
 		if info.IP == "" {
 			// 如果 agent 中没有 IP 信息，则从主机身份文件中获取
 			info.IP = w.GetHostInnerIp()
+		}
+		if w.GetTenantID() != "" {
+			info.BKTenantID = w.GetTenantID()
+		}
+		if w.GetStaticDataID() != 0 {
+			info.StaticDataID = w.GetStaticDataID()
 		}
 		logger.Debugf("fetch agent info from host watcher: %+v", info)
 	}

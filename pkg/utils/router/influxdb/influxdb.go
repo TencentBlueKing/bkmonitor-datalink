@@ -20,26 +20,28 @@ import (
 )
 
 const (
-	ClusterInfoKey                   = "cluster_info"
-	HostInfoKey                      = "host_info"
-	TagInfoKey                       = "tag_info"
-	HostStatusInfoKey                = "host_info:status"
-	ProxyKey                         = "influxdb_proxy"
-	QueryRouterInfoKey               = "query_router_info"
-	SpaceToResultTableKey            = "space_to_result_table"
-	DataLabelToResultTableKey        = "data_label_to_result_table"
-	FieldToResultTableKey            = "field_to_result_table"
-	ResultTableDetailKey             = "result_table_detail"
-	SpaceToResultTableChannelKey     = "space_to_result_table:channel"
-	DataLabelToResultTableChannelKey = "data_label_to_result_table:channel"
-	FieldToResultTableChannelKey     = "field_to_result_table:channel"
-	ResultTableDetailChannelKey      = "result_table_detail:channel"
+	ClusterInfoKey                    = "cluster_info"
+	HostInfoKey                       = "host_info"
+	TagInfoKey                        = "tag_info"
+	HostStatusInfoKey                 = "host_info:status"
+	ProxyKey                          = "influxdb_proxy"
+	QueryRouterInfoKey                = "query_router_info"
+	SpaceToResultTableKey             = "space_to_result_table"
+	DataLabelToResultTableKey         = "data_label_to_result_table"
+	ResultTableDetailKey              = "result_table_detail"
+	SpaceToResultTableChannelKey      = "space_to_result_table:channel"
+	DataLabelToResultTableChannelKey  = "data_label_to_result_table:channel"
+	ResultTableDetailChannelKey       = "result_table_detail:channel"
+	ResultTableDetailChannelDeleteKey = "result_table_detail:channel:delete"
+
+	BkAppToSpaceKey        = "bk_app_to_space"
+	BkAppToSpaceChannelKey = "bk_app_to_space:channel"
 )
 
 var (
 	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey}
-	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey}
-	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey}
+	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppToSpaceKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, ResultTableDetailChannelDeleteKey, BkAppToSpaceChannelKey}
 )
 
 type Router interface {
@@ -55,8 +57,8 @@ type Router interface {
 	GetQueryRouterInfo(ctx context.Context) (QueryRouterInfo, error)
 	SubHostStatus(ctx context.Context) <-chan *goRedis.Message
 	SetHostStatusRead(ctx context.Context, hostName string, readStatus bool) error
+	GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error)
 	GetSpace(ctx context.Context, spaceId string) (Space, error)
-	GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error)
 	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
 	GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error)
 	IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV)
@@ -94,7 +96,8 @@ func (r *router) Close() error {
 
 // key get cache's key
 func (r *router) key(keys ...string) string {
-	return fmt.Sprintf("%s:%s", r.prefix, strings.Join(keys, ":"))
+	k := fmt.Sprintf("%s:%s", r.prefix, strings.Join(keys, ":"))
+	return k
 }
 
 // Subscribe sub all key
@@ -298,6 +301,15 @@ func (r *router) SetHostStatusRead(ctx context.Context, hostName string, readSta
 	return nil
 }
 
+func (r *router) GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error) {
+	var value SpaceUIDList
+	err := GetGenericHashKeyResult(r, ctx, BkAppToSpaceKey, bkApp, &value)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 func (r *router) GetSpace(ctx context.Context, spaceId string) (Space, error) {
 	value := Space{}
 	err := GetGenericHashKeyResult(r, ctx, SpaceToResultTableKey, spaceId, &value)
@@ -319,15 +331,6 @@ func (r *router) GetResultTableDetail(ctx context.Context, tableId string) (*Res
 func (r *router) GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error) {
 	value := ResultTableList{}
 	err := GetGenericHashKeyResult(r, ctx, DataLabelToResultTableKey, dataLabel, &value)
-	if err != nil {
-		return nil, err
-	}
-	return value, nil
-}
-
-func (r *router) GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error) {
-	value := ResultTableList{}
-	err := GetGenericHashKeyResult(r, ctx, FieldToResultTableKey, field, &value)
 	if err != nil {
 		return nil, err
 	}
@@ -391,8 +394,8 @@ func GetGenericHashKeyResult(r *router, ctx context.Context, coreKey string, fie
 
 func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 	switch typeKey {
-	case FieldToResultTableKey:
-		stoVal = &ResultTableList{}
+	case BkAppToSpaceKey:
+		stoVal = &SpaceUIDList{}
 	case SpaceToResultTableKey:
 		stoVal = &Space{}
 	case DataLabelToResultTableKey:

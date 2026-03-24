@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
@@ -76,12 +75,12 @@ type Discover struct {
 
 var _ discover.Discover = (*Discover)(nil)
 
-func New(ctx context.Context, role string, checkFn define.CheckFunc, opts *Options) *Discover {
+func New(ctx context.Context, role string, opts *Options) *Discover {
 	d := &Discover{
 		ctx:          ctx,
 		role:         role,
 		opts:         opts,
-		BaseDiscover: discover.NewBaseDiscover(ctx, checkFn, opts.CommonOptions),
+		BaseDiscover: discover.NewBaseDiscover(ctx, opts.CommonOptions),
 	}
 
 	d.SetUK(fmt.Sprintf("%s:%s", role, strings.Join(d.getNamespaces(), "/")))
@@ -103,6 +102,12 @@ func (d *Discover) Reload() error {
 	return d.Start()
 }
 
+type WrapDiscovery struct {
+	*promk8ssd.Discovery
+}
+
+func (WrapDiscovery) Stop() {}
+
 func (d *Discover) Start() error {
 	d.PreStart()
 
@@ -116,7 +121,7 @@ func (d *Discover) Start() error {
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}
-		return shareddiscovery.New(d.UK(), discovery), nil
+		return shareddiscovery.New(d.UK(), &WrapDiscovery{discovery}), nil
 	})
 	if err != nil {
 		return err

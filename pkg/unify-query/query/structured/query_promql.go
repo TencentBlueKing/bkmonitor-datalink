@@ -12,6 +12,7 @@ package structured
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Knetic/govaluate"
@@ -24,14 +25,17 @@ type QueryPromQL struct {
 	PromQL              string   `json:"promql"`
 	Start               string   `json:"start"`
 	End                 string   `json:"end"`
-	Step                string   `json:"step"`
-	BKBizIDs            []string `json:"bk_biz_ids"`
+	Step                string   `json:"step,omitempty"`
+	BKBizIDs            []string `json:"bk_biz_ids,omitempty"`
 	MaxSourceResolution string   `json:"max_source_resolution,omitempty"`
 	NotAlignInfluxdb    bool     `json:"not_align_influxdb,omitempty"` // 不与influxdb对齐
 	Limit               int      `json:"limit,omitempty"`
 	Slimit              int      `json:"slimit,omitempty"`
 	Match               string   `json:"match,omitempty"`
 	IsVerifyDimensions  bool     `json:"is_verify_dimensions,omitempty"`
+
+	Reference    bool `json:"reference,omitempty"`
+	NotTimeAlign bool `json:"not_time_align,omitempty"`
 
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
@@ -41,6 +45,9 @@ type QueryPromQL struct {
 	LookBackDelta string `json:"look_back_delta"`
 	// 瞬时数据
 	Instant bool `json:"instant"`
+
+	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+	AddDimensions []string `json:"add_dimensions,omitempty"`
 }
 
 // refMgr
@@ -76,7 +83,7 @@ type vecGroup struct {
 // queryPromQLExpr
 type queryPromQLExpr struct {
 	q string
-	//promql     []string
+	// promql     []string
 	promqlByte []byte
 	ref        *refMgr
 	expr       parser.Expr
@@ -87,7 +94,17 @@ type queryPromQLExpr struct {
 
 // NewQueryPromQLExpr
 func NewQueryPromQLExpr(q string) *queryPromQLExpr {
-	return &queryPromQLExpr{q: q, ref: &refMgr{char: "abcdefghijklmnopqrstuvwxyz"}}
+	return (&queryPromQLExpr{
+		q: q, ref: &refMgr{char: "abcdefghijklmnopqrstuvwxyz"},
+	}).init()
+}
+
+func (sp *queryPromQLExpr) init() *queryPromQLExpr {
+	// 针对 now() 函数进行转换成毫秒时间戳
+	if strings.Contains(sp.q, "now()") {
+		sp.q = strings.ReplaceAll(sp.q, "now()", fmt.Sprintf("%d", time.Now().UnixMilli()))
+	}
+	return sp
 }
 
 // inspect 使用深度优先遍历语法树 并记录 VectorSelector 的索引位置
@@ -95,7 +112,7 @@ func NewQueryPromQLExpr(q string) *queryPromQLExpr {
 func (sp *queryPromQLExpr) inspect() {
 	parser.Inspect(sp.expr, func(node parser.Node, _ []parser.Node) error {
 		if node != nil {
-			// 记录所有非空 Node 用于后面分析 Vector 分组情况
+			// 记录所有非空 node 用于后面分析 Vector 分组情况
 			sp.nodes = append(sp.nodes, node)
 			idx := len(sp.nodes) - 1
 
@@ -125,7 +142,7 @@ func (sp *queryPromQLExpr) isGroupMember(node parser.Node) bool {
 	}
 }
 
-// splitVecGroups 切分 vectorSelector 分组 即叶子节点的上层被哪些 Node 嵌套住
+// splitVecGroups 切分 vectorSelector 分组 即叶子节点的上层被哪些 node 嵌套住
 func (sp *queryPromQLExpr) splitVecGroups() error {
 	vecGroups := make([]vecGroup, 0)
 	preVec := 0
@@ -142,7 +159,7 @@ func (sp *queryPromQLExpr) splitVecGroups() error {
 				break
 			}
 
-			// 只有部分的 Node 类型会属于一个 VectorSelector 分组
+			// 只有部分的 node 类型会属于一个 VectorSelector 分组
 			if sp.isGroupMember(node) {
 				if int(node.PositionRange().Start) > start || int(node.PositionRange().End) < end {
 					continue
@@ -201,7 +218,7 @@ func (sp *queryPromQLExpr) QueryTs() (*QueryTs, error) {
 		return &QueryTs{}, err
 	}
 
-	//sp.promql = strings.Split(sp.q, "")
+	// sp.promql = strings.Split(sp.q, "")
 	sp.promqlByte = []byte(sp.q)
 
 	sp.inspect()
@@ -225,7 +242,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 		)
 		for nodeIndex, node := range group.Nodes {
 			switch e := node.(type) {
-			// 一个 vecGroup 里有且仅有一个 *parser.VectorSelector Node
+			// 一个 vecGroup 里有且仅有一个 *parser.VectorSelector node
 			case *parser.VectorSelector:
 				query, err = vectorQuery(e, query, group.ID)
 				if err != nil {
@@ -273,7 +290,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				}
 
 				// 获取参数，参数的长度有可能会大于等于 argTypes，所以要单独循环获取
-				vargsList := make([]interface{}, 0)
+				vargsList := make([]any, 0)
 				for _, arg := range e.Args {
 					// 其他类型判断是否是常量参数，是则加入到函数参数列表里面
 					switch at := arg.(type) {
@@ -326,6 +343,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 							Window:     timeAggregation.Window,
 							IsSubQuery: timeAggregation.IsSubQuery,
 							Step:       timeAggregation.Step,
+							Position:   timeAggregation.Position,
 						})
 					}
 				} else {
@@ -345,7 +363,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				if method == "" {
 					return &QueryTs{}, fmt.Errorf("aggregate expr op: %d is not exist", e.Op)
 				}
-				vargsList := make([]interface{}, 1)
+				vargsList := make([]any, 1)
 				aggregateMethod := AggregateMethod{
 					Method:     method,
 					Dimensions: e.Grouping,

@@ -10,16 +10,13 @@
 package discover
 
 import (
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/valyala/bytebufferpool"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -78,7 +75,7 @@ func (c *hashCache) gc() {
 	}
 }
 
-func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
+func (c *hashCache) Check(namespace string, tlset, tglbs labels.Labels) bool {
 	h := c.hash(namespace, tlset, tglbs)
 
 	c.mut.Lock()
@@ -91,7 +88,7 @@ func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
 	return ok
 }
 
-func (c *hashCache) Set(namespace string, tlset, tglbs model.LabelSet) {
+func (c *hashCache) Set(namespace string, tlset, tglbs labels.Labels) {
 	h := c.hash(namespace, tlset, tglbs)
 
 	c.mut.Lock()
@@ -100,25 +97,25 @@ func (c *hashCache) Set(namespace string, tlset, tglbs model.LabelSet) {
 	c.cache[h] = fasttime.UnixTimestamp()
 }
 
-func (c *hashCache) hash(namespace string, tlset, tglbs model.LabelSet) uint64 {
-	lbs := labelspool.Get()
-	defer labelspool.Put(lbs)
-
-	for k, v := range tlset {
-		lbs = append(lbs, labels.Label{Name: string(k), Value: string(v)})
-	}
-	for k, v := range tglbs {
-		lbs = append(lbs, labels.Label{Name: string(k), Value: string(v)})
-	}
-	sort.Sort(lbs)
-
+func (c *hashCache) hash(namespace string, tlset, tglbs labels.Labels) uint64 {
 	buf := bytebufferpool.Get()
 	defer bytebufferpool.Put(buf)
 
 	buf.WriteString(namespace)
 	buf.Write(seps)
-	for i := 0; i < len(lbs); i++ {
-		lb := lbs[i]
+
+	// tlset
+	for i := 0; i < len(tlset); i++ {
+		lb := tlset[i]
+		buf.WriteString(lb.Name)
+		buf.Write(seps)
+		buf.WriteString(lb.Value)
+	}
+
+	// tglbs
+	buf.Write(seps)
+	for i := 0; i < len(tglbs); i++ {
+		lb := tglbs[i]
 		buf.WriteString(lb.Name)
 		buf.Write(seps)
 		buf.WriteString(lb.Value)

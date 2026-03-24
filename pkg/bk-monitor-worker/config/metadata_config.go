@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -39,6 +40,16 @@ var (
 	BcsInfluxdbDefaultProxyClusterNameForK8s string
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
+	// BkciSpaceAccessPlugins 允许被项目空间访问业务数据的RT列表
+	BkciSpaceAccessPlugins []string
+
+	// QueryDbBatchSize 查询DB的批量大小
+	QueryDbBatchSize int
+	// QueryDbBatchDelay 查询DB的批量延迟时间
+	QueryDbBatchDelay time.Duration
+
+	// SpecialRtRouterAliasResultTableList 特殊的路由别名结果表列表
+	SpecialRtRouterAliasResultTableList []string
 
 	// GlobalFetchTimeSeriesMetricIntervalSeconds 获取指标的间隔时间
 	GlobalFetchTimeSeriesMetricIntervalSeconds int
@@ -62,6 +73,8 @@ var (
 	GlobalIPV6SupportBizList []int
 	// GlobalHostDisableMonitorStates 主机不监控字段列表
 	GlobalHostDisableMonitorStates []string
+	// GlobalEnableTsMetricFilterByIsActive 是否启用is_active方式过滤指标
+	GlobalEnableTsMetricFilterByIsActive bool
 
 	// PingServerEnablePingAlarm 全局 Ping 告警开关
 	PingServerEnablePingAlarm bool
@@ -86,6 +99,10 @@ var (
 	SpaceToResultTableChannel string
 	// BuildInResultTableDetailKey 空间关联内置上报rt详情
 	BuildInResultTableDetailKey string
+	// BkAppToSpaceKey redis 中 bkApp 的 key
+	BkAppToSpaceKey string
+	// BkAppToSpaceChannelKey bkAppCode 关联 space 的 channel
+	BkAppToSpaceChannelKey string
 
 	// BkdataDefaultBizId 接入计算平台使用的业务 ID
 	BkdataDefaultBizId int
@@ -128,6 +145,9 @@ var (
 	SloPushGatewayToken string
 	// SloPushGatewayEndpoint slo数据上报端点
 	SloPushGatewayEndpoint string
+
+	// InitialMaxWaitTime 初始最大等待时间
+	InitialMaxWaitTime string
 )
 
 func initMetadataVariables() {
@@ -145,6 +165,7 @@ func initMetadataVariables() {
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
 	GlobalFetchTimeSeriesMetricIntervalSeconds = GetValue("taskConfig.metadata.global.fetchTimeSeriesMetricIntervalSeconds", 7200)
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
+	GlobalEnableTsMetricFilterByIsActive = GetValue("taskConfig.metadata.global.enableTsMetricFilterByIsActive", false)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
 	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")
@@ -154,6 +175,14 @@ func initMetadataVariables() {
 	GlobalIsAutoDeployCustomReportServer = GetValue("taskConfig.metadata.global.isAutoDeployCustomReportServer", true)
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
 	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
+	BkciSpaceAccessPlugins = GetValue("taskConfig.metadata.bcs.bkciSpaceAccessPlugins", []string{})
+	QueryDbBatchSize = GetValue("taskConfig.metadata.bcs.queryDbBatchSize", 1000)
+
+	// 优先使用毫秒配置，如果没有配置则使用默认值
+	queryDbBatchDelayMs := GetValue("taskConfig.metadata.bcs.queryDbBatchDelayMs", 20)
+	QueryDbBatchDelay = time.Duration(queryDbBatchDelayMs) * time.Millisecond
+
+	SpecialRtRouterAliasResultTableList = GetValue("taskConfig.metadata.bcs.specialRtRouterAliasResultTableList", []string{})
 
 	PingServerEnablePingAlarm = GetValue("taskConfig.metadata.pingserver.enablePingAlarm", true)
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)
@@ -167,6 +196,8 @@ func initMetadataVariables() {
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
+	BkAppToSpaceKey = GetValue("taskConfig.metadata.space.bkAppSpace", fmt.Sprintf("%s:bk_app_to_space", SpaceRedisKey))
+	BkAppToSpaceChannelKey = GetValue("taskConfig.metadata.space.bkAppSpaceChannel", fmt.Sprintf("%s:bk_app_to_space:channel", SpaceRedisKey))
 
 	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
 	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)
@@ -189,4 +220,6 @@ func initMetadataVariables() {
 
 	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
 	SloPushGatewayEndpoint = GetValue("taskConfig.metadata.slo.sloPushGatewayEndpoint", "")
+
+	InitialMaxWaitTime = GetValue("taskConfig.metadata.initialMaxWaitTime", "10m")
 }

@@ -41,6 +41,10 @@ const (
 	StaticMetricValue = "metric_value"
 
 	StaticField = "value"
+
+	// 结果集列名常量
+	ResultColumnTime  = "_time"
+	ResultColumnValue = "_value"
 )
 
 // promql内置的几种运算对应的字符串
@@ -120,7 +124,7 @@ func (l *WhereList) String() string {
 
 // Check 判断条件里是包含tag的值，例如：tagName: bk_biz_id，tagValue：[1, 2]，bk_biz_id = 1 和 bk_biz_id = 2 都符合
 func (l *WhereList) Check(tagName string, tagValue []string) bool {
-	tagMap := make(map[string]interface{})
+	tagMap := make(map[string]any)
 	for _, v := range tagValue {
 		tagMap[v] = nil
 	}

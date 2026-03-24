@@ -81,12 +81,13 @@ var (
 		},
 	)
 
-	discoverCount = promauto.NewGauge(
+	discoverCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_count",
 			Help:      "discover count",
 		},
+		[]string{"type"},
 	)
 
 	handledSecretSuccessTotal = promauto.NewCounterVec(
@@ -124,14 +125,6 @@ var (
 			Buckets:   define.DefObserveDuration,
 		},
 		[]string{"trigger"},
-	)
-
-	secretsExceeded = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "secrets_exceeded",
-			Help:      "secrets exceeded",
-		},
 	)
 
 	statefulSetWorkerCount = promauto.NewGauge(
@@ -199,8 +192,8 @@ func (m *metricMonitor) SetSharedDiscoveryCount(n int) {
 	sharedDiscoveryCount.Set(float64(n))
 }
 
-func (m *metricMonitor) SetDiscoverCount(n int) {
-	discoverCount.Set(float64(n))
+func (m *metricMonitor) SetDiscoverCount(typ string, n int) {
+	discoverCount.WithLabelValues(typ).Set(float64(n))
 }
 
 func (m *metricMonitor) IncHandledSecretSuccessCounter(name, action string) {
@@ -215,10 +208,6 @@ func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string, err e
 
 func (m *metricMonitor) IncDispatchedTaskCounter(trigger string) {
 	dispatchedTaskTotal.WithLabelValues(trigger).Inc()
-}
-
-func (m *metricMonitor) IncSecretsExceededCounter() {
-	secretsExceeded.Inc()
 }
 
 func (m *metricMonitor) ObserveDispatchedTaskDuration(trigger string, t time.Time) {

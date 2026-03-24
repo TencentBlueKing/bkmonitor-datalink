@@ -14,7 +14,7 @@ import (
 )
 
 // IsMapKey 判断某个值是否为字典的值key
-func IsMapKey[T constraints.Ordered](key T, dict map[T]interface{}) bool {
+func IsMapKey[T constraints.Ordered](key T, dict map[T]any) bool {
 	if _, ok := dict[key]; ok {
 		return true
 	}
@@ -50,7 +50,7 @@ func GetValWithDefault[T constraints.Ordered, K any](m map[T]K, key T, val K) K 
 }
 
 // SetDefault set the default value, if key not found, set the default value
-func SetDefault(m *map[string]interface{}, key string, val interface{}) {
+func SetDefault(m *map[string]any, key string, val any) {
 	_, ok := (*m)[key]
 	if !ok {
 		(*m)[key] = val

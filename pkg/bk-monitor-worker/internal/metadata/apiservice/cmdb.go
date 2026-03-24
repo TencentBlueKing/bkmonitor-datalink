@@ -10,11 +10,14 @@
 package apiservice
 
 import (
+	"strconv"
+
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -29,8 +32,8 @@ type GetHostByIpParams struct {
 	BkCloudId int
 }
 
-func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams) map[string]interface{} {
-	var cloudDict = make(map[int][]string)
+func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams) map[string]any {
+	cloudDict := make(map[int][]string)
 	for _, param := range ips {
 		if ls, ok := cloudDict[param.BkCloudId]; ok {
 			cloudDict[param.BkCloudId] = append(ls, param.Ip)
@@ -38,7 +41,7 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 			cloudDict[param.BkCloudId] = []string{param.Ip}
 		}
 	}
-	conditions := []map[string]interface{}{}
+	conditions := []map[string]any{}
 	for cloudId, ipList := range cloudDict {
 		ipv6IPs := []string{}
 		ipv4IPs := []string{}
@@ -49,24 +52,24 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 				ipv4IPs = append(ipv4IPs, ip)
 			}
 		}
-		ipv4Rules := []map[string]interface{}{
+		ipv4Rules := []map[string]any{
 			{"field": "bk_host_innerip", "operator": "in", "value": ipv4IPs},
 		}
 
-		ipv6Rules := []map[string]interface{}{
+		ipv6Rules := []map[string]any{
 			{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6IPs},
 		}
 
 		if cloudId != -1 {
-			ipv4Rules = append(ipv4Rules, map[string]interface{}{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
-			ipv6Rules = append(ipv6Rules, map[string]interface{}{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
+			ipv4Rules = append(ipv4Rules, map[string]any{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
+			ipv6Rules = append(ipv6Rules, map[string]any{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
 		}
 
-		ipv4Condition := map[string]interface{}{
+		ipv4Condition := map[string]any{
 			"condition": "AND",
 			"rules":     ipv4Rules,
 		}
-		ipv6Condition := map[string]interface{}{
+		ipv6Condition := map[string]any{
 			"condition": "AND",
 			"rules":     ipv6Rules,
 		}
@@ -79,21 +82,22 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 		}
 	}
 
-	var finalCondition interface{}
+	var finalCondition any
 
 	if len(conditions) == 1 {
 		finalCondition = conditions[0]
 	} else {
-		finalCondition = map[string]interface{}{
+		finalCondition = map[string]any{
 			"condition": "OR",
 			"rules":     conditions,
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"bk_biz_id":            bkBizId,
 		"host_property_filter": finalCondition,
-		"fields": []string{"bk_host_innerip",
+		"fields": []string{
+			"bk_host_innerip",
 			"bk_host_innerip_v6",
 			"bk_cloud_id",
 			"bk_host_id",
@@ -119,7 +123,8 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 			"net_device_id",
 			"rack_id",
 			"bk_svr_device_cls_name",
-			"svr_device_class"},
+			"svr_device_class",
+		},
 		"page": map[string]int{
 			"limit": 500,
 		},
@@ -127,14 +132,18 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 }
 
 // GetHostByIp 通过IP查询主机信息
-func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, bkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
+	tenantId, err := tenant.GetTenantIdByBkBizId(bkBizId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, BkBizID: %d", bkBizId)
 	}
-	params := s.processGetHostByIpParams(BkBizId, ipList)
+	cmdbApi, err := api.GetCmdbApi(tenantId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "GetCmdbApi failed, BkBizID: %d", bkBizId)
+	}
+	params := s.processGetHostByIpParams(bkBizId, ipList)
 	var topoResp cmdb.ListBizHostsTopoResp
-	if _, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request(); err != nil {
+	if _, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizId)}).SetBody(params).SetResult(&topoResp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "ListBizHostsTopo with params [%s] failed", paramStr)
 	}
@@ -147,11 +156,12 @@ func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmd
 
 // GetHostWithoutBiz 通过IP跨业务查询主机信息
 func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.ListHostsWithoutBizDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
-	var filterRules []map[string]interface{}
+	var filterRules []map[string]any
 	var ipv4List []string
 	var ipv6List []string
 	for _, ip := range ips {
@@ -162,17 +172,17 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 		}
 	}
 	if len(ipv4List) != 0 {
-		filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip", "operator": "in", "value": ipv4List})
+		filterRules = append(filterRules, map[string]any{"field": "bk_host_innerip", "operator": "in", "value": ipv4List})
 	}
 	if len(ipv6List) != 0 {
-		filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6List})
+		filterRules = append(filterRules, map[string]any{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6List})
 	}
 	if len(bkCloudIds) != 0 {
-		filterRules = append(filterRules, map[string]interface{}{"field": "bk_cloud_id", "operator": "in", "value": bkCloudIds})
+		filterRules = append(filterRules, map[string]any{"field": "bk_cloud_id", "operator": "in", "value": bkCloudIds})
 	}
-	var params = map[string]interface{}{"fields": nil}
+	params := map[string]any{"fields": nil}
 	if len(filterRules) != 0 {
-		params["host_property_filter"] = map[string]interface{}{"condition": "AND", "rules": filterRules}
+		params["host_property_filter"] = map[string]any{"condition": "AND", "rules": filterRules}
 	}
 	var resp cmdb.ListHostsWithoutBizResp
 	if _, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request(); err != nil {
@@ -187,12 +197,13 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 }
 
 func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var resp cmdb.SearchCloudAreaResp
-	_, err = cmdbApi.SearchCloudArea().SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&resp).Request()
+	_, err = cmdbApi.SearchCloudArea().SetBody(map[string]any{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrap(err, "SearchCloudArea failed")
 	}
@@ -205,12 +216,13 @@ func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
 // FindHostBizRelationMap 查询主机业务关系信息
 func (s CMDBService) FindHostBizRelationMap(bkHostIds []int) (map[int]int, error) {
 	// 获取到所有业务id
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.FindHostBizRelationResp
-	params := map[string]interface{}{"bk_host_id": bkHostIds}
+	params := map[string]any{"bk_host_id": bkHostIds}
 	if _, err := cmdbApi.FindHostBizRelation().SetBody(params).SetResult(&bizResp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "FindHostBizRelation with params [%s] failed", paramStr)
@@ -229,19 +241,21 @@ func (s CMDBService) FindHostBizRelationMap(bkHostIds []int) (map[int]int, error
 // GetAllHost 获取所有主机信息
 func (s CMDBService) GetAllHost() ([]Host, error) {
 	// 获取到所有业务id
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
+	if _, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&bizResp).Request(); err != nil {
 		return nil, errors.Wrap(err, "SearchBusinessResp failed")
 	}
 	if err := bizResp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "SearchBusinessResp failed")
 	}
 
-	fields := []string{"bk_host_innerip",
+	fields := []string{
+		"bk_host_innerip",
 		"bk_host_innerip_v6",
 		"bk_cloud_id",
 		"bk_host_id",
@@ -268,10 +282,11 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 		"rack_id",
 		"bk_svr_device_cls_name",
 		"svr_device_class",
+		"version_meta",
 	}
 	var hostInfoList []Host
 	for _, info := range bizResp.Data.Info {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"bk_biz_id": info.BkBizId,
 			"fields":    fields,
 			"page": map[string]int{
@@ -279,7 +294,7 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 			},
 		}
 		var topoResp cmdb.ListBizHostsTopoResp
-		_, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request()
+		_, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(info.BkBizId)}).SetBody(params).SetResult(&topoResp).Request()
 		if err != nil {
 			logger.Errorf("ListBizHostsTopo with bk_biz_id [%v] failed, %v", info.BkBizId, err)
 			continue

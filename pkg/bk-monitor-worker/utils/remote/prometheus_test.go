@@ -25,12 +25,11 @@ import (
 
 func TestPrometheusWriter_WriteBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	mocker.InitTestDBConfig("../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../bmw_test.yaml")
 
 	metric := fmt.Sprintf("prometheus_%s", time.Now().Format("2006010215"))
 	prometheusWriter := NewPrometheusWriterClient("", config.PromRemoteWriteUrl, config.PromRemoteWriteHeaders)
 	ts := append([]prompb.TimeSeries{
-
 		{
 			Labels: []prompb.Label{
 				{

@@ -31,7 +31,6 @@ func NewTestClient(t *testing.T) (*Instance, func(), error) {
 }
 
 func newTestClient(t *testing.T) (*Instance, func(), error) {
-
 	f, err := os.CreateTemp("", "bmw-bolt-")
 	if err != nil {
 		return nil, nil, errors.New("unable to open temporary boltdb file")

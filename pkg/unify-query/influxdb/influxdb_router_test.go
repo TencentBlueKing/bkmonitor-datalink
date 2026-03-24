@@ -52,9 +52,7 @@ func TestGetTagRouter(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			actual, err := GetTagRouter(context.Background(), c.tagKey, c.condition)
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.expected, actual)
-			}
+			assert.Equal(t, c.expected, actual)
 		})
 	}
 }

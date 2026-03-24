@@ -17,29 +17,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 )
 
-type ComponentConfig struct {
-	Jaeger      ComponentCommon `config:"jaeger"`
-	Otlp        ComponentCommon `config:"otlp"`
-	PushGateway ComponentCommon `config:"pushgateway"`
-	RemoteWrite ComponentCommon `config:"remotewrite"`
-	Zipkin      ComponentCommon `config:"zipkin"`
-	Skywalking  ComponentCommon `config:"skywalking"`
-	Pyroscope   ComponentCommon `config:"pyroscope"`
-	Fta         ComponentCommon `config:"fta"`
-	Beat        ComponentCommon `config:"beat"`
-	Tars        ComponentCommon `config:"tars"`
-}
-
-type ComponentCommon struct {
-	Enabled bool `config:"enabled"`
-}
-
 type Config struct {
 	RecvServer  HttpServerConfig `config:"http_server"`
 	AdminServer HttpServerConfig `config:"admin_server"`
 	GrpcServer  GrpcServerConfig `config:"grpc_server"`
 	TarsServer  TarsServerConfig `config:"tars_server"`
-	Components  ComponentConfig  `config:"components"`
 }
 
 type HttpServerConfig struct {
@@ -83,9 +65,9 @@ func LoadConfigFrom(conf *confengine.Config) map[string]SkywalkingConfig {
 	}
 
 	type T struct {
-		Type           string                 `config:"type"`
-		Token          string                 `config:"token"`
-		SkywalkingConf map[string]interface{} `config:"skywalking_agent"`
+		Type           string         `config:"type"`
+		Token          string         `config:"token"`
+		SkywalkingConf map[string]any `config:"skywalking_agent"`
 	}
 
 	subConfig := confengine.LoadConfigPatterns(apmConf.Patterns)

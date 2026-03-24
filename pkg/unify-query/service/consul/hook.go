@@ -32,7 +32,6 @@ func setDefaultConfig() {
 
 // LoadConfig
 func LoadConfig() {
-
 	ServiceName = viper.GetString(ServiceNameConfigPath)
 	KVBasePath = viper.GetString(KVBasePathConfigPath)
 

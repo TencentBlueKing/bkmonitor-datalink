@@ -24,7 +24,7 @@ import (
 )
 
 type Elasticsearch struct {
-	client  interface{}
+	client  any
 	Version string
 }
 
@@ -68,7 +68,6 @@ func NewElasticsearch(version string, address []string, username string, passwor
 		}
 		return &Elasticsearch{client, version}, nil
 	}
-
 }
 
 // Ping 验证ES客户端连接
@@ -123,7 +122,7 @@ func (e Elasticsearch) Ping(ctx context.Context) (*Response, error) {
 }
 
 // ParseResponse 对ES查询返回值进行封装
-func (e Elasticsearch) ParseResponse(resp interface{}) (*Response, error) {
+func (e Elasticsearch) ParseResponse(resp any) (*Response, error) {
 	switch e.Version {
 	case "5":
 		response, ok := resp.(*esapi5.Response)
@@ -244,7 +243,6 @@ func (e Elasticsearch) CatIndices(ctx context.Context, indices []string, format 
 			return nil, ClientVersionErr
 		}
 		response, err := client.Cat.Indices(client.Cat.Indices.WithIndex(indices...), client.Cat.Indices.WithFormat(format), client.Cat.Indices.WithContext(ctx))
-
 		if err != nil {
 			return nil, err
 		}
@@ -770,7 +768,6 @@ func (e Elasticsearch) PutSettings(ctx context.Context, body io.Reader, indices 
 			return nil, ClientVersionErr
 		}
 		response, err := client.Indices.PutSettings(body, client.Indices.PutSettings.WithIndex(indices...), client.Indices.PutSettings.WithContext(ctx))
-
 		if err != nil {
 			return nil, err
 		}
@@ -785,7 +782,6 @@ func (e Elasticsearch) PutSettings(ctx context.Context, body io.Reader, indices 
 			return nil, ClientVersionErr
 		}
 		response, err := client.Indices.PutSettings(body, client.Indices.PutSettings.WithIndex(indices...), client.Indices.PutSettings.WithContext(ctx))
-
 		if err != nil {
 			return nil, err
 		}

@@ -195,7 +195,7 @@ func newPromEventV1(line string, ts int64, offsetTime time.Duration, handler Tim
 	}
 
 	var pe PromEvent
-	decoder := expfmt.NewDecoder(strings.NewReader(line), expfmt.FmtText)
+	decoder := expfmt.NewDecoder(strings.NewReader(line), expfmt.NewFormat(expfmt.TypeTextPlain))
 	family := &clientmodel.MetricFamily{}
 	err := decoder.Decode(family)
 	if err != nil {

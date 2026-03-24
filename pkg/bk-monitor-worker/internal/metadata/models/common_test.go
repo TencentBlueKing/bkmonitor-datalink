@@ -17,7 +17,7 @@ import (
 
 func TestParseOptionValue(t *testing.T) {
 	type args struct {
-		value interface{}
+		value any
 	}
 	tests := []struct {
 		name    string
@@ -31,7 +31,7 @@ func TestParseOptionValue(t *testing.T) {
 		{name: "string", args: args{"abc"}, want: "abc", want1: "string", wantErr: false},
 		{name: "sliceInt", args: args{[]int{1, 2, 3}}, want: "[1,2,3]", want1: "list", wantErr: false},
 		{name: "sliceString", args: args{[]string{"a", "b", "c"}}, want: `["a","b","c"]`, want1: "list", wantErr: false},
-		{name: "map[string]", args: args{map[string]interface{}{"a": 1, "b": []int{1, 2}}}, want: `{"a":1,"b":[1,2]}`, want1: "dict", wantErr: false},
+		{name: "map[string]", args: args{map[string]any{"a": 1, "b": []int{1, 2}}}, want: `{"a":1,"b":[1,2]}`, want1: "dict", wantErr: false},
 		{name: "bool", args: args{true}, want: `true`, want1: "bool", wantErr: false},
 		{name: "nil", args: args{nil}, want: ``, want1: "", wantErr: true},
 	}
@@ -62,15 +62,15 @@ func TestOptionBase_InterfaceValue(t *testing.T) {
 	tests := []struct {
 		name    string
 		fields  fields
-		want    interface{}
+		want    any
 		wantErr bool
 	}{
-		{name: "string", fields: fields{ValueType: "string", Value: "abcd"}, want: interface{}("abcd"), wantErr: false},
-		{name: "bool-true", fields: fields{ValueType: "bool", Value: "true"}, want: interface{}(true), wantErr: false},
-		{name: "bool-false", fields: fields{ValueType: "bool", Value: "false"}, want: interface{}(false), wantErr: false},
-		{name: "int", fields: fields{ValueType: "int", Value: "123"}, want: interface{}(float64(123)), wantErr: false},
-		{name: "list", fields: fields{ValueType: "list", Value: `["a","b"]`}, want: interface{}([]interface{}{"a", "b"}), wantErr: false},
-		{name: "dict", fields: fields{ValueType: "dict", Value: `{"a":"aa","b":true}`}, want: interface{}(map[string]interface{}{"a": "aa", "b": true}), wantErr: false},
+		{name: "string", fields: fields{ValueType: "string", Value: "abcd"}, want: any("abcd"), wantErr: false},
+		{name: "bool-true", fields: fields{ValueType: "bool", Value: "true"}, want: any(true), wantErr: false},
+		{name: "bool-false", fields: fields{ValueType: "bool", Value: "false"}, want: any(false), wantErr: false},
+		{name: "int", fields: fields{ValueType: "int", Value: "123"}, want: any(float64(123)), wantErr: false},
+		{name: "list", fields: fields{ValueType: "list", Value: `["a","b"]`}, want: any([]any{"a", "b"}), wantErr: false},
+		{name: "dict", fields: fields{ValueType: "dict", Value: `{"a":"aa","b":true}`}, want: any(map[string]any{"a": "aa", "b": true}), wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

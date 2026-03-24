@@ -153,13 +153,13 @@ func TestSubConfigParseAndLoad(t *testing.T) {
 		Type:  "default",
 		Config: processor.Config{
 			Name: "apdex_calculator/fixed",
-			Config: map[string]interface{}{
-				"calculator": map[string]interface{}{
+			Config: map[string]any{
+				"calculator": map[string]any{
 					"apdex_status": "satisfied",
 					"type":         "fixed",
 				},
-				"rules": []interface{}{
-					map[string]interface{}{
+				"rules": []any{
+					map[string]any{
 						"kind":        "",
 						"destination": "apdex_type_subconfig1",
 						"metric_name": "bk_apm_duration",
@@ -176,13 +176,13 @@ func TestSubConfigParseAndLoad(t *testing.T) {
 		ID:    "Go-Tier-Name",
 		Config: processor.Config{
 			Name: "apdex_calculator/fixed",
-			Config: map[string]interface{}{
-				"calculator": map[string]interface{}{
+			Config: map[string]any{
+				"calculator": map[string]any{
 					"apdex_status": "tolerating",
 					"type":         "fixed",
 				},
-				"rules": []interface{}{
-					map[string]interface{}{
+				"rules": []any{
+					map[string]any{
 						"kind":        "",
 						"destination": "apdex_type_subconfig2",
 						"metric_name": "bk_apm_duration",
@@ -199,13 +199,13 @@ func TestSubConfigParseAndLoad(t *testing.T) {
 		ID:    "golang:Go-Tier-Name:MANDOCHEN-MB0:127.0.0.1:8004",
 		Config: processor.Config{
 			Name: "apdex_calculator/fixed",
-			Config: map[string]interface{}{
-				"calculator": map[string]interface{}{
+			Config: map[string]any{
+				"calculator": map[string]any{
 					"apdex_status": "frustrated",
 					"type":         "fixed",
 				},
-				"rules": []interface{}{
-					map[string]interface{}{
+				"rules": []any{
+					map[string]any{
 						"kind":        "",
 						"destination": "apdex_type_subconfig3",
 						"metric_name": "bk_apm_duration",
@@ -229,7 +229,7 @@ func TestReportV2ConfigParseAndLoad(t *testing.T) {
 		Type:  "default",
 		Config: processor.Config{
 			Name: "token_checker/proxy",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"proxy_dataid": uint64(1100001),
 				"proxy_token":  "1100001_accesstoken",
 				"type":         "proxy",
@@ -246,7 +246,7 @@ func TestReportV2ConfigParseAndLoad(t *testing.T) {
 		Type:  "default",
 		Config: processor.Config{
 			Name: "rate_limiter/token_bucket",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"qps":   uint64(500),
 				"burst": uint64(1000),
 				"type":  "token_bucket",
@@ -268,7 +268,7 @@ func TestReportV1ConfigParseAndLoad(t *testing.T) {
 		Type:  "default",
 		Config: processor.Config{
 			Name: "token_checker/proxy",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"proxy_dataid": uint64(1100001),
 				"proxy_token":  "1100001_accesstoken",
 				"type":         "proxy",
@@ -285,7 +285,7 @@ func TestReportV1ConfigParseAndLoad(t *testing.T) {
 		Type:  "default",
 		Config: processor.Config{
 			Name: "rate_limiter/token_bucket",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"qps":   uint64(1000),
 				"burst": uint64(1000),
 				"type":  "token_bucket",

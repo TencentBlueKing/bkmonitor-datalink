@@ -10,6 +10,7 @@
 package bkapi
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,24 @@ func TestGetBkAPI(t *testing.T) {
 		"Content-Type": "application/json",
 	})
 
-	assert.Equal(t, map[string]string{
-		"Content-Type":          "application/json",
-		"X-Bkapi-Authorization": `{"bk_app_code":"bk_code","bk_app_secret":"bk_secret","bk_username":"admin"}`,
-	}, headers)
+	actual := make(map[string]any)
+	for k, v := range headers {
+		var nv map[string]string
+		if err := json.Unmarshal([]byte(v), &nv); err != nil {
+			actual[k] = v
+		} else {
+			actual[k] = nv
+		}
+	}
+
+	expected := map[string]any{
+		"Content-Type": "application/json",
+		"X-Bkapi-Authorization": map[string]string{
+			"bk_app_code":   "bk_code",
+			"bk_app_secret": "bk_secret",
+			"bk_username":   "admin",
+		},
+	}
+
+	assert.Equal(t, expected, actual)
 }

@@ -57,7 +57,7 @@ func (m *MockStore) Delete(key string) error {
 }
 
 // Delete indicates an expected call of Delete.
-func (mr *MockStoreMockRecorder) Delete(key interface{}) *gomock.Call {
+func (mr *MockStoreMockRecorder) Delete(key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockStore)(nil).Delete), key)
 }
@@ -68,11 +68,11 @@ func (m *MockStore) Get(key string) (uint64, []byte, error) {
 	ret := m.ctrl.Call(m, "Get", key)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
-	return 0,ret0, ret1
+	return 0, ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockStoreMockRecorder) Get(key interface{}) *gomock.Call {
+func (mr *MockStoreMockRecorder) Get(key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockStore)(nil).Get), key)
 }
@@ -100,7 +100,7 @@ func (m *MockStore) Put(key, val string, modifyIndex uint64, expiration time.Dur
 }
 
 // Put indicates an expected call of Put.
-func (mr *MockStoreMockRecorder) Put(key, val, expiration interface{}) *gomock.Call {
+func (mr *MockStoreMockRecorder) Put(key, val, expiration any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Put", reflect.TypeOf((*MockStore)(nil).Put), key, val, expiration)
 }

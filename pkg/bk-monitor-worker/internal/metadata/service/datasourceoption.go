@@ -10,18 +10,8 @@
 package service
 
 import (
-	"time"
-
-	"github.com/jinzhu/gorm"
-	"github.com/pkg/errors"
-
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // DataSourceOptionSvc data source option service
@@ -36,13 +26,13 @@ func NewDataSourceOptionSvc(obj *resulttable.DataSourceOption) DataSourceOptionS
 }
 
 // GetOptions 获取datasource的配置项
-func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, error) {
+func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]any, error) {
 	var dataSourceOptionList []resulttable.DataSourceOption
 	if err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).
 		BkDataIdEq(bkDataId).All(&dataSourceOptionList); err != nil {
 		return nil, err
 	}
-	optionData := make(map[string]interface{})
+	optionData := make(map[string]any)
 	for _, option := range dataSourceOptionList {
 		value, err := option.InterfaceValue()
 		if err != nil {
@@ -51,45 +41,4 @@ func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, er
 		optionData[option.Name] = value
 	}
 	return optionData, nil
-}
-
-func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interface{}, creator string, db *gorm.DB) error {
-	if db == nil {
-		db = mysql.GetDBSession().DB
-	}
-
-	count, err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(bkDataId).NameEq(name).Count()
-	if err != nil {
-		return err
-	}
-	if count != 0 {
-		return errors.Errorf("bk_data_id [%v] already has option [%s]", bkDataId, name)
-	}
-	valueStr, valueType, err := models.ParseOptionValue(value)
-	if err != nil {
-		return err
-	}
-	dso := resulttable.DataSourceOption{
-		OptionBase: models.OptionBase{
-			ValueType:  valueType,
-			Value:      valueStr,
-			Creator:    creator,
-			CreateTime: time.Now(),
-		},
-		BkDataId: bkDataId,
-		Name:     name,
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(dso.TableName(), map[string]interface{}{
-			resulttable.DataSourceOptionDBSchema.BkDataId.String():  dso.BkDataId,
-			resulttable.DataSourceOptionDBSchema.Name.String():      dso.Name,
-			resulttable.DataSourceOptionDBSchema.ValueType.String(): dso.ValueType,
-			resulttable.DataSourceOptionDBSchema.Value.String():     dso.Value,
-		}), ""))
-	} else {
-		if err := dso.Create(db); err != nil {
-			return err
-		}
-	}
-	return nil
 }

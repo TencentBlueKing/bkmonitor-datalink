@@ -24,6 +24,7 @@ var DefaultServiceMonitorDimensionTerm = []string{"bk_monitor_name", "bk_monitor
 // BCSClusterInfo BCS cluster info model
 // gen:qs
 type BCSClusterInfo struct {
+	BkTenantId         string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	ID                 uint      `gorm:"primary_key" json:"id"`
 	ClusterID          string    `gorm:"size:128;index" json:"cluster_id"`
 	BCSApiClusterId    string    `gorm:"column:bcs_api_cluster_id;index" json:"bcs_api_cluster_id"`
@@ -50,6 +51,7 @@ type BCSClusterInfo struct {
 	CreateTime         time.Time `json:"create_time"`
 	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser     string    `gorm:"size:32" json:"last_modify_user"`
+	IsDeletedAllowView bool      `gorm:"column:is_deleted_allow_view" json:"is_deleted_allow_view"`
 }
 
 // TableName: 用于设置表的别名

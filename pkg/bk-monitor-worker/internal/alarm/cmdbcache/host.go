@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -34,10 +21,13 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -123,7 +113,9 @@ type AlarmHostInfo struct {
 	BkCloudName string `json:"bk_cloud_name"`
 	DisplayName string `json:"display_name"`
 
-	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+	TopoLinks map[string][]map[string]any `json:"topo_link"`
+
+	Expands map[string]map[string]any `json:"expands"`
 }
 
 const (
@@ -192,6 +184,14 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		bkIspName = *info.Host.BkIspName
 	}
 
+	// 补充扩展信息到 host 节点
+	var expands map[string]map[string]any
+	if info.Host.VersionMeta != "" {
+		if err := json.Unmarshal([]byte(info.Host.VersionMeta), &expands); err != nil {
+			logger.Warnf("[cmdb_relation] unmarshal error: %v, version_meta: %s", err, info.Host.VersionMeta)
+		}
+	}
+
 	host := &AlarmHostInfo{
 		BkBizId:             info.Host.BkBizId,
 		BkAgentId:           info.Host.BkAgentId,
@@ -232,7 +232,8 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		BkModuleIds: bkModuleIds,
 		BkCloudName: "",
 		DisplayName: displayName,
-		TopoLinks:   make(map[string][]map[string]interface{}),
+		TopoLinks:   make(map[string][]map[string]any),
+		Expands:     expands,
 	}
 
 	return host
@@ -246,9 +247,49 @@ type HostAndTopoCacheManager struct {
 	hostIpMapLock sync.RWMutex
 }
 
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
+	// 1. 从缓存获取主机数据
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(hostCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get host cache failed")
+	}
+
+	// 2. 解析JSON数据并转换为AlarmHostInfo，按业务ID分组
+	bizDataMap := make(map[int][]*AlarmHostInfo)
+	for _, jsonStr := range cacheData {
+		var host AlarmHostInfo
+		if err := json.Unmarshal([]byte(jsonStr), &host); err != nil {
+			logger.Warnf("unmarshal host cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := host.BkBizId
+		bizDataMap[bizID] = append(bizDataMap[bizID], &host)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, hosts := range bizDataMap {
+		m.buildRelationMetricsByBizAndData(ctx, hosts, bizID)
+	}
+
+	logger.Infof("[cmdb_relation] build_cache type:host action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
+	return nil
+}
+
+func (m *HostAndTopoCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, hosts []*AlarmHostInfo, bizID int) {
+	infos := m.HostToRelationInfos(hosts)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Host, infos); err != nil {
+		logger.Errorf("build host relation metrics failed for biz %d: %v", bizID, err)
+	}
+}
+
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewHostAndTopoCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
+	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
@@ -267,9 +308,15 @@ func (m *HostAndTopoCacheManager) Type() string {
 
 // RefreshByBiz 按业务刷新缓存
 func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
-	// 业务ID为1的是资源池，不需要刷新
-	if bkBizId == 1 {
-		return nil
+	// 业务是资源池时，不需要刷新
+	if cfg.EnableMultiTenantMode {
+		if bkBizId == 2 {
+			return nil
+		}
+	} else {
+		if bkBizId == 1 {
+			return nil
+		}
 	}
 
 	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
@@ -279,7 +326,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	// 获取业务下的主机及拓扑信息
-	hosts, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
+	hosts, topo, err := getHostAndTopoByBiz(ctx, m.GetBkTenantId(), bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get host by biz failed")
 	}
@@ -326,18 +373,89 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		wg.Done()
 	}()
 
-	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	// 刷新 relation metrics 缓存
 	go func() {
-		err = GetRelationMetricsBuilder().BuildMetrics(ctx, bkBizId, hosts)
-		if err != nil {
-			logger.Error("refresh relation metrics failed, err: %v", err)
-		}
+		m.buildRelationMetricsByBizAndData(ctx, hosts, bkBizId)
 		wg.Done()
 	}()
 
 	wg.Wait()
-
 	return nil
+}
+
+// HostToRelationInfos 主机信息转关联缓存信息
+func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(hosts))
+	for _, h := range hosts {
+		if h.BkHostId == 0 {
+			continue
+		}
+
+		hostID := cast.ToString(h.BkHostId)
+		hostItem := relation.Item{
+			ID:       hostID,
+			Resource: relation.Host,
+			Label: map[string]string{
+				relation.HostID: hostID,
+			},
+		}
+
+		// 忽略 ip 过长的异常数据，使用逗号存放多 ip 的场景
+		if h.BkHostInnerip != "" && !strings.Contains(h.BkHostInnerip, ",") && len(h.BkHostInnerip) < 50 {
+			systemInfo := &relation.Info{}
+			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
+			systemInfo.ID = systemID
+			systemInfo.Resource = relation.System
+			systemInfo.Label = map[string]string{
+				"bk_target_ip": h.BkHostInnerip,
+				"bk_cloud_id":  fmt.Sprintf("%d", h.BkCloudId),
+			}
+			systemInfo.Links = []relation.Link{{hostItem}}
+			infos = append(infos, systemInfo)
+		}
+
+		hostInfo := &relation.Info{
+			ID:       hostID,
+			Resource: relation.Host,
+			Label:    hostItem.Label,
+			Expands:  relation.TransformExpands(h.Expands),
+		}
+		if hostInfo.Expands[relation.Host] != nil {
+			hostInfo.Expands[relation.Host][relation.HostName] = h.BkHostName
+		}
+
+		for _, tplink := range h.TopoLinks {
+			var link []relation.Item
+			for _, tp := range tplink {
+				resource := cast.ToString(tp["bk_obj_id"])
+				if resource == "" {
+					continue
+				}
+
+				id := cast.ToString(tp["bk_inst_id"])
+				if id == "" {
+					continue
+				}
+
+				link = append(link, relation.Item{
+					ID:       id,
+					Resource: resource,
+					Label: map[string]string{
+						fmt.Sprintf("bk_%s_id", resource): id,
+					},
+				})
+			}
+
+			if len(link) > 0 {
+				hostInfo.Links = append(hostInfo.Links, link)
+			}
+		}
+
+		// 写入 host 数据
+		infos = append(infos, hostInfo)
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局缓存
@@ -398,7 +516,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId 
 
 	topoNodes := make(map[string]string)
 	topo.Traverse(func(node *cmdb.SearchBizInstTopoData) {
-		value, _ := json.Marshal(map[string]interface{}{
+		value, _ := json.Marshal(map[string]any{
 			"bk_inst_id":   node.BkInstId,
 			"bk_inst_name": node.BkInstName,
 			"bk_obj_id":    node.BkObjId,
@@ -460,8 +578,8 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 }
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
-func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi := getCmdbApi()
+func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()
@@ -469,7 +587,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	// 批量拉取业务下的主机信息
 	results, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var res cmdb.ListBizHostsTopoResp
 			err := mapstructure.Decode(resp, &res)
 			if err != nil {
@@ -478,7 +596,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 			return res.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": hostFields})
+			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": hostFields})
 		},
 		10,
 	)
@@ -501,7 +619,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 
 	// 拉取云区域信息
 	var cloudAreaResp cmdb.SearchCloudAreaResp
-	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
+	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
 	err = api.HandleApiResultError(cloudAreaResp.ApiCommonRespMeta, err, "search cloud area failed")
 	if err != nil {
 		return nil, nil, err
@@ -522,7 +640,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 
 	// 查询业务下的拓扑信息
 	var bizInstTopoResp cmdb.SearchBizInstTopoResp
-	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
+	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
 	err = api.HandleApiResultError(bizInstTopoResp.ApiCommonRespMeta, err, "search biz inst topo failed")
 	if err != nil {
 		logger.Errorf("search biz inst topo failed, bk_biz_id: %d, err: %v", bkBizID, err)
@@ -535,7 +653,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
+	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
 		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)
@@ -562,8 +680,8 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	bizInstTopoResp.Data[0].Child = append(bizInstTopoResp.Data[0].Child, *setNode)
 
 	// 构建模块ID到拓扑链路的映射
-	moduleIdToTopoLinks := make(map[int][]map[string]interface{})
-	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []map[string]interface{}{})
+	moduleIdToTopoLinks := make(map[int][]map[string]any)
+	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []map[string]any{})
 
 	// 补充拓扑信息到主机
 	for _, host := range hosts {
@@ -578,7 +696,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 }
 
 // CleanByEvents 通过变更事件清理缓存
-func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -617,8 +735,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 		}
 		if len(hostKeys) > 0 {
 			// 清理 relationMetrics 里的缓存数据
+			rmb := relation.GetRelationMetricsBuilder()
 			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
-			clearNodes := make([]*AlarmHostInfo, 0)
 			for _, value := range result.Val() {
 				// 如果找不到对应的缓存，不需要更新
 				if value == nil {
@@ -630,9 +748,10 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 				if err != nil {
 					continue
 				}
-				clearNodes = append(clearNodes, host)
+
+				// 清理 relation metrics 里面的 host
+				rmb.ClearResourceWithID(host.BkBizId, relation.Host, cast.ToString(host.BkHostId))
 			}
-			GetRelationMetricsBuilder().ClearMetricsWithHostID(clearNodes...)
 
 			// 记录需要更新的业务ID
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()
@@ -663,7 +782,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 }
 
 // UpdateByEvents 通过变更事件更新缓存
-func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -730,7 +849,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)
 			bkInstId := event["bk_inst_id"].(float64)
-			topo := map[string]interface{}{
+			topo := map[string]any{
 				"bk_inst_id":   int(bkInstId),
 				"bk_inst_name": event["bk_inst_name"],
 				"bk_obj_id":    bkObjId,

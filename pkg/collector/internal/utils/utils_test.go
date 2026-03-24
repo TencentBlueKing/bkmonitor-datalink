@@ -20,17 +20,27 @@ import (
 )
 
 func TestParseRequestIP(t *testing.T) {
-	t.Run("localhost", func(t *testing.T) {
-		assert.Equal(t, "", ParseRequestIP("localhost"))
-	})
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{
+			input:  "localhost",
+			output: "",
+		},
+		{
+			input:  "127.0.0.1",
+			output: "127.0.0.1",
+		},
+		{
+			input:  "127.0.0.1:8080",
+			output: "127.0.0.1",
+		},
+	}
 
-	t.Run("127.0.0.1", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1"))
-	})
-
-	t.Run("127.0.0.1:8080", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1:8080"))
-	})
+	for _, tt := range tests {
+		assert.Equal(t, tt.output, ParseRequestIP(tt.input, nil))
+	}
 }
 
 func TestGetGrpcIpFromContext(t *testing.T) {
@@ -64,27 +74,25 @@ func TestCalcSpanDuration(t *testing.T) {
 }
 
 func TestFirstUpper(t *testing.T) {
-	type Case struct {
-		Input  string
-		Output string
-	}
-
-	cases := []Case{
+	tests := []struct {
+		input  string
+		output string
+	}{
 		{
-			Input:  "foo",
-			Output: "Foo",
+			input:  "foo",
+			output: "Foo",
 		},
 		{
-			Input:  "FOO",
-			Output: "Foo",
+			input:  "FOO",
+			output: "Foo",
 		},
 		{
-			Input:  "",
-			Output: "x",
+			input:  "",
+			output: "x",
 		},
 	}
 
-	for _, c := range cases {
-		assert.Equal(t, c.Output, FirstUpper(c.Input, "x"))
+	for _, tt := range tests {
+		assert.Equal(t, tt.output, FirstUpper(tt.input, "x"))
 	}
 }

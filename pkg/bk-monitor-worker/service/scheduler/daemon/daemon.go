@@ -131,7 +131,13 @@ func NewDaemonTaskScheduler(ctx context.Context) *TaskScheduler {
 }
 
 func ComputeTaskUniId(task task.SerializerTask) string {
-	dimension := getDimensionOperator(task.Kind)(task.Payload)
+	taskFunc := getDimensionOperator(task.Kind)
+	if taskFunc == nil {
+		return ""
+	}
+
+	dimension := taskFunc(task.Payload)
+
 	if dimension == "" {
 		// 如果任务没有定义唯一维度 则取参数作为唯一维度来计算 Id
 		return fmt.Sprintf("%s-%s", task.Kind, hex.EncodeToString(task.Payload))

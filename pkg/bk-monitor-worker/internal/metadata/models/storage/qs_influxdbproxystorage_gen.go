@@ -827,7 +827,7 @@ var InfluxdbProxyStorageDBSchema = struct {
 // Update updates InfluxdbProxyStorage fields by primary key
 // nolint: dupl
 func (o *InfluxdbProxyStorage) Update(db *gorm.DB, fields ...InfluxdbProxyStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":                    o.ID,
 		"proxy_cluster_id":      o.ProxyClusterId,
 		"instance_cluster_name": o.InstanceClusterName,
@@ -838,7 +838,7 @@ func (o *InfluxdbProxyStorage) Update(db *gorm.DB, fields ...InfluxdbProxyStorag
 		"updater":               o.Updater,
 		"update_time":           o.UpdateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -857,7 +857,7 @@ func (o *InfluxdbProxyStorage) Update(db *gorm.DB, fields ...InfluxdbProxyStorag
 
 // InfluxdbProxyStorageUpdater is an InfluxdbProxyStorage updates manager
 type InfluxdbProxyStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -865,7 +865,7 @@ type InfluxdbProxyStorageUpdater struct {
 // nolint: dupl
 func NewInfluxdbProxyStorageUpdater(db *gorm.DB) InfluxdbProxyStorageUpdater {
 	return InfluxdbProxyStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&InfluxdbProxyStorage{}),
 	}
 }

@@ -38,12 +38,20 @@ func NewEnvProcessor(ctx context.Context, name string) *template.RecordProcessor
 			etl.ExtractByJMESPath("data.system.info.procs"), etl.TransformNilFloat64,
 		),
 		etl.NewSimpleField(
+			"procs_zombie",
+			etl.ExtractByJMESPath("data.system.info.procsZombie"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
 			"uptime",
 			etl.ExtractByJMESPath("data.system.info.uptime"), etl.TransformNilFloat64,
 		),
 		etl.NewSimpleField(
 			"maxfiles",
 			etl.ExtractByJMESPath("data.env.maxfiles"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
+			"allocated_files",
+			etl.ExtractByJMESPath("data.env.allocated_files"), etl.TransformNilFloat64,
 		),
 		etl.NewSimpleField(
 			"uname",

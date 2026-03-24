@@ -83,7 +83,7 @@ var (
 	// a post-chain instance is created whenever 1 hour(2h / 2) is reached.
 	// When 2h are up, the post-chain instance is moved forward to clear data.
 	StorageBloomNormalOverlapResetDuration time.Duration
-	//StorageBloomLayersBloomLayers is the number of layers of the multilayer filter.
+	// StorageBloomLayersBloomLayers is the number of layers of the multilayer filter.
 	StorageBloomLayersBloomLayers int
 	// StorageBloomDecreaseCap The initial capacity of the overlap-decrement filter,
 	// and the capacity of each layer will decrease by StorageBloomDecreaseDivisor.
@@ -123,11 +123,9 @@ var (
 	HashSecret string
 )
 
-var (
-	// DurationBuckets unit: s (10 ms -> 5s)
-	// 未来需要由用户确定 目前暂时固定
-	DurationBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 5}
-)
+// DurationBuckets unit: s (10 ms -> 5s)
+// 未来需要由用户确定 目前暂时固定
+var DurationBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 5}
 
 func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)

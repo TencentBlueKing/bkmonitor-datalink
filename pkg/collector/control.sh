@@ -49,8 +49,9 @@ function package() {
 
   # 构建二进制
   go mod tidy
+  JSON_LIB=${JSON_LIB:-jsonsonic}
   GOOS=${goos} GOARCH=${goarch} \
-    go build -ldflags " \
+    go build -tags "${JSON_LIB}" -ldflags " \
   	-s -w \
   	-X main.version=${version} \
   	-X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
@@ -68,8 +69,9 @@ function sidecar() {
     local dist=${2:-'./dist'}
     # 构建二进制
     go mod tidy
+    JSON_LIB=${JSON_LIB:-jsonsonic}
     GOOS=linux GOARCH=amd64 \
-      go build -ldflags " \
+      go build -tags "${JSON_LIB}" -ldflags " \
     	-s -w \
     	-X main.version=${version} \
     	-X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
@@ -80,7 +82,7 @@ function sidecar() {
 function encode() {
   local base_dir="./support-files/templates/linux/x86_64/etc"
 
-  tpls=("bk-collector-application.conf.tpl" "bk-collector-platform.conf.tpl")
+  tpls=("bk-collector-application.conf.tpl" "bk-collector-platform.conf.tpl" "bk-collector-report-v2.conf.tpl")
   # shellcheck disable=SC2068
   for tpl in ${tpls[@]}
     do echo 'File:' $tpl && cat ${base_dir}/${tpl} | base64 && echo ''

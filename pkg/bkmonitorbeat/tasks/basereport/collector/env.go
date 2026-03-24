@@ -15,16 +15,17 @@ import (
 )
 
 type EnvReport struct {
-	Contab      []toolkit.Crontab `json:"crontab"`
-	Host        string            `json:"host"`
-	Route       string            `json:"route"`
-	MaxFiles    int               `json:"maxfiles"`
-	Uname       string            `json:"uname"`
-	LoginUser   int               `json:"login_user"`
-	RunningProc int               `json:"proc_running_current"`
-	BlockedProc int               `json:"procs_blocked_current"`
-	Totalproc   int               `json:"procs_processes_total"`
-	Ctxt        int               `json:"procs_ctxt_total"`
+	Contab         []toolkit.Crontab `json:"crontab"`
+	Host           string            `json:"host"`
+	Route          string            `json:"route"`
+	MaxFiles       int               `json:"maxfiles"`
+	AllocatedFiles int               `json:"allocated_files"`
+	Uname          string            `json:"uname"`
+	LoginUser      int               `json:"login_user"`
+	RunningProc    int               `json:"proc_running_current"`
+	BlockedProc    int               `json:"procs_blocked_current"`
+	Totalproc      int               `json:"procs_processes_total"`
+	Ctxt           int               `json:"procs_ctxt_total"`
 }
 
 func GetEnvInfo(config configs.BasereportConfig) (*EnvReport, error) {
@@ -55,6 +56,11 @@ func GetEnvInfo(config configs.BasereportConfig) (*EnvReport, error) {
 	}
 
 	report.MaxFiles, err = GetMaxFiles()
+	if err != nil {
+		lastErr = err
+	}
+
+	report.AllocatedFiles, err = GetAllocatedFiles()
 	if err != nil {
 		lastErr = err
 	}

@@ -20,26 +20,26 @@ var replacements = []struct {
 	replacement string
 }{
 	{
-		regexp.MustCompile("^(jdk/internal/reflect/GeneratedMethodAccessor)(\\d+)$"),
-		"${1}_",
+		pattern:     regexp.MustCompile("^(jdk/internal/reflect/GeneratedMethodAccessor)(\\d+)$"),
+		replacement: "${1}_",
 	},
 	{
-		regexp.MustCompile("^(.+\\$\\$Lambda\\$)\\d+[./](0x[\\da-f]+|\\d+)$"),
-		"${1}_",
+		pattern:     regexp.MustCompile("^(.+\\$\\$Lambda\\$)\\d+[./](0x[\\da-f]+|\\d+)$"),
+		replacement: "${1}_",
 	},
 	{
-		regexp.MustCompile("^(\\.?/tmp/)?(libzstd-jni-\\d+\\.\\d+\\.\\d+-)(\\d+)(\\.so)( \\(deleted\\))?$"),
-		"libzstd-jni-_.so",
+		pattern:     regexp.MustCompile("^(\\.?/tmp/)?(libzstd-jni-\\d+\\.\\d+\\.\\d+-)(\\d+)(\\.so)( \\(deleted\\))?$"),
+		replacement: "libzstd-jni-_.so",
 	},
 	{
-		regexp.MustCompile("^(\\.?/tmp/)?(lib)?(amazonCorrettoCryptoProvider)(NativeLibraries\\.)?([0-9a-f]{16})" +
+		pattern: regexp.MustCompile("^(\\.?/tmp/)?(lib)?(amazonCorrettoCryptoProvider)(NativeLibraries\\.)?([0-9a-f]{16})" +
 			"(/libcrypto|/libamazonCorrettoCryptoProvider)?(\\.so)( \\(deleted\\))?$"),
-		"libamazonCorrettoCryptoProvider_.so",
+		replacement: "libamazonCorrettoCryptoProvider_.so",
 	},
 	{
-		regexp.MustCompile("^(\\.?/tmp/)?(libasyncProfiler)-(linux-arm64|linux-musl-x64|linux-x64|macos)-" +
+		pattern: regexp.MustCompile("^(\\.?/tmp/)?(libasyncProfiler)-(linux-arm64|linux-musl-x64|linux-x64|macos)-" +
 			"(17b9a1d8156277a98ccc871afa9a8f69215f92)(\\.so)( \\(deleted\\))?$"),
-		"libasyncProfiler-_.so",
+		replacement: "libasyncProfiler-_.so",
 	},
 }
 

@@ -31,9 +31,9 @@ func (e metricsEvent) RecordType() define.RecordType {
 	return define.RecordMetrics
 }
 
-var MetricsConverter EventConverter = metricsConverter{}
-
 type metricsConverter struct{}
+
+func (c metricsConverter) Clean() {}
 
 func (c metricsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return metricsEvent{define.NewCommonEvent(token, dataId, data)}
@@ -53,17 +53,17 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
 		resourceMetrics := resourceMetricsSlice.At(i)
-		rsAttrs := resourceMetrics.Resource().Attributes()
+		rs := resourceMetrics.Resource().Attributes()
 		scopeMetricsSlice := resourceMetrics.ScopeMetrics()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeMetricsSlice.Len(); j++ {
 			scopeMetric := scopeMetricsSlice.At(j)
 			dimensions := pcommon.NewMap()
-			rsAttrs.CopyTo(dimensions)
+			rs.CopyTo(dimensions)
 			dimensions.InsertString("scope_name", scopeMetric.Scope().Name())
 			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				for _, dp := range c.Extract(dataId, metrics.At(k), dimensions) {
+				for _, dp := range c.Extract(metrics.At(k), dimensions) {
 					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}
@@ -75,8 +75,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 }
 
 type otMetricMapper struct {
-	Metric     string
-	Value      float64
+	Metrics    map[string]float64
 	Dimensions map[string]string
 	Time       time.Time
 }
@@ -87,7 +86,7 @@ func (p otMetricMapper) AsMapStr() common.MapStr {
 		target = define.Identity()
 	}
 	return common.MapStr{
-		"metrics":   map[string]float64{p.Metric: p.Value},
+		"metrics":   p.Metrics,
 		"target":    target,
 		"timestamp": p.Time.UnixMilli(),
 		"dimension": p.Dimensions,
@@ -109,7 +108,7 @@ func toFloatValue(dp pmetric.NumberDataPoint) float64 {
 	return val
 }
 
-func (c metricsConverter) convertSumMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertSumMetrics(pdMetric pmetric.Metric, rs pcommon.Map) []common.MapStr {
 	dps := pdMetric.Sum().DataPoints()
 	items := make([]common.MapStr, 0, dps.Len())
 	for i := 0; i < dps.Len(); i++ {
@@ -117,55 +116,55 @@ func (c metricsConverter) convertSumMetrics(dataId int32, pdMetric pmetric.Metri
 
 		val := toFloatValue(dp)
 		if !utils.IsValidFloat64(val) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 		m := otMetricMapper{
-			Metric:     pdMetric.Name(),
-			Value:      val,
+			Metrics:    map[string]float64{pdMetric.Name(): val},
 			Time:       dp.Timestamp().AsTime(),
-			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rs),
 		}
 		items = append(items, m.AsMapStr())
 	}
 	return items
 }
 
-func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	dps := pdMetric.Histogram().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
-		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
-
-		if !utils.IsValidFloat64(dp.Sum()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
-		}
+		dpTime := dp.Timestamp().AsTime()
+		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rs)
+		metrics := make(map[string]float64)
 
 		// 当且仅当 Sum 存在时才追加 _sum 指标
-		if dp.HasSum() {
-			m := otMetricMapper{
-				Metric:     pdMetric.Name() + "_sum",
-				Value:      dp.Sum(),
-				Dimensions: dimensions,
-				Time:       dp.Timestamp().AsTime(),
-			}
-			items = append(items, m.AsMapStr())
+		if dp.HasSum() && utils.IsValidFloat64(dp.Sum()) {
+			metrics[pdMetric.Name()+"_sum"] = dp.Sum()
+		}
+
+		// 当且仅当 Min 存在时才追加 _min 指标
+		if dp.HasMin() && utils.IsValidFloat64(dp.Min()) {
+			metrics[pdMetric.Name()+"_min"] = dp.Min()
+		}
+
+		// 当且仅当 Max 存在时才追加 _max 指标
+		if dp.HasMax() && utils.IsValidFloat64(dp.Max()) {
+			metrics[pdMetric.Name()+"_max"] = dp.Max()
 		}
 
 		// 追加 _count 指标
-		if !utils.IsValidUint64(dp.Count()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
+		if utils.IsValidUint64(dp.Count()) {
+			metrics[pdMetric.Name()+"_count"] = float64(dp.Count())
 		}
-		m := otMetricMapper{
-			Metric:     pdMetric.Name() + "_count",
-			Value:      float64(dp.Count()),
-			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
+
+		if len(metrics) > 0 {
+			m := otMetricMapper{
+				Metrics:    metrics,
+				Dimensions: dimensions,
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
 		}
-		items = append(items, m.AsMapStr())
 
 		// 追加 buckets 指标
 		bounds := dp.MExplicitBounds()
@@ -178,14 +177,11 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 				val = math.Float64frombits(value.StaleNaN)
 			}
 
-			additional := map[string]string{
-				"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
-			}
-			m = otMetricMapper{
-				Metric:     pdMetric.Name() + "_bucket",
-				Value:      val,
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
-				Time:       dp.Timestamp().AsTime(),
+			fv := strconv.FormatFloat(bounds[j], 'f', -1, 64)
+			m := otMetricMapper{
+				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
+				Dimensions: utils.MergeMapWith(dimensions, "le", fv),
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -195,18 +191,17 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 		if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
 			val = math.Float64frombits(value.StaleNaN)
 		}
-		m = otMetricMapper{
-			Metric:     pdMetric.Name() + "_bucket",
-			Value:      val,
-			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
-			Time:       dp.Timestamp().AsTime(),
+		m := otMetricMapper{
+			Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
+			Dimensions: utils.MergeMapWith(dimensions, "le", "+Inf"),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 	}
 	return items
 }
 
-func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertGaugeMetrics(pdMetric pmetric.Metric, rs pcommon.Map) []common.MapStr {
 	dps := pdMetric.Gauge().DataPoints()
 	items := make([]common.MapStr, 0, dps.Len())
 	for i := 0; i < dps.Len(); i++ {
@@ -214,14 +209,12 @@ func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Met
 
 		val := toFloatValue(dp)
 		if !utils.IsValidFloat64(val) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 
 		m := otMetricMapper{
-			Metric:     pdMetric.Name(),
-			Value:      val,
-			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+			Metrics:    map[string]float64{pdMetric.Name(): val},
+			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rs),
 			Time:       dp.Timestamp().AsTime(),
 		}
 		items = append(items, m.AsMapStr())
@@ -229,55 +222,42 @@ func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Met
 	return items
 }
 
-func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	dps := pdMetric.Summary().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
-		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
+		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rs)
+		metrics := make(map[string]float64)
 
-		if !utils.IsValidFloat64(dp.Sum()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
+		// 当且仅当有效数值才进行处理
+		if utils.IsValidFloat64(dp.Sum()) {
+			metrics[pdMetric.Name()+"_sum"] = dp.Sum()
+		}
+		if utils.IsValidUint64(dp.Count()) {
+			metrics[pdMetric.Name()+"_count"] = float64(dp.Count())
 		}
 
-		m := otMetricMapper{
-			Metric:     pdMetric.Name() + "_sum",
-			Value:      dp.Sum(),
-			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
+		if len(metrics) > 0 {
+			m := otMetricMapper{
+				Metrics:    metrics,
+				Dimensions: dimensions,
+				Time:       dp.Timestamp().AsTime(),
+			}
+			items = append(items, m.AsMapStr())
 		}
-		items = append(items, m.AsMapStr())
-
-		if !utils.IsValidUint64(dp.Count()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
-		}
-
-		m = otMetricMapper{
-			Metric:     pdMetric.Name() + "_count",
-			Value:      float64(dp.Count()),
-			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
-		}
-		items = append(items, m.AsMapStr())
 
 		quantile := dp.QuantileValues()
 		for j := 0; j < quantile.Len(); j++ {
 			qua := quantile.At(j)
-			additional := map[string]string{
-				"quantile": strconv.FormatFloat(qua.Quantile(), 'f', -1, 64),
-			}
-
 			if !utils.IsValidFloat64(qua.Value()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 				continue
 			}
 
-			m = otMetricMapper{
-				Metric:     pdMetric.Name(),
-				Value:      qua.Value(),
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
+			fv := strconv.FormatFloat(qua.Quantile(), 'f', -1, 64)
+			m := otMetricMapper{
+				Metrics:    map[string]float64{pdMetric.Name(): qua.Value()},
+				Dimensions: utils.MergeMapWith(dimensions, "quantile", fv),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())
@@ -286,22 +266,22 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 	return items
 }
 
-func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) Extract(pdMetric pmetric.Metric, rs pcommon.Map) []common.MapStr {
 	name := utils.NormalizeName(pdMetric.Name())
 	pdMetric.SetName(name)
 
 	switch pdMetric.DataType() {
 	case pmetric.MetricDataTypeSum:
-		return c.convertSumMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertSumMetrics(pdMetric, rs)
 
 	case pmetric.MetricDataTypeHistogram:
-		return c.convertHistogramMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertHistogramMetrics(pdMetric, rs)
 
 	case pmetric.MetricDataTypeGauge:
-		return c.convertGaugeMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertGaugeMetrics(pdMetric, rs)
 
 	case pmetric.MetricDataTypeSummary:
-		return c.convertSummaryMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertSummaryMetrics(pdMetric, rs)
 	}
 
 	return nil

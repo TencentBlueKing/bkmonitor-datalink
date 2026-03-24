@@ -26,7 +26,7 @@ import (
 	"github.com/minio/highwayhash"
 	"github.com/stretchr/testify/assert"
 	boom "github.com/tylertreat/BoomFilters"
-	"github.com/wcharczuk/go-chart/v2"
+	chart "github.com/wcharczuk/go-chart/v2"
 
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -164,7 +164,6 @@ func readAndWrite(bloomFilter BloomOperator, count, magnitude int) ([]float64, [
 }
 
 func exportChart(x, y []float64, duration time.Duration, title string) {
-
 	graph := chart.Chart{
 		Title:      fmt.Sprintf("%s - duration: %s", title, duration),
 		TitleStyle: chart.Style{FontSize: 15},

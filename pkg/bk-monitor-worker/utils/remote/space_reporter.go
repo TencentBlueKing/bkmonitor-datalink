@@ -44,21 +44,18 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		return nil, fmt.Errorf("failed to create redis client")
 	}
 
-	writer := NewPrometheusWriterClient("", writerUrl, map[string]string{})
-
 	report := &reporter{
 		client: inst.Client,
-		writer: writer,
+		writer: NewPrometheusWriterClient("", writerUrl, map[string]string{}),
 		key:    key,
 	}
 
-	logger.Infof("[cmdb_relation] start space reporter in %s, %s", key, writerUrl)
+	logger.Infof("[cmdb_relation] start_space_reporter key: %s url: %s", key, writerUrl)
 	return report, nil
 }
 
-func (r *reporter) Close(_ context.Context) error {
-	r.writer.client.CloseIdleConnections()
-	return r.client.Close()
+func (r *reporter) Close(ctx context.Context) error {
+	return r.writer.Close(ctx)
 }
 
 func (r *reporter) Do(ctx context.Context, spaceUID string, tsList ...prompb.TimeSeries) error {

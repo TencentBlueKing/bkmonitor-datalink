@@ -23,11 +23,11 @@ func init() {
 	processor.Register(define.ProcessorProxyValidator, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*proxyValidator, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*proxyValidator, error) {
 	validators := confengine.NewTierConfig()
 
 	var c Config
@@ -68,7 +68,7 @@ func (p *proxyValidator) IsPreCheck() bool {
 	return true
 }
 
-func (p *proxyValidator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *proxyValidator) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

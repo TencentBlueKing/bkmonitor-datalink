@@ -17,17 +17,17 @@ import (
 
 // Options 用于传递动态参数
 type Options struct {
-	params map[string]interface{}
+	params map[string]any
 }
 
-func NewOptions(params map[string]interface{}) *Options {
+func NewOptions(params map[string]any) *Options {
 	if params == nil {
-		params = map[string]interface{}{}
+		params = map[string]any{}
 	}
 	return &Options{params: params}
 }
 
-func (o *Options) Get(key string) (interface{}, bool) {
+func (o *Options) Get(key string) (any, bool) {
 	value, ok := o.params[key]
 	return value, ok
 }
@@ -35,13 +35,11 @@ func (o *Options) Get(key string) (interface{}, bool) {
 func (o *Options) GetString(key string) (string, bool) {
 	value, ok := o.params[key].(string)
 	return value, ok
-
 }
 
 func (o *Options) GetBool(key string) (bool, bool) {
 	value, ok := o.params[key].(bool)
 	return value, ok
-
 }
 
 func (o *Options) GetUint(key string) (uint, bool) {
@@ -54,8 +52,8 @@ func (o *Options) GetUintsSlice(key string) ([]uint, bool) {
 	return value, ok
 }
 
-func (o *Options) GetInterfaceSlice(key string) ([]interface{}, bool) {
-	value, ok := o.params[key].([]interface{})
+func (o *Options) GetInterfaceSlice(key string) ([]any, bool) {
+	value, ok := o.params[key].([]any)
 	return value, ok
 }
 
@@ -103,7 +101,7 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 	switch v := value.(type) {
 	case []string:
 		return v, true
-	case []interface{}:
+	case []any:
 		strSlice := make([]string, len(v))
 		for i, item := range v {
 			str, ok := item.(string)
@@ -121,7 +119,7 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 }
 
 func (o *Options) GetInterfaceSliceWithString(key string) ([]string, bool) {
-	value, ok := o.params[key].([]interface{})
+	value, ok := o.params[key].([]any)
 	if !ok {
 		return nil, false
 	}
@@ -132,8 +130,8 @@ func (o *Options) GetInterfaceSliceWithString(key string) ([]string, bool) {
 	return data, true
 }
 
-func (o *Options) GetStringMap(key string) (map[string]interface{}, bool) {
-	value, ok := o.params[key].(map[string]interface{})
+func (o *Options) GetStringMap(key string) (map[string]any, bool) {
+	value, ok := o.params[key].(map[string]any)
 	return value, ok
 }
 
@@ -152,16 +150,16 @@ func (o *Options) IsSet(key string) bool {
 	return ok
 }
 
-func (o *Options) Set(key string, value interface{}) {
+func (o *Options) Set(key string, value any) {
 	if o.params == nil {
-		o.params = make(map[string]interface{})
+		o.params = make(map[string]any)
 	}
 	o.params[key] = value
 }
 
-func (o *Options) SetDefault(key string, value interface{}) {
+func (o *Options) SetDefault(key string, value any) {
 	if o.params == nil {
-		o.params = make(map[string]interface{})
+		o.params = make(map[string]any)
 	}
 	if _, ok := o.params[key]; !ok {
 		o.params[key] = value

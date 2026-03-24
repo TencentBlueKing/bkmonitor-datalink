@@ -24,7 +24,7 @@ func TestMSGPack(t *testing.T) {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/x-msgpack")
-	var resp = new(Response)
+	resp := new(Response)
 	size, err := dec.Decode(ctx, data, resp)
 	if err != nil {
 		panic(err)
@@ -33,7 +33,6 @@ func TestMSGPack(t *testing.T) {
 		fmt.Println(size)
 		fmt.Println(resp)
 	}
-
 }
 
 // TestJSON
@@ -44,7 +43,7 @@ func TestJSON(t *testing.T) {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/json")
-	var resp = new(Response)
+	resp := new(Response)
 	size, err := dec.Decode(ctx, data, resp)
 	if err != nil {
 		panic(err)

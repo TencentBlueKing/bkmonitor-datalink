@@ -712,7 +712,7 @@ var RedisStorageDBSchema = struct {
 // Update updates RedisStorage fields by primary key
 // nolint: dupl
 func (o *RedisStorage) Update(db *gorm.DB, fields ...RedisStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":           o.TableID,
 		"command":            o.Command,
 		"key":                o.Key,
@@ -721,7 +721,7 @@ func (o *RedisStorage) Update(db *gorm.DB, fields ...RedisStorageDBSchemaField) 
 		"is_sentinel":        o.IsSentinel,
 		"master_name":        o.MasterName,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -740,7 +740,7 @@ func (o *RedisStorage) Update(db *gorm.DB, fields ...RedisStorageDBSchemaField) 
 
 // RedisStorageUpdater is an RedisStorage updates manager
 type RedisStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -748,7 +748,7 @@ type RedisStorageUpdater struct {
 // nolint: dupl
 func NewRedisStorageUpdater(db *gorm.DB) RedisStorageUpdater {
 	return RedisStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&RedisStorage{}),
 	}
 }

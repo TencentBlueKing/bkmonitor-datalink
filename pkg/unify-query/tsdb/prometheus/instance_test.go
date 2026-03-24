@@ -35,8 +35,7 @@ var (
 	testTag            = "kafka"
 )
 
-type queryable struct {
-}
+type queryable struct{}
 
 var _ storage.Queryable = (*queryable)(nil)
 
@@ -44,8 +43,7 @@ func (q *queryable) Querier(ctx context.Context, mint, maxt int64) (storage.Quer
 	return &querier{}, nil
 }
 
-type querier struct {
-}
+type querier struct{}
 
 // LabelValues 返回可能的标签(维度)值。
 // 在查询器的生命周期以外使用这些字符串是不安全的
@@ -112,7 +110,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -135,7 +134,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -158,7 +158,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -181,7 +182,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -204,7 +206,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -227,7 +230,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -250,7 +254,8 @@ func (qr *querier) Select(sortSeries bool, hints *storage.SelectHints, matchers 
 				{Timestamp: defaultStart.UnixMilli() + 4*60*1e3 + 3*1e3, Value: 175},
 				{Timestamp: defaultStart.UnixMilli() + 5*60*1e3 + 3*1e3, Value: 175},
 			},
-		}, {
+		},
+		{
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
@@ -713,7 +718,7 @@ NaN @[360000]`,
 		t.Run(k, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
-			res, err := ins.DirectQueryRange(ctx, c.q, c.start, c.end, c.step)
+			res, _, err := ins.DirectQueryRange(ctx, c.q, c.start, c.end, c.step)
 
 			a := res.String()
 			assert.Nil(t, err)

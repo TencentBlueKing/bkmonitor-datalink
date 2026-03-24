@@ -36,7 +36,7 @@ func (SpaceResource) TableName() string {
 }
 
 // SetDimensionValues 设置 DimensionValues
-func (o *SpaceResource) SetDimensionValues(dm []map[string]interface{}) error {
+func (o *SpaceResource) SetDimensionValues(dm []map[string]any) error {
 	dmJson, err := jsonx.MarshalString(dm)
 	if err != nil {
 		return errors.Wrapf(err, "marshal DimensionValues [%#v] failed", dm)
@@ -46,8 +46,8 @@ func (o *SpaceResource) SetDimensionValues(dm []map[string]interface{}) error {
 }
 
 // GetDimensionValues 获取 DimensionValues 对象
-func (o *SpaceResource) GetDimensionValues() ([]map[string]interface{}, error) {
-	var dm []map[string]interface{}
+func (o *SpaceResource) GetDimensionValues() ([]map[string]any, error) {
+	var dm []map[string]any
 	if err := jsonx.UnmarshalString(o.DimensionValues, &dm); err != nil {
 		return nil, errors.Wrapf(err, "unmarshal DimensionValues [%s] failed", o.DimensionValues)
 	}

@@ -280,7 +280,6 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 						logger.Errorf("receive icmp packet failed, error:%v", err)
 					}
 				}
-
 			}
 		}()
 	}

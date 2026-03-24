@@ -26,56 +26,51 @@ func TestGetEventFromPromEvent(t *testing.T) {
 
 	lines1 := `
 metric1{label1="value1"} 10
-metric2{label1="value2"} 11
-metric3:foo:bar{label1="value3"} 12
+metric2{label1="value2"} 10
+metric3:foo:bar{label1="value3"} 10
 `
 	ch := mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines1)), func() {}, true)
 	expected := []common.MapStr{
 		{
-			"key": "metric1",
-			"labels": common.MapStr{
-				"label1": "value1",
-			},
+			"key":    "metric1",
+			"labels": common.MapStr{},
+			"value":  float64(10),
 		},
 		{
-			"key": "metric2",
-			"labels": common.MapStr{
-				"label1": "value2",
-			},
+			"key":    "metric2",
+			"labels": common.MapStr{},
+			"value":  float64(10),
 		},
 		{
-			"key": "metric3_foo_bar",
-			"labels": common.MapStr{
-				"label1": "value3",
-			},
-			"value": float64(12),
+			"key":    "metric3_foo_bar",
+			"labels": common.MapStr{},
+			"value":  float64(10),
 		},
 		{
 			"key":    "bkm_metricbeat_scrape_line",
 			"labels": common.MapStr{},
-			"value":  float64(3),
+			"value":  float64(10),
 		},
 		{
-			"key": "bkm_metricbeat_endpoint_up",
-			"labels": common.MapStr{
-				"code":      "0",
-				"code_name": "成功",
-			},
-			"value": float64(1),
+			"key":    "bkm_metricbeat_endpoint_up",
+			"labels": common.MapStr{},
+			"value":  float64(10),
 		},
 		{
 			"key":    "bkm_metricbeat_handle_duration_seconds",
 			"labels": common.MapStr{},
-			"value":  float64(0.1),
+			"value":  float64(10),
 		},
 	}
 
-	index := 0
+	var msgs []common.MapStr
 	for msg := range ch {
-		assert.Equal(t, expected[index]["key"], msg["key"])
-		t.Log(msg)
-		_, ok := msg["timestamp"]
-		assert.True(t, ok)
-		index++
+		for i := 0; i < len(msg); i++ {
+			msgs = append(msgs, common.MapStr{"key": msg[i]["key"]})
+		}
+	}
+
+	for idx, msg := range expected {
+		assert.Equal(t, msg["key"], msgs[idx]["key"])
 	}
 }

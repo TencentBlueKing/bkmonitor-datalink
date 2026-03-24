@@ -12,7 +12,6 @@ package influxdb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -23,7 +22,7 @@ import (
 	"github.com/influxdata/influxdb/prometheus/remote"
 	"google.golang.org/grpc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -136,12 +135,16 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 			addr := fmt.Sprintf("%s://%s:%d/ping", HTTP, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
-				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)
 				continue
 			}
+			// 对于配置了账号密码的情况
+			// 此处用于兼容 influxdb 的 basic auth 认证
+			if v.Username != "" && v.Password != "" {
+				req.SetBasicAuth(v.Username, v.Password)
+			}
+
 			resp, err := clint.Do(req)
 			if err != nil {
-				log.Warnf(ctx, "do ping failed, error: %s", err)
 				continue
 			}
 			// 状态码 204 变更 read 跳出循环
@@ -337,7 +340,11 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 		for _, k := range influxdb.AllKey {
 			err := r.loadRouter(ctx, k)
 			if err != nil {
-				log.Errorf(ctx, err.Error())
+				_ = metadata.NewMessage(
+					metadata.MsgQueryInfluxDB,
+					"加载路由配置 %s 失败",
+					k,
+				).Error(ctx, err)
 			}
 		}
 	}
@@ -437,9 +444,7 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 		return "", nil
 	}
 
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "get-tag-values")
 	defer span.End(&err)

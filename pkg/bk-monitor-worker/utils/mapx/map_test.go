@@ -17,21 +17,21 @@ import (
 
 // TestIsMapKey
 func TestIsMapKey(t *testing.T) {
-	assert.True(t, IsMapKey("a", map[string]interface{}{"a": "a", "b": "b"}))
-	assert.False(t, IsMapKey("a", map[string]interface{}{"a1": "a"}))
+	assert.True(t, IsMapKey("a", map[string]any{"a": "a", "b": "b"}))
+	assert.False(t, IsMapKey("a", map[string]any{"a1": "a"}))
 }
 
 func TestSetDefault(t *testing.T) {
 	testSuite := []struct {
 		name     string
-		src      map[string]interface{}
+		src      map[string]any
 		key      string
-		value    interface{}
+		value    any
 		expected string
 	}{
-		{name: "null map", src: map[string]interface{}{}, key: "test1", value: "test"},
-		{name: "map is {tInit: 1}", src: map[string]interface{}{}, key: "test1", value: "test"},
-		{name: "null map", src: map[string]interface{}{}, key: "test1", value: []string{}},
+		{name: "null map", src: map[string]any{}, key: "test1", value: "test"},
+		{name: "map is {tInit: 1}", src: map[string]any{}, key: "test1", value: "test"},
+		{name: "null map", src: map[string]any{}, key: "test1", value: []string{}},
 	}
 	for _, tt := range testSuite {
 		t.Run(tt.name, func(t *testing.T) {

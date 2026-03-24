@@ -268,16 +268,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "my-service")
+	foreach.Spans(data, func(span ptrace.Span) {
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "my-service")
 		assert.Equal(t, "/api/v1/users", span.Name())
 	})
 }
@@ -316,16 +315,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+	foreach.Spans(data, func(span ptrace.Span) {
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 		assert.Equal(t, "api", span.Name())
 	})
 }
@@ -362,16 +360,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+	foreach.Spans(data, func(span ptrace.Span) {
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 	})
 }
 
@@ -401,7 +398,7 @@ processor:
 	factoryReplaceMissing := processor.MustCreateFactory(fmt.Sprintf(content, "missing"), NewFactory)
 	factoryReplaceForce := processor.MustCreateFactory(fmt.Sprintf(content, "force"), NewFactory)
 
-	testCases := []struct {
+	tests := []struct {
 		name      string
 		httpUrl   string
 		attrs     map[string]string
@@ -438,13 +435,14 @@ processor:
 			factory: factoryReplaceForce,
 		},
 	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			traces := generator.NewTracesGenerator(define.TracesOptions{
 				GeneratorOptions: define.GeneratorOptions{
 					Attributes: map[string]string{
 						"http.method": "GET",
-						"http.url":    tc.httpUrl,
+						"http.url":    tt.httpUrl,
 					},
 				},
 				SpanCount: 1,
@@ -452,17 +450,16 @@ processor:
 			})
 			data := traces.Generate()
 
-			record := &define.Record{
+			record := define.Record{
 				RecordType: define.RecordTraces,
 				Data:       data,
 			}
-			_, err := tc.factory.Process(record)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, tt.factory, record)
 
 			data = record.Data.(ptrace.Traces)
-			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-				for k, v := range tc.attrs {
-					testkits.AssertAttrsStringVal(t, span.Attributes(), k, v)
+			foreach.Spans(data, func(span ptrace.Span) {
+				for k, v := range tt.attrs {
+					testkits.AssertAttrsStringKeyVal(t, span.Attributes(), k, v)
 				}
 			})
 		})
@@ -498,15 +495,14 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", span.Name())
+	foreach.Spans(data, func(span ptrace.Span) {
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", span.Name())
 	})
 }

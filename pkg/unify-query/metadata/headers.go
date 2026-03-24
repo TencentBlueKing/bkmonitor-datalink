@@ -19,6 +19,7 @@ func Headers(ctx context.Context, headers map[string]string) map[string]string {
 
 	user := GetUser(ctx)
 	headers[BkQuerySourceHeader] = user.Key
-	headers[SpaceUIDHeader] = user.SpaceUid
+	headers[SpaceUIDHeader] = user.SpaceUID
+	headers[TenantIDHeader] = user.TenantID
 	return headers
 }

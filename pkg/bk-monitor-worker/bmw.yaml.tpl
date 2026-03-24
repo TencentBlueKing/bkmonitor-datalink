@@ -30,9 +30,6 @@ broker:
 
 # ================================ 存储配置  ===================================
 # 旁路配置，用于数据对账
-bypassSuffixPath: ""
-# 跳过旁路配置的任务
-skipBypassTasks: []
 store:
   redis:
     mode: standalone

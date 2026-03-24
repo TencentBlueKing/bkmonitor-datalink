@@ -55,13 +55,20 @@ type PrometheusWriter struct {
 	headers map[string]string
 
 	client       *http.Client
-	isValid      bool
 	logger       monitorLogger.Logger
 	responseHook func(bool)
 }
 
+func (p *PrometheusWriter) Close(_ context.Context) error {
+	if p.client != nil {
+		p.client.CloseIdleConnections()
+		p.client = nil
+	}
+	return nil
+}
+
 func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
-	if !p.isValid || len(writeReq.Timeseries) == 0 {
+	if len(writeReq.Timeseries) == 0 {
 		return nil
 	}
 
@@ -88,8 +95,11 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 		req.Header.Set(tokenKey, token)
 	}
 
-	resp, err := p.client.Do(req)
+	if req.Header.Get(tokenKey) == "" {
+		return nil
+	}
 
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
 	}
@@ -123,16 +133,11 @@ func NewPrometheusWriterClient(token, url string, headers map[string]string) *Pr
 	} else {
 		h[tokenKey] = h["x-bk-token"]
 	}
-	isValid := false
-	if v, _ := h[tokenKey]; v != "" {
-		isValid = true
-	}
 
 	return &PrometheusWriter{
 		url:     url,
 		headers: h,
 		client:  client,
-		isValid: isValid,
 		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
 }

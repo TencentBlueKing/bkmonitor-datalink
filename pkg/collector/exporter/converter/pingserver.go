@@ -35,15 +35,15 @@ func (p pingserverMapper) AsMapStr() common.MapStr {
 	return common.MapStr{
 		"dataid":    p.pd.DataId,
 		"version":   p.pd.Version,
-		"data":      []map[string]interface{}{p.pd.Data},
+		"data":      []map[string]any{p.pd.Data},
 		"time":      now,
 		"timestamp": now,
 	}
 }
 
-var PingserverConverter EventConverter = pingserverConverter{}
-
 type pingserverConverter struct{}
+
+func (c pingserverConverter) Clean() {}
 
 func (c pingserverConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return pingserverEvent{define.NewCommonEvent(token, dataId, data)}

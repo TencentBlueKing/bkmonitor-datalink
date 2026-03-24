@@ -10,7 +10,7 @@
 package mocker
 
 import (
-	"github.com/agiledragon/gomonkey/v2"
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	goRedis "github.com/go-redis/redis/v8"
 
@@ -27,7 +27,7 @@ func InitTestDBConfig(filePath string) {
 func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 	redisClient := &RedisClientMocker{
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
-		HMGetValue:                   []interface{}{},
+		HMGetValue:                   []any{},
 		SetMap:                       map[string]mapset.Set[string]{},
 		HKeysValue:                   []string{},
 	}
@@ -42,7 +42,7 @@ func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 func DependenceRedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 	redisClient := &RedisClientMocker{
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
-		HMGetValue:                   []interface{}{},
+		HMGetValue:                   []any{},
 		SetMap:                       map[string]mapset.Set[string]{},
 		HKeysValue:                   []string{},
 	}

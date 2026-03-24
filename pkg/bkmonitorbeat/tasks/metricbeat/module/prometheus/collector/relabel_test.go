@@ -42,6 +42,6 @@ func TestRelabel(t *testing.T) {
 			Value: "b",
 		},
 	}
-	result := relabel.Process(lsets, relabelConfigs...)
+	result, _ := relabel.Process(lsets, relabelConfigs...)
 	t.Logf("result: %+v", result)
 }

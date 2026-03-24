@@ -35,7 +35,6 @@ type Client struct {
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
 func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
-
 	var (
 		err    error
 		client = &Client{
@@ -58,7 +57,6 @@ func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
 
 // GetAPI 获取api包中的对象
 var GetAPI = func(client *Client) error {
-
 	conf := api.DefaultConfig()
 
 	// 添加链接配置信息
@@ -80,12 +78,12 @@ var GetAPI = func(client *Client) error {
 }
 
 // GetPlan 获取监听plan
-var GetPlan = func(params map[string]interface{}, outchan chan<- interface{}) (*watch.Plan, error) {
+var GetPlan = func(params map[string]any, outchan chan<- any) (*watch.Plan, error) {
 	plan, err := watch.Parse(params)
 	if err != nil {
 		return nil, err
 	}
-	plan.Handler = func(num uint64, inter interface{}) {
+	plan.Handler = func(num uint64, inter any) {
 		outchan <- inter
 	}
 	return plan, nil
@@ -137,7 +135,6 @@ func (bc *Client) ServiceAwake(serviceID, serviceName string, tags []string, add
 		return nil
 	}
 	return nil
-
 }
 
 // CheckRegister 注册check
@@ -157,7 +154,6 @@ func (bc *Client) CheckRegister(serviceID, checkID string, ttl string) error {
 
 // CheckDeregister 取消注册
 func (bc *Client) CheckDeregister(checkID string) error {
-
 	err := bc.Agent.CheckDeregister(checkID)
 	if err != nil {
 		return err
@@ -271,15 +267,14 @@ func (bc *Client) GetChild(prefix string, separator string) ([]string, error) {
 		return nil, err
 	}
 	return childs, nil
-
 }
 
 // makeWatchParams 获取建立监听对象所需要的
-func (bc *Client) makeWatchParams(path string, separator string) (map[string]interface{}, error) {
-	var params map[string]interface{}
+func (bc *Client) makeWatchParams(path string, separator string) (map[string]any, error) {
+	var params map[string]any
 	// 如果没有传入分隔符，则直接监听指定目录
 	if separator == "" {
-		params = map[string]interface{}{
+		params = map[string]any{
 			"stale": false,
 			"type":  "key",
 			"key":   path,
@@ -291,7 +286,7 @@ func (bc *Client) makeWatchParams(path string, separator string) (map[string]int
 	if err != nil {
 		return nil, err
 	}
-	params = map[string]interface{}{
+	params = map[string]any{
 		"stale":  false,
 		"type":   "keyprefix",
 		"prefix": prefix,
@@ -307,20 +302,19 @@ func (bc *Client) addPlanIntoList(plan *watch.Plan, path string, separator strin
 	}
 	bc.watchPrefixPlanMap[path] = plan
 	return nil
-
 }
 
 // Watch 监听单个地址,返回一个通道用于提供信号
 // separator为空字符串，则监听指定的目标位置，若separator不为空,则以其为分隔符做目录监听
-func (bc *Client) Watch(path string, separator string) (<-chan interface{}, error) {
+func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 	var err error
-	var watchParams map[string]interface{}
+	var watchParams map[string]any
 	watchParams, err = bc.makeWatchParams(path, separator)
 	if err != nil {
 		return nil, err
 	}
 	// 若监听到消息则向外输出
-	outChan := make(chan interface{})
+	outChan := make(chan any)
 	// consulAPI提供的监听方案
 	plan, err := GetPlan(watchParams, outChan)
 	if err != nil {

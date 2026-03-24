@@ -26,6 +26,7 @@ import (
 type portEvent struct {
 	conns    []process.FileSocket
 	procName string
+	username string
 	pid      int32
 	dims     map[string]string
 	tags     map[string]string
@@ -55,6 +56,7 @@ func (e portEvent) AsMapStr() []common.MapStr {
 			}
 			dimensions["pid"] = fmt.Sprintf("%d", e.pid)
 			dimensions["process_name"] = e.procName
+			dimensions["process_username"] = e.username
 			dimensions["listen_address"] = conn.Address
 			dimensions["listen_port"] = conn.Port
 
@@ -140,7 +142,7 @@ func (e portEvent) touch(ip string, port int) error {
 		ip = ips[0]
 		logger.Infof("%d(%s) touch using ip %s", e.pid, e.procName, ip)
 	}
-	conn, err := net.Dial("tcp", fmt.Sprintf("[%s]:%d", ip, port))
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", ip, port), 3*time.Second)
 	if err != nil {
 		return err
 	}

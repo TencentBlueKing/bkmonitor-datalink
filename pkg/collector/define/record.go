@@ -17,6 +17,8 @@ import (
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
 	"github.com/google/pprof/profile"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
 )
@@ -40,10 +42,12 @@ const (
 	SourceSkywalking  = "skywalking"
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
+	SourceLogPush     = "logpush"
 
-	KeyToken    = "X-BK-TOKEN"
-	KeyDataID   = "X-BK-DATA-ID"
-	KeyTenantID = "X-Tps-TenantID"
+	KeyToken        = "X-BK-TOKEN"
+	KeyDataID       = "X-BK-DATA-ID"
+	KeyUserMetadata = "X-BK-METADATA"
+	KeyTenantID     = "X-Tps-TenantID"
 )
 
 type RecordType string
@@ -66,6 +70,7 @@ const (
 	RecordPingserver     RecordType = "pingserver"
 	RecordBeat           RecordType = "beat"
 	RecordTars           RecordType = "tars"
+	RecordLogPush        RecordType = "logpush"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
@@ -100,6 +105,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordBeat
 	case RecordTars.S():
 		t = RecordTars
+	case RecordLogPush.S():
+		t = RecordLogPush
 	default:
 		t = RecordUndefined
 	}
@@ -131,7 +138,8 @@ type Record struct {
 	RequestType   RequestType
 	RequestClient RequestClient
 	Token         Token
-	Data          interface{}
+	Metadata      map[string]string
+	Data          any
 }
 
 func (r *Record) Unwrap() {
@@ -152,6 +160,11 @@ type PushGatewayData struct {
 
 type RemoteWriteData struct {
 	Timeseries []prompb.TimeSeries
+}
+
+type LogPushData struct {
+	Data   []string
+	Labels map[string]string
 }
 
 const (
@@ -177,7 +190,7 @@ type TarsData struct {
 	// 标识为 TarsStatType 或者 ProxyEvent
 	Type      string
 	Timestamp int64
-	Data      interface{}
+	Data      any
 }
 
 // TarsPropertyData 属性统计数据
@@ -192,11 +205,11 @@ type TarsStatData struct {
 }
 
 type ProxyData struct {
-	DataId      int64       `json:"data_id"`
-	AccessToken string      `json:"access_token"`
-	Version     string      `json:"version"`
-	Data        interface{} `json:"data"`
-	Type        string      // 标识为 ProxyMetric 或者 ProxyEvent
+	DataId      int64  `json:"data_id"`
+	AccessToken string `json:"access_token"`
+	Version     string `json:"version"`
+	Data        any    `json:"data"`
+	Type        string // 标识为 ProxyMetric 或者 ProxyEvent
 }
 
 type BeatData struct {
@@ -216,24 +229,24 @@ type ProxyMetric struct {
 }
 
 type ProxyEvent struct {
-	EventName string                 `json:"event_name"`
-	Event     map[string]interface{} `json:"event"`
-	Target    string                 `json:"target"`
-	Dimension map[string]string      `json:"dimension"`
-	Timestamp int64                  `json:"timestamp"`
+	EventName string            `json:"event_name"`
+	Event     map[string]any    `json:"event"`
+	Target    string            `json:"target"`
+	Dimension map[string]string `json:"dimension"`
+	Timestamp int64             `json:"timestamp"`
 }
 
 type PingserverData struct {
-	DataId  int64                  `json:"data_id"`
-	Version string                 `json:"version"`
-	Data    map[string]interface{} `json:"data"`
+	DataId  int64          `json:"data_id"`
+	Version string         `json:"version"`
+	Data    map[string]any `json:"data"`
 }
 
 type FtaData struct {
-	PluginId   string                   `json:"bk_plugin_id"`
-	IngestTime int64                    `json:"bk_ingest_time"`
-	Data       []map[string]interface{} `json:"data"`
-	EventId    string                   `json:"__bk_event_id__"`
+	PluginId   string           `json:"bk_plugin_id"`
+	IngestTime int64            `json:"bk_ingest_time"`
+	Data       []map[string]any `json:"data"`
+	EventId    string           `json:"__bk_event_id__"`
 }
 
 type PushMode string
@@ -272,8 +285,13 @@ func (q *RecordQueue) Get() <-chan *Record {
 	return q.records
 }
 
+const (
+	TokenAppName = "app_name"
+)
+
 // Token 描述了 Record 校验的必要信息
 type Token struct {
+	Type           string `config:"type"`
 	Original       string `config:"token"`
 	BizId          int32  `config:"bk_biz_id"`
 	AppName        string `config:"bk_app_name"`
@@ -283,6 +301,28 @@ type Token struct {
 	LogsDataId     int32  `config:"logs_dataid"`
 	ProxyDataId    int32  `config:"proxy_dataid"`
 	BeatDataId     int32  `config:"beat_dataid"`
+}
+
+var tokenInfo = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: MonitoringNamespace,
+		Name:      "receiver_token_info",
+		Help:      "Receiver decoded token info",
+	},
+	[]string{"token", "metrics_id", "traces_id", "logs_id", "profiles_id", "proxy_id", "app_name", "biz_id"},
+)
+
+func SetTokenInfo(token Token) {
+	tokenInfo.WithLabelValues(
+		token.Original,
+		fmt.Sprintf("%d", token.MetricsDataId),
+		fmt.Sprintf("%d", token.TracesDataId),
+		fmt.Sprintf("%d", token.LogsDataId),
+		fmt.Sprintf("%d", token.ProfilesDataId),
+		fmt.Sprintf("%d", token.ProxyDataId),
+		token.AppName,
+		fmt.Sprintf("%d", token.BizId),
+	).Set(1)
 }
 
 func (t Token) BizApp() string {

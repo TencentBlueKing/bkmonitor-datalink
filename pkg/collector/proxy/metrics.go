@@ -81,7 +81,7 @@ var (
 			Name:      "proxy_precheck_failed_total",
 			Help:      "proxy records precheck failed total",
 		},
-		[]string{"processor", "token", "code"},
+		[]string{"processor", "token", "id", "code"},
 	)
 )
 
@@ -113,6 +113,6 @@ func (m *metricMonitor) ObserveHandledDuration(t time.Time, id int64) {
 	handledDuration.WithLabelValues(strconv.Itoa(int(id))).Observe(time.Since(t).Seconds())
 }
 
-func (m *metricMonitor) IncPreCheckFailedCounter(processor, token string, code define.StatusCode) {
-	preCheckFailedTotal.WithLabelValues(processor, token, code.S()).Inc()
+func (m *metricMonitor) IncPreCheckFailedCounter(processor, token string, id int64, code define.StatusCode) {
+	preCheckFailedTotal.WithLabelValues(processor, token, strconv.Itoa(int(id)), code.S()).Inc()
 }

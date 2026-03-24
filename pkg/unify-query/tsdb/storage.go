@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var (
@@ -27,9 +28,7 @@ func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt 
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
 
 	for storageID, tsDB := range tsDBs {
-		var (
-			storage *Storage
-		)
+		var storage *Storage
 
 		storage = &Storage{
 			Type:     tsDB.Type,
@@ -39,11 +38,11 @@ func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt 
 		}
 
 		switch tsDB.Type {
-		case consul.ElasticsearchStorageType:
+		case metadata.ElasticsearchStorageType:
 			storage.Timeout = opt.Es.Timeout
 			storage.MaxRouting = opt.Es.MaxRouting
 			storage.MaxLimit = opt.Es.MaxSize
-		case consul.InfluxDBStorageType:
+		case metadata.InfluxDBStorageType:
 			storage.Timeout = opt.InfluxDB.Timeout
 			storage.MaxLimit = opt.InfluxDB.MaxLimit
 			storage.MaxSLimit = opt.InfluxDB.MaxSLimit

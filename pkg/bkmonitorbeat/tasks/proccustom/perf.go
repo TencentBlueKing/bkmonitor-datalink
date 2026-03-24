@@ -21,6 +21,7 @@ import (
 type perfEvent struct {
 	stat     define.ProcStat
 	procName string
+	username string
 	dims     map[string]string
 	tags     map[string]string
 	labels   []map[string]string
@@ -84,6 +85,7 @@ func (e perfEvent) AsMapStr() []common.MapStr {
 		}
 		dimensions["pid"] = fmt.Sprintf("%d", e.stat.Pid)
 		dimensions["process_name"] = e.procName
+		dimensions["process_username"] = e.username
 
 		cloudID, ok := label["bk_target_cloud_id"]
 		if !ok {

@@ -1,6 +1,0 @@
-FROM centos:7
-LABEL maintainer="Tencent BlueKing"
-RUN mkdir -p /data/bkmonitor/
-WORKDIR /data/bkmonitor
-COPY ./offline-data-archive /data/bkmonitor/
-RUN chmod +x /data/bkmonitor/offline-data-archive

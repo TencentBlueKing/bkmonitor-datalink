@@ -12,7 +12,7 @@ package tracesderiver
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 )
 
 // DimensionMatcher 负责匹配 span 维度
@@ -26,13 +26,13 @@ type DimensionMatcher interface {
 func NewSpanDimensionMatcher(ch *ConfigHandler) DimensionMatcher {
 	return spanDimensionMatcher{
 		ch:      ch,
-		fetcher: processor.NewSpanDimensionFetcher(),
+		fetcher: fields.NewSpanFieldFetcher(),
 	}
 }
 
 type spanDimensionMatcher struct {
 	ch      *ConfigHandler
-	fetcher processor.SpanDimensionFetcher
+	fetcher fields.SpanFieldFetcher
 }
 
 // Match 一种 type 只能提取一个指标
@@ -52,25 +52,25 @@ func (sdm spanDimensionMatcher) Match(t string, span ptrace.Span) (map[string]st
 	var found bool
 loop:
 	for _, pk := range predicateKeys {
-		df, k := processor.DecodeDimensionFrom(pk)
-		switch df {
+		ff, k := fields.DecodeFieldFrom(pk)
+		switch ff {
 		// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-		case processor.DimensionFromAttribute:
+		case fields.FieldFromAttributes:
 			// 如果 key 空值则跳过
 			if s := sdm.fetcher.FetchAttribute(span, k); s == "" {
 				continue
 			}
 
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
+			sdm.fetcher.FetchAttributesTo(span, sdm.ch.GetAttributes(t, spanKind, pk), dimensions)
+			sdm.fetcher.FetchMethodsTo(span, sdm.ch.GetMethods(t, spanKind, pk), dimensions)
 			break loop
 
-		case processor.DimensionFromUnknown:
+		case fields.FieldFromUnknown:
 			// 退避处理
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
+			sdm.fetcher.FetchAttributesTo(span, sdm.ch.GetAttributes(t, spanKind, pk), dimensions)
+			sdm.fetcher.FetchMethodsTo(span, sdm.ch.GetMethods(t, spanKind, pk), dimensions)
 			break loop
 		}
 	}
@@ -93,10 +93,7 @@ func (sdm spanDimensionMatcher) MatchResource(resourceSpans ptrace.ResourceSpans
 	ret := make(map[string]string)
 	types := sdm.ch.GetTypes()
 	for i := 0; i < len(types); i++ {
-		m := sdm.fetcher.FetchResources(resourceSpans, sdm.ch.GetResourceKeys(types[i].Type)...)
-		for k, v := range m {
-			ret[k] = v
-		}
+		sdm.fetcher.FetchResourcesTo(resourceSpans, sdm.ch.GetResourceKeys(types[i].Type), ret)
 	}
 	return ret
 }

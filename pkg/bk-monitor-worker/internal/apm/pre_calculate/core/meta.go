@@ -33,6 +33,7 @@ type MetadataCenter struct {
 type ConsulInfo struct {
 	Token       string           `json:"token"`
 	BkBizId     int              `json:"bk_biz_id"`
+	BkTenantId  string           `json:"bk_tenant_id"`
 	BkBizName   any              `json:"bk_biz_name"`
 	AppId       int              `json:"app_id"`
 	AppName     string           `json:"app_name"`
@@ -56,6 +57,8 @@ type DataIdInfo struct {
 
 // BaseInfo info of bk_biz
 type BaseInfo struct {
+	BkTenantId string
+
 	BkBizId   string
 	BkBizName string
 	AppId     string
@@ -78,9 +81,7 @@ type TraceKafkaConfig struct {
 	Password string `json:"password"`
 }
 
-var (
-	centerInstance *MetadataCenter
-)
+var centerInstance *MetadataCenter
 
 // CreateMetadataCenter globally unique config provider
 func CreateMetadataCenter() error {
@@ -158,6 +159,8 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 
 	info.Token = apmInfo.Token
 	info.BaseInfo = BaseInfo{
+		BkTenantId: apmInfo.BkTenantId,
+
 		BkBizId:   strconv.Itoa(apmInfo.BkBizId),
 		BkBizName: bizName,
 		AppId:     strconv.Itoa(apmInfo.AppId),

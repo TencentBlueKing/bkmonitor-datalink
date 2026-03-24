@@ -64,7 +64,6 @@ func (p *PromExpr) GetCtx() context.Context {
 
 // handleVectorExpr
 func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		name      string
 		grouping  []string
@@ -80,7 +79,7 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 	}
 	name = expr.Name
 	if promExpr, ok = m[name]; !ok {
-		return nil, nil, ErrMetricMissing
+		return nil, nil, fmt.Errorf("%s 指标未发现，请检查配置", name)
 	}
 	finalExpr = promExpr.Expr
 
@@ -93,7 +92,6 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 		grouping = promExpr.Dimensions
 	}
 
-	log.Debugf(context.TODO(), "exp->[%s] transfer to result->[%s] with grouping->[%s]", e, finalExpr, grouping)
 	return finalExpr, grouping, nil
 }
 
@@ -119,7 +117,6 @@ func handlerUnaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 
 // handleBinaryExpr
 func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		expr                  *parser.BinaryExpr
 		finalGroup            []string
@@ -203,7 +200,6 @@ func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 
 	log.Debugf(context.TODO(), "expr->[%s] transfer to final expr->[%s] with group->[%s]", e, expr, finalGroup)
 	return expr, finalGroup, nil
-
 }
 
 // handleParenExpr
@@ -320,7 +316,6 @@ func handleNumberLiteral(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []
 
 // handleExpr: 处理各个表达式之间的维度对齐内容
 func handleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, []string, error) {
-
 	var (
 		result parser.Expr
 		group  []string
@@ -366,15 +361,15 @@ func HandleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, error) {
 }
 
 // 判断A是B的子集
-func isSubset(A []string, B []string) bool {
-	BMap := make(map[string]bool)
-	for _, childItem := range B {
-		BMap[childItem] = true
+func isSubset(a []string, b []string) bool {
+	bMap := make(map[string]bool)
+	for _, childItem := range b {
+		bMap[childItem] = true
 	}
 
-	for _, childItem := range A {
+	for _, childItem := range a {
 		// B里不存在A，说明A不是B的子集
-		if _, ok := BMap[childItem]; !ok {
+		if _, ok := bMap[childItem]; !ok {
 			return false
 		}
 	}

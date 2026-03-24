@@ -11,9 +11,9 @@ package bkgse
 
 // QueryRouteDataResp query_route返回结构体
 type QueryRouteDataResp struct {
-	Metadata      GSEMetadata   `json:"metadata"`
-	Route         []GSERoute    `json:"route"`
-	StreamFilters []interface{} `json:"stream_filters"`
+	Metadata      GSEMetadata `json:"metadata"`
+	Route         []GSERoute  `json:"route"`
+	StreamFilters []any       `json:"stream_filters"`
 }
 
 // GSEMetadata query_route返回的gse metadata结构体
@@ -30,8 +30,8 @@ type GSEMetadata struct {
 
 // GSERoute query_route返回的gse route结构体
 type GSERoute struct {
-	Name          string                 `json:"name"`
-	StreamTo      map[string]interface{} `json:"stream_to"`
-	FilterNameAnd []interface{}          `json:"filter_name_and"`
-	FilterNameOr  []interface{}          `json:"filter_name_or"`
+	Name          string         `json:"name"`
+	StreamTo      map[string]any `json:"stream_to"`
+	FilterNameAnd []any          `json:"filter_name_and"`
+	FilterNameOr  []any          `json:"filter_name_or"`
 }

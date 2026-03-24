@@ -26,7 +26,7 @@ func onPretty() bool {
 	return logger.LoggerLevel() == logger.DebugLevelDesc
 }
 
-func Pretty(rtype define.RecordType, data interface{}) {
+func Pretty(rtype define.RecordType, data any) {
 	if !onPretty() {
 		return
 	}
@@ -51,9 +51,9 @@ func Traces(traces ptrace.Traces) {
 		return
 	}
 
-	foreach.SpansWithResourceAttrs(traces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
-		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
-			rsAttrs.AsRaw(),
+	foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
+		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, attributes=%#v",
+			rs.AsRaw(),
 			span.TraceID().HexString(),
 			span.SpanID().HexString(),
 			span.Name(),
@@ -69,12 +69,12 @@ func Metrics(metrics pmetric.Metrics) {
 		return
 	}
 
-	foreach.MetricsWithResourceAttrs(metrics.ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
-		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, unit=%s",
-			rsAttrs.AsRaw(),
+	foreach.MetricsDataPointWithResource(metrics, func(metric pmetric.Metric, rs, attrs pcommon.Map) {
+		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, attributes=%#v",
+			rs.AsRaw(),
 			metric.Name(),
 			metric.DataType().String(),
-			metric.Unit(),
+			attrs.AsRaw(),
 		)
 	})
 }
@@ -84,12 +84,12 @@ func Logs(logs plog.Logs) {
 		return
 	}
 
-	foreach.LogsWithResourceAttrs(logs.ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) {
-		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v, logLevel=%s",
-			rsAttrs.AsRaw(),
+	foreach.LogsWithResource(logs, func(rs pcommon.Map, logRecord plog.LogRecord) {
+		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logLevel=%s, attributes=%#v",
+			rs.AsRaw(),
 			logRecord.Body().AsString(),
-			logRecord.Attributes().AsRaw(),
 			logRecord.SeverityText(),
+			logRecord.Attributes().AsRaw(),
 		)
 	})
 }
@@ -98,7 +98,7 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func RuntimeMemStats(f func(format string, args ...interface{})) {
+func RuntimeMemStats(f func(format string, args ...any)) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats

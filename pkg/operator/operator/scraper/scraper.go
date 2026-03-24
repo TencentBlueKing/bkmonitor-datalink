@@ -144,7 +144,7 @@ func New(data []byte) (*Scraper, error) {
 		return nil, err
 	}
 
-	if len(module.Tasks) <= 0 {
+	if len(module.Tasks) == 0 {
 		return nil, errors.New("no tasks available")
 	}
 

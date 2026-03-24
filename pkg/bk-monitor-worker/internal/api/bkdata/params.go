@@ -16,14 +16,14 @@ import (
 )
 
 // AccessDeployPlanParams AccessDeployPlan的结构化参数
-func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, user, password string, tasks uint, useSasl bool) map[string]interface{} {
-	return map[string]interface{}{
+func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, user, password string, tasks uint, useSasl bool) map[string]any {
+	return map[string]any{
 		"bk_app_code":   config.BkApiAppCode,
 		"bk_username":   "admin",
 		"data_scenario": "queue",
 		"bk_biz_id":     config.BkdataBkBizId,
 		"description":   "",
-		"access_raw_data": map[string]interface{}{
+		"access_raw_data": map[string]any{
 			"raw_data_name":    rawDataName,
 			"maintainer":       config.BkdataProjectMaintainer,
 			"raw_data_alias":   rawDataAlias,
@@ -31,14 +31,14 @@ func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, use
 			"data_encoding":    "UTF-8",
 			"sensitivity":      "private",
 			"description":      fmt.Sprintf("接入配置 (%s)", rawDataAlias),
-			"tags":             []interface{}{},
+			"tags":             []any{},
 			"data_source_tags": []string{"src_kafka"},
 		},
-		"access_conf_info": map[string]interface{}{
-			"collection_model": map[string]interface{}{"collection_type": "incr", "start_at": 1, "period": "-1"},
-			"resource": map[string]interface{}{
+		"access_conf_info": map[string]any{
+			"collection_model": map[string]any{"collection_type": "incr", "start_at": 1, "period": "-1"},
+			"resource": map[string]any{
 				"type": "kafka",
-				"scope": []map[string]interface{}{
+				"scope": []map[string]any{
 					{
 						"master":            master,
 						"group":             group,
@@ -57,36 +57,36 @@ func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, use
 }
 
 type DatabusCleansParams struct {
-	RawDataId            int                      `json:"raw_data_id"`
-	JsonConfig           string                   `json:"json_config"`
-	PEConfig             string                   `json:"pe_config"`
-	BkBizId              int                      `json:"bk_biz_id"`
-	Description          string                   `json:"description"`
-	CleanConfigName      string                   `json:"clean_config_name"`
-	ResultTableName      string                   `json:"result_table_name"`
-	ResultTableNameAlias string                   `json:"result_table_name_alias"`
-	Fields               []map[string]interface{} `json:"fields"`
-	BkUsername           string                   `json:"bk_username"`
+	RawDataId            int              `json:"raw_data_id"`
+	JsonConfig           string           `json:"json_config"`
+	PEConfig             string           `json:"pe_config"`
+	BkBizId              int              `json:"bk_biz_id"`
+	Description          string           `json:"description"`
+	CleanConfigName      string           `json:"clean_config_name"`
+	ResultTableName      string           `json:"result_table_name"`
+	ResultTableNameAlias string           `json:"result_table_name_alias"`
+	Fields               []map[string]any `json:"fields"`
+	BkUsername           string           `json:"bk_username"`
 }
 
 type StopDatabusCleansParams struct {
-	RawDataId            int                      `json:"raw_data_id"`
-	JsonConfig           string                   `json:"json_config"`
-	PEConfig             string                   `json:"pe_config"`
-	BkBizId              int                      `json:"bk_biz_id"`
-	Description          string                   `json:"description"`
-	CleanConfigName      string                   `json:"clean_config_name"`
-	ResultTableName      string                   `json:"result_table_name"`
-	ResultTableNameAlias string                   `json:"result_table_name_alias"`
-	Fields               []map[string]interface{} `json:"fields"`
-	BkUsername           string                   `json:"bk_username"`
+	RawDataId            int              `json:"raw_data_id"`
+	JsonConfig           string           `json:"json_config"`
+	PEConfig             string           `json:"pe_config"`
+	BkBizId              int              `json:"bk_biz_id"`
+	Description          string           `json:"description"`
+	CleanConfigName      string           `json:"clean_config_name"`
+	ResultTableName      string           `json:"result_table_name"`
+	ResultTableNameAlias string           `json:"result_table_name_alias"`
+	Fields               []map[string]any `json:"fields"`
+	BkUsername           string           `json:"bk_username"`
 }
 
 type DataFlowNodeParams struct {
-	FromLinks    []map[string]interface{} `json:"from_links"`
-	NodeType     string                   `json:"node_type"`
-	Config       map[string]interface{}   `json:"config"`
-	FrontendInfo map[string]int           `json:"frontend_info"`
+	FromLinks    []map[string]any `json:"from_links"`
+	NodeType     string           `json:"node_type"`
+	Config       map[string]any   `json:"config"`
+	FrontendInfo map[string]int   `json:"frontend_info"`
 }
 
 type UpdateDataFlowNodeParams struct {

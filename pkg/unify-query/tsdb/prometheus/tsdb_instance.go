@@ -11,13 +11,12 @@ package prometheus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	baseInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	tsDBService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
@@ -40,7 +39,13 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, "get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error())
+			qryString, _ := json.Marshal(qry)
+
+			err = metadata.NewMessage(
+				metadata.MsgQueryTs,
+				"查询实例构建异常 %s",
+				string(qryString),
+			).Error(ctx, err)
 		}
 		span.End(&err)
 	}()
@@ -48,10 +53,10 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	span.Set("storage-id", qry.StorageID)
 
 	span.Set("storage-type", qry.StorageType)
-	curlGet := &curl.HttpCurl{Log: log.DefaultLogger}
+	curlGet := &curl.HttpCurl{}
 
 	switch qry.StorageType {
-	case consul.InfluxDBStorageType:
+	case metadata.InfluxDBStorageType:
 		opt := &influxdb.Options{
 			Timeout:        tsDBService.InfluxDBTimeout,
 			ContentType:    tsDBService.InfluxDBContentType,
@@ -88,43 +93,46 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		span.Set("ins-option", opt)
 
 		instance, err = influxdb.NewInstance(ctx, opt)
-	case consul.ElasticsearchStorageType:
+	case metadata.ElasticsearchStorageType:
 		opt := &elasticsearch.InstanceOption{
-			MaxSize:    tsDBService.EsMaxSize,
-			Timeout:    tsDBService.EsTimeout,
-			MaxRouting: tsDBService.EsMaxRouting,
+			MaxSize: tsDBService.EsMaxSize,
+			Timeout: tsDBService.EsTimeout,
 		}
+
 		if qry.SourceType == structured.BkData {
-			opt.Address = bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUid)
+			opt.Connect = elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)}
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
-			// 兼容原逻辑，storageType 通过 storageMap 获取
 			stg, _ := tsdb.GetStorage(qry.StorageID)
 			if stg == nil {
-				err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
-				return nil
+				err = fmt.Errorf("%s storage list is empty in %s", metadata.ElasticsearchStorageType, qry.StorageID)
+				return instance
 			}
-			opt.Address = stg.Address
-			opt.Username = stg.Username
-			opt.Password = stg.Password
-			opt.HealthCheck = true
+
+			opt.Connect = elasticsearch.Connect{
+				Address:  stg.Address,
+				UserName: stg.Username,
+				Password: stg.Password,
+			}
+			opt.HealthCheck = false
 		}
 		instance, err = elasticsearch.NewInstance(ctx, opt)
-	case consul.BkSqlStorageType:
+	case metadata.BkSqlStorageType:
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
-			Timeout:   tsDBService.BkSqlTimeout,
-			MaxLimit:  tsDBService.BkSqlLimit,
-			Tolerance: tsDBService.BkSqlTolerance,
-			Curl:      curlGet,
+			Timeout:    tsDBService.BkSqlTimeout,
+			MaxLimit:   tsDBService.BkSqlLimit,
+			Tolerance:  tsDBService.BkSqlTolerance,
+			SliceLimit: qry.Size,
+			Curl:       curlGet,
 		})
-	case consul.VictoriaMetricsStorageType:
+	case metadata.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				victoriaMetrics.ContentType: tsDBService.VmContentType,
 			}),
@@ -133,7 +141,9 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			InfluxCompatible: tsDBService.VmInfluxCompatible,
 			UseNativeOr:      tsDBService.VmUseNativeOr,
 			Curl:             curlGet,
+			ForceStorageName: tsDBService.QueryRouterForceVmClusterName,
 		})
+		span.Set("vm-force-storage-name", tsDBService.QueryRouterForceVmClusterName)
 	default:
 		err = fmt.Errorf("storage type is error %+v", qry)
 	}

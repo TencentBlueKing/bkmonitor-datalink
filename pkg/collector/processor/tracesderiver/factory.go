@@ -21,18 +21,18 @@ func init() {
 	processor.Register(define.ProcessorTracesDeriver, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*tracesDeriver, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*tracesDeriver, error) {
 	operators := confengine.NewTierConfig()
 
 	var c Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
-	operators.SetGlobal(NewTracesOperator(c))
+	operators.SetGlobal(NewOperator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -40,7 +40,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		operators.Set(custom.Token, custom.Type, custom.ID, NewTracesOperator(cfg))
+		operators.Set(custom.Token, custom.Type, custom.ID, NewOperator(cfg))
 	}
 
 	return &tracesDeriver{
@@ -66,7 +66,7 @@ func (p *tracesDeriver) IsPreCheck() bool {
 	return false
 }
 
-func (p *tracesDeriver) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *tracesDeriver) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

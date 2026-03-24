@@ -9,17 +9,9 @@
 
 package consul
 
-const (
-	BkSqlStorageType           = "bk_sql"
-	VictoriaMetricsStorageType = "victoria_metrics"
-	InfluxDBStorageType        = "influxdb"
-	PrometheusStorageType      = "prometheus"
-	OfflineDataArchive         = "offline_data_archive"
-	RedisStorageType           = "redis"
-	ElasticsearchStorageType   = "elasticsearch"
-)
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 
-var typeList = []string{InfluxDBStorageType, ElasticsearchStorageType, BkSqlStorageType, VictoriaMetricsStorageType}
+var typeList = []string{metadata.InfluxDBStorageType, metadata.ElasticsearchStorageType, metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType}
 
 // GetTsDBStorageInfo 获取 tsDB 存储实例
 func GetTsDBStorageInfo() (map[string]*Storage, error) {

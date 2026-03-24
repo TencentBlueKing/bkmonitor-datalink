@@ -46,7 +46,6 @@ type Receiver struct {
 
 var (
 	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
-	globalConfig           Config
 	globalSkywalkingConfig map[string]SkywalkingConfig
 )
 
@@ -70,11 +69,6 @@ func (p Publisher) Publish(r *define.Record) {
 		return
 	}
 	publishRecord(r)
-}
-
-// GetComponentConfig 获取组件全局配置项
-func GetComponentConfig() ComponentConfig {
-	return globalConfig.Components
 }
 
 type SkywalkingConfigFetcher struct {
@@ -107,7 +101,6 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	}
 
 	// 全局状态记录
-	globalConfig = c
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 
 	return &Receiver{
@@ -127,10 +120,9 @@ func New(conf *confengine.Config) (*Receiver, error) {
 }
 
 func (r *Receiver) ready() {
-	config := GetComponentConfig()
-	for k, f := range componentsReady {
-		f(config)
-		logger.Infof("register '%s' component", k)
+	for name, f := range componentsReady {
+		f()
+		logger.Infof("register '%s' component", name)
 	}
 }
 
@@ -253,7 +245,6 @@ func (r *Receiver) Start() error {
 		}
 		if err := r.startRecvHttpServer(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.Info("receiver http recv server stopped")
 				return
 			}
 			errs <- err
@@ -269,7 +260,6 @@ func (r *Receiver) Start() error {
 		}
 		if err := r.starAdminHttpServer(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.Info("receiver http admin server stopped")
 				return
 			}
 			errs <- err
@@ -315,33 +305,82 @@ func (r *Receiver) Start() error {
 	}
 }
 
-func (r *Receiver) Stop() error {
-	if r.config.RecvServer.Enabled {
-		if err := r.recvServer.Close(); err != nil {
-			return err
-		}
+func (r *Receiver) shutdownRecvServer() error {
+	if !r.config.RecvServer.Enabled {
+		return nil
 	}
 
-	if r.config.AdminServer.Enabled {
-		if err := r.adminServer.Close(); err != nil {
-			return err
-		}
-	}
-
-	if r.config.GrpcServer.Enabled {
-		r.grpcServer.Stop()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
 	defer cancel()
 
-	if r.config.TarsServer.Enabled {
-		if err := r.tarsServer.Shutdown(ctx); err != nil {
-			logger.Errorf("receiver stop tars server got err: %v", err)
-		} else {
-			logger.Info("receiver tars server stopped")
-		}
+	t0 := time.Now()
+	err := r.recvServer.Shutdown(ctx)
+	if err != nil {
+		return err
 	}
+
+	logger.Infof("shutdown recv server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownAdminServer() error {
+	if !r.config.AdminServer.Enabled {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
+	defer cancel()
+
+	t0 := time.Now()
+	err := r.adminServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.Infof("shutdown admin server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownTarsServer() error {
+	if !r.config.TarsServer.Enabled {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
+	defer cancel()
+
+	t0 := time.Now()
+	err := r.tarsServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.Infof("shutdown tars server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownGrpcServer() {
+	if !r.config.GrpcServer.Enabled {
+		return
+	}
+
+	t0 := time.Now()
+	r.grpcServer.GracefulStop()
+	logger.Infof("shutdown grpc server, take: %s", time.Since(t0))
+}
+
+func (r *Receiver) Stop() error {
+	if err := r.shutdownRecvServer(); err != nil {
+		return err
+	}
+	if err := r.shutdownAdminServer(); err != nil {
+		return err
+	}
+	if err := r.shutdownTarsServer(); err != nil {
+		return err
+	}
+
+	r.shutdownGrpcServer()
 
 	r.wg.Wait()
 	return nil

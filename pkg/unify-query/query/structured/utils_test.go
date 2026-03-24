@@ -54,7 +54,6 @@ func TestContainElement(t *testing.T) {
 }
 
 func TestJudgeFilter(t *testing.T) {
-
 	testCases := map[string]struct {
 		filters []query.Filter
 		satisfy bool
@@ -90,7 +89,6 @@ func TestJudgeFilter(t *testing.T) {
 			assert.Equal(t, v.length, len(tKeys))
 		})
 	}
-
 }
 
 func TestCompressFilterCondition(t *testing.T) {
@@ -189,6 +187,10 @@ func TestCompressFilterCondition(t *testing.T) {
 					return cond[i].DimensionName < cond[j].DimensionName
 				})
 			}
+
+			sort.SliceStable(condition, func(i, j int) bool {
+				return condition[i][0].Value[0] < condition[j][0].Value[0]
+			})
 			assert.Equal(t, testCase.expect, condition)
 		})
 	}

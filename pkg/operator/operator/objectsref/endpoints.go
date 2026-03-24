@@ -109,7 +109,7 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		endpoints, ok := obj.(*corev1.Endpoints)
 		if !ok {
 			logger.Errorf("excepted Endpoints type, got %T", obj)
@@ -127,7 +127,7 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			endpoints, ok := obj.(*corev1.Endpoints)
 			if !ok {
 				logger.Errorf("excepted Endpoints type, got %T", obj)
@@ -135,7 +135,7 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 			}
 			objs.Set(endpoints)
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			endpoints, ok := newObj.(*corev1.Endpoints)
 			if !ok {
 				logger.Errorf("excepted Endpoints type, got %T", newObj)
@@ -143,7 +143,7 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 			}
 			objs.Set(endpoints)
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			endpoints, ok := obj.(*corev1.Endpoints)
 			if !ok {
 				logger.Errorf("excepted Endpoints type, got %T", obj)

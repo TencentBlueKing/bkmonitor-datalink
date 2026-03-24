@@ -11,18 +11,70 @@
 # MetricsFilter: 指标过滤器
 
 processor:
-   - name: "metrics_filter/drop"
-     config:
-       # Drop Action
-       drop:
-         # metrics: metric name
-         metrics:
-           - "runtime.go.mem.live_objects"
-           - "none.exist.metric"
-       # Replace Action
-       replace:
-         - source: "previous_metric"       # 原字段
-           destination: "current_metric"   # 新字段
+  - name: "metrics_filter/drop"
+    config:
+      # Drop Action
+      drop:
+        metrics:
+        - "runtime.go.mem.live_objects"
+        - "none.exist.metric"
+
+      # Replace Action
+      replace:
+        - source: "previous_metric"       # 原字段
+          destination: "current_metric"   # 新字段
+
+      # Relabel Action
+      relabel:
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          rules:
+            - label: "callee_method"
+              op: "in"
+              values: ["hello"]
+            - label: "callee_service"
+              op: "in"
+              values: ["example.greeter"]
+            - label: "code"
+              op: "range"
+              values:
+                - prefix: "err_"
+                  min: 10
+                  max: 19
+                - prefix: "trpc_"
+                  min: 11
+                  max: 12
+                - prefix: "ret_"
+                  min: 100
+                  max: 200
+                - min: 200
+                  max: 200
+          target:
+            action: "upsert"
+            label: "code_type"
+            value: "success"
+
+      # CodeRelabel Action
+      code_relabel:
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes:
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
+            - rule: "err_400~500"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "error"
+            - rule: "600"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "normal"
 */
 
 package metricsfilter

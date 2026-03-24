@@ -33,9 +33,9 @@ func (s *Set[T]) First() (v T) {
 	defer s.lock.RUnlock()
 	for k := range s.m {
 		v = k
-		return
+		return v
 	}
-	return
+	return v
 }
 
 func (s *Set[T]) Size() int {
@@ -103,4 +103,10 @@ func (s *Set[T]) ToArray() []T {
 		array = append(array, item)
 	}
 	return array
+}
+
+func (s *Set[T]) Clean() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.m = make(map[T]struct{})
 }

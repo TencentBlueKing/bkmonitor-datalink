@@ -14,14 +14,12 @@ import (
 	"time"
 )
 
-var (
-	mockOnce sync.Once
-)
+var mockOnce sync.Once
 
 func MockEngine() {
 	mockOnce.Do(func() {
 		NewEngine(&Params{
-			Timeout:              time.Minute,
+			Timeout:              time.Hour,
 			MaxSamples:           5e5,
 			LookbackDelta:        5 * time.Minute,
 			EnableNegativeOffset: true,

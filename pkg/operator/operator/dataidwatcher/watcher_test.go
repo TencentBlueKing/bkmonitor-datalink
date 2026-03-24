@@ -24,6 +24,11 @@ func TestMetricDataIDMatcher(t *testing.T) {
 		watcher.uniqueKey("servicemonitor", "ns1", "name1"): {
 			Spec: bkv1beta1.DataIDSpec{
 				DataID: 1001,
+				MonitorResource: bkv1beta1.MonitorResource{
+					NameSpace: "ns1",
+					Name:      "name1",
+					Kind:      "servicemonitor",
+				},
 			},
 		},
 		watcher.uniqueKey("servicemonitor", "ns2", ""): {
@@ -40,6 +45,16 @@ func TestMetricDataIDMatcher(t *testing.T) {
 				DataID: 1101,
 				MonitorResource: bkv1beta1.MonitorResource{
 					NameSpace: "ns5|ns6|ns7",
+					Kind:      "servicemonitor",
+				},
+			},
+		},
+		watcher.uniqueKey("servicemonitor", "ns7|ns8|ns9", "name3|name4"): {
+			Spec: bkv1beta1.DataIDSpec{
+				DataID: 1005,
+				MonitorResource: bkv1beta1.MonitorResource{
+					NameSpace: "ns7|ns8|ns9",
+					Name:      "name3|name4",
 					Kind:      "servicemonitor",
 				},
 			},
@@ -94,6 +109,16 @@ func TestMetricDataIDMatcher(t *testing.T) {
 		}, false)
 		assert.NoError(t, err)
 		assert.Equal(t, 1101, dataID.Spec.DataID)
+	})
+
+	t.Run("name 分割匹配", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "name3",
+			Kind:      "servicemonitor",
+			Namespace: "ns9",
+		}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, 1005, dataID.Spec.DataID)
 	})
 
 	t.Run("兜底匹配", func(t *testing.T) {

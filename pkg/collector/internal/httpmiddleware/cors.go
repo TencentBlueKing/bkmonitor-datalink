@@ -19,22 +19,24 @@ func init() {
 	Register("cors", Cors)
 }
 
-func Cors(handler http.Handler) http.Handler {
-	allowAllCorsOption := cors.Options{
-		AllowedOrigins: []string{},
-		AllowedMethods: []string{
-			http.MethodHead,
-			http.MethodGet,
-			http.MethodPost,
-			http.MethodPut,
-			http.MethodPatch,
-			http.MethodDelete,
-		},
-		AllowedHeaders:   []string{"*"},
-		AllowCredentials: true,
-		AllowOriginFunc: func(origin string) bool {
-			return true
-		},
+func Cors(_ string) MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		allowAllCorsOption := cors.Options{
+			AllowedOrigins: []string{},
+			AllowedMethods: []string{
+				http.MethodHead,
+				http.MethodGet,
+				http.MethodPost,
+				http.MethodPut,
+				http.MethodPatch,
+				http.MethodDelete,
+			},
+			AllowedHeaders:   []string{"*"},
+			AllowCredentials: true,
+			AllowOriginFunc: func(origin string) bool {
+				return true
+			},
+		}
+		return cors.New(allowAllCorsOption).Handler(next)
 	}
-	return cors.New(allowAllCorsOption).Handler(handler)
 }

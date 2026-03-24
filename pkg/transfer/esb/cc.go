@@ -11,6 +11,7 @@ package esb
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cstockton/go-conv"
 	"github.com/dghubble/sling"
@@ -31,7 +32,7 @@ const (
 
 type APIClient interface {
 	GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error)
-	GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
+	GetServiceInstance(bizID, limit, start int, serviceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
 	GetSearchBizInstTopo(start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error)
 	GetHostsByRange(bizID, limit, start int) (*CCSearchHostResponseData, error)
 	VisitAllHost(ctx context.Context, batchSize int, ccInfo models.CCInfo, fn func(monitor CCSearchHostResponseDataV3Monitor, ccInfo models.CCInfo) error) error
@@ -110,9 +111,30 @@ func NewCCApiClient(client *Client) *CCApiClient {
 	}
 }
 
+// useApiGateway: use api gateway or not
+func (c *CCApiClient) useApiGateway() bool {
+	return c.client.conf.GetBool(ConfESBUseAPIGateway)
+}
+
 // Agent :
 func (c *CCApiClient) Agent() *sling.Sling {
-	return c.client.Agent().Path("cc/")
+	agent := c.client.Agent()
+
+	// use esb or api gateway
+	if c.useApiGateway() {
+		customCmdbApi := c.client.conf.GetString(ConfESBCmdbApiAddress)
+		if customCmdbApi != "" {
+			// use custom cmdb apigw address
+			agent = agent.Base(customCmdbApi)
+		} else {
+			// use default cmdb apigw address
+			agent = agent.Path("/api/bk-cmdb/prod/")
+		}
+	} else {
+		// use esb cmdb address
+		agent = agent.Path("/api/c/compapi/v2/cc/")
+	}
+	return agent
 }
 
 func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostResponseData, error) {
@@ -143,9 +165,18 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 			},
 		},
 	}
+
+	// use different path by esb or api gateway
+	var path string
+	if c.useApiGateway() {
+		path = fmt.Sprintf("api/v3/hosts/app/%d/list_hosts_topo", bizID)
+	} else {
+		path = "list_biz_hosts_topo/"
+	}
+
 	response, err := c.Agent().
 		Set(authKey, c.client.commonArgs.JSON()).
-		Post("list_biz_hosts_topo").
+		Post(path).
 		BodyProvider(reqBody).Receive(&result /* success */, &result /* failed */)
 	if err != nil {
 		c.SearchHostCounter.CounterFails.Inc()
@@ -171,9 +202,20 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 		APIResponse
 		Data []CCSearchBizInstTopoResponseInfo `json:"data"`
 	}{}
-	response, err := c.Agent().
-		Set(authKey, c.client.commonArgs.JSON()).
-		Get("search_biz_inst_topo/").
+
+	sling := c.Agent().Set(authKey, c.client.commonArgs.JSON())
+
+	// use different path by esb or api gateway
+	var path string
+	if c.useApiGateway() {
+		path = fmt.Sprintf("api/v3/find/topoinst/biz/%d", bizID)
+		sling = sling.Post(path)
+	} else {
+		path = "search_biz_inst_topo/"
+		sling = sling.Get(path)
+	}
+
+	response, err := sling.
 		QueryStruct(
 			&CCSearchBizInstTopoParams{
 				BkBizID: bizID,
@@ -205,9 +247,18 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 		APIResponse
 		Data *CCSearchBusinessResponseData `json:"data"`
 	}{}
+
+	// use different path by esb or api gateway
+	var path string
+	if c.useApiGateway() {
+		path = fmt.Sprintf("api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
+	} else {
+		path = "search_business/"
+	}
+
 	// 请求并将结果写入到result中
 	response, err := c.Agent().
-		Post("search_business/").
+		Post(path).
 		Set(authKey, c.client.commonArgs.JSON()).
 		BodyProvider(&json.Provider{Payload: &CCSearchBusinessRequest{Fields: []string{"bk_biz_id", "bk_biz_name"}}}).
 		Receive(&result /* success */, &result /* failed */)
@@ -245,14 +296,23 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 }
 
 // GetServiceInstance : 实例
-func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
+func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, serviceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
 	defer c.SearchServiceInstanceTimeObserver.Start().Finish()
 	result := struct {
 		APIResponse
 		Data *CCSearchServiceInstanceResponseData `json:"data"`
 	}{}
+
+	// use different path by esb or api gateway
+	var path string
+	if c.useApiGateway() {
+		path = "api/v3/findmany/proc/service_instance/details"
+	} else {
+		path = "list_service_instance_detail/"
+	}
+
 	response, err := c.Agent().
-		Post("list_service_instance_detail/").
+		Post(path).
 		Set(authKey, c.client.commonArgs.JSON()).
 		BodyProvider(&json.Provider{Payload: &CCSearchServiceInstanceRequest{
 			Page: CCSearchServiceInstanceRequestMetadataLabelPage{
@@ -447,69 +507,7 @@ func MergeTopoHost(hostInfo *CCSearchHostResponseDataV3Monitor, topoInfo []map[s
 	}
 }
 
-// FilterBizLocation: 将传入的业务信息进行过滤，仅剩余CMDBV3的业务信息
+// FilterBizLocation: 将传入的业务信息进行过滤，仅剩余CMDBV3的业务信息（已弃用）
 func (c *CCApiClient) FilterCMDBV3Biz(originalResponse []CCSearchBusinessResponseInfo) ([]CCSearchBusinessResponseInfo, error) {
-	var (
-		result       CCGetBusinessLocationResponse           // 缓存
-		bizList      = make([]int, 0, len(originalResponse)) // 请求业务列表
-		V3BizMap     = make(map[int]bool)
-		filterResult = make([]CCSearchBusinessResponseInfo, 0)
-	)
-
-	// 构造需要请求的业务列表
-	for _, bizInfo := range originalResponse {
-		bizList = append(bizList, bizInfo.BKBizID)
-	}
-	logging.Infof("going to request cmdb filter bizList->[%v]", bizList)
-
-	response, err := c.Agent().
-		Set(authKey, c.client.commonArgs.JSON()).
-		Post("get_biz_location/").
-		BodyProvider(&json.Provider{Payload: &CCGetBusinessLocationRequest{BkBizIDs: bizList}}).
-		Receive(&result /* success */, &result /* failed */)
-
-	// 判断请求是否成功
-	if err != nil {
-		c.GetBizLocationCounter.CounterFails.Inc()
-		logging.Errorf("get business location failed: %v, %v, cache response will use", result, err)
-		return LocationResponseCache, nil
-	}
-
-	logging.Debugf("get business location response: %d, %v", response.StatusCode, result.Message)
-	if result.Data == nil {
-		c.GetBizLocationCounter.CounterFails.Inc()
-		logging.Errorf("%s query from cc location error %d: %v, empty response will use", result.RequestID, result.Code, result.Message)
-		// 如果返回的内容为空，则此时返回空的业务列表，防止将CMDB拉挂
-		return filterResult, errors.Wrapf(define.ErrOperationForbidden, result.Message)
-	}
-
-	c.GetBizLocationCounter.CounterSuccesses.Inc()
-
-	// 先过滤一遍所有需要保留的业务信息
-	for _, bizInfo := range result.Data {
-		if bizInfo.BkLocation != V3LocationLabel {
-			logging.Debugf("biz->[%d] location is not v3.0, jump it.", bizInfo.BkBizID)
-			continue
-		}
-		V3BizMap[bizInfo.BkBizID] = true
-		logging.Debugf("biz->[%d] location is v3.0, added to map.", bizInfo.BkBizID)
-	}
-
-	// 再判断哪些业务需要加入到返回内容中
-	for _, originalBizInfo := range originalResponse {
-		if _, isV3Biz := V3BizMap[originalBizInfo.BKBizID]; !isV3Biz {
-			logging.Infof("biz->[%d] is not v3.0 biz, will not add to return list.", originalBizInfo.BKBizID)
-			continue
-		}
-
-		logging.Infof("biz->[%d] is V3.0 biz, will added to return list.", originalBizInfo.BKBizID)
-		filterResult = append(filterResult, originalBizInfo)
-	}
-
-	// 此时更新缓存信息内容，为了下次CMDB被拉挂的时候，可以使用缓存数据
-	LocationResponseCache = filterResult
-	logging.Infof("location response updated success to count->[%d]", len(LocationResponseCache))
-
-	logging.Infof("filter done, origin biz count->[%d] after filter count->[%d]", len(originalResponse), len(filterResult))
-	return filterResult, nil
+	return originalResponse, nil
 }

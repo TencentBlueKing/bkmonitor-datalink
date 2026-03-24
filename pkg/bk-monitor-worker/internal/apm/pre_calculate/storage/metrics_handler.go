@@ -133,7 +133,6 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 	config remote.PrometheusWriterOptions,
 	metricsConfig MetricConfigOptions,
 ) *MetricDimensionsHandler {
-
 	token := core.GetMetadataCenter().GetToken(dataId)
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+

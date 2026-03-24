@@ -10,18 +10,10 @@
 package api
 
 import (
-	"context"
-
-	"github.com/gin-gonic/gin"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
 
-func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
-
-	g.POST(RelationMultiResource, HandlerAPIRelationMultiResource)
-	g.POST(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
+func RegisterRelation(registerHandler *endpoint.RegisterHandler) {
+	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
+	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
 }

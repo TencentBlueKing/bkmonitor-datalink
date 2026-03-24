@@ -28,7 +28,7 @@ type Encoder interface {
 	UnmarshalLogs(b []byte) (plog.Logs, error)
 }
 
-func unmarshalRecordData(encoder Encoder, rtype define.RecordType, b []byte) (interface{}, error) {
+func unmarshalRecordData(encoder Encoder, rtype define.RecordType, b []byte) (any, error) {
 	switch rtype {
 	case define.RecordTraces:
 		return encoder.UnmarshalTraces(b)

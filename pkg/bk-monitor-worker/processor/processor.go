@@ -156,7 +156,7 @@ func (p *Processor) Exec() {
 		logger.Debugf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
-			//logger.Info("All queues are empty")
+			// logger.Info("All queues are empty")
 			time.Sleep(time.Second)
 			<-p.Sema // release token
 			return

@@ -10,9 +10,7 @@
 package probefilter
 
 import (
-	"strings"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 )
 
 type Config struct {
@@ -49,15 +47,5 @@ type Filter struct {
 }
 
 func (f *Filter) Clean() {
-	f.Field = cleanPrefix(f.Field)
-}
-
-func cleanPrefix(s string) string {
-	if strings.HasPrefix(s, define.AttributeKeyPrefix) {
-		return s[len(define.AttributeKeyPrefix):]
-	}
-	if strings.HasPrefix(s, define.ResourceKeyPrefix) {
-		return s[len(define.ResourceKeyPrefix):]
-	}
-	return s
+	f.Field = fields.TrimPrefix(f.Field)
 }

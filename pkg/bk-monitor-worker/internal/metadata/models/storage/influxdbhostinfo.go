@@ -10,21 +10,13 @@
 package storage
 
 import (
-	"context"
-	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -34,10 +26,10 @@ import (
 // InfluxdbHostInfo influxdb host info model
 // gen:qs
 type InfluxdbHostInfo struct {
-	HostName        string  `gorm:"primary_key" json:"host_name;size:128"`
+	HostName        string  `gorm:"primary_key;size:128" json:"host_name"`
 	DomainName      string  `gorm:"size:128" json:"domain_name"`
 	Port            uint    `json:"port"`
-	Username        string  `gorm:"size:64" json:"username;"`
+	Username        string  `gorm:"size:64" json:"username"`
 	Password        string  `gorm:"password" json:"password"`
 	Description     string  `gorm:"size:256" json:"description"`
 	Status          bool    `gorm:"column:status" json:"status"`
@@ -64,13 +56,13 @@ func (i *InfluxdbHostInfo) BeforeCreate(tx *gorm.DB) error {
 }
 
 // GetConsulConfig 生成consul配置信息
-func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
+func (i InfluxdbHostInfo) GetConsulConfig() map[string]any {
 	pwd, err := cipher.GetDBAESCipher().AESDecrypt(i.Password)
 	if err != nil {
 		logger.Error("GetConsulConfig:get influxdb host info password error", err)
 		return nil
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"domain_name":       i.DomainName,
 		"port":              i.Port,
 		"username":          i.Username,
@@ -81,38 +73,6 @@ func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
 		"protocol":          i.Protocol,
 		"read_rate_limit":   i.ReadRateLimit,
 	}
-}
-
-// ConsulPath 获取host_info的consul根路径
-func (InfluxdbHostInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbHostInfoConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
-}
-
-// ConsulConfigPath 获取具体host的consul配置路径
-func (i InfluxdbHostInfo) ConsulConfigPath() string {
-	return fmt.Sprintf("%s/%s", i.ConsulPath(), i.HostName)
-}
-
-// RefreshConsulClusterConfig 刷新consul中的influxdb主机信息
-func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error {
-	consulClient, err := consul.GetInstance()
-	if err != nil {
-		return err
-	}
-	// 从数据库中生成consul配置信息
-	cfg := i.GetConsulConfig()
-	configStr, err := jsonx.MarshalString(cfg)
-	if err != nil {
-		return err
-	}
-	// 更新consul信息
-	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), configStr, 0, nil)
-	if err != nil {
-		logger.Errorf("host: [%s] refresh consul config failed, %v", i.HostName, err)
-		return err
-	}
-	models.PushToRedis(ctx, models.InfluxdbHostInfoKey, i.HostName, configStr)
-	return nil
 }
 
 // JudgeShardByDuration 用于根据数据保留时间判断shard的长度
@@ -130,7 +90,7 @@ func JudgeShardByDuration(duration string) (string, error) {
 	if durationValue < time.Hour {
 		return "", errors.New("duration must gte 1h")
 	} else if durationValue < time.Hour*48 {
-		//小于2d时，shard为1h
+		// 小于2d时，shard为1h
 		return "1h", nil
 	} else if durationValue <= time.Hour*180*24 {
 		// duration大于2d小于180d时，shard为1d
@@ -139,27 +99,4 @@ func JudgeShardByDuration(duration string) (string, error) {
 		// duration大于180d时，shard为7d
 		return "7d", nil
 	}
-}
-
-// RefreshInfluxdbHostInfoConsulClusterConfig 更新influxDB主机信息到consul中
-func RefreshInfluxdbHostInfoConsulClusterConfig(ctx context.Context, objs *[]InfluxdbHostInfo, goroutineLimit int) {
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
-	wg.Add(len(*objs))
-	for _, hostInfo := range *objs {
-		ch <- true
-		go func(hostInfo InfluxdbHostInfo, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			err := hostInfo.RefreshConsulClusterConfig(ctx)
-			if err != nil {
-				logger.Errorf("host: [%v] try to refresh consul config failed, %v", hostInfo.HostName, err)
-			} else {
-				logger.Infof("host: [%v] refresh consul config success", hostInfo.HostName)
-			}
-		}(hostInfo, wg, ch)
-	}
-	wg.Wait()
 }

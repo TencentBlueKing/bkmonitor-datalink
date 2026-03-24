@@ -11,13 +11,14 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	elastic "github.com/olivere/elastic/v7"
 	"golang.org/x/exp/slices"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 var itemsPool = sync.Pool{
@@ -85,6 +86,17 @@ func (a *aggFormat) reset() {
 	a.items = append(a.items, a.item)
 }
 
+// 增加值判断，如果返回值为 null 的情况，则认为该值为空点，无需加入到 samples 中
+// 其中 count / sum 会补零，该值不会是 null，minx / max /avg 会是 null，如果补零会导致计算异常，所以忽略该值
+func (a *aggFormat) setMetricValue(v *float64) {
+	if v == nil {
+		return
+	}
+
+	a.item.value = *v
+	a.reset()
+}
+
 // idx 是层级信息，默认为 len(a.aggInfoList), 因为聚合结果跟聚合列表是相反的，通过聚合层级递归解析 data 里面的内容
 // 例如该查询 sum(count_over_time(metric[1m])) by (dim-1, dim-2) 的聚合层级为：dim-1, dim-2, time range, count
 func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
@@ -115,6 +127,12 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 							return err
 						}
 					}
+				}
+			}
+		case ReverNested:
+			if singleBucket, ok := data.ReverseNested(info.Name); ok {
+				if err := a.ts(idx, singleBucket.Aggregations); err != nil {
+					return err
 				}
 			}
 		case NestedAgg:
@@ -151,44 +169,38 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			switch info.FuncType {
 			case Min:
 				if valueMetric, ok := data.Min(info.Name); ok && valueMetric != nil {
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Sum:
 				if valueMetric, ok := data.Sum(info.Name); ok && valueMetric != nil {
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Avg:
 				if valueMetric, ok := data.Avg(info.Name); ok && valueMetric != nil {
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Cardinality:
 				if valueMetric, ok := data.Cardinality(info.Name); ok && valueMetric != nil {
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Max:
 				if valueMetric, ok := data.Max(info.Name); ok && valueMetric != nil {
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Count:
 				if valueMetric, ok := data.ValueCount(info.Name); ok && valueMetric != nil {
 					// 计算数量需要造数据
-					a.item.value = *valueMetric.Value
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}

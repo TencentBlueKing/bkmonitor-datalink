@@ -91,30 +91,30 @@ var otSpanEventsMapping = map[string]string{
 }
 
 func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
-	traceData := ptrace.NewTraces()
+	pdTraces := ptrace.NewTraces()
 
 	swSpans := segment.Spans
 	if swSpans == nil && len(swSpans) == 0 {
-		return traceData
+		return pdTraces
 	}
 
-	resourceSpan := traceData.ResourceSpans().AppendEmpty()
-	rsAttrs := resourceSpan.Resource().Attributes()
-	rsAttrs.InsertString(semconv.AttributeServiceName, segment.GetService())
-	rsAttrs.InsertString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
-	rsAttrs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
-	rsAttrs.InsertString(attributeDataToken, token)
+	resourceSpan := pdTraces.ResourceSpans().AppendEmpty()
+	rs := resourceSpan.Resource().Attributes()
+	rs.InsertString(semconv.AttributeServiceName, segment.GetService())
+	rs.InsertString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
+	rs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
+	rs.InsertString(attributeDataToken, token)
 
 	// 补充数据字段内容 agentLanguage agentType agentVersion
 	for k, v := range extraAttrs {
-		rsAttrs.InsertString(k, v)
+		rs.InsertString(k, v)
 	}
 
 	il := resourceSpan.ScopeSpans().AppendEmpty()
 	swSpansToSpanSlice(segment.GetTraceId(), segment.GetTraceSegmentId(), swSpans, il.Spans())
 
 	serviceInstanceId := segment.GetServiceInstance()
-	foreach.Spans(traceData.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		attrs := span.Attributes()
 		v, ok := attrs.Get(semconv.AttributeNetHostIP)
 		if !ok {
@@ -127,7 +127,7 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 		}
 	})
 
-	return traceData
+	return pdTraces
 }
 
 // swTransformIP 转化 serviceInstanceId 中的 ip 字段插入 attribute 中

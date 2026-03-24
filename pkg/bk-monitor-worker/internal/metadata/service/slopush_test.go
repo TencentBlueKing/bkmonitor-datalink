@@ -57,7 +57,7 @@ func TestSloPush(t *testing.T) {
 	err2 := alarmStrategy.Create(db)
 	assert.NoError(t, err2)
 
-	//检索所有满足标签的业务
+	// 检索所有满足标签的业务
 	bizID, err := FindAllBiz()
 	// 创建一个 map，键为 int 类型，值为 []string 类型
 	alarmMap := make(map[int32][]string)
@@ -67,7 +67,7 @@ func TestSloPush(t *testing.T) {
 	now := time.Now().Unix()
 	_, _, _, err = InitStraID(5000140, "场景2", now)
 	assert.NoError(t, err)
-	conditions := []map[string]interface{}{
+	conditions := []map[string]any{
 		{
 			"key":   "severity",
 			"value": []int{1, 2, 3},

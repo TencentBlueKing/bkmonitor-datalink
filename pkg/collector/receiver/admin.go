@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -46,6 +47,13 @@ func init() {
 		routes = append(routes, AdminHttpRoutes()...)
 		b, _ := json.Marshal(routes)
 		w.Write(b)
+	})
+	registerAdminHttpGetRoute(adminSource, "/-/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if confengine.LoadedPlatformConfig() {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable) // 未加载到平台配置表示服务未就绪
 	})
 
 	const pprofSource = "pprof"

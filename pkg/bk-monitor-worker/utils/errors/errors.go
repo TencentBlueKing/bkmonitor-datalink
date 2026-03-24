@@ -125,11 +125,12 @@ type Op string
 //
 // If the error is printed, only those items that have been
 // set to non-zero values will appear in the result.
-func E(args ...interface{}) error {
+func E(args ...any) error {
 	if len(args) == 0 {
 		panic("call to errors.E with no arguments")
 	}
 	e := &Error{}
+	var errs []error
 	for _, arg := range args {
 		switch arg := arg.(type) {
 		case Op:
@@ -137,15 +138,17 @@ func E(args ...interface{}) error {
 		case Code:
 			e.Code = arg
 		case error:
-			e.Err = arg
+			errs = append(errs, arg)
 		case string:
-			e.Err = errors.New(arg)
+			errs = append(errs, errors.New(arg))
 		default:
 			_, file, line, _ := runtime.Caller(1)
 			logger.Errorf("errors.E: bad call from %s:%d: %v", file, line, args)
 			return fmt.Errorf("unknown type %T, value %v in error call", arg, arg)
 		}
 	}
+	e.Err = errors.Join(errs...)
+
 	return e
 }
 
@@ -284,7 +287,7 @@ func Is(err, target error) bool { return errors.Is(err, target) }
 //
 // This function is the errors.As function from the standard library (https://golang.org/pkg/errors/#As).
 // It is exported from this package for import convenience.
-func As(err error, target interface{}) bool { return errors.As(err, target) }
+func As(err error, target any) bool { return errors.As(err, target) }
 
 // Unwrap returns the result of calling the Unwrap method on err,
 // if err's type contains an Unwrap method returning error.

@@ -748,7 +748,7 @@ var KafkaTopicInfoDBSchema = struct {
 // Update updates KafkaTopicInfo fields by primary key
 // nolint: dupl
 func (o *KafkaTopicInfo) Update(db *gorm.DB, fields ...KafkaTopicInfoDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":             o.Id,
 		"bk_data_id":     o.BkDataId,
 		"topic":          o.Topic,
@@ -757,7 +757,7 @@ func (o *KafkaTopicInfo) Update(db *gorm.DB, fields ...KafkaTopicInfoDBSchemaFie
 		"flush_interval": o.FlushInterval,
 		"consume_rate":   o.ConsumeRate,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -776,7 +776,7 @@ func (o *KafkaTopicInfo) Update(db *gorm.DB, fields ...KafkaTopicInfoDBSchemaFie
 
 // KafkaTopicInfoUpdater is an KafkaTopicInfo updates manager
 type KafkaTopicInfoUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -784,7 +784,7 @@ type KafkaTopicInfoUpdater struct {
 // nolint: dupl
 func NewKafkaTopicInfoUpdater(db *gorm.DB) KafkaTopicInfoUpdater {
 	return KafkaTopicInfoUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&KafkaTopicInfo{}),
 	}
 }

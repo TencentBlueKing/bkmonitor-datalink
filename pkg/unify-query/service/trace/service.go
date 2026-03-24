@@ -100,7 +100,6 @@ func (s *Service) Start(ctx context.Context) {
 
 	exporter, err = otlptrace.New(ctx, client)
 	if err != nil {
-		log.Errorf(context.TODO(), "sdktrace.WithBatcher(exporter), %s", err.Error())
 		return
 	}
 
@@ -108,6 +107,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.wg.Add(1)
 
 	s.tracerProvider = sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(s.newResource()),
 	)
@@ -115,30 +115,25 @@ func (s *Service) Start(ctx context.Context) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
-	log.Infof(context.TODO(), "trace exporter start success.")
 }
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
 	s.Close()
 	s.Start(ctx)
-	log.Infof(context.TODO(), "tracing exporter reload service success.")
 }
 
 // Close
 func (s *Service) Close() {
 	if s.tracerProvider == nil {
-		log.Infof(context.TODO(), "no exporter is running, nothing will shutdown.")
 		return
 	}
 
 	go func(tracerProvider *sdktrace.TracerProvider) {
 		defer s.wg.Done()
 		if err := tracerProvider.Shutdown(s.ctx); err != nil {
-			log.Errorf(context.TODO(), "failed to shutdown the exporter for->[%s]", err)
+			log.Errorf(context.TODO(), "failed to shutdown TracerProvider: %v", err)
 		}
-
-		log.Infof(context.TODO(), "trace exporter is shutdown now.")
 	}(s.tracerProvider)
 }
 

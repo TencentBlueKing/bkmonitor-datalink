@@ -107,48 +107,46 @@ func TestConvertJvmMetrics(t *testing.T) {
 		ServiceInstance: "instance1",
 	}, "my-token")
 
-	type Case struct {
-		Metric string
-		Val    float64
-	}
-
-	cases := []Case{
-		{Metric: jvmGcYoungCount, Val: 10},
-		{Metric: jvmGcYoungTime, Val: 20},
-		{Metric: jvmGcOldCount, Val: 30},
-		{Metric: jvmGcOldTime, Val: 40},
-		{Metric: jvmMemoryHeapMax, Val: 10},
-		{Metric: jvmMemoryHeapUsed, Val: 20},
-		{Metric: jvmMemoryHeapCommitted, Val: 30},
-		{Metric: jvmMemoryNoHeapInit, Val: 2},
-		{Metric: jvmMemoryNoHeapMax, Val: 30},
-		{Metric: jvmMemoryNoHeapUsed, Val: 40},
-		{Metric: jvmMemoryNoHeapCommitted, Val: 50},
-		{Metric: jvmMemoryCodeCacheInit, Val: 1},
-		{Metric: jvmMemoryCodeCacheMax, Val: 10},
-		{Metric: jvmMemoryCodeCacheUsed, Val: 20},
-		{Metric: jvmMemoryCodeCacheCommitted, Val: 30},
-		{Metric: jvmMemoryNewGenCommitted, Val: 30},
-		{Metric: jvmMemoryOldGenCommitted, Val: 30},
-		{Metric: jvmMemorySurvivorCommitted, Val: 30},
-		{Metric: jvmMemoryMetaspaceInit, Val: 1},
-		{Metric: jvmMemoryMetaspaceMax, Val: 10},
-		{Metric: jvmMemoryMetaspaceUsed, Val: 20},
-		{Metric: jvmMemoryMetaspaceCommitted, Val: 30},
-		{Metric: jvmThreadLiveCount, Val: 1},
-		{Metric: jvmThreadDaemonCount, Val: 2},
-		{Metric: jvmThreadRunnableCount, Val: 4},
-		{Metric: jvmThreadBlockedCount, Val: 5},
-		{Metric: jvmThreadWaitingCount, Val: 6},
-		{Metric: jvmThreadTimeWaitingCount, Val: 7},
+	tests := []struct {
+		metric string
+		val    float64
+	}{
+		{metric: jvmGcYoungCount, val: 10},
+		{metric: jvmGcYoungTime, val: 20},
+		{metric: jvmGcOldCount, val: 30},
+		{metric: jvmGcOldTime, val: 40},
+		{metric: jvmMemoryHeapMax, val: 10},
+		{metric: jvmMemoryHeapUsed, val: 20},
+		{metric: jvmMemoryHeapCommitted, val: 30},
+		{metric: jvmMemoryNoHeapInit, val: 2},
+		{metric: jvmMemoryNoHeapMax, val: 30},
+		{metric: jvmMemoryNoHeapUsed, val: 40},
+		{metric: jvmMemoryNoHeapCommitted, val: 50},
+		{metric: jvmMemoryCodeCacheInit, val: 1},
+		{metric: jvmMemoryCodeCacheMax, val: 10},
+		{metric: jvmMemoryCodeCacheUsed, val: 20},
+		{metric: jvmMemoryCodeCacheCommitted, val: 30},
+		{metric: jvmMemoryNewGenCommitted, val: 30},
+		{metric: jvmMemoryOldGenCommitted, val: 30},
+		{metric: jvmMemorySurvivorCommitted, val: 30},
+		{metric: jvmMemoryMetaspaceInit, val: 1},
+		{metric: jvmMemoryMetaspaceMax, val: 10},
+		{metric: jvmMemoryMetaspaceUsed, val: 20},
+		{metric: jvmMemoryMetaspaceCommitted, val: 30},
+		{metric: jvmThreadLiveCount, val: 1},
+		{metric: jvmThreadDaemonCount, val: 2},
+		{metric: jvmThreadRunnableCount, val: 4},
+		{metric: jvmThreadBlockedCount, val: 5},
+		{metric: jvmThreadWaitingCount, val: 6},
+		{metric: jvmThreadTimeWaitingCount, val: 7},
 	}
 
 	n := 0
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-		c := cases[n]
-		assert.Equal(t, metric.Name(), c.Metric)
+	foreach.Metrics(metrics, func(metric pmetric.Metric) {
+		c := tests[n]
+		assert.Equal(t, metric.Name(), c.metric)
 		assert.Equal(t, metric.Gauge().DataPoints().Len(), 1)
-		assert.Equal(t, metric.Gauge().DataPoints().At(0).DoubleVal(), c.Val)
+		assert.Equal(t, metric.Gauge().DataPoints().At(0).DoubleVal(), c.val)
 		n++
 	})
 

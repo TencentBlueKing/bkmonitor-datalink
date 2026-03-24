@@ -28,11 +28,11 @@ func init() {
 	processor.Register(define.ProcessorTokenChecker, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
 	decoders := confengine.NewTierConfig()
 	configs := confengine.NewTierConfig()
 
@@ -80,7 +80,7 @@ func (p *tokenChecker) IsPreCheck() bool {
 	return true
 }
 
-func (p *tokenChecker) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *tokenChecker) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -104,13 +104,10 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 		err = p.processMetrics(decoder, config, record)
 	case define.RecordLogs:
 		err = p.processLogs(decoder, config, record)
-	case define.RecordProfiles:
-		err = p.processProfiles(decoder, config, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
 	case define.RecordFta:
 		err = p.processFta(decoder, record)
-
 	default:
 		err = p.processCommon(decoder, record)
 	}
@@ -197,15 +194,21 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	var errs []error
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdTraces.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdTraces.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false
@@ -231,15 +234,21 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	var errs []error
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdMetrics.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdMetrics.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false
@@ -265,15 +274,21 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 	var errs []error
 	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdLogs.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdLogs.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false
@@ -291,20 +306,6 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 func (p *tokenChecker) processProxy(decoder TokenDecoder, record *define.Record) error {
 	var err error
 	record.Token, err = decoder.Decode(tokenparser.WrapProxyToken(record.Token))
-	return err
-}
-
-func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, record *define.Record) error {
-	var err error
-	if decoder.Skip() {
-		record.Token, err = decoder.Decode("")
-		return err
-	}
-
-	record.Token, err = decoder.Decode(record.Token.Original)
-	if config.ProfilesDataId > 0 {
-		record.Token.ProfilesDataId = config.ProfilesDataId
-	}
 	return err
 }
 

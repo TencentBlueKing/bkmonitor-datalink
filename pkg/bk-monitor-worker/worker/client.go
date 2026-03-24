@@ -28,9 +28,7 @@ type Client struct {
 	broker broker.Broker
 }
 
-var (
-	clientInstance *Client
-)
+var clientInstance *Client
 
 // GetClient new a client
 func GetClient() (*Client, error) {
@@ -109,13 +107,13 @@ func (c *Client) EnqueueWithContext(ctx context.Context, task *t.Task, opts ...t
 	}
 	switch {
 	case errors.Is(err, errors.ErrDuplicateTask):
-		logger.Warnf("task: %s already exists, not schedule a task again", task.Kind)
+		logger.Warnf("task: %s already exists, not schedule a task again, error: %+v", task.Kind, err)
 		return nil, fmt.Errorf("task already exists")
 	case errors.Is(err, errors.ErrTaskIdConflict):
-		logger.Warnf("task: %s conflict with exist task, not schedule a task again", task.Kind)
+		logger.Warnf("task: %s conflict with exist task, not schedule a task again, error: %+v", task.Kind, err)
 		return nil, fmt.Errorf("task conflict with exist task")
 	case err != nil:
-		logger.Errorf("task: %s is error, not schedule a task again", task.Kind)
+		logger.Errorf("task: %s is error, not schedule a task again, error: %+v", task.Kind, err)
 		return nil, err
 	}
 	return t.NewTaskInfo(msg, state, opt.ProcessAt, nil), nil

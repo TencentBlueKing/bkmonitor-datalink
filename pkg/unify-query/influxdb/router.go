@@ -19,9 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-var (
-	tsDBRouter = NewTsDBRouter()
-)
+var tsDBRouter = NewTsDBRouter()
 
 var Print = func() string {
 	var res string
@@ -36,7 +34,7 @@ var Print = func() string {
 	// tsDBRouter:  dataID -> [tableInfo]
 	res += fmt.Sprintln("tsDBRouter:  dataID => [tableInfo]")
 	res += fmt.Sprintln("----------------------------------------")
-	tsDBRouter.Range(func(k, v interface{}) bool {
+	tsDBRouter.Range(func(k, v any) bool {
 		if tableInfos, ok := v.([]*consul.TableID); ok {
 			res += fmt.Sprintf("%v => %v\n", k, tableInfos)
 		}
@@ -47,7 +45,7 @@ var Print = func() string {
 	// metricRouter: metric -> [dataID]
 	res += fmt.Sprintln("metricRouter: metric => [dataID]")
 	res += fmt.Sprintln("----------------------------------------")
-	metricRouter.Range(func(k, v interface{}) bool {
+	metricRouter.Range(func(k, v any) bool {
 		if dataID, ok := v.(consul.DataIDs); ok {
 			res += fmt.Sprintf("%v => %v\n", k, dataID)
 		}
@@ -58,7 +56,7 @@ var Print = func() string {
 	// bizRouter:  bizID -> [dataID]
 	res += fmt.Sprintln(" bizRouter:  bizID => [dataID]")
 	res += fmt.Sprintln("----------------------------------------")
-	bizRouter.Range(func(k, v interface{}) bool {
+	bizRouter.Range(func(k, v any) bool {
 		if dataID, ok := v.(consul.DataIDs); ok {
 			res += fmt.Sprintf("%v => %v\n", k, dataID)
 		}
@@ -69,7 +67,7 @@ var Print = func() string {
 	// tableRouter:  db.measurement -> tableID
 	res += fmt.Sprintln("tableRouter:  db.measurement => ClusterID, DB, Measurement, IsSplitMeasurement")
 	res += fmt.Sprintln("----------------------------------------")
-	tableRouter.Range(func(k, v interface{}) bool {
+	tableRouter.Range(func(k, v any) bool {
 		if tableID, ok := v.(*consul.TableID); ok {
 			res += fmt.Sprintf(
 				"%v => %v, %v, %v, %v\n",
@@ -100,7 +98,7 @@ func GetTsDBRouter() *TsDBRouter {
 }
 
 // Value
-func (r *TsDBRouter) Value(v interface{}) []*consul.TableID {
+func (r *TsDBRouter) Value(v any) []*consul.TableID {
 	return v.([]*consul.TableID)
 }
 
@@ -127,9 +125,7 @@ var GetTableIDsByDataID = func(dataID consul.DataID) []*consul.TableID {
 	return GetTsDBRouter().GetTableIDs(dataID)
 }
 
-var (
-	bizRouter = NewBizRouter()
-)
+var bizRouter = NewBizRouter()
 
 // BizRouter
 type BizRouter struct {
@@ -150,7 +146,7 @@ func GetBizRouter() *BizRouter {
 }
 
 // Value
-func (b *BizRouter) Value(v interface{}) consul.DataIDs {
+func (b *BizRouter) Value(v any) consul.DataIDs {
 	return v.(consul.DataIDs)
 }
 
@@ -181,9 +177,7 @@ func (b *BizRouter) Keys() []int {
 	return b.keys
 }
 
-var (
-	tableRouter = NewTableRouter()
-)
+var tableRouter = NewTableRouter()
 
 // TableRouter
 type TableRouter struct {
@@ -210,7 +204,7 @@ func (t *TableRouter) Key(db, measurement string) string {
 // GetTableID
 func (t *TableRouter) GetTableID(db, measurement string) *consul.TableID {
 	var (
-		res interface{}
+		res any
 		ok  bool
 	)
 
@@ -263,7 +257,7 @@ func ReloadTableInfos(pipelineConfMap map[string][]*consul.PipelineConfig) {
 				tmpBizRouter.AddRouter(resultTable.BizID, dataID)
 
 				// 从 pipeline.resultTable 中获取tableInfo
-				var tableID = &consul.TableID{}
+				tableID := &consul.TableID{}
 				err = resultTable.GetTSInfo(dataID, tableID)
 				// 忽略错误
 				if err != nil {
@@ -289,9 +283,7 @@ func ReloadTableInfos(pipelineConfMap map[string][]*consul.PipelineConfig) {
 	tableRouter = tmpTableRouter
 }
 
-var (
-	metricRouter = NewMetricRouter()
-)
+var metricRouter = NewMetricRouter()
 
 // MetricRouter map[string]consul.DataIDs
 type MetricRouter struct {
@@ -312,7 +304,7 @@ func GetMetricRouter() *MetricRouter {
 }
 
 // Value
-func (m *MetricRouter) Value(v interface{}) consul.DataIDs {
+func (m *MetricRouter) Value(v any) consul.DataIDs {
 	return v.(consul.DataIDs)
 }
 

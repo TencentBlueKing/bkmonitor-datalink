@@ -10,7 +10,6 @@
 package mock
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -18,6 +17,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 type TimeSeriesList []prompb.TimeSeries
@@ -46,7 +47,7 @@ func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err
 		}
 		if it.Err() != nil {
 			err = it.Err()
-			return
+			return timeSeries, err
 		}
 
 		timeSeries = append(timeSeries, prompb.TimeSeries{Labels: newLbs, Samples: newSamples})
@@ -58,19 +59,19 @@ func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err
 			errorString.WriteString(w.Error())
 		}
 		err = errors.New(errorString.String())
-		return
+		return timeSeries, err
 	}
 
 	if ss.Err() != nil {
 		err = ss.Err()
-		return
+		return timeSeries, err
 	}
 
 	sort.SliceStable(timeSeries, func(i, j int) bool {
 		return timeSeries[i].String() < timeSeries[j].String()
 	})
 
-	return
+	return timeSeries, err
 }
 
 func (t *TimeSeriesList) String() string {

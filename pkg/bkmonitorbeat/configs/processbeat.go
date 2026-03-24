@@ -22,6 +22,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 type ProcessbeatConfig struct {
@@ -41,7 +42,8 @@ type ProcessbeatConfig struct {
 	MustHostIDExist      bool                    `config:"must_host_id_exist" yaml:"must_host_id_exist"`
 	MonitorCollectorPath string                  `config:"monitor_collector_path" yaml:"monitor_collector_path"`
 	ConvergePID          bool                    `config:"converge_pid" yaml:"converge_pid"`
-	MaxNoListenPorts     int                     `config:"max_nolisten_ports" yaml:"max_nolisten_ports"`
+	MaxNoListenPorts     int                     `config:"max_nolisten_ports" yaml:"max_nolisten_ports`
+	Disable              bool                    `config:"disable" yaml:"disable"`
 
 	namestore map[string][]ProcessbeatPortConfig // name -> configs
 	confs     map[string]ProcessbeatPortConfig   // id -> config
@@ -57,8 +59,8 @@ func NewProcessbeatConfig(root *Config) *ProcessbeatConfig {
 
 func (c *ProcessbeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
-	// 如果不存在采集 dataid 则没必要生成采集配置
-	if c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0 {
+	// 如果禁用或不存在采集 dataid 则没必要生成采集配置
+	if c.Disable || (c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0) {
 		return tasks
 	}
 
@@ -74,7 +76,22 @@ func (c *ProcessbeatConfig) EnablePerfCollected() bool { return c.PerfDataId != 
 
 func (c *ProcessbeatConfig) GetPeriod() time.Duration { return c.Period }
 
-func (c *ProcessbeatConfig) InitIdent() error { return c.initIdent(c) }
+func (c *ProcessbeatConfig) InitIdent() error {
+	// 需要在计算 indent 之前进行 dataid 替换 否则 reload 不会生效
+
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
+		c.PortDataId = v
+	}
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
+		c.TopDataId = v
+	}
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
+		c.PerfDataId = v
+	}
+
+	return c.initIdent(c)
+}
 
 func (c *ProcessbeatConfig) GetType() string { return define.ModuleProcessbeat }
 

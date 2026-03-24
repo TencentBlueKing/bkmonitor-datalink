@@ -31,6 +31,7 @@ var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果
 type ClusterInfo struct {
 	ClusterID                 uint      `gorm:"primary_key" json:"cluster_id"`
 	ClusterName               string    `gorm:"size:128;unique" json:"cluster_name"`
+	DisplayName               string    `gorm:"size:128" json:"display_name"`
 	ClusterType               string    `gorm:"size:32;index" json:"cluster_type"`
 	DomainName                string    `gorm:"size:128" json:"domain_name"`
 	Port                      uint      `json:"port"`
@@ -58,6 +59,8 @@ type ClusterInfo struct {
 	SslVerificationMode       string    `gorm:"size:16" json:"ssl_verification_mode"`
 	ExtranetDomainName        string    `gorm:"size:128" json:"extranet_domain_name"`
 	ExtranetPort              uint      `gorm:"column:extranet_port" json:"extranet_port"`
+	// 是否开启鉴权
+	IsAuth bool `gorm:"column:is_auth" json:"is_auth"`
 }
 
 // TableName: 用于设置表的别名
@@ -95,10 +98,10 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 	timeoutCtx, _ := context.WithTimeout(ctx, 5*time.Second)
 	resp, err := client.Ping(timeoutCtx)
 	// ref: https://andrii-kushch.medium.com/is-it-necessary-to-close-the-body-in-the-http-response-object-in-golang-171c44c9394d
-	defer resp.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Close()
 
 	return client, nil
 }

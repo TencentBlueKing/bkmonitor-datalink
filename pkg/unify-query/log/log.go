@@ -32,6 +32,13 @@ type Logger struct {
 	logger *zap.Logger
 }
 
+func (l *Logger) Printf(format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
+	l.logger.Info(withTraceID(context.Background(), format, v...))
+}
+
 func (l *Logger) Warnf(ctx context.Context, format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return

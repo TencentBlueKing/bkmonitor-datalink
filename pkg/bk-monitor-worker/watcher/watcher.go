@@ -14,5 +14,5 @@ import (
 )
 
 type Watcher interface {
-	Watch(ctx context.Context, path string) (<-chan interface{}, error)
+	Watch(ctx context.Context, path string) (<-chan any, error)
 }

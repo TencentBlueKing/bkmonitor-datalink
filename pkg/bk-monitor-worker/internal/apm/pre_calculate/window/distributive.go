@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
+	xxhash "github.com/cespare/xxhash/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 
@@ -103,7 +103,6 @@ type DistributiveWindow struct {
 }
 
 func NewDistributiveWindow(dataId string, ctx context.Context, processor Processor, saveReqChan chan<- storage.SaveRequest, specificOptions ...DistributiveWindowOption) Operator {
-
 	specificConfig := &DistributiveWindowOptions{}
 	for _, setter := range specificOptions {
 		setter(specificConfig)
@@ -147,7 +146,6 @@ func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 }
 
 func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpts ...RuntimeConfigOption) {
-
 	for ob := range w.observers {
 		ob.assembleRuntimeConfig(runtimeOpts...)
 		for i := 0; i < w.config.concurrentProcessCount; i++ {
@@ -175,7 +173,6 @@ func (w *DistributiveWindow) GetWindowsLength() int {
 }
 
 func (w *DistributiveWindow) RecordTraceAndSpanCountMetric() {
-
 	for subId := range w.subWindows {
 		traceC, spanC := w.getSubWindowMetrics(subId)
 		metrics.RecordApmPreCalcWindowTraceTotal(w.dataId, subId, traceC)
@@ -252,7 +249,7 @@ func (w *DistributiveWindow) startWatch(errorReceiveChan chan<- error) {
 			w.logger.Info("trigger watch stopped.")
 			return
 		case <-tick.C:
-			for ob, _ := range w.observers {
+			for ob := range w.observers {
 				ob.detectNotify()
 			}
 		}
@@ -279,7 +276,8 @@ type distributiveSubWindow struct {
 
 func newDistributiveSubWindow(
 	dataId string, ctx context.Context, index int, processor Processor, saveReqChan chan<- storage.SaveRequest,
-	concurrentMaximum int, mappingMaxSpanCount int) *distributiveSubWindow {
+	concurrentMaximum int, mappingMaxSpanCount int,
+) *distributiveSubWindow {
 	subWindow := &distributiveSubWindow{
 		id:                   index,
 		dataId:               dataId,
@@ -303,7 +301,6 @@ func newDistributiveSubWindow(
 }
 
 func (d *distributiveSubWindow) assembleRuntimeConfig(runtimeOpt ...RuntimeConfigOption) {
-
 	config := RuntimeConfig{}
 	for _, setter := range runtimeOpt {
 		setter(&config)
@@ -316,7 +313,6 @@ func (d *distributiveSubWindow) assembleRuntimeConfig(runtimeOpt ...RuntimeConfi
 }
 
 func (d *distributiveSubWindow) detectNotify() {
-
 	// todo 检查自己是否有过期的traceId
 	expiredKeys := make([]string, 0)
 
@@ -331,7 +327,10 @@ func (d *distributiveSubWindow) detectNotify() {
 	if len(expiredKeys) > 0 {
 		metrics.RecordApmPreCalcExpiredKeyTotal(d.dataId, d.id, len(expiredKeys))
 		for _, k := range expiredKeys {
+			// 防止在执行前 addWindow 方法已经把值取了出来导致值还存放着上次窗口的数据
+			d.mLock.Lock()
 			v, exists := d.m.LoadAndDelete(k)
+			d.mLock.Unlock()
 			if !exists {
 				d.logger.Errorf("An expired key[%s] was detected but does not exist in the mapping", k)
 				continue

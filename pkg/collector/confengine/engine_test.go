@@ -21,7 +21,7 @@ func TestLoadConfigPath(t *testing.T) {
 	config, err := LoadConfigPath("../example/example.yml")
 	assert.NoError(t, err)
 
-	conf := make(map[string]interface{})
+	conf := make(map[string]any)
 	assert.NoError(t, config.Unpack(conf))
 }
 
@@ -38,7 +38,7 @@ func TestLoadConfigPattern(t *testing.T) {
 		assert.Len(t, configs, 2)
 
 		for _, config := range configs {
-			m := make(map[string]interface{})
+			m := make(map[string]any)
 			assert.NoError(t, config.Unpack(m))
 			t.Log("load config pattern:", m)
 		}
@@ -69,26 +69,28 @@ func TestLoadConfigPatterns(t *testing.T) {
 	assert.Len(t, configs, 2)
 
 	for _, config := range configs {
-		m := make(map[string]interface{})
+		m := make(map[string]any)
 		assert.NoError(t, config.Unpack(m))
 		t.Log("load config patterns:", m)
 	}
 }
 
-func TestLoadConfigFromType(t *testing.T) {
+func TestSelectConfigFromType(t *testing.T) {
 	t.Run("Platform", func(t *testing.T) {
-		config := LoadConfigFromType([]string{"../example/fixtures/platform.yml"}, define.ConfigTypePlatform)
+		subConfigs := LoadConfigPatterns([]string{"../example/fixtures/platform.yml"})
+		config := SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 		assert.NotNil(t, config)
 
-		conf := make(map[string]interface{})
+		conf := make(map[string]any)
 		assert.NoError(t, config.Unpack(conf))
 	})
 
 	t.Run("Privileged", func(t *testing.T) {
-		config := LoadConfigFromType([]string{"../example/fixtures/privileged.yml"}, define.ConfigTypePrivileged)
+		subConfigs := LoadConfigPatterns([]string{"../example/fixtures/privileged.yml"})
+		config := SelectConfigFromType(subConfigs, define.ConfigTypePrivileged)
 		assert.NotNil(t, config)
 
-		conf := make(map[string]interface{})
+		conf := make(map[string]any)
 		assert.NoError(t, config.Unpack(conf))
 	})
 }

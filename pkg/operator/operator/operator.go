@@ -13,28 +13,31 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
-	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
+	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
+	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -42,6 +45,8 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 	monitorKindHttpSd         = "HttpSd"
+	monitorKindPolarisSd      = "PolarisSd"
+	monitorKindEtcdSd         = "EtcdSd"
 	monitorKindKubernetesSd   = "KubernetesSd"
 )
 
@@ -59,17 +64,17 @@ type Operator struct {
 	mm        *metricMonitor
 	buildInfo BuildInfo
 
-	client     kubernetes.Interface
-	mdClient   metadata.Interface
-	promclient promversioned.Interface
-	bkclient   bkversioned.Interface
-	srv        *http.Server
+	client  kubernetes.Interface
+	mdCli   metadata.Interface
+	promCli promcli.Interface
+	bkCli   bkcli.Interface
+	srv     *http.Server
 
-	serviceMonitorInformer *prominformers.ForResource
-	podMonitorInformer     *prominformers.ForResource
+	qmopr *qcloudmonitor.Operator
 
-	promRuleInformer  *prominformers.ForResource
-	promsliController *promsli.Controller
+	serviceMonitorInformer *prominfs.ForResource
+	podMonitorInformer     *prominfs.ForResource
+	helmchartsController   *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -86,7 +91,8 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 
-	promSdConfigsBytes map[string][]byte // 无并发读写
+	promSdConfigsBytes        map[SecretKey][]byte           // 无并发读写
+	prevResourceScrapeConfigs map[string]resourceScrapConfig // 无并发读写
 }
 
 func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -107,17 +113,17 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
+	operator.mdCli, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
+	operator.promCli, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
+	operator.bkCli, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -157,11 +163,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnableServiceMonitor {
-		operator.serviceMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.serviceMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -173,11 +179,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnablePodMonitor {
-		operator.podMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.podMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -188,30 +194,30 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		}
 	}
 
-	if configs.G().EnablePromRule {
-		operator.promRuleInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
-				map[string]struct{}{corev1.NamespaceAll: {}},
-				map[string]struct{}{},
-				operator.promclient,
-				resyncPeriod,
-				nil,
-			),
-			promv1.SchemeGroupVersion.WithResource(promv1.PrometheusRuleName),
-		)
+	if configs.G().QCloudMonitor.Enabled {
+		operator.qmopr, err = qcloudmonitor.New(ctx, qcloudmonitor.ClientSet{
+			Client: operator.client,
+			Meta:   operator.mdCli,
+			BK:     operator.bkCli,
+			Prom:   operator.promCli,
+		})
 		if err != nil {
-			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
+			return nil, errors.Wrap(err, "create QCloudMonitor operator failed")
 		}
-		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
+	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
+	if err != nil {
+		return nil, errors.Wrap(err, "create helmchartsController failed")
+	}
+
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdCli, operator.bkCli)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
 
 	operator.recorder = newRecorder()
-	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
+	operator.dw = dataidwatcher.New(operator.ctx, operator.bkCli)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
 
@@ -228,6 +234,37 @@ func (c *Operator) getAllDiscover() []define.MonitorMeta {
 	return ret
 }
 
+func (c *Operator) getDiscoverCount() map[string]int {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	count := make(map[string]int)
+	for _, dis := range c.discovers {
+		count[dis.Type()]++
+	}
+	return count
+}
+
+func equalDataID(a, b *v1beta1.DataID) bool {
+	// 当且仅当 DataID 实例存在且非空才可能相等
+	if a == nil || b == nil {
+		return false
+	}
+
+	// 仅比对关键字段 dataid reload 是一个`比较重`的操作 尽量减少其影响
+	if a.Name != b.Name {
+		return false
+	}
+	if !reflect.DeepEqual(a.Spec, b.Spec) {
+		return false
+	}
+	if !reflect.DeepEqual(a.Labels, b.Labels) {
+		return false
+	}
+
+	return true
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -239,7 +276,7 @@ func (c *Operator) reloadAllDiscovers() {
 			logger.Errorf("no dataid found, meta=%+v, discover=%s", meta, dis)
 			continue
 		}
-		if dis.DataID() == newDataID {
+		if equalDataID(dis.DataID(), newDataID) {
 			continue
 		}
 
@@ -254,18 +291,19 @@ func (c *Operator) recordMetrics() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.mm.UpdateUptime(5)
+			c.mm.UpdateUptime(15)
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
 			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
+			c.helmchartsController.UpdateMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -275,7 +313,9 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(len(shareddiscovery.AllDiscovery()))
-	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
+	for typ, count := range c.getDiscoverCount() {
+		c.mm.SetDiscoverCount(typ, count)
+	}
 }
 
 func (c *Operator) updateNodeConfigMetrics() {
@@ -291,7 +331,7 @@ func (c *Operator) updateNodeConfigMetrics() {
 }
 
 func (c *Operator) updateMonitorEndpointMetrics() {
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(false)
 	for name, count := range endpoints {
 		c.mm.SetMonitorEndpointCount(name, count)
 	}
@@ -366,17 +406,14 @@ func (c *Operator) Run() error {
 		c.podMonitorInformer.Start(c.ctx.Done())
 	}
 
-	if configs.G().EnablePromRule {
-		c.promRuleInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    c.handlePrometheusRuleAdd,
-			UpdateFunc: c.handlePrometheusRuleUpdate,
-			DeleteFunc: c.handlePrometheusRuleDelete,
-		})
-		c.promRuleInformer.Start(c.ctx.Done())
-	}
-
 	if err := c.waitForCacheSync(c.ctx); err != nil {
 		return err
+	}
+
+	if configs.G().QCloudMonitor.Enabled {
+		if err := c.qmopr.Start(); err != nil {
+			return err
+		}
 	}
 
 	// 如果启动了 StatefulSetWorker 则需要监听 statefulset secrets 的变化以及 statefulset 本身的变化
@@ -396,6 +433,7 @@ func (c *Operator) Run() error {
 
 	go c.loopHandlePromSdConfigs()
 	c.cleanupInvalidSecrets()
+
 	return nil
 }
 
@@ -407,6 +445,7 @@ func (c *Operator) Stop() {
 	c.wg.Wait()
 
 	c.dw.Stop()
+	c.helmchartsController.Stop()
 	c.objectsController.Stop()
 	shareddiscovery.Deactivate()
 }
@@ -417,11 +456,10 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 
 	for _, infs := range []struct {
 		name                 string
-		informersForResource *prominformers.ForResource
+		informersForResource *prominfs.ForResource
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},
-		{"PrometheusRule", c.promRuleInformer},
 	} {
 		// 跳过没有初始化的 informers
 		if infs.informersForResource == nil {
@@ -481,7 +519,7 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	var last int64
+	last := time.Now().Unix() + configs.G().DispatchInterval // 第一次调度时多等待一个周期 避免触发太多 secrets 变更
 	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)

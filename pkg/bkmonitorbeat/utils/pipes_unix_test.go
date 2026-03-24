@@ -48,7 +48,7 @@ func TestString(t *testing.T) {
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	// releases resources if execCmd completes before timeout elapses
 	defer cmdCancel()
-	s, err := utils.RunString(cmdCtx, "ps aux | grep usr", nil)
+	s, err := utils.RunString(cmdCtx, "ps aux | grep usr", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

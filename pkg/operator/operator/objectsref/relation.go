@@ -17,6 +17,13 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/promfmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
+)
+
+const (
+	relationContainerInfoPath = "monitoring.bk.tencent.com/relation/info/container/"
 )
 
 const (
@@ -37,23 +44,64 @@ const (
 	relationDataSourceWithPod         = "datasource_with_pod_relation"
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
+	relationAppVersionWithContainer   = "app_version_with_container_relation"
+
+	relationContainerInfo = "container_info_relation"
 )
 
-type relationMetric struct {
-	Name   string
-	Labels []relationLabel
+func (oc *ObjectsController) WriteAppVersionWithContainerRelation(w io.Writer) {
+	for _, pod := range oc.podObjs.GetAll() {
+		var customLabels []promfmt.Label
+		for k, v := range pod.Annotations {
+			if strings.HasPrefix(k, relationContainerInfoPath) {
+				name := strings.TrimPrefix(k, relationContainerInfoPath)
+				if name == "" || v == "" {
+					continue
+				}
+				customLabels = append(customLabels, promfmt.Label{
+					Name:  name,
+					Value: v,
+				})
+			}
+		}
+
+		for _, container := range pod.Containers {
+			if container.ImageTag == "" || container.Name == "" {
+				continue
+			}
+
+			labels := append([]promfmt.Label{
+				{Name: "pod", Value: pod.ID.Name},
+				{Name: "namespace", Value: pod.ID.Namespace},
+				{Name: "container", Value: container.Name},
+				{Name: "app_name", Value: container.ImageName},
+				{Name: "version", Value: container.ImageTag},
+			}, customLabels...)
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name:   relationContainerInfo,
+				Labels: labels,
+			})
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name: relationAppVersionWithContainer,
+				Labels: []promfmt.Label{
+					{Name: "pod", Value: pod.ID.Name},
+					{Name: "namespace", Value: pod.ID.Namespace},
+					{Name: "container", Value: container.Name},
+					{Name: "app_name", Value: container.ImageName},
+					{Name: "version", Value: container.ImageTag},
+				},
+			})
+		}
+	}
 }
 
-type relationLabel struct {
-	Name  string
-	Value string
-}
-
-func (oc *ObjectsController) GetNodeRelations(w io.Writer) {
+func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 	for node, ip := range oc.nodeObjs.Addrs() {
-		relationBytes(w, relationMetric{
+		promfmt.FmtBytes(w, promfmt.Metric{
 			Name: relationNodeSystem,
-			Labels: []relationLabel{
+			Labels: []promfmt.Label{
 				{Name: "node", Value: node},
 				{Name: "bk_target_ip", Value: ip},
 			},
@@ -61,18 +109,18 @@ func (oc *ObjectsController) GetNodeRelations(w io.Writer) {
 	}
 }
 
-func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
-	oc.serviceObjs.rangeServices(func(namespace string, services serviceEntities) {
+func (oc *ObjectsController) WriteServiceRelations(w io.Writer) {
+	oc.serviceObjs.Range(func(namespace string, services serviceEntities) {
+		pods := oc.podObjs.GetByNamespace(namespace)
 		for _, svc := range services {
 			if len(svc.selector) > 0 {
-				pods := oc.podObjs.GetByNamespace(namespace)
 				for _, pod := range pods {
-					if !matchLabels(svc.selector, pod.Labels) {
+					if !utils.MatchSubLabels(svc.selector, pod.Labels) {
 						continue
 					}
-					relationBytes(w, relationMetric{
+					promfmt.FmtBytes(w, promfmt.Metric{
 						Name: relationPodService,
-						Labels: []relationLabel{
+						Labels: []promfmt.Label{
 							{Name: "namespace", Value: namespace},
 							{Name: "service", Value: svc.name},
 							{Name: "pod", Value: pod.ID.Name},
@@ -82,9 +130,9 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 			}
 
 			for _, addr := range svc.externalIPs {
-				relationBytes(w, relationMetric{
+				promfmt.FmtBytes(w, promfmt.Metric{
 					Name: relationK8sAddressService,
-					Labels: []relationLabel{
+					Labels: []promfmt.Label{
 						{Name: "namespace", Value: svc.namespace},
 						{Name: "service", Value: svc.name},
 						{Name: "address", Value: addr},
@@ -97,9 +145,9 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 					if s != svc.name {
 						continue
 					}
-					relationBytes(w, relationMetric{
+					promfmt.FmtBytes(w, promfmt.Metric{
 						Name: relationIngressService,
-						Labels: []relationLabel{
+						Labels: []promfmt.Label{
 							{Name: "namespace", Value: svc.namespace},
 							{Name: "service", Value: svc.name},
 							{Name: "ingress", Value: name},
@@ -112,9 +160,9 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 			case string(corev1.ServiceTypeExternalName):
 				eps, ok := oc.endpointsObjs.getEndpoints(svc.namespace, svc.name)
 				if !ok {
-					relationBytes(w, relationMetric{
+					promfmt.FmtBytes(w, promfmt.Metric{
 						Name: relationDomainService,
-						Labels: []relationLabel{
+						Labels: []promfmt.Label{
 							{Name: "namespace", Value: svc.namespace},
 							{Name: "service", Value: svc.name},
 							{Name: "domain", Value: svc.externalName},
@@ -122,9 +170,9 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 					})
 				} else {
 					for _, addr := range eps.addresses {
-						relationBytes(w, relationMetric{
+						promfmt.FmtBytes(w, promfmt.Metric{
 							Name: relationK8sAddressService,
-							Labels: []relationLabel{
+							Labels: []promfmt.Label{
 								{Name: "namespace", Value: svc.namespace},
 								{Name: "service", Value: svc.name},
 								{Name: "address", Value: addr},
@@ -135,9 +183,9 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 
 			case string(corev1.ServiceTypeLoadBalancer):
 				for _, addr := range svc.loadBalancerIPs {
-					relationBytes(w, relationMetric{
+					promfmt.FmtBytes(w, promfmt.Metric{
 						Name: relationK8sAddressService,
-						Labels: []relationLabel{
+						Labels: []promfmt.Label{
 							{Name: "namespace", Value: svc.namespace},
 							{Name: "service", Value: svc.name},
 							{Name: "address", Value: addr},
@@ -149,25 +197,25 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 	})
 }
 
-func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
+func (oc *ObjectsController) WriteReplicasetRelations(w io.Writer) {
 	for _, rs := range oc.replicaSetObjs.GetAll() {
 		ownerRef := LookupOnce(rs.ID, oc.replicaSetObjs, oc.objsMap())
 		if ownerRef == nil {
 			continue
 		}
 
-		labels := []relationLabel{
+		labels := []promfmt.Label{
 			{Name: "namespace", Value: rs.ID.Namespace},
 			{Name: "replicaset", Value: rs.ID.Name},
 		}
 
 		switch ownerRef.Kind {
 		case kindDeployment:
-			labels = append(labels, relationLabel{
+			labels = append(labels, promfmt.Label{
 				Name:  "deployment",
 				Value: ownerRef.Name,
 			})
-			relationBytes(w, relationMetric{
+			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationDeploymentReplicaset,
 				Labels: labels,
 			})
@@ -175,14 +223,14 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 	}
 }
 
-func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
+func (oc *ObjectsController) WriteDataSourceRelations(w io.Writer) {
 	pods := oc.podObjs.GetAll()
 	nodes := oc.nodeObjs.GetAll()
 
 	oc.bkLogConfigObjs.Range(func(e *bkLogConfigEntity) {
-		relationBytes(w, relationMetric{
+		promfmt.FmtBytes(w, promfmt.Metric{
 			Name: relationBkLogConfigWithDataSource,
-			Labels: []relationLabel{
+			Labels: []promfmt.Label{
 				{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 				{Name: "bklogconfig_namespace", Value: e.Obj.Namespace},
 				{Name: "bklogconfig_name", Value: e.Obj.Name},
@@ -213,7 +261,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 				podRelationStatus := false
 				for _, container := range pod.Containers {
 					if !e.Obj.Spec.AllContainer {
-						if !e.MatchContainerName(container) {
+						if !e.MatchContainerName(container.Name) {
 							continue
 						}
 					}
@@ -222,9 +270,9 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 
 				// 只需要上报到 pod 层级就够了
 				if podRelationStatus {
-					relationBytes(w, relationMetric{
+					promfmt.FmtBytes(w, promfmt.Metric{
 						Name: relationDataSourceWithPod,
-						Labels: []relationLabel{
+						Labels: []promfmt.Label{
 							{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 							{Name: "namespace", Value: pod.ID.Namespace},
 							{Name: "pod", Value: pod.ID.Name},
@@ -243,9 +291,9 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					continue
 				}
 
-				relationBytes(w, relationMetric{
+				promfmt.FmtBytes(w, promfmt.Metric{
 					Name: relationDataSourceWithNode,
-					Labels: []relationLabel{
+					Labels: []promfmt.Label{
 						{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 						{Name: "node", Value: node.Name},
 					},
@@ -260,22 +308,8 @@ type StatefulSetWorker struct {
 	Index int
 }
 
-type PodInfo struct {
-	Name      string
-	Namespace string
-	IP        string
-}
-
-func (oc *ObjectsController) AllPods() []PodInfo {
-	var pods []PodInfo
-	for _, pod := range oc.podObjs.GetAll() {
-		pods = append(pods, PodInfo{
-			Name:      pod.ID.Name,
-			Namespace: pod.ID.Namespace,
-			IP:        pod.PodIP,
-		})
-	}
-	return pods
+func (oc *ObjectsController) FetchPodEvents(rv int) ([]PodEvent, int) {
+	return oc.podObjs.FetchEvents(rv)
 }
 
 func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
@@ -287,7 +321,7 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	// bkm-statefulset-worker-0 => [0]
 	parseIndex := func(s string) int {
 		parts := strings.Split(s, "-")
-		if len(parts) <= 0 {
+		if len(parts) == 0 {
 			return 0
 		}
 		last := parts[len(parts)-1]
@@ -311,16 +345,16 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	return items
 }
 
-func (oc *ObjectsController) GetPodRelations(w io.Writer) {
+func (oc *ObjectsController) WritePodRelations(w io.Writer) {
 	for _, pod := range oc.podObjs.GetAll() {
 		ownerRef := LookupOnce(pod.ID, oc.podObjs, oc.objsMap())
 		if ownerRef == nil {
 			continue
 		}
 
-		relationBytes(w, relationMetric{
+		promfmt.FmtBytes(w, promfmt.Metric{
 			Name: relationNodePod,
-			Labels: []relationLabel{
+			Labels: []promfmt.Label{
 				{Name: "namespace", Value: pod.ID.Namespace},
 				{Name: "pod", Value: pod.ID.Name},
 				{Name: "node", Value: pod.NodeName},
@@ -329,83 +363,61 @@ func (oc *ObjectsController) GetPodRelations(w io.Writer) {
 
 		// 遍历 containers
 		for _, container := range pod.Containers {
-			relationBytes(w, relationMetric{
+			promfmt.FmtBytes(w, promfmt.Metric{
 				Name: relationContainerPod,
-				Labels: []relationLabel{
+				Labels: []promfmt.Label{
 					{Name: "namespace", Value: pod.ID.Namespace},
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "node", Value: pod.NodeName},
-					{Name: "container", Value: container},
+					{Name: "container", Value: container.Name},
 				},
 			})
 		}
 
-		labels := []relationLabel{
+		labels := []promfmt.Label{
 			{Name: "namespace", Value: pod.ID.Namespace},
 			{Name: "pod", Value: pod.ID.Name},
 		}
 		switch ownerRef.Kind {
 		case kindJob:
-			labels = append(labels, relationLabel{
+			labels = append(labels, promfmt.Label{
 				Name:  "job",
 				Value: ownerRef.Name,
 			})
-			relationBytes(w, relationMetric{
+			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationJobPod,
 				Labels: labels,
 			})
 
 		case kindReplicaSet:
-			labels = append(labels, relationLabel{
+			labels = append(labels, promfmt.Label{
 				Name:  "replicaset",
 				Value: ownerRef.Name,
 			})
-			relationBytes(w, relationMetric{
+			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationPodReplicaset,
 				Labels: labels,
 			})
 
-		case kindGameStatefulSet:
-			labels = append(labels, relationLabel{
-				Name:  "statefulset",
-				Value: ownerRef.Name,
-			})
-			relationBytes(w, relationMetric{
-				Name:   relationPodStatefulset,
-				Labels: labels,
-			})
+	case kindStatefulSet, kindGameStatefulSet:
+		labels = append(labels, promfmt.Label{
+			Name:  "statefulset",
+			Value: ownerRef.Name,
+		})
+		promfmt.FmtBytes(w, promfmt.Metric{
+			Name:   relationPodStatefulset,
+			Labels: labels,
+		})
 
-		case kindDaemonSet:
-			labels = append(labels, relationLabel{
+	case kindDaemonSet:
+			labels = append(labels, promfmt.Label{
 				Name:  "daemonset",
 				Value: ownerRef.Name,
 			})
-			relationBytes(w, relationMetric{
+			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationDaemonsetPod,
 				Labels: labels,
 			})
 		}
-	}
-}
-
-func relationBytes(w io.Writer, metrics ...relationMetric) {
-	for _, metric := range metrics {
-		w.Write([]byte(metric.Name))
-		w.Write([]byte(`{`))
-
-		var n int
-		for _, label := range metric.Labels {
-			if n > 0 {
-				w.Write([]byte(`,`))
-			}
-			n++
-			w.Write([]byte(label.Name))
-			w.Write([]byte(`="`))
-			w.Write([]byte(label.Value))
-			w.Write([]byte(`"`))
-		}
-
-		w.Write([]byte("} 1"))
-		w.Write([]byte("\n"))
 	}
 }

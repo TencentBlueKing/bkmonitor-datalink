@@ -29,6 +29,7 @@ bk-collector 是一个通用的数据接收和清洗框架，依赖配置进行�
 | beat                    |              |               | ✅          |                |              |               |            |               |
 | pyroscope               |              |               |            | ✅              |              |               |            |               |
 | tars                    |              |               |            |                |              |               |            | ✅             |
+| logpush | | | ✅ | | | | | |
 
 [proxy](./proxy): 接收自定指标和自定义时序数据上报。
 
@@ -182,10 +183,10 @@ type Processor interface {
 	// Reload 重载 processor 配置
 	// 对于无状态的 processor 可支持替换实例所有变量
 	// 对于有状态的 processor 需要`谨慎地`处理所有变量 避免内存/goroutines 泄漏
-	Reload(config map[string]interface{}, customized []SubConfigProcessor)
+	Reload(config map[string]any, customized []SubConfigProcessor)
 
 	// MainConfig 获取主配置信息
-	MainConfig() map[string]interface{}
+	MainConfig() map[string]any
 
 	// SubConfigs 获取子配置信息
 	SubConfigs() []SubConfigProcessor
@@ -227,8 +228,7 @@ bk-collector 有三种类型的配置，程序的最终配置结果是三者的�
 
 本项目提供了多个配置文件示例：
 
-* [example.yml](./example/example.yml): 处理器配置示例文件
-* [main.yml](./example/main.yml): 主配置文件
+* [example.yml](./example/example.yml): 主配置示例文件
 * [platform.yml](./example/platform.yml): 平台配置文件
 
 ### 1）配置层级

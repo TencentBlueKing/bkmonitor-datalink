@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 type ClusterMetricConfig struct {
@@ -35,10 +35,10 @@ type MetaClusterMetrics struct {
 }
 
 type EsMetric struct {
-	Metrics   map[string]float64     `json:"metrics"`
-	Target    string                 `json:"target"`
-	Dimension map[string]interface{} `json:"dimension"`
-	Timestamp int64                  `json:"timestamp"`
+	Metrics   map[string]float64 `json:"metrics"`
+	Target    string             `json:"target"`
+	Dimension map[string]any     `json:"dimension"`
+	Timestamp int64              `json:"timestamp"`
 }
 
 type CustomReportData struct {

@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -64,12 +65,21 @@ func parseSizeString(sizeStr string) (int64, error) {
 }
 
 func shortDur(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = s[:len(s)-2]
+	nd := d.Milliseconds()
+
+	if nd == 0 {
+		return "0ms"
 	}
-	if strings.HasSuffix(s, "h0m") {
-		s = s[:len(s)-2]
+
+	if nd%(time.Hour.Milliseconds()*24) == 0 {
+		return fmt.Sprintf("%dd", nd/time.Hour.Milliseconds()/24)
+	} else if nd%(time.Hour.Milliseconds()) == 0 {
+		return fmt.Sprintf("%dh", nd/time.Hour.Milliseconds())
+	} else if nd%(time.Minute.Milliseconds()) == 0 {
+		return fmt.Sprintf("%dm", nd/time.Minute.Milliseconds())
+	} else if nd%(time.Second.Milliseconds()) == 0 {
+		return fmt.Sprintf("%ds", nd/time.Second.Milliseconds())
+	} else {
+		return fmt.Sprintf("%dms", nd)
 	}
-	return s
 }

@@ -41,6 +41,7 @@ es:
   max_concurrency: 200
   alias_refresh_period: 1m
 http:
+  multiTenantMode: false
   address: 127.0.0.1
   path:
     es: /query/es
@@ -87,6 +88,7 @@ bk_api:
   code: bk_code
   secret: bk_secret
 bk_data:
+  address: "" # 可选 如果配置了 address，则直接使用此地址，不再通过 bk_api.address + uri_path 组装
   uri_path: bk_data
   authentication_method: token
   token: 123456

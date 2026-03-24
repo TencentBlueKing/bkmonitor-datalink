@@ -96,23 +96,13 @@ func (m *ServiceMap) Del(service *corev1.Service) {
 	}
 }
 
-func (m *ServiceMap) rangeServices(visitFunc func(namespace string, services serviceEntities)) {
+func (m *ServiceMap) Range(visitFunc func(namespace string, services serviceEntities)) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
 	for k, v := range m.services {
 		visitFunc(k, v)
 	}
-}
-
-func matchLabels(subset, set map[string]string) bool {
-	for k, v := range subset {
-		val, ok := set[k]
-		if !ok || val != v {
-			return false
-		}
-	}
-	return true
 }
 
 func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
@@ -124,7 +114,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		service, ok := obj.(*corev1.Service)
 		if !ok {
 			logger.Errorf("excepted Service type, got %T", obj)
@@ -142,7 +132,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			service, ok := obj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", obj)
@@ -150,7 +140,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 			}
 			objs.Set(service)
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			service, ok := newObj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", newObj)
@@ -158,7 +148,7 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 			}
 			objs.Set(service)
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			service, ok := obj.(*corev1.Service)
 			if !ok {
 				logger.Errorf("excepted Service type, got %T", obj)

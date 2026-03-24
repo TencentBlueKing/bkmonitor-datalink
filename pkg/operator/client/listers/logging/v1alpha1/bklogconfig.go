@@ -12,10 +12,10 @@
 package v1alpha1
 
 import (
-	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/cache"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // BkLogConfigLister helps list BkLogConfigs.
@@ -23,7 +23,7 @@ import (
 type BkLogConfigLister interface {
 	// List lists all BkLogConfigs in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1alpha1.BkLogConfig, err error)
+	List(selector labels.Selector) (ret []*loggingv1alpha1.BkLogConfig, err error)
 	// BkLogConfigs returns an object that can list and get BkLogConfigs.
 	BkLogConfigs(namespace string) BkLogConfigNamespaceLister
 	BkLogConfigListerExpansion
@@ -31,25 +31,17 @@ type BkLogConfigLister interface {
 
 // bkLogConfigLister implements the BkLogConfigLister interface.
 type bkLogConfigLister struct {
-	indexer cache.Indexer
+	listers.ResourceIndexer[*loggingv1alpha1.BkLogConfig]
 }
 
 // NewBkLogConfigLister returns a new BkLogConfigLister.
 func NewBkLogConfigLister(indexer cache.Indexer) BkLogConfigLister {
-	return &bkLogConfigLister{indexer: indexer}
-}
-
-// List lists all BkLogConfigs in the indexer.
-func (s *bkLogConfigLister) List(selector labels.Selector) (ret []*v1alpha1.BkLogConfig, err error) {
-	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1alpha1.BkLogConfig))
-	})
-	return ret, err
+	return &bkLogConfigLister{listers.New[*loggingv1alpha1.BkLogConfig](indexer, loggingv1alpha1.Resource("bklogconfig"))}
 }
 
 // BkLogConfigs returns an object that can list and get BkLogConfigs.
 func (s *bkLogConfigLister) BkLogConfigs(namespace string) BkLogConfigNamespaceLister {
-	return bkLogConfigNamespaceLister{indexer: s.indexer, namespace: namespace}
+	return bkLogConfigNamespaceLister{listers.NewNamespaced[*loggingv1alpha1.BkLogConfig](s.ResourceIndexer, namespace)}
 }
 
 // BkLogConfigNamespaceLister helps list and get BkLogConfigs.
@@ -57,36 +49,15 @@ func (s *bkLogConfigLister) BkLogConfigs(namespace string) BkLogConfigNamespaceL
 type BkLogConfigNamespaceLister interface {
 	// List lists all BkLogConfigs in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1alpha1.BkLogConfig, err error)
+	List(selector labels.Selector) (ret []*loggingv1alpha1.BkLogConfig, err error)
 	// Get retrieves the BkLogConfig from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1alpha1.BkLogConfig, error)
+	Get(name string) (*loggingv1alpha1.BkLogConfig, error)
 	BkLogConfigNamespaceListerExpansion
 }
 
 // bkLogConfigNamespaceLister implements the BkLogConfigNamespaceLister
 // interface.
 type bkLogConfigNamespaceLister struct {
-	indexer   cache.Indexer
-	namespace string
-}
-
-// List lists all BkLogConfigs in the indexer for a given namespace.
-func (s bkLogConfigNamespaceLister) List(selector labels.Selector) (ret []*v1alpha1.BkLogConfig, err error) {
-	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1alpha1.BkLogConfig))
-	})
-	return ret, err
-}
-
-// Get retrieves the BkLogConfig from the indexer for a given namespace and name.
-func (s bkLogConfigNamespaceLister) Get(name string) (*v1alpha1.BkLogConfig, error) {
-	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, errors.NewNotFound(v1alpha1.Resource("bklogconfig"), name)
-	}
-	return obj.(*v1alpha1.BkLogConfig), nil
+	listers.ResourceIndexer[*loggingv1alpha1.BkLogConfig]
 }

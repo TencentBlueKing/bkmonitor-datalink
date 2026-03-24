@@ -261,6 +261,12 @@ func ListTask(c *gin.Context) {
 			}
 
 			taskUinId := daemon.ComputeTaskUniId(item)
+			// 如果计算 taskUniId 失败，直接跳过
+			if taskUinId == "" {
+				logger.Errorf("failed to compute taskUniId, value: %v", item)
+				continue
+			}
+
 			var payload map[string]any
 			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
@@ -300,7 +306,6 @@ func ListTask(c *gin.Context) {
 	default:
 		BadReqResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
 	}
-
 }
 
 // SetLogLevel 动态设置日志级别

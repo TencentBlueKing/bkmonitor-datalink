@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensecache"
 )
@@ -100,14 +101,13 @@ processor:
 			SpanCount: 1,
 		})
 		for i := 0; i < 10; i++ {
-			r := &define.Record{
+			record := define.Record{
 				Token:       define.Token{Original: "token1"},
 				RequestType: define.RequestGrpc,
 				RecordType:  define.RecordTraces,
 				Data:        g.Generate(),
 			}
-			_, err := factory.Process(r)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, factory, record)
 		}
 	})
 
@@ -206,15 +206,13 @@ processor:
 }
 
 func TestProcessLicenseStatus(t *testing.T) {
-	type Case struct {
+	tests := []struct {
 		agentStatus   Status
 		licenseStatus Status
 		nodeStatus    Status
 		pass          bool
 		err           error
-	}
-
-	cases := []Case{
+	}{
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseAccess,
@@ -294,14 +292,14 @@ func TestProcessLicenseStatus(t *testing.T) {
 		},
 	}
 
-	for _, v := range cases {
+	for _, tt := range tests {
 		pass, err := processLicenseStatus(statusInfo{
-			agent:   v.agentStatus,
-			node:    v.nodeStatus,
-			license: v.licenseStatus,
+			agent:   tt.agentStatus,
+			node:    tt.nodeStatus,
+			license: tt.licenseStatus,
 		})
-		assert.Equal(t, v.err, err)
-		assert.Equal(t, v.pass, pass)
+		assert.Equal(t, tt.err, err)
+		assert.Equal(t, tt.pass, pass)
 	}
 
 	pass, err := processLicenseStatus(statusInfo{

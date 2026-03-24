@@ -23,11 +23,11 @@ func init() {
 	processor.Register(define.ProcessorPprofTranslator, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*pprofTranslator, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*pprofTranslator, error) {
 	configs := confengine.NewTierConfig()
 
 	var c Config
@@ -35,7 +35,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		return nil, err
 	}
 
-	configs.SetGlobal(NewPprofTranslator(c))
+	configs.SetGlobal(NewTranslator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -43,7 +43,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofTranslator(cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, NewTranslator(cfg))
 	}
 
 	return &pprofTranslator{
@@ -69,7 +69,7 @@ func (p *pprofTranslator) IsPreCheck() bool {
 	return false
 }
 
-func (p *pprofTranslator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *pprofTranslator) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -81,7 +81,7 @@ func (p *pprofTranslator) Reload(config map[string]interface{}, customized []pro
 }
 
 func (p *pprofTranslator) Process(record *define.Record) (*define.Record, error) {
-	translator := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
+	translator := p.configs.GetByToken(record.Token.Original).(Translator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {

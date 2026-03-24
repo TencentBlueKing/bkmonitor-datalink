@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -43,10 +43,8 @@ type runningBinding struct {
 }
 
 type RunMaintainerOptions struct {
-	checkInterval         time.Duration
-	RetryTolerateCount    int
-	RetryTolerateInterval time.Duration
-	RetryIntolerantFactor int
+	checkInterval      time.Duration
+	RetryTolerateCount int
 }
 
 type RunMaintainer struct {
@@ -162,6 +160,9 @@ func (r *RunMaintainer) listenRunningState(
 	errorChan := errorReceiveChan
 	runningTicker := time.NewTicker(30 * time.Second)
 
+	tolerateInterval := 10 * time.Second
+	maxTolerateInterval := 15 * time.Minute
+
 	for {
 		select {
 		case <-runningTicker.C:
@@ -179,13 +180,13 @@ func (r *RunMaintainer) listenRunningState(
 
 			if errors.Is(ReloadSignal{}, receiveErr) {
 				rB.reloadCount++
-				nextRetryTime = r.config.RetryTolerateInterval
+				nextRetryTime = tolerateInterval
 			} else {
 				rB.retryCount++
 				if rB.retryCount < r.config.RetryTolerateCount {
-					nextRetryTime = r.config.RetryTolerateInterval
+					nextRetryTime = tolerateInterval
 				} else {
-					nextRetryTime = r.config.RetryTolerateInterval * time.Duration(1<<(rB.retryCount-r.config.RetryIntolerantFactor))
+					nextRetryTime = maxTolerateInterval
 				}
 			}
 
@@ -314,7 +315,6 @@ func (r *RunMaintainer) handleReloadBinding(taskBinding TaskBinding) {
 }
 
 func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMaintainer {
-
 	operatorMapping := make(map[string]Operator, len(taskDefine))
 
 	for taskKind, define := range taskDefine {
@@ -331,10 +331,8 @@ func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMainta
 	}
 
 	options := RunMaintainerOptions{
-		checkInterval:         config.WorkerDaemonTaskMaintainerInterval,
-		RetryTolerateCount:    config.WorkerDaemonTaskRetryTolerateCount,
-		RetryTolerateInterval: config.WorkerDaemonTaskRetryTolerateInterval,
-		RetryIntolerantFactor: config.WorkerDaemonTaskRetryIntolerantFactor,
+		checkInterval:      config.WorkerDaemonTaskMaintainerInterval,
+		RetryTolerateCount: config.WorkerDaemonTaskRetryTolerateCount,
 	}
 
 	return &RunMaintainer{

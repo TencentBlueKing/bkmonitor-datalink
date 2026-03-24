@@ -14,7 +14,7 @@ import (
 )
 
 // Decode 默认支持 time.Duration 类型数据的转换处理
-func Decode(input, output interface{}) error {
+func Decode(input, output any) error {
 	config := &mapstructure.DecoderConfig{
 		Result:     output,
 		DecodeHook: mapstructure.StringToTimeDurationHookFunc(),

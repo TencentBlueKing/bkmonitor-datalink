@@ -11,10 +11,13 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
-	"github.com/pkg/errors"
+	ants "github.com/panjf2000/ants/v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -23,126 +26,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// RefreshBkccSpaceName 刷新 bkcc 类型空间名称
-func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkccSpaceName Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space name task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkccSpaceName(); err != nil {
-		return errors.Wrap(err, "refresh bkcc space name failed")
-	}
-	logger.Info("refresh bkcc space name successfully")
-	return nil
-}
-
-// RefreshClusterResource 检测集群资源的变化,当绑定资源的集群信息变动时，刷新绑定的集群资源
-func RefreshClusterResource(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshClusterResource Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Infof("start sync bcs space cluster resource task")
-	if err := service.NewBcsClusterInfoSvc(nil).RefreshClusterResource(); err != nil {
-		logger.Errorf("sync bcs space cluster resource failed, %v", err)
-		return err
-	}
-	logger.Infof("sync bcs space cluster resource success")
-	return nil
-}
-
-// RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
-func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkccSpace Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkccSpace(false); err != nil {
-		return errors.Wrap(err, "refresh bkcc space failed")
-	}
-	logger.Info("refresh bkcc space successfully")
-	return nil
-}
-
-// SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
-func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SyncBkccSpaceDataSource Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space data source task")
-	svc := service.NewSpaceDataSourceSvc(nil)
-	if err := svc.SyncBkccSpaceDataSource(); err != nil {
-		return errors.Wrap(err, "sync bkcc space data source failed")
-	}
-	logger.Info("sync bkcc space data source successfully")
-	return nil
-}
-
-// RefreshBcsProjectBiz 检测 bcs 项目绑定的业务的变化
-func RefreshBcsProjectBiz(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBcsProjectBiz Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start check and update the bind biz of bcs project task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBcsProjectBiz(); err != nil {
-		return errors.Wrap(err, "refresh bcs project biz failed")
-	}
-	logger.Info("refresh bcs project biz successfully")
-	return nil
-}
-
-// SyncBcsSpace 同步 BCS 项目空间数据
-func SyncBcsSpace(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SyncBcsSpace Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bcs space task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.SyncBcsSpace(); err != nil {
-		return errors.Wrap(err, "sync bcs space task failed")
-	}
-	logger.Info("sync bcs space task successfully")
-	return nil
-}
-
-// RefreshBkciSpaceName 刷新 bkci 类型空间名称
-func RefreshBkciSpaceName(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkciSpaceName Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkci space name task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkciSpaceName(); err != nil {
-		return errors.Wrap(err, "refresh bkci space name failed")
-	}
-	logger.Info("refresh bkci space name successfully")
-	return nil
-}
-
 // PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
-
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
 		}
 	}()
+
+	var (
+		wg  sync.WaitGroup
+		err error
+	)
 
 	logger.Info("start push and publish space router task")
 	db := mysql.GetDBSession().DB
@@ -153,60 +48,162 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
+	// 获取租户ID
+	bkTenantIdSet := make(map[string]struct{})
+	for _, sp := range spaceList {
+		if sp.BkTenantId != "" {
+			bkTenantIdSet[sp.BkTenantId] = struct{}{}
+		}
+	}
+
 	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
-	var spaceUidList []string
-	wg := &sync.WaitGroup{}
-	ch := make(chan struct{}, goroutineCount)
-	wg.Add(len(spaceList))
-	// 处理空间路由数据
+
+	t0 := time.Now()
+	p, _ := ants.NewPool(goroutineCount)
+	defer p.Release()
+
+	// 处理 bk_app_to_space 关联路由
+	wg.Add(1)
+	_ = p.Submit(func() {
+		defer wg.Done()
+		t1 := time.Now()
+		name := "[task] PushAndPublishSpaceRouterInfo bk_app_to_space"
+		if err = pusher.PushBkAppToSpace(); err != nil {
+			logger.Errorf("%s error %s", name, err)
+			return
+		}
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
+	})
+
+	// 循环每个空间处理 space_to_result_table 空间路由数据
 	for _, sp := range spaceList {
-		// 组装空间 uid
-		spaceUidList = append(spaceUidList, sp.SpaceUid())
-		ch <- struct{}{}
-		go func(sp space.Space, wg *sync.WaitGroup, ch chan struct{}) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			// 推送空间到结果表的路由
-			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId); err != nil {
-				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
-			} else {
-				logger.Infof("PushAndPublishSpaceRouterInfo task success, push space [%s__%s] to redis success", sp.SpaceTypeId, sp.SpaceId)
+		wg.Add(1)
+		sp := sp
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
+			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
 			}
-		}(sp, wg, ch)
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
 	}
+
+	// 处理 data_label_to_result_table 关联路由
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		bkTenantId := bkTenantId
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo data_label_to_result_table tenant[%s]", bkTenantId)
+			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
+
+	// 处理 result_table_detail 路由
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail tenant[%s]", bkTenantId)
+			var tableIdList []string
+			var rtList []resulttable.ResultTable
+			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageIn(models.StorageTypeInfluxdb, models.StorageTypeVM).IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+				logger.Errorf("%s error, %s", name, err)
+				return
+			}
+			// 获取结果表
+			for _, rt := range rtList {
+				tableIdList = append(tableIdList, rt.TableId)
+			}
+
+			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
+
+	// 处理 result_table_detail 路由: Elasticsearch 类型
+	wg.Add(1)
+	_ = p.Submit(func() {
+		defer wg.Done()
+		t1 := time.Now()
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (elasticsearch)"
+
+		var tableIdList []string
+		var rtList []resulttable.ResultTable
+
+		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
+		if err = resulttable.NewResultTableQuerySet(db).
+			Select(resulttable.ResultTableDBSchema.TableId).
+			DefaultStorageEq(models.StorageTypeES).
+			IsEnableEq(true).IsDeletedEq(false).
+			All(&rtList); err != nil {
+			logger.Errorf("%s error, %s", name, err)
+			return
+		}
+
+		// 提取 TableID 列表
+		for _, rt := range rtList {
+			tableIdList = append(tableIdList, rt.TableId)
+		}
+
+		// 调用 PushEsTableIdDetail 方法
+		if err = pusher.PushEsTableIdDetail(tableIdList, true); err != nil {
+			logger.Errorf("%s error %s", name, err)
+			return
+		}
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
+	})
+
+	// 处理 result_table_detail 路由: Doris 类型
+	wg.Add(1)
+	_ = p.Submit(func() {
+		defer wg.Done()
+		t1 := time.Now()
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (doris)"
+
+		var tableIdList []string
+		var rtList []resulttable.ResultTable
+
+		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
+		if err = resulttable.NewResultTableQuerySet(db).
+			Select(resulttable.ResultTableDBSchema.TableId).
+			DefaultStorageEq(models.StorageTypeDoris).
+			IsEnableEq(true).IsDeletedEq(false).
+			All(&rtList); err != nil {
+			logger.Errorf("%s error, %s", name, err)
+			return
+		}
+
+		// 提取 TableID 列表
+		for _, rt := range rtList {
+			tableIdList = append(tableIdList, rt.TableId)
+		}
+
+		// 调用 PushEsTableIdDetail 方法
+		if err = pusher.PushDorisTableIdDetail(tableIdList, true); err != nil {
+			logger.Errorf("%s error %s", name, err)
+			return
+		}
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
+	})
+
 	wg.Wait()
-
-	// 推送结果表别名路由
-	if err := pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
-		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)
-	}
-
-	// 获取所有可用的结果表
-	var tableIdList []string
-	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
-		logger.Errorf("PushAndPublishSpaceRouterInfo get table id error, %s", err)
-		return err
-	}
-	// 获取结果表
-	for _, rt := range rtList {
-		tableIdList = append(tableIdList, rt.TableId)
-	}
-
-	// TODO：兼容新版结果表路由方法，重构入参
-	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
-		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
-	}
-
-	if err := pusher.PushEsTableIdDetail([]string{}, true); err != nil {
-		return err
-	}
-
-	logger.Infof("push and publish space router successfully")
+	logger.Infof("push and publish space router successfully, cost: %s", time.Since(t0))
 	return nil
 }
 

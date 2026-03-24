@@ -21,8 +21,10 @@ func init() {
 	Register("content_decompressor", ContentDecompressor)
 }
 
-func ContentDecompressor(handler http.Handler) http.Handler {
-	return HTTPContentDecompressor(handler)
+func ContentDecompressor(_ string) MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return HTTPContentDecompressor(next)
+	}
 }
 
 const (

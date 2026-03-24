@@ -18,7 +18,7 @@ import (
 
 func TestDecode(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
-		input := map[string]interface{}{
+		input := map[string]any{
 			"int":      1,
 			"float64":  1.0,
 			"string":   "foo",

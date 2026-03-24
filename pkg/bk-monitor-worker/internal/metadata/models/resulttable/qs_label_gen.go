@@ -748,7 +748,7 @@ var LabelDBSchema = struct {
 // Update updates Label fields by primary key
 // nolint: dupl
 func (o *Label) Update(db *gorm.DB, fields ...LabelDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"label_id":      o.LabelId,
 		"label_name":    o.LabelName,
 		"label_type":    o.LabelType,
@@ -757,7 +757,7 @@ func (o *Label) Update(db *gorm.DB, fields ...LabelDBSchemaField) error {
 		"level":         o.Level,
 		"index":         o.Index,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -776,7 +776,7 @@ func (o *Label) Update(db *gorm.DB, fields ...LabelDBSchemaField) error {
 
 // LabelUpdater is an Label updates manager
 type LabelUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -784,7 +784,7 @@ type LabelUpdater struct {
 // nolint: dupl
 func NewLabelUpdater(db *gorm.DB) LabelUpdater {
 	return LabelUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&Label{}),
 	}
 }

@@ -41,6 +41,15 @@ var (
 	)
 )
 
+var loadedPlatformConfig bool
+
+// LoadedPlatformConfig 返回是否已经加载过 platform 配置
+//
+// 作为判断服务是否就绪的一种方案
+func LoadedPlatformConfig() bool {
+	return loadedPlatformConfig
+}
+
 var DefaultMetricMonitor = &metricMonitor{}
 
 type metricMonitor struct{}
@@ -53,26 +62,19 @@ func (m *metricMonitor) IncLoadConfigFailedCounter() {
 	loadConfigFailedTotal.Inc()
 }
 
-func LoadConfigFromType(patterns []string, typ string) *Config {
+func SelectConfigFromType(configs []*Config, typ string) *Config {
 	type T struct {
 		Type string `config:"type"`
 	}
 
-	for _, p := range patterns {
-		configs, err := LoadConfigPattern(p)
-		if err != nil {
-			logger.Errorf("failed to load platform, path: %s, err: %v", p, err)
+	for _, c := range configs {
+		var subConf T
+		if err := c.Unpack(&subConf); err != nil {
+			logger.Errorf("failed to unpack config, err: %v", err)
 			continue
 		}
-		for _, c := range configs {
-			var subConf T
-			if err = c.Unpack(&subConf); err != nil {
-				logger.Errorf("failed to unpack config, err: %v", err)
-				continue
-			}
-			if subConf.Type == typ {
-				return c
-			}
+		if subConf.Type == typ {
+			return c
 		}
 	}
 	return nil
@@ -127,6 +129,9 @@ func LoadConfigPath(path string) (*Config, error) {
 	if token.Original != "" {
 		logger.Debugf("metacache set token: %+v", token)
 		metacache.Set(token.Original, token)
+	}
+	if token.Type == define.ConfigTypePlatform {
+		loadedPlatformConfig = true
 	}
 
 	logger.Debugf("load config file '%v'", path)

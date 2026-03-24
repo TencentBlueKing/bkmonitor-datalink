@@ -88,21 +88,20 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func testMetricsDimension(t *testing.T, data interface{}, conf *Config, exist bool) {
-	confMap := make(map[string]interface{})
+func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
+	confMap := make(map[string]any)
 	assert.NoError(t, mapstructure.Decode(conf, &confMap))
 
 	factory, _ := NewFactory(confMap, nil)
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordMetrics,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	pdMetrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()
@@ -211,7 +210,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 		}},
 	}
 
-	confMap := make(map[string]interface{})
+	confMap := make(map[string]any)
 	if err := mapstructure.Decode(config, &confMap); err != nil {
 		return false, err
 	}
@@ -231,7 +230,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 	}
 
 	var errs []error
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(record.Data.(pmetric.Metrics), func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()
@@ -275,10 +274,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		SpanCount: 1,
 		GeneratorOptions: define.GeneratorOptions{
-			RandomAttributeKeys: []string{
-				processor.KeyService,
-				processor.KeyInstance,
-			},
+			RandomAttributeKeys: []string{keyService, keyInstance},
 		},
 	})
 	data := g.Generate()
@@ -296,7 +292,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 		}},
 	}
 
-	confMap := make(map[string]interface{})
+	confMap := make(map[string]any)
 	if err := mapstructure.Decode(config, &confMap); err != nil {
 		return "", err
 	}

@@ -36,11 +36,25 @@ type StatefulSetMatchRule struct {
 type PromSDSecret struct {
 	Namespace string `yaml:"namespace"`
 	Name      string `yaml:"name"`
+	Selector  string `yaml:"selector"`
 }
 
 // Validate 校验 PromSDSecret 是否合法
 func (p PromSDSecret) Validate() bool {
-	return p.Namespace != "" && p.Name != ""
+	// 优先使用 name 精准匹配
+	if p.Name != "" {
+		if p.Namespace == "" {
+			return false // 精准匹配不允许空 namespace
+		}
+		return true
+	}
+
+	// 使用 selector 匹配
+	if p.Selector == "" {
+		return false // 不允许空 selector
+	}
+	// 空 namespace 则表示匹配所有 namespace 的 secrets
+	return true
 }
 
 // MonitorBlacklistMatchRule monitor 黑名单匹配规则
@@ -67,9 +81,11 @@ type TLS struct {
 
 // Kubelet 采集配置
 type Kubelet struct {
-	Enable    bool   `yaml:"enable"`
-	Namespace string `yaml:"namespace"`
-	Name      string `yaml:"name"`
+	Enable               bool    `yaml:"enable"`
+	Namespace            string  `yaml:"namespace"`
+	Name                 string  `yaml:"name"`
+	MaxEndpointsPerSlice int     `yaml:"max_endpoints_per_slice"` // EndpointSlice 每个 slice 最多包含的 endpoints 数量，默认 100，最大 1000
+	RebalanceThreshold   float64 `yaml:"rebalance_threshold"`     // Rebalance 阈值（0.0-1.0），当总容量使用率低于此值时触发合并，默认 0.5（50%）
 }
 
 func (k Kubelet) String() string {
@@ -117,21 +133,6 @@ func setupLogger(c *Config) {
 	})
 }
 
-// PromSli 自监控配置
-type PromSli struct {
-	Namespace     string        `yaml:"namespace"`
-	SecretName    string        `yaml:"secret_name"`
-	ConfigMapName string        `yaml:"configmap_name"`
-	Scrape        PromSliScrape `yaml:"prometheus"`
-}
-
-// PromSliScrape prometheus 抓取目标配置
-type PromSliScrape struct {
-	Global    map[string]interface{} `yaml:"global"`
-	RuleFiles []string               `yaml:"rule_files"`
-	Alerting  map[string]interface{} `yaml:"alerting"`
-}
-
 // VCluster 配置，bklogconfig 使用中
 type VCluster struct {
 	PodNameAnnotationKey      string `yaml:"pod_name_annotation_key"`
@@ -142,6 +143,28 @@ type VCluster struct {
 	LabelsAnnotationKey       string `yaml:"labels_annotation_key"`
 	LabelKey                  string `yaml:"label_key"`
 	ManagedAnnotationKey      string `yaml:"managed_annotation_key"`
+}
+
+type TimeSync struct {
+	Enabled       bool   `yaml:"enabled"`
+	NtpdPath      string `yaml:"ntpd_path"`
+	ChronyAddress string `yaml:"chrony_address"`
+	QueryTimeout  string `yaml:"query_timeout"`
+}
+
+// QCloudMonitor 腾讯云监控采集配置
+type QCloudMonitor struct {
+	// Enabled 是否启用
+	Enabled bool `yaml:"enabled"`
+
+	// Private 是否为内部模式
+	Private bool `yaml:"private"`
+
+	// TargetNamespaces namespace 匹配白名单
+	TargetNamespaces []string `yaml:"target_namespaces"`
+
+	// DenyTargetNamespaces namespace 匹配黑名单
+	DenyTargetNamespaces []string `yaml:"deny_target_namespaces"`
 }
 
 // Config Operator 进程主配置
@@ -179,29 +202,29 @@ type Config struct {
 	// EnablePodMonitor 是否启用 podmonitor
 	EnablePodMonitor bool `yaml:"enable_pod_monitor"`
 
-	// EnablePromRule 是否启用 promrules 自监控专用
-	EnablePromRule bool `yaml:"enable_prometheus_rule"`
-
 	// EnableStatefulSetWorker 是否启用 statefulset worker 调度
 	EnableStatefulSetWorker bool `yaml:"enable_statefulset_worker"`
 
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
 
-	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
+	// DaemonSetWorkerIgnoreNodeLabels 部分 nodes 不允许被调度到 daemonset 时指定
+	DaemonSetWorkerIgnoreNodeLabels map[string]string `yaml:"daemonset_worker_ignore_node_labels"`
+
+	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22)
 	EnableEndpointSlice bool `yaml:"enable_endpointslice"`
 
 	// DispatchInterval 调度周期（单位秒）
 	DispatchInterval int64 `yaml:"dispatch_interval"`
-
-	// NodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
-	NodeSecretRatio float64 `yaml:"node_secret_ratio"`
 
 	// StatefulSetWorkerHpa 是否开启 statefulset worker HPA 特性
 	StatefulSetWorkerHpa bool `yaml:"statefulset_worker_hpa"`
 
 	// StatefulSetWorkerFactor statefulset worker 调度因子 即单 worker 最多支持的 secrets 数量
 	StatefulSetWorkerFactor float64 `yaml:"statefulset_worker_factor"`
+
+	// StatefulSetWorkerScaleMaxRetry statefulset worker 调度最大重试次数
+	StatefulSetWorkerScaleMaxRetry int `yaml:"statefulset_worker_scale_max_retry"`
 
 	// StatefulSetReplicas statefulset worker 最小副本数
 	StatefulSetReplicas int `yaml:"statefulset_replicas"`
@@ -226,7 +249,6 @@ type Config struct {
 	Kubelet     Kubelet      `yaml:"kubelet"`
 	Event       Event        `yaml:"event"`
 	Logger      Logger       `yaml:"logger"`
-	PromSli     PromSli      `yaml:"sli"`
 	MetaEnv     env.Metadata `yaml:"meta_env"`
 	PromSDKinds PromSDKinds  `yaml:"prom_sd_kinds"`
 
@@ -234,7 +256,10 @@ type Config struct {
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
 
-	VCluster VCluster `yaml:"vcluster"`
+	VCluster       VCluster      `yaml:"vcluster"`
+	PolarisAddress []string      `yaml:"polaris_address"`
+	TimeSync       TimeSync      `yaml:"timesync"`
+	QCloudMonitor  QCloudMonitor `yaml:"qcloudmonitor"`
 }
 
 type PromSDKinds []string
@@ -298,6 +323,42 @@ func setupVCluster(c *Config) {
 	}
 }
 
+func setupTimeSync(c *Config) {
+	if c.TimeSync.QueryTimeout == "" {
+		c.TimeSync.QueryTimeout = "10s"
+	}
+}
+
+func setupKubelet(c *Config) {
+	// 设置 MaxEndpointsPerSlice 默认值为 100（Kubernetes 的默认值）
+	// 如果用户配置了该值（> 0），则使用用户配置
+	// 最大值限制为 1000（Kubernetes 的硬限制）
+	originalMaxEndpointsPerSlice := c.Kubelet.MaxEndpointsPerSlice
+	if c.Kubelet.MaxEndpointsPerSlice <= 0 {
+		c.Kubelet.MaxEndpointsPerSlice = 100
+		logger.Warnf("kubelet.max_endpoints_per_slice is invalid (%d), using default value: %d", originalMaxEndpointsPerSlice, c.Kubelet.MaxEndpointsPerSlice)
+	}
+	// 限制最大值为 1000，避免超过 Kubernetes 的限制
+	if originalMaxEndpointsPerSlice > 1000 {
+		c.Kubelet.MaxEndpointsPerSlice = 1000
+		logger.Warnf("kubelet.max_endpoints_per_slice exceeds maximum limit (%d > 1000), using maximum value: %d", originalMaxEndpointsPerSlice, c.Kubelet.MaxEndpointsPerSlice)
+	}
+
+	// 设置 RebalanceThreshold 默认值为 0.5（50%）
+	// 如果用户配置了该值（> 0），则使用用户配置
+	// 范围限制为 0.0-1.0
+	originalRebalanceThreshold := c.Kubelet.RebalanceThreshold
+	if c.Kubelet.RebalanceThreshold <= 0 {
+		c.Kubelet.RebalanceThreshold = 0.5
+		logger.Warnf("kubelet.rebalance_threshold is invalid (%.2f), using default value: %.2f", originalRebalanceThreshold, c.Kubelet.RebalanceThreshold)
+	}
+	// 限制最大值为 1.0（100%）
+	if originalRebalanceThreshold > 1.0 {
+		c.Kubelet.RebalanceThreshold = 1.0
+		logger.Warnf("kubelet.rebalance_threshold exceeds maximum limit (%.2f > 1.0), using maximum value: %.2f", originalRebalanceThreshold, c.Kubelet.RebalanceThreshold)
+	}
+}
+
 // GetTLS 转换 tls 配置为 restclinet tls
 func (c *Config) GetTLS() *rest.TLSClientConfig {
 	return &rest.TLSClientConfig{
@@ -316,6 +377,8 @@ func (c *Config) setup() {
 		setupHTTP,
 		setupStatefulSetWorker,
 		setupVCluster,
+		setupTimeSync,
+		setupKubelet,
 	}
 
 	for _, fn := range funcs {
@@ -326,9 +389,6 @@ func (c *Config) setup() {
 	}
 	if c.DispatchInterval <= 0 {
 		c.DispatchInterval = 30 // 默认调度周期为 30s
-	}
-	if c.NodeSecretRatio <= 0 {
-		c.NodeSecretRatio = 2.0
 	}
 }
 

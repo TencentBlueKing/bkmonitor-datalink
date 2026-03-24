@@ -43,7 +43,7 @@ func (m *MockBackend) Exist(req ExistRequest) (bool, error) {
 }
 
 // Exist indicates an expected call of Exist.
-func (mr *MockBackendMockRecorder) Exist(req interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) Exist(req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Exist", reflect.TypeOf((*MockBackend)(nil).Exist), req)
 }
@@ -57,7 +57,7 @@ func (m *MockBackend) GetClient(t Target) any {
 }
 
 // GetClient indicates an expected call of GetClient.
-func (mr *MockBackendMockRecorder) GetClient(t interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) GetClient(t any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClient", reflect.TypeOf((*MockBackend)(nil).GetClient), t)
 }
@@ -72,7 +72,7 @@ func (m *MockBackend) Query(queryRequest QueryRequest) (any, error) {
 }
 
 // Query indicates an expected call of Query.
-func (mr *MockBackendMockRecorder) Query(queryRequest interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) Query(queryRequest any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*MockBackend)(nil).Query), queryRequest)
 }
@@ -84,7 +84,7 @@ func (m *MockBackend) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 }
 
 // ReceiveSaveRequest indicates an expected call of ReceiveSaveRequest.
-func (mr *MockBackendMockRecorder) ReceiveSaveRequest(errorReceiveChan interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) ReceiveSaveRequest(errorReceiveChan any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReceiveSaveRequest", reflect.TypeOf((*MockBackend)(nil).ReceiveSaveRequest), errorReceiveChan)
 }
@@ -96,7 +96,7 @@ func (m *MockBackend) Run(errorReceiveChan chan<- error) {
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockBackendMockRecorder) Run(errorReceiveChan interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) Run(errorReceiveChan any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockBackend)(nil).Run), errorReceiveChan)
 }

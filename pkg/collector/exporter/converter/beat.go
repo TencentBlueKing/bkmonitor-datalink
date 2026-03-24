@@ -24,9 +24,9 @@ func (e beatEvent) RecordType() define.RecordType {
 	return define.RecordBeat
 }
 
-var BeatConverter EventConverter = beatConverter{}
-
 type beatConverter struct{}
+
+func (c beatConverter) Clean() {}
 
 func (c beatConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return beatEvent{define.NewCommonEvent(token, dataId, data)}
@@ -39,9 +39,8 @@ func (c beatConverter) ToDataID(record *define.Record) int32 {
 func (c beatConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataID := c.ToDataID(record)
 	data := record.Data.(*define.BeatData)
-	dst := make(map[string]interface{})
+	dst := make(map[string]any)
 	if err := json.Unmarshal(data.Data, &dst); err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordBeat, dataID)
 		return
 	}
 

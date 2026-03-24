@@ -66,7 +66,7 @@ func deepCopy(dst, src reflect.Value) {
 }
 
 // DeepCopy 深拷贝
-func DeepCopy(dst, src interface{}) error {
+func DeepCopy(dst, src any) error {
 	typeDst := reflect.TypeOf(dst)
 	typeSrc := reflect.TypeOf(src)
 	if typeDst != typeSrc {

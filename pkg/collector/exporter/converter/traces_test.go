@@ -62,7 +62,9 @@ func TestTracesRandom(t *testing.T) {
 			events = append(events, evt)
 		}
 	}
-	NewCommonConverter().Convert(&record, gather)
+
+	var conv tracesConverter
+	conv.Convert(&record, gather)
 	assert.Equal(t, len(events), 2)
 	assert.NotEqual(t, events[0].Data()["trace_id"], events[1].Data()["trace_id"])
 	assert.NotEqual(t, events[0].Data()["span_id"], events[1].Data()["span_id"])
@@ -77,8 +79,9 @@ func BenchmarkTracesConvert_10_Span(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv tracesConverter
 	for i := 0; i < b.N; i++ {
-		TracesConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -91,8 +94,9 @@ func BenchmarkTracesConvert_100_Span(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv tracesConverter
 	for i := 0; i < b.N; i++ {
-		TracesConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -105,8 +109,9 @@ func BenchmarkTracesConvert_1000_Span(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv tracesConverter
 	for i := 0; i < b.N; i++ {
-		TracesConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -119,7 +124,8 @@ func BenchmarkTracesConvert_10000_Span(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv tracesConverter
 	for i := 0; i < b.N; i++ {
-		TracesConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }

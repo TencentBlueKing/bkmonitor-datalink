@@ -1044,7 +1044,7 @@ var InfluxdbHostInfoDBSchema = struct {
 // Update updates InfluxdbHostInfo fields by primary key
 // nolint: dupl
 func (o *InfluxdbHostInfo) Update(db *gorm.DB, fields ...InfluxdbHostInfoDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"host_name":         o.HostName,
 		"domain_name":       o.DomainName,
 		"port":              o.Port,
@@ -1057,7 +1057,7 @@ func (o *InfluxdbHostInfo) Update(db *gorm.DB, fields ...InfluxdbHostInfoDBSchem
 		"read_rate_limit":   o.ReadRateLimit,
 		"protocol":          o.Protocol,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1076,7 +1076,7 @@ func (o *InfluxdbHostInfo) Update(db *gorm.DB, fields ...InfluxdbHostInfoDBSchem
 
 // InfluxdbHostInfoUpdater is an InfluxdbHostInfo updates manager
 type InfluxdbHostInfoUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1084,7 +1084,7 @@ type InfluxdbHostInfoUpdater struct {
 // nolint: dupl
 func NewInfluxdbHostInfoUpdater(db *gorm.DB) InfluxdbHostInfoUpdater {
 	return InfluxdbHostInfoUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&InfluxdbHostInfo{}),
 	}
 }

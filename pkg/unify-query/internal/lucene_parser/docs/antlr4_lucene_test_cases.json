@@ -1,0 +1,1522 @@
+{
+  "metadata": {
+    "title": "ANTLR4 Lucene查询语法测试用例集",
+    "description": "为ANTLR4语法定义提供全面的Lucene查询语法测试覆盖",
+    "generated_at": "2025-09-09 14:51:10",
+    "total_test_cases": 161,
+    "syntax_features_covered": [
+      "boolean_query",
+      "boost_query",
+      "complex_combinations",
+      "escape_sequences",
+      "field_query",
+      "fuzzy_query",
+      "group_query",
+      "numeric_values",
+      "phrase_query",
+      "proximity_query",
+      "range_query",
+      "regex_query",
+      "simple_term",
+      "unicode_support",
+      "wildcard_query"
+    ]
+  },
+  "test_suites": {
+    "basic_syntax": [
+      {
+        "query": "term",
+        "category": "simple_term",
+        "description": "简单词项",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "Lucene基础语法"
+        }
+      },
+      {
+        "query": "hello",
+        "category": "simple_term",
+        "description": "英文词项",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "Lucene基础语法"
+        }
+      },
+      {
+        "query": "中国",
+        "category": "simple_term",
+        "description": "中文词项",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "Unicode支持"
+        }
+      },
+      {
+        "query": "café",
+        "category": "simple_term",
+        "description": "带重音符的词项",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "Unicode重音符"
+        }
+      },
+      {
+        "query": "field:value",
+        "category": "field_query",
+        "description": "基本字段查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - FieldQuery"
+        }
+      },
+      {
+        "query": "title:hello",
+        "category": "field_query",
+        "description": "标题字段查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - FieldQuery"
+        }
+      },
+      {
+        "query": "content:world",
+        "category": "field_query",
+        "description": "内容字段查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - FieldQuery"
+        }
+      },
+      {
+        "query": "_exists_:field",
+        "category": "field_query",
+        "description": "字段存在查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "Elasticsearch特殊字段"
+        }
+      },
+      {
+        "query": "\"hello world\"",
+        "category": "phrase_query",
+        "description": "基本短语查询"
+      },
+      {
+        "query": "\"java programming\"",
+        "category": "phrase_query",
+        "description": "多词短语查询"
+      },
+      {
+        "query": "field:\"phrase value\"",
+        "category": "phrase_query",
+        "description": "字段短语查询"
+      },
+      {
+        "query": "\"hello world\"~5",
+        "category": "proximity_query",
+        "description": "邻近查询"
+      },
+      {
+        "query": "term1 AND term2",
+        "category": "boolean_query",
+        "description": "AND操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - BooleanQuery, StandardSyntaxParser.jj"
+        }
+      },
+      {
+        "query": "term1 OR term2",
+        "category": "boolean_query",
+        "description": "OR操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - BooleanQuery, StandardSyntaxParser.jj"
+        }
+      },
+      {
+        "query": "term1 NOT term2",
+        "category": "boolean_query",
+        "description": "NOT操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - BooleanQuery, StandardSyntaxParser.jj"
+        }
+      },
+      {
+        "query": "+required -prohibited",
+        "category": "boolean_query",
+        "description": "必须和禁止操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - RequiredProhibited"
+        }
+      },
+      {
+        "query": "term1 && term2",
+        "category": "boolean_query",
+        "description": "&& 操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "StandardSyntaxParser.jj - AndToken"
+        }
+      },
+      {
+        "query": "term1 || term2",
+        "category": "boolean_query",
+        "description": "|| 操作符",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "StandardSyntaxParser.jj - OrToken"
+        }
+      },
+      {
+        "query": "test*",
+        "category": "wildcard_query",
+        "description": "后缀通配符"
+      },
+      {
+        "query": "*test",
+        "category": "wildcard_query",
+        "description": "前缀通配符"
+      },
+      {
+        "query": "te*st",
+        "category": "wildcard_query",
+        "description": "中间通配符"
+      },
+      {
+        "query": "t?st",
+        "category": "wildcard_query",
+        "description": "单字符通配符"
+      },
+      {
+        "query": "field:test*",
+        "category": "wildcard_query",
+        "description": "字段通配符查询"
+      },
+      {
+        "query": "/test.*/",
+        "category": "regex_query",
+        "description": "基本正则表达式"
+      },
+      {
+        "query": "/[a-z]+/",
+        "category": "regex_query",
+        "description": "字符类正则表达式"
+      },
+      {
+        "query": "field:/pattern/",
+        "category": "regex_query",
+        "description": "字段正则表达式"
+      },
+      {
+        "query": "test~",
+        "category": "fuzzy_query",
+        "description": "默认模糊查询"
+      },
+      {
+        "query": "test~1",
+        "category": "fuzzy_query",
+        "description": "指定编辑距离的模糊查询"
+      },
+      {
+        "query": "test~0.8",
+        "category": "fuzzy_query",
+        "description": "指定相似度的模糊查询"
+      },
+      {
+        "query": "[1 TO 10]",
+        "category": "range_query",
+        "description": "闭区间范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - RangeQuery, StandardSyntaxParser.jj"
+        }
+      },
+      {
+        "query": "{1 TO 10}",
+        "category": "range_query",
+        "description": "开区间范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - RangeQuery, StandardSyntaxParser.jj"
+        }
+      },
+      {
+        "query": "[1 TO *]",
+        "category": "range_query",
+        "description": "下界范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - RangeQuery"
+        }
+      },
+      {
+        "query": "[* TO 10]",
+        "category": "range_query",
+        "description": "上界范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - RangeQuery"
+        }
+      },
+      {
+        "query": "field:[a TO z]",
+        "category": "range_query",
+        "description": "字段范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "QueryParser.jj - FieldRangeQuery"
+        }
+      },
+      {
+        "query": "date:[2021-01-01 TO 2021-12-31]",
+        "category": "range_query",
+        "description": "日期范围查询",
+        "source": {
+          "type": "basic_syntax",
+          "reference": "日期范围查询常见用例"
+        }
+      },
+      {
+        "query": "term^2",
+        "category": "boost_query",
+        "description": "整数权重"
+      },
+      {
+        "query": "term^2.5",
+        "category": "boost_query",
+        "description": "浮点权重"
+      },
+      {
+        "query": "field:value^10",
+        "category": "boost_query",
+        "description": "字段查询权重"
+      },
+      {
+        "query": "\"phrase query\"^3",
+        "category": "boost_query",
+        "description": "短语查询权重"
+      },
+      {
+        "query": "(term1 OR term2)",
+        "category": "group_query",
+        "description": "基本分组"
+      },
+      {
+        "query": "field:(value1 OR value2)",
+        "category": "group_query",
+        "description": "字段分组"
+      },
+      {
+        "query": "(term1 AND term2)^2",
+        "category": "group_query",
+        "description": "分组权重"
+      }
+    ],
+    "lucene_extracted": [
+      {
+        "query": "foo",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo foobar",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "multi foo",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo multi",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "multi multi",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiAnalyzer.java",
+          "class": "TestMultiAnalyzer",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one two",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "+one +two",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "+one -two -three",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one^2 two",
+        "category": "lucene_boost",
+        "description": "Lucene测试用例 - boost",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one~ two",
+        "category": "lucene_fuzzy",
+        "description": "Lucene测试用例 - fuzzy",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one~0.8 two^2",
+        "category": "lucene_fuzzy",
+        "description": "Lucene测试用例 - fuzzy",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one* two*",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiFieldQueryParser.java",
+          "class": "TestMultiFieldQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestMultiPhraseQueryParsing.java",
+          "class": "TestMultiPhraseQueryParsing",
+          "method": "testMultiPhraseQueryParsing",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term phrase term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testQPA",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "+guinea pig",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "-guinea pig",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "!guinea pig",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "guinea* pig",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "guinea? pig",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "guinea~2 pig",
+        "category": "lucene_fuzzy",
+        "description": "Lucene测试用例 - fuzzy",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "guinea^2 pig",
+        "category": "lucene_boost",
+        "description": "Lucene测试用例 - boost",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/classic/TestQueryParser.java",
+          "class": "TestQueryParser",
+          "method": "testOperatorsAndMultiWordSynonyms",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "aField:testExt:\\",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/ext/TestExtendableQueryParser.java",
+          "class": "TestExtendableQueryParser",
+          "method": "testUnescapedExtDelimiter",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "türm term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "ümlaut",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a AND b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "(a AND b)",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "c OR (a AND b)",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a AND NOT b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a AND -b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/precedence/TestPrecedenceQueryParser.java",
+          "class": "TestPrecedenceQueryParser",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "body:text",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/spans/TestSpanQueryParserSimpleSample.java",
+          "class": "TestSpanQueryParserSimpleSample",
+          "method": "testBasicDemo",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo foobar",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "multi foo",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo multi",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "multi multi",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiAnalyzerQPHelper.java",
+          "class": "TestMultiAnalyzerQPHelper",
+          "method": "testMultiAnalyzer",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one two",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "+one +two",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "+one -two -three",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one^2 two",
+        "category": "lucene_boost",
+        "description": "Lucene测试用例 - boost",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one~ two",
+        "category": "lucene_fuzzy",
+        "description": "Lucene测试用例 - fuzzy",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one~0.8 two^2",
+        "category": "lucene_fuzzy",
+        "description": "Lucene测试用例 - fuzzy",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "one* two*",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestMultiFieldQPHelper.java",
+          "class": "TestMultiFieldQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "intField:[1 TO 3]",
+        "category": "lucene_range",
+        "description": "Lucene测试用例 - range",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testIntegers",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "intField:1",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testIntegers",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "longField:[1 TO 3]",
+        "category": "lucene_range",
+        "description": "Lucene测试用例 - range",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testLongs",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "longField:1",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testLongs",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "floatField:[1.5 TO 3.6]",
+        "category": "lucene_range",
+        "description": "Lucene测试用例 - range",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testFloats",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "floatField:1.5",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testFloats",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "doubleField:[1.5 TO 3.6]",
+        "category": "lucene_range",
+        "description": "Lucene测试用例 - range",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testDoubles",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "doubleField:1.5",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestPointQueryParser.java",
+          "class": "TestPointQueryParser",
+          "method": "testDoubles",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term\\u3000term\\u3000term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testCJK",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "field=a",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "türm term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "ümlaut",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo:\\",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestQPHelper.java",
+          "class": "TestQPHelper",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a - b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testOperatorVsWhitespace",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a + b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testOperatorVsWhitespace",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a ! b",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testOperatorVsWhitespace",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "[\\\\* TO \\",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testRangeWithPhrase",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a:b\\\\-?c",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testEscapedVsQuestionMarkAsWildcard",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a:b\\\\+?c",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testEscapedVsQuestionMarkAsWildcard",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a:b\\\\:?c",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testEscapedVsQuestionMarkAsWildcard",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a:b\\\\\\\\?c",
+        "category": "lucene_wildcard",
+        "description": "Lucene测试用例 - wildcard",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/flexible/standard/TestStandardQP.java",
+          "class": "TestStandardQP",
+          "method": "testEscapedVsQuestionMarkAsWildcard",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo bar",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/simple/TestSimpleQueryParser.java",
+          "class": "TestSimpleQueryParser",
+          "method": "testORImplicit",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/simple/TestSimpleQueryParser.java",
+          "class": "TestSimpleQueryParser",
+          "method": "testWeightedTerm",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo|bar",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/simple/TestSimpleQueryParser.java",
+          "class": "TestSimpleQueryParser",
+          "method": "testWeightedOR",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term\\u3000term\\u3000term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testCJK",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "用語\\u3000用語\\u3000用語",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testCJK",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "term term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "türm term term",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "ümlaut",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "\\",
+        "category": "lucene_simple_term",
+        "description": "Lucene测试用例 - simple_term",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "foo:\\",
+        "category": "lucene_field",
+        "description": "Lucene测试用例 - field",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      },
+      {
+        "query": "a AND b",
+        "category": "lucene_boolean",
+        "description": "Lucene测试用例 - boolean",
+        "source": {
+          "type": "lucene_extracted",
+          "file": "lucene/queryparser/src/test/org/apache/lucene/queryparser/util/QueryParserTestBase.java",
+          "class": "Unknown",
+          "method": "testSimple",
+          "pattern_type": "standard"
+        }
+      }
+    ],
+    "edge_cases": [
+      {
+        "query": "hello\\:world",
+        "category": "escape",
+        "description": "转义冒号"
+      },
+      {
+        "query": "hello\\(world\\)",
+        "category": "escape",
+        "description": "转义括号"
+      },
+      {
+        "query": "hello\\*world",
+        "category": "escape",
+        "description": "转义星号"
+      },
+      {
+        "query": "hello\\?world",
+        "category": "escape",
+        "description": "转义问号"
+      },
+      {
+        "query": "hello\\+world",
+        "category": "escape",
+        "description": "转义加号"
+      },
+      {
+        "query": "hello\\-world",
+        "category": "escape",
+        "description": "转义减号"
+      },
+      {
+        "query": "hello\\\"world",
+        "category": "escape",
+        "description": "转义双引号"
+      },
+      {
+        "query": "hello\\\\world",
+        "category": "escape",
+        "description": "转义反斜杠"
+      },
+      {
+        "query": "hello world",
+        "category": "whitespace",
+        "description": "空格分隔的词项"
+      },
+      {
+        "query": "  hello  world  ",
+        "category": "whitespace",
+        "description": "多余空格"
+      },
+      {
+        "query": "hello\tworld",
+        "category": "whitespace",
+        "description": "制表符分隔"
+      },
+      {
+        "query": "hello\nworld",
+        "category": "whitespace",
+        "description": "换行符分隔"
+      },
+      {
+        "query": "123",
+        "category": "numeric",
+        "description": "整数"
+      },
+      {
+        "query": "12.34",
+        "category": "numeric",
+        "description": "浮点数"
+      },
+      {
+        "query": "-123",
+        "category": "numeric",
+        "description": "负数"
+      },
+      {
+        "query": "1e10",
+        "category": "numeric",
+        "description": "科学记数法"
+      },
+      {
+        "query": "中文查询",
+        "category": "unicode",
+        "description": "中文查询"
+      },
+      {
+        "query": "café résumé",
+        "category": "unicode",
+        "description": "法语重音符"
+      },
+      {
+        "query": "Москва",
+        "category": "unicode",
+        "description": "俄语西里尔字母"
+      },
+      {
+        "query": "العربية",
+        "category": "unicode",
+        "description": "阿拉伯文"
+      },
+      {
+        "query": "日本語",
+        "category": "unicode",
+        "description": "日文"
+      },
+      {
+        "query": "*:*",
+        "category": "special",
+        "description": "匹配所有文档"
+      },
+      {
+        "query": "*",
+        "category": "special",
+        "description": "单独的通配符"
+      },
+      {
+        "query": "?",
+        "category": "special",
+        "description": "单独的单字符通配符"
+      },
+      {
+        "query": "\"\"",
+        "category": "special",
+        "description": "空短语"
+      }
+    ],
+    "complex_combinations": [
+      {
+        "query": "(title:java OR title:python) AND (content:tutorial OR content:guide) AND NOT deprecated:true",
+        "category": "complex_boolean",
+        "description": "多层嵌套布尔查询"
+      },
+      {
+        "query": "+required +(optional1 OR optional2) -excluded",
+        "category": "complex_boolean",
+        "description": "混合操作符的复杂查询"
+      },
+      {
+        "query": "title:\"hello world\" AND content:programming AND author:john",
+        "category": "multi_field",
+        "description": "多字段组合查询"
+      },
+      {
+        "query": "title:(java OR python) AND tags:(tutorial AND beginner)",
+        "category": "multi_field",
+        "description": "字段分组组合查询"
+      },
+      {
+        "query": "title:java^10 OR content:java^1 OR tags:java^5",
+        "category": "scoring",
+        "description": "多字段权重查询"
+      },
+      {
+        "query": "(title:\"machine learning\"^3 OR content:\"artificial intelligence\"^2)^0.5",
+        "category": "scoring",
+        "description": "嵌套权重查询"
+      },
+      {
+        "query": "date:[2021-01-01 TO 2021-12-31] AND price:[10 TO 100] AND title:python~",
+        "category": "mixed_types",
+        "description": "范围和模糊查询组合"
+      },
+      {
+        "query": "author:john~ AND created:[* TO now] AND (urgent OR priority:high^2)",
+        "category": "mixed_types",
+        "description": "复杂类型混合查询"
+      }
+    ]
+  }
+}

@@ -17,8 +17,7 @@ import (
 )
 
 // CustomExport
-type CustomExport struct {
-}
+type CustomExport struct{}
 
 // Export
 func (e *CustomExport) Export(ctx context.Context, _ *log.Logger, featureEvents []exporter.FeatureEvent) error {
@@ -31,8 +30,7 @@ func (e *CustomExport) IsBulk() bool {
 }
 
 // CustomRetriever
-type CustomRetriever struct {
-}
+type CustomRetriever struct{}
 
 // Retrieve
 func (s *CustomRetriever) Retrieve(_ context.Context) ([]byte, error) {

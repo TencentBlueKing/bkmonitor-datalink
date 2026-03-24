@@ -41,6 +41,10 @@ const (
 	ModuleSocketSnapshot  = "socketsnapshot"
 	ModuleShellHistory    = "shellhistory"
 	ModuleRpmPackage      = "rpmpackage"
+	ModuleTimeSync        = "timesync"
+	ModuleDmesg           = "dmesg"
+	ModuleGatherUpBeat    = "gather_up_beat"
+	ModuleSelfStats       = "selfstats"
 )
 
 const (

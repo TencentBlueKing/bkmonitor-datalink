@@ -12,10 +12,10 @@
 package v1beta1
 
 import (
-	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/cache"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // DataIDLister helps list DataIDs.
@@ -23,7 +23,7 @@ import (
 type DataIDLister interface {
 	// List lists all DataIDs in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1beta1.DataID, err error)
+	List(selector labels.Selector) (ret []*monitoringv1beta1.DataID, err error)
 	// DataIDs returns an object that can list and get DataIDs.
 	DataIDs(namespace string) DataIDNamespaceLister
 	DataIDListerExpansion
@@ -31,25 +31,17 @@ type DataIDLister interface {
 
 // dataIDLister implements the DataIDLister interface.
 type dataIDLister struct {
-	indexer cache.Indexer
+	listers.ResourceIndexer[*monitoringv1beta1.DataID]
 }
 
 // NewDataIDLister returns a new DataIDLister.
 func NewDataIDLister(indexer cache.Indexer) DataIDLister {
-	return &dataIDLister{indexer: indexer}
-}
-
-// List lists all DataIDs in the indexer.
-func (s *dataIDLister) List(selector labels.Selector) (ret []*v1beta1.DataID, err error) {
-	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1beta1.DataID))
-	})
-	return ret, err
+	return &dataIDLister{listers.New[*monitoringv1beta1.DataID](indexer, monitoringv1beta1.Resource("dataid"))}
 }
 
 // DataIDs returns an object that can list and get DataIDs.
 func (s *dataIDLister) DataIDs(namespace string) DataIDNamespaceLister {
-	return dataIDNamespaceLister{indexer: s.indexer, namespace: namespace}
+	return dataIDNamespaceLister{listers.NewNamespaced[*monitoringv1beta1.DataID](s.ResourceIndexer, namespace)}
 }
 
 // DataIDNamespaceLister helps list and get DataIDs.
@@ -57,36 +49,15 @@ func (s *dataIDLister) DataIDs(namespace string) DataIDNamespaceLister {
 type DataIDNamespaceLister interface {
 	// List lists all DataIDs in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1beta1.DataID, err error)
+	List(selector labels.Selector) (ret []*monitoringv1beta1.DataID, err error)
 	// Get retrieves the DataID from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1beta1.DataID, error)
+	Get(name string) (*monitoringv1beta1.DataID, error)
 	DataIDNamespaceListerExpansion
 }
 
 // dataIDNamespaceLister implements the DataIDNamespaceLister
 // interface.
 type dataIDNamespaceLister struct {
-	indexer   cache.Indexer
-	namespace string
-}
-
-// List lists all DataIDs in the indexer for a given namespace.
-func (s dataIDNamespaceLister) List(selector labels.Selector) (ret []*v1beta1.DataID, err error) {
-	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1beta1.DataID))
-	})
-	return ret, err
-}
-
-// Get retrieves the DataID from the indexer for a given namespace and name.
-func (s dataIDNamespaceLister) Get(name string) (*v1beta1.DataID, error) {
-	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, errors.NewNotFound(v1beta1.Resource("dataid"), name)
-	}
-	return obj.(*v1beta1.DataID), nil
+	listers.ResourceIndexer[*monitoringv1beta1.DataID]
 }

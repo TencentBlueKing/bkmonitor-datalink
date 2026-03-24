@@ -41,7 +41,7 @@ func TestParseSQL(t *testing.T) {
 	}
 
 	for _, item := range data {
-		err := influxdb.CheckSelectSQL(context.Background(), item.sql)
+		err := influxdb.CheckSQLInject(context.Background(), item.sql)
 		if item.hasErr {
 			assert.NotNil(t, err)
 		} else {

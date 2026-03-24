@@ -11,8 +11,8 @@ package metadata
 
 import (
 	"context"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -20,8 +20,12 @@ import (
 type QueryParams struct {
 	ctx context.Context
 
-	Start int64
-	End   int64
+	AlignStart time.Time
+	Start      time.Time
+	End        time.Time
+	Step       time.Duration
+	TimeUnit   string
+	Timezone   string
 
 	StorageType *set.Set[string]
 
@@ -40,7 +44,7 @@ func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
 }
 
 func (q *QueryParams) IsDirectQuery() bool {
-	return q.StorageType.Existed(consul.VictoriaMetricsStorageType)
+	return q.StorageType.Existed(VictoriaMetricsStorageType)
 }
 
 func (q *QueryParams) SetStorageType(ds string) *QueryParams {
@@ -48,9 +52,13 @@ func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) SetTime(start, end int64) *QueryParams {
+func (q *QueryParams) SetTime(alignStart, start, end time.Time, step time.Duration, unit, timezone string) *QueryParams {
+	q.AlignStart = alignStart
 	q.Start = start
 	q.End = end
+	q.Step = step
+	q.TimeUnit = unit
+	q.Timezone = timezone
 	return q
 }
 

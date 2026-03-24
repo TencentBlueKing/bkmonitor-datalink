@@ -10,10 +10,8 @@
 package window
 
 import (
-	"reflect"
 	"strconv"
 
-	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -46,11 +44,7 @@ type Span struct {
 }
 
 func init() {
-	var v OriginMessage
-	err := sonic.Pretouch(reflect.TypeOf(v))
-	if err != nil {
-		panic(err)
-	}
+	pretouchJSON()
 }
 
 func ToStandardSpan(originSpan Span) StandardSpan {

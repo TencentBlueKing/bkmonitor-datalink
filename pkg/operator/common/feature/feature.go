@@ -10,7 +10,10 @@
 package feature
 
 import (
+	"strconv"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
@@ -29,7 +32,14 @@ const (
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
 	keyLabelJoinMatcher     = "labelJoinMatcher"
-	keySliMonitor           = "sliMonitor"
+
+	// KeyScheduledDataID Monitor 资源直接指定 DataID
+	// 优先级高于 DataID Resource 自身匹配规则
+	KeyScheduledDataID = "scheduledDataID"
+
+	// KeyExtendLabels Monitor 资源扩展 Labels
+	// 优先级高于 DataID Resource 自身 Labels
+	KeyExtendLabels = "extendLabels"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -41,18 +51,10 @@ func isMapKeyExists(m map[string]string, key string) bool {
 	return false
 }
 
-func parseSelector(s string) map[string]string {
-	selector := make(map[string]string)
-	parts := strings.Split(s, ",")
-	for _, part := range parts {
-		kv := strings.Split(strings.TrimSpace(part), "=")
-		if len(kv) != 2 {
-			continue
-		}
-		selector[kv[0]] = kv[1]
-	}
-	return selector
-}
+const (
+	LabelJoinMatcherKindPod  = "Pod"
+	LabelJoinMatcherKindNode = "Node"
+)
 
 type LabelJoinMatcherSpec struct {
 	Kind        string
@@ -68,9 +70,16 @@ func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
 		labelPrefix      = "label:"
 	)
 
+	var kind string
 	switch {
-	case strings.HasPrefix(s, "Pod://"): // TODO(mando): 目前仅支持 Pod
+	case strings.HasPrefix(s, "Pod://"):
 		s = s[len("Pod://"):]
+		kind = LabelJoinMatcherKindPod
+
+	case strings.HasPrefix(s, "Node://"):
+		s = s[len("Node://"):]
+		kind = LabelJoinMatcherKindNode
+
 	default:
 		return nil
 	}
@@ -89,7 +98,7 @@ func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
 	}
 
 	return &LabelJoinMatcherSpec{
-		Kind:        "Pod",
+		Kind:        kind,
 		Annotations: annotations,
 		Labels:      labels,
 	}
@@ -137,17 +146,30 @@ func RelabelIndex(m map[string]string) string {
 }
 
 func MonitorMatchSelector(m map[string]string) map[string]string {
-	return parseSelector(m[keyMonitorMatchSelector])
+	return utils.SelectorToMap(m[keyMonitorMatchSelector])
 }
 
 func MonitorDropSelector(m map[string]string) map[string]string {
-	return parseSelector(m[keyMonitorDropSelector])
+	return utils.SelectorToMap(m[keyMonitorDropSelector])
 }
 
 func LabelJoinMatcher(m map[string]string) *LabelJoinMatcherSpec {
 	return parseLabelJoinMatcher(m[keyLabelJoinMatcher])
 }
 
-func SliMonitor(m map[string]string) string {
-	return m[keySliMonitor]
+func ExtendLabels(m map[string]string) map[string]string {
+	return utils.SelectorToMap(m[KeyExtendLabels])
+}
+
+func ScheduledDataID(m map[string]string) int {
+	v, ok := m[KeyScheduledDataID]
+	if !ok {
+		return 0
+	}
+
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return i
 }

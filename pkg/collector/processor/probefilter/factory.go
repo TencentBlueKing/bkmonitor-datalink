@@ -34,11 +34,11 @@ func init() {
 	processor.Register(define.ProcessorProbeFilter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*probeFilter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*probeFilter, error) {
 	configs := confengine.NewTierConfig()
 	c := &Config{}
 
@@ -81,7 +81,7 @@ func (p *probeFilter) IsPreCheck() bool {
 	return false
 }
 
-func (p *probeFilter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *probeFilter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -95,25 +95,23 @@ func (p *probeFilter) Reload(config map[string]interface{}, customized []process
 func (p *probeFilter) Process(record *define.Record) (*define.Record, error) {
 	config := p.configs.GetByToken(record.Token.Original).(Config)
 	if len(config.AddAttrs) > 0 {
-		p.processAddAttrsAction(record, config)
+		p.addAttrsAction(record, config)
 	}
 	return nil, nil
 }
 
-// Add Attributes Action
-
-func (p *probeFilter) processAddAttrsAction(record *define.Record, config Config) {
+func (p *probeFilter) addAttrsAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 			for _, action := range config.AddAttrs {
 				for _, rule := range action.Rules {
 					if !rule.Enabled {
 						continue
 					}
 					if v, ok := span.Attributes().Get(attributeSpanLayer); ok && v.StringVal() == rule.Type {
-						processAddAttrs(span, rule, rsAttrs)
+						processAddAttrs(span, rule, rs)
 					}
 				}
 			}
@@ -156,8 +154,8 @@ func matchAddAttrsRules(span ptrace.Span, rule Rule, attrs pcommon.Map) bool {
 }
 
 // processAddAttrs 处理并新增 attributes
-func processAddAttrs(span ptrace.Span, rule Rule, attrs pcommon.Map) {
-	if !matchAddAttrsRules(span, rule, attrs) {
+func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
+	if !matchAddAttrsRules(span, rule, rs) {
 		return
 	}
 

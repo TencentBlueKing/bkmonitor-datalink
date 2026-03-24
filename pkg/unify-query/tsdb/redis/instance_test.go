@@ -19,7 +19,7 @@ import (
 func TestDataframe(t *testing.T) {
 	df := dataframe.LoadRecords(
 		[][]string{
-			[]string{"A", "B", "D"},
+			{"A", "B", "D"},
 		},
 		dataframe.DetectTypes(false),
 		dataframe.DefaultType(series.String),
@@ -31,8 +31,8 @@ func TestDataframe(t *testing.T) {
 	)
 	df2 := dataframe.LoadRecords(
 		[][]string{
-			[]string{"A", "B", "D"},
-			[]string{"A", "1.1", "false"},
+			{"A", "B", "D"},
+			{"A", "1.1", "false"},
 		},
 		dataframe.DetectTypes(false),
 		dataframe.DefaultType(series.String),

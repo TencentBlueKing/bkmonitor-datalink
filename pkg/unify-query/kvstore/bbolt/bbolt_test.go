@@ -31,7 +31,6 @@ func NewTestClient(t *testing.T) (*Client, func(), error) {
 }
 
 func newTestClient(t *testing.T) (*Client, func(), error) {
-
 	f, err := os.CreateTemp("", "unify-query-bolt-")
 	if err != nil {
 		return nil, nil, errors.New("unable to open temporary boltdb file")

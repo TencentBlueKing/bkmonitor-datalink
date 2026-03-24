@@ -51,7 +51,6 @@ func (g *DiGraph) AddEdge(from, to Node) {
 
 // RefreshEdges Build tree
 func (g *DiGraph) RefreshEdges() {
-
 	g.Edges = make(map[string][]Node)
 
 	nodeMapping := make(map[string]Node)

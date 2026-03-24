@@ -19,14 +19,13 @@ import (
 var msgType = "application/x-msgpack"
 
 // MsgPackDecoder
-type MsgPackDecoder struct {
-}
+type MsgPackDecoder struct{}
 
 // Decode
 func (d *MsgPackDecoder) Decode(ctx context.Context, reader io.Reader, resp *Response) (size int, err error) {
 	resp.Ctx = ctx
 	err = msgp.Decode(reader, resp)
-	return
+	return size, err
 }
 
 // init

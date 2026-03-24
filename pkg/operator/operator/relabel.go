@@ -290,7 +290,8 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	}
 
 	if ep.RelabelConfigs != nil {
-		for _, c := range ep.RelabelConfigs {
+		for i := 0; i < len(ep.RelabelConfigs); i++ {
+			c := ep.RelabelConfigs[i]
 			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
@@ -303,6 +304,14 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 
 func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) []yaml.MapSlice {
 	relabelings := initRelabelings()
+
+	// Drop pods that are not running. (Failed, Succeeded).
+	// ref: https://github.com/prometheus-operator/prometheus-operator/pull/5049
+	relabelings = append(relabelings, yaml.MapSlice{
+		{Key: "action", Value: "drop"},
+		{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_phase"}},
+		{Key: "regex", Value: "(Failed|Succeeded)"},
+	})
 
 	var labelKeys []string
 	// Filter targets by pods selected by the monitor.
@@ -432,7 +441,8 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 	}
 
 	if ep.RelabelConfigs != nil {
-		for _, c := range ep.RelabelConfigs {
+		for i := 0; i < len(ep.RelabelConfigs); i++ {
+			c := ep.RelabelConfigs[i]
 			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}

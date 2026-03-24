@@ -1575,7 +1575,7 @@ var RecordRuleDBSchema = struct {
 // Update updates RecordRule fields by primary key
 // nolint: dupl
 func (o *RecordRule) Update(db *gorm.DB, fields ...RecordRuleDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":               o.Id,
 		"space_type":       o.SpaceType,
 		"space_id":         o.SpaceId,
@@ -1594,7 +1594,7 @@ func (o *RecordRule) Update(db *gorm.DB, fields ...RecordRuleDBSchemaField) erro
 		"updater":          o.Updater,
 		"update_at":        o.UpdateAt,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1613,7 +1613,7 @@ func (o *RecordRule) Update(db *gorm.DB, fields ...RecordRuleDBSchemaField) erro
 
 // RecordRuleUpdater is an RecordRule updates manager
 type RecordRuleUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1621,7 +1621,7 @@ type RecordRuleUpdater struct {
 // nolint: dupl
 func NewRecordRuleUpdater(db *gorm.DB) RecordRuleUpdater {
 	return RecordRuleUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&RecordRule{}),
 	}
 }

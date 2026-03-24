@@ -17,7 +17,6 @@ import (
 )
 
 func TestSpanGraph(t *testing.T) {
-
 	rootSpan := Node{
 		StandardSpan: StandardSpan{
 			TraceId:      "445e8696539f4a07cde400e0fbbe2341",

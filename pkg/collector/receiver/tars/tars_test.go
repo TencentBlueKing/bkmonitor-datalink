@@ -25,7 +25,7 @@ import (
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
-		Ready(receiver.ComponentConfig{})
+		Ready()
 	})
 }
 

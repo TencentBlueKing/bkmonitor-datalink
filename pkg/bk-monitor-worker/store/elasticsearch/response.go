@@ -87,7 +87,7 @@ type IndexStatStoreInfo struct {
 
 // IndexAlias GetAlias的resp
 type IndexAlias map[string]struct {
-	Aliases map[string]map[string]interface{} `json:"aliases"`
+	Aliases map[string]map[string]any `json:"aliases"`
 }
 
 // CountResp CountByIndex的resp
@@ -97,21 +97,21 @@ type CountResp struct {
 
 // Snapshot GetSnapshot的Resp
 type Snapshot struct {
-	Snapshot           string        `json:"snapshot"`
-	Uuid               string        `json:"uuid"`
-	Repository         string        `json:"repository"`
-	VersionId          int           `json:"version_id"`
-	Version            string        `json:"version"`
-	Indices            []string      `json:"indices"`
-	DataStreams        []interface{} `json:"data_streams"`
-	IncludeGlobalState bool          `json:"include_global_state"`
-	State              string        `json:"state"`
-	StartTime          time.Time     `json:"start_time"`
-	StartTimeInMillis  int64         `json:"start_time_in_millis"`
-	EndTime            time.Time     `json:"end_time"`
-	EndTimeInMillis    int64         `json:"end_time_in_millis"`
-	DurationInMillis   int           `json:"duration_in_millis"`
-	Failures           []interface{} `json:"failures"`
+	Snapshot           string    `json:"snapshot"`
+	Uuid               string    `json:"uuid"`
+	Repository         string    `json:"repository"`
+	VersionId          int       `json:"version_id"`
+	Version            string    `json:"version"`
+	Indices            []string  `json:"indices"`
+	DataStreams        []any     `json:"data_streams"`
+	IncludeGlobalState bool      `json:"include_global_state"`
+	State              string    `json:"state"`
+	StartTime          time.Time `json:"start_time"`
+	StartTimeInMillis  int64     `json:"start_time_in_millis"`
+	EndTime            time.Time `json:"end_time"`
+	EndTimeInMillis    int64     `json:"end_time_in_millis"`
+	DurationInMillis   int       `json:"duration_in_millis"`
+	Failures           []any     `json:"failures"`
 	FeatureStates      []struct {
 		FeatureName string   `json:"feature_name"`
 		Indices     []string `json:"indices"`

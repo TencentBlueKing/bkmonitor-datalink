@@ -76,9 +76,9 @@ func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrateg
 // FindAllBiz 找到符合标准的biz
 func FindAllBiz() (map[int32][]string, error) {
 	db := mysql.GetDBSession().DB
-	//标签前缀
+	// 标签前缀
 	prefix := "/slo/"
-	//标签后缀
+	// 标签后缀
 	suffixes := SloName //{"volume", "error", "latency", "availability"}
 
 	// 寻找符合标签规范的全部策略。然后统计其上层全部业务
@@ -127,7 +127,7 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, allStrategyAggIn
 	strategyIDs_con := extractStrategyIDs(strategyIDs)
 	getStrategyAggInterval(strategyIDs, allStrategyAggInterval)
 
-	conditions := []map[string]interface{}{
+	conditions := []map[string]any{
 		{"key": "severity", "value": []int{1, 2, 3}},
 		{"key": "strategy_id", "value": strategyIDs_con, "condition": "and"},
 	}
@@ -150,9 +150,9 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, allStrategyAggIn
 	return alertList, nil
 }
 
-func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert, error) {
+func getFatalAlerts(conditions []map[string]any, startTime int64, page, pageSize int, bkBizID int32) (int, []Alert, error) {
 	// 调用外部服务以获取告警数据
-	alertData, err := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, BkBizID)
+	alertData, err := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, bkBizID)
 	if err != nil {
 		// 处理调用错误
 		return 0, nil, errors.Wrapf(err, "failed to search alerts")
@@ -220,12 +220,12 @@ func addSloTimeIntoDict(day int, sloKey string, strategyID int32, beginTime, end
 
 // GetAllAlertTime 获取告警事件
 func GetAllAlertTime(totalAlertTimeBucket map[int]map[string]map[string][]int64, trueSloName map[string][]BkBizStrategy, bkBizID int32, scene string) map[int32]StrategyDetail {
-	//定义策略详细信息
+	// 定义策略详细信息
 	allStrategyAggInterval := make(map[int32]StrategyDetail)
 	for day := range totalAlertTimeBucket {
-		//每天的告警数据
+		// 每天的告警数据
 
-		//定义起始时间，当前时间-时间周期（1，7，30，180，365）
+		// 定义起始时间，当前时间-时间周期（1，7，30，180，365）
 		startTime := Now - int64(day*24*60*60)
 		for sloName, sloStrategyList := range trueSloName {
 			// 每个方法论进行获取数据

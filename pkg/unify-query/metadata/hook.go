@@ -40,7 +40,6 @@ func setDefaultConfig() {
 
 // LoadConfig
 func LoadConfig() {
-
 	MaDruidQueryRawSuffix = viper.GetString(MaDruidQueryRawSuffixPath)
 	MaDruidQueryCmdbSuffix = viper.GetString(MaDruidQueryCmdbSuffixPath)
 }

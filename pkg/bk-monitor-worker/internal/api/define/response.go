@@ -29,23 +29,23 @@ func (m ApiCommonRespMeta) Err() error {
 // APICommonResp api通用返回结构体
 type APICommonResp struct {
 	ApiCommonRespMeta
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 }
 
 // APICommonMapResp api通用返回结构体Map
 type APICommonMapResp struct {
 	ApiCommonRespMeta
-	Data map[string]interface{} `json:"data"`
+	Data map[string]any `json:"data"`
 }
 
 // APICommonListResp api通用返回结构体List
 type APICommonListResp struct {
 	ApiCommonRespMeta
-	Data []interface{} `json:"data"`
+	Data []any `json:"data"`
 }
 
 // APICommonListMapResp api通用返回结构体List-Map
 type APICommonListMapResp struct {
 	ApiCommonRespMeta
-	Data []map[string]interface{} `json:"data"`
+	Data []map[string]any `json:"data"`
 }

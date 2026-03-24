@@ -226,7 +226,7 @@ func (ps *Pingserver) push(results map[string]*Response, timestamp int64) {
 			continue
 		}
 
-		data := make(map[string]interface{})
+		data := make(map[string]any)
 		data["timestamp"] = timestamp
 		data["target"] = addr
 

@@ -33,6 +33,8 @@ const (
 	BkModuleIDKey    = "bk_module_id"
 	BkObjectIDKey    = "bk_obj_id"
 	BkInstIDKey      = "bk_inst_id"
+	BkTenantIDKey    = "tenant_id"
+	BkDataIDKey      = "dataid"
 	CustomerToposKey = "layer"
 	AssociationsKey  = "associations"
 	ChildLayerKey    = "child"
@@ -71,6 +73,8 @@ type Watcher interface {
 	GetCloudId() string
 	GetHostId() int32
 	GetHostInnerIp() string
+	GetTenantID() string
+	GetStaticDataID() int32
 	UpdateOnce() error
 	Notify() <-chan struct{}
 }
@@ -138,6 +142,10 @@ func (w *emptyWatcher) Notify() <-chan struct{} {
 	return nil
 }
 
+func (w *emptyWatcher) GetTenantID() string { return "" }
+
+func (w *emptyWatcher) GetStaticDataID() int32 { return 0 }
+
 // idWatcher :
 type idWatcher struct {
 	ctx            context.Context
@@ -149,6 +157,8 @@ type idWatcher struct {
 	bkCloudID     string
 	bkHostID      int32
 	bkBizID       int64
+	bkTenantID    string
+	bkDataID      int32
 
 	Info     Info
 	hostLock sync.RWMutex
@@ -239,6 +249,10 @@ func (w *idWatcher) GetHostId() int32 {
 func (w *idWatcher) GetHostInnerIp() string {
 	return w.bkHostInnerIP
 }
+
+func (w *idWatcher) GetTenantID() string { return w.bkTenantID }
+
+func (w *idWatcher) GetStaticDataID() int32 { return w.bkDataID }
 
 func (w *idWatcher) changeInfo(info Info) {
 	// 成功修改则置为true
@@ -408,6 +422,7 @@ func (w *idWatcher) updateInfo() error {
 		logger.Warn("get info from hostid file error: %s", err.Error())
 		return err
 	}
+
 	bkHostInnerIP, ok := hostIdInfo[BkHostInnerIPKey].(string)
 	if !ok {
 		logger.Warnf("find bk_host_innerip data failed, info value: %v", hostIdInfo)
@@ -424,12 +439,27 @@ func (w *idWatcher) updateInfo() error {
 		bkCloudID = 0
 	}
 	w.bkCloudID = strconv.FormatInt(bkCloudID, 10)
+
 	bkHostID, ok := hostIdInfo[BkHostIDKey].(int64)
 	if !ok {
 		logger.Warnf("find bk_host_id data failed, info value:%v", hostIdInfo)
 		bkHostID = 0
 	}
 	w.bkHostID = int32(bkHostID)
+
+	bkTenantID, ok := hostIdInfo[BkTenantIDKey].(string)
+	if !ok {
+		logger.Warnf("find tanant_id data failed, info value:%v", hostIdInfo)
+		bkTenantID = ""
+	}
+	w.bkTenantID = bkTenantID
+
+	bkDataID, ok := hostIdInfo[BkDataIDKey].(int64)
+	if !ok {
+		logger.Warnf("find dataid data failed, info value:%v", hostIdInfo)
+		bkDataID = 0
+	}
+	w.bkDataID = int32(bkDataID)
 
 	// 获取associations，这里存放的就是拓扑
 	associations, ok := hostIdInfo[AssociationsKey].(map[string]interface{})

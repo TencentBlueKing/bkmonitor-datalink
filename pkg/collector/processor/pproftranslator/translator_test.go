@@ -11,7 +11,6 @@ package pproftranslator
 
 import (
 	"bytes"
-	"reflect"
 	"testing"
 	"time"
 
@@ -21,38 +20,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-// isEqual 因为 sdk 里面解析原因，原始数组中空数组会被解析为 nil，所以测试时需要认为他们是一致的
-func isEqual(a, b interface{}) bool {
-	v1 := reflect.ValueOf(a)
-	v2 := reflect.ValueOf(b)
-
-	if v1.Kind() != v2.Kind() {
-		return false
-	}
-
-	for i := 0; i < v1.NumField(); i++ {
-		f1 := v1.Field(i)
-		f2 := v2.Field(i)
-
-		if f1.Kind() == reflect.Slice {
-			if (f1.IsNil() && f2.Len() == 0) || (f2.IsNil() && f1.Len() == 0) {
-				continue
-			}
-		}
-
-	}
-
-	return true
-}
-
 func TestDefaultTranslator(t *testing.T) {
-	d := &DefaultTranslator{}
+	var transaltor defaultTranslator
 
 	t.Run("invalid data type", func(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: "invalid",
 		}
-		_, err := d.Translate(pd)
+		_, err := transaltor.Translate(pd)
 		assert.Error(t, err)
 	})
 
@@ -60,7 +35,7 @@ func TestDefaultTranslator(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin{},
 		}
-		_, err := d.Translate(pd)
+		_, err := transaltor.Translate(pd)
 		assert.Error(t, err)
 	})
 
@@ -68,7 +43,7 @@ func TestDefaultTranslator(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin("any"),
 		}
-		profilesData, err := d.Translate(pd)
+		profilesData, err := transaltor.Translate(pd)
 		assert.Error(t, err)
 		assert.Nil(t, profilesData)
 	})
@@ -87,20 +62,10 @@ func TestDefaultTranslator(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin(buf.Bytes()),
 		}
-		profilesData, err := d.Translate(pd)
+		profilesData, err := transaltor.Translate(pd)
 		assert.NoError(t, err)
 		assert.Equal(t, pd.Metadata, profilesData.Metadata)
-		assert.Equal(t, 1, len(profilesData.Profiles))
-		assert.True(t, isEqual(*p.Sample[0], *profilesData.Profiles[0].Sample[0]))
+		assert.Len(t, profilesData.Profiles, 1)
+		assert.Equal(t, p.Sample[0].Value, profilesData.Profiles[0].Sample[0].Value)
 	})
-}
-
-func TestSpyNameTranslator(t *testing.T) {
-	c := Config{Type: "spy"}
-	entry := NewPprofTranslator(c)
-	assert.IsType(t, entry, &spyNameTranslator{})
-
-	c = Config{Type: "default"}
-	entry = NewPprofTranslator(c)
-	assert.IsType(t, entry, &spyNameTranslator{})
 }

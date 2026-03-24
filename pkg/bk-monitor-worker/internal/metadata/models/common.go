@@ -11,7 +11,6 @@ package models
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"strconv"
 	"time"
@@ -19,9 +18,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -66,8 +63,8 @@ func (b *BaseModel) BeforeUpdate(tx *gorm.DB) error {
 }
 
 // InterfaceValue 将字符串转为interface{}类型
-func (r *OptionBase) InterfaceValue() (interface{}, error) {
-	var value interface{}
+func (r *OptionBase) InterfaceValue() (any, error) {
+	var value any
 	switch r.ValueType {
 	case "string":
 		value = r.Value
@@ -85,7 +82,7 @@ func (r *OptionBase) InterfaceValue() (interface{}, error) {
 }
 
 // ParseOptionValue 解析option的interface{}的类型
-func ParseOptionValue(value interface{}) (string, string, error) {
+func ParseOptionValue(value any) (string, string, error) {
 	if value == nil {
 		return "", "", errors.New("ParseOptionValue value can not be nil")
 	}
@@ -112,23 +109,6 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 		return valueStr, "string", nil
 	default:
 		return "", "", errors.Errorf("unsupport option value type [%s], value [%v]", reflect.TypeOf(value).Kind().String(), value)
-	}
-}
-
-// PushToRedis 推送数据到 redis, just for influxdb
-func PushToRedis(ctx context.Context, key, field, value string) {
-	client := redis.GetStorageRedisInstance()
-	logger.Infof("PushToRedis: push redis, key->[%s], field->[%s]", key, field)
-	redisKey := fmt.Sprintf("%s%s:%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath, key)
-	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
-	channelName := fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath)
-	logger.Infof("PushToRedis: start push redis, key->[%s], field->[%s],value->[%s],channel_name->[%s],channel_key->[%s]", redisKey, field, value, channelName, key)
-	isSuccess, err := client.HSetWithCompareAndPublish(redisKey, field, value, channelName, key)
-	logger.Infof("PushToRedis: push redis, key->[%s], field->[%s],isSuccess:->[%v]", key, field, isSuccess)
-	if err != nil {
-		logger.Errorf("PushToRedis: push redis failed, %s, err: %v", msgSuffix, err)
-	} else {
-		logger.Infof("PushToRedis: push redis successfully, %s", msgSuffix)
 	}
 }
 

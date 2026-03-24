@@ -12,123 +12,34 @@
 package fake
 
 import (
-	"context"
-
 	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeBkLogConfigs implements BkLogConfigInterface
-type FakeBkLogConfigs struct {
+// fakeBkLogConfigs implements BkLogConfigInterface
+type fakeBkLogConfigs struct {
+	*gentype.FakeClientWithList[*v1alpha1.BkLogConfig, *v1alpha1.BkLogConfigList]
 	Fake *FakeBkV1alpha1
-	ns   string
 }
 
-var bklogconfigsResource = v1alpha1.SchemeGroupVersion.WithResource("bklogconfigs")
-
-var bklogconfigsKind = v1alpha1.SchemeGroupVersion.WithKind("BkLogConfig")
-
-// Get takes name of the bkLogConfig, and returns the corresponding bkLogConfig object, and an error if there is any.
-func (c *FakeBkLogConfigs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.BkLogConfig, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewGetAction(bklogconfigsResource, c.ns, name), &v1alpha1.BkLogConfig{})
-
-	if obj == nil {
-		return nil, err
+func newFakeBkLogConfigs(fake *FakeBkV1alpha1, namespace string) loggingv1alpha1.BkLogConfigInterface {
+	return &fakeBkLogConfigs{
+		gentype.NewFakeClientWithList[*v1alpha1.BkLogConfig, *v1alpha1.BkLogConfigList](
+			fake.Fake,
+			namespace,
+			v1alpha1.SchemeGroupVersion.WithResource("bklogconfigs"),
+			v1alpha1.SchemeGroupVersion.WithKind("BkLogConfig"),
+			func() *v1alpha1.BkLogConfig { return &v1alpha1.BkLogConfig{} },
+			func() *v1alpha1.BkLogConfigList { return &v1alpha1.BkLogConfigList{} },
+			func(dst, src *v1alpha1.BkLogConfigList) { dst.ListMeta = src.ListMeta },
+			func(list *v1alpha1.BkLogConfigList) []*v1alpha1.BkLogConfig {
+				return gentype.ToPointerSlice(list.Items)
+			},
+			func(list *v1alpha1.BkLogConfigList, items []*v1alpha1.BkLogConfig) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1alpha1.BkLogConfig), err
-}
-
-// List takes label and field selectors, and returns the list of BkLogConfigs that match those selectors.
-func (c *FakeBkLogConfigs) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.BkLogConfigList, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewListAction(bklogconfigsResource, bklogconfigsKind, c.ns, opts), &v1alpha1.BkLogConfigList{})
-
-	if obj == nil {
-		return nil, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1alpha1.BkLogConfigList{ListMeta: obj.(*v1alpha1.BkLogConfigList).ListMeta}
-	for _, item := range obj.(*v1alpha1.BkLogConfigList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested bkLogConfigs.
-func (c *FakeBkLogConfigs) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewWatchAction(bklogconfigsResource, c.ns, opts))
-
-}
-
-// Create takes the representation of a bkLogConfig and creates it.  Returns the server's representation of the bkLogConfig, and an error, if there is any.
-func (c *FakeBkLogConfigs) Create(ctx context.Context, bkLogConfig *v1alpha1.BkLogConfig, opts v1.CreateOptions) (result *v1alpha1.BkLogConfig, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewCreateAction(bklogconfigsResource, c.ns, bkLogConfig), &v1alpha1.BkLogConfig{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BkLogConfig), err
-}
-
-// Update takes the representation of a bkLogConfig and updates it. Returns the server's representation of the bkLogConfig, and an error, if there is any.
-func (c *FakeBkLogConfigs) Update(ctx context.Context, bkLogConfig *v1alpha1.BkLogConfig, opts v1.UpdateOptions) (result *v1alpha1.BkLogConfig, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateAction(bklogconfigsResource, c.ns, bkLogConfig), &v1alpha1.BkLogConfig{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BkLogConfig), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeBkLogConfigs) UpdateStatus(ctx context.Context, bkLogConfig *v1alpha1.BkLogConfig, opts v1.UpdateOptions) (*v1alpha1.BkLogConfig, error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceAction(bklogconfigsResource, "status", c.ns, bkLogConfig), &v1alpha1.BkLogConfig{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BkLogConfig), err
-}
-
-// Delete takes name of the bkLogConfig and deletes it. Returns an error if one occurs.
-func (c *FakeBkLogConfigs) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewDeleteActionWithOptions(bklogconfigsResource, c.ns, name, opts), &v1alpha1.BkLogConfig{})
-
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeBkLogConfigs) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewDeleteCollectionAction(bklogconfigsResource, c.ns, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1alpha1.BkLogConfigList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched bkLogConfig.
-func (c *FakeBkLogConfigs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.BkLogConfig, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceAction(bklogconfigsResource, c.ns, name, pt, data, subresources...), &v1alpha1.BkLogConfig{})
-
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BkLogConfig), err
 }

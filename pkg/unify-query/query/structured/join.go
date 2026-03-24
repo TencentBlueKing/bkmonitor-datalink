@@ -16,6 +16,7 @@ type JoinItem struct {
 	Left   string   `json:"left"`
 	Right  string   `json:"right"`
 }
+
 type JoinList []*JoinItem
 
 // GetLastJoinName

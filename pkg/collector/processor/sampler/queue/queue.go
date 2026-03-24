@@ -206,12 +206,11 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 
 	spanIDs := idMap.Pop(traceID)
 	logger.Debugf("queue pop action: count=%d, dataID=%v, traceID=%v", len(spanIDs), dataID, traceID.HexString())
-	if len(spanIDs) <= 0 {
+	if len(spanIDs) == 0 {
 		return nil
 	}
 
 	result := make([]ptrace.Traces, 0, len(spanIDs))
-
 	for i := 0; i < len(spanIDs); i++ {
 		tk := tracestore.TraceKey{TraceID: traceID, SpanID: spanIDs[i]}
 		traces, ok := storage.Get(tk)

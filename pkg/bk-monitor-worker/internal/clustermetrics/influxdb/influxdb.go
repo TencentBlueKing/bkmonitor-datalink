@@ -53,7 +53,7 @@ type Row struct {
 	Name    string            `json:"name,omitempty" msg:"name"`
 	Tags    map[string]string `json:"tags,omitempty" msg:"tags"`
 	Columns []string          `json:"columns,omitempty" msg:"columns"`
-	Values  [][]interface{}   `json:"values,omitempty" msg:"values"`
+	Values  [][]any           `json:"values,omitempty" msg:"values"`
 	Partial bool              `json:"partial,omitempty" msg:"partial"`
 }
 
@@ -202,7 +202,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 			return
 		}
 
-		recordData := make([]map[string]interface{}, 0)
+		recordData := make([]map[string]any, 0)
 		for _, r := range resultData.Results {
 			for _, s := range r.Series {
 				if len(s.Values) == 0 {
@@ -210,7 +210,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 				}
 				// 默认只取一个点
 				vs := s.Values[0]
-				d := make(map[string]interface{})
+				d := make(map[string]any)
 				for idx, v := range vs {
 					d[s.Columns[idx]] = v
 				}

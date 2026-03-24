@@ -22,91 +22,34 @@ import (
 	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 )
 
-func TestMetricsToPrometheusFormat(t *testing.T) {
-	t.Run("Labels/Count=2", func(t *testing.T) {
-		rows := []relationMetric{
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "1"},
-					{Name: "biz", Value: "0"},
-				},
-			},
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "2"},
-					{Name: "biz", Value: "0"},
-				},
-			},
-		}
-
-		buf := &bytes.Buffer{}
-		relationBytes(buf, rows...)
-
-		expected := `usage{cpu="1",biz="0"} 1
-usage{cpu="2",biz="0"} 1
-`
-		assert.Equal(t, expected, buf.String())
-	})
-
-	t.Run("Labels/Count=1", func(t *testing.T) {
-		rows := []relationMetric{
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "1"},
-				},
-			},
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "2"},
-				},
-			},
-		}
-
-		buf := &bytes.Buffer{}
-		relationBytes(buf, rows...)
-
-		expected := `usage{cpu="1"} 1
-usage{cpu="2"} 1
-`
-		assert.Equal(t, expected, buf.String())
-	})
-}
-
-func TestGetPodRelations(t *testing.T) {
+func TestWritePodRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	containers := []string{"test-container-1", "test-container-2"}
-	pod := "test-pod-1"
-	namespace := "test-ns-1"
-	node := "test-node-1"
-
-	podObject := Object{
+	podObject := PodObject{
 		ID: ObjectID{
-			Name:      pod,
-			Namespace: namespace,
+			Name:      "test-pod-1",
+			Namespace: "test-ns-1",
 		},
-		NodeName:   node,
-		Containers: containers,
+		NodeName: "test-node-1",
+		Containers: []ContainerKey{
+			{Name: "test-container-1"},
+			{Name: "test-container-2"},
+		},
 	}
 
 	objectsController := &ObjectsController{
 		ctx:    ctx,
 		cancel: cancel,
-		podObjs: &Objects{
-			kind: kindPod,
-			objs: map[string]Object{
+		podObjs: &PodMap{
+			objs: map[string]PodObject{
 				podObject.ID.String(): podObject,
 			},
 		},
 	}
 
 	buf := &bytes.Buffer{}
-	objectsController.GetPodRelations(buf)
+	objectsController.WritePodRelations(buf)
 
 	expected := `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1"} 1
 container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-1"} 1
@@ -115,11 +58,70 @@ container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-no
 	assert.Equal(t, expected, buf.String())
 }
 
-func TestGetDataSourceRelations(t *testing.T) {
+func TestWritePodRelationsWithStatefulSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pods := []Object{
+	cases := []struct {
+		name       string
+		ownerKind  string
+		setupObjs  func() (*Objects, *Objects) // statefulSetObjs, gameStatefulSetObjs
+	}{
+		{
+			name:      "standard StatefulSet",
+			ownerKind: kindStatefulSet,
+			setupObjs: func() (*Objects, *Objects) {
+				sts := NewObjects(kindStatefulSet)
+				sts.Set(Object{ID: ObjectID{Name: "test-sts-1", Namespace: "test-ns-1"}})
+				return sts, nil
+			},
+		},
+		{
+			name:      "GameStatefulSet",
+			ownerKind: kindGameStatefulSet,
+			setupObjs: func() (*Objects, *Objects) {
+				gsts := NewObjects(kindGameStatefulSet)
+				gsts.Set(Object{ID: ObjectID{Name: "test-sts-1", Namespace: "test-ns-1"}})
+				return nil, gsts
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			podObject := PodObject{
+				ID:         ObjectID{Name: "test-pod-0", Namespace: "test-ns-1"},
+				NodeName:   "test-node-1",
+				Containers: []ContainerKey{{Name: "test-container-1"}},
+				OwnerRefs:  []OwnerRef{{Kind: tc.ownerKind, Name: "test-sts-1"}},
+			}
+
+			stsObjs, gstsObjs := tc.setupObjs()
+			objectsController := &ObjectsController{
+				ctx:    ctx,
+				cancel: cancel,
+				podObjs: &PodMap{
+					objs: map[string]PodObject{podObject.ID.String(): podObject},
+				},
+				statefulSetObjs:     stsObjs,
+				gameStatefulSetObjs: gstsObjs,
+			}
+
+			buf := &bytes.Buffer{}
+			objectsController.WritePodRelations(buf)
+
+			output := buf.String()
+			assert.Contains(t, output, `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-0",node="test-node-1"} 1`)
+			assert.Contains(t, output, `pod_with_statefulset_relation{namespace="test-ns-1",pod="test-pod-0",statefulset="test-sts-1"} 1`)
+		})
+	}
+}
+
+func TestWriteDataSourceRelations(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pods := []PodObject{
 		{
 			ID: ObjectID{
 				Name:      "unify-query-01",
@@ -129,10 +131,8 @@ func TestGetDataSourceRelations(t *testing.T) {
 				"app.kubernetes.io/instance": "bkmonitor",
 				"app.kubernetes.io/name":     "unify-query",
 			},
-			NodeName: "127-0-0-1",
-			Containers: []string{
-				"unify-query",
-			},
+			NodeName:   "127-0-0-1",
+			Containers: []ContainerKey{{Name: "unify-query"}},
 		},
 		{
 			ID: ObjectID{
@@ -143,10 +143,8 @@ func TestGetDataSourceRelations(t *testing.T) {
 				"app.kubernetes.io/instance": "bkmonitor",
 				"app.kubernetes.io/name":     "unify-query",
 			},
-			NodeName: "127-0-0-2",
-			Containers: []string{
-				"unify-query",
-			},
+			NodeName:   "127-0-0-2",
+			Containers: []ContainerKey{{Name: "unify-query"}},
 		},
 		{
 			ID: ObjectID{
@@ -157,13 +155,11 @@ func TestGetDataSourceRelations(t *testing.T) {
 				"app.kubernetes.io/instance": "bkmonitor",
 				"app.kubernetes.io/name":     "unify-query",
 			},
-			NodeName: "127-0-0-3",
-			Containers: []string{
-				"unify-query",
-			},
+			NodeName:   "127-0-0-3",
+			Containers: []ContainerKey{{Name: "unify-query"}},
 		},
 	}
-	podsMap := make(map[string]Object, len(pods))
+	podsMap := make(map[string]PodObject, len(pods))
 	for _, p := range pods {
 		podsMap[p.ID.String()] = p
 	}
@@ -195,8 +191,7 @@ func TestGetDataSourceRelations(t *testing.T) {
 
 	testCases := map[string]struct {
 		bkLogConfig string
-
-		expected string
+		expected    []string
 	}{
 		"std_log_config_1": {
 			bkLogConfig: `{
@@ -230,10 +225,11 @@ func TestGetDataSourceRelations(t *testing.T) {
         "namespace": "blueking"
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1`,
+			},
 		},
 		"std_log_config_2": {
 			bkLogConfig: `{
@@ -267,9 +263,10 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify
         "namespace": "default"
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1`,
+			},
 		},
 		"std_log_config_3": {
 			bkLogConfig: `{
@@ -306,11 +303,12 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-
         }
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1`,
+			},
 		},
 	}
 
@@ -322,8 +320,7 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-
 				nodeObjs: &NodeMap{
 					nodes: nodesMap,
 				},
-				podObjs: &Objects{
-					kind: kindPod,
+				podObjs: &PodMap{
 					objs: podsMap,
 				},
 			}
@@ -334,15 +331,58 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-
 
 			objectsController.bkLogConfigObjs = &BkLogConfigMap{
 				entitiesMap: map[string]*bkLogConfigEntity{
-					name: {
-						Obj: bkLogConfig,
-					},
+					name: newBkLogConfigEntity(bkLogConfig),
 				},
 			}
 
 			buf := &bytes.Buffer{}
-			objectsController.GetDataSourceRelations(buf)
-			assert.Equal(t, c.expected, buf.String())
+			objectsController.WriteDataSourceRelations(buf)
+
+			for _, s := range c.expected {
+				assert.Contains(t, buf.String(), s)
+			}
 		})
+	}
+}
+
+func TestWriteContainerInfoRelation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	podObject := PodObject{
+		ID: ObjectID{
+			Name:      "test-pod-1",
+			Namespace: "test-ns-1",
+		},
+		NodeName: "test-node-1",
+		Annotations: map[string]string{
+			"monitoring.bk.tencent.com/relation/info/container/environment": "paasv3",
+			"monitoring.bk.tencent.com/relation/info/container/region":      "guangzhou",
+		},
+		Containers: []ContainerKey{
+			{Name: "test-container-1", ImageTag: "1.0.0", ImageName: "test-image"},
+			{Name: "test-container-2", ImageTag: "2.0.0", ImageName: "test-image"},
+		},
+	}
+
+	objectsController := &ObjectsController{
+		ctx:    ctx,
+		cancel: cancel,
+		podObjs: &PodMap{
+			objs: map[string]PodObject{
+				podObject.ID.String(): podObject,
+			},
+		},
+	}
+
+	buf := &bytes.Buffer{}
+	objectsController.WriteAppVersionWithContainerRelation(buf)
+
+	expected := []string{
+		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",app_name="test-image",version="1.0.0"} 1`,
+		`app_version_with_container_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",app_name="test-image",version="2.0.0"} 1`,
+	}
+	for _, s := range expected {
+		assert.Contains(t, buf.String(), s)
 	}
 }

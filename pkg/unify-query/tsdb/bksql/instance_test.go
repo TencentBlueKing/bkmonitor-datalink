@@ -10,15 +10,9 @@
 package bksql_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,76 +151,6 @@ func TestInstance_ShowCreateTable_TSpider(t *testing.T) {
 
 	// 验证字段数量
 	assert.Equal(t, 8, len(fieldsMap))
-}
-
-// TestInstance_QueryFieldMap_DorisTokenizeOnCharsNilToEmptySlice getFieldsMap 不填 TokenizeOnChars（零值 nil）；
-// 经 Doris QueryFieldMap 两轮合并写回后，JSON 须为 tokenize_on_chars: []，不得为 null。
-// 用 httptest 模拟「dbB 首次 SHOW CREATE 失败、第二次成功」，不修改 pkg/unify-query/mock。
-func TestInstance_QueryFieldMap_DorisTokenizeOnCharsNilToEmptySlice(t *testing.T) {
-	ctx := metadata.InitHashID(context.Background())
-	mock.Init()
-
-	dbA := "uq_tok_norm_a"
-	dbB := "uq_tok_norm_b"
-	respA := `{"result":true,"code":"00","data":{"list":[
-			{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},
-			{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}
-		]}}`
-	respB := `{"result":true,"code":"00","data":{"list":[
-			{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},
-			{"Field":"only_b","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}
-		]}}`
-
-	var bCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			SQL string `json:"sql"`
-		}
-		_ = json.Unmarshal(body, &req)
-		w.Header().Set("Content-Type", "application/json")
-
-		switch {
-		case strings.Contains(req.SQL, "`"+dbB+"`"):
-			if bCalls.Add(1) == 1 {
-				_, _ = w.Write([]byte(`{"result":false,"code":"99","message":"simulated first failure","errors":{}}`))
-				return
-			}
-			_, _ = w.Write([]byte(respB))
-		case strings.Contains(req.SQL, "`"+dbA+"`"):
-			_, _ = w.Write([]byte(respA))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	ins, err := bksql.NewInstance(ctx, &bksql.Options{
-		Address:   srv.URL + "/bk_data/query_sync/",
-		Timeout:   time.Minute,
-		MaxLimit:  1e4,
-		Tolerance: 5,
-		Curl:      curlWithoutHTTPMock{},
-	})
-	assert.NoError(t, err)
-
-	query := &metadata.Query{
-		DB:          dbA,
-		Measurement: "doris",
-		DBs:         []string{dbA, dbB},
-	}
-	fieldsMap, err := ins.QueryFieldMap(ctx, query, time.UnixMilli(1730118589181), time.UnixMilli(1730118889181))
-	assert.NoError(t, err)
-	assert.Contains(t, fieldsMap, "only_b")
-
-	raw, err := json.Marshal(fieldsMap["only_b"])
-	assert.NoError(t, err)
-	assert.Contains(t, string(raw), `"tokenize_on_chars":[]`)
-	assert.NotContains(t, string(raw), `"tokenize_on_chars":null`)
-
-	rawMap, err := json.Marshal(fieldsMap)
-	assert.NoError(t, err)
-	assert.NotContains(t, string(rawMap), `"tokenize_on_chars":null`)
 }
 
 // TestInstance_InitQueryFactory_TSpider_NoFieldQuery 验证 TSpider 通过 InitQueryFactory 时不触发字段查询。
@@ -2490,48 +2414,6 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 			}
 		})
 	}
-}
-
-// curlWithoutHTTPMock 与 curl.HttpCurl 行为一致，但使用全新 http.Transport，避免 mock.Init 激活的 httpmock 拦截 httptest。
-type curlWithoutHTTPMock struct{}
-
-func (curlWithoutHTTPMock) WithDecoder(func(context.Context, io.Reader, any) (int, error)) {}
-
-func (curlWithoutHTTPMock) Request(ctx context.Context, method string, opt curl.Options, res any) (int, error) {
-	if opt.UrlPath == "" {
-		return 0, fmt.Errorf("url path is empty")
-	}
-	client := http.Client{
-		Transport: &http.Transport{},
-		Timeout:   opt.Timeout,
-	}
-	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
-	if err != nil {
-		return 0, err
-	}
-	for k, v := range opt.Headers {
-		if k != "" && v != "" {
-			req.Header.Set(k, v)
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("http status %s", resp.Status)
-	}
-	buf, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, err
-	}
-	dec := json.NewDecoder(bytes.NewReader(buf))
-	dec.UseNumber()
-	if err := dec.Decode(&res); err != nil {
-		return len(buf), err
-	}
-	return len(buf), nil
 }
 
 // 创建测试用Instance

@@ -23,11 +23,33 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
+	relationInternal "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
+
+// bmwLogger 适配 bmw 的日志到 relation.Logger 接口
+// 注意：bmw 的 logger 包提供全局函数而不是对象方法，因此需要此 adapter
+// 同时为 schema_provider 相关日志添加统一前缀，便于过滤和调试
+type bmwLogger struct{}
+
+func (l *bmwLogger) Infof(format string, args ...interface{}) {
+	logger.Infof("[schema_provider] "+format, args...)
+}
+
+func (l *bmwLogger) Warnf(format string, args ...interface{}) {
+	logger.Warnf("[schema_provider] "+format, args...)
+}
+
+func (l *bmwLogger) Errorf(format string, args ...interface{}) {
+	logger.Errorf("[schema_provider] "+format, args...)
+}
+
+func (l *bmwLogger) Debugf(format string, args ...interface{}) {
+	logger.Debugf("[schema_provider] "+format, args...)
+}
 
 // CmdbResourceType cmdb监听资源类型
 type CmdbResourceType string
@@ -311,7 +333,7 @@ func NewCmdbEventHandler(bkTenantId string, prefix string, rOpt *redis.Options, 
 
 // Close 关闭操作
 func (h *CmdbEventHandler) Close() {
-	relation.GetRelationMetricsBuilder().ClearAllMetrics()
+	relationInternal.GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
 // getBkEvents 获取全部资源变更事件
@@ -538,6 +560,32 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	redisClient, err := redis.GetClient(&params.Redis)
+	if err != nil {
+		logger.Errorf("[cmdb_relation] failed to get redis client for schema provider: %v", err)
+		return errors.Wrapf(err, "failed to get redis client for schema provider")
+	}
+
+	// SchemaProvider 初始化失败时降级处理：不注入 SchemaProvider，
+	// 基础 CMDB 关系指标（set/module/host）仍正常上报，仅自定义关联指标不可用
+	schemaProvider, err := relation.NewRedisProvider(
+		cancelCtx,
+		redisClient,
+		relation.WithLogger(&bmwLogger{}),
+		relation.WithReloadOnStart(true),
+	)
+	if err != nil {
+		logger.Errorf("[cmdb_relation] failed to create schema provider, degrading gracefully: %v", err)
+	} else {
+		defer func() {
+			if closeErr := schemaProvider.Close(); closeErr != nil {
+				logger.Warnf("[cmdb_relation] failed to close schema provider: %v", closeErr)
+			}
+		}()
+		relationInternal.GetRelationMetricsBuilder().WithSchemaProvider(schemaProvider)
+		logger.Infof("[cmdb_relation] schema provider initialized successfully")
+	}
+
 	// 推送自定义上报数据，如果没有配置则不启动
 	if config.PromRemoteWriteUrl != "" {
 		wg.Add(1)
@@ -552,7 +600,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			defer func() {
 				err = reporter.Close(ctx)
 			}()
-			spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
+			spaceReport := relationInternal.GetRelationMetricsBuilder().WithSpaceReport(reporter)
 
 			for {
 				ticker := time.NewTicker(time.Minute)
@@ -560,7 +608,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
-					relation.GetRelationMetricsBuilder().ClearAllMetrics()
+					relationInternal.GetRelationMetricsBuilder().ClearAllMetrics()
 					ticker.Stop()
 					return
 				case <-ticker.C:

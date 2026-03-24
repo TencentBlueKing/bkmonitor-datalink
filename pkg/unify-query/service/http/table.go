@@ -34,13 +34,14 @@ func (p StatPoint) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]any{p.T, p.V})
 }
 
-// StatItem 统计降采样前数据的 Count/Sum/Min/Max/Avg，每项为 [时间戳, value]
+// StatItem 统计点集的 Count/Sum/Min/Max/Avg/Last，每项为 [时间戳, value]；Last 为按顺序的最后一个点
 type StatItem struct {
 	Count StatPoint `json:"count"`
 	Sum   StatPoint `json:"sum"`
 	Min   StatPoint `json:"min"`
 	Max   StatPoint `json:"max"`
 	Avg   StatPoint `json:"avg"`
+	Last  StatPoint `json:"last"`
 }
 
 // TablesItem
@@ -122,7 +123,7 @@ func (t *TablesItem) SetValuesByPoints(points []promql.Point) {
 	t.Values = values
 }
 
-// ComputeStatFromPoints 根据点集计算 Stat（Count/Sum/Min/Max/Avg），基于全部点
+// ComputeStatFromPoints 根据点集计算 Stat（Count/Sum/Min/Max/Avg/Last），基于全部点
 func ComputeStatFromPoints(points []promql.Point) *StatItem {
 	if len(points) == 0 {
 		return nil
@@ -143,11 +144,13 @@ func ComputeStatFromPoints(points []promql.Point) *StatItem {
 	}
 	n := float64(len(points))
 	avg := sum / n
+	last := points[len(points)-1]
 	return &StatItem{
 		Count: StatPoint{T: 0, V: n},
 		Sum:   StatPoint{T: 0, V: sum},
 		Min:   StatPoint{T: points[minIdx].T, V: minV},
 		Max:   StatPoint{T: points[maxIdx].T, V: maxV},
 		Avg:   StatPoint{T: 0, V: avg},
+		Last:  StatPoint{T: last.T, V: last.V},
 	}
 }

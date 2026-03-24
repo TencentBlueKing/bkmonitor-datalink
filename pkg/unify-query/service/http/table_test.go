@@ -27,7 +27,7 @@ func TestComputeStatFromPoints_Empty(t *testing.T) {
 func TestComputeStatFromPoints_SinglePoint(t *testing.T) {
 	points := []promql.Point{{T: 1000, V: 10}}
 	got := ComputeStatFromPoints(points)
-	requireStat(t, got, 1, 10, 10, 10, 10, 1000, 1000)
+	requireStat(t, got, 1, 10, 10, 10, 10, 1000, 1000, 1000, 10)
 }
 
 func TestComputeStatFromPoints_MultiplePoints(t *testing.T) {
@@ -37,8 +37,8 @@ func TestComputeStatFromPoints_MultiplePoints(t *testing.T) {
 		{T: 3000, V: 30},
 	}
 	got := ComputeStatFromPoints(points)
-	// count=3, sum=60, min=10@1000, max=30@3000, avg=20
-	requireStat(t, got, 3, 60, 10, 30, 20, 1000, 3000)
+	// count=3, sum=60, min=10@1000, max=30@3000, avg=20, last=30@3000
+	requireStat(t, got, 3, 60, 10, 30, 20, 1000, 3000, 3000, 30)
 }
 
 func TestComputeStatFromPoints_MinMaxIndices(t *testing.T) {
@@ -56,9 +56,11 @@ func TestComputeStatFromPoints_MinMaxIndices(t *testing.T) {
 	assert.Equal(t, float64(3), got.Count.V)
 	assert.Equal(t, float64(150), got.Sum.V)
 	assert.Equal(t, float64(50), got.Avg.V)
+	assert.Equal(t, int64(3000), got.Last.T)
+	assert.Equal(t, float64(90), got.Last.V)
 }
 
-func requireStat(t *testing.T, s *StatItem, count int, sum, minV, maxV, avg float64, minT, maxT int64) {
+func requireStat(t *testing.T, s *StatItem, count int, sum, minV, maxV, avg float64, minT, maxT, lastT int64, lastV float64) {
 	t.Helper()
 	assert.NotNil(t, s)
 	assert.Equal(t, float64(count), s.Count.V)
@@ -71,6 +73,8 @@ func requireStat(t *testing.T, s *StatItem, count int, sum, minV, maxV, avg floa
 	assert.Equal(t, maxT, s.Max.T)
 	assert.Equal(t, avg, s.Avg.V)
 	assert.Equal(t, int64(0), s.Avg.T)
+	assert.Equal(t, lastT, s.Last.T)
+	assert.Equal(t, lastV, s.Last.V)
 }
 
 func TestStatPoint_MarshalJSON(t *testing.T) {
@@ -98,5 +102,5 @@ func TestTablesItem_GetPromPoints_And_Stat(t *testing.T) {
 	assert.Equal(t, 20.0, points[1].V)
 
 	item.Stat = ComputeStatFromPoints(points)
-	requireStat(t, item.Stat, 2, 30, 10, 20, 15, 1000, 2000)
+	requireStat(t, item.Stat, 2, 30, 10, 20, 15, 1000, 2000, 2000, 20)
 }

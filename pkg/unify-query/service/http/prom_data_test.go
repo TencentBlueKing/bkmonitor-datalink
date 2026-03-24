@@ -42,6 +42,8 @@ func TestPromData_Fill_FillsStat(t *testing.T) {
 	assert.Equal(t, int64(2000), stat.Max.T)
 	assert.Equal(t, float64(20), stat.Max.V)
 	assert.Equal(t, float64(15), stat.Avg.V)
+	assert.Equal(t, int64(2000), stat.Last.T)
+	assert.Equal(t, float64(20), stat.Last.V)
 }
 
 // Fill 已写入 Stat；Downsample 只缩减 Values，Stat 仍为降采样前点集统计。
@@ -77,6 +79,8 @@ func TestPromData_Downsample_PreservesStatAndReducesPoints(t *testing.T) {
 	// Stat 应为降采样前的统计：10 个点
 	assert.Equal(t, float64(10), d.Tables[0].Stat.Count.V)
 	assert.Equal(t, float64(55), d.Tables[0].Stat.Sum.V) // 1+2+...+10
+	assert.Equal(t, int64(1900), d.Tables[0].Stat.Last.T)
+	assert.Equal(t, float64(10), d.Tables[0].Stat.Last.V)
 	// Values 应为降采样后的点数（变少）
 	assert.Less(t, len(d.Tables[0].Values), origLen)
 }

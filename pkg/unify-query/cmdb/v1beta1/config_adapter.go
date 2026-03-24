@@ -18,82 +18,63 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
-// ConfigAdapter 将 SchemaProvider 的数据转换为 v1beta1 Config 格式
+// ConfigAdapter 配置适配器
+// 将 relation.SchemaProvider 的数据转换为 v1beta1 Config 格式
 type ConfigAdapter struct {
 	provider relation.SchemaProvider
 }
 
-// NewConfigAdapter 创建 ConfigAdapter
+// NewConfigAdapter 创建配置适配器
 func NewConfigAdapter(provider relation.SchemaProvider) *ConfigAdapter {
 	return &ConfigAdapter{
 		provider: provider,
 	}
 }
 
-// GetConfig 从 SchemaProvider 获取数据并转换为 v1beta1 Config
-// namespace 为空字符串时获取全局配置
-//
-// 注意：v1beta1 没有 namespace 概念，因此会按资源/关联 Name 去重，
-// 跨 namespace 出现相同 Name 时只保留第一个。
+// GetConfig 从 SchemaProvider 获取并转换配置
+// namespace 为空时获取全局配置（__all__）
 func (ca *ConfigAdapter) GetConfig(ctx context.Context, namespace string) (*Config, error) {
-	resources, err := ca.provider.ListResourceDefinitions(namespace)
+	if namespace == "" {
+		namespace = relation.NamespaceAll
+	}
+
+	// 获取资源定义
+	resourceDefs, err := ca.provider.ListResourceDefinitions(namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list resource definitions error: %w", err)
+		return nil, fmt.Errorf("list resource definitions: %w", err)
 	}
 
-	relations, err := ca.provider.ListRelationDefinitions(namespace)
+	// 获取关联定义
+	relationDefs, err := ca.provider.ListRelationDefinitions(namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list relation definitions error: %w", err)
+		return nil, fmt.Errorf("list relation definitions: %w", err)
 	}
 
-	if len(resources) == 0 && len(relations) == 0 {
-		return nil, fmt.Errorf("no resource or relation definitions found for namespace %q", namespace)
+	// 转换为 Config
+	resources := make([]ResourceConf, 0, len(resourceDefs))
+	for _, rd := range resourceDefs {
+		resources = append(resources, convertResourceDefinition(rd))
 	}
 
-	cfg := &Config{
-		Resource: make([]ResourceConf, 0, len(resources)),
-		Relation: make([]RelationConf, 0, len(relations)),
+	relations := make([]RelationConf, 0, len(relationDefs))
+	for _, rd := range relationDefs {
+		relations = append(relations, convertRelationDefinition(rd))
 	}
 
-	// v1beta1 没有 namespace 概念，按 Name 去重（跨 namespace 相同资源只保留第一个）
-	seenResource := make(map[string]bool, len(resources))
-	for _, rd := range resources {
-		if seenResource[rd.Name] {
-			log.Debugf(ctx, "skip duplicate resource %q (namespace=%s), already seen", rd.Name, rd.Namespace)
-			continue
-		}
-		seenResource[rd.Name] = true
-		cfg.Resource = append(cfg.Resource, convertResourceDefinition(rd))
-	}
+	log.Infof(ctx, "v1beta1 config adapter built: %d resources, %d relations from namespace %s",
+		len(resources), len(relations), namespace)
 
-	// 关联也按边去重，避免跨 namespace 重复的边
-	// v1beta1 使用无向图，所以 "pod->node" 和 "node->pod" 是同一条边
-	seenRelation := make(map[string]bool, len(relations))
-	for _, rd := range relations {
-		relConf, convertErr := convertRelationDefinition(rd)
-		if convertErr != nil {
-			log.Warnf(ctx, "skip relation %s: %v", rd.Name, convertErr)
-			continue
-		}
-		edgeKey := undirectedEdgeKey(rd.FromResource, rd.ToResource)
-		if seenRelation[edgeKey] {
-			log.Debugf(ctx, "skip duplicate relation %q (namespace=%s), edge %s already seen", rd.Name, rd.Namespace, edgeKey)
-			continue
-		}
-		seenRelation[edgeKey] = true
-		cfg.Relation = append(cfg.Relation, relConf)
-	}
-
-	return cfg, nil
+	return &Config{
+		Resource: resources,
+		Relation: relations,
+	}, nil
 }
 
-// convertResourceDefinition 将 relation.ResourceDefinition 转换为 v1beta1 ResourceConf
-// 映射规则:
-//   - FieldDefinition.Required=true  → Index（主键/索引字段）
-//   - FieldDefinition.Required=false → Info（信息字段）
+// convertResourceDefinition 转换资源定义
+// ResourceDefinition.Fields[].Required=true → ResourceConf.Index
+// ResourceDefinition.Fields[].Required=false → ResourceConf.Info
 func convertResourceDefinition(rd *relation.ResourceDefinition) ResourceConf {
-	var index cmdb.Index
-	var info cmdb.Index
+	var index, info cmdb.Index
 
 	for _, field := range rd.Fields {
 		if field.Required {
@@ -110,28 +91,14 @@ func convertResourceDefinition(rd *relation.ResourceDefinition) ResourceConf {
 	}
 }
 
-// convertRelationDefinition 将 relation.RelationDefinition 转换为 v1beta1 RelationConf
-// 映射规则:
-//   - FromResource → Resources[0]
-//   - ToResource   → Resources[1]
-func convertRelationDefinition(rd *relation.RelationDefinition) (RelationConf, error) {
-	if rd.FromResource == "" || rd.ToResource == "" {
-		return RelationConf{}, fmt.Errorf("from_resource or to_resource is empty")
-	}
-
+// convertRelationDefinition 转换关联定义
+// RelationDefinition.FromResource → RelationConf.Resources[0]
+// RelationDefinition.ToResource → RelationConf.Resources[1]
+func convertRelationDefinition(rd *relation.RelationDefinition) RelationConf {
 	return RelationConf{
 		Resources: []cmdb.Resource{
 			cmdb.Resource(rd.FromResource),
 			cmdb.Resource(rd.ToResource),
 		},
-	}, nil
-}
-
-// undirectedEdgeKey 生成无向边的去重 key
-// v1beta1 graph 是无向图，"a->b" 和 "b->a" 是同一条边
-func undirectedEdgeKey(a, b string) string {
-	if a > b {
-		a, b = b, a
 	}
-	return a + "<>" + b
 }

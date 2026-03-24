@@ -578,3 +578,24 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
 }
+
+// ReloadConfig 重新加载配置
+// 当 Redis 数据变更时，可以调用此方法刷新 Model
+func ReloadConfig(ctx context.Context) error {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if provider == nil {
+		return fmt.Errorf("schema provider not initialized")
+	}
+
+	newMdl, err := newModel(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create new model: %w", err)
+	}
+
+	mdl = newMdl
+	log.Infof(ctx, "v1beta1 model reloaded successfully")
+	return nil
+}
+

@@ -39,38 +39,83 @@ type lastTimeSlice struct {
 
 var lastCPUTimeSlice lastTimeSlice
 
+func logWindowsCPUTimesQuery(stage string, meta windowsCPUTimesQueryMeta, cpuCount int) {
+	if meta.fallbackReason != "" {
+		logger.Warnw(
+			"windows cpu times fallback to legacy query",
+			"stage", stage,
+			"group_count", meta.groupCount,
+			"cpu_count", cpuCount,
+			"mode", meta.mode,
+			"used_group_query", false,
+			"fallback_reason", meta.fallbackReason,
+		)
+		return
+	}
+
+	logger.Debugw(
+		"windows cpu times query",
+		"stage", stage,
+		"group_count", meta.groupCount,
+		"cpu_count", cpuCount,
+		"mode", meta.mode,
+		"used_group_query", meta.mode == windowsCPUTimesModeGroupAware,
+	)
+}
+
 func init() {
 	lastCPUTimeSlice.Lock()
-	lastCPUTimeSlice.lastPerCPUTimes, _ = getWindowsCPUTimes()
+	perTimes, meta, err := getWindowsCPUTimesWithMeta()
+	if err != nil {
+		logger.Errorf("init windows cpu baseline failed: %v", err)
+	} else {
+		lastCPUTimeSlice.lastPerCPUTimes = perTimes
+		logWindowsCPUTimesQuery("init", meta, len(perTimes))
+	}
 	if len(lastCPUTimeSlice.lastPerCPUTimes) > 0 {
 		lastCPUTimeSlice.lastCPUTimes = []cpu.TimesStat{sumWindowsTotalCPUTimes(lastCPUTimeSlice.lastPerCPUTimes)}
 	} else {
-		lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
+		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
+		if err != nil {
+			logger.Errorf("init windows total cpu baseline fallback failed: %v", err)
+		} else {
+			logger.Warn("init windows total cpu baseline fell back to cpu.Times(false)")
+		}
 	}
 	lastCPUTimeSlice.Unlock()
 }
 
 func getCPUStatUsage(report *CpuReport) error {
 	// per stat
-	perStat, err := getWindowsCPUTimes()
+	perStat, meta, err := getWindowsCPUTimesWithMeta()
 	if err != nil {
-		logger.Error("get CPU Stat fail")
+		logger.Errorf("get CPU Stat fail: %v", err)
 		return err
 	}
+	logWindowsCPUTimesQuery("collect", meta, len(perStat))
 	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
 	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perStat) != len(lastCPUTimeSlice.lastPerCPUTimes) {
-		lastCPUTimeSlice.lastPerCPUTimes, err = getWindowsCPUTimes()
+		logger.Warnw(
+			"reset windows cpu baseline before usage calculation",
+			"previous_cpu_count", len(lastCPUTimeSlice.lastPerCPUTimes),
+			"current_cpu_count", len(perStat),
+		)
+
+		lastCPUTimeSlice.lastPerCPUTimes, meta, err = getWindowsCPUTimesWithMeta()
 		if err != nil {
+			logger.Errorf("reset windows cpu baseline failed: %v", err)
 			return err
 		}
+		logWindowsCPUTimesQuery("reset_baseline", meta, len(lastCPUTimeSlice.lastPerCPUTimes))
 	}
 
 	l1, l2 := len(perStat), len(lastCPUTimeSlice.lastPerCPUTimes)
 	if l1 != l2 {
 		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
+		logger.Errorf("windows cpu baseline length mismatch: %v", err)
 		return err
 	}
 
@@ -85,7 +130,7 @@ func getCPUStatUsage(report *CpuReport) error {
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
 	perUsage, err := calculateAllCPUBusyPercent(lastCPUTimeSlice.lastPerCPUTimes, perStat)
 	if err != nil {
-		logger.Error("get CPU Percent fail")
+		logger.Errorf("get CPU Percent fail: %v", err)
 		return err
 	}
 	// 将此次获取的timeState重新写入公共变量
@@ -111,6 +156,13 @@ func getCPUStatUsage(report *CpuReport) error {
 	if report.TotalUsage < 0 || report.TotalUsage > 100 {
 		report.TotalUsage = 0.0
 	}
+
+	logger.Debugw(
+		"windows cpu usage collected",
+		"per_stat_len", len(report.Stat),
+		"per_usage_len", len(report.Usage),
+		"total_usage", report.TotalUsage,
+	)
 	return nil
 }
 

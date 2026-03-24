@@ -21,6 +21,17 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const (
+	windowsCPUTimesModeLegacy     = "legacy"
+	windowsCPUTimesModeGroupAware = "group-aware"
+)
+
+type windowsCPUTimesQueryMeta struct {
+	groupCount     uint16
+	mode           string
+	fallbackReason string
+}
+
 type systemProcessorPerformanceInformation struct {
 	IdleTime       int64
 	KernelTime     int64
@@ -44,26 +55,36 @@ const (
 )
 
 func getWindowsCPUTimes() ([]cpu.TimesStat, error) {
+	times, _, err := getWindowsCPUTimesWithMeta()
+	return times, err
+}
+
+func getWindowsCPUTimesWithMeta() ([]cpu.TimesStat, windowsCPUTimesQueryMeta, error) {
+	meta := windowsCPUTimesQueryMeta{}
 	groupCount, err := getActiveProcessorGroupCount()
 	if err != nil {
 		stats, legacyErr := queryLegacyProcessorPerformanceInformation()
 		if legacyErr == nil {
-			return processorPerformanceInfoToTimes(stats, 0), nil
+			meta.mode = windowsCPUTimesModeLegacy
+			meta.fallbackReason = fmt.Sprintf("GetActiveProcessorGroupCount failed: %v", err)
+			return processorPerformanceInfoToTimes(stats, 0), meta, nil
 		}
-		return nil, err
+		return nil, meta, fmt.Errorf("get active processor group count: %w", err)
 	}
+	meta.groupCount = groupCount
 
 	// Single-group machines can still use the old code path safely.
 	if groupCount <= 1 {
 		stats, err := queryLegacyProcessorPerformanceInformation()
 		if err != nil {
-			return nil, err
+			return nil, meta, err
 		}
-		return processorPerformanceInfoToTimes(stats, 0), nil
+		meta.mode = windowsCPUTimesModeLegacy
+		return processorPerformanceInfoToTimes(stats, 0), meta, nil
 	}
 
 	if err := procNtQuerySystemInformationEx.Find(); err != nil {
-		return nil, fmt.Errorf("NtQuerySystemInformationEx unavailable: %w", err)
+		return nil, meta, fmt.Errorf("NtQuerySystemInformationEx unavailable for %d processor groups: %w", groupCount, err)
 	}
 
 	var all []cpu.TimesStat
@@ -71,12 +92,13 @@ func getWindowsCPUTimes() ([]cpu.TimesStat, error) {
 	for group := uint16(0); group < groupCount; group++ {
 		stats, err := queryProcessorPerformanceInformationByGroup(group)
 		if err != nil {
-			return nil, err
+			return nil, meta, fmt.Errorf("query processor performance info for group %d: %w", group, err)
 		}
 		all = append(all, processorPerformanceInfoToTimes(stats, cpuOffset)...)
 		cpuOffset += len(stats)
 	}
-	return all, nil
+	meta.mode = windowsCPUTimesModeGroupAware
+	return all, meta, nil
 }
 
 func sumCPUTimes(times []cpu.TimesStat) cpu.TimesStat {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/singleflight"
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -40,6 +41,11 @@ var (
 	mdl      *model
 	mtx      sync.Mutex
 	provider relation.SchemaProvider
+
+	// reloadGroup ensures that concurrent schema change events coalesce into
+	// a single ReloadConfig call, preventing redundant model rebuilds under
+	// notification storms from Redis Pub/Sub.
+	reloadGroup singleflight.Group
 )
 
 // InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用
@@ -59,14 +65,21 @@ func InitSchemaProvider(p relation.SchemaProvider) {
 	}
 }
 
-// onSchemaChange is called when schema (resource or relation definitions) changes
-// This callback triggers model reload to ensure v1beta1 stays in sync with provider
+// onSchemaChange is called when schema (resource or relation definitions) changes.
+// It uses singleflight to coalesce concurrent reload requests so that rapid-fire
+// Pub/Sub events (e.g. batch schema updates) result in only one model rebuild.
 func onSchemaChange(kind, namespace string) {
 	ctx := context.Background()
 	log.Infof(ctx, "schema change detected: kind=%s, namespace=%s", kind, namespace)
-	
-	if err := ReloadConfig(ctx); err != nil {
+
+	_, err, shared := reloadGroup.Do("reload", func() (interface{}, error) {
+		return nil, ReloadConfig(ctx)
+	})
+	if err != nil {
 		log.Warnf(ctx, "failed to reload v1beta1 model on schema change: %v", err)
+	}
+	if shared {
+		log.Debugf(ctx, "schema reload was shared with concurrent request")
 	}
 }
 

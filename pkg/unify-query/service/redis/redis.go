@@ -83,6 +83,11 @@ func (s *Service) Reload(ctx context.Context) {
 
 // initSchemaProvider 根据配置初始化 SchemaProvider
 func (s *Service) initSchemaProvider(ctx context.Context) {
+	// Close the old provider manager before creating a new one to prevent
+	// leaking Redis provider subscriptions and goroutines on repeated Reload()
+	if s.providerManager != nil {
+		_ = s.providerManager.Close()
+	}
 	s.providerManager = relation.NewProviderManager(nil)
 
 	var redisClient goRedis.UniversalClient

@@ -483,6 +483,8 @@ func (c AllConditions) ToPromMatchers(ctx context.Context, encodeFunc func(strin
 		cf := f
 		cf.Value = append([]string(nil), cf.Value...)
 		cf.ContainsToPromReg()
+		// ContainsToPromReg 会将多值合并为单条（如拼成正则）并写回 cf.Value，通常仅剩一项。
+		// 下面取 Value[0] 表示该合并后的完整匹配串，而不是原始多值里“只取第一个”。
 		if cf.Operator == ConditionContains || cf.Operator == ConditionNotContains {
 			return nil, metadata.NewMessage(
 				metadata.MsgQueryTs,

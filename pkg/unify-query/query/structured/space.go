@@ -111,6 +111,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	if rtDetail == nil {
 		return nil
 	}
+	// 仅在全空间候选路径下传入非空 tableIDConditions（见 DataList）；此处按结果表 Labels 过滤。
 	if len(tableIDConditions) > 0 {
 		labels := rtDetail.Labels
 		if labels == nil {
@@ -287,6 +288,12 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	// 判断 tableID 使用几段式
 	db, measurement := opt.TableID.Split()
+	// 已指定 table_id / data_label（db 非空）时，候选 RT 已由 TableID 限定，不再按 table_id_conditions 过滤 Labels；
+	// 未指定（db 为空，全空间扫表）时，才用 table_id_conditions 在候选集上按结果表 Labels 收窄。
+	var tableIDCondsForFilter AllConditions
+	if db == "" {
+		tableIDCondsForFilter = opt.TableIDConditions
+	}
 
 	var fieldNameExp *regexp.Regexp
 	if opt.IsRegexp {
@@ -332,7 +339,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, opt.TableIDConditions)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, tableIDCondsForFilter)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -340,6 +347,9 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	if len(tsDBs) == 0 {
 		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)
+		if len(tableIDCondsForFilter) > 0 {
+			routerMessage += "；已启用 table_id_conditions，无命中时请核对结果表 Labels 是否与条件一致"
+		}
 		return nil, nil
 	}
 
@@ -357,7 +367,7 @@ type TsDBOption struct {
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp      bool
 	AllConditions AllConditions
-	// TableIDConditions 表标签条件（AllConditions），用于 DataList 按表标签过滤 RT
+	// TableIDConditions 表标签条件（AllConditions）。仅当未指定 table_id / data_label（TableID.Split() 后 db 为空、走全空间候选）时参与过滤；已指定 db 或完整 table_id 时不生效。
 	TableIDConditions AllConditions
 }
 

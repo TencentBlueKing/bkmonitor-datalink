@@ -297,4 +297,22 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		assert.Contains(t, tableIDs, influxdb.ResultTableInfluxDB)
 		assert.Contains(t, tableIDs, influxdb.ResultTableVM)
 	})
+
+	// 已指定 table_id / data_label（Split 后 db 非空）时，不再套用 table_id_conditions，避免与显式选表互斥。
+	t.Run("with_data_label_ignores_table_id_conditions", func(t *testing.T) {
+		opt := *optBase
+		opt.TableID = "influxdb"
+		opt.TableIDConditions = AllConditions{
+			{{DimensionName: "scene", Value: []string{"other"}, Operator: ConditionEqual}},
+		}
+		tsdb, err := sf.DataList(&opt)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(tsdb), 2, "有 data_label 时 table_id_conditions 应被忽略，仍应命中 influxdb+vm（mock 中二者同属 influxdb data_label）")
+		tableIDs := make([]string, 0, len(tsdb))
+		for _, d := range tsdb {
+			tableIDs = append(tableIDs, d.TableID)
+		}
+		assert.Contains(t, tableIDs, influxdb.ResultTableInfluxDB)
+		assert.Contains(t, tableIDs, influxdb.ResultTableVM)
+	})
 }

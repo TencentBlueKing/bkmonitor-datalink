@@ -333,9 +333,12 @@ func (rp *RedisProvider) subscribeEntities() {
 				select {
 				case <-rp.ctx.Done():
 					return
-				case msg := <-ch:
-					if msg == nil {
+				case msg, ok := <-ch:
+					if !ok {
 						return
+					}
+					if msg == nil {
+						continue
 					}
 
 					var payload MsgPayload
@@ -352,8 +355,7 @@ func (rp *RedisProvider) subscribeEntities() {
 					if err := rp.reloadNamespace(payload.Kind, payload.Namespace); err != nil {
 						rp.config.Logger.Errorf("failed to reload namespace %s:%s: %v", payload.Kind, payload.Namespace, err)
 					}
-					
-					// Trigger all registered callbacks to notify subscribers about the change
+
 					rp.triggerCallbacks(payload.Kind, payload.Namespace)
 				}
 			}
@@ -577,9 +579,9 @@ func (rp *RedisProvider) FindRelationByResourceTypes(namespace, fromResource, to
 			}
 		case DirectionTypeBidirectional:
 			// 双向关联：匹配任意方向
-			if !def.IsDirectional && 
+			if !def.IsDirectional &&
 				((def.FromResource == fromResource && def.ToResource == toResource) ||
-				 (def.FromResource == toResource && def.ToResource == fromResource)) {
+					(def.FromResource == toResource && def.ToResource == fromResource)) {
 				return def, true
 			}
 		}
@@ -589,7 +591,7 @@ func (rp *RedisProvider) FindRelationByResourceTypes(namespace, fromResource, to
 }
 
 // Subscribe registers a callback to be invoked when schema changes occur
-// The callback will be called with the kind ("ResourceDefinition" or "RelationDefinition") 
+// The callback will be called with the kind ("ResourceDefinition" or "RelationDefinition")
 // and namespace that was reloaded
 func (rp *RedisProvider) Subscribe(callback SchemaChangeCallback) error {
 	if callback == nil {

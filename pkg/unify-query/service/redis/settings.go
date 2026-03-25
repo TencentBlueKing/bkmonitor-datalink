@@ -27,6 +27,8 @@ const (
 	DialTimeoutConfigPath = "redis.dial_timeout"
 	ReadTimeoutConfigPath = "redis.read_timeout"
 	ServiceNameConfigPath = "redis.service_name"
+
+	SchemaProviderTypeConfigPath = "schemaProvider.type"
 )
 
 var (
@@ -44,4 +46,6 @@ var (
 
 	DialTimeout time.Duration
 	ReadTimeout time.Duration
+
+	SchemaProviderType string
 )

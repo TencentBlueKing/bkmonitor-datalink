@@ -142,6 +142,27 @@ func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 0, len(tsdb))
 	})
+
+	t.Run("invalid_regex_in_table_id_conditions_warns_and_no_tsdb", func(t *testing.T) {
+		ctx = metadata.InitHashID(ctx)
+		influxdb.MockSpaceRouter(ctx)
+		sf, err := NewSpaceFilter(ctx, &TsDBOption{SpaceUid: influxdb.SpaceUid})
+		require.NoError(t, err)
+		opt := &TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			FieldName:   "kube_node_info",
+			TableID:     "",
+			IsRegexp:    false,
+			IsSkipK8s:   true,
+			IsSkipField: false,
+			TableIDConditions: AllConditions{{
+				{DimensionName: "scene", Value: []string{"("}, Operator: ConditionRegEqual},
+			}},
+		}
+		tsdb, err := sf.DataList(opt)
+		require.NoError(t, err)
+		assert.Equal(t, 0, len(tsdb), "非法正则时跳过匹配、不返回 error；0 TsDB 时由 DataList routerMessage/Status 汇总提示")
+	})
 }
 
 // TestE2E_DataList_FilterResultTableByLabel 端到端：按表标签过滤 result table；mock 中 influxdb 为 scene=log、vm 为 scene=k8s

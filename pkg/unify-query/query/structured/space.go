@@ -117,7 +117,12 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		if labels == nil {
 			labels = make(map[string]string)
 		}
-		if !tableIDConditions.MatchesResultTableLabels(labels) { // 如果标签不匹配，则直接返回 nil
+		ok, err := tableIDConditions.MatchResultTableLabels(labels)
+		if err != nil {
+			// 非法正则等不在此逐表打日志，由 DataList 在最终 0 个 TsDB 时经 routerMessage 汇总提示
+			return nil
+		}
+		if !ok {
 			return nil
 		}
 	}
@@ -348,7 +353,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	if len(tsDBs) == 0 {
 		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)
 		if len(tableIDCondsForFilter) > 0 {
-			routerMessage += "；已启用 table_id_conditions，无命中时请核对结果表 Labels 是否与条件一致"
+			routerMessage += "；已启用 table_id_conditions，无命中时请核对 Labels 与条件是否一致（req/nreq 请确认正则合法；匹配异常亦表现为无 TsDB）"
 		}
 		return nil, nil
 	}

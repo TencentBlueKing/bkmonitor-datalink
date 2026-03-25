@@ -1184,3 +1184,83 @@ func TestAllConditions_ToPromMatchers(t *testing.T) {
 		assert.Equal(t, "PREFIX___bk_query_label_selector_scene", ms[0].Name)
 	})
 }
+
+func TestConditionField_ContainsToPromReg(t *testing.T) {
+	t.Run("empty_value_noop", func(t *testing.T) {
+		c := ConditionField{DimensionName: "x", Value: nil, Operator: ConditionContains}
+		got := c.ContainsToPromReg()
+		require.Same(t, &c, got)
+		assert.Equal(t, ConditionContains, c.Operator)
+		assert.Nil(t, c.Value)
+	})
+
+	t.Run("single_contains_to_eq", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionContains, Value: []string{"log"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionEqual, c.Operator)
+		assert.Equal(t, []string{"log"}, c.Value)
+	})
+
+	t.Run("single_ncontains_to_ne", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionNotContains, Value: []string{"metric"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionNotEqual, c.Operator)
+		assert.Equal(t, []string{"metric"}, c.Value)
+	})
+
+	t.Run("single_eq_unchanged_operator", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionEqual, Value: []string{"v"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionEqual, c.Operator)
+		assert.Equal(t, []string{"v"}, c.Value)
+	})
+
+	t.Run("multi_eq_to_req_quoted_full_match", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionEqual, Value: []string{"a.b", "c"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		assert.Equal(t, `^(a\.b|c)$`, c.Value[0])
+	})
+
+	t.Run("multi_ne_to_nreq_quoted", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionNotEqual, Value: []string{"x", "y"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionNotRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		assert.Equal(t, `^(x|y)$`, c.Value[0])
+	})
+
+	t.Run("multi_contains_to_req_quoted", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionContains, Value: []string{"p|q", "r"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		// | and meta in literals are escaped
+		assert.Equal(t, `^(p\|q|r)$`, c.Value[0])
+	})
+
+	t.Run("multi_ncontains_to_nreq_quoted", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionNotContains, Value: []string{"a", "b"}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionNotRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		assert.Equal(t, `^(a|b)$`, c.Value[0])
+	})
+
+	t.Run("multi_req_passthrough_regex_no_wrapper", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionRegEqual, Value: []string{`foo`, `bar.*`}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		assert.Equal(t, `foo|bar.*`, c.Value[0])
+	})
+
+	t.Run("multi_nreq_passthrough_regex_no_wrapper", func(t *testing.T) {
+		c := ConditionField{Operator: ConditionNotRegEqual, Value: []string{`a`, `b`}}
+		c.ContainsToPromReg()
+		assert.Equal(t, ConditionNotRegEqual, c.Operator)
+		require.Len(t, c.Value, 1)
+		assert.Equal(t, `a|b`, c.Value[0])
+	})
+}

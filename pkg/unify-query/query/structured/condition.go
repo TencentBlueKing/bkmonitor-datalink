@@ -453,7 +453,7 @@ func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, e
 	return false, nil
 }
 
-// MatchesResultTableLabels 表标签过滤：语义同 MatchResultTableLabels，仅返回是否匹配（忽略 error）；空或 nil 视为不过滤（返回 true）。
+// MatchesResultTableLabels 表标签过滤：语义同 MatchResultTableLabels，仅返回是否匹配
 func (c AllConditions) MatchesResultTableLabels(labels map[string]string) bool {
 	ok, _ := c.MatchResultTableLabels(labels)
 	return ok

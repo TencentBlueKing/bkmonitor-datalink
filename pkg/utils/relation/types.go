@@ -90,6 +90,11 @@ var (
 	ErrRelationDefinitionNotFound = errors.New("relation definition not found")
 )
 
+// SchemaChangeCallback is called when schema (resource or relation definitions) changes
+// kind: "ResourceDefinition" or "RelationDefinition"
+// namespace: the namespace that was changed
+type SchemaChangeCallback func(kind, namespace string)
+
 type SchemaProvider interface {
 	GetResourceDefinition(namespace, name string) (*ResourceDefinition, error)
 	ListResourceDefinitions(namespace string) ([]*ResourceDefinition, error)
@@ -99,6 +104,10 @@ type SchemaProvider interface {
 	GetRelationSchema(relationType RelationName) (*RelationSchema, error)
 	ListRelationSchemas() []RelationSchema
 	FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType DirectionType) (*RelationDefinition, bool)
+	
+	// Subscribe registers a callback for schema change notifications
+	// The callback will be invoked when resource or relation definitions are reloaded
+	Subscribe(callback SchemaChangeCallback) error
 }
 
 type ResourceType string

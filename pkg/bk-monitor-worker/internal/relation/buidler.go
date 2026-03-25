@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -497,13 +498,13 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 
 	generateMetric := func(relationDef *relation.RelationDefinition, targetResource string, fields map[string]any) *Metric {
 		// 获取两端资源的 ResourceDefinition
-		fromResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, targetResource)
+		fromResourceDef, err := schemaProvider.GetResourceDefinition(namespace, targetResource)
 		if err != nil {
 			logger.Errorf("[relation_config] Resource definition for %s not found: %v", targetResource, err)
 			return nil
 		}
 
-		toResourceDef, err := b.schemaProvider.GetResourceDefinition(namespace, info.Resource)
+		toResourceDef, err := schemaProvider.GetResourceDefinition(namespace, info.Resource)
 		if err != nil {
 			logger.Errorf("[relation_config] Resource definition for %s not found: %v", info.Resource, err)
 			return nil
@@ -558,12 +559,17 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 			return nil
 		}
 
-		// 生成指标
+		// 生成指标 - 排序 keys 以保证 label 顺序稳定
 		labelList := make(Labels, 0, len(collectedFields))
-		for k, v := range collectedFields {
+		keys := make([]string, 0, len(collectedFields))
+		for k := range collectedFields {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
 			labelList = append(labelList, Label{
 				Name:  k,
-				Value: v,
+				Value: collectedFields[k],
 			})
 		}
 

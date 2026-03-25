@@ -390,5 +390,10 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 func AllResources() map[cmdb.Resource]ResourceConf {
 	resourceConfigMu.RLock()
 	defer resourceConfigMu.RUnlock()
-	return resourceConfig
+	// Return a shallow copy to prevent callers from modifying the internal map
+	result := make(map[cmdb.Resource]ResourceConf, len(resourceConfig))
+	for k, v := range resourceConfig {
+		result[k] = v
+	}
+	return result
 }

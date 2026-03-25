@@ -76,6 +76,21 @@ func (m *mockSchemaProvider) ListRelationSchemas() []relation.RelationSchema {
 	return nil
 }
 
+func (m *mockSchemaProvider) FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType relation.DirectionType) (*relation.RelationDefinition, bool) {
+	for _, r := range m.relations {
+		if (r.Namespace == namespace || namespace == "") &&
+			((r.FromResource == fromResource && r.ToResource == toResource) ||
+				(r.FromResource == toResource && r.ToResource == fromResource)) {
+			return r, true
+		}
+	}
+	return nil, false
+}
+
+func (m *mockSchemaProvider) Subscribe(callback relation.SchemaChangeCallback) error {
+	return nil
+}
+
 func TestConfigAdapter_GetConfig(t *testing.T) {
 	provider := &mockSchemaProvider{
 		resources: []*relation.ResourceDefinition{
@@ -292,8 +307,7 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "system",
 		}
 
-		conf, err := convertRelationDefinition(rd)
-		require.NoError(t, err)
+		conf := convertRelationDefinition(rd)
 		assert.Len(t, conf.Resources, 2)
 		assert.Equal(t, cmdb.Resource("node"), conf.Resources[0])
 		assert.Equal(t, cmdb.Resource("system"), conf.Resources[1])
@@ -307,8 +321,10 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "node",
 		}
 
-		_, err := convertRelationDefinition(rd)
-		assert.Error(t, err)
+		conf := convertRelationDefinition(rd)
+		// empty from_resource still produces a RelationConf (no error)
+		assert.Equal(t, cmdb.Resource(""), conf.Resources[0])
+		assert.Equal(t, cmdb.Resource("node"), conf.Resources[1])
 	})
 
 	t.Run("empty to_resource", func(t *testing.T) {
@@ -319,7 +335,8 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "",
 		}
 
-		_, err := convertRelationDefinition(rd)
-		assert.Error(t, err)
+		conf := convertRelationDefinition(rd)
+		assert.Equal(t, cmdb.Resource("node"), conf.Resources[0])
+		assert.Equal(t, cmdb.Resource(""), conf.Resources[1])
 	})
 }

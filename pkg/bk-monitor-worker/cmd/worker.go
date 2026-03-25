@@ -73,11 +73,12 @@ func startWorker(cmd *cobra.Command, args []string) {
 	}
 
 	if err := pm.InitProvider(ctx, config.SchemaProviderType, redisClient); err != nil {
-		logger.Errorf("[schema_provider] init failed: %v", err)
-		cancel()
-		return
+		// Graceful degradation: log warning but continue with nil provider
+		// This allows base metrics to still be reported even if relation metadata provider fails
+		logger.Warnf("[schema_provider] init failed, degrading gracefully: %v", err)
 	}
 
+	// InitSchemaProvider accepts nil provider (falls back to hardcoded config)
 	bmwRelation.InitSchemaProvider(pm.GetProvider())
 	logger.Infof("[schema_provider] initialized with type=%s", config.SchemaProviderType)
 

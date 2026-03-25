@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -680,10 +681,17 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toResource string, relationType relation.DirectionType) (*relation.RelationDefinition, bool) {
+func (m *MockSchemaProvider) GetRelationDefinition(namespace, name string) (*relation.RelationDefinition, error) {
+	key := fmt.Sprintf("%s:%s", namespace, name)
+	if def, ok := m.relationDefs[key]; ok {
+		return def, nil
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockSchemaProvider) findRelationByResourceTypes(namespace, fromResource, toResource string, relationType relation.DirectionType) (*relation.RelationDefinition, bool) {
 	switch relationType {
 	case relation.DirectionTypeDirectional:
-		// 只查找单向关系
 		directionalName := fmt.Sprintf("%s_to_%s", fromResource, toResource)
 		directionalKey := fmt.Sprintf("%s:%s", namespace, directionalName)
 		if def, ok := m.relationDefs[directionalKey]; ok {
@@ -691,7 +699,6 @@ func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toRe
 		}
 		return nil, false
 	case relation.DirectionTypeBidirectional:
-		// 只查找双向关系
 		resources := []string{fromResource, toResource}
 		sort.Strings(resources)
 		bidirectionalName := fmt.Sprintf("%s_with_%s", resources[0], resources[1])
@@ -706,5 +713,56 @@ func (m *MockSchemaProvider) GetRelationDefinition(namespace, fromResource, toRe
 }
 
 func (m *MockSchemaProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
-	return nil, nil
+	result := make([]*relation.RelationDefinition, 0)
+	for key, def := range m.relationDefs {
+		if namespace == "" || strings.HasPrefix(key, namespace+":") {
+			result = append(result, def)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockSchemaProvider) ListResourceDefinitions(namespace string) ([]*relation.ResourceDefinition, error) {
+	result := make([]*relation.ResourceDefinition, 0)
+	for key, def := range m.resourceDefs {
+		if namespace == "" || strings.HasPrefix(key, namespace+":") {
+			result = append(result, def)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockSchemaProvider) GetResourcePrimaryKeys(resourceType relation.ResourceType) []string {
+	for _, def := range m.resourceDefs {
+		if def.Name == string(resourceType) {
+			return def.GetPrimaryKeys()
+		}
+	}
+	return []string{}
+}
+
+func (m *MockSchemaProvider) GetRelationSchema(relationType relation.RelationName) (*relation.RelationSchema, error) {
+	for _, def := range m.relationDefs {
+		if relation.ToRelationName(def) == relationType {
+			schema := relation.ToRelationSchema(def)
+			return &schema, nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockSchemaProvider) ListRelationSchemas() []relation.RelationSchema {
+	result := make([]relation.RelationSchema, 0)
+	for _, def := range m.relationDefs {
+		result = append(result, relation.ToRelationSchema(def))
+	}
+	return result
+}
+
+func (m *MockSchemaProvider) FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType relation.DirectionType) (*relation.RelationDefinition, bool) {
+	return m.findRelationByResourceTypes(namespace, fromResource, toResource, directionType)
+}
+
+func (m *MockSchemaProvider) Subscribe(callback relation.SchemaChangeCallback) error {
+	return nil
 }

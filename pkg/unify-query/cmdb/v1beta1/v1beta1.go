@@ -50,6 +50,24 @@ func InitSchemaProvider(p relation.SchemaProvider) {
 	provider = p
 	// 重置 model，下次 GetModel 调用时会用新的 provider 重建
 	mdl = nil
+	
+	// Register callback for schema changes if provider supports it
+	if provider != nil {
+		if err := provider.Subscribe(onSchemaChange); err != nil {
+			log.Warnf(context.Background(), "failed to subscribe to schema changes: %v", err)
+		}
+	}
+}
+
+// onSchemaChange is called when schema (resource or relation definitions) changes
+// This callback triggers model reload to ensure v1beta1 stays in sync with provider
+func onSchemaChange(kind, namespace string) {
+	ctx := context.Background()
+	log.Infof(ctx, "schema change detected: kind=%s, namespace=%s", kind, namespace)
+	
+	if err := ReloadConfig(ctx); err != nil {
+		log.Warnf(ctx, "failed to reload v1beta1 model on schema change: %v", err)
+	}
 }
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {

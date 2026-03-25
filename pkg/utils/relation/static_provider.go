@@ -218,5 +218,15 @@ func (sp *StaticSchemaProvider) FindRelationByResourceTypes(namespace, fromResou
 	return nil, false
 }
 
+// Subscribe registers a callback for schema changes
+// StaticSchemaProvider never changes, so callbacks are never invoked
+func (sp *StaticSchemaProvider) Subscribe(callback SchemaChangeCallback) error {
+	if callback == nil {
+		return nil // StaticProvider never calls callbacks anyway
+	}
+	// StaticProvider doesn't support subscriptions since data never changes
+	return nil
+}
+
 // Ensure StaticSchemaProvider implements SchemaProvider
 var _ SchemaProvider = (*StaticSchemaProvider)(nil)

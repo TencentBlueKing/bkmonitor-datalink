@@ -79,6 +79,10 @@ type RedisProvider struct {
 	relationDefinitions map[string]map[string]*RelationDefinition
 	mu                  sync.RWMutex
 
+	// 订阅回调列表，在数据变更时通知
+	callbacks []SchemaChangeCallback
+	cbMu      sync.RWMutex
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -348,6 +352,9 @@ func (rp *RedisProvider) subscribeEntities() {
 					if err := rp.reloadNamespace(payload.Kind, payload.Namespace); err != nil {
 						rp.config.Logger.Errorf("failed to reload namespace %s:%s: %v", payload.Kind, payload.Namespace, err)
 					}
+					
+					// Trigger all registered callbacks to notify subscribers about the change
+					rp.triggerCallbacks(payload.Kind, payload.Namespace)
 				}
 			}
 		}()
@@ -579,6 +586,42 @@ func (rp *RedisProvider) FindRelationByResourceTypes(namespace, fromResource, to
 	}
 
 	return nil, false
+}
+
+// Subscribe registers a callback to be invoked when schema changes occur
+// The callback will be called with the kind ("ResourceDefinition" or "RelationDefinition") 
+// and namespace that was reloaded
+func (rp *RedisProvider) Subscribe(callback SchemaChangeCallback) error {
+	if callback == nil {
+		return errors.New("callback cannot be nil")
+	}
+
+	rp.cbMu.Lock()
+	rp.callbacks = append(rp.callbacks, callback)
+	rp.cbMu.Unlock()
+
+	rp.config.Logger.Debugf("schema change callback registered")
+	return nil
+}
+
+// triggerCallbacks invokes all registered callbacks
+func (rp *RedisProvider) triggerCallbacks(kind, namespace string) {
+	rp.cbMu.RLock()
+	callbacks := make([]SchemaChangeCallback, len(rp.callbacks))
+	copy(callbacks, rp.callbacks)
+	rp.cbMu.RUnlock()
+
+	for _, callback := range callbacks {
+		// Run callbacks in separate goroutines to avoid blocking the subscription loop
+		go func(cb SchemaChangeCallback) {
+			defer func() {
+				if r := recover(); r != nil {
+					rp.config.Logger.Errorf("panic in schema change callback: %v", r)
+				}
+			}()
+			cb(kind, namespace)
+		}(callback)
+	}
 }
 
 // Ensure RedisProvider implements SchemaProvider

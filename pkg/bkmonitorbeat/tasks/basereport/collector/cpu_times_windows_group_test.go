@@ -12,12 +12,27 @@
 package collector
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func withWindowsCPUTimesTestHooks(t *testing.T) {
+	originalGetActiveProcessorGroupCountFn := getActiveProcessorGroupCountFn
+	originalQueryLegacyProcessorTimesFn := queryLegacyProcessorTimesFn
+	originalQueryProcessorTimesByGroupFn := queryProcessorTimesByGroupFn
+	originalFindNtQuerySystemInformationEx := findNtQuerySystemInformationEx
+
+	t.Cleanup(func() {
+		getActiveProcessorGroupCountFn = originalGetActiveProcessorGroupCountFn
+		queryLegacyProcessorTimesFn = originalQueryLegacyProcessorTimesFn
+		queryProcessorTimesByGroupFn = originalQueryProcessorTimesByGroupFn
+		findNtQuerySystemInformationEx = originalFindNtQuerySystemInformationEx
+	})
+}
 
 func TestProcessorPerformanceInfoToTimes(t *testing.T) {
 	stats := []systemProcessorPerformanceInformation{
@@ -111,7 +126,7 @@ func TestCalculateCPUBusyPercentBounds(t *testing.T) {
 	t.Run("total_does_not_increase_but_busy_does", func(t *testing.T) {
 		prev := cpu.TimesStat{CPU: "cpu0", User: 10, System: 10, Idle: 80}
 		curr := cpu.TimesStat{CPU: "cpu0", User: 20, System: 20, Idle: 60}
-		assert.Equal(t, 100.0, calculateCPUBusyPercent(prev, curr))
+		assert.Equal(t, 0.0, calculateCPUBusyPercent(prev, curr))
 	})
 }
 
@@ -139,4 +154,66 @@ func TestCalculateAllCPUBusyPercentLengthMismatch(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "received two CPU counts")
+}
+
+func TestGetWindowsCPUTimesWithMetaGroupAware(t *testing.T) {
+	withWindowsCPUTimesTestHooks(t)
+
+	getActiveProcessorGroupCountFn = func() (uint16, error) {
+		return 2, nil
+	}
+	findNtQuerySystemInformationEx = func() error {
+		return nil
+	}
+	queryProcessorTimesByGroupFn = func(group uint16) ([]systemProcessorPerformanceInformation, error) {
+		switch group {
+		case 0:
+			return []systemProcessorPerformanceInformation{
+				{UserTime: int64(1 * windowsClocksPerSec), KernelTime: int64(3 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
+				{UserTime: int64(2 * windowsClocksPerSec), KernelTime: int64(4 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
+			}, nil
+		case 1:
+			return []systemProcessorPerformanceInformation{
+				{UserTime: int64(3 * windowsClocksPerSec), KernelTime: int64(6 * windowsClocksPerSec), IdleTime: int64(2 * windowsClocksPerSec)},
+			}, nil
+		default:
+			return nil, errors.New("unexpected group")
+		}
+	}
+
+	got, meta, err := getWindowsCPUTimesWithMeta()
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, windowsCPUTimesModeGroupAware, meta.mode)
+	assert.Equal(t, uint16(2), meta.groupCount)
+	assert.Empty(t, meta.fallbackReason)
+	assert.Equal(t, "cpu0", got[0].CPU)
+	assert.Equal(t, "cpu1", got[1].CPU)
+	assert.Equal(t, "cpu2", got[2].CPU)
+}
+
+func TestGetWindowsCPUTimesWithMetaFallbackWhenNtQuerySystemInformationExUnavailable(t *testing.T) {
+	withWindowsCPUTimesTestHooks(t)
+
+	getActiveProcessorGroupCountFn = func() (uint16, error) {
+		return 2, nil
+	}
+	findNtQuerySystemInformationEx = func() error {
+		return errors.New("not supported")
+	}
+	queryLegacyProcessorTimesFn = func() ([]systemProcessorPerformanceInformation, error) {
+		return []systemProcessorPerformanceInformation{
+			{UserTime: int64(1 * windowsClocksPerSec), KernelTime: int64(2 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
+			{UserTime: int64(2 * windowsClocksPerSec), KernelTime: int64(3 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
+		}, nil
+	}
+
+	got, meta, err := getWindowsCPUTimesWithMeta()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, windowsCPUTimesModeLegacy, meta.mode)
+	assert.Equal(t, uint16(2), meta.groupCount)
+	assert.Contains(t, meta.fallbackReason, "NtQuerySystemInformationEx unavailable")
+	assert.Equal(t, "cpu0", got[0].CPU)
+	assert.Equal(t, "cpu1", got[1].CPU)
 }

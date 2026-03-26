@@ -46,6 +46,10 @@ var (
 	ntdllDLL                         = windows.NewLazySystemDLL("ntdll.dll")
 	procGetActiveProcessorGroupCount = kernel32DLL.NewProc("GetActiveProcessorGroupCount")
 	procNtQuerySystemInformationEx   = ntdllDLL.NewProc("NtQuerySystemInformationEx")
+	findNtQuerySystemInformationEx   = func() error { return procNtQuerySystemInformationEx.Find() }
+	getActiveProcessorGroupCountFn   = getActiveProcessorGroupCount
+	queryLegacyProcessorTimesFn      = queryLegacyProcessorPerformanceInformation
+	queryProcessorTimesByGroupFn     = queryProcessorPerformanceInformationByGroup
 )
 
 const (
@@ -61,9 +65,9 @@ func getWindowsCPUTimes() ([]cpu.TimesStat, error) {
 
 func getWindowsCPUTimesWithMeta() ([]cpu.TimesStat, windowsCPUTimesQueryMeta, error) {
 	meta := windowsCPUTimesQueryMeta{}
-	groupCount, err := getActiveProcessorGroupCount()
+	groupCount, err := getActiveProcessorGroupCountFn()
 	if err != nil {
-		stats, legacyErr := queryLegacyProcessorPerformanceInformation()
+		stats, legacyErr := queryLegacyProcessorTimesFn()
 		if legacyErr == nil {
 			meta.mode = windowsCPUTimesModeLegacy
 			meta.fallbackReason = fmt.Sprintf("GetActiveProcessorGroupCount failed: %v", err)
@@ -75,7 +79,7 @@ func getWindowsCPUTimesWithMeta() ([]cpu.TimesStat, windowsCPUTimesQueryMeta, er
 
 	// Single-group machines can still use the old code path safely.
 	if groupCount <= 1 {
-		stats, err := queryLegacyProcessorPerformanceInformation()
+		stats, err := queryLegacyProcessorTimesFn()
 		if err != nil {
 			return nil, meta, err
 		}
@@ -83,14 +87,29 @@ func getWindowsCPUTimesWithMeta() ([]cpu.TimesStat, windowsCPUTimesQueryMeta, er
 		return processorPerformanceInfoToTimes(stats, 0), meta, nil
 	}
 
-	if err := procNtQuerySystemInformationEx.Find(); err != nil {
-		return nil, meta, fmt.Errorf("NtQuerySystemInformationEx unavailable for %d processor groups: %w", groupCount, err)
+	if err := findNtQuerySystemInformationEx(); err != nil {
+		stats, legacyErr := queryLegacyProcessorTimesFn()
+		if legacyErr == nil {
+			meta.mode = windowsCPUTimesModeLegacy
+			meta.fallbackReason = fmt.Sprintf(
+				"NtQuerySystemInformationEx unavailable for %d processor groups: %v",
+				groupCount,
+				err,
+			)
+			return processorPerformanceInfoToTimes(stats, 0), meta, nil
+		}
+		return nil, meta, fmt.Errorf(
+			"NtQuerySystemInformationEx unavailable for %d processor groups: %v; legacy query failed: %w",
+			groupCount,
+			err,
+			legacyErr,
+		)
 	}
 
 	var all []cpu.TimesStat
 	cpuOffset := 0
 	for group := uint16(0); group < groupCount; group++ {
-		stats, err := queryProcessorPerformanceInformationByGroup(group)
+		stats, err := queryProcessorTimesByGroupFn(group)
 		if err != nil {
 			return nil, meta, fmt.Errorf("query processor performance info for group %d: %w", group, err)
 		}
@@ -120,8 +139,10 @@ func sumCPUTimes(times []cpu.TimesStat) cpu.TimesStat {
 
 func sumWindowsTotalCPUTimes(times []cpu.TimesStat) cpu.TimesStat {
 	total := sumCPUTimes(times)
-	// Preserve the historical total_cpu semantics from GetSystemTimes:
-	// system already includes interrupt time, so total irq should remain 0 here.
+	// Preserve the historical total_cpu semantics from GetSystemTimes so the
+	// aggregated total_usage stays aligned with the previous implementation.
+	// There, system time already included interrupt time, so total irq should
+	// remain 0 rather than summing per-core Irq into the total view.
 	total.Irq = 0
 	return total
 }
@@ -132,11 +153,11 @@ func calculateCPUBusyPercent(prev, curr cpu.TimesStat) float64 {
 	prevBusy := prevTotal - prev.Idle - prev.Iowait
 	currBusy := currTotal - curr.Idle - curr.Iowait
 
-	if currBusy <= prevBusy {
+	if currTotal <= prevTotal {
 		return 0
 	}
-	if currTotal <= prevTotal {
-		return 100
+	if currBusy <= prevBusy {
+		return 0
 	}
 	return math.Min(100, math.Max(0, (currBusy-prevBusy)/(currTotal-prevTotal)*100))
 }

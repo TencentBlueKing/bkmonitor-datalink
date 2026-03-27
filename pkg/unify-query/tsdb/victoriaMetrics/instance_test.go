@@ -594,7 +594,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 		rtDetail     map[string]metadata.RtDetail
 		responseList []string
 		wantStatus   string
-		wantMissing  []string
+		wantMissing  string // JSON string or empty
 		wantExtra    []string
 	}{
 		"match: request cluster names equal response cluster names": {
@@ -604,7 +604,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			},
 			responseList: []string{"vm_op_1", "vm_op_2"},
 			wantStatus:   "match",
-			wantMissing:  nil,
+			wantMissing:  "",
 			wantExtra:    nil,
 		},
 		"mismatch: vm_op_2 missing from response": {
@@ -614,7 +614,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			},
 			responseList: []string{"vm_op_1"},
 			wantStatus:   "mismatch",
-			wantMissing:  []string{"vm_op_2"},
+			wantMissing:  `[{"cluster":"vm_op_2","rts":["rt_vm_2"]}]`,
 			wantExtra:    nil,
 		},
 		"mismatch: vm_op_2 extra in response": {
@@ -623,14 +623,14 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			},
 			responseList: []string{"vm_op_1", "vm_op_2"},
 			wantStatus:   "mismatch",
-			wantMissing:  nil,
+			wantMissing:  "",
 			wantExtra:    []string{"vm_op_2"},
 		},
 		"empty request and response: match": {
 			rtDetail:     nil,
 			responseList: nil,
 			wantStatus:   "match",
-			wantMissing:  nil,
+			wantMissing:  "",
 			wantExtra:    nil,
 		},
 	}
@@ -645,13 +645,25 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 
 			attrs := rec.Ended()[0].Attributes()
 
-			status, _ := spanAttrString(attrs, "storage-list-status")
+			status, _ := spanAttrString(attrs, "query-storage-status")
 			assert.Equal(t, tc.wantStatus, status)
 
-			missing, _ := spanAttrStringSlice(attrs, "storage-list-missing")
-			assert.ElementsMatch(t, tc.wantMissing, missing)
+			// Check missing field
+			if tc.wantMissing != "" {
+				missing, ok := spanAttrString(attrs, "query-storage-missing")
+				assert.True(t, ok)
+				// Parse and compare as JSON to handle ordering
+				var gotMissing, wantMissing any
+				assert.NoError(t, json.Unmarshal([]byte(missing), &gotMissing))
+				assert.NoError(t, json.Unmarshal([]byte(tc.wantMissing), &wantMissing))
+				assert.Equal(t, wantMissing, gotMissing)
+			} else {
+				_, ok := spanAttrString(attrs, "query-storage-missing")
+				assert.False(t, ok)
+			}
 
-			extra, _ := spanAttrStringSlice(attrs, "storage-list-extra")
+			// Check extra field
+			extra, _ := spanAttrStringSlice(attrs, "query-storage-extra")
 			assert.ElementsMatch(t, tc.wantExtra, extra)
 		})
 	}

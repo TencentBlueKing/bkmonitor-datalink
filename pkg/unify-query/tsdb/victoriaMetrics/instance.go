@@ -137,17 +137,27 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 // requestRtDetail maps vm_rt → RtDetail{TableID, StorageName}: vm_rt is the observation subject
 // while StorageName (cluster name) is the comparison subject; TableID is carried as context.
 // responseList contains the storage cluster names returned by the VM API.
-// missing: cluster names present in request but absent from response.
+// missing: cluster names present in request but absent from response, with associated RTs.
 // extra:   cluster names present in response but absent from request.
 func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseList []string) {
-	span.Set("storage-list-request", requestRtDetail)
-	span.Set("storage-list-response", responseList)
+	// Marshal request detail map as JSON for trace consumption.
+	requestJSON := ""
+	if len(requestRtDetail) > 0 {
+		b, err := json.Marshal(requestRtDetail)
+		if err != nil {
+			requestJSON = fmt.Sprintf("%+v", requestRtDetail)
+		} else {
+			requestJSON = string(b)
+		}
+	}
+	span.Set("query-storage-request", requestJSON)
+	span.Set("query-storage-response", responseList)
 
-	// Build request cluster-name set from RtDetailList
-	reqClusterSet := make(map[string]struct{}, len(requestRtDetail))
-	for _, detail := range requestRtDetail {
+	// Build request cluster-name → [vm_rt] mapping
+	reqClusterToRts := make(map[string][]string)
+	for vmRt, detail := range requestRtDetail {
 		if detail.StorageName != "" {
-			reqClusterSet[detail.StorageName] = struct{}{}
+			reqClusterToRts[detail.StorageName] = append(reqClusterToRts[detail.StorageName], vmRt)
 		}
 	}
 
@@ -156,24 +166,46 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		respSet[s] = struct{}{}
 	}
 
-	var missing, extra []string
-	for clusterName := range reqClusterSet {
+	// Build missing and extra with RT details
+	type ClusterMissing struct {
+		Cluster string   `json:"cluster"`
+		Rts     []string `json:"rts"`
+	}
+	var missing []ClusterMissing
+	for clusterName, rts := range reqClusterToRts {
 		if _, ok := respSet[clusterName]; !ok {
-			missing = append(missing, clusterName)
+			missing = append(missing, ClusterMissing{Cluster: clusterName, Rts: rts})
 		}
 	}
+	var extra []string
 	for _, s := range responseList {
-		if _, ok := reqClusterSet[s]; !ok {
+		found := false
+		for clusterName := range reqClusterToRts {
+			if clusterName == s {
+				found = true
+				break
+			}
+		}
+		if !found {
 			extra = append(extra, s)
 		}
 	}
 
 	if len(missing) > 0 || len(extra) > 0 {
-		span.Set("storage-list-status", "mismatch")
-		span.Set("storage-list-missing", missing)
-		span.Set("storage-list-extra", extra)
+		span.Set("query-storage-status", "mismatch")
+		if len(missing) > 0 {
+			b, err := json.Marshal(missing)
+			if err != nil {
+				span.Set("query-storage-missing", fmt.Sprintf("%+v", missing))
+			} else {
+				span.Set("query-storage-missing", string(b))
+			}
+		}
+		if len(extra) > 0 {
+			span.Set("query-storage-extra", extra)
+		}
 	} else {
-		span.Set("storage-list-status", "match")
+		span.Set("query-storage-status", "match")
 	}
 }
 

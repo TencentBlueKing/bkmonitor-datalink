@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFieldAlias_InjectOriginalKeysWhenAliasPresent(t *testing.T) {
+func TestFieldAlias_AddAliasKeysWhenOriginalFieldPresent(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
@@ -23,59 +23,59 @@ func TestFieldAlias_InjectOriginalKeysWhenAliasPresent(t *testing.T) {
 		before   map[string]any
 		expected map[string]any
 	}{
-		"当别名字段存在时写入与别名同值的原始字段名": {
-			fa:       FieldAlias{"orig": "alias"},
-			before:   map[string]any{"alias": "v"},
-			expected: map[string]any{"orig": "v", "alias": "v"},
+		"命中原始字段 key 时补全别名字段": {
+			fa:       FieldAlias{"alias": "original"},
+			before:   map[string]any{"original": "v"},
+			expected: map[string]any{"alias": "v", "original": "v"},
 		},
-		"多组映射分别注入": {
+		"多组映射分别补全别名字段": {
 			fa: FieldAlias{
-				"raw_a": "show_a",
-				"raw_b": "show_b",
+				"alias_a": "orig_a",
+				"alias_b": "orig_b",
 			},
 			before: map[string]any{
-				"show_a": 1,
-				"show_b": "x",
+				"orig_a": 1,
+				"orig_b": "x",
 				"other":  true,
 			},
 			expected: map[string]any{
-				"raw_a":  1,
-				"raw_b":  "x",
-				"show_a": 1,
-				"show_b": "x",
-				"other":  true,
+				"alias_a": 1,
+				"alias_b": "x",
+				"orig_a":  1,
+				"orig_b":  "x",
+				"other":   true,
 			},
 		},
-		"别名字段不存在时不新增原始 key": {
-			fa:       FieldAlias{"orig": "alias"},
+		"原始字段不存在时不新增别名 key": {
+			fa:       FieldAlias{"alias": "original"},
 			before:   map[string]any{"only_other": 1},
 			expected: map[string]any{"only_other": 1},
 		},
-		"原始与别名同时存在时用别名值覆盖原始 key": {
-			fa:       FieldAlias{"orig": "alias"},
-			before:   map[string]any{"orig": "old", "alias": "new"},
-			expected: map[string]any{"orig": "new", "alias": "new"},
+		"别名与原始同时存在时以原始字段值写入别名": {
+			fa:       FieldAlias{"alias": "original"},
+			before:   map[string]any{"alias": "old", "original": "new"},
+			expected: map[string]any{"alias": "new", "original": "new"},
 		},
 		"FieldAlias 为空时不修改 map": {
 			fa:       nil,
-			before:   map[string]any{"alias": "v", "k": 2},
-			expected: map[string]any{"alias": "v", "k": 2},
+			before:   map[string]any{"k": 2, "original": "v"},
+			expected: map[string]any{"k": 2, "original": "v"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			data := cloneAnyMap(c.before)
-			c.fa.InjectOriginalKeysWhenAliasPresent(data)
+			c.fa.AddAliasKeysWhenOriginalFieldPresent(data)
 			assert.Equal(t, c.expected, data)
 		})
 	}
 
 	t.Run("data 为 nil 时不 panic", func(t *testing.T) {
 		t.Parallel()
-		fa := FieldAlias{"orig": "alias"}
-		fa.InjectOriginalKeysWhenAliasPresent(nil)
+		fa := FieldAlias{"alias": "original"}
+		fa.AddAliasKeysWhenOriginalFieldPresent(nil)
 		var empty FieldAlias
-		empty.InjectOriginalKeysWhenAliasPresent(nil)
+		empty.AddAliasKeysWhenOriginalFieldPresent(nil)
 	})
 }
 

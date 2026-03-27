@@ -93,6 +93,8 @@ type VmQueryCluster struct {
 	StorageClusterList []string `json:"storage_cluster_list,omitempty"`
 }
 
+// FieldAlias 字段别名映射：key 为别名字段名（下游稳定读取），value 为原始字段名（Doris/存储侧实际列名或 VARIANT 展开键等）。
+// 因 Doris 等对标识符大小写不敏感，结果行里原始字段名可能不稳定；行后可在命中原始字段后补一份别名字段，与 ES 行为对齐。
 type FieldAlias map[string]string
 
 type TimeField struct {
@@ -479,14 +481,15 @@ func (fa FieldAlias) AliasName(f string) string {
 	return ""
 }
 
-// InjectOriginalKeysWhenAliasPresent 当结果 map 中已存在别名字段 key 时，再写入同值的原始字段名 key（与 ES 原始行数据注入一致）。
-func (fa FieldAlias) InjectOriginalKeysWhenAliasPresent(data map[string]any) {
+// AddAliasKeysWhenOriginalFieldPresent 在行结果上补全别名字段：当结果 map 中已命中「原始字段」（value）作为 key 时，
+// 再写入同值的「别名字段」（key），供下游读取；保留双 key。与 ES QueryRawData 中 reverseAlias 循环语义一致。
+func (fa FieldAlias) AddAliasKeysWhenOriginalFieldPresent(data map[string]any) {
 	if len(fa) == 0 || data == nil {
 		return
 	}
-	for original, alias := range fa {
-		if _, ok := data[alias]; ok {
-			data[original] = data[alias]
+	for aliasField, originalField := range fa {
+		if _, ok := data[originalField]; ok {
+			data[aliasField] = data[originalField]
 		}
 	}
 }

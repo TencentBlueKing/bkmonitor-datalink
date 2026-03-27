@@ -15,6 +15,81 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestFieldAlias_InjectOriginalKeysWhenAliasPresent(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		fa       FieldAlias
+		before   map[string]any
+		expected map[string]any
+	}{
+		"当别名字段存在时写入与别名同值的原始字段名": {
+			fa:       FieldAlias{"orig": "alias"},
+			before:   map[string]any{"alias": "v"},
+			expected: map[string]any{"orig": "v", "alias": "v"},
+		},
+		"多组映射分别注入": {
+			fa: FieldAlias{
+				"raw_a": "show_a",
+				"raw_b": "show_b",
+			},
+			before: map[string]any{
+				"show_a": 1,
+				"show_b": "x",
+				"other":  true,
+			},
+			expected: map[string]any{
+				"raw_a":  1,
+				"raw_b":  "x",
+				"show_a": 1,
+				"show_b": "x",
+				"other":  true,
+			},
+		},
+		"别名字段不存在时不新增原始 key": {
+			fa:       FieldAlias{"orig": "alias"},
+			before:   map[string]any{"only_other": 1},
+			expected: map[string]any{"only_other": 1},
+		},
+		"原始与别名同时存在时用别名值覆盖原始 key": {
+			fa:       FieldAlias{"orig": "alias"},
+			before:   map[string]any{"orig": "old", "alias": "new"},
+			expected: map[string]any{"orig": "new", "alias": "new"},
+		},
+		"FieldAlias 为空时不修改 map": {
+			fa:       nil,
+			before:   map[string]any{"alias": "v", "k": 2},
+			expected: map[string]any{"alias": "v", "k": 2},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			data := cloneAnyMap(c.before)
+			c.fa.InjectOriginalKeysWhenAliasPresent(data)
+			assert.Equal(t, c.expected, data)
+		})
+	}
+
+	t.Run("data 为 nil 时不 panic", func(t *testing.T) {
+		t.Parallel()
+		fa := FieldAlias{"orig": "alias"}
+		fa.InjectOriginalKeysWhenAliasPresent(nil)
+		var empty FieldAlias
+		empty.InjectOriginalKeysWhenAliasPresent(nil)
+	})
+}
+
+func cloneAnyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 func TestReplaceVmCondition(t *testing.T) {
 	for name, c := range map[string]struct {
 		condition     VmCondition

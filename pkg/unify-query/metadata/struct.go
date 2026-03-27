@@ -478,3 +478,15 @@ func (fa FieldAlias) AliasName(f string) string {
 	}
 	return ""
 }
+
+// InjectOriginalKeysWhenAliasPresent 当结果 map 中已存在别名字段 key 时，再写入同值的原始字段名 key（与 ES 原始行数据注入一致）。
+func (fa FieldAlias) InjectOriginalKeysWhenAliasPresent(data map[string]any) {
+	if len(fa) == 0 || data == nil {
+		return
+	}
+	for original, alias := range fa {
+		if _, ok := data[alias]; ok {
+			data[original] = data[alias]
+		}
+	}
+}

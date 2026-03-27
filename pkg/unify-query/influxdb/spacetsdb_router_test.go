@@ -50,7 +50,7 @@ func (s *TestSuite) SetupTest() {
 	s.client = goRedis.NewClient(&goRedis.Options{
 		Addr: s.miniRedis.Addr(),
 	})
-	err = innerRedis.SetInstance(s.ctx, "bkmonitorv3", &goRedis.UniversalOptions{
+	err = innerRedis.SetInstance(s.ctx, "bkmonitorv3:unify-query", "bkmonitorv3", &goRedis.UniversalOptions{
 		Addrs: []string{s.miniRedis.Addr()},
 	})
 	s.Require().NoError(err)

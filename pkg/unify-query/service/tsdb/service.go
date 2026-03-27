@@ -13,9 +13,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
 
 type Service struct {
@@ -82,19 +82,23 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 		log.Errorf(context.TODO(), "reload storage failed")
 		return err
 	}
-	ch, err := consul.WatchStorageInfo(ctx)
+
+	// 使用接口多态，根据配置自动选择 Consul 或 Redis
+	provider := getStorageProvider()
+	watchCh, err := provider.WatchStorageInfo(ctx)
 	if err != nil {
 		return err
 	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "prometheus service close success")
+				log.Warnf(context.TODO(), "storage watch loop exit")
 				return
-			case <-ch:
+			case <-watchCh:
 				log.Debugf(context.TODO(), "get storage info changed notify")
 				err = s.reloadStorage()
 				if err != nil {
@@ -103,20 +107,24 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 			}
 		}
 	}()
+
 	return nil
 }
 
 // reloadStorage 加载 storage 实例
 func (s *Service) reloadStorage() error {
-	consulData, err := consul.GetTsDBStorageInfo()
+	// 使用接口多态，根据配置自动选择 Consul 或 Redis
+	provider := getStorageProvider()
+	storageData, err := provider.GetTsDBStorageInfo(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "get storage info failed %v", err)
 		return err
 	}
-	hash := consul.HashIt(consulData)
+
+	hash := utils.HashIt(storageData)
 	if hash == s.storageHash {
 		log.Debugf(context.TODO(), "storage hash not changed")
-		return err
+		return nil
 	}
 
 	options := &inner.Options{
@@ -139,11 +147,12 @@ func (s *Service) reloadStorage() error {
 			MaxSize:    EsMaxSize,
 		},
 	}
-	err = inner.ReloadTsDBStorage(s.ctx, consulData, options)
+	err = inner.ReloadTsDBStorage(s.ctx, storageData, options)
 	if err != nil {
 		log.Errorf(context.TODO(), "reload storage failed %v", err)
 		return err
 	}
 
+	s.storageHash = hash
 	return nil
 }

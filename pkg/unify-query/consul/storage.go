@@ -60,3 +60,8 @@ func WatchStorageInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, storagePath)
 	return WatchChange(ctx, path)
 }
+
+// GetStoragePath 获取存储配置的 consul 存储地址
+func GetStoragePath() string {
+	return fmt.Sprintf("%s/%s/%s", basePath, dataPath, storagePath)
+}

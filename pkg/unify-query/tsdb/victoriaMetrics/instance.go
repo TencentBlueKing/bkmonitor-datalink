@@ -133,6 +133,43 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	return storage.EmptySeriesSet()
 }
 
+// spanSetStorageListDiff records request/response storageLists and any diff into the span.
+// missing: entries present in request but absent from response.
+// extra:   entries present in response but absent from request.
+func spanSetStorageListDiff(span *trace.Span, requestList []string, responseList []string) {
+	span.Set("storage-list-request", requestList)
+	span.Set("storage-list-response", responseList)
+
+	respSet := make(map[string]struct{}, len(responseList))
+	for _, s := range responseList {
+		respSet[s] = struct{}{}
+	}
+	reqSet := make(map[string]struct{}, len(requestList))
+	for _, s := range requestList {
+		reqSet[s] = struct{}{}
+	}
+
+	var missing, extra []string
+	for _, s := range requestList {
+		if _, ok := respSet[s]; !ok {
+			missing = append(missing, s)
+		}
+	}
+	for _, s := range responseList {
+		if _, ok := reqSet[s]; !ok {
+			extra = append(extra, s)
+		}
+	}
+
+	if len(missing) > 0 || len(extra) > 0 {
+		span.Set("storage-list-status", "mismatch")
+		span.Set("storage-list-missing", missing)
+		span.Set("storage-list-extra", extra)
+	} else {
+		span.Set("storage-list-status", "match")
+	}
+}
+
 func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata.VmQueryCluster) {
 	if v == nil {
 		return
@@ -516,7 +553,15 @@ func (i *Instance) DirectQueryRange(
 		return nil, false, err
 	}
 
-	return i.matrixFormat(ctx, vmResp, span)
+	result, isDropped, err := i.matrixFormat(ctx, vmResp, span)
+
+	var responseStorageList []string
+	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
+		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, paramsQueryRange.ResultTableList, responseStorageList)
+
+	return result, isDropped, err
 }
 
 // Query instant 查询
@@ -577,7 +622,15 @@ func (i *Instance) DirectQuery(
 		return nil, err
 	}
 
-	return i.vectorFormat(ctx, vmResp, span)
+	result, err := i.vectorFormat(ctx, vmResp, span)
+
+	var responseStorageList []string
+	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
+		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, paramsQuery.ResultTableList, responseStorageList)
+
+	return result, err
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
@@ -854,7 +907,15 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		return list, err
 	}
 
-	return i.labelFormat(ctx, resp, span)
+	result, err := i.labelFormat(ctx, resp, span)
+
+	var responseStorageList []string
+	if resp != nil && resp.Data.VmQueryCluster != nil {
+		responseStorageList = resp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, paramsQuery.ResultTableList, responseStorageList)
+
+	return result, err
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

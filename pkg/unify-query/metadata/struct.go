@@ -93,8 +93,6 @@ type VmQueryCluster struct {
 	StorageClusterList []string `json:"storage_cluster_list,omitempty"`
 }
 
-// FieldAlias 字段别名映射：key 为别名字段名（下游稳定读取），value 为原始字段名（Doris/存储侧实际列名或 VARIANT 展开键等）。
-// 因 Doris 等对标识符大小写不敏感，结果行里原始字段名可能不稳定；行后可在命中原始字段后补一份别名字段，与 ES 行为对齐。
 type FieldAlias map[string]string
 
 type TimeField struct {

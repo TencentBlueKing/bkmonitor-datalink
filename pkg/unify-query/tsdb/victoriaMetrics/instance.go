@@ -134,29 +134,36 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 // spanSetStorageListDiff records request/response storageLists and any diff into the span.
-// missing: entries present in request but absent from response.
-// extra:   entries present in response but absent from request.
-func spanSetStorageListDiff(span *trace.Span, requestList []string, responseList []string) {
-	span.Set("storage-list-request", requestList)
+// requestRtDetail maps vm_rt → RtDetail{TableID, StorageName}: vm_rt is the observation subject
+// while StorageName (cluster name) is the comparison subject; TableID is carried as context.
+// responseList contains the storage cluster names returned by the VM API.
+// missing: cluster names present in request but absent from response.
+// extra:   cluster names present in response but absent from request.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseList []string) {
+	span.Set("storage-list-request", requestRtDetail)
 	span.Set("storage-list-response", responseList)
+
+	// Build request cluster-name set from RtDetailList
+	reqClusterSet := make(map[string]struct{}, len(requestRtDetail))
+	for _, detail := range requestRtDetail {
+		if detail.StorageName != "" {
+			reqClusterSet[detail.StorageName] = struct{}{}
+		}
+	}
 
 	respSet := make(map[string]struct{}, len(responseList))
 	for _, s := range responseList {
 		respSet[s] = struct{}{}
 	}
-	reqSet := make(map[string]struct{}, len(requestList))
-	for _, s := range requestList {
-		reqSet[s] = struct{}{}
-	}
 
 	var missing, extra []string
-	for _, s := range requestList {
-		if _, ok := respSet[s]; !ok {
-			missing = append(missing, s)
+	for clusterName := range reqClusterSet {
+		if _, ok := respSet[clusterName]; !ok {
+			missing = append(missing, clusterName)
 		}
 	}
 	for _, s := range responseList {
-		if _, ok := reqSet[s]; !ok {
+		if _, ok := reqClusterSet[s]; !ok {
 			extra = append(extra, s)
 		}
 	}
@@ -553,15 +560,15 @@ func (i *Instance) DirectQueryRange(
 		return nil, false, err
 	}
 
-	result, isDropped, err := i.matrixFormat(ctx, vmResp, span)
+	result, isPartial, err := i.matrixFormat(ctx, vmResp, span)
 
 	var responseStorageList []string
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, paramsQueryRange.ResultTableList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
 
-	return result, isDropped, err
+	return result, isPartial, err
 }
 
 // Query instant 查询
@@ -628,7 +635,7 @@ func (i *Instance) DirectQuery(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, paramsQuery.ResultTableList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
 
 	return result, err
 }
@@ -913,7 +920,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	if resp != nil && resp.Data.VmQueryCluster != nil {
 		responseStorageList = resp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, paramsQuery.ResultTableList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
 
 	return result, err
 }

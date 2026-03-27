@@ -9,8 +9,23 @@
 
 package metadata
 
+// RtDetail holds the mapping information for a single vm_rt entry.
+// It is used by spanSetStorageListDiff to provide context when reporting
+// storage-list mismatches: vm_rt is the observation subject while StorageName
+// (cluster name) is the comparison subject.
+type RtDetail struct {
+	TableID     string `json:"table_id"`
+	StorageName string `json:"storage_name"`
+}
+
 type VmExpand struct {
 	ResultTableList       []string
 	MetricFilterCondition map[string]string
 	ClusterName           string
+
+	// RtDetailList maps vm_rt → RtDetail{TableID, StorageName}.
+	// Populated alongside ResultTableList so that spanSetStorageListDiff can
+	// use StorageName as the comparison subject and include TableID as an
+	// explanatory field.
+	RtDetailList map[string]RtDetail
 }

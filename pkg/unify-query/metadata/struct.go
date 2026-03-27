@@ -232,6 +232,12 @@ func (q *Query) VMExpand() *VmExpand {
 			DefaultReferenceName: q.VmCondition.String(),
 		},
 		ClusterName: q.StorageName,
+		RtDetailList: map[string]RtDetail{
+			q.VmRt: {
+				TableID:     q.TableID,
+				StorageName: q.StorageName,
+			},
+		},
 	}
 }
 

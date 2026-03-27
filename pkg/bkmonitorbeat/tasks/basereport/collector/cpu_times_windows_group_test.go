@@ -21,15 +21,15 @@ import (
 )
 
 func withWindowsCPUTimesTestHooks(t *testing.T) {
-	originalGetActiveProcessorGroupCountFn := getActiveProcessorGroupCountFn
-	originalQueryLegacyProcessorTimesFn := queryLegacyProcessorTimesFn
-	originalQueryProcessorTimesByGroupFn := queryProcessorTimesByGroupFn
+	originalGetActiveProcessorGroupCount := getActiveProcessorGroupCount
+	originalQueryLegacyProcessorPerformanceInformation := queryLegacyProcessorPerformanceInformation
+	originalQueryProcessorPerformanceInformationByGroup := queryProcessorPerformanceInformationByGroup
 	originalFindNtQuerySystemInformationEx := findNtQuerySystemInformationEx
 
 	t.Cleanup(func() {
-		getActiveProcessorGroupCountFn = originalGetActiveProcessorGroupCountFn
-		queryLegacyProcessorTimesFn = originalQueryLegacyProcessorTimesFn
-		queryProcessorTimesByGroupFn = originalQueryProcessorTimesByGroupFn
+		getActiveProcessorGroupCount = originalGetActiveProcessorGroupCount
+		queryLegacyProcessorPerformanceInformation = originalQueryLegacyProcessorPerformanceInformation
+		queryProcessorPerformanceInformationByGroup = originalQueryProcessorPerformanceInformationByGroup
 		findNtQuerySystemInformationEx = originalFindNtQuerySystemInformationEx
 	})
 }
@@ -50,20 +50,20 @@ func TestProcessorPerformanceInfoToTimes(t *testing.T) {
 		},
 	}
 
-	got := processorPerformanceInfoToTimes(stats, 64)
-	require.Len(t, got, 2)
+	perCPUTimes := processorPerformanceInfoToTimes(stats, 64)
+	require.Len(t, perCPUTimes, 2)
 
-	assert.Equal(t, "cpu64", got[0].CPU)
-	assert.InDelta(t, 12.0, got[0].User, 0.0001)
-	assert.InDelta(t, 7.0, got[0].System, 0.0001)
-	assert.InDelta(t, 3.0, got[0].Idle, 0.0001)
-	assert.InDelta(t, 2.0, got[0].Irq, 0.0001)
+	assert.Equal(t, "cpu64", perCPUTimes[0].CPU)
+	assert.InDelta(t, 12.0, perCPUTimes[0].User, 0.0001)
+	assert.InDelta(t, 7.0, perCPUTimes[0].System, 0.0001)
+	assert.InDelta(t, 3.0, perCPUTimes[0].Idle, 0.0001)
+	assert.InDelta(t, 2.0, perCPUTimes[0].Irq, 0.0001)
 
-	assert.Equal(t, "cpu65", got[1].CPU)
-	assert.InDelta(t, 20.0, got[1].User, 0.0001)
-	assert.InDelta(t, 12.0, got[1].System, 0.0001)
-	assert.InDelta(t, 5.0, got[1].Idle, 0.0001)
-	assert.InDelta(t, 1.0, got[1].Irq, 0.0001)
+	assert.Equal(t, "cpu65", perCPUTimes[1].CPU)
+	assert.InDelta(t, 20.0, perCPUTimes[1].User, 0.0001)
+	assert.InDelta(t, 12.0, perCPUTimes[1].System, 0.0001)
+	assert.InDelta(t, 5.0, perCPUTimes[1].Idle, 0.0001)
+	assert.InDelta(t, 1.0, perCPUTimes[1].Irq, 0.0001)
 }
 
 func TestSumWindowsTotalCPUTimesPreservesHistoricalIRQSemantics(t *testing.T) {
@@ -88,14 +88,14 @@ func TestSumWindowsTotalCPUTimesPreservesHistoricalIRQSemantics(t *testing.T) {
 		},
 	}
 
-	got := sumWindowsTotalCPUTimes(times)
-	assert.Equal(t, "cpu-total", got.CPU)
-	assert.Equal(t, 16.0, got.User)
-	assert.Equal(t, 9.0, got.System)
-	assert.Equal(t, 30.0, got.Idle)
-	assert.Equal(t, 3.0, got.Iowait)
-	assert.Equal(t, 3.0, got.Softirq)
-	assert.Equal(t, 0.0, got.Irq)
+	totalCPUTimes := sumWindowsTotalCPUTimes(times)
+	assert.Equal(t, "cpu-total", totalCPUTimes.CPU)
+	assert.Equal(t, 16.0, totalCPUTimes.User)
+	assert.Equal(t, 9.0, totalCPUTimes.System)
+	assert.Equal(t, 30.0, totalCPUTimes.Idle)
+	assert.Equal(t, 3.0, totalCPUTimes.Iowait)
+	assert.Equal(t, 3.0, totalCPUTimes.Softirq)
+	assert.Equal(t, 0.0, totalCPUTimes.Irq)
 }
 
 func TestCalculateCPUBusyPercent(t *testing.T) {
@@ -159,13 +159,13 @@ func TestCalculateAllCPUBusyPercentLengthMismatch(t *testing.T) {
 func TestGetWindowsCPUTimesWithMetaGroupAware(t *testing.T) {
 	withWindowsCPUTimesTestHooks(t)
 
-	getActiveProcessorGroupCountFn = func() (uint16, error) {
+	getActiveProcessorGroupCount = func() (uint16, error) {
 		return 2, nil
 	}
 	findNtQuerySystemInformationEx = func() error {
 		return nil
 	}
-	queryProcessorTimesByGroupFn = func(group uint16) ([]systemProcessorPerformanceInformation, error) {
+	queryProcessorPerformanceInformationByGroup = func(group uint16) ([]systemProcessorPerformanceInformation, error) {
 		switch group {
 		case 0:
 			return []systemProcessorPerformanceInformation{
@@ -181,39 +181,39 @@ func TestGetWindowsCPUTimesWithMetaGroupAware(t *testing.T) {
 		}
 	}
 
-	got, meta, err := getWindowsCPUTimesWithMeta()
+	perCPUTimes, meta, err := getWindowsCPUTimesWithMeta()
 	require.NoError(t, err)
-	require.Len(t, got, 3)
+	require.Len(t, perCPUTimes, 3)
 	assert.Equal(t, windowsCPUTimesModeGroupAware, meta.mode)
 	assert.Equal(t, uint16(2), meta.groupCount)
 	assert.Empty(t, meta.fallbackReason)
-	assert.Equal(t, "cpu0", got[0].CPU)
-	assert.Equal(t, "cpu1", got[1].CPU)
-	assert.Equal(t, "cpu2", got[2].CPU)
+	assert.Equal(t, "cpu0", perCPUTimes[0].CPU)
+	assert.Equal(t, "cpu1", perCPUTimes[1].CPU)
+	assert.Equal(t, "cpu2", perCPUTimes[2].CPU)
 }
 
 func TestGetWindowsCPUTimesWithMetaFallbackWhenNtQuerySystemInformationExUnavailable(t *testing.T) {
 	withWindowsCPUTimesTestHooks(t)
 
-	getActiveProcessorGroupCountFn = func() (uint16, error) {
+	getActiveProcessorGroupCount = func() (uint16, error) {
 		return 2, nil
 	}
 	findNtQuerySystemInformationEx = func() error {
 		return errors.New("not supported")
 	}
-	queryLegacyProcessorTimesFn = func() ([]systemProcessorPerformanceInformation, error) {
+	queryLegacyProcessorPerformanceInformation = func() ([]systemProcessorPerformanceInformation, error) {
 		return []systemProcessorPerformanceInformation{
 			{UserTime: int64(1 * windowsClocksPerSec), KernelTime: int64(2 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
 			{UserTime: int64(2 * windowsClocksPerSec), KernelTime: int64(3 * windowsClocksPerSec), IdleTime: int64(1 * windowsClocksPerSec)},
 		}, nil
 	}
 
-	got, meta, err := getWindowsCPUTimesWithMeta()
+	perCPUTimes, meta, err := getWindowsCPUTimesWithMeta()
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Len(t, perCPUTimes, 2)
 	assert.Equal(t, windowsCPUTimesModeLegacy, meta.mode)
 	assert.Equal(t, uint16(2), meta.groupCount)
 	assert.Contains(t, meta.fallbackReason, "NtQuerySystemInformationEx unavailable")
-	assert.Equal(t, "cpu0", got[0].CPU)
-	assert.Equal(t, "cpu1", got[1].CPU)
+	assert.Equal(t, "cpu0", perCPUTimes[0].CPU)
+	assert.Equal(t, "cpu1", perCPUTimes[1].CPU)
 }

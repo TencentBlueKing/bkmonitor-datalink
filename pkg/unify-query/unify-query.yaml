@@ -19,6 +19,9 @@ redis:
   dial_timeout: 1s
   read_timeout: 10s
   service_name: bkmonitorv3:spaces
+  kv_base_path: bkmonitorv3:unify-query
+feature_flag:
+  data_source: consul  # 可选值: consul 或 redis,默认为 consul
 victoria_metrics:
   timeout: 30s
 influxdb:

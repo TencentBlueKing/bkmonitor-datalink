@@ -11,6 +11,7 @@ package featureFlag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
 
 // Service
@@ -26,7 +29,8 @@ type Service struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	wg *sync.WaitGroup
+	wg       *sync.WaitGroup
+	provider FeatureFlagProvider
 }
 
 // Type
@@ -41,26 +45,38 @@ func (s *Service) Start(ctx context.Context) {
 
 // reloadFeatureFlags
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
-	data, err := consul.GetFeatureFlags()
+	if s.provider == nil {
+		return fmt.Errorf("feature flag provider is not initialized")
+	}
+
+	data, err := s.provider.GetFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "get feature flags from consul failed,error:%s", err)
+		log.Errorf(ctx, "get feature flags failed, error: %s", err)
 		return err
 	}
+
 	err = featureFlag.ReloadFeatureFlags(data)
 	return err
 }
 
 // loopReloadFeatureFlags
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
+	if s.provider == nil {
+		return fmt.Errorf("feature flag provider is not initialized")
+	}
+
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(ctx, "realod feature flags failed, error: %s", err)
+		log.Errorf(ctx, "reload feature flags failed, error: %s", err)
 		return err
 	}
-	ch, err := consul.WatchFeatureFlags(ctx)
+
+	ch, err := s.provider.WatchFeatureFlags(ctx)
 	if err != nil {
+		log.Errorf(ctx, "watch feature flags failed, error: %s", err)
 		return err
 	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -73,7 +89,7 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
+					log.Errorf(context.TODO(), "reload feature flags failed, error: %s", err)
 				}
 			}
 		}
@@ -94,6 +110,24 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
+
+	// 根据配置选择数据源，初始化 provider
+	if DataSource == "redis" {
+		redisClient := redis.Client()
+		if redisClient == nil {
+			log.Errorf(ctx, "redis client is not initialized")
+			return
+		}
+		// 从配置获取 basePath，如果没有则使用默认值
+		basePath := redisService.KVBasePath
+		if basePath == "" {
+			basePath = "bkmonitorv3:unify-query"
+		}
+		s.provider = redis.NewFeatureFlagClient(redisClient, basePath)
+	} else {
+		// 默认使用 consul
+		s.provider = consul.NewFeatureFlagProvider()
+	}
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {

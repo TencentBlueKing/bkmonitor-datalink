@@ -300,36 +300,6 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		}
 	}
 
-	for _, db := range dbs {
-		table := fmt.Sprintf("`%s`", db)
-		if f.query.Measurement != "" {
-			table += "." + f.query.Measurement
-		}
-
-		sql := f.expr.DescribeTableSQL(table)
-		res, err := i.getFieldsMap(ctx, sql)
-		if err != nil {
-			continue
-		}
-
-		for k, v := range res {
-			if k == "" || v.FieldType == "" {
-				continue
-			}
-			// 如果字段相同则忽略
-			if _, ok := fieldsMap[k]; ok {
-				continue
-			}
-
-			v.AliasName = query.FieldAlias.AliasName(k)
-			v.FieldName = k
-			ks := strings.Split(k, ".")
-			v.OriginField = ks[0]
-
-			fieldsMap[k] = v
-		}
-	}
-
 	return fieldsMap, nil
 }
 

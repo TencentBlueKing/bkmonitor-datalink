@@ -135,7 +135,13 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 		span.Set("enabled", enabled)
 
 		defer func() {
-			span.End(&err)
+			// 当 JWT 鉴权未启用时，即使 token 解析失败也不应将 span 标记为 ERROR，
+			// 否则 trace 中会出现误导性的红色错误记录。
+			spanErr := err
+			if !enabled && spanErr != nil {
+				spanErr = nil
+			}
+			span.End(&spanErr)
 
 			if err != nil {
 				metric.JWTRequestInc(ctx, c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusFailed)

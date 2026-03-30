@@ -676,11 +676,11 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		"metrics merge issue": {
 			body: `{"query_list":[{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"*","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es","field_name":"serverIp","limit":20},{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"test","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es_1","field_name":"serverIp","limit":20}],"metric_merge":"a","order_by":["-_value"],"step":"1d","space_uid":"bkcc__2","start_time":"1761980445276","end_time":"1764572445277","down_sample_range":"","timezone":"Asia/Shanghai","bk_biz_id":2}`,
 			// 修复后按 -_value 排序: 13961116 -> 42821 -> 48 -> 24
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.7.93"],"values":[[1761980445276,13961116]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.33"],"values":[[1761980445276,42821]]},{"name":"_result2","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.4"],"values":[[1761980445276,48]]},{"name":"_result3","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.18"],"values":[[1761980445276,24]]}],"is_partial":false}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.7.93"],"stat":{"count":[0,1],"sum":[0,13961116],"min":[1761980445276,13961116],"max":[1761980445276,13961116],"avg":[0,13961116],"last":[1761980445276,13961116]},"values":[[1761980445276,13961116]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.33"],"stat":{"count":[0,1],"sum":[0,42821],"min":[1761980445276,42821],"max":[1761980445276,42821],"avg":[0,42821],"last":[1761980445276,42821]},"values":[[1761980445276,42821]]},{"name":"_result2","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.4"],"stat":{"count":[0,1],"sum":[0,48],"min":[1761980445276,48],"max":[1761980445276,48],"avg":[0,48],"last":[1761980445276,48]},"values":[[1761980445276,48]]},{"name":"_result3","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.18"],"stat":{"count":[0,1],"sum":[0,24],"min":[1761980445276,24],"max":[1761980445276,24],"avg":[0,24],"last":[1761980445276,24]},"values":[[1761980445276,24]]}],"is_partial":false}`,
 		},
 		"order_by_value_desc_bug": {
 			body:     `{"query_list":[{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"*","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es","field_name":"serverIp","limit":20}],"metric_merge":"a","order_by":["-_value"],"step":"1d","space_uid":"bkcc__2","start_time":"1761980445276","end_time":"1764572445277","down_sample_range":"","timezone":"Asia/Shanghai","bk_biz_id":2}`,
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.7.93"],"values":[[1761980445276,13961116]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.33"],"values":[[1761980445276,53]]},{"name":"_result2","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.4"],"values":[[1761980445276,48]]},{"name":"_result3","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.18"],"values":[[1761980445276,24]]}],"is_partial":false}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.7.93"],"stat":{"count":[0,1],"sum":[0,13961116],"min":[1761980445276,13961116],"max":[1761980445276,13961116],"avg":[0,13961116],"last":[1761980445276,13961116]},"values":[[1761980445276,13961116]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.33"],"stat":{"count":[0,1],"sum":[0,53],"min":[1761980445276,53],"max":[1761980445276,53],"avg":[0,53],"last":[1761980445276,53]},"values":[[1761980445276,53]]},{"name":"_result2","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.4"],"stat":{"count":[0,1],"sum":[0,48],"min":[1761980445276,48],"max":[1761980445276,48],"avg":[0,48],"last":[1761980445276,48]},"values":[[1761980445276,48]]},{"name":"_result3","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["serverIp"],"group_values":["10.0.6.18"],"stat":{"count":[0,1],"sum":[0,24],"min":[1761980445276,24],"max":[1761980445276,24],"avg":[0,24],"last":[1761980445276,24]},"values":[[1761980445276,24]]}],"is_partial":false}`,
 		},
 	}
 
@@ -698,7 +698,7 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 
 			HandlerQueryReference(ginC)
 			b := w.body()
-			assert.Equal(t, c.expected, b)
+			assert.JSONEq(t, c.expected, b)
 		})
 	}
 }
@@ -811,21 +811,21 @@ func TestPromQLQueryHandler(t *testing.T) {
 			handler:  HandlerQueryPromQL,
 			promql:   `count(container_cpu_usage_seconds_total) by (bcs_cluster_id)`,
 			step:     "10m",
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729602000000,2042],[1729602600000,2056],[1729603200000,1995],[1729603800000,2008],[1729604400000,1978],[1729605000000,2001],[1729605600000,2052]]}],"is_partial":false}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"stat":{"count":[0,7],"sum":[0,14132],"min":[1729604400000,1978],"max":[1729602600000,2056],"avg":[0,2018.857142857143],"last":[1729605600000,2052]},"values":[[1729602000000,2042],[1729602600000,2056],[1729603200000,1995],[1729603800000,2008],[1729604400000,1978],[1729605000000,2001],[1729605600000,2052]]}],"is_partial":false}`,
 		},
 		"test_query_vm_1 and not time align": {
 			handler:      HandlerQueryPromQL,
 			promql:       `count(container_cpu_usage_seconds_total) by (bcs_cluster_id)`,
 			step:         "10m",
 			notTimeAlign: true,
-			expected:     `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1741056443000,2042],[1741057043000,2056],[1741057643000,1995],[1741058243000,2008],[1741058843000,1978],[1741059443000,2001],[1741060043000,2052]]}],"is_partial":false}`,
+			expected:     `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"stat":{"count":[0,7],"sum":[0,14132],"min":[1741058843000,1978],"max":[1741057043000,2056],"avg":[0,2018.857142857143],"last":[1741060043000,2052]},"values":[[1741056443000,2042],[1741057043000,2056],[1741057643000,1995],[1741058243000,2008],[1741058843000,1978],[1741059443000,2001],[1741060043000,2052]]}],"is_partial":false}`,
 		},
 		"test_query_vm_2 and instant": {
 			handler:  HandlerQueryPromQL,
 			promql:   `sum(kube_pod_info) by (bcs_cluster_id)`,
 			step:     "30m",
 			instant:  true,
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}],"is_partial":false}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"stat":{"count":[0,1],"sum":[0,1172],"min":[1729608144000,1172],"max":[1729608144000,1172],"avg":[0,1172],"last":[1729608144000,1172]},"values":[[1729608144000,1172]]}],"is_partial":false}`,
 		},
 		"test promql bkdata": {
 			handler:  HandlerQueryPromQL,
@@ -840,7 +840,7 @@ func TestPromQLQueryHandler(t *testing.T) {
 			start:    time.Unix(1763719860, 0),
 			step:     "1m",
 			instant:  true,
-			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["RoomId"],"group_values":["30895627249454038"],"values":[[1763719560000,3860]]}],"is_partial":false}`,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["RoomId"],"group_values":["30895627249454038"],"stat":{"count":[0,1],"sum":[0,3860],"min":[1763719560000,3860],"max":[1763719560000,3860],"avg":[0,3860],"last":[1763719560000,3860]},"values":[[1763719560000,3860]]}],"is_partial":false}`,
 		},
 	}
 
@@ -879,7 +879,7 @@ func TestPromQLQueryHandler(t *testing.T) {
 			if c.handler != nil {
 				c.handler(ginC)
 				b := w.body()
-				assert.Equal(t, c.expected, b)
+				assert.JSONEq(t, c.expected, b)
 			}
 		})
 	}

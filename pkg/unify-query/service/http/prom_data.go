@@ -80,6 +80,7 @@ func (d *PromData) Fill(tables *promql.Tables) error {
 			values = append(values, value)
 		}
 		tableItem.Values = values
+		tableItem.Stat = ComputeStatFromPoints(tableItem.GetPromPoints())
 		d.Tables = append(d.Tables, tableItem)
 	}
 	return nil

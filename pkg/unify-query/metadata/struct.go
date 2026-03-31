@@ -488,6 +488,7 @@ func (fa FieldAlias) AddAliasKeysWhenOriginalFieldPresent(data map[string]any) {
 	for aliasField, originalField := range fa {
 		if _, ok := data[originalField]; ok {
 			data[aliasField] = data[originalField]
+			// TODO: 等前端适配之后，再移除
 		}
 	}
 }

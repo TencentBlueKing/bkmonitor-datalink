@@ -15,14 +15,15 @@ const (
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
 	TenantIDHeader      = "X-Bk-Tenant-Id"
 
-	UserKey               = "user"
-	StatusKey             = "message"
-	ExpandKey             = "expand"
-	QueriesKey            = "queries"
-	QueryParamsKey        = "query_params"
-	QueryReferenceKey     = "query_reference"
-	QueryClusterMetricKey = "query_cluster_metric"
-	JwtPayLoadKey         = "jwt_payload"
+	UserKey                 = "user"
+	StatusKey               = "message"
+	ExpandKey               = "expand"
+	CheckPreviewMetricQLKey = "check_preview_metricql"
+	QueriesKey              = "queries"
+	QueryParamsKey          = "query_params"
+	QueryReferenceKey       = "query_reference"
+	QueryClusterMetricKey   = "query_cluster_metric"
+	JwtPayLoadKey           = "jwt_payload"
 
 	FieldFormatKey = "field_format"
 

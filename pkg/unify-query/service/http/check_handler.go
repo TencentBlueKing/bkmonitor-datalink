@@ -33,7 +33,7 @@ import (
 
 // CheckQueryTsDataResponse check 接口成功响应体。
 type CheckQueryTsDataResponse struct {
-	// Data 每项为 QueryCheckPreview.GetRequestBody() 序列化结果。直查 VM 常为单元素 VmQueryCheckBody；非直查若子查询预览均为占位 nil 则 400。不下发真实 TSDB。
+	// Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实 TSDB。
 	Data []any `json:"data"`
 	// TraceID 链路 ID（与 trace span 一致）。
 	TraceID string `json:"trace_id"`
@@ -146,17 +146,15 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 // --- 编排：QueryReference → 直查 / 非直查预览
 
 // checkQueryTsData 将 QueryTs 转为 QueryReference，再按直查/非直查组装预览（不调真实 TSDB）。
-// 直查 VM：metricql 由 vmCheckMetricql 生成（ToPromExpr 空 PromExprOption + MetricFilterCondition 替换变量）。
-// 非直查：不生成 VM 预览，仅按子查询追加其它存储预览（待扩展）todo: 未来扩展
+// 直查 VM：vmCheckMetricql 后 SetCheckPreviewMetricQL；与 queryTsToInstanceAndStmt 同源 GetTsDbInstance(VM)，Instance.GetRequestBody(ctx) 产出 VmQueryCheckBody。
+// 非直查：统一经 GetTsDbInstance + GetRequestBody，默认实现返回 nil 预览体则跳过。todo: 未来扩展具体预览体
 func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error) {
 	qr, err := checkQueryTsToReference(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 
-	qb := metadata.GetQueryParams(ctx)
-
-	if qb.IsDirectQuery() {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 与 queryTsToInstanceAndStmt 直查分支一致：ToVmExpand + SetExpand，后续与 DirectQuery 同源读 GetExpand。
 		vmExpand := query.ToVmExpand(ctx, qr)
 		metadata.SetExpand(ctx, vmExpand)
@@ -165,30 +163,30 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 		if err != nil {
 			return nil, err
 		}
-		iface, err := vmCheckPreviewIface(ctx, qr, promQL)
-		if err != nil {
-			return nil, err
+		metadata.SetCheckPreviewMetricQL(ctx, promQL)
+		instance := prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			StorageID:   metadata.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
+		})
+		if instance == nil {
+			return nil, fmt.Errorf("instance is null for direct vm check")
 		}
-		return appendCheckPreview(ctx, nil, iface)
+		return appendCheckPreview(ctx, nil, instance)
 	}
 
-	// 非直查：不涉及 VM 与 ToPromExpr；校验实例并按存储类型追加预览（Doris/ES 当前跳过）todo: 未来扩展
+	// 非直查：遍历子查询 GetTsDbInstance + appendCheckPreview（GetRequestBody 默认 nil 预览体则跳过）todo: 未来扩展各存储预览体
 	var out []any
 	var rangeErr error
 	qr.Range("", func(qry *metadata.Query) {
 		if rangeErr != nil {
 			return
 		}
-		if prometheus.GetTsDbInstance(ctx, qry) == nil {
+		instance := prometheus.GetTsDbInstance(ctx, qry)
+		if instance == nil {
 			rangeErr = fmt.Errorf("instance is null, with storageID %s", qry.StorageID)
 			return
 		}
-		iface, err := checkTsdbPreviewForSubQuery(ctx, qry)
-		if err != nil {
-			rangeErr = err
-			return
-		}
-		out, rangeErr = appendCheckPreview(ctx, out, iface)
+		out, rangeErr = appendCheckPreview(ctx, out, instance)
 	})
 	if rangeErr != nil {
 		return nil, rangeErr
@@ -245,7 +243,7 @@ func checkQueryTsToReference(ctx context.Context, q *structured.QueryTs) (metada
 // --- 直查 VM：VmExpand、MetricQL 预览、VmQueryCheckBody
 
 // vmExpandForCheck 优先 metadata.GetExpand(ctx)（直查 Check 在 checkQueryTsData 内已 SetExpand，与 queryTsToInstanceAndStmt 一致）；
-// ctx 未写入时退回 ToVmExpand(qr)，便于单测直接调用 vmCheckMetricql / vmCheckPreviewIface。
+// ctx 未写入时退回 ToVmExpand(qr)，便于单测直接调用 vmCheckMetricql。
 func vmExpandForCheck(ctx context.Context, qr metadata.QueryReference) *metadata.VmExpand {
 	if v := metadata.GetExpand(ctx); v != nil {
 		return v
@@ -298,49 +296,21 @@ func vmCheckMetricql(ctx context.Context, q *structured.QueryTs, qr metadata.Que
 	return out, nil
 }
 
-// vmCheckPreviewIface 基于 QueryReference 的 VM 展开构造 VmQueryCheckBody（实现 QueryCheckPreview）。
-func vmCheckPreviewIface(ctx context.Context, qr metadata.QueryReference, promQL string) (tsdb.QueryCheckPreview, error) {
-	vmExpand := vmExpandForCheck(ctx, qr)
-	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryReference,
-			"vm 展开结果为空",
-		).Error(ctx, fmt.Errorf("vm expand is empty"))
-	}
-	return &tsdb.VmQueryCheckBody{
-		StorageType:     metadata.VictoriaMetricsStorageType,
-		MetricQL:        promQL,
-		ResultTableList: append([]string(nil), vmExpand.ResultTableList...),
-	}, nil
-}
-
-// --- 非直查：按子查询 storage 的预览占位
-
-// checkTsdbPreviewForSubQuery 非直查路径按子查询 storage_type 返回预览；不涉及 VM（VM 仅直查路径处理）。
-// Doris/ES/BkSql 当前返回 nil 待扩展；VM 若出现则视为路由异常并返回错误；其它类型暂不支持。
-func checkTsdbPreviewForSubQuery(ctx context.Context, qry *metadata.Query) (tsdb.QueryCheckPreview, error) {
-	switch qry.StorageType {
-	case metadata.DorisStorageType, metadata.BkSqlStorageType, metadata.ElasticsearchStorageType: // todo: 未来支持其他存储
-		return nil, nil
-	default:
-		return nil, metadata.NewMessage(
-			metadata.MsgQueryReference,
-			"check 暂不支持该存储类型",
-		).Error(ctx, fmt.Errorf("unsupported storage_type %q for check preview", qry.StorageType))
-	}
-}
-
 // --- 工具
 
-// appendCheckPreview 将 iface.GetRequestBody() 追加到 out；iface 为 nil 时跳过（不报错），并打 Warn 便于排查占位未实现。
-func appendCheckPreview(ctx context.Context, out []any, iface tsdb.QueryCheckPreview) ([]any, error) {
-	if iface == nil {
-		log.Warnf(ctx, "check: skip nil QueryCheckPreview (no preview body for this subquery, e.g. doris/es placeholder)")
+// appendCheckPreview 将 instance.GetRequestBody(ctx) 追加到 out；instance 为 nil 或预览体为 nil 时跳过并打 Warn。
+func appendCheckPreview(ctx context.Context, out []any, instance tsdb.Instance) ([]any, error) {
+	if instance == nil {
+		log.Warnf(ctx, "check: skip nil tsdb.Instance preview")
 		return out, nil
 	}
-	item, err := iface.GetRequestBody()
+	item, err := instance.GetRequestBody(ctx)
 	if err != nil {
 		return out, err
+	}
+	if item == nil {
+		log.Warnf(ctx, "check: skip nil preview body for instance type %q", instance.InstanceType())
+		return out, nil
 	}
 	return append(out, item), nil
 }

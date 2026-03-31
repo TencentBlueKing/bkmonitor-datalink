@@ -648,13 +648,13 @@
 
 ## 5. 校验接口（Check）
 
-**说明**：接口返回 **JSON**（`Content-Type: application/json`），**不下发**真实 TSDB/VM 查询。直查 VictoriaMetrics 时，在内存中生成 MetricQL 预览；直查路径在 `ToQueryReference` 之后会 **`ToVmExpand` + `metadata.SetExpand`**，与正式 `queryTsToInstanceAndStmt` 一致，便于与 `DirectQuery` 使用的 `GetExpand` 同源。
+**说明**：接口返回 **JSON**（`Content-Type: application/json`），**不下发**真实 TSDB/VM 查询。直查 VictoriaMetrics 时，在内存中生成 MetricQL 预览；直查路径在 `ToQueryReference` 之后会 **`ToVmExpand` + `metadata.SetExpand`**，与正式 `queryTsToInstanceAndStmt` 一致，便于与 `DirectQuery` 使用的 `GetExpand` 同源。预览字符串在 `vmCheckMetricql` 之后由 **`metadata.SetCheckPreviewMetricQL`** 写入当前请求的 metadata，`victoriaMetrics.Instance.GetRequestBody(ctx)` 再通过 **`metadata.GetCheckPreviewMetricQL`** 与 **`metadata.GetExpand`** 拼装响应中的 `VmQueryCheckBody`。
 
 **成功（HTTP 200）**：`CheckQueryTsDataResponse`
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data` | array | 每项为某存储预览对象的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody` |
+| `data` | array | 每项为某子查询存储 **`tsdb.Instance.GetRequestBody(ctx)`** 的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody` |
 | `trace_id` | string | 链路追踪 ID |
 
 **失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。
@@ -669,7 +669,7 @@
 
 ### 5.2 非直查
 
-当前实现：遍历子查询校验实例；Doris/ES 等预览占位返回 nil 时，若 **`data` 最终为空** 则 **400**（「未解析到可路由的查询」），而非 200 空数组。
+当前实现：遍历子查询 `GetTsDbInstance`，再调用 **`GetRequestBody(ctx)`**；**`DefaultInstance`** 等无预览体时返回 **(nil, nil)**，该子查询**不产生** `data` 元素（内部打日志跳过）。若遍历结束后 **`data` 仍为空** 则 **400**（「未解析到可路由的查询」），而非 200 空数组。
 
 ### 5.3 校验结构体查询
 

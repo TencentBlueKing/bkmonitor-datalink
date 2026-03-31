@@ -137,8 +137,10 @@ definitions:
   http.CheckQueryTsDataResponse:
     properties:
       data:
-        description: Data 每项为 QueryCheckPreview.GetRequestBody() 序列化结果。直查 VM 常为单元素
-          VmQueryCheckBody；非直查若子查询预览均为占位 nil 则 400。不下发真实 TSDB。
+        description: Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM
+          常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL
+          写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实
+          TSDB。
         items: {}
         type: array
       trace_id:
@@ -760,20 +762,6 @@ definitions:
     - 1000000000
     - 60000000000
     - 3600000000000
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
     format: int64
     type: integer
     x-enum-varnames:
@@ -787,20 +775,6 @@ definitions:
     - Hour
     - minDuration
     - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
     - Nanosecond
     - Microsecond
     - Millisecond

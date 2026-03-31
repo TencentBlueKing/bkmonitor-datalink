@@ -589,49 +589,44 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 
 	// These test cases mirror the JSON examples from the code review:
 	// request:  {"rt_vm_1": {"table_id": "rt_1", "storage_name": "vm_op_1"}, ...}
-	// response: {"vm_op_1": [...], "vm_op_2": [...]} → StorageClusterList: ["vm_op_1", "vm_op_2"]
+	// response StorageClusterList: ["vm_op_1", "vm_op_2"]
 	cases := map[string]struct {
-		rtDetail     map[string]metadata.RtDetail
-		responseList []string
-		wantStatus   string
-		wantMissing  string // JSON string or empty
-		wantExtra    []string
+		rtDetail              map[string]metadata.RtDetail
+		responseVMClusterList []string
+		wantStatus            string
+		wantMissing           string // JSON string or empty
 	}{
 		"match: request cluster names equal response cluster names": {
 			rtDetail: map[string]metadata.RtDetail{
 				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
 				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
 			},
-			responseList: []string{"vm_op_1", "vm_op_2"},
-			wantStatus:   "match",
-			wantMissing:  "",
-			wantExtra:    nil,
+			responseVMClusterList: []string{"vm_op_1", "vm_op_2"},
+			wantStatus:            "match",
+			wantMissing:           "",
 		},
 		"mismatch: vm_op_2 missing from response": {
 			rtDetail: map[string]metadata.RtDetail{
 				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
 				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
 			},
-			responseList: []string{"vm_op_1"},
-			wantStatus:   "mismatch",
-			wantMissing:  `[{"cluster":"vm_op_2","rts":["rt_vm_2"]}]`,
-			wantExtra:    nil,
+			responseVMClusterList: []string{"vm_op_1"},
+			wantStatus:            "mismatch",
+			wantMissing:           `[{"cluster":"vm_op_2","vm_rt_list":["rt_vm_2"],"table_id_list":["rt_2"]}]`,
 		},
-		"mismatch: vm_op_2 extra in response": {
+		"response has extra cluster not in request: match (extra ignored)": {
 			rtDetail: map[string]metadata.RtDetail{
 				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
 			},
-			responseList: []string{"vm_op_1", "vm_op_2"},
-			wantStatus:   "mismatch",
-			wantMissing:  "",
-			wantExtra:    []string{"vm_op_2"},
+			responseVMClusterList: []string{"vm_op_1", "vm_op_2"},
+			wantStatus:            "match",
+			wantMissing:           "",
 		},
 		"empty request and response: match": {
-			rtDetail:     nil,
-			responseList: nil,
-			wantStatus:   "match",
-			wantMissing:  "",
-			wantExtra:    nil,
+			rtDetail:              nil,
+			responseVMClusterList: nil,
+			wantStatus:            "match",
+			wantMissing:           "",
 		},
 	}
 
@@ -639,7 +634,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rec.Reset()
 			_, span := uqtrace.NewSpan(context.Background(), "test-span")
-			spanSetStorageListDiff(span, tc.rtDetail, tc.responseList)
+			spanSetStorageListDiff(span, tc.rtDetail, tc.responseVMClusterList)
 			var err error
 			span.End(&err)
 
@@ -662,9 +657,9 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 				assert.False(t, ok)
 			}
 
-			// Check extra field
-			extra, _ := spanAttrStringSlice(attrs, "query-storage-extra")
-			assert.ElementsMatch(t, tc.wantExtra, extra)
+			// extra field is no longer recorded
+			_, hasExtra := spanAttrStringSlice(attrs, "query-storage-extra")
+			assert.False(t, hasExtra)
 		})
 	}
 }

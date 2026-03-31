@@ -136,10 +136,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 // spanSetStorageListDiff records request/response storageLists and any diff into the span.
 // requestRtDetail maps vm_rt → RtDetail{TableID, StorageName}: vm_rt is the observation subject
 // while StorageName (cluster name) is the comparison subject; TableID is carried as context.
-// responseList contains the storage cluster names returned by the VM API.
-// missing: cluster names present in request but absent from response, with associated RTs.
-// extra:   cluster names present in response but absent from request.
-func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseList []string) {
+// responseVMClusterList contains the storage cluster names returned by the VM API.
+// missing: cluster names present in request but absent from response, with associated RTs and TableIDs.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) {
 	// Marshal request detail map as JSON for trace consumption.
 	requestJSON := ""
 	if len(requestRtDetail) > 0 {
@@ -151,58 +150,57 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		}
 	}
 	span.Set("query-storage-request", requestJSON)
-	span.Set("query-storage-response", responseList)
+	span.Set("query-storage-response", responseVMClusterList)
 
-	// Build request cluster-name → [vm_rt] mapping
-	reqClusterToRts := make(map[string][]string)
+	// Build request cluster-name → {VmRtList, TableIDList} mapping
+	type clusterRtInfo struct {
+		VmRtList   []string
+		TableIDList []string
+	}
+	reqClusterToInfo := make(map[string]*clusterRtInfo)
 	for vmRt, detail := range requestRtDetail {
 		if detail.StorageName != "" {
-			reqClusterToRts[detail.StorageName] = append(reqClusterToRts[detail.StorageName], vmRt)
+			info, ok := reqClusterToInfo[detail.StorageName]
+			if !ok {
+				info = &clusterRtInfo{}
+				reqClusterToInfo[detail.StorageName] = info
+			}
+			info.VmRtList = append(info.VmRtList, vmRt)
+			if detail.TableID != "" {
+				info.TableIDList = append(info.TableIDList, detail.TableID)
+			}
 		}
 	}
 
-	respSet := make(map[string]struct{}, len(responseList))
-	for _, s := range responseList {
+	respSet := make(map[string]struct{}, len(responseVMClusterList))
+	for _, s := range responseVMClusterList {
 		respSet[s] = struct{}{}
 	}
 
-	// Build missing and extra with RT details
+	// Build missing with VmRtList and TableIDList
 	type ClusterMissing struct {
-		Cluster string   `json:"cluster"`
-		Rts     []string `json:"rts"`
+		Cluster     string   `json:"cluster"`
+		VmRtList    []string `json:"vm_rt_list"`
+		TableIDList []string `json:"table_id_list"`
 	}
 	var missing []ClusterMissing
-	for clusterName, rts := range reqClusterToRts {
+	for clusterName, info := range reqClusterToInfo {
 		if _, ok := respSet[clusterName]; !ok {
-			missing = append(missing, ClusterMissing{Cluster: clusterName, Rts: rts})
-		}
-	}
-	var extra []string
-	for _, s := range responseList {
-		found := false
-		for clusterName := range reqClusterToRts {
-			if clusterName == s {
-				found = true
-				break
-			}
-		}
-		if !found {
-			extra = append(extra, s)
+			missing = append(missing, ClusterMissing{
+				Cluster:     clusterName,
+				VmRtList:    info.VmRtList,
+				TableIDList: info.TableIDList,
+			})
 		}
 	}
 
-	if len(missing) > 0 || len(extra) > 0 {
+	if len(missing) > 0 {
 		span.Set("query-storage-status", "mismatch")
-		if len(missing) > 0 {
-			b, err := json.Marshal(missing)
-			if err != nil {
-				span.Set("query-storage-missing", fmt.Sprintf("%+v", missing))
-			} else {
-				span.Set("query-storage-missing", string(b))
-			}
-		}
-		if len(extra) > 0 {
-			span.Set("query-storage-extra", extra)
+		b, err := json.Marshal(missing)
+		if err != nil {
+			span.Set("query-storage-missing", fmt.Sprintf("%+v", missing))
+		} else {
+			span.Set("query-storage-missing", string(b))
 		}
 	} else {
 		span.Set("query-storage-status", "match")
@@ -594,11 +592,11 @@ func (i *Instance) DirectQueryRange(
 
 	result, isPartial, err := i.matrixFormat(ctx, vmResp, span)
 
-	var responseStorageList []string
+	var responseVMClusterList []string
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
-		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
+		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 
 	return result, isPartial, err
 }
@@ -663,11 +661,11 @@ func (i *Instance) DirectQuery(
 
 	result, err := i.vectorFormat(ctx, vmResp, span)
 
-	var responseStorageList []string
+	var responseVMClusterList []string
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
-		responseStorageList = vmResp.Data.VmQueryCluster.StorageClusterList
+		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 
 	return result, err
 }
@@ -948,11 +946,11 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	result, err := i.labelFormat(ctx, resp, span)
 
-	var responseStorageList []string
+	var responseVMClusterList []string
 	if resp != nil && resp.Data.VmQueryCluster != nil {
-		responseStorageList = resp.Data.VmQueryCluster.StorageClusterList
+		responseVMClusterList = resp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseStorageList)
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 
 	return result, err
 }

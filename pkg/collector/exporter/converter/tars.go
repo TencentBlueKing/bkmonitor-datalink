@@ -48,18 +48,21 @@ const (
 	resourceTagInstance      = "instance"
 	resourceTagContainerName = "container_name"
 	resourceTagVersion       = "version"
+	resourceTagRegion        = "region"
 )
 
 const (
-	metricTagCallerServer  = "caller_server"
-	metricTagCallerService = "caller_service"
-	metricTagCallerIp      = "caller_ip"
-	metricTagCalleeServer  = "callee_server"
-	metricTagCalleeService = "callee_service"
-	metricTagCalleeMethod  = "callee_method"
-	metricTagCalleeIp      = "callee_ip"
-	metricTagCode          = "code"
-	metricTagCodeType      = "code_type"
+	metricTagCallerServer   = "caller_server"
+	metricTagCallerService  = "caller_service"
+	metricTagCallerIp       = "caller_ip"
+	metricTagCallerConSetid = "caller_con_setid"
+	metricTagCalleeServer   = "callee_server"
+	metricTagCalleeService  = "callee_service"
+	metricTagCalleeMethod   = "callee_method"
+	metricTagCalleeIp       = "callee_ip"
+	metricTagCalleeConSetid = "callee_con_setid"
+	metricTagCode           = "code"
+	metricTagCodeType       = "code_type"
 )
 
 const (
@@ -97,6 +100,21 @@ func splitAtLastOnce(s, sep string) (string, string) {
 	default:
 		return s[:lastIndex], s[lastIndex+1:]
 	}
+}
+
+// parseTafServiceName 从原始 Taf 服务名中提取纯净服务名、set 标识和版本号
+func parseTafServiceName(raw string) (serviceName, setId, version string) {
+	s, _ := tokenparser.FromString(raw)
+	s, version = splitAtLastOnce(s, "@")
+	// 启发式：Taf 服务名约定为 "App.Server"（两段式），三段及以上时末段视为 set 标识
+	parts := strings.SplitN(s, ".", 3)
+	if len(parts) >= 3 {
+		serviceName = parts[0] + "." + parts[1]
+		setId = parts[2]
+	} else {
+		serviceName = s
+	}
+	return
 }
 
 // toBuckets 将分布统计数据转为符合 Prometheus Histogram 格式的分桶数据
@@ -171,12 +189,10 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 
 // statHeadToDims 将 Tars Stat 维度转为通用 RPC 模调维度
 func statHeadToDims(head *statf.StatMicMsgHead, role, ip, appName string) map[string]string {
-	// 去掉可能存在的 Token，并提取可能存在的 Version 字段。
-	calleeServer, _ := tokenparser.FromString(head.SlaveName)
-	callerServer, _ := tokenparser.FromString(head.MasterName)
-	callerServer, version := splitAtLastOnce(callerServer, "@")
+	callerServer, callerSetId, version := parseTafServiceName(head.MasterName)
+	calleeServer, calleeSetId, _ := parseTafServiceName(head.SlaveName)
 
-	var instance, serviceName string
+	var instance, serviceName, region string
 	callerIp, calleeIp := head.MasterIp, head.SlaveIp
 	if role == statTagRoleClient {
 		// 主调场景上报指标缺少主调 IP 维度，使用上报 IP 填充
@@ -185,6 +201,7 @@ func statHeadToDims(head *statf.StatMicMsgHead, role, ip, appName string) map[st
 		}
 		instance = callerIp
 		serviceName = callerServer
+		region = callerSetId
 	} else {
 		// 被调场景上报指标缺少被调 IP 维度，使用上报 IP 填充
 		if calleeIp == "" {
@@ -192,26 +209,27 @@ func statHeadToDims(head *statf.StatMicMsgHead, role, ip, appName string) map[st
 		}
 		instance = calleeIp
 		serviceName = calleeServer
+		region = calleeSetId
 	}
 
 	return map[string]string{
-		define.TokenAppName:    appName,
-		resourceTagRPCSystem:   define.RequestTars.S(),
-		resourceTagScopeName:   fmt.Sprintf("%s_metrics", role),
-		resourceTagVersion:     version,
-		resourceTagInstance:    instance,
-		resourceTagServiceName: serviceName,
-		// 主调
-		metricTagCallerServer:  callerServer,
-		metricTagCallerService: callerServer,
-		metricTagCallerIp:      callerIp,
-		// 被调
-		metricTagCalleeServer:  calleeServer,
-		metricTagCalleeService: calleeServer,
-		metricTagCalleeIp:      calleeIp,
-		metricTagCalleeMethod:  head.InterfaceName,
-		// 返回码
-		metricTagCode: strconv.Itoa(int(head.ReturnValue)),
+		define.TokenAppName:     appName,
+		resourceTagRPCSystem:    define.RequestTars.S(),
+		resourceTagScopeName:    fmt.Sprintf("%s_metrics", role),
+		resourceTagVersion:      version,
+		resourceTagInstance:     instance,
+		resourceTagServiceName:  serviceName,
+		resourceTagRegion:       region,
+		metricTagCallerServer:   callerServer,
+		metricTagCallerService:  callerServer,
+		metricTagCallerIp:       callerIp,
+		metricTagCallerConSetid: callerSetId,
+		metricTagCalleeServer:   calleeServer,
+		metricTagCalleeService:  calleeServer,
+		metricTagCalleeIp:       calleeIp,
+		metricTagCalleeConSetid: calleeSetId,
+		metricTagCalleeMethod:   head.InterfaceName,
+		metricTagCode:           strconv.Itoa(int(head.ReturnValue)),
 	}
 }
 
@@ -223,13 +241,14 @@ func propHeadToDims(head *propertyf.StatPropMsgHead, ip, appName string) map[str
 		instance = ip
 	}
 
-	serviceName, _ := tokenparser.FromString(head.ModuleName)
+	serviceName, setId, _ := parseTafServiceName(head.ModuleName)
 	return map[string]string{
 		define.TokenAppName:      appName,
 		resourceTagRPCSystem:     define.RequestTars.S(),
 		resourceTagScopeName:     fmt.Sprintf("%s_property", define.RequestTars.S()),
 		resourceTagInstance:      instance,
 		resourceTagServiceName:   serviceName,
+		resourceTagRegion:        setId,
 		resourceTagContainerName: head.SContainer,
 		propertyTagIPropertyVer:  strconv.Itoa(int(head.IPropertyVer)),
 		propertyTagPropertyName:  head.PropertyName,
@@ -564,7 +583,8 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
 		events = append(events, c.statToEvents(stat)...)
 
-		if role == statTagRoleClient {
+		// 背景：部分应用缺失被调实际的指标上报，为此增加从主调视角推导出被调视角指标的功能。
+		if role == statTagRoleClient && c.conf.IsDeriveServerView {
 			calleeServer, ok := dims[metricTagCalleeServer]
 			if !ok || calleeServer == "" || calleeServer == "." {
 				continue
@@ -579,6 +599,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 				resourceTagServiceName, calleeServer,
 				resourceTagInstance, calleeIp,
 				resourceTagScopeName, "server_metrics",
+				resourceTagRegion, dims[metricTagCalleeConSetid],
 			)
 			// 从 Client 切换成 Server 视角，target 取值从 ip 调整为 calleeIp，避免 target x calleeIp 不一致导致高基数。
 			serverStatFromClient := newStat(token, statTagRoleServer, calleeIp, data.Timestamp, serverDims, body)

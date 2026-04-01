@@ -23,6 +23,7 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	metricFilterCondition := make(map[string]string)
+	rtDetailList := make(map[string]metadata.RtDetail)
 
 	for referenceName, references := range qr {
 		if len(references) == 0 {
@@ -41,6 +42,10 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 				vmResultTable.Add(query.VmRt)
 				vmConditions.Add(string(query.VmCondition))
 				vmClusterNames.Add(query.StorageName)
+				rtDetailList[query.VmRt] = metadata.RtDetail{
+					TableID:     query.TableID,
+					StorageName: query.StorageName,
+				}
 			}
 
 			filterCondition := ""
@@ -59,6 +64,7 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 	vmExpand := &metadata.VmExpand{
 		MetricFilterCondition: metricFilterCondition,
 		ResultTableList:       vmResultTable.ToArray(),
+		RtDetailList:          rtDetailList,
 	}
 	sort.Strings(vmExpand.ResultTableList)
 

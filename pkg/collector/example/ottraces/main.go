@@ -37,7 +37,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
 type ExporterType string
@@ -245,7 +245,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&ConfExporter, "exporter", "stdout", "exporter represents the standard exporter type, optional: stdout/http/grpc")
+	flag.StringVar(&ConfExporter, "exporter", "http", "exporter represents the standard exporter type, optional: stdout/http/grpc")
 	flag.StringVar(&ConfToken, "token", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==", "authentication token")
 	flag.StringVar(&ConfEndpoint, "endpoint", "localhost", "report endpoint")
 	flag.StringVar(&ConfUpstreamAddr, "upstream", "localhost:56089", "upstream server address for testing")

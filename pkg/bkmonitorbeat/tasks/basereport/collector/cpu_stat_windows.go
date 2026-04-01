@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -22,101 +23,155 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// 全局通用的cpu信息获取
+// cpuInfo 缓存最近一次成功查询到的 CPU 基础信息。
 var cpuInfo = make([]cpu.InfoStat, 0)
 
-var isCpuInfoUpdating = false
+// cpuInfoWithContext 保留为包级函数变量，方便测试时替换查询实现。
+var cpuInfoWithContext = cpu.InfoWithContext
 
+// cpuInfoUpdaterRunning 标记后台 CPU 信息刷新协程是否正在运行。
+var cpuInfoUpdaterRunning atomic.Bool
+
+// updateLock 用于保护 `cpuInfo` 的并发读写。
 var updateLock sync.RWMutex
 
+// minPeriod 限制 CPU 信息后台刷新任务的最小执行周期。
 var minPeriod = 1 * time.Minute
 
+// lastTimeSlice 缓存上一次 CPU 时间采样结果，用于计算本次增量。
 type lastTimeSlice struct {
 	sync.Mutex
-	lastCPUTimes    []cpu.TimesStat
+	// lastPerCPUTimes 保存上一次逐核 CPU 时间采样结果。
 	lastPerCPUTimes []cpu.TimesStat
 }
 
+// lastCPUTimeSlice 保存 Windows CPU 使用率计算所需的基线时间片。
 var lastCPUTimeSlice lastTimeSlice
 
-func init() {
-	lastCPUTimeSlice.Lock()
-	lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
-	lastCPUTimeSlice.lastPerCPUTimes, _ = cpu.Times(true)
-	lastCPUTimeSlice.Unlock()
+// logWindowsCPUTimesQuery 记录 Windows CPU 时间查询路径及回退信息。
+//
+// 参数：
+// - stage：当前日志对应的阶段，如 init、collect 或 reset_baseline。
+// - meta：本次查询返回的元数据，包含模式、group 数量和回退原因。
+// - cpuCount：本次查询得到的 CPU 数量。
+func logWindowsCPUTimesQuery(stage string, meta windowsCPUTimesQueryMeta, cpuCount int) {
+	if meta.fallbackReason != "" {
+		logger.Warnw(
+			"windows cpu times fallback to legacy query",
+			"stage", stage,
+			"group_count", meta.groupCount,
+			"cpu_count", cpuCount,
+			"mode", meta.mode,
+			"used_group_query", false,
+			"fallback_reason", meta.fallbackReason,
+		)
+		return
+	}
+
+	logger.Debugw(
+		"windows cpu times query",
+		"stage", stage,
+		"group_count", meta.groupCount,
+		"cpu_count", cpuCount,
+		"mode", meta.mode,
+		"used_group_query", meta.mode == windowsCPUTimesModeGroupAware,
+	)
 }
 
-func getCPUStatUsage(report *CpuReport) error {
-	// per stat
-	perStat, err := cpu.Times(true)
-	if err != nil {
-		logger.Error("get CPU Stat fail")
-		return err
-	}
-	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
+// init 初始化 Windows CPU 采样基线，供后续使用率计算复用。
+func init() {
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
-	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perStat) != len(lastCPUTimeSlice.lastPerCPUTimes) {
-		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
-		if err != nil {
-			return err
-		}
+
+	perCPUTimes, meta, err := getWindowsCPUTimesWithMeta()
+	if err != nil {
+		logger.Errorf("init windows cpu baseline failed: %v", err)
+		return
 	}
 
-	l1, l2 := len(perStat), len(lastCPUTimeSlice.lastPerCPUTimes)
+	lastCPUTimeSlice.lastPerCPUTimes = cloneCPUTimesStats(perCPUTimes)
+	logWindowsCPUTimesQuery("init", meta, len(perCPUTimes))
+}
+
+// getCPUStatUsage 采集 Windows CPU 时间信息，并计算逐核及总 CPU 使用率。
+//
+// 参数：
+// - report：CPU 采集结果的输出对象，会被填充逐核统计、总统计和使用率。
+//
+// 返回值：
+// - error：当 CPU 时间查询、基线重置或使用率计算失败时返回错误。
+func getCPUStatUsage(report *CpuReport) error {
+	report.Stat = report.Stat[:0]
+	report.Usage = report.Usage[:0]
+	report.TotalStat = cpu.TimesStat{}
+	report.TotalUsage = 0
+
+	// 采集逐核 CPU 时间统计。
+	perCPUTimes, meta, err := getWindowsCPUTimesWithMeta()
+	if err != nil {
+		logger.Errorf("get CPU Stat fail: %v", err)
+		return err
+	}
+	logWindowsCPUTimesQuery("collect", meta, len(perCPUTimes))
+
+	var previousPerCPUTimes []cpu.TimesStat
+	lastCPUTimeSlice.Lock()
+	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
+	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
+		logger.Warnw(
+			"reset windows cpu baseline before usage calculation",
+			"previous_cpu_count", len(lastCPUTimeSlice.lastPerCPUTimes),
+			"current_cpu_count", len(perCPUTimes),
+		)
+
+		lastCPUTimeSlice.lastPerCPUTimes, meta, err = getWindowsCPUTimesWithMeta()
+		if err != nil {
+			lastCPUTimeSlice.Unlock()
+			logger.Errorf("reset windows cpu baseline failed: %v", err)
+			return err
+		}
+		logWindowsCPUTimesQuery("reset_baseline", meta, len(lastCPUTimeSlice.lastPerCPUTimes))
+	}
+
+	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
 	if l1 != l2 {
+		lastCPUTimeSlice.Unlock()
 		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
+		logger.Errorf("windows cpu baseline length mismatch: %v", err)
 		return err
 	}
 
-	for index, value := range perStat {
-		item := lastCPUTimeSlice.lastPerCPUTimes[index]
-		tmp := calcTimeState(item, value)
+	previousPerCPUTimes = cloneCPUTimesStats(lastCPUTimeSlice.lastPerCPUTimes)
+	lastCPUTimeSlice.lastPerCPUTimes = cloneCPUTimesStats(perCPUTimes)
+	lastCPUTimeSlice.Unlock()
+
+	for index, currentCPUTimes := range perCPUTimes {
+		previousCPUTimes := previousPerCPUTimes[index]
+		tmp := calcTimeState(previousCPUTimes, currentCPUTimes)
 		report.Stat = append(report.Stat, tmp)
 	}
-	// total stat
-	totalstat, err := cpu.Times(false)
+	// 计算总 CPU 统计信息。
+	currentTotalCPUTimes := sumWindowsTotalCPUTimes(perCPUTimes)
+	lastTotalCPUTimes := sumWindowsTotalCPUTimes(previousPerCPUTimes)
+	report.TotalStat = calcTimeState(lastTotalCPUTimes, currentTotalCPUTimes)
+	perUsage, err := calculateAllCPUBusyPercent(previousPerCPUTimes, perCPUTimes)
 	if err != nil {
-		logger.Error("get CPU Total Stat fail")
-		return err
-	}
-	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
-		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
-		if err != nil {
-			return err
-		}
-	}
-	cpuTimeStat := totalstat[0]
-	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
-	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
-	// 将此次获取的timeState重新写入公共变量
-	lastCPUTimeSlice.lastCPUTimes = totalstat
-	lastCPUTimeSlice.lastPerCPUTimes = perStat
-	perUsage, err := cpu.Percent(0, true)
-	if err != nil {
-		logger.Error("get CPU Percent fail")
+		logger.Errorf("get CPU Percent fail: %v", err)
 		return err
 	}
 
 	report.Usage = perUsage
-	// get total cpu percent
-	total, err := cpu.Percent(0, false)
-	if err != nil {
-		logger.Error("get CPU Total Percent fail")
-		return err
-	}
-	report.TotalUsage = total[0]
+	// 计算总 CPU 使用率。
+	report.TotalUsage = calculateCPUBusyPercent(lastTotalCPUTimes, currentTotalCPUTimes)
 
-	// protect code
+	// 对使用率结果做边界保护。
 	for i := range report.Usage {
 		if report.Usage[i] < 0 {
-			logger.Errorf("get invalid cpu useage %f", report.Usage[i])
+			logger.Errorf("get invalid cpu usage %f", report.Usage[i])
 			report.Usage[i] = 0.0
 		}
 		if report.Usage[i] > 100 {
-			logger.Errorf("get invalid cpu useage %f", report.Usage[i])
+			logger.Errorf("get invalid cpu usage %f", report.Usage[i])
 			report.Usage[i] = 100.0
 		}
 	}
@@ -124,62 +179,124 @@ func getCPUStatUsage(report *CpuReport) error {
 	if report.TotalUsage < 0 || report.TotalUsage > 100 {
 		report.TotalUsage = 0.0
 	}
+
+	logger.Debugw(
+		"windows cpu usage collected",
+		"per_stat_len", len(report.Stat),
+		"per_usage_len", len(report.Usage),
+		"total_usage", report.TotalUsage,
+	)
 	return nil
 }
 
-// queryCpuInfo: 查询获取机器的CPU信息
-// 注意，由于发现在部分windows机器上存在CPU核数过多，导致查询WMI接口超时的问题
-// 所以在此会提供兼容方案，windows允许CPU info上报的核数信息与CPU usage不对应
-// 但是由于linux机器上获取该配置方便，因此存在控制，要求两边的个数必须一致
-func queryCpuInfo(r *CpuReport, period time.Duration, timeout time.Duration) error {
-	// 异常存储，如果有任何异常存储在此处
-	var err error
-
-	// 判断是否已经有在工作的goroutines
-	if !isCpuInfoUpdating {
-		// 如果没有，需要新增一个
-		go func() {
-			var tempCpuInfo []cpu.InfoStat
-			// 标识已经正在处理中
-			isCpuInfoUpdating = true
-
-			// 退出时，需要将标志位改为
-			defer func() { isCpuInfoUpdating = false }()
-
-			// CPU的定时更新时间，不能低于1分钟一次，防止导致频繁更新
-			if period < minPeriod {
-				period = minPeriod
-			}
-
-			timer := time.NewTicker(period)
-			logger.Debugf("going to period update config->[%d]", period)
-			logger.Debugf("cpu info gather timeout->[%d]", timeout)
-			// 定时的更新CPU INFO
-			for {
-				timeoutCtx, _ := context.WithTimeout(context.Background(), timeout)
-				if tempCpuInfo, err = cpu.InfoWithContext(timeoutCtx); err != nil {
-					logger.Errorf("failed to get cpu info for->[%#v]", err)
-					return
-				}
-
-				logger.Debug("cpu info update success and going to update global state")
-				updateLock.Lock()
-				cpuInfo = tempCpuInfo
-				updateLock.Unlock()
-				logger.Debug("update global state success")
-
-				// 更新完成，需要sleep
-				select {
-				case <-timer.C:
-					continue
-				}
-			}
-		}()
+func cloneCPUTimesStats(src []cpu.TimesStat) []cpu.TimesStat {
+	if src == nil {
+		return nil
 	}
 
-	// 将获取的CPU信息返回到Report中
+	cloned := make([]cpu.TimesStat, len(src))
+	copy(cloned, src)
+	return cloned
+}
+
+// cloneCPUInfo 复制 CPU 信息切片，避免调用方修改结果时污染全局缓存。
+func cloneCPUInfo(src []cpu.InfoStat) []cpu.InfoStat {
+	if src == nil {
+		return nil
+	}
+
+	cloned := make([]cpu.InfoStat, len(src))
+	copy(cloned, src)
+	for i := range cloned {
+		if src[i].Flags != nil {
+			cloned[i].Flags = append([]string(nil), src[i].Flags...)
+		}
+	}
+	return cloned
+}
+
+func fetchCPUInfo(timeout time.Duration) ([]cpu.InfoStat, error) {
+	ctx := context.Background()
+	cancel := func() {}
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+
+	return cpuInfoWithContext(ctx)
+}
+
+func ensureCPUInfoUpdater(period time.Duration, timeout time.Duration) {
+	if !cpuInfoUpdaterRunning.CompareAndSwap(false, true) {
+		return
+	}
+
+	if period < minPeriod {
+		period = minPeriod
+	}
+
+	go func(period time.Duration, timeout time.Duration) {
+		defer cpuInfoUpdaterRunning.Store(false)
+
+		timer := time.NewTicker(period)
+		defer timer.Stop()
+		logger.Debugf("going to period update config->[%s]", period)
+		logger.Debugf("cpu info gather timeout->[%s]", timeout)
+
+		for {
+			tempCpuInfo, err := fetchCPUInfo(timeout)
+			if err != nil {
+				logger.Errorf("failed to get cpu info for->[%#v]", err)
+			} else {
+				logger.Debug("cpu info update success and going to update global state")
+				updateLock.Lock()
+				cpuInfo = cloneCPUInfo(tempCpuInfo)
+				updateLock.Unlock()
+				logger.Debug("update global state success")
+			}
+
+			select {
+			case <-timer.C:
+			}
+		}
+	}(period, timeout)
+}
+
+// queryCpuInfo 查询并缓存机器的 CPU 基础信息。
+//
+// 注意：
+// - 部分 Windows 机器因为 CPU 核数过多，查询 WMI 接口可能超时。
+// - 因此这里提供兼容方案，允许 Windows 上报的 CPU info 数量与 CPU usage 数量不完全对应。
+// - Linux 侧因为该信息更容易稳定获取，因此仍要求两边个数保持一致。
+//
+// 参数：
+// - r：CPU 采集结果的输出对象，会写入当前缓存的 CPU 基础信息。
+// - period：后台刷新 CPU 信息的周期，实际执行时不会低于 `minPeriod`。
+// - timeout：单次查询 CPU 信息的超时时间。
+//
+// 返回值：
+// - error：当缓存为空且同步查询失败时返回错误；若命中缓存则通常为 nil。
+func queryCpuInfo(r *CpuReport, period time.Duration, timeout time.Duration) error {
+	ensureCPUInfoUpdater(period, timeout)
+
 	updateLock.RLock()
-	r.Cpuinfo = cpuInfo
+	cachedCPUInfo := cloneCPUInfo(cpuInfo)
 	updateLock.RUnlock()
-	return err
+	if len(cachedCPUInfo) > 0 {
+		r.Cpuinfo = cachedCPUInfo
+		return nil
+	}
+
+	tempCpuInfo, err := fetchCPUInfo(timeout)
+	if err != nil {
+		logger.Errorf("failed to get cpu info for->[%#v]", err)
+		return err
+	}
+
+	clonedCPUInfo := cloneCPUInfo(tempCpuInfo)
+	updateLock.Lock()
+	cpuInfo = cloneCPUInfo(clonedCPUInfo)
+	updateLock.Unlock()
+	r.Cpuinfo = clonedCPUInfo
+	return nil
 }

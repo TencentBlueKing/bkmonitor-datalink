@@ -75,6 +75,10 @@ func TestVmExpand(t *testing.T) {
 					"vm_result_table",
 					"vm_result_table_1",
 				},
+				RtDetailList: map[string]metadata.RtDetail{
+					"vm_result_table":   {TableID: "result_table.vm"},
+					"vm_result_table_1": {TableID: "result_table.vm_1"},
+				},
 			},
 		},
 		"default-2": {
@@ -117,6 +121,9 @@ func TestVmExpand(t *testing.T) {
 				},
 				ResultTableList: []string{
 					"vm_result_table",
+				},
+				RtDetailList: map[string]metadata.RtDetail{
+					"vm_result_table": {TableID: "result_table.vm"},
 				},
 			},
 		},
@@ -171,6 +178,10 @@ func TestVmExpand(t *testing.T) {
 				ResultTableList: []string{
 					"vm_result_table",
 					"vm_result_table_1",
+				},
+				RtDetailList: map[string]metadata.RtDetail{
+					"vm_result_table":   {TableID: "result_table.vm"},
+					"vm_result_table_1": {TableID: "result_table.vm_1"},
 				},
 			},
 		},

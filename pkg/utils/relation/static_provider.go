@@ -48,7 +48,7 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 		}
 
 		rd := &ResourceDefinition{
-			Namespace: "", // 全局资源
+			Namespace: NamespaceAll,
 			Name:      resourceType,
 			Fields:    fields,
 			Labels:    make(map[string]string),
@@ -65,7 +65,7 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 		}
 
 		rd := &RelationDefinition{
-			Namespace:    "", // 全局关联
+			Namespace:    NamespaceAll,
 			Name:         string(schema.RelationName),
 			FromResource: string(schema.FromType),
 			ToResource:   string(schema.ToType),
@@ -80,13 +80,21 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 	return provider
 }
 
+// normalizeNamespace 将 "" 规范化为 NamespaceAll，统一全局 namespace 表示
+func normalizeNamespace(namespace string) string {
+	if namespace == "" {
+		return NamespaceAll
+	}
+	return namespace
+}
+
 // GetResourceDefinition 获取资源定义
 func (sp *StaticSchemaProvider) GetResourceDefinition(namespace, name string) (*ResourceDefinition, error) {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 
-	// 静态提供器只支持全局资源(namespace = "")
-	if namespace != "" {
+	// 静态提供器只支持全局资源(namespace 统一为 NamespaceAll)
+	if normalizeNamespace(namespace) != NamespaceAll {
 		return nil, ErrResourceDefinitionNotFound
 	}
 
@@ -103,8 +111,8 @@ func (sp *StaticSchemaProvider) ListResourceDefinitions(namespace string) ([]*Re
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 
-	// 静态提供器只支持全局资源(namespace = "")
-	if namespace != "" {
+	// 静态提供器只支持全局资源(namespace 统一为 NamespaceAll)
+	if normalizeNamespace(namespace) != NamespaceAll {
 		return []*ResourceDefinition{}, nil
 	}
 
@@ -121,8 +129,8 @@ func (sp *StaticSchemaProvider) GetRelationDefinition(namespace, name string) (*
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 
-	// 静态提供器只支持全局关联(namespace = "")
-	if namespace != "" {
+	// 静态提供器只支持全局关联(namespace 统一为 NamespaceAll)
+	if normalizeNamespace(namespace) != NamespaceAll {
 		return nil, ErrRelationDefinitionNotFound
 	}
 
@@ -139,8 +147,8 @@ func (sp *StaticSchemaProvider) ListRelationDefinitions(namespace string) ([]*Re
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 
-	// 静态提供器只支持全局关联(namespace = "")
-	if namespace != "" {
+	// 静态提供器只支持全局关联(namespace 统一为 NamespaceAll)
+	if normalizeNamespace(namespace) != NamespaceAll {
 		return []*RelationDefinition{}, nil
 	}
 

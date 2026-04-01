@@ -143,9 +143,18 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 	return provider, nil
 }
 
-// Close 关闭提供器
+// Close 关闭提供器，幂等，可多次调用
 func (rp *RedisProvider) Close() error {
-	rp.cancel()
+	rp.mu.Lock()
+	if rp.cancel == nil {
+		rp.mu.Unlock()
+		return nil
+	}
+	cancel := rp.cancel
+	rp.cancel = nil
+	rp.mu.Unlock()
+
+	cancel()
 	rp.wg.Wait()
 	rp.config.Logger.Infof("RedisProvider closed")
 	return nil
@@ -415,20 +424,12 @@ func (rp *RedisProvider) GetResourceDefinition(namespace, name string) (*Resourc
 }
 
 // ListResourceDefinitions 列出指定命名空间下的所有资源定义
+// namespace 为空或 "__all__" 时只返回全局定义；指定业务 namespace 时合并 __all__ 作为兜底
 func (rp *RedisProvider) ListResourceDefinitions(namespace string) ([]*ResourceDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
 	result := make([]*ResourceDefinition, 0)
-	if namespace == "" {
-		for _, nsMap := range rp.resourceDefinitions {
-			for _, def := range nsMap {
-				result = append(result, def)
-			}
-		}
-		return result, nil
-	}
-
 	ns := rp.normalizeNamespace(namespace)
 	seen := make(map[string]struct{})
 
@@ -480,20 +481,12 @@ func (rp *RedisProvider) GetRelationDefinition(namespace, name string) (*Relatio
 }
 
 // ListRelationDefinitions 列出指定命名空间下的所有关联定义
+// namespace 为空或 "__all__" 时只返回全局定义；指定业务 namespace 时合并 __all__ 作为兜底
 func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
 	result := make([]*RelationDefinition, 0)
-	if namespace == "" {
-		for _, nsMap := range rp.relationDefinitions {
-			for _, def := range nsMap {
-				result = append(result, def)
-			}
-		}
-		return result, nil
-	}
-
 	ns := rp.normalizeNamespace(namespace)
 	seen := make(map[string]struct{})
 
@@ -567,6 +560,7 @@ func (rp *RedisProvider) ListRelationSchemas() []RelationSchema {
 func (rp *RedisProvider) FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType DirectionType) (*RelationDefinition, bool) {
 	defs, err := rp.ListRelationDefinitions(namespace)
 	if err != nil {
+		rp.config.Logger.Warnf("FindRelationByResourceTypes: list relation definitions failed, namespace=%s, err=%v", namespace, err)
 		return nil, false
 	}
 

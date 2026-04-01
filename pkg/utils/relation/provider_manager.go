@@ -46,9 +46,9 @@ func (pm *ProviderManager) InitProvider(ctx context.Context, providerType string
 
 	switch providerType {
 	case "static":
-		// 使用 static provider
-		pm.logger.Infof("Using static SchemaProvider (not creating provider, using hardcoded config)")
-		// static 模式下不创建 provider，让业务代码使用硬编码配置
+		// static 模式使用空配置的 StaticSchemaProvider 作为兜底
+		pm.provider = NewStaticSchemaProvider(StaticProviderConfig{})
+		pm.logger.Infof("Using static SchemaProvider (empty config, hardcoded definitions take effect elsewhere)")
 		return nil
 
 	case "redis":

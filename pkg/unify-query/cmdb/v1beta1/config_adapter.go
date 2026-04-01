@@ -34,6 +34,9 @@ func NewConfigAdapter(provider relation.SchemaProvider) *ConfigAdapter {
 // GetConfig 从 SchemaProvider 获取并转换配置
 // namespace 为空时获取全局配置（__all__）
 func (ca *ConfigAdapter) GetConfig(ctx context.Context, namespace string) (*Config, error) {
+	if ca.provider == nil {
+		return nil, fmt.Errorf("schema provider is not initialized")
+	}
 	if namespace == "" {
 		namespace = relation.NamespaceAll
 	}

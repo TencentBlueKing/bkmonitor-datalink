@@ -189,6 +189,8 @@ func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuild
 
 // WithSchemaProvider 注入 SchemaProvider
 func (b *MetricsBuilder) WithSchemaProvider(provider relation.SchemaProvider) *MetricsBuilder {
+	b.lock.Lock()
+	defer b.lock.Unlock()
 	b.schemaProvider = provider
 	return b
 }

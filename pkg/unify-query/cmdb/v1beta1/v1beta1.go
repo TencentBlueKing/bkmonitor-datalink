@@ -105,8 +105,8 @@ type model struct {
 // 优先从 SchemaProvider 获取配置，失败则回退到硬编码 configData
 func newModel(ctx context.Context) (*model, error) {
 	var (
-		err        error
-		cfg        *Config
+		err          error
+		cfg          *Config
 		configSource string
 	)
 
@@ -115,21 +115,25 @@ func newModel(ctx context.Context) (*model, error) {
 
 	// 尝试从 SchemaProvider 获取动态配置
 	if provider != nil {
-		span.Set("schema_provider.available", true)
 		adapter := NewConfigAdapter(provider)
 		cfg, err = adapter.GetConfig(ctx, "")
 		if err != nil {
 			log.Warnf(ctx, "failed to get config from SchemaProvider, falling back to hardcoded config: %v", err)
-			span.Set("schema_provider.error", err.Error())
+			span.Set("schema-provider-error", err.Error())
 			cfg = nil
 			err = nil // 清除错误，允许回退
 		} else {
-			configSource = "schema_provider"
+			switch provider.(type) {
+			case *relation.RedisProvider:
+				configSource = "redis"
+			case *relation.StaticSchemaProvider:
+				configSource = "static"
+			default:
+				configSource = "schema_provider"
+			}
 			log.Infof(ctx, "v1beta1 model loaded from SchemaProvider: %d resources, %d relations",
 				len(cfg.Resource), len(cfg.Relation))
 		}
-	} else {
-		span.Set("schema_provider.available", false)
 	}
 
 	// 回退到硬编码配置
@@ -141,15 +145,15 @@ func newModel(ctx context.Context) (*model, error) {
 	}
 
 	// 记录 trace 信息：配置来源、资源/关联数量和名称
-	span.Set("config_source", configSource)
-	span.Set("resource_count", len(cfg.Resource))
-	span.Set("relation_count", len(cfg.Relation))
+	span.Set("config-source", configSource)
+	span.Set("config-resource-count", len(cfg.Resource))
+	span.Set("config-relation-count", len(cfg.Relation))
 
 	resourceNames := make([]string, 0, len(cfg.Resource))
 	for _, r := range cfg.Resource {
 		resourceNames = append(resourceNames, string(r.Name))
 	}
-	span.Set("resource_names", resourceNames)
+	span.Set("config-resource-names", resourceNames)
 
 	relationNames := make([]string, 0, len(cfg.Relation))
 	for _, r := range cfg.Relation {
@@ -157,7 +161,7 @@ func newModel(ctx context.Context) (*model, error) {
 			relationNames = append(relationNames, fmt.Sprintf("%s->%s", r.Resources[0], r.Resources[1]))
 		}
 	}
-	span.Set("relation_names", relationNames)
+	span.Set("config-relation-names", relationNames)
 
 	// 更新全局 resourceConfig 映射（供 ResourcesIndex/ResourcesInfo/AllResources 使用）
 	updateResourceConfig(cfg)
@@ -315,19 +319,19 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
 
-	span.Set("source", user.Source)
-	span.Set("username", user.Name)
-	span.Set("space-uid", opt.SpaceUid)
-	span.Set("startTs", opt.Start)
-	span.Set("endTs", opt.End)
-	span.Set("step", opt.Step)
-	span.Set("source", opt.Source)
-	span.Set("target", opt.Target)
-	span.Set("index-indexMatcher", opt.IndexMatcher)
-	span.Set("target", opt.PathResource)
+	span.Set("query-source-type", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-space-uid", opt.SpaceUid)
+	span.Set("query-start-ts", opt.Start)
+	span.Set("query-end-ts", opt.End)
+	span.Set("query-step", opt.Step)
+	span.Set("query-resource", opt.Source)
+	span.Set("query-target-resource", opt.Target)
+	span.Set("query-index-matcher", opt.IndexMatcher)
+	span.Set("query-path-resource", opt.PathResource)
 
 	opt.IndexMatcher = opt.IndexMatcher.Rename()
-	span.Set("query-index-indexMatcher", opt.IndexMatcher)
+	span.Set("query-renamed-index-matcher", opt.IndexMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
@@ -352,7 +356,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("query-source", opt.Source)
+	// query-resource already set above
 
 	source = opt.Source
 	target = opt.Target
@@ -368,7 +372,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("paths", paths)
+	span.Set("query-relation-paths", paths)
 	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 	var errorMessage []string
@@ -395,7 +399,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		).Warn(ctx)
 	}
 
-	span.Set("hit_path", hitPath)
+	span.Set("query-hit-path", hitPath)
 	return source, sourceInfo, hitPath, target, ts, err
 }
 
@@ -531,7 +535,7 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	realPromQL, err := queryTs.ToPromQL(ctx)
 	if err == nil {
-		span.Set("promql", realPromQL)
+		span.Set("query-promql", realPromQL)
 	}
 
 	promQL, err := queryTs.ToPromExpr(ctx, nil)

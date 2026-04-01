@@ -143,7 +143,7 @@ func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 		assert.Equal(t, 0, len(tsdb))
 	})
 
-	t.Run("invalid_regex_in_table_id_conditions_warns_and_no_tsdb", func(t *testing.T) {
+	t.Run("invalid_regex_in_table_id_conditions_returns_error", func(t *testing.T) {
 		ctx = metadata.InitHashID(ctx)
 		influxdb.MockSpaceRouter(ctx)
 		sf, err := NewSpaceFilter(ctx, &TsDBOption{SpaceUid: influxdb.SpaceUid})
@@ -160,8 +160,8 @@ func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 			}},
 		}
 		tsdb, err := sf.DataList(opt)
-		require.NoError(t, err)
-		assert.Equal(t, 0, len(tsdb), "非法正则时跳过匹配、不返回 error；0 TsDB 时由 DataList routerMessage/Status 汇总提示")
+		require.Error(t, err)
+		assert.Empty(t, tsdb)
 	})
 }
 

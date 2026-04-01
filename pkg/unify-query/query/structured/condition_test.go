@@ -1000,9 +1000,13 @@ func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "metric"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
-		ok, err = c.MatchResultTableLabels(map[string]string{}) // key 缺失视为不满足
+		// 缺 scene 与 PromQL scene!="metric" 一致：无该 label 时通过
+		ok, err = c.MatchResultTableLabels(map[string]string{})
 		assert.NoError(t, err)
-		assert.False(t, ok)
+		assert.True(t, ok)
+		ok, err = c.MatchResultTableLabels(map[string]string{"other": "x"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
 	})
 	t.Run("single_req", func(t *testing.T) {
 		c := AllConditions{{{DimensionName: "scene", Value: []string{"log.*"}, Operator: ConditionRegEqual}}}
@@ -1024,6 +1028,71 @@ func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "metric-api"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
+		ok, err = c.MatchResultTableLabels(map[string]string{}) // 缺 scene 与 !~ 负向语义一致：通过
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = c.MatchResultTableLabels(map[string]string{"other": "x"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
+	})
+	// nreq 多正则、非法正则、与其它条件 AND/OR 组合
+	t.Run("nreq", func(t *testing.T) {
+		t.Run("multiple_patterns_any_match_fails", func(t *testing.T) {
+			c := AllConditions{{{DimensionName: "scene", Value: []string{"metric.*", "k8s.*"}, Operator: ConditionNotRegEqual}}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
+			require.NoError(t, err)
+			assert.True(t, ok, "不匹配任一排除正则则通过")
+			ok, err = c.MatchResultTableLabels(map[string]string{"scene": "metric-api"})
+			require.NoError(t, err)
+			assert.False(t, ok, "命中第一个排除正则则失败")
+			ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s-1"})
+			require.NoError(t, err)
+			assert.False(t, ok, "命中第二个排除正则则失败")
+		})
+		t.Run("invalid_regex_returns_error", func(t *testing.T) {
+			c := AllConditions{{{DimensionName: "scene", Value: []string{"("}, Operator: ConditionNotRegEqual}}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
+			require.Error(t, err)
+			assert.False(t, ok)
+		})
+		t.Run("and_group_eq_plus_nreq_missing_second_label_passes", func(t *testing.T) {
+			// scene=log 且 cluster_id !~ ^tmp-.* ；无 cluster_id 时 nreq 通过
+			c := AllConditions{{
+				{DimensionName: "scene", Value: []string{"log"}, Operator: ConditionEqual},
+				{DimensionName: "cluster_id", Value: []string{"^tmp-.*"}, Operator: ConditionNotRegEqual},
+			}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
+			require.NoError(t, err)
+			assert.True(t, ok)
+			ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "prod-1"})
+			require.NoError(t, err)
+			assert.True(t, ok)
+			ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "cluster_id": "tmp-1"})
+			require.NoError(t, err)
+			assert.False(t, ok)
+		})
+		t.Run("or_groups_any_branch_passes", func(t *testing.T) {
+			// (scene !~ alpha.*) OR (scene !~ beta.*)
+			c := AllConditions{
+				{{DimensionName: "scene", Value: []string{"alpha.*"}, Operator: ConditionNotRegEqual}},
+				{{DimensionName: "scene", Value: []string{"beta.*"}, Operator: ConditionNotRegEqual}},
+			}
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": "log"})
+			require.NoError(t, err)
+			assert.True(t, ok, "第一组即可满足")
+			ok, err = c.MatchResultTableLabels(map[string]string{"scene": "alpha-1"})
+			require.NoError(t, err)
+			assert.True(t, ok, "第一组失败，第二组仍满足")
+		})
+		t.Run("or_groups_all_branches_fail", func(t *testing.T) {
+			c := AllConditions{
+				{{DimensionName: "scene", Value: []string{".*"}, Operator: ConditionNotRegEqual}},
+				{{DimensionName: "scene", Value: []string{".*"}, Operator: ConditionNotRegEqual}},
+			}
+			ok, err := c.MatchResultTableLabels(map[string]string{"scene": "any"})
+			require.NoError(t, err)
+			assert.False(t, ok, "两组都是「不能匹配任意串」，有 scene 时皆失败")
+		})
 	})
 	t.Run("and_group_with_ne", func(t *testing.T) {
 		c := AllConditions{{
@@ -1036,6 +1105,10 @@ func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log", "env": "prod"})
 		assert.NoError(t, err)
 		assert.False(t, ok)
+		// 仅有 scene=log、无 env：env!=prod 在缺 env 时通过
+		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "log"})
+		assert.NoError(t, err)
+		assert.True(t, ok)
 		ok, err = c.MatchResultTableLabels(map[string]string{"scene": "k8s", "env": "staging"})
 		assert.NoError(t, err)
 		assert.False(t, ok)

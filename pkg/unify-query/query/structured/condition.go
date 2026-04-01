@@ -389,6 +389,62 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
+// matchResultTableLabelField 单条表标签 AND 条件。stillAnd 为 true 表示本条已满足，可继续同组下一 field；false 表示本 OR 组失败。err 为正则编译等错误。
+func matchResultTableLabelField(field ConditionField, labels map[string]string) (stillAnd bool, err error) {
+	val, ok := labels[field.DimensionName]
+	switch field.Operator {
+	case ConditionEqual: // eq：缺 label 与 PromQL = 一致，不满足
+		if !ok || !containElement(field.Value, val) {
+			return false, nil
+		}
+		return true, nil
+	case ConditionNotEqual: // ne：缺 label 与 PromQL != 一致，视为满足
+		if !ok {
+			return true, nil
+		}
+		if containElement(field.Value, val) {
+			return false, nil
+		}
+		return true, nil
+	case ConditionRegEqual: // req
+		if !ok {
+			return false, nil
+		}
+		matched := false
+		for _, v := range field.Value {
+			reExp, compileErr := regexp.Compile(v)
+			if compileErr != nil {
+				return false, compileErr
+			}
+			if reExp.Match([]byte(val)) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
+		return true, nil
+	case ConditionNotRegEqual: // nreq：缺 label 与 PromQL !~ 一致，视为满足
+		if !ok {
+			return true, nil
+		}
+		for _, v := range field.Value {
+			reExp, compileErr := regexp.Compile(v)
+			if compileErr != nil {
+				return false, compileErr
+			}
+			if reExp.Match([]byte(val)) {
+				return false, nil
+			}
+		}
+		return true, nil
+	default:
+		// 表标签匹配仅支持 eq/ne/req/nreq，其他 op 视为不满足
+		return false, nil
+	}
+}
+
 // MatchResultTableLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
 func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, error) {
 	if len(c) == 0 {
@@ -397,51 +453,11 @@ func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, e
 	for _, group := range c { //外层：OR 组
 		andOk := true
 		for _, field := range group { // 内层：AND 条件
-			val, ok := labels[field.DimensionName] // 判断 field 是否满足 labels
-			if !ok {
-				andOk = false
-				break
+			stillAnd, err := matchResultTableLabelField(field, labels)
+			if err != nil {
+				return false, err
 			}
-			switch field.Operator {
-			case ConditionEqual: // eq
-				if !containElement(field.Value, val) {
-					andOk = false
-					break
-				}
-			case ConditionNotEqual: // ne
-				if containElement(field.Value, val) {
-					andOk = false
-					break
-				}
-			case ConditionRegEqual: // req
-				matched := false
-				for _, v := range field.Value {
-					reExp, err := regexp.Compile(v)
-					if err != nil {
-						return false, err
-					}
-					if reExp.Match([]byte(val)) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					andOk = false
-					break
-				}
-			case ConditionNotRegEqual: // nreq
-				for _, v := range field.Value {
-					reExp, err := regexp.Compile(v)
-					if err != nil {
-						return false, err
-					}
-					if reExp.Match([]byte(val)) {
-						andOk = false
-						break
-					}
-				}
-			default:
-				// 表标签匹配仅支持 eq/ne/req/nreq，其他 op 视为不满足
+			if !stillAnd {
 				andOk = false
 				break
 			}

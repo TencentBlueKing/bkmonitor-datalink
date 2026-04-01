@@ -252,8 +252,9 @@ type Collapse struct {
 }
 
 type Order struct {
-	Name string
-	Ast  bool
+	Name         string
+	Ast          bool
+	UnmappedType string
 }
 
 type Orders []Order

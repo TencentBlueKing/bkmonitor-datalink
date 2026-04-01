@@ -271,7 +271,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	source := elastic.NewSearchSource()
 	for _, order := range fact.Orders() {
-		source.Sort(order.Name, order.Ast)
+		fs := elastic.NewFieldSort(order.Name).Order(order.Ast)
+		if order.UnmappedType != "" {
+			fs = fs.UnmappedType(order.UnmappedType)
+		}
+		source.SortBy(fs)
 	}
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)

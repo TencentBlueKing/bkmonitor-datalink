@@ -120,11 +120,13 @@
 
 1. **检查 PromQL 语法**
    ```bash
-   # 使用 PromQL 校验接口
-   curl -X POST http://localhost:10205/check/query/ts \
+   # 使用 PromQL 校验接口（请求体为 QueryPromQL，非裸 query 字段）
+   curl -X POST http://localhost:10205/check/query/ts/promql \
      -H "Content-Type: application/json" \
-     -d '{"query": "your_promql"}'
+     -H "X-Bk-Scope-Space-Uid: bkcc__2" \
+     -d '{"promql":"avg(cpu_usage)","start":"1629810830","end":"1629811070","step":"60s"}'
    ```
+   结构体查询请使用 `POST /check/query/ts`，Body 与 `/query/ts` 一致；响应为 JSON（`data`、`trace_id`），见 `docs/api/api.md` §5。
 
 2. **检查字段和标签**
    ```bash

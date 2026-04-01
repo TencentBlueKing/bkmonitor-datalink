@@ -134,20 +134,18 @@ definitions:
       target_type:
         type: string
     type: object
-  http.CheckItem:
+  http.CheckQueryTsDataResponse:
     properties:
-      error: {}
-      json_data:
-        type: string
-      step_name:
-        type: string
-    type: object
-  http.CheckResponse:
-    properties:
-      list:
-        items:
-          $ref: '#/definitions/http.CheckItem'
+      data:
+        description: Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM
+          常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL
+          写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实
+          TSDB。
+        items: {}
         type: array
+      trace_id:
+        description: TraceID 链路 ID（与 trace span 一致）。
+        type: string
     type: object
   http.ErrResponse:
     properties:
@@ -222,6 +220,23 @@ definitions:
       trace_id:
         type: string
     type: object
+  http.StatItem:
+    properties:
+      avg:
+        $ref: '#/definitions/http.StatPoint'
+      count:
+        $ref: '#/definitions/http.StatPoint'
+      last:
+        $ref: '#/definitions/http.StatPoint'
+      max:
+        $ref: '#/definitions/http.StatPoint'
+      min:
+        $ref: '#/definitions/http.StatPoint'
+      sum:
+        $ref: '#/definitions/http.StatPoint'
+    type: object
+  http.StatPoint:
+    type: object
   http.TablesItem:
     properties:
       columns:
@@ -240,6 +255,8 @@ definitions:
         type: string
       name:
         type: string
+      stat:
+        $ref: '#/definitions/http.StatItem'
       types:
         items:
           type: string
@@ -261,9 +278,46 @@ definitions:
           type: array
         type: object
     type: object
+  metadata.Collapse:
+    properties:
+      field:
+        type: string
+    type: object
   metadata.FieldAlias:
     additionalProperties:
       type: string
+    type: object
+  metadata.HighLight:
+    properties:
+      enable:
+        type: boolean
+      max_analyzed_offset:
+        type: integer
+    type: object
+  metadata.ResultTableOption:
+    properties:
+      from:
+        type: integer
+      result_schema:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      scroll_id:
+        type: string
+      search_after:
+        items: {}
+        type: array
+      slice_index:
+        type: integer
+      slice_max:
+        type: integer
+      sql:
+        type: string
+    type: object
+  metadata.ResultTableOptions:
+    additionalProperties:
+      $ref: '#/definitions/metadata.ResultTableOption'
     type: object
   metadata.Status:
     properties:
@@ -427,8 +481,99 @@ definitions:
           $ref: '#/definitions/structured.ConditionField'
         type: array
     type: object
+  structured.Query:
+    properties:
+      collapse:
+        allOf:
+        - $ref: '#/definitions/metadata.Collapse'
+        description: Collapse
+      conditions:
+        allOf:
+        - $ref: '#/definitions/structured.Conditions'
+        description: Conditions 过滤条件
+      dimensions:
+        description: Dimensions promQL 使用维度
+        example:
+        - bk_target_ip
+        - bk_target_cloud_id
+        items:
+          type: string
+        type: array
+      field_name:
+        description: FieldName 查询指标
+        example: usage
+        type: string
+      from:
+        description: From 翻页开启数字
+        example: 0
+        type: integer
+      function:
+        description: AggregateMethodList 维度聚合函数
+        items:
+          $ref: '#/definitions/structured.AggregateMethod'
+        type: array
+      is_dom_sampled:
+        description: IsDomSampled 是否命中降采样算法
+        type: boolean
+      is_prefix:
+        description: IsPrefix 是否启用前缀匹配
+        type: boolean
+      is_regexp:
+        description: IsRegexp 指标是否使用正则查询
+        example: false
+        type: boolean
+      limit:
+        description: Limit 点数限制数量
+        example: 0
+        type: integer
+      offset:
+        description: Offset 偏移量
+        example: ""
+        type: string
+      offset_forward:
+        description: OffsetForward 偏移方向，默认 false 为向前偏移
+        example: false
+        type: boolean
+      query_string:
+        description: QueryString 关键字查询
+        type: string
+      reference_name:
+        description: ReferenceName 别名，用于表达式计算
+        example: a
+        type: string
+      slimit:
+        description: Slimit 维度限制数量
+        example: 0
+        type: integer
+      sql:
+        description: SQL doris sql 解析
+        type: string
+      start_or_end:
+        description: StartOrEnd @-modifier 标记，start or end
+        type: integer
+      table_id:
+        description: TableID 数据实体ID，容器指标可以为空
+        example: system.cpu_summary
+        type: string
+      time_aggregation:
+        allOf:
+        - $ref: '#/definitions/structured.TimeAggregation'
+        description: TimeAggregation 时间聚合方法
+      timestamp:
+        description: Timestamp @-modifier 标记
+        type: integer
+      vector_offset:
+        allOf:
+        - $ref: '#/definitions/time.Duration'
+        description: VectorOffset
+    type: object
   structured.QueryPromQL:
     properties:
+      add_dimensions:
+        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+        items:
+          type: string
+        type: array
       bk_biz_ids:
         items:
           type: string
@@ -474,6 +619,113 @@ definitions:
         type: string
     type: object
   structured.QueryTs:
+    properties:
+      add_dimensions:
+        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+        items:
+          type: string
+        type: array
+      clear_cache:
+        description: ClearCache 是否强制清理已存在的缓存会话
+        type: boolean
+      down_sample_range:
+        description: DownSampleRange 降采样：大于Step才能生效，可以为空
+        example: 5m
+        type: string
+      dry_run:
+        description: DryRun 是否启用 DryRun
+        type: boolean
+      end_time:
+        description: End 结束时间：单位为任意长度的时间戳
+        example: "1657851600"
+        type: string
+      from:
+        description: From 翻页开启数字
+        example: 0
+        type: integer
+      highlight:
+        allOf:
+        - $ref: '#/definitions/metadata.HighLight'
+        description: HighLight 是否开启高亮
+      instant:
+        description: Instant 瞬时数据
+        type: boolean
+      is_merge_db:
+        description: IsMergeDB 是否启用合并 db 特性
+        type: boolean
+      is_multi_from:
+        description: IsMultiFrom 是否启用 MultiFrom 查询
+        type: boolean
+      is_search_after:
+        description: IsSearchAfter 是否启用 SearchAfter 查询
+        type: boolean
+      limit:
+        description: |-
+          增加公共限制
+          Limit 点数限制数量
+        example: 0
+        type: integer
+      look_back_delta:
+        description: LookBackDelta 偏移量
+        type: string
+      metric_merge:
+        description: MetricMerge 表达式：支持所有PromQL语法
+        example: a
+        type: string
+      not_time_align:
+        description: |-
+          NotTimeAlign 查询开始时间和聚合是否需要对齐
+          例如
+          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23
+          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+        type: boolean
+      order_by:
+        description: OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
+        items:
+          type: string
+        type: array
+      query_list:
+        description: QueryList 查询实例
+        items:
+          $ref: '#/definitions/structured.Query'
+        type: array
+      reference:
+        description: |-
+          Reference 查询开始时间是否需要对齐，
+          例如：
+          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+        type: boolean
+      result_table_options:
+        $ref: '#/definitions/metadata.ResultTableOptions'
+      scroll:
+        description: Scroll 是否启用 Scroll 查询
+        type: string
+      slice_max:
+        description: SliceMax 最大切片数量
+        type: integer
+      space_uid:
+        description: SpaceUid 空间ID
+        type: string
+      start_time:
+        description: Start 开始时间：单位为任意长度的时间戳
+        example: "1657848000"
+        type: string
+      step:
+        description: Step 步长：最终返回的点数的时间间隔
+        example: 1m
+        type: string
+      timezone:
+        description: Timezone 时区
+        example: Asia/Shanghai
+        type: string
+      tsdb_map:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/query.TsDBV2'
+          type: array
+        description: TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
+        type: object
     type: object
   structured.TimeAggregation:
     properties:
@@ -492,6 +744,43 @@ definitions:
         example: 60s
         type: string
     type: object
+  time.Duration:
+    enum:
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
+    format: int64
+    type: integer
+    x-enum-varnames:
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
 info:
   contact: {}
   description: bk unify-query swagger api
@@ -593,7 +882,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.CheckResponse'
+            $ref: '#/definitions/http.CheckQueryTsDataResponse'
         "400":
           description: Bad Request
           schema:
@@ -630,7 +919,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.CheckResponse'
+            $ref: '#/definitions/http.CheckQueryTsDataResponse'
         "400":
           description: Bad Request
           schema:

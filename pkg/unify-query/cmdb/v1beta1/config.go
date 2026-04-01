@@ -9,7 +9,11 @@
 
 package v1beta1
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+import (
+	"sync"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+)
 
 var configData = &Config{
 	Resource: []ResourceConf{
@@ -344,6 +348,7 @@ var configData = &Config{
 }
 
 var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+var resourceConfigMu sync.RWMutex
 
 func init() {
 	for _, c := range configData.Resource {
@@ -351,7 +356,20 @@ func init() {
 	}
 }
 
+// updateResourceConfig 更新资源配置映射（当配置来自 SchemaProvider 时使用）
+func updateResourceConfig(cfg *Config) {
+	resourceConfigMu.Lock()
+	defer resourceConfigMu.Unlock()
+	newConfig := make(map[cmdb.Resource]ResourceConf, len(cfg.Resource))
+	for _, c := range cfg.Resource {
+		newConfig[c.Name] = c
+	}
+	resourceConfig = newConfig
+}
+
 func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
 	var index cmdb.Index
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Index...)
@@ -360,6 +378,8 @@ func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 }
 
 func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
 	var index []string
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Info...)
@@ -368,5 +388,12 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 }
 
 func AllResources() map[cmdb.Resource]ResourceConf {
-	return resourceConfig
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
+	// Return a shallow copy to prevent callers from modifying the internal map
+	result := make(map[cmdb.Resource]ResourceConf, len(resourceConfig))
+	for k, v := range resourceConfig {
+		result[k] = v
+	}
+	return result
 }

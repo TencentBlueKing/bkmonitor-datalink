@@ -163,7 +163,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.CheckResponse"
+                            "$ref": "#/definitions/http.CheckQueryTsDataResponse"
                         }
                     },
                     "400": {
@@ -218,7 +218,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.CheckResponse"
+                            "$ref": "#/definitions/http.CheckQueryTsDataResponse"
                         }
                     },
                     "400": {
@@ -1381,26 +1381,17 @@ const docTemplate = `{
                 }
             }
         },
-        "http.CheckItem": {
+        "http.CheckQueryTsDataResponse": {
             "type": "object",
             "properties": {
-                "error": {},
-                "json_data": {
-                    "type": "string"
-                },
-                "step_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "http.CheckResponse": {
-            "type": "object",
-            "properties": {
-                "list": {
+                "data": {
+                    "description": "Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实 TSDB。",
                     "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/http.CheckItem"
-                    }
+                    "items": {}
+                },
+                "trace_id": {
+                    "description": "TraceID 链路 ID（与 trace span 一致）。",
+                    "type": "string"
                 }
             }
         },
@@ -1514,6 +1505,32 @@ const docTemplate = `{
                 }
             }
         },
+        "http.StatItem": {
+            "type": "object",
+            "properties": {
+                "avg": {
+                    "$ref": "#/definitions/http.StatPoint"
+                },
+                "count": {
+                    "$ref": "#/definitions/http.StatPoint"
+                },
+                "last": {
+                    "$ref": "#/definitions/http.StatPoint"
+                },
+                "max": {
+                    "$ref": "#/definitions/http.StatPoint"
+                },
+                "min": {
+                    "$ref": "#/definitions/http.StatPoint"
+                },
+                "sum": {
+                    "$ref": "#/definitions/http.StatPoint"
+                }
+            }
+        },
+        "http.StatPoint": {
+            "type": "object"
+        },
         "http.TablesItem": {
             "type": "object",
             "properties": {
@@ -1540,6 +1557,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "stat": {
+                    "$ref": "#/definitions/http.StatItem"
                 },
                 "types": {
                     "type": "array",
@@ -1573,10 +1593,66 @@ const docTemplate = `{
                 }
             }
         },
+        "metadata.Collapse": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                }
+            }
+        },
         "metadata.FieldAlias": {
             "type": "object",
             "additionalProperties": {
                 "type": "string"
+            }
+        },
+        "metadata.HighLight": {
+            "type": "object",
+            "properties": {
+                "enable": {
+                    "type": "boolean"
+                },
+                "max_analyzed_offset": {
+                    "type": "integer"
+                }
+            }
+        },
+        "metadata.ResultTableOption": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "integer"
+                },
+                "result_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "scroll_id": {
+                    "type": "string"
+                },
+                "search_after": {
+                    "type": "array",
+                    "items": {}
+                },
+                "slice_index": {
+                    "type": "integer"
+                },
+                "slice_max": {
+                    "type": "integer"
+                },
+                "sql": {
+                    "type": "string"
+                }
+            }
+        },
+        "metadata.ResultTableOptions": {
+            "type": "object",
+            "additionalProperties": {
+                "$ref": "#/definitions/metadata.ResultTableOption"
             }
         },
         "metadata.Status": {
@@ -1815,9 +1891,140 @@ const docTemplate = `{
                 }
             }
         },
+        "structured.Query": {
+            "type": "object",
+            "properties": {
+                "collapse": {
+                    "description": "Collapse",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/metadata.Collapse"
+                        }
+                    ]
+                },
+                "conditions": {
+                    "description": "Conditions 过滤条件",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/structured.Conditions"
+                        }
+                    ]
+                },
+                "dimensions": {
+                    "description": "Dimensions promQL 使用维度",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "bk_target_ip",
+                        "bk_target_cloud_id"
+                    ]
+                },
+                "field_name": {
+                    "description": "FieldName 查询指标",
+                    "type": "string",
+                    "example": "usage"
+                },
+                "from": {
+                    "description": "From 翻页开启数字",
+                    "type": "integer",
+                    "example": 0
+                },
+                "function": {
+                    "description": "AggregateMethodList 维度聚合函数",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/structured.AggregateMethod"
+                    }
+                },
+                "is_dom_sampled": {
+                    "description": "IsDomSampled 是否命中降采样算法",
+                    "type": "boolean"
+                },
+                "is_prefix": {
+                    "description": "IsPrefix 是否启用前缀匹配",
+                    "type": "boolean"
+                },
+                "is_regexp": {
+                    "description": "IsRegexp 指标是否使用正则查询",
+                    "type": "boolean",
+                    "example": false
+                },
+                "limit": {
+                    "description": "Limit 点数限制数量",
+                    "type": "integer",
+                    "example": 0
+                },
+                "offset": {
+                    "description": "Offset 偏移量",
+                    "type": "string",
+                    "example": ""
+                },
+                "offset_forward": {
+                    "description": "OffsetForward 偏移方向，默认 false 为向前偏移",
+                    "type": "boolean",
+                    "example": false
+                },
+                "query_string": {
+                    "description": "QueryString 关键字查询",
+                    "type": "string"
+                },
+                "reference_name": {
+                    "description": "ReferenceName 别名，用于表达式计算",
+                    "type": "string",
+                    "example": "a"
+                },
+                "slimit": {
+                    "description": "Slimit 维度限制数量",
+                    "type": "integer",
+                    "example": 0
+                },
+                "sql": {
+                    "description": "SQL doris sql 解析",
+                    "type": "string"
+                },
+                "start_or_end": {
+                    "description": "StartOrEnd @-modifier 标记，start or end",
+                    "type": "integer"
+                },
+                "table_id": {
+                    "description": "TableID 数据实体ID，容器指标可以为空",
+                    "type": "string",
+                    "example": "system.cpu_summary"
+                },
+                "time_aggregation": {
+                    "description": "TimeAggregation 时间聚合方法",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/structured.TimeAggregation"
+                        }
+                    ]
+                },
+                "timestamp": {
+                    "description": "Timestamp @-modifier 标记",
+                    "type": "integer"
+                },
+                "vector_offset": {
+                    "description": "VectorOffset",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/time.Duration"
+                        }
+                    ]
+                }
+            }
+        },
         "structured.QueryPromQL": {
             "type": "object",
             "properties": {
+                "add_dimensions": {
+                    "description": "AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "bk_biz_ids": {
                     "type": "array",
                     "items": {
@@ -1882,7 +2089,139 @@ const docTemplate = `{
             }
         },
         "structured.QueryTs": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "add_dimensions": {
+                    "description": "AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "clear_cache": {
+                    "description": "ClearCache 是否强制清理已存在的缓存会话",
+                    "type": "boolean"
+                },
+                "down_sample_range": {
+                    "description": "DownSampleRange 降采样：大于Step才能生效，可以为空",
+                    "type": "string",
+                    "example": "5m"
+                },
+                "dry_run": {
+                    "description": "DryRun 是否启用 DryRun",
+                    "type": "boolean"
+                },
+                "end_time": {
+                    "description": "End 结束时间：单位为任意长度的时间戳",
+                    "type": "string",
+                    "example": "1657851600"
+                },
+                "from": {
+                    "description": "From 翻页开启数字",
+                    "type": "integer",
+                    "example": 0
+                },
+                "highlight": {
+                    "description": "HighLight 是否开启高亮",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/metadata.HighLight"
+                        }
+                    ]
+                },
+                "instant": {
+                    "description": "Instant 瞬时数据",
+                    "type": "boolean"
+                },
+                "is_merge_db": {
+                    "description": "IsMergeDB 是否启用合并 db 特性",
+                    "type": "boolean"
+                },
+                "is_multi_from": {
+                    "description": "IsMultiFrom 是否启用 MultiFrom 查询",
+                    "type": "boolean"
+                },
+                "is_search_after": {
+                    "description": "IsSearchAfter 是否启用 SearchAfter 查询",
+                    "type": "boolean"
+                },
+                "limit": {
+                    "description": "增加公共限制\nLimit 点数限制数量",
+                    "type": "integer",
+                    "example": 0
+                },
+                "look_back_delta": {
+                    "description": "LookBackDelta 偏移量",
+                    "type": "string"
+                },
+                "metric_merge": {
+                    "description": "MetricMerge 表达式：支持所有PromQL语法",
+                    "type": "string",
+                    "example": "a"
+                },
+                "not_time_align": {
+                    "description": "NotTimeAlign 查询开始时间和聚合是否需要对齐\n例如\ntrue:  range: 10:03 - 10:23 window: 10m -\u003e 10:03 - 10:13, 10:13 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -\u003e 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
+                    "type": "boolean"
+                },
+                "order_by": {
+                    "description": "OrderBy 排序字段列表，按顺序排序，负数代表倒序, [\"_time\", \"-_time\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "query_list": {
+                    "description": "QueryList 查询实例",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/structured.Query"
+                    }
+                },
+                "reference": {
+                    "description": "Reference 查询开始时间是否需要对齐，\n例如：\ntrue:  range: 10:03 - 10:23 window: 10m -\u003e 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -\u003e 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
+                    "type": "boolean"
+                },
+                "result_table_options": {
+                    "$ref": "#/definitions/metadata.ResultTableOptions"
+                },
+                "scroll": {
+                    "description": "Scroll 是否启用 Scroll 查询",
+                    "type": "string"
+                },
+                "slice_max": {
+                    "description": "SliceMax 最大切片数量",
+                    "type": "integer"
+                },
+                "space_uid": {
+                    "description": "SpaceUid 空间ID",
+                    "type": "string"
+                },
+                "start_time": {
+                    "description": "Start 开始时间：单位为任意长度的时间戳",
+                    "type": "string",
+                    "example": "1657848000"
+                },
+                "step": {
+                    "description": "Step 步长：最终返回的点数的时间间隔",
+                    "type": "string",
+                    "example": "1m"
+                },
+                "timezone": {
+                    "description": "Timezone 时区",
+                    "type": "string",
+                    "example": "Asia/Shanghai"
+                },
+                "tsdb_map": {
+                    "description": "TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/query.TsDBV2"
+                        }
+                    }
+                }
+            }
         },
         "structured.TimeAggregation": {
             "type": "object",
@@ -1906,6 +2245,46 @@ const docTemplate = `{
                     "example": "60s"
                 }
             }
+        },
+        "time.Duration": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
+                3600000000000,
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
+                3600000000000
+            ],
+            "x-enum-varnames": [
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour",
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour"
+            ]
         }
     },
     "securityDefinitions": {

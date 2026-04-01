@@ -683,14 +683,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				}
 				fact.SetData(data)
 
-				// 注入别名
-				for k, v := range reverseAlias {
-					if _, ok := fact.data[k]; ok {
-						fact.data[v] = fact.data[k]
-						// TODO: 等前端适配之后，再移除
-						// delete(fact.data, k)
-					}
-				}
+				// 注入别名：命中原始字段 key 后补写别名字段 key（与 bksql 语义保持一致）
+				query.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(fact.data)
 
 				fact.data[metadata.KeyDocID] = d.Id
 				fact.data[metadata.KeyIndex] = d.Index

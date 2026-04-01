@@ -18,15 +18,18 @@ import (
 
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/singleflight"
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 const (
@@ -35,15 +38,58 @@ const (
 )
 
 var (
-	mdl *model
-	mtx sync.Mutex
+	mdl      *model
+	mtx      sync.Mutex
+	provider relation.SchemaProvider
+
+	// reloadGroup ensures that concurrent schema change events coalesce into
+	// a single ReloadConfig call, preventing redundant model rebuilds under
+	// notification storms from Redis Pub/Sub.
+	reloadGroup singleflight.Group
 )
+
+// InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用
+// 设置后，GetModel 会优先从 SchemaProvider 获取配置，获取失败则回退到硬编码 configData
+func InitSchemaProvider(p relation.SchemaProvider) {
+	mtx.Lock()
+	defer mtx.Unlock()
+	provider = p
+	// 重置 model，下次 GetModel 调用时会用新的 provider 重建
+	mdl = nil
+	
+	// Register callback for schema changes if provider supports it
+	if provider != nil {
+		if err := provider.Subscribe(onSchemaChange); err != nil {
+			log.Warnf(context.Background(), "failed to subscribe to schema changes: %v", err)
+		}
+	}
+}
+
+// onSchemaChange is called when schema (resource or relation definitions) changes.
+// It uses singleflight to coalesce concurrent reload requests so that rapid-fire
+// Pub/Sub events (e.g. batch schema updates) result in only one model rebuild.
+func onSchemaChange(kind, namespace string) {
+	ctx := context.Background()
+	log.Infof(ctx, "schema change detected: kind=%s, namespace=%s", kind, namespace)
+
+	_, err, shared := reloadGroup.Do("reload", func() (interface{}, error) {
+		return nil, ReloadConfig(ctx)
+	})
+	if err != nil {
+		log.Warnf(ctx, "failed to reload v1beta1 model on schema change: %v", err)
+	}
+	if shared {
+		log.Debugf(ctx, "schema reload was shared with concurrent request")
+	}
+}
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	var err error
 	if mdl == nil {
 		mtx.Lock()
-		mdl, err = newModel(ctx)
+		if mdl == nil {
+			mdl, err = newModel(ctx)
+		}
 		mtx.Unlock()
 	}
 	return mdl, err
@@ -56,11 +102,69 @@ type model struct {
 }
 
 // newModel 初始化
+// 优先从 SchemaProvider 获取配置，失败则回退到硬编码 configData
 func newModel(ctx context.Context) (*model, error) {
 	var (
-		err error
-		cfg = configData
+		err          error
+		cfg          *Config
+		configSource string
 	)
+
+	ctx, span := trace.NewSpan(ctx, "v1beta1-new-model")
+	defer span.End(&err)
+
+	// 尝试从 SchemaProvider 获取动态配置
+	if provider != nil {
+		adapter := NewConfigAdapter(provider)
+		cfg, err = adapter.GetConfig(ctx, "")
+		if err != nil {
+			log.Warnf(ctx, "failed to get config from SchemaProvider, falling back to hardcoded config: %v", err)
+			span.Set("schema-provider-error", err.Error())
+			cfg = nil
+			err = nil // 清除错误，允许回退
+		} else {
+			switch provider.(type) {
+			case *relation.RedisProvider:
+				configSource = "redis"
+			case *relation.StaticSchemaProvider:
+				configSource = "static"
+			default:
+				configSource = "schema_provider"
+			}
+			log.Infof(ctx, "v1beta1 model loaded from SchemaProvider: %d resources, %d relations",
+				len(cfg.Resource), len(cfg.Relation))
+		}
+	}
+
+	// 回退到硬编码配置
+	if cfg == nil {
+		cfg = configData
+		configSource = "hardcoded"
+		log.Infof(ctx, "v1beta1 model using hardcoded config: %d resources, %d relations",
+			len(cfg.Resource), len(cfg.Relation))
+	}
+
+	// 记录 trace 信息：配置来源、资源/关联数量和名称
+	span.Set("config-source", configSource)
+	span.Set("config-resource-count", len(cfg.Resource))
+	span.Set("config-relation-count", len(cfg.Relation))
+
+	resourceNames := make([]string, 0, len(cfg.Resource))
+	for _, r := range cfg.Resource {
+		resourceNames = append(resourceNames, string(r.Name))
+	}
+	span.Set("config-resource-names", resourceNames)
+
+	relationNames := make([]string, 0, len(cfg.Relation))
+	for _, r := range cfg.Relation {
+		if len(r.Resources) == 2 {
+			relationNames = append(relationNames, fmt.Sprintf("%s->%s", r.Resources[0], r.Resources[1]))
+		}
+	}
+	span.Set("config-relation-names", relationNames)
+
+	// 更新全局 resourceConfig 映射（供 ResourcesIndex/ResourcesInfo/AllResources 使用）
+	updateResourceConfig(cfg)
 
 	// 初始化 graph 存储结构
 	g := graph.New(graph.StringHash)
@@ -215,19 +319,19 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
 
-	span.Set("source", user.Source)
-	span.Set("username", user.Name)
-	span.Set("space-uid", opt.SpaceUid)
-	span.Set("startTs", opt.Start)
-	span.Set("endTs", opt.End)
-	span.Set("step", opt.Step)
-	span.Set("source", opt.Source)
-	span.Set("target", opt.Target)
-	span.Set("index-indexMatcher", opt.IndexMatcher)
-	span.Set("target", opt.PathResource)
+	span.Set("query-source-type", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-space-uid", opt.SpaceUid)
+	span.Set("query-start-ts", opt.Start)
+	span.Set("query-end-ts", opt.End)
+	span.Set("query-step", opt.Step)
+	span.Set("query-resource", opt.Source)
+	span.Set("query-target-resource", opt.Target)
+	span.Set("query-index-matcher", opt.IndexMatcher)
+	span.Set("query-path-resource", opt.PathResource)
 
 	opt.IndexMatcher = opt.IndexMatcher.Rename()
-	span.Set("query-index-indexMatcher", opt.IndexMatcher)
+	span.Set("query-renamed-index-matcher", opt.IndexMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
@@ -252,7 +356,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("query-source", opt.Source)
+	// query-resource already set above
 
 	source = opt.Source
 	target = opt.Target
@@ -268,7 +372,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("paths", paths)
+	span.Set("query-relation-paths", paths)
 	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 	var errorMessage []string
@@ -295,7 +399,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		).Warn(ctx)
 	}
 
-	span.Set("hit_path", hitPath)
+	span.Set("query-hit-path", hitPath)
 	return source, sourceInfo, hitPath, target, ts, err
 }
 
@@ -431,7 +535,7 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	realPromQL, err := queryTs.ToPromQL(ctx)
 	if err == nil {
-		span.Set("promql", realPromQL)
+		span.Set("query-promql", realPromQL)
 	}
 
 	promQL, err := queryTs.ToPromExpr(ctx, nil)
@@ -509,3 +613,24 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
 }
+
+// ReloadConfig 重新加载配置
+// 当 Redis 数据变更时，可以调用此方法刷新 Model
+func ReloadConfig(ctx context.Context) error {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if provider == nil {
+		return fmt.Errorf("schema provider not initialized")
+	}
+
+	newMdl, err := newModel(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create new model: %w", err)
+	}
+
+	mdl = newMdl
+	log.Infof(ctx, "v1beta1 model reloaded successfully")
+	return nil
+}
+

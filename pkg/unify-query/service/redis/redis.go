@@ -15,13 +15,16 @@ import (
 
 	goRedis "github.com/go-redis/redis/v8"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 type Service struct {
-	ctx        context.Context
-	cancelFunc context.CancelFunc
+	ctx             context.Context
+	cancelFunc      context.CancelFunc
+	providerManager *relation.ProviderManager
 }
 
 func (s *Service) Type() string {
@@ -73,6 +76,37 @@ func (s *Service) Reload(ctx context.Context) {
 		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
 		return
 	}
+
+	// 初始化 SchemaProvider
+	s.initSchemaProvider(s.ctx)
+}
+
+// initSchemaProvider 根据配置初始化 SchemaProvider
+func (s *Service) initSchemaProvider(ctx context.Context) {
+	// Close the old provider manager before creating a new one to prevent
+	// leaking Redis provider subscriptions and goroutines on repeated Reload()
+	if s.providerManager != nil {
+		_ = s.providerManager.Close()
+	}
+	s.providerManager = relation.NewProviderManager(nil)
+
+	var redisClient goRedis.UniversalClient
+	if SchemaProviderType == "redis" {
+		client := redis.Client()
+		if client == nil {
+			log.Errorf(ctx, "Failed to get redis client for SchemaProvider: client is nil")
+			return
+		}
+		redisClient = client
+	}
+
+	if err := s.providerManager.InitProvider(ctx, SchemaProviderType, redisClient); err != nil {
+		log.Errorf(ctx, "Failed to init provider: %v", err)
+		return
+	}
+
+	v1beta1.InitSchemaProvider(s.providerManager.GetProvider())
+	log.Infof(ctx, "SchemaProvider initialized with type: %s", SchemaProviderType)
 }
 
 func (s *Service) Wait() {
@@ -80,6 +114,9 @@ func (s *Service) Wait() {
 }
 
 func (s *Service) Close() {
+	if s.providerManager != nil {
+		s.providerManager.Close()
+	}
 	redis.Close()
 	if s.cancelFunc != nil {
 		s.cancelFunc()

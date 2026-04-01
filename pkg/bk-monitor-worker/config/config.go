@@ -231,6 +231,9 @@ var (
 
 	// BigResourceTaskQueueName 占用大资源的队列名称
 	BigResourceTaskQueueName string
+
+	// SchemaProviderType schema provider type: static, redis, or empty
+	SchemaProviderType string
 )
 
 func initVariables() {
@@ -388,6 +391,9 @@ func initVariables() {
 	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
 
 	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
+
+	// SchemaProvider 配置
+	SchemaProviderType = GetValue("schemaProvider.type", "static")
 }
 
 var keys []string

@@ -70,6 +70,58 @@ func TestTracesRandom(t *testing.T) {
 	assert.NotEqual(t, events[0].Data()["span_id"], events[1].Data()["span_id"])
 }
 
+func TestTracesInjectTokenFields(t *testing.T) {
+	g := makeTracesGenerator(3)
+	traces := g.Generate()
+
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       traces,
+		Token: define.Token{
+			BizId:        2,
+			AppName:      "oneapm-demo",
+			TracesDataId: 1001,
+		},
+	}
+
+	events := make([]define.Event, 0)
+	gather := func(evts ...define.Event) { events = append(events, evts...) }
+
+	var conv tracesConverter
+	conv.Convert(&record, gather)
+
+	assert.Equal(t, 3, len(events))
+	for i, evt := range events {
+		data := evt.Data()
+		assert.Equal(t, int32(2), data["bk_biz_id"], "span[%d] bk_biz_id mismatch", i)
+		assert.Equal(t, "oneapm-demo", data["app_name"], "span[%d] app_name mismatch", i)
+		assert.NotNil(t, data["resource"], "span[%d] resource should exist", i)
+		assert.NotNil(t, data["trace_id"], "span[%d] trace_id should exist", i)
+	}
+}
+
+func TestTracesInjectTokenFieldsZeroValue(t *testing.T) {
+	g := makeTracesGenerator(1)
+	traces := g.Generate()
+
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       traces,
+		Token:      define.Token{TracesDataId: 1001},
+	}
+
+	events := make([]define.Event, 0)
+	gather := func(evts ...define.Event) { events = append(events, evts...) }
+
+	var conv tracesConverter
+	conv.Convert(&record, gather)
+
+	assert.Equal(t, 1, len(events))
+	data := events[0].Data()
+	assert.Equal(t, int32(0), data["bk_biz_id"])
+	assert.Equal(t, "", data["app_name"])
+}
+
 func BenchmarkTracesConvert_10_Span(b *testing.B) {
 	g := makeTracesGenerator(10)
 	data := g.Generate()

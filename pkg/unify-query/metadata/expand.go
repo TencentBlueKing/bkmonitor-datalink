@@ -29,3 +29,20 @@ func GetExpand(ctx context.Context) *VmExpand {
 	}
 	return nil
 }
+
+// SetCheckPreviewMetricQL 仅用于 check 直查路径：写入待序列化的 VM MetricQL 预览，供 victoriaMetrics.Instance.GetRequestBody(ctx) 读取。
+func SetCheckPreviewMetricQL(ctx context.Context, metricQL string) {
+	md.set(ctx, CheckPreviewMetricQLKey, metricQL)
+}
+
+// GetCheckPreviewMetricQL 读取 check VM 预览 MetricQL；未设置时返回空字符串。
+func GetCheckPreviewMetricQL(ctx context.Context) string {
+	r, ok := md.get(ctx, CheckPreviewMetricQLKey)
+	if !ok {
+		return ""
+	}
+	if s, ok := r.(string); ok {
+		return s
+	}
+	return ""
+}

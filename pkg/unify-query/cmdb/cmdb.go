@@ -14,9 +14,9 @@ import (
 )
 
 type CMDB interface {
-	// QueryResourceMatcher 获取目标的关键维度和值（instant 查询）
+	// QueryResourceMatcher 获取目标的关键维度和值（instant 查询），返回 []string 路径
 	QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, ts string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, Matchers, error)
 
-	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询）
+	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询），返回 []string 路径
 	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, []MatchersWithTimestamp, error)
 }

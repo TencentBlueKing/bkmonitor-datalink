@@ -427,6 +427,10 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_raw": {TableID: "system.cpu_detail"},
+					"100147_ieod_system_disk_raw":       {TableID: "system.disk"},
+				},
 			},
 			ref: md.QueryReference{
 				"a": {
@@ -519,6 +523,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				MetricFilterCondition: map[string]string{
 					"a": ``,
 					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_disk_raw": {TableID: "system.disk"},
 				},
 			},
 			ref: md.QueryReference{
@@ -667,6 +674,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				MetricFilterCondition: map[string]string{
 					"b": `bk_biz_id="2", bk_obj_id!="0", result_table_id="rt_by_cmdb_level", __name__="usage_value"`,
 				},
+				RtDetailList: map[string]md.RtDetail{
+					"rt_by_cmdb_level": {TableID: "system.disk"},
+				},
 			},
 			ref: md.QueryReference{
 				"b": {
@@ -733,6 +743,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				ResultTableList: []string{"100147_ieod_system_cpu_detail_cmdb"},
 				MetricFilterCondition: map[string]string{
 					"b": `bk_biz_id="2", bk_obj_id!="0", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
+				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_cmdb": {TableID: "system.cpu_detail"},
 				},
 			},
 			ref: md.QueryReference{
@@ -805,6 +818,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				MetricFilterCondition: map[string]string{
 					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
 				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_cmdb": {TableID: "system.cpu_detail"},
+				},
 			},
 			ref: md.QueryReference{
 				"b": {
@@ -871,6 +887,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw"},
 				MetricFilterCondition: map[string]string{
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_raw": {TableID: "system.cpu_detail"},
 				},
 			},
 			ref: md.QueryReference{
@@ -946,6 +965,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				MetricFilterCondition: map[string]string{
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_raw": {TableID: "system.cpu_detail"},
+				},
 			},
 			ref: md.QueryReference{
 				"a": {
@@ -1019,6 +1041,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw"},
 				MetricFilterCondition: map[string]string{
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+				},
+				RtDetailList: map[string]md.RtDetail{
+					"100147_ieod_system_cpu_detail_raw": {TableID: "system.cpu_detail"},
 				},
 			},
 			ref: md.QueryReference{
@@ -1611,6 +1636,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				ResultTableList: []string{"2_bcs_prom_computation_result_table"},
 				MetricFilterCondition: map[string]string{
 					"a": `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
+				},
+				RtDetailList: map[string]md.RtDetail{
+					"2_bcs_prom_computation_result_table": {TableID: "result_table.vm"},
 				},
 			},
 			refString: `{"a":[{"QueryList":[{"storage_type":"influxdb","storage_id":"2","cluster_name":"default","data_source":"bkmonitor","data_label":"influxdb","table_id":"result_table.influxdb","db":"result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"__name__=\"kube_pod_info_value\"","vm_condition_num":1,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false},{"storage_type":"victoria_metrics","storage_id":"2","data_source":"bkmonitor","data_label":"vm","table_id":"result_table.vm","vm_rt":"2_bcs_prom_computation_result_table","measurement":"kube_pod_info","measurement_type":"bk_split_measurement","field":"value","time_field":{},"fields":["value"],"measurements":["kube_pod_info"],"metric_names":["kube_pod_info"],"vm_condition":"result_table_id=\"2_bcs_prom_computation_result_table\", __name__=\"kube_pod_info_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"is_merge_db":false}],"ReferenceName":"a","MetricName":"kube_pod_info","IsCount":false}]}`,

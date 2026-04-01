@@ -646,50 +646,63 @@
 
 ---
 
-## 5. 校验接口
+## 5. 校验接口（Check）
 
-### 5.1 校验结构体查询
+**说明**：接口返回 **JSON**（`Content-Type: application/json`），**不下发**真实 TSDB/VM 查询。直查 VictoriaMetrics 时，在内存中生成 MetricQL 预览；直查路径在 `ToQueryReference` 之后会 **`ToVmExpand` + `metadata.SetExpand`**，与正式 `queryTsToInstanceAndStmt` 一致，便于与 `DirectQuery` 使用的 `GetExpand` 同源。预览字符串在 `vmCheckMetricql` 之后由 **`metadata.SetCheckPreviewMetricQL`** 写入当前请求的 metadata，`victoriaMetrics.Instance.GetRequestBody(ctx)` 再通过 **`metadata.GetCheckPreviewMetricQL`** 与 **`metadata.GetExpand`** 拼装响应中的 `VmQueryCheckBody`。
+
+**成功（HTTP 200）**：`CheckQueryTsDataResponse`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `data` | array | 每项为某子查询存储 **`tsdb.Instance.GetRequestBody(ctx)`** 的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody` |
+| `trace_id` | string | 链路追踪 ID |
+
+**失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。
+
+### 5.1 直查 VM 时 `data[]` 元素形态（`VmQueryCheckBody`）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `storage_type` | string | 如 `victoria_metrics` |
+| `metricql` | string | **内存预览**：`QueryTs.ToPromExpr`（**空** `PromExprOption`）得到与直查 **`stmt` 相同骨架**（仍含引用名 `a`、`b`），再按 **`ToVmExpand.MetricFilterCondition`** 将引用名整词替换为 `{...}`。**不是** `ToPromQL` 全文，也**不是** BKSQL 网关返回的 `data.sql` |
+| `result_table_id` | string[] | 与 **`ToVmExpand.ResultTableList`** 一致（VmRt 汇总） |
+
+### 5.2 非直查
+
+当前实现：遍历子查询 `GetTsDbInstance`，再调用 **`GetRequestBody(ctx)`**；**`DefaultInstance`** 等无预览体时返回 **(nil, nil)**，该子查询**不产生** `data` 元素（内部打日志跳过）。若遍历结束后 **`data` 仍为空** 则 **400**（「未解析到可路由的查询」），而非 200 空数组。
+
+### 5.3 校验结构体查询
 
 **接口**: `POST /check/query/ts`
 
-**描述**: 校验结构体查询，返回查询转换的各个步骤信息（用于调试）。
+**请求头**: 同 [2.1 结构体查询](#21-结构体查询)（需 `X-Bk-Scope-Space-Uid` 等）
 
-**请求头**: 同结构体查询（需要 `X-Bk-Scope-Space-Uid`）
+**请求体**: 与 `POST /query/ts` 相同，为 `QueryTs` JSON（`query_list`、`metric_merge`、`start_time` / `end_time`、`step` 等）
 
-**请求体**: 同结构体查询
+**响应示例（直查 VM 成功，示意）**:
 
-**响应格式**: 返回文本格式的调试信息，包含查询转换的各个步骤
-
-**响应示例**:
-
-```
-step-name: query ts
-data: {"query_list":[...],...}
--------------------------------------------------
-step-name: metadata user
-data: {"key":"username:goodman","space_uid":"bkcc__2"}
--------------------------------------------------
-step-name: query-reference
-data: {...}
--------------------------------------------------
-step-name: query promQL
-data: "avg(avg_over_time(cpu_usage[1m]))"
--------------------------------------------------
+```json
+{
+  "data": [
+    {
+      "storage_type": "victoria_metrics",
+      "metricql": "avg by (ip) (avg_over_time({bk_biz_id=\"2\", result_table_id=\"rt1\", __name__=\"usage_value\"}[1m]))",
+      "result_table_id": ["rt1"]
+    }
+  ],
+  "trace_id": "..."
+}
 ```
 
-**注意**: 如果某个步骤出错，会显示 `error: ...` 而不是 `data: ...`
-
-### 5.2 校验 PromQL 查询
+### 5.4 校验 PromQL 查询
 
 **接口**: `POST /check/query/ts/promql`
 
-**描述**: 校验 PromQL 查询，返回查询转换的各个步骤信息。
+**请求头**: 同 PromQL 查询接口
 
-**请求头**: 同 PromQL 查询（需要 `X-Bk-Scope-Space-Uid`）
+**请求体**: 与 `POST /query/promql` 相同（`promql`、`start`、`end`、`step` 等）
 
-**请求体**: 同 PromQL 查询
-
-**响应格式**: 同结构体查询校验（返回文本格式）
+**处理流程**: 先将 PromQL 反解为 `QueryTs`，再与 **5.3** 共用校验逻辑，响应格式相同。
 
 ---
 

@@ -17,13 +17,3 @@ type VmQueryCheckBody struct {
 	// ResultTableList ToVmExpand.ResultTableList，与正式直查 SetExpand 后下发 VM 的 result_table 列表同源。
 	ResultTableList []string `json:"result_table_id"`
 }
-
-// DorisQueryCheckBody Doris 存储在 check 预览中的返回体
-type DorisQueryCheckBody struct {
-	//todo
-}
-
-// ElasticsearchQueryCheckBody Elasticsearch 在 check 预览中的返回体
-type ElasticsearchQueryCheckBody struct {
-	//todo
-}

@@ -171,10 +171,17 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 		if instance == nil {
 			return nil, fmt.Errorf("instance is null for direct vm check")
 		}
-		return appendCheckPreview(ctx, nil, instance)
+		item, err := getCheckPreview(ctx, instance)
+		if err != nil {
+			return nil, err
+		}
+		if item == nil {
+			return nil, fmt.Errorf("empty check preview for direct vm check")
+		}
+		return []any{item}, nil
 	}
 
-	// 非直查：遍历子查询 GetTsDbInstance + appendCheckPreview（GetRequestBody 默认 nil 预览体则跳过）todo: 未来扩展各存储预览体
+	// 非直查：遍历子查询 GetTsDbInstance + getCheckPreview（GetRequestBody 默认 nil 预览体则跳过）todo: 未来扩展各存储预览体
 	var out []any
 	var rangeErr error
 	qr.Range("", func(qry *metadata.Query) {
@@ -186,7 +193,14 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 			rangeErr = fmt.Errorf("instance is null, with storageID %s", qry.StorageID)
 			return
 		}
-		out, rangeErr = appendCheckPreview(ctx, out, instance)
+		var item any
+		item, rangeErr = getCheckPreview(ctx, instance)
+		if rangeErr != nil {
+			return
+		}
+		if item != nil {
+			out = append(out, item)
+		}
 	})
 	if rangeErr != nil {
 		return nil, rangeErr
@@ -298,19 +312,19 @@ func vmCheckMetricql(ctx context.Context, q *structured.QueryTs, qr metadata.Que
 
 // --- 工具
 
-// appendCheckPreview 将 instance.GetRequestBody(ctx) 追加到 out；instance 为 nil 或预览体为 nil 时跳过并打 Warn。
-func appendCheckPreview(ctx context.Context, out []any, instance tsdb.Instance) ([]any, error) {
+// getCheckPreview 获取 instance 的预览体；instance 为 nil 或预览体为 nil 时返回 nil 并打 Warn。
+func getCheckPreview(ctx context.Context, instance tsdb.Instance) (any, error) {
 	if instance == nil {
 		log.Warnf(ctx, "check: skip nil tsdb.Instance preview")
-		return out, nil
+		return nil, nil
 	}
 	item, err := instance.GetRequestBody(ctx)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	if item == nil {
 		log.Warnf(ctx, "check: skip nil preview body for instance type %q", instance.InstanceType())
-		return out, nil
+		return nil, nil
 	}
-	return append(out, item), nil
+	return item, nil
 }

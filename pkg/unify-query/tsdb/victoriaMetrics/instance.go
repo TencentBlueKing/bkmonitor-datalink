@@ -128,9 +128,100 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 	return output.String()
 }
 
+// GetRequestBody check 路径：从 ctx 读 GetExpand 与 GetCheckPreviewMetricQL，拼装 VmQueryCheckBody（不调用实际VM）
+func (i *Instance) GetRequestBody(ctx context.Context) (any, error) {
+	vmExpand := metadata.GetExpand(ctx)
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
+		return nil, fmt.Errorf("vm expand is empty for check GetRequestBody")
+	}
+	metricql := metadata.GetCheckPreviewMetricQL(ctx)
+	if metricql == "" {
+		return nil, fmt.Errorf("check preview metricql not set in context")
+	}
+	return &tsdb.VmQueryCheckBody{
+		StorageType:     metadata.VictoriaMetricsStorageType,
+		MetricQL:        metricql,
+		ResultTableList: append([]string(nil), vmExpand.ResultTableList...),
+	}, nil
+}
+
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return storage.EmptySeriesSet()
+}
+
+// spanSetStorageListDiff records request/response storageLists and any diff into the span.
+// requestRtDetail maps vm_rt → RtDetail{TableID, StorageName}: vm_rt is the observation subject
+// while StorageName (cluster name) is the comparison subject; TableID is carried as context.
+// responseVMClusterList contains the storage cluster names returned by the VM API.
+// missing: cluster names present in request but absent from response, with associated RTs and TableIDs.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) {
+	// Marshal request detail map as JSON for trace consumption.
+	requestJSON := ""
+	if len(requestRtDetail) > 0 {
+		b, err := json.Marshal(requestRtDetail)
+		if err != nil {
+			requestJSON = fmt.Sprintf("%+v", requestRtDetail)
+		} else {
+			requestJSON = string(b)
+		}
+	}
+	span.Set("query-storage-request", requestJSON)
+	span.Set("query-storage-response", responseVMClusterList)
+
+	// Build request cluster-name → {VmRtList, TableIDList} mapping
+	type clusterRtInfo struct {
+		VmRtList   []string
+		TableIDList []string
+	}
+	reqClusterToInfo := make(map[string]*clusterRtInfo)
+	for vmRt, detail := range requestRtDetail {
+		if detail.StorageName != "" {
+			info, ok := reqClusterToInfo[detail.StorageName]
+			if !ok {
+				info = &clusterRtInfo{}
+				reqClusterToInfo[detail.StorageName] = info
+			}
+			info.VmRtList = append(info.VmRtList, vmRt)
+			if detail.TableID != "" {
+				info.TableIDList = append(info.TableIDList, detail.TableID)
+			}
+		}
+	}
+
+	respSet := make(map[string]struct{}, len(responseVMClusterList))
+	for _, s := range responseVMClusterList {
+		respSet[s] = struct{}{}
+	}
+
+	// Build missing with VmRtList and TableIDList
+	type ClusterMissing struct {
+		Cluster     string   `json:"cluster"`
+		VmRtList    []string `json:"vm_rt_list"`
+		TableIDList []string `json:"table_id_list"`
+	}
+	var missing []ClusterMissing
+	for clusterName, info := range reqClusterToInfo {
+		if _, ok := respSet[clusterName]; !ok {
+			missing = append(missing, ClusterMissing{
+				Cluster:     clusterName,
+				VmRtList:    info.VmRtList,
+				TableIDList: info.TableIDList,
+			})
+		}
+	}
+
+	if len(missing) > 0 {
+		span.Set("query-storage-status", "mismatch")
+		b, err := json.Marshal(missing)
+		if err != nil {
+			span.Set("query-storage-missing", fmt.Sprintf("%+v", missing))
+		} else {
+			span.Set("query-storage-missing", string(b))
+		}
+	} else {
+		span.Set("query-storage-status", "match")
+	}
 }
 
 func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata.VmQueryCluster) {
@@ -516,7 +607,15 @@ func (i *Instance) DirectQueryRange(
 		return nil, false, err
 	}
 
-	return i.matrixFormat(ctx, vmResp, span)
+	result, isPartial, err := i.matrixFormat(ctx, vmResp, span)
+
+	var responseVMClusterList []string
+	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
+		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+
+	return result, isPartial, err
 }
 
 // Query instant 查询
@@ -577,7 +676,15 @@ func (i *Instance) DirectQuery(
 		return nil, err
 	}
 
-	return i.vectorFormat(ctx, vmResp, span)
+	result, err := i.vectorFormat(ctx, vmResp, span)
+
+	var responseVMClusterList []string
+	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
+		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+
+	return result, err
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
@@ -854,7 +961,15 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		return list, err
 	}
 
-	return i.labelFormat(ctx, resp, span)
+	result, err := i.labelFormat(ctx, resp, span)
+
+	var responseVMClusterList []string
+	if resp != nil && resp.Data.VmQueryCluster != nil {
+		responseVMClusterList = resp.Data.VmQueryCluster.StorageClusterList
+	}
+	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+
+	return result, err
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

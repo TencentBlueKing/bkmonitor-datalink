@@ -36,6 +36,7 @@ type Instance interface {
 	DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
 	DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
 	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
+	GetRequestBody(ctx context.Context) (any, error)
 
 	InstanceType() string
 }
@@ -89,6 +90,11 @@ func (d *DefaultInstance) DirectLabelNames(ctx context.Context, start, end time.
 }
 
 func (d *DefaultInstance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) GetRequestBody(ctx context.Context) (any, error) {
+	// check 路径：无预览体则不报错，由 handler 跳过。
 	return nil, nil
 }
 

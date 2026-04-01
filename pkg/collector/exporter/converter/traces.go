@@ -54,6 +54,8 @@ func (c tracesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			spans := scopeSpansSlice.At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
 				content, kind := c.Extract(record.RequestClient.IP, spans.At(k), rs)
+				content["bk_biz_id"] = record.Token.BizId
+				content["app_name"] = record.Token.AppName
 				DefaultMetricMonitor.IncConverterSpanKindCounter(dataId, kind)
 				events = append(events, c.ToEvent(record.Token, dataId, content))
 			}

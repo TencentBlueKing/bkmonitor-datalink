@@ -232,6 +232,12 @@ func (q *Query) VMExpand() *VmExpand {
 			DefaultReferenceName: q.VmCondition.String(),
 		},
 		ClusterName: q.StorageName,
+		RtDetailList: map[string]RtDetail{
+			q.VmRt: {
+				TableID:     q.TableID,
+				StorageName: q.StorageName,
+			},
+		},
 	}
 }
 
@@ -477,4 +483,18 @@ func (fa FieldAlias) AliasName(f string) string {
 		}
 	}
 	return ""
+}
+
+// AddAliasKeysWhenOriginalFieldPresent 在行结果上补全别名字段：当结果 map 中已命中「原始字段」（value）作为 key 时，
+// 再写入同值的「别名字段」（key），供下游读取；保留双 key。与 ES QueryRawData 中 reverseAlias 循环语义一致。
+func (fa FieldAlias) AddAliasKeysWhenOriginalFieldPresent(data map[string]any) {
+	if len(fa) == 0 || data == nil {
+		return
+	}
+	for aliasField, originalField := range fa {
+		if _, ok := data[originalField]; ok {
+			data[aliasField] = data[originalField]
+			// TODO: 等前端适配之后，再移除
+		}
+	}
 }

@@ -369,6 +369,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
+		query.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(newData)
 		newData[metadata.KeyIndex] = query.DB
 		// 注入原始数据需要的字段
 		query.DataReload(newData)

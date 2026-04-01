@@ -10,6 +10,7 @@ github:
 
 project:
   # 默认单据来源
+  # 未连内网/VPN 导致 gtm commit 无法访问 TAPD 时，可用 scripts/gtm-commit-offline.sh
   default_source: "tapd"
   # 默认目标分支
   default_target_branch: "master"

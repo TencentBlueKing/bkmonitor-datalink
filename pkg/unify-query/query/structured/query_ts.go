@@ -644,10 +644,21 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			Field:         q.FieldName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
-			Size:          q.Limit,
-			From:          q.From,
-			Collapse:      q.Collapse,
 		}
+
+		query.SQL = q.SQL
+		query.QueryString = q.QueryString
+		query.IsPrefix = q.IsPrefix
+		query.Source = q.KeepColumns
+
+		query.Collapse = q.Collapse
+
+		query.Scroll = q.Scroll
+		query.DryRun = q.DryRun
+		query.IsMergeDB = q.IsMergeDB
+
+		query.Size = q.Limit
+		query.From = q.From
 
 		if len(q.OrderBy) > 0 {
 			query.Orders = make(metadata.Orders, 0, len(q.OrderBy))

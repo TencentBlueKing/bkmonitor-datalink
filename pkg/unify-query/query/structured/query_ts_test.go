@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 )
 
 func TestQueryToMetric(t *testing.T) {
@@ -288,6 +289,62 @@ func TestQueryToMetric(t *testing.T) {
 			assert.Equal(t, string(a), string(b))
 		})
 	}
+}
+
+// TestBkData_ToQueryMetric_PropagatesSQLToBkSqlStage 验证 bkdata 分支把结构化请求中的 sql 等字段写入 metadata.Query，
+// 且 bksql.QueryFactory.SQL() 在用户 SQL 非空时走 parserSQL，使用同一条模板参与生成（bk-sql 执行前最后一段拼 SQL 逻辑）。
+func TestBkData_ToQueryMetric_PropagatesSQLToBkSqlStage(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	// TableID 需满足 MockSpaceRouter 下 bk-data-table-id-auth：bkcc__2 仅允许 2_ 前缀；带 .doris 以便走 DorisSQLExpr
+	wantSQL := "SELECT dtEventTimeStamp FROM `2_bklog_unit_test`.doris WHERE dtEventTimeStamp > 0 LIMIT 10"
+	q := &Query{
+		DataSource:    BkData,
+		TableID:       "2_bklog_unit_test.doris",
+		FieldName:     "gseIndex",
+		ReferenceName: "a",
+		SQL:           wantSQL,
+		QueryString:   "level:ERROR",
+		IsPrefix:      true,
+		KeepColumns:   KeepColumns{"log", "level"},
+		Limit:         20,
+		From:          5,
+		Scroll:        "scroll-token",
+		DryRun:        true,
+		IsMergeDB:     true,
+		OrderBy:       OrderBy{"-dtEventTimeStamp"},
+	}
+
+	metric, err := q.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+	require.Len(t, metric.QueryList, 1)
+
+	mq := metric.QueryList[0]
+	assert.Equal(t, wantSQL, mq.SQL, "bkdata 分支应透传用户 sql 到 metadata.Query")
+	assert.Equal(t, "level:ERROR", mq.QueryString)
+	assert.True(t, mq.IsPrefix)
+	assert.Equal(t, []string{"log", "level"}, mq.Source)
+	assert.Equal(t, 20, mq.Size)
+	assert.Equal(t, 5, mq.From)
+	assert.Equal(t, "scroll-token", mq.Scroll)
+	assert.True(t, mq.DryRun)
+	assert.True(t, mq.IsMergeDB)
+	assert.Equal(t, md.BkSqlStorageType, mq.StorageType)
+	assert.Equal(t, "2_bklog_unit_test", mq.DB)
+	assert.Equal(t, "doris", mq.Measurement)
+	require.Len(t, mq.Orders, 1)
+	assert.Equal(t, "dtEventTimeStamp", mq.Orders[0].Name)
+	assert.False(t, mq.Orders[0].Ast)
+
+	start := time.Unix(1741795260, 0)
+	end := time.Unix(1741796260, 0)
+	factory := bksql.NewQueryFactory(ctx, mq).WithRangeTime(start, end)
+	gotSQL, err := factory.SQL()
+	require.NoError(t, err, "QueryFactory 应能基于透传的 SQL 走 parserSQL")
+	assert.NotEmpty(t, gotSQL)
+	assert.Contains(t, gotSQL, "dtEventTimeStamp", "生成 SQL 应保留用户模板中的核心字段引用")
 }
 
 // TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：Query 带 TableIDConditions → ToQueryMetric(tsDBs=nil) → GetTsDBList 选表，链路打通；mock 下无匹配 Labels 时 QueryList 为空

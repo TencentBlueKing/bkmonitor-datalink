@@ -425,6 +425,9 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
 	defer span.End(&err)
 
+	span.Set("bksql.parser_from_user_sql", true)
+	span.Set("bksql.user_sql.byte_len", len(f.query.SQL))
+
 	tables := f.Tables()
 
 	span.Set("tables", tables)

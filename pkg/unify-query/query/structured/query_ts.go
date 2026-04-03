@@ -596,6 +596,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {
+		span.Set("bkdata.path", true)
+		span.Set("bkdata.table_id", string(tableID))
+		span.Set("bkdata.space_uid", spaceUid)
+
 		// 判断空间跟业务是否匹配
 		isMatchBizID := func() bool {
 			space := strings.Split(spaceUid, "__")
@@ -616,10 +620,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		ff := featureFlag.GetBkDataTableIDCheck(ctx, string(tableID))
 		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
 
+		span.Set("bkdata.table_id_auth.enabled", ff)
+		span.Set("bkdata.table_id_auth.is_match_biz_id", isMatchBizID)
+
 		// 特性开关是否，打开 bkdata tableid 校验
 		if ff {
 			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
 			if !isMatchBizID {
+				span.Set("bkdata.table_id_auth.blocked", true)
 				return queryMetric, nil
 			}
 		}
@@ -659,6 +667,27 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 		query.Size = q.Limit
 		query.From = q.From
+
+		span.Set("bkdata.metadata.db", query.DB)
+		span.Set("bkdata.metadata.measurement", query.Measurement)
+		span.Set("bkdata.metadata.sql.byte_len", len(query.SQL))
+		span.Set("bkdata.metadata.sql.empty", query.SQL == "")
+		span.Set("bkdata.metadata.query_string.byte_len", len(query.QueryString))
+		span.Set("bkdata.metadata.is_prefix", query.IsPrefix)
+		span.Set("bkdata.metadata.source_field_count", len(query.Source))
+		span.Set("bkdata.metadata.dry_run", query.DryRun)
+		span.Set("bkdata.metadata.is_merge_db", query.IsMergeDB)
+		span.Set("bkdata.metadata.size", query.Size)
+		span.Set("bkdata.metadata.from", query.From)
+
+		if query.SQL != "" {
+			const sqlPreviewMax = 512
+			preview := query.SQL
+			if len(preview) > sqlPreviewMax {
+				preview = preview[:sqlPreviewMax] + "...(truncated)"
+			}
+			span.Set("bkdata.metadata.sql.preview", preview)
+		}
 
 		if len(q.OrderBy) > 0 {
 			query.Orders = make(metadata.Orders, 0, len(q.OrderBy))

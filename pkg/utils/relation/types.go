@@ -96,15 +96,19 @@ var (
 type SchemaChangeCallback func(kind, namespace string)
 
 type SchemaProvider interface {
+	Name() string
+	ListNamespaces() ([]string, error)
 	GetResourceDefinition(namespace, name string) (*ResourceDefinition, error)
 	ListResourceDefinitions(namespace string) ([]*ResourceDefinition, error)
+	ListAllResourceDefinitions() (map[string][]*ResourceDefinition, error)
 	GetRelationDefinition(namespace, name string) (*RelationDefinition, error)
 	ListRelationDefinitions(namespace string) ([]*RelationDefinition, error)
+	ListAllRelationDefinitions() (map[string][]*RelationDefinition, error)
 	GetResourcePrimaryKeys(resourceType ResourceType) []string
 	GetRelationSchema(relationType RelationName) (*RelationSchema, error)
 	ListRelationSchemas() []RelationSchema
 	FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType DirectionType) (*RelationDefinition, bool)
-	
+
 	// Subscribe registers a callback for schema change notifications
 	// The callback will be invoked when resource or relation definitions are reloaded
 	Subscribe(callback SchemaChangeCallback) error

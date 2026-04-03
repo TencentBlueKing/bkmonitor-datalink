@@ -18,15 +18,17 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
-var testModel, _ = newModel(context.Background())
+var testModel, _ = newModel(context.Background(), configData)
 
 func TestModel_Resources(t *testing.T) {
 	mock.Init()
@@ -816,5 +818,191 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 				assert.Equal(t, c.expectedTarget, target)
 			}
 		})
+	}
+}
+
+// newMockProvider 构建一个包含多个 namespace 数据的 mock provider
+func newMockProvider(resources []*relation.ResourceDefinition, rels []*relation.RelationDefinition) *mockSchemaProvider {
+	return &mockSchemaProvider{resources: resources, relations: rels}
+}
+
+// resetGlobals 重置包级全局状态，确保测试互相独立
+func resetGlobals() {
+	mtx.Lock()
+	defer mtx.Unlock()
+	models = nil
+	provider = nil
+}
+
+func TestInitSchemaProvider_MultiNamespace(t *testing.T) {
+	defer resetGlobals()
+	ctx := context.Background()
+
+	p := newMockProvider(
+		[]*relation.ResourceDefinition{
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
+			{Namespace: "__all__", Name: "system", Fields: []relation.FieldDefinition{{Name: "bk_target_ip", Required: true}}},
+			{Namespace: "bkcc__2", Name: "pod", Fields: []relation.FieldDefinition{{Name: "bcs_cluster_id", Required: true}, {Name: "pod", Required: true}}},
+			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "bcs_cluster_id", Required: true}, {Name: "node", Required: true}}},
+		},
+		[]*relation.RelationDefinition{
+			{Namespace: "__all__", Name: "host_system", FromResource: "host", ToResource: "system"},
+			{Namespace: "bkcc__2", Name: "node_pod", FromResource: "node", ToResource: "pod"},
+		},
+	)
+
+	InitSchemaProvider(p)
+
+	// __all__ namespace 应有 host/system 资源和对应路径
+	m, err := GetModel(ctx, "__all__")
+	require.NoError(t, err)
+	assert.NotNil(t, m)
+
+	// bkcc__2 namespace 应有独立的 model
+	m2, err := GetModel(ctx, "bkcc__2")
+	require.NoError(t, err)
+	assert.NotNil(t, m2)
+
+	// bkcc__2 的 model 与 __all__ 是不同实例
+	assert.NotEqual(t, fmt.Sprintf("%p", m), fmt.Sprintf("%p", m2))
+}
+
+func TestGetModel_FallbackToAll(t *testing.T) {
+	defer resetGlobals()
+	ctx := context.Background()
+
+	p := newMockProvider(
+		[]*relation.ResourceDefinition{
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
+		},
+		[]*relation.RelationDefinition{},
+	)
+
+	InitSchemaProvider(p)
+
+	// 请求一个不存在的 namespace，应该回退到 __all__
+	m, err := GetModel(ctx, "bkcc__999")
+	require.NoError(t, err)
+	assert.NotNil(t, m)
+
+	allModel, _ := GetModel(ctx, "__all__")
+	assert.Equal(t, fmt.Sprintf("%p", allModel), fmt.Sprintf("%p", m))
+}
+
+func TestReloadNamespaceModel_AsyncUpdate(t *testing.T) {
+	defer resetGlobals()
+	ctx := context.Background()
+
+	p := newMockProvider(
+		[]*relation.ResourceDefinition{
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
+			{Namespace: "bkcc__2", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
+			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
+		},
+		[]*relation.RelationDefinition{
+			{Namespace: "bkcc__2", Name: "pod_node", FromResource: "pod", ToResource: "node"},
+		},
+	)
+
+	InitSchemaProvider(p)
+
+	// 记录初始化后 __all__ model 的指针
+	allBefore, err := GetModel(ctx, "__all__")
+	require.NoError(t, err)
+
+	// 记录初始化后 bkcc__2 model 的指针
+	ns2Before, err := GetModel(ctx, "bkcc__2")
+	require.NoError(t, err)
+
+	// 模拟 bkcc__2 数据变更：增加一个 container 资源
+	p.resources = append(p.resources, &relation.ResourceDefinition{
+		Namespace: "bkcc__2", Name: "container", Fields: []relation.FieldDefinition{{Name: "container", Required: true}},
+	})
+
+	// 触发异步 reload，只更新 bkcc__2
+	err = reloadNamespaceModel(ctx, "bkcc__2")
+	require.NoError(t, err)
+
+	// __all__ model 不应被替换
+	allAfter, err := GetModel(ctx, "__all__")
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("%p", allBefore), fmt.Sprintf("%p", allAfter), "__all__ model should not change")
+
+	// bkcc__2 model 应被重建（新指针）
+	ns2After, err := GetModel(ctx, "bkcc__2")
+	require.NoError(t, err)
+	assert.NotEqual(t, fmt.Sprintf("%p", ns2Before), fmt.Sprintf("%p", ns2After), "bkcc__2 model should be rebuilt")
+}
+
+func TestOnSchemaChange_OnlyReloadsTargetNamespace(t *testing.T) {
+	defer resetGlobals()
+	ctx := context.Background()
+
+	p := newMockProvider(
+		[]*relation.ResourceDefinition{
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
+			{Namespace: "bkcc__3", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
+		},
+		[]*relation.RelationDefinition{},
+	)
+
+	InitSchemaProvider(p)
+
+	allBefore, _ := GetModel(ctx, "__all__")
+	ns3Before, _ := GetModel(ctx, "bkcc__3")
+
+	// 通过 onSchemaChange 触发 bkcc__3 的 reload（同步等待）
+	done := make(chan struct{})
+	go func() {
+		onSchemaChange("ResourceDefinition", "bkcc__3")
+		close(done)
+	}()
+	<-done
+
+	allAfter, _ := GetModel(ctx, "__all__")
+	ns3After, _ := GetModel(ctx, "bkcc__3")
+
+	// __all__ 未变
+	assert.Equal(t, fmt.Sprintf("%p", allBefore), fmt.Sprintf("%p", allAfter))
+	// bkcc__3 已重建
+	assert.NotEqual(t, fmt.Sprintf("%p", ns3Before), fmt.Sprintf("%p", ns3After))
+}
+
+func TestNamespaceIsolation_GraphIndependent(t *testing.T) {
+	defer resetGlobals()
+
+	// __all__: host → system
+	// bkcc__2: pod → node (完全不同的资源和关系)
+	p := newMockProvider(
+		[]*relation.ResourceDefinition{
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
+			{Namespace: "__all__", Name: "system", Fields: []relation.FieldDefinition{{Name: "bk_target_ip", Required: true}}},
+			{Namespace: "bkcc__2", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
+			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
+		},
+		[]*relation.RelationDefinition{
+			{Namespace: "__all__", Name: "host_system", FromResource: "host", ToResource: "system"},
+			{Namespace: "bkcc__2", Name: "pod_node", FromResource: "pod", ToResource: "node"},
+		},
+	)
+
+	InitSchemaProvider(p)
+
+	// __all__ model 只认识 host/system，不认识 pod/node
+	allMdl := models["__all__"]
+	require.NotNil(t, allMdl)
+	_, hasHost := allMdl.cfg.Resource[0], true
+	assert.True(t, hasHost)
+	for _, r := range allMdl.cfg.Resource {
+		assert.NotEqual(t, cmdb.Resource("pod"), r.Name, "__all__ should not contain pod")
+		assert.NotEqual(t, cmdb.Resource("node"), r.Name, "__all__ should not contain node")
+	}
+
+	// bkcc__2 model 只认识 pod/node，不认识 host/system
+	ns2Mdl := models["bkcc__2"]
+	require.NotNil(t, ns2Mdl)
+	for _, r := range ns2Mdl.cfg.Resource {
+		assert.NotEqual(t, cmdb.Resource("host"), r.Name, "bkcc__2 should not contain host")
+		assert.NotEqual(t, cmdb.Resource("system"), r.Name, "bkcc__2 should not contain system")
 	}
 }

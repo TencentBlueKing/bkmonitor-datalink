@@ -26,6 +26,26 @@ type mockSchemaProvider struct {
 	relations []*relation.RelationDefinition
 }
 
+func (m *mockSchemaProvider) Name() string {
+	return "mock"
+}
+
+func (m *mockSchemaProvider) ListNamespaces() ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, r := range m.resources {
+		ns := r.Namespace
+		if ns == "" {
+			ns = relation.NamespaceAll
+		}
+		seen[ns] = struct{}{}
+	}
+	namespaces := make([]string, 0, len(seen))
+	for ns := range seen {
+		namespaces = append(namespaces, ns)
+	}
+	return namespaces, nil
+}
+
 func (m *mockSchemaProvider) GetResourceDefinition(namespace, name string) (*relation.ResourceDefinition, error) {
 	for _, r := range m.resources {
 		if r.Namespace == namespace && r.Name == name {
@@ -36,11 +56,30 @@ func (m *mockSchemaProvider) GetResourceDefinition(namespace, name string) (*rel
 }
 
 func (m *mockSchemaProvider) ListResourceDefinitions(namespace string) ([]*relation.ResourceDefinition, error) {
+	if namespace == "" {
+		namespace = relation.NamespaceAll
+	}
 	result := make([]*relation.ResourceDefinition, 0)
 	for _, r := range m.resources {
-		if r.Namespace == namespace || namespace == "" {
+		ns := r.Namespace
+		if ns == "" {
+			ns = relation.NamespaceAll
+		}
+		if ns == namespace {
 			result = append(result, r)
 		}
+	}
+	return result, nil
+}
+
+func (m *mockSchemaProvider) ListAllResourceDefinitions() (map[string][]*relation.ResourceDefinition, error) {
+	result := make(map[string][]*relation.ResourceDefinition)
+	for _, r := range m.resources {
+		ns := r.Namespace
+		if ns == "" {
+			ns = relation.NamespaceAll
+		}
+		result[ns] = append(result[ns], r)
 	}
 	return result, nil
 }
@@ -55,11 +94,30 @@ func (m *mockSchemaProvider) GetRelationDefinition(namespace, name string) (*rel
 }
 
 func (m *mockSchemaProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
+	if namespace == "" {
+		namespace = relation.NamespaceAll
+	}
 	result := make([]*relation.RelationDefinition, 0)
 	for _, r := range m.relations {
-		if r.Namespace == namespace || namespace == "" {
+		ns := r.Namespace
+		if ns == "" {
+			ns = relation.NamespaceAll
+		}
+		if ns == namespace {
 			result = append(result, r)
 		}
+	}
+	return result, nil
+}
+
+func (m *mockSchemaProvider) ListAllRelationDefinitions() (map[string][]*relation.RelationDefinition, error) {
+	result := make(map[string][]*relation.RelationDefinition)
+	for _, r := range m.relations {
+		ns := r.Namespace
+		if ns == "" {
+			ns = relation.NamespaceAll
+		}
+		result[ns] = append(result[ns], r)
 	}
 	return result, nil
 }
@@ -91,7 +149,7 @@ func (m *mockSchemaProvider) Subscribe(callback relation.SchemaChangeCallback) e
 	return nil
 }
 
-func TestConfigAdapter_GetConfig(t *testing.T) {
+func TestConfigAdapter_GetConfigs(t *testing.T) {
 	provider := &mockSchemaProvider{
 		resources: []*relation.ResourceDefinition{
 			{
@@ -140,64 +198,52 @@ func TestConfigAdapter_GetConfig(t *testing.T) {
 	}
 
 	adapter := NewConfigAdapter(provider)
-	cfg, err := adapter.GetConfig(context.Background(), "")
+	configs, err := adapter.GetConfigs(context.Background())
 	require.NoError(t, err)
+	require.NotNil(t, configs)
+
+	// mock 数据 namespace 为 ""，归到 __all__
+	cfg := configs[relation.NamespaceAll]
 	require.NotNil(t, cfg)
 
-	// 验证资源数量
 	assert.Len(t, cfg.Resource, 3)
 
-	// 验证资源转换
 	resourceMap := make(map[cmdb.Resource]ResourceConf)
 	for _, r := range cfg.Resource {
 		resourceMap[r.Name] = r
 	}
 
-	// pod: 3 个 required 字段 → 3 个 Index, 0 个 Info
 	podConf := resourceMap["pod"]
 	assert.Equal(t, cmdb.Resource("pod"), podConf.Name)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "namespace", "pod"}, podConf.Index)
 	assert.Nil(t, podConf.Info)
 
-	// node: 2 个 required 字段
 	nodeConf := resourceMap["node"]
 	assert.Equal(t, cmdb.Resource("node"), nodeConf.Name)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "node"}, nodeConf.Index)
 	assert.Nil(t, nodeConf.Info)
 
-	// host: 1 个 required + 2 个 optional → Index + Info
 	hostConf := resourceMap["host"]
 	assert.Equal(t, cmdb.Resource("host"), hostConf.Name)
 	assert.Equal(t, cmdb.Index{"bk_host_id"}, hostConf.Index)
 	assert.Equal(t, cmdb.Index{"version", "env_name"}, hostConf.Info)
 
-	// 验证关联数量和内容
 	assert.Len(t, cfg.Relation, 2)
-
-	relMap := make(map[string]RelationConf)
-	for _, r := range cfg.Relation {
-		key := string(r.Resources[0]) + "_" + string(r.Resources[1])
-		relMap[key] = r
-	}
-
-	nodePodRel := relMap["node_pod"]
-	assert.Equal(t, cmdb.Resource("node"), nodePodRel.Resources[0])
-	assert.Equal(t, cmdb.Resource("pod"), nodePodRel.Resources[1])
 }
 
-func TestConfigAdapter_GetConfig_EmptyProvider(t *testing.T) {
+func TestConfigAdapter_GetConfigs_EmptyProvider(t *testing.T) {
 	provider := &mockSchemaProvider{
 		resources: []*relation.ResourceDefinition{},
 		relations: []*relation.RelationDefinition{},
 	}
 
 	adapter := NewConfigAdapter(provider)
-	_, err := adapter.GetConfig(context.Background(), "")
+	_, err := adapter.GetConfigs(context.Background())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no resource or relation definitions found")
+	assert.Contains(t, err.Error(), "no namespaces found")
 }
 
-func TestConfigAdapter_GetConfig_SkipInvalidRelation(t *testing.T) {
+func TestConfigAdapter_GetConfigs_SkipInvalidRelation(t *testing.T) {
 	provider := &mockSchemaProvider{
 		resources: []*relation.ResourceDefinition{
 			{
@@ -223,60 +269,47 @@ func TestConfigAdapter_GetConfig_SkipInvalidRelation(t *testing.T) {
 	}
 
 	adapter := NewConfigAdapter(provider)
-	cfg, err := adapter.GetConfig(context.Background(), "")
+	configs, err := adapter.GetConfigs(context.Background())
 	require.NoError(t, err)
+	cfg := configs[relation.NamespaceAll]
+	require.NotNil(t, cfg)
 	// invalid relation should be skipped
 	assert.Len(t, cfg.Relation, 1)
 	assert.Equal(t, cmdb.Resource("pod"), cfg.Relation[0].Resources[0])
 }
 
-func TestConfigAdapter_GetConfig_DeduplicateByName(t *testing.T) {
-	// 模拟跨 namespace 出现同名资源和同边关联的场景（Redis 返回多个 namespace 的数据）
+func TestConfigAdapter_GetConfigs_MultiNamespace(t *testing.T) {
+	// 模拟多 namespace 的场景，每个 namespace 独立构建 Config
 	provider := &mockSchemaProvider{
 		resources: []*relation.ResourceDefinition{
 			{Namespace: "bkcc__2", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
-			{Namespace: "bkcc__3", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
-			{Namespace: "__all__", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
 			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
-			{Namespace: "__all__", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
+			{Namespace: "__all__", Name: "host", Fields: []relation.FieldDefinition{{Name: "bk_host_id", Required: true}}},
 		},
 		relations: []*relation.RelationDefinition{
 			{Namespace: "bkcc__2", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
-			{Namespace: "bkcc__3", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
-			{Namespace: "__all__", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
+			{Namespace: "__all__", Name: "host_with_system", FromResource: "host", ToResource: "system"},
 		},
 	}
 
 	adapter := NewConfigAdapter(provider)
-	cfg, err := adapter.GetConfig(context.Background(), "")
+	configs, err := adapter.GetConfigs(context.Background())
 	require.NoError(t, err)
 
-	// 应该只有 2 个去重后的资源
-	assert.Len(t, cfg.Resource, 2)
-	// 应该只有 1 个去重后的关联
-	assert.Len(t, cfg.Relation, 1)
-}
+	// 应有 2 个 namespace
+	assert.Len(t, configs, 2)
 
-func TestConfigAdapter_GetConfig_DeduplicateUndirectedEdge(t *testing.T) {
-	// v1beta1 使用无向图，"pod->node" 和 "node->pod" 是同一条边
-	// 模拟 Redis 有 pod->node，Static 有 node->pod 的情况
-	provider := &mockSchemaProvider{
-		resources: []*relation.ResourceDefinition{
-			{Namespace: "", Name: "pod", Fields: []relation.FieldDefinition{{Name: "pod", Required: true}}},
-			{Namespace: "", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
-		},
-		relations: []*relation.RelationDefinition{
-			{Namespace: "__all__", Name: "global_pod_to_node", FromResource: "pod", ToResource: "node"},
-			{Namespace: "", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
-		},
-	}
+	// bkcc__2 有 pod, node 两个资源和 1 个关联
+	cfg2 := configs["bkcc__2"]
+	require.NotNil(t, cfg2)
+	assert.Len(t, cfg2.Resource, 2)
+	assert.Len(t, cfg2.Relation, 1)
 
-	adapter := NewConfigAdapter(provider)
-	cfg, err := adapter.GetConfig(context.Background(), "")
-	require.NoError(t, err)
-
-	// pod->node 和 node->pod 在无向图中是同一条边，应只保留 1 个
-	assert.Len(t, cfg.Relation, 1)
+	// __all__ 有 host 1 个资源和 1 个关联
+	cfgAll := configs[relation.NamespaceAll]
+	require.NotNil(t, cfgAll)
+	assert.Len(t, cfgAll.Resource, 1)
+	assert.Len(t, cfgAll.Relation, 1)
 }
 
 func TestConvertResourceDefinition(t *testing.T) {
@@ -307,7 +340,8 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "system",
 		}
 
-		conf := convertRelationDefinition(rd)
+		conf, ok := convertRelationDefinition(rd)
+		assert.True(t, ok)
 		assert.Len(t, conf.Resources, 2)
 		assert.Equal(t, cmdb.Resource("node"), conf.Resources[0])
 		assert.Equal(t, cmdb.Resource("system"), conf.Resources[1])
@@ -321,10 +355,8 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "node",
 		}
 
-		conf := convertRelationDefinition(rd)
-		// empty from_resource still produces a RelationConf (no error)
-		assert.Equal(t, cmdb.Resource(""), conf.Resources[0])
-		assert.Equal(t, cmdb.Resource("node"), conf.Resources[1])
+		_, ok := convertRelationDefinition(rd)
+		assert.False(t, ok)
 	})
 
 	t.Run("empty to_resource", func(t *testing.T) {
@@ -335,8 +367,7 @@ func TestConvertRelationDefinition(t *testing.T) {
 			ToResource:   "",
 		}
 
-		conf := convertRelationDefinition(rd)
-		assert.Equal(t, cmdb.Resource("node"), conf.Resources[0])
-		assert.Equal(t, cmdb.Resource(""), conf.Resources[1])
+		_, ok := convertRelationDefinition(rd)
+		assert.False(t, ok)
 	})
 }

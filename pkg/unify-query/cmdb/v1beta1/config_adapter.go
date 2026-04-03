@@ -31,29 +31,52 @@ func NewConfigAdapter(provider relation.SchemaProvider) *ConfigAdapter {
 	}
 }
 
-// GetConfig 从 SchemaProvider 获取并转换配置
-// namespace 为空时获取全局配置（__all__）
-func (ca *ConfigAdapter) GetConfig(ctx context.Context, namespace string) (*Config, error) {
+func (ca *ConfigAdapter) GetConfigs(ctx context.Context) (map[string]*Config, error) {
 	if ca.provider == nil {
 		return nil, fmt.Errorf("schema provider is not initialized")
 	}
-	if namespace == "" {
-		namespace = relation.NamespaceAll
+
+	resourcesByNs, err := ca.provider.ListAllResourceDefinitions()
+	if err != nil {
+		return nil, fmt.Errorf("list all resource definitions: %w", err)
+	}
+	if len(resourcesByNs) == 0 {
+		return nil, fmt.Errorf("no namespaces found")
 	}
 
-	// 获取资源定义
+	relationsByNs, err := ca.provider.ListAllRelationDefinitions()
+	if err != nil {
+		return nil, fmt.Errorf("list all relation definitions: %w", err)
+	}
+
+	configs := make(map[string]*Config, len(resourcesByNs))
+	for ns, resourceDefs := range resourcesByNs {
+		configs[ns] = buildConfig(ctx, ns, resourceDefs, relationsByNs[ns])
+	}
+
+	log.Infof(ctx, "v1beta1 config adapter built %d namespaces", len(configs))
+	return configs, nil
+}
+
+func (ca *ConfigAdapter) GetConfigForNamespace(ctx context.Context, namespace string) (*Config, error) {
+	if ca.provider == nil {
+		return nil, fmt.Errorf("schema provider is not initialized")
+	}
+
 	resourceDefs, err := ca.provider.ListResourceDefinitions(namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list resource definitions: %w", err)
+		return nil, fmt.Errorf("list resource definitions for namespace %q: %w", namespace, err)
 	}
 
-	// 获取关联定义
 	relationDefs, err := ca.provider.ListRelationDefinitions(namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list relation definitions: %w", err)
+		return nil, fmt.Errorf("list relation definitions for namespace %q: %w", namespace, err)
 	}
 
-	// 转换为 Config
+	return buildConfig(ctx, namespace, resourceDefs, relationDefs), nil
+}
+
+func buildConfig(ctx context.Context, ns string, resourceDefs []*relation.ResourceDefinition, relationDefs []*relation.RelationDefinition) *Config {
 	resources := make([]ResourceConf, 0, len(resourceDefs))
 	for _, rd := range resourceDefs {
 		resources = append(resources, convertResourceDefinition(rd))
@@ -61,16 +84,18 @@ func (ca *ConfigAdapter) GetConfig(ctx context.Context, namespace string) (*Conf
 
 	relations := make([]RelationConf, 0, len(relationDefs))
 	for _, rd := range relationDefs {
-		relations = append(relations, convertRelationDefinition(rd))
+		if r, ok := convertRelationDefinition(rd); ok {
+			relations = append(relations, r)
+		} else {
+			log.Warnf(ctx, "skipping invalid relation %q in namespace %q: from=%q to=%q",
+				rd.Name, ns, rd.FromResource, rd.ToResource)
+		}
 	}
-
-	log.Infof(ctx, "v1beta1 config adapter built: %d resources, %d relations from namespace %s",
-		len(resources), len(relations), namespace)
 
 	return &Config{
 		Resource: resources,
 		Relation: relations,
-	}, nil
+	}
 }
 
 // convertResourceDefinition 转换资源定义
@@ -94,14 +119,14 @@ func convertResourceDefinition(rd *relation.ResourceDefinition) ResourceConf {
 	}
 }
 
-// convertRelationDefinition 转换关联定义
-// RelationDefinition.FromResource → RelationConf.Resources[0]
-// RelationDefinition.ToResource → RelationConf.Resources[1]
-func convertRelationDefinition(rd *relation.RelationDefinition) RelationConf {
+func convertRelationDefinition(rd *relation.RelationDefinition) (RelationConf, bool) {
+	if rd.FromResource == "" || rd.ToResource == "" {
+		return RelationConf{}, false
+	}
 	return RelationConf{
 		Resources: []cmdb.Resource{
 			cmdb.Resource(rd.FromResource),
 			cmdb.Resource(rd.ToResource),
 		},
-	}
+	}, true
 }

@@ -17,59 +17,43 @@ import (
 )
 
 // ProviderManager SchemaProvider 管理器
-// 负责创建、管理和关闭 SchemaProvider
 type ProviderManager struct {
 	provider SchemaProvider
 	logger   Logger
 }
 
-// NewProviderManager 创建 Provider 管理器
-// 如果 logger 为 nil，使用默认的 noop logger
-func NewProviderManager(logger Logger) *ProviderManager {
+// NewProviderManager 根据 providerType 创建并初始化 SchemaProvider。
+// providerType: "static" 或 "redis"
+// redisClient: redis 模式下必须提供
+// staticConfig: static 模式下的硬编码配置
+func NewProviderManager(ctx context.Context, logger Logger, providerType string, redisClient redis.UniversalClient, staticConfig StaticProviderConfig) (*ProviderManager, error) {
 	if logger == nil {
 		logger = &noopLogger{}
 	}
-	return &ProviderManager{
-		logger: logger,
-	}
-}
 
-// InitProvider 根据类型和 Redis 客户端初始化 Provider
-// providerType: "static" 或 "redis"
-// redisClient: Redis 客户端（当 providerType 为 "redis" 时必须提供）
-func (pm *ProviderManager) InitProvider(ctx context.Context, providerType string, redisClient redis.UniversalClient) error {
-	// 先关闭旧的 provider
-	pm.Close()
-
-	var provider SchemaProvider
-	var err error
+	pm := &ProviderManager{logger: logger}
 
 	switch providerType {
 	case "static":
-		// static 模式使用空配置的 StaticSchemaProvider 作为兜底
-		pm.provider = NewStaticSchemaProvider(StaticProviderConfig{})
-		pm.logger.Infof("Using static SchemaProvider (empty config, hardcoded definitions take effect elsewhere)")
-		return nil
+		pm.provider = NewStaticSchemaProvider(staticConfig)
+		pm.logger.Infof("Using static SchemaProvider")
 
 	case "redis":
 		if redisClient == nil {
-			return fmt.Errorf("redis client is required for redis provider type")
+			return nil, fmt.Errorf("redis client is required for redis provider type")
 		}
-
-		// 使用 Redis provider，key 前缀固定为 "bkmonitorv3:entity"
-		provider, err = NewRedisProvider(ctx, redisClient)
+		p, err := NewRedisProvider(ctx, redisClient)
 		if err != nil {
-			return fmt.Errorf("failed to create redis SchemaProvider: %w", err)
+			return nil, fmt.Errorf("failed to create redis SchemaProvider: %w", err)
 		}
-
+		pm.provider = p
 		pm.logger.Infof("Redis SchemaProvider created successfully")
 
 	default:
-		return fmt.Errorf("unknown schema provider type: %s", providerType)
+		return nil, fmt.Errorf("unknown schema provider type: %s", providerType)
 	}
 
-	pm.provider = provider
-	return nil
+	return pm, nil
 }
 
 // GetProvider 获取当前 Provider

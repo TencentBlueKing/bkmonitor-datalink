@@ -102,6 +102,13 @@ func TestNewSQLExpr_Default(t *testing.T) {
 	assert.Equal(t, "other", defaultExpr.key)
 }
 
+func TestNewSQLExpr_TSpider(t *testing.T) {
+	expr := NewSQLExpr(TSpider)
+	ts, ok := expr.(*TSpiderSQLExpr)
+	assert.True(t, ok)
+	assert.Equal(t, TSpider, ts.Type())
+}
+
 func TestHDFS_vs_Default_RegexComparison(t *testing.T) {
 	condition := metadata.ConditionField{
 		DimensionName: "projectId",

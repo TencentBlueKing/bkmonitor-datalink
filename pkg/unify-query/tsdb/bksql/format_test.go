@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -280,6 +281,27 @@ func TestNewSqlFactory(t *testing.T) {
 			assert.Equal(t, c.expected, sql)
 		})
 	}
+}
+
+// TestNewQueryFactory_BkSql_TSpider_UserSQL 单段 table_id（Measurement 空）走用户 SQL 时，应选用 TSpider 表达式并完成 ParserSQL，表名仍为 `db` 无 .suffix。
+func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1741795260, 0)
+	end := time.Unix(1741796260, 0)
+	q := &metadata.Query{
+		StorageType: metadata.BkSqlStorageType,
+		DB:          "132_lol_new_login_queue_login_1min",
+		Measurement: "",
+		Field:       "login_rate",
+		SQL:         "SELECT dtEventTimeStamp FROM tbl WHERE dtEventTimeStamp > 0 LIMIT 10",
+	}
+	f := bksql.NewQueryFactory(ctx, q).WithRangeTime(start, end)
+	got, err := f.SQL()
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	assert.Contains(t, got, "dtEventTimeStamp")
+	assert.Contains(t, got, "`132_lol_new_login_queue_login_1min`")
+	assert.NotContains(t, got, ".tspider")
 }
 
 func TestWindowWithTimezone(t *testing.T) {

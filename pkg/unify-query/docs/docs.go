@@ -175,7 +175,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/check/query/ts/promql": {
+        "/check/query/promql": {
             "post": {
                 "produces": [
                     "application/json"

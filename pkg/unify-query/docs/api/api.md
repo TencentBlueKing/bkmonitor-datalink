@@ -696,7 +696,7 @@
 
 ### 5.4 校验 PromQL 查询
 
-**接口**: `POST /check/query/ts/promql`
+**接口**: `POST /check/query/promql`
 
 **请求头**: 同 PromQL 查询接口
 

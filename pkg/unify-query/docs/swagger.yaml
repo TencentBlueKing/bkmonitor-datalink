@@ -888,7 +888,7 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrResponse'
       summary: query ts monitor check by ts
-  /check/query/ts/promql:
+  /check/query/promql:
     post:
       operationId: check_query_promql
       parameters:

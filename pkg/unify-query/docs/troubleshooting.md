@@ -121,7 +121,7 @@
 1. **检查 PromQL 语法**
    ```bash
    # 使用 PromQL 校验接口（请求体为 QueryPromQL，非裸 query 字段）
-   curl -X POST http://localhost:10205/check/query/ts/promql \
+   curl -X POST http://localhost:10205/check/query/promql \
      -H "Content-Type: application/json" \
      -H "X-Bk-Scope-Space-Uid: bkcc__2" \
      -d '{"promql":"avg(cpu_usage)","start":"1629810830","end":"1629811070","step":"60s"}'

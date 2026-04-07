@@ -416,7 +416,9 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, h.cacheManager.Type())
 		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
 		if err != nil {
-			logger.Errorf("refresh all cmdb resource(%s) cache  reset last update time error: %v, bkTenantId: %s", h.cacheManager.Type(), err, h.bkTenantId)
+			logger.Errorf("refresh all cmdb resource(%s) cache  reset %s last update time error: %v, bkTenantId: %s", h.cacheManager.Type(), lastUpdateTimeKey, err, h.bkTenantId)
+		} else {
+			logger.Infof("refresh all cmdb resource(%s) cache reset %s last update time success, bkTenantId: %s", h.cacheManager.Type(), lastUpdateTimeKey, h.bkTenantId)
 		}
 
 		logger.Infof("refresh all cmdb resource(%s) cache success, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)

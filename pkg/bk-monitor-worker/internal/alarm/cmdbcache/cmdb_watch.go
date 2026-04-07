@@ -405,19 +405,21 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 	// 如果超过全量刷新间隔时间，执行全量刷新
 	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 		// 全量刷新
+		logger.Infof("refresh all cmdb resource(%s) cache start, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
+
 		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 		if err != nil {
-			logger.Errorf("refresh all cache failed: %v, bkTenantId: %s", err, h.bkTenantId)
+			logger.Errorf("refresh all cmdb resource(%s) cache failed: %v, bkTenantId: %s", h.cacheManager.Type(), err, h.bkTenantId)
 		}
-
-		logger.Infof("refresh all cmdb resource(%s) cache, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
 
 		// 记录全量刷新时间
 		lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, h.cacheManager.Type())
 		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
 		if err != nil {
-			logger.Errorf("set last update time error: %v, bkTenantId: %s", err, h.bkTenantId)
+			logger.Errorf("refresh all cmdb resource(%s) cache  reset last update time error: %v, bkTenantId: %s", h.cacheManager.Type(), err, h.bkTenantId)
 		}
+
+		logger.Infof("refresh all cmdb resource(%s) cache success, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
 
 		return
 	}

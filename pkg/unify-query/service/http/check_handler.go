@@ -99,7 +99,7 @@ func HandlerCheckQueryTs(c *gin.Context) {
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
 // @Success  200                   	{object}  CheckQueryTsDataResponse
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /check/query/promql [post]
+// @Router   /check/query/ts/promql [post]
 func HandlerCheckQueryPromQL(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()

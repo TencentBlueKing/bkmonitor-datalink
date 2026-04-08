@@ -467,7 +467,7 @@ func TestEndToEndHandlerCheckQueryPromQL_Success_VMPreview(t *testing.T) {
 	}
 	wantMql, wantRT := expectedCheckVMPreview(ctx, t, queryTs)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1/check/query/promql", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1/check/query/ts/promql", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	w := runCheckHandler(t, req, HandlerCheckQueryPromQL)

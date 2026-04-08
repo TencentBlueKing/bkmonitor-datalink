@@ -29,9 +29,17 @@ func registerDefaultHandlers(registerHandler *endpoint.RegisterHandler) {
 	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTs)
 
+	// check/query/ts：与 query/ts 同属 public（MetaData + Jwt），配置项 http.path.check_query_ts
+	handlerPath = viper.GetString(CheckQueryTsConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryTs)
+
 	// query/ts/promql
 	handlerPath = viper.GetString(TSQueryPromQLHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryPromQL)
+
+	// check/query/ts/promql：与 query/ts/promql 同属 public（MetaData + Jwt），配置项 http.path.check_query_promql
+	handlerPath = viper.GetString(CheckQueryPromQLConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryPromQL)
 
 	// query/reference
 	handlerPath = viper.GetString(TSQueryReferenceQueryHandlePathConfigPath)
@@ -108,14 +116,6 @@ func registerOtherHandlers(registerHandler *endpoint.RegisterHandler) {
 	// query/ts/promql_to_struct
 	handlerPath = viper.GetString(TSQueryPromQLToStructHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerPromQLToStruct)
-
-	// check/query/ts
-	handlerPath = viper.GetString(CheckQueryTsConfigPath)
-	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryTs)
-
-	// check/query/ts/promql
-	handlerPath = viper.GetString(CheckQueryPromQLConfigPath)
-	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryPromQL)
 
 	// print
 	handlerPath = viper.GetString(PrintHandlePathConfigPath)

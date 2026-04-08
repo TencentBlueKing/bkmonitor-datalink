@@ -555,6 +555,14 @@ definitions:
         description: TableID 数据实体ID，容器指标可以为空
         example: system.cpu_summary
         type: string
+      table_id_conditions:
+        description: TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_<维度>
+          写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。
+        items:
+          items:
+            $ref: '#/definitions/structured.ConditionField'
+          type: array
+        type: array
       time_aggregation:
         allOf:
         - $ref: '#/definitions/structured.TimeAggregation'
@@ -762,9 +770,41 @@ definitions:
     - 1000000000
     - 60000000000
     - 3600000000000
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
     format: int64
     type: integer
     x-enum-varnames:
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
     - minDuration
     - maxDuration
     - Nanosecond

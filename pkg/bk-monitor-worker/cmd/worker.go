@@ -59,8 +59,6 @@ func startWorker(cmd *cobra.Command, args []string) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pm := relation.NewProviderManager(nil)
-
 	var redisClient goRedis.UniversalClient
 	if config.SchemaProviderType == "redis" {
 		inst := bmwRedis.GetStorageRedisInstance()
@@ -72,14 +70,18 @@ func startWorker(cmd *cobra.Command, args []string) {
 		redisClient = inst.Client
 	}
 
-	if err := pm.InitProvider(ctx, config.SchemaProviderType, redisClient); err != nil {
+	pm, err := relation.NewProviderManager(ctx, nil, config.SchemaProviderType, redisClient, relation.DefaultStaticProviderConfig())
+	if err != nil {
 		// Graceful degradation: log warning but continue with nil provider
-		// This allows base metrics to still be reported even if relation metadata provider fails
 		logger.Warnf("[schema_provider] init failed, degrading gracefully: %v", err)
 	}
 
+	var schemaProvider relation.SchemaProvider
+	if pm != nil {
+		schemaProvider = pm.GetProvider()
+	}
 	// InitSchemaProvider accepts nil provider (falls back to hardcoded config)
-	bmwRelation.InitSchemaProvider(pm.GetProvider())
+	bmwRelation.InitSchemaProvider(schemaProvider)
 	logger.Infof("[schema_provider] initialized with type=%s", config.SchemaProviderType)
 
 	r := bmwHttp.NewProfHttpService()

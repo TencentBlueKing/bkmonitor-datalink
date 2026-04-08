@@ -1659,3 +1659,92 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatFactory_Orders(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	fieldsMap := metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: "date"},
+		"timestamp":        {FieldType: "date"},
+		"value":            {FieldType: "double"},
+		"host":             {FieldType: "keyword"},
+	}
+
+	for name, c := range map[string]struct {
+		timeField    metadata.TimeField
+		orders       metadata.Orders
+		expected     metadata.Orders
+	}{
+		"time field uses timeField.Type as unmapped_type": {
+			timeField: metadata.TimeField{
+				Name: "dtEventTimeStamp",
+				Type: TimeFieldTypeTime,
+			},
+			orders: metadata.Orders{
+				{Name: FieldTime, Ast: false},
+			},
+			expected: metadata.Orders{
+				{Name: "dtEventTimeStamp", Ast: false, UnmappedType: TimeFieldTypeTime},
+			},
+		},
+		"time field with date_nanos type": {
+			timeField: metadata.TimeField{
+				Name: "dtEventTimeStamp",
+				Type: "date_nanos",
+			},
+			orders: metadata.Orders{
+				{Name: FieldTime, Ast: true},
+			},
+			expected: metadata.Orders{
+				{Name: "dtEventTimeStamp", Ast: true, UnmappedType: "date_nanos"},
+			},
+		},
+		"non-time field has no unmapped_type": {
+			timeField: metadata.TimeField{
+				Name: "dtEventTimeStamp",
+				Type: TimeFieldTypeTime,
+			},
+			orders: metadata.Orders{
+				{Name: "host", Ast: false},
+			},
+			expected: metadata.Orders{
+				{Name: "host", Ast: false, UnmappedType: ""},
+			},
+		},
+		"mixed time and non-time fields": {
+			timeField: metadata.TimeField{
+				Name: "dtEventTimeStamp",
+				Type: TimeFieldTypeTime,
+			},
+			orders: metadata.Orders{
+				{Name: FieldTime, Ast: false},
+				{Name: "host", Ast: true},
+			},
+			expected: metadata.Orders{
+				{Name: "dtEventTimeStamp", Ast: false, UnmappedType: TimeFieldTypeTime},
+				{Name: "host", Ast: true, UnmappedType: ""},
+			},
+		},
+		"unmapped field is filtered out": {
+			timeField: metadata.TimeField{
+				Name: "dtEventTimeStamp",
+				Type: TimeFieldTypeTime,
+			},
+			orders: metadata.Orders{
+				{Name: "non_existent_field", Ast: false},
+			},
+			expected: metadata.Orders{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fact := NewFormatFactory(ctx).
+				WithFieldMap(fieldsMap).
+				WithQuery("value", c.timeField, now.Add(-time.Hour), now, "", 0).
+				WithOrders(c.orders)
+
+			got := fact.Orders()
+			assert.Equal(t, c.expected, got)
+		})
+	}
+}

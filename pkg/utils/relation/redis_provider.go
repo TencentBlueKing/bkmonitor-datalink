@@ -453,6 +453,22 @@ func (rp *RedisProvider) ListResourceDefinitions(namespace string) ([]*ResourceD
 	return result, nil
 }
 
+// ListAllResourceDefinitions 返回所有命名空间下的资源定义，按 namespace 分组
+func (rp *RedisProvider) ListAllResourceDefinitions() (map[string][]*ResourceDefinition, error) {
+	rp.mu.RLock()
+	defer rp.mu.RUnlock()
+
+	result := make(map[string][]*ResourceDefinition, len(rp.resourceDefinitions))
+	for ns, nsMap := range rp.resourceDefinitions {
+		defs := make([]*ResourceDefinition, 0, len(nsMap))
+		for _, def := range nsMap {
+			defs = append(defs, def)
+		}
+		result[ns] = defs
+	}
+	return result, nil
+}
+
 // GetRelationDefinition 获取关联定义
 func (rp *RedisProvider) GetRelationDefinition(namespace, name string) (*RelationDefinition, error) {
 	rp.mu.RLock()
@@ -506,6 +522,22 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 				}
 			}
 		}
+	}
+	return result, nil
+}
+
+// ListAllRelationDefinitions 返回所有命名空间下的关联定义，按 namespace 分组
+func (rp *RedisProvider) ListAllRelationDefinitions() (map[string][]*RelationDefinition, error) {
+	rp.mu.RLock()
+	defer rp.mu.RUnlock()
+
+	result := make(map[string][]*RelationDefinition, len(rp.relationDefinitions))
+	for ns, nsMap := range rp.relationDefinitions {
+		defs := make([]*RelationDefinition, 0, len(nsMap))
+		for _, def := range nsMap {
+			defs = append(defs, def)
+		}
+		result[ns] = defs
 	}
 	return result, nil
 }
@@ -587,6 +619,22 @@ func (rp *RedisProvider) FindRelationByResourceTypes(namespace, fromResource, to
 // Subscribe registers a callback to be invoked when schema changes occur
 // The callback will be called with the kind ("ResourceDefinition" or "RelationDefinition")
 // and namespace that was reloaded
+func (rp *RedisProvider) Name() string {
+	return "redis"
+}
+
+// ListNamespaces returns all namespaces that have resource definitions
+func (rp *RedisProvider) ListNamespaces() ([]string, error) {
+	rp.mu.RLock()
+	defer rp.mu.RUnlock()
+
+	namespaces := make([]string, 0, len(rp.resourceDefinitions))
+	for ns := range rp.resourceDefinitions {
+		namespaces = append(namespaces, ns)
+	}
+	return namespaces, nil
+}
+
 func (rp *RedisProvider) Subscribe(callback SchemaChangeCallback) error {
 	if callback == nil {
 		return errors.New("callback cannot be nil")

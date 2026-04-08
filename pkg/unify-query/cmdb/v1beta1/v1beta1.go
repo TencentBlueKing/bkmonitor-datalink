@@ -18,8 +18,8 @@ import (
 
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
-	"golang.org/x/sync/singleflight"
 	pl "github.com/prometheus/prometheus/promql"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -38,7 +38,7 @@ const (
 )
 
 var (
-	mdl      *model
+	models   map[string]*model // namespace → model
 	mtx      sync.Mutex
 	provider relation.SchemaProvider
 
@@ -48,51 +48,111 @@ var (
 	reloadGroup singleflight.Group
 )
 
-// InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用
-// 设置后，GetModel 会优先从 SchemaProvider 获取配置，获取失败则回退到硬编码 configData
+// InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用。
 func InitSchemaProvider(p relation.SchemaProvider) {
+	ctx := context.Background()
 	mtx.Lock()
 	defer mtx.Unlock()
 	provider = p
-	// 重置 model，下次 GetModel 调用时会用新的 provider 重建
-	mdl = nil
-	
-	// Register callback for schema changes if provider supports it
-	if provider != nil {
-		if err := provider.Subscribe(onSchemaChange); err != nil {
-			log.Warnf(context.Background(), "failed to subscribe to schema changes: %v", err)
-		}
+
+	newModels, err := loadModels(ctx, p)
+	if err != nil {
+		log.Warnf(ctx, "failed to load models from %s: %v", p.Name(), err)
+		return
+	}
+	models = newModels
+	log.Infof(ctx, "v1beta1 models loaded from %s: %d namespaces", p.Name(), len(models))
+
+	if err = p.Subscribe(onSchemaChange); err != nil {
+		log.Warnf(ctx, "failed to subscribe to schema changes: %v", err)
 	}
 }
 
-// onSchemaChange is called when schema (resource or relation definitions) changes.
-// It uses singleflight to coalesce concurrent reload requests so that rapid-fire
-// Pub/Sub events (e.g. batch schema updates) result in only one model rebuild.
+// loadModels 从 SchemaProvider 加载所有 namespace 的配置并构建对应的 model。
+func loadModels(ctx context.Context, p relation.SchemaProvider) (map[string]*model, error) {
+	adapter := NewConfigAdapter(p)
+	configs, err := adapter.GetConfigs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	newModels := make(map[string]*model, len(configs))
+	for ns, cfg := range configs {
+		m, err := newModel(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build model for namespace %q: %w", ns, err)
+		}
+		newModels[ns] = m
+	}
+	return newModels, nil
+}
+
+// onSchemaChange 在某个 namespace 的 schema 发生变更时被调用，只重建该 namespace 的 model。
+// 使用 singleflight 以 namespace 为 key ，避免短时间内重复 reload。
 func onSchemaChange(kind, namespace string) {
 	ctx := context.Background()
 	log.Infof(ctx, "schema change detected: kind=%s, namespace=%s", kind, namespace)
 
-	_, err, shared := reloadGroup.Do("reload", func() (interface{}, error) {
-		return nil, ReloadConfig(ctx)
+	_, err, shared := reloadGroup.Do(namespace, func() (interface{}, error) {
+		return nil, reloadNamespaceModel(ctx, namespace)
 	})
 	if err != nil {
-		log.Warnf(ctx, "failed to reload v1beta1 model on schema change: %v", err)
+		log.Warnf(ctx, "failed to reload v1beta1 model for namespace %s: %v", namespace, err)
 	}
 	if shared {
-		log.Debugf(ctx, "schema reload was shared with concurrent request")
+		log.Debugf(ctx, "schema reload for namespace %s was shared with concurrent request", namespace)
 	}
 }
 
-func GetModel(ctx context.Context) (cmdb.CMDB, error) {
-	var err error
-	if mdl == nil {
-		mtx.Lock()
-		if mdl == nil {
-			mdl, err = newModel(ctx)
-		}
-		mtx.Unlock()
+// reloadNamespaceModel 重建指定 namespace 的 model。
+func reloadNamespaceModel(ctx context.Context, namespace string) error {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if provider == nil {
+		return fmt.Errorf("schema provider not initialized")
 	}
-	return mdl, err
+
+	cfg, err := NewConfigAdapter(provider).GetConfigForNamespace(ctx, namespace)
+	if err != nil {
+		return fmt.Errorf("get config for namespace %q: %w", namespace, err)
+	}
+
+	newMdl, err := newModel(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("build model for namespace %q: %w", namespace, err)
+	}
+
+	if models == nil {
+		models = make(map[string]*model)
+	}
+	models[namespace] = newMdl
+	log.Infof(ctx, "v1beta1 model for namespace %q reloaded from %s", namespace, provider.Name())
+	return nil
+}
+
+// GetModel 返回指定 namespace 的 model。
+// 如果 models 尚未初始化（如单元测试场景），使用静态 configData 构建 __all__ namespace 的 model。
+func GetModel(ctx context.Context, namespace string) (cmdb.CMDB, error) {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if models == nil {
+		var err error
+		mdl, err := newModel(ctx, configData)
+		if err != nil {
+			return nil, err
+		}
+		models = map[string]*model{relation.NamespaceAll: mdl}
+	}
+
+	// 先尝试拿具体 namespace，如果没有则回退到 __all__
+	if m, ok := models[namespace]; ok {
+		return m, nil
+	}
+	if m, ok := models[relation.NamespaceAll]; ok {
+		return m, nil
+	}
+	return nil, fmt.Errorf("no model found for namespace %q", namespace)
 }
 
 type model struct {
@@ -101,51 +161,15 @@ type model struct {
 	g graph.Graph[string, string]
 }
 
-// newModel 初始化
-// 优先从 SchemaProvider 获取配置，失败则回退到硬编码 configData
-func newModel(ctx context.Context) (*model, error) {
-	var (
-		err          error
-		cfg          *Config
-		configSource string
-	)
+// newModel 根据已加载的 cfg 构建 graph 模型。
+// cfg 由 loadConfig 在服务启动或 reload 时准备好，newModel 不再访问 SchemaProvider。
+func newModel(ctx context.Context, cfg *Config) (*model, error) {
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "v1beta1-new-model")
 	defer span.End(&err)
 
-	// 尝试从 SchemaProvider 获取动态配置
-	if provider != nil {
-		adapter := NewConfigAdapter(provider)
-		cfg, err = adapter.GetConfig(ctx, "")
-		if err != nil {
-			log.Warnf(ctx, "failed to get config from SchemaProvider, falling back to hardcoded config: %v", err)
-			span.Set("schema-provider-error", err.Error())
-			cfg = nil
-			err = nil // 清除错误，允许回退
-		} else {
-			switch provider.(type) {
-			case *relation.RedisProvider:
-				configSource = "redis"
-			case *relation.StaticSchemaProvider:
-				configSource = "static"
-			default:
-				configSource = "schema_provider"
-			}
-			log.Infof(ctx, "v1beta1 model loaded from SchemaProvider: %d resources, %d relations",
-				len(cfg.Resource), len(cfg.Relation))
-		}
-	}
-
-	// 回退到硬编码配置
-	if cfg == nil {
-		cfg = configData
-		configSource = "hardcoded"
-		log.Infof(ctx, "v1beta1 model using hardcoded config: %d resources, %d relations",
-			len(cfg.Resource), len(cfg.Relation))
-	}
-
 	// 记录 trace 信息：配置来源、资源/关联数量和名称
-	span.Set("config-source", configSource)
 	span.Set("config-resource-count", len(cfg.Resource))
 	span.Set("config-relation-count", len(cfg.Relation))
 
@@ -614,8 +638,7 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 	return pick.Matchers
 }
 
-// ReloadConfig 重新加载配置
-// 当 Redis 数据变更时，可以调用此方法刷新 Model
+// ReloadConfig 重新从 SchemaProvider 加载所有 namespace 的配置并重建 model。
 func ReloadConfig(ctx context.Context) error {
 	mtx.Lock()
 	defer mtx.Unlock()
@@ -624,13 +647,12 @@ func ReloadConfig(ctx context.Context) error {
 		return fmt.Errorf("schema provider not initialized")
 	}
 
-	newMdl, err := newModel(ctx)
+	newModels, err := loadModels(ctx, provider)
 	if err != nil {
-		return fmt.Errorf("failed to create new model: %w", err)
+		return fmt.Errorf("load models from %s: %w", provider.Name(), err)
 	}
 
-	mdl = newMdl
-	log.Infof(ctx, "v1beta1 model reloaded successfully")
+	models = newModels
+	log.Infof(ctx, "v1beta1 models reloaded from %s: %d namespaces", provider.Name(), len(models))
 	return nil
 }
-

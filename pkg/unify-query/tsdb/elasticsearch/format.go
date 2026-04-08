@@ -898,6 +898,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.valueField
 		} else if order.Name == FieldTime {
 			order.Name = f.timeField.Name
+			order.UnmappedType = f.timeField.Type
 		}
 
 		if v := f.GetFieldType(order.Name); v != "" {

@@ -15,8 +15,12 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestQueryPromQLExpr(t *testing.T) {
@@ -147,4 +151,95 @@ func TestQueryPromQLExpr(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPromQLWithBkQueryLabelSelector PromQL __bk_query_label_selector_* 解析与单组往返。
+func TestPromQLWithBkQueryLabelSelector(t *testing.T) {
+	log.InitTestLogger()
+
+	promQL := `bklog:log_count{__bk_query_label_selector_scene="log",__bk_query_label_selector_cluster_id="1"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList)
+
+	q := ts.QueryList[0]
+	require.Len(t, q.TableIDConditions, 1)
+	require.Len(t, q.TableIDConditions[0], 2)
+	require.Equal(t, "scene", q.TableIDConditions[0][0].DimensionName)
+	require.Equal(t, []string{"log"}, q.TableIDConditions[0][0].Value)
+	require.Equal(t, "cluster_id", q.TableIDConditions[0][1].DimensionName)
+	require.Equal(t, []string{"1"}, q.TableIDConditions[0][1].Value)
+
+	promExprOpt := &PromExprOption{}
+	promExprOpt.ReferenceNameMetric = make(map[string]string, len(ts.QueryList))
+	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(ts.QueryList))
+	for _, sub := range ts.QueryList {
+		router, _ := sub.ToRouter()
+		promExprOpt.ReferenceNameMetric[sub.ReferenceName] = router.RealMetricName()
+		labelsMatcher, _, _ := sub.Conditions.ToProm()
+		promExprOpt.ReferenceNameLabelMatcher[sub.ReferenceName] = labelsMatcher
+	}
+	result, err := ts.ToPromExpr(context.TODO(), promExprOpt)
+	require.NoError(t, err)
+	resultStr := result.String()
+	require.Contains(t, resultStr, `__bk_query_label_selector_scene="log"`)
+	require.Contains(t, resultStr, `__bk_query_label_selector_cluster_id="1"`)
+}
+
+// TestE2E_PromQL_BkQueryLabelSelector_ToQueryMetric_GetTsDBList 端到端：PromQL 带 __bk_query_label_selector_* → ToQueryMetric(GetTsDBList)
+func TestE2E_PromQL_BkQueryLabelSelector_ToQueryMetric_GetTsDBList(t *testing.T) {
+	log.InitTestLogger()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	promQL := `bklog:log_count{__bk_query_label_selector_scene="log"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList)
+
+	q := ts.QueryList[0]
+	require.NotEmpty(t, q.TableIDConditions)
+
+	metric, err := q.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+	require.NotNil(t, metric)
+	assert.NotEmpty(t, metric.QueryList, "表标签条件 scene=log 应匹配到带 Labels 的 RT")
+}
+
+// TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList 端到端：PromQL → QueryTs → ToQueryMetric 后再 ToPromExpr，表路由标签保留为 __bk_query_label_selector_*
+func TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList(t *testing.T) {
+	log.InitTestLogger()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	promQL := `metric_name{__bk_query_label_selector_scene="k8s"}`
+	sp := NewQueryPromQLExpr(promQL)
+	ts, err := sp.QueryTs()
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	require.NotEmpty(t, ts.QueryList)
+
+	_, err = ts.QueryList[0].ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+
+	promExprOpt := &PromExprOption{}
+	promExprOpt.ReferenceNameMetric = make(map[string]string, len(ts.QueryList))
+	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(ts.QueryList))
+	for _, sub := range ts.QueryList {
+		router, _ := sub.ToRouter()
+		promExprOpt.ReferenceNameMetric[sub.ReferenceName] = router.RealMetricName()
+		labelsMatcher, _, _ := sub.Conditions.ToProm()
+		promExprOpt.ReferenceNameLabelMatcher[sub.ReferenceName] = labelsMatcher
+	}
+	result, err := ts.ToPromExpr(ctx, promExprOpt)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	resultStr := result.String()
+	require.Contains(t, resultStr, `__bk_query_label_selector_scene="k8s"`)
 }

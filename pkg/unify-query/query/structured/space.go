@@ -105,11 +105,25 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool,
-) []*query.TsDBV2 {
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions AllConditions,
+) ([]*query.TsDBV2, error) {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
-		return nil
+		return nil, nil
+	}
+	// 仅在全空间候选路径下传入非空 tableIDConditions（见 DataList）；此处按结果表 Labels 过滤。
+	if len(tableIDConditions) > 0 {
+		labels := rtDetail.Labels
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		ok, err := tableIDConditions.MatchResultTableLabels(labels)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, nil
+		}
 	}
 
 	// 只有在容器场景下的特殊逻辑
@@ -119,24 +133,24 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			return nil
+			return nil, nil
 		}
 
 		// 容器下 bcs_cluster_id 是内置维度，才进行此逻辑判断
 		// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
 		compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
 		if err != nil {
-			return nil
+			return nil, nil
 		}
 
 		if !compareResult {
-			return nil
+			return nil, nil
 		}
 
 		if isK8sFeatureFlag {
 			// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
 			if rtDetail.BcsClusterID == "" {
-				return nil
+				return nil, nil
 			}
 		}
 	}
@@ -171,7 +185,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	if isSkipField {
 		defaultTsDB.ExpandMetricNames = []string{fieldName}
 		tsDBs = append(tsDBs, &defaultTsDB)
-		return tsDBs
+		return tsDBs, nil
 	}
 	// 字段不为空时，需要判断是否有匹配字段，返回解析后的结果
 	metricNames := make([]string, 0)
@@ -182,7 +196,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 	// 如果字段都不匹配到目标字段，则非目标结果表
 	if len(metricNames) == 0 {
-		return tsDBs
+		return tsDBs, nil
 	}
 
 	if !defaultTsDB.IsSplit() {
@@ -208,7 +222,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		tsDBs = append(tsDBs, &defaultTsDB)
 	}
 
-	return tsDBs
+	return tsDBs, nil
 }
 
 // GetMetricSepRT 获取指标独立配置的 RT
@@ -278,6 +292,12 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	// 判断 tableID 使用几段式
 	db, measurement := opt.TableID.Split()
+	// 已指定 table_id / data_label（db 非空）时，候选 RT 已由 TableID 限定，不再按 table_id_conditions 过滤 Labels；
+	// 未指定（db 为空，全空间扫表）时，才用 table_id_conditions 在候选集上按结果表 Labels 收窄。
+	var tableIDCondsForFilter AllConditions
+	if db == "" {
+		tableIDCondsForFilter = opt.TableIDConditions
+	}
 
 	var fieldNameExp *regexp.Regexp
 	if opt.IsRegexp {
@@ -323,7 +343,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, tableIDCondsForFilter)
+		if err != nil {
+			return nil, err
+		}
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -331,6 +354,9 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	if len(tsDBs) == 0 {
 		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)
+		if len(tableIDCondsForFilter) > 0 {
+			routerMessage += "；已启用 table_id_conditions，无命中时请核对 Labels 与条件是否一致"
+		}
 		return nil, nil
 	}
 
@@ -348,6 +374,8 @@ type TsDBOption struct {
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp      bool
 	AllConditions AllConditions
+	// TableIDConditions 表标签条件（AllConditions）。仅当未指定 table_id / data_label（TableID.Split() 后 db 为空、走全空间候选）时参与过滤；已指定 db 或完整 table_id 时不生效。
+	TableIDConditions AllConditions
 }
 
 type TsDBs []*query.TsDBV2

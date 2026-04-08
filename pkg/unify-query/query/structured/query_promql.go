@@ -20,6 +20,9 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
+// QueryBkLabelSelectorPrefix PromQL 表标签路由：__bk_query_label_selector_<维度>，同 {} 内多条为 AND，仅表达单组；多组 OR 请用结构化 table_id_conditions。
+const QueryBkLabelSelectorPrefix = "__bk_query_label_selector_"
+
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
 	PromQL              string   `json:"promql"`
@@ -424,8 +427,30 @@ func vectorQuery(
 	if query == nil {
 		query = new(Query)
 	}
+	// 分离 __bk_query_label_selector_<维度>（仅用于路由）与其余 matchers
+	var otherMatchers []*labels.Matcher
+	var bkTableRouteGroup []ConditionField
+	for _, m := range e.LabelMatchers {
+		if strings.HasPrefix(m.Name, QueryBkLabelSelectorPrefix) {
+			dim := strings.TrimPrefix(m.Name, QueryBkLabelSelectorPrefix)
+			if dim == "" {
+				return query, fmt.Errorf("invalid table routing label name: %q", m.Name)
+			}
+			op := convertOp(m.Type)
+			if op == "" {
+				return query, fmt.Errorf("failed to decode the '%s' operation symbol", m.Type)
+			}
+			bkTableRouteGroup = append(bkTableRouteGroup, ConditionField{
+				DimensionName: dim,
+				Value:         []string{m.Value},
+				Operator:      op,
+			})
+			continue
+		}
+		otherMatchers = append(otherMatchers, m)
+	}
 	conds := make([]ConditionField, 0)
-	route, matchers, err := MetricsToRouter(e.LabelMatchers...)
+	route, matchers, err := MetricsToRouter(otherMatchers...)
 	if err != nil {
 		return query, err
 	}
@@ -448,6 +473,9 @@ func vectorQuery(
 		}
 		cond.Operator = op
 		conds = append(conds, cond)
+	}
+	if len(bkTableRouteGroup) > 0 {
+		query.TableIDConditions = AllConditions{bkTableRouteGroup}
 	}
 
 	// 匹配 Conditions 组合条件

@@ -23,6 +23,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
@@ -1618,6 +1619,8 @@ type TsInfo struct {
 }
 
 // 根据结果表获取对应的时序数据
+// V3 链路（created_from=bkgse）: 严格根据 last_modify_time 过滤
+// V4 链路（created_from=bkdata）: 根据 last_modify_time 或 is_active 过滤
 func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInfo, error) {
 	if len(tableIds) == 0 {
 		return nil, nil
@@ -1633,97 +1636,69 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 
 	var tsGroupIdList []uint
 	TableIdTsGroupIdMap := make(map[string]uint)
-	var tsGroupTableId []string
+	groupIdDataIdMap := make(map[uint]uint)
 	for _, group := range tsGroupList {
 		tsGroupIdList = append(tsGroupIdList, group.TimeSeriesGroupID)
 		TableIdTsGroupIdMap[group.TableID] = group.TimeSeriesGroupID
-		tsGroupTableId = append(tsGroupTableId, group.TableID)
+		groupIdDataIdMap[group.TimeSeriesGroupID] = group.BkDataID
 	}
 
-	// NOTE: 针对自定义时序，过滤掉历史废弃的指标
-	// 根据特性开关决定过滤方式:
-	// 1. 启用 is_active 字段时: 只查询 is_active=true 的指标
-	// 2. 使用原有方式时: 查询时间在 TIME_SERIES_METRIC_EXPIRED_SECONDS 内的指标
+	// 查询 DataSource 获取 created_from，用于区分 V3/V4 链路
+	var dataIdList []uint
+	for _, dataId := range groupIdDataIdMap {
+		dataIdList = append(dataIdList, dataId)
+	}
+	dataIdList = slicex.RemoveDuplicate(&dataIdList)
+
+	dataIdCreatedFromMap := make(map[uint]string)
+	if len(dataIdList) > 0 {
+		var dsList []resulttable.DataSource
+		if err := resulttable.NewDataSourceQuerySet(db).
+			Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.CreatedFrom).
+			BkDataIdIn(dataIdList...).
+			All(&dsList); err != nil {
+			return nil, err
+		}
+		for _, ds := range dsList {
+			dataIdCreatedFromMap[ds.BkDataId] = ds.CreatedFrom
+		}
+	}
+
+	// 按 V3/V4 链路分组 tsGroupId
+	var v3GroupIdList, v4GroupIdList []uint
+	for _, groupId := range tsGroupIdList {
+		dataId := groupIdDataIdMap[groupId]
+		createdFrom := dataIdCreatedFromMap[dataId]
+		if createdFrom == common.DataIdFromBkData {
+			v4GroupIdList = append(v4GroupIdList, groupId)
+		} else {
+			v3GroupIdList = append(v3GroupIdList, groupId)
+		}
+	}
+
+	logger.Infof("filterTsInfo: group classification, v3(bkgse) groups: %d, v4(bkdata) groups: %d",
+		len(v3GroupIdList), len(v4GroupIdList))
+
 	beginTime := time.Now().UTC().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds) * time.Second)
 
-	// 分批查询 TimeSeriesMetric（优化部分
 	var tsmList []customreport.TimeSeriesMetric
 
-	if len(tsGroupIdList) != 0 {
-		// 分批查询配置
-		queryConfig := GetDefaultRTFBatchConfig()
-
-		filterMode := "last_modify_time"
-		if cfg.GlobalEnableTsMetricFilterByIsActive {
-			filterMode = "is_active"
+	// V3 链路: 严格根据 last_modify_time 过滤
+	if len(v3GroupIdList) > 0 {
+		v3Metrics, err := s.batchQueryTsMetrics(db, v3GroupIdList, "last_modify_time", beginTime)
+		if err != nil {
+			return nil, err
 		}
+		tsmList = append(tsmList, v3Metrics...)
+	}
 
-		logger.Infof("filterTsInfo: Starting batch query for TimeSeriesMetric records, target groups: %d, batch size: %d records per batch, filter_mode: %s",
-			len(tsGroupIdList), queryConfig.BatchSize, filterMode)
-
-		// 记录查询开始时间
-		startTime := time.Now()
-		offset := 0
-		batchNum := 1
-		totalRecords := 0
-
-		for {
-			logger.Infof("filterTsInfo: Querying TimeSeriesMetric batch %d, offset: %d, limit: %d",
-				batchNum, offset, queryConfig.BatchSize)
-
-			// 执行当前批次的查询，使用 Limit 和 Offset 进行分页
-			var batchTsmList []customreport.TimeSeriesMetric
-			query := customreport.NewTimeSeriesMetricQuerySet(db).
-				Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).
-				GroupIDIn(tsGroupIdList...).
-				Limit(queryConfig.BatchSize).
-				Offset(offset)
-
-			// 根据特性开关添加不同的过滤条件
-			if cfg.GlobalEnableTsMetricFilterByIsActive {
-				// 启用 is_active 字段过滤: 只查询活跃的指标
-				query = query.IsActiveEq(true)
-			} else {
-				// 使用原有方式: 根据最后修改时间过滤
-				query = query.LastModifyTimeGte(beginTime)
-			}
-
-			if err := query.All(&batchTsmList); err != nil {
-				logger.Errorf("filterTsInfo: Failed to query TimeSeriesMetric batch %d (offset: %d): %v", batchNum, offset, err)
-				return nil, err
-			}
-
-			// 如果当前批次没有数据，说明已经查询完毕
-			if len(batchTsmList) == 0 {
-				logger.Infof("filterTsInfo: No more TimeSeriesMetric records found, batch query completed")
-				break
-			}
-
-			// 合并当前批次的结果
-			tsmList = append(tsmList, batchTsmList...)
-			totalRecords += len(batchTsmList)
-
-			logger.Infof("filterTsInfo: Completed TimeSeriesMetric batch %d, retrieved %d records, total so far: %d",
-				batchNum, len(batchTsmList), totalRecords)
-
-			// 如果当前批次的记录数少于批次大小，说明这是最后一批
-			if len(batchTsmList) < queryConfig.BatchSize {
-				logger.Infof("filterTsInfo: Last batch detected (records: %d < batch_size: %d), query completed",
-					len(batchTsmList), queryConfig.BatchSize)
-				break
-			}
-
-			// 准备下一批次
-			offset += queryConfig.BatchSize
-			batchNum++
-
-			// 批次间延迟
-			time.Sleep(queryConfig.BatchDelay)
+	// V4 链路: 根据 last_modify_time 或 is_active 过滤
+	if len(v4GroupIdList) > 0 {
+		v4Metrics, err := s.batchQueryTsMetrics(db, v4GroupIdList, "last_modify_time_or_is_active", beginTime)
+		if err != nil {
+			return nil, err
 		}
-
-		queryDuration := time.Since(startTime)
-		logger.Infof("filterTsInfo: TimeSeriesMetric batch query completed, total records: %d, batches: %d, duration: %v",
-			totalRecords, batchNum, queryDuration)
+		tsmList = append(tsmList, v4Metrics...)
 	}
 
 	groupIdFieldsMap := make(map[uint][]string)
@@ -1739,6 +1714,87 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 		TableIdTsGroupIdMap: TableIdTsGroupIdMap,
 		GroupIdFieldsMap:    groupIdFieldsMap,
 	}, nil
+}
+
+// batchQueryTsMetrics 分批查询 TimeSeriesMetric
+// filterMode: "last_modify_time" 仅按时间过滤, "last_modify_time_or_is_active" 按时间或活跃状态过滤
+func (s *SpacePusher) batchQueryTsMetrics(db *gorm.DB, groupIdList []uint, filterMode string, beginTime time.Time) ([]customreport.TimeSeriesMetric, error) {
+	if len(groupIdList) == 0 {
+		return nil, nil
+	}
+
+	queryConfig := GetDefaultRTFBatchConfig()
+
+	logger.Infof("batchQueryTsMetrics: Starting batch query, target groups: %d, batch size: %d, filter_mode: %s",
+		len(groupIdList), queryConfig.BatchSize, filterMode)
+
+	var tsmList []customreport.TimeSeriesMetric
+	startTime := time.Now()
+	offset := 0
+	batchNum := 1
+	totalRecords := 0
+
+	for {
+		logger.Infof("batchQueryTsMetrics: Querying batch %d, offset: %d, limit: %d, filter_mode: %s",
+			batchNum, offset, queryConfig.BatchSize, filterMode)
+
+		var batchTsmList []customreport.TimeSeriesMetric
+
+		switch filterMode {
+		case "last_modify_time_or_is_active":
+			// V4 链路: last_modify_time >= beginTime OR is_active = true
+			if err := db.Table("metadata_timeseriesmetric").
+				Select("field_name, group_id").
+				Where("group_id IN (?)", groupIdList).
+				Where("(last_modify_time >= ? OR is_active = ?)", beginTime, true).
+				Limit(queryConfig.BatchSize).
+				Offset(offset).
+				Find(&batchTsmList).Error; err != nil {
+				logger.Errorf("batchQueryTsMetrics: Failed to query batch %d (offset: %d, mode: %s): %v", batchNum, offset, filterMode, err)
+				return nil, err
+			}
+		default:
+			// V3 链路: 严格根据 last_modify_time 过滤
+			query := customreport.NewTimeSeriesMetricQuerySet(db).
+				Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).
+				GroupIDIn(groupIdList...).
+				LastModifyTimeGte(beginTime).
+				Limit(queryConfig.BatchSize).
+				Offset(offset)
+			if err := query.All(&batchTsmList); err != nil {
+				logger.Errorf("batchQueryTsMetrics: Failed to query batch %d (offset: %d, mode: %s): %v", batchNum, offset, filterMode, err)
+				return nil, err
+			}
+		}
+
+		if len(batchTsmList) == 0 {
+			logger.Infof("batchQueryTsMetrics: No more records found, batch query completed (mode: %s)", filterMode)
+			break
+		}
+
+		tsmList = append(tsmList, batchTsmList...)
+		totalRecords += len(batchTsmList)
+
+		logger.Infof("batchQueryTsMetrics: Completed batch %d, retrieved %d records, total so far: %d (mode: %s)",
+			batchNum, len(batchTsmList), totalRecords, filterMode)
+
+		if len(batchTsmList) < queryConfig.BatchSize {
+			logger.Infof("batchQueryTsMetrics: Last batch detected (records: %d < batch_size: %d), query completed (mode: %s)",
+				len(batchTsmList), queryConfig.BatchSize, filterMode)
+			break
+		}
+
+		offset += queryConfig.BatchSize
+		batchNum++
+
+		time.Sleep(queryConfig.BatchDelay)
+	}
+
+	queryDuration := time.Since(startTime)
+	logger.Infof("batchQueryTsMetrics: Batch query completed, total records: %d, batches: %d, duration: %v, filter_mode: %s",
+		totalRecords, batchNum, queryDuration, filterMode)
+
+	return tsmList, nil
 }
 
 // 获取结果表对应的集群 ID

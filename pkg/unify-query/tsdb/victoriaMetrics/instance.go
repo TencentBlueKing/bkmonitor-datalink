@@ -128,6 +128,23 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 	return output.String()
 }
 
+// GetRequestBody check 路径：从 ctx 读 GetExpand 与 GetCheckPreviewMetricQL，拼装 VmQueryCheckBody（不调用实际VM）
+func (i *Instance) GetRequestBody(ctx context.Context) (any, error) {
+	vmExpand := metadata.GetExpand(ctx)
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
+		return nil, fmt.Errorf("vm expand is empty for check GetRequestBody")
+	}
+	metricql := metadata.GetCheckPreviewMetricQL(ctx)
+	if metricql == "" {
+		return nil, fmt.Errorf("check preview metricql not set in context")
+	}
+	return &tsdb.VmQueryCheckBody{
+		StorageType:     metadata.VictoriaMetricsStorageType,
+		MetricQL:        metricql,
+		ResultTableList: append([]string(nil), vmExpand.ResultTableList...),
+	}, nil
+}
+
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return storage.EmptySeriesSet()

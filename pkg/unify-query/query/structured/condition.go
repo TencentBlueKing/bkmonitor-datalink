@@ -389,6 +389,141 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
+// matchResultTableLabelField 单条表标签 AND 条件。stillAnd 为 true 表示本条已满足，可继续同组下一 field；false 表示本 OR 组失败。err 为正则编译等错误。
+func matchResultTableLabelField(field ConditionField, labels map[string]string) (stillAnd bool, err error) {
+	val, ok := labels[field.DimensionName]
+	switch field.Operator {
+	case ConditionEqual: // eq：缺 label 与 PromQL = 一致，不满足
+		if !ok || !containElement(field.Value, val) {
+			return false, nil
+		}
+		return true, nil
+	case ConditionNotEqual: // ne：缺 label 与 PromQL != 一致，视为满足
+		if !ok {
+			return true, nil
+		}
+		if containElement(field.Value, val) {
+			return false, nil
+		}
+		return true, nil
+	case ConditionRegEqual: // req
+		if !ok {
+			return false, nil
+		}
+		matched := false
+		for _, v := range field.Value {
+			reExp, compileErr := regexp.Compile(v)
+			if compileErr != nil {
+				return false, compileErr
+			}
+			if reExp.Match([]byte(val)) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
+		return true, nil
+	case ConditionNotRegEqual: // nreq：缺 label 与 PromQL !~ 一致，视为满足
+		if !ok {
+			return true, nil
+		}
+		for _, v := range field.Value {
+			reExp, compileErr := regexp.Compile(v)
+			if compileErr != nil {
+				return false, compileErr
+			}
+			if reExp.Match([]byte(val)) {
+				return false, nil
+			}
+		}
+		return true, nil
+	default:
+		// 表标签匹配仅支持 eq/ne/req/nreq，其他 op 视为不满足
+		return false, nil
+	}
+}
+
+// MatchResultTableLabels 表标签匹配：AllConditions 形态，多组 OR（任一组内全部条件满足即通过）；空或 nil 视为不过滤（返回 true）。
+func (c AllConditions) MatchResultTableLabels(labels map[string]string) (bool, error) {
+	if len(c) == 0 {
+		return true, nil
+	}
+	for _, group := range c { //外层：OR 组
+		andOk := true
+		for _, field := range group { // 内层：AND 条件
+			stillAnd, err := matchResultTableLabelField(field, labels)
+			if err != nil {
+				return false, err
+			}
+			if !stillAnd {
+				andOk = false
+				break
+			}
+		}
+		if andOk { // 该 OR 组通过
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// MatchesResultTableLabels 表标签过滤：语义同 MatchResultTableLabels，仅返回是否匹配
+func (c AllConditions) MatchesResultTableLabels(labels map[string]string) bool {
+	ok, _ := c.MatchResultTableLabels(labels)
+	return ok
+}
+
+// ToPromMatchers 将单组表标签路由条件转为 __bk_query_label_selector_* matchers，与 Conditions.ToProm 单组 AND 分支一致。
+// 多组 OR 无法写入单条 PromQL，返回错误。
+func (c AllConditions) ToPromMatchers(ctx context.Context, encodeFunc func(string) string) ([]*labels.Matcher, error) {
+	if len(c) == 0 {
+		return nil, nil
+	}
+	if len(c) > 1 {
+		return nil, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"多组表标签路由条件(OR)无法转换为单条 PromQL，请使用结构化查询或拆分为多次查询",
+		).Error(ctx, errors.New("table_id_conditions OR"))
+	}
+	group := c[0]
+	if len(group) == 0 {
+		return nil, nil
+	}
+	if encodeFunc == nil {
+		encodeFunc = func(s string) string { return s }
+	}
+	out := make([]*labels.Matcher, 0, len(group))
+	for _, f := range group {
+		cf := f
+		cf.Value = append([]string(nil), cf.Value...)
+		cf.ContainsToPromReg()
+		// ContainsToPromReg 会将多值合并为单条（如拼成正则）并写回 cf.Value，通常仅剩一项。
+		// 下面取 Value[0] 表示该合并后的完整匹配串，而不是原始多值里“只取第一个”。
+		if cf.Operator == ConditionContains || cf.Operator == ConditionNotContains {
+			return nil, metadata.NewMessage(
+				metadata.MsgQueryTs,
+				"表标签路由条件无法转换为 PromQL matcher，请使用结构化查询",
+			).Error(ctx, errors.New("table_id_conditions contains"))
+		}
+		val := ""
+		if len(cf.Value) > 0 {
+			val = cf.Value[0]
+		}
+		name := encodeFunc(QueryBkLabelSelectorPrefix + cf.DimensionName)
+		m, err := labels.NewMatcher(cf.ToPromOperator(), name, val)
+		if err != nil {
+			return nil, metadata.NewMessage(
+				metadata.MsgParserPromQL,
+				"创建标签匹配器失败",
+			).Error(ctx, err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
 // ConvertToPromBuffer
 func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionField {
 	var promBuffer [][]promql.ConditionField

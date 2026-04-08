@@ -92,6 +92,7 @@ type ResultTableDetail struct {
 	TagsKey               []string          `json:"tags_key"`
 	DataId                int64             `json:"bk_data_id"`
 	SourceType            string            `json:"source_type"`
+	Labels                map[string]string `json:"labels"` // 表标签，用于 __bk_query_label_selector_* / table_id_conditions 路由过滤
 	Options               struct {
 		// 自定义时间聚合字段
 		TimeField TimeField `json:"time_field"`

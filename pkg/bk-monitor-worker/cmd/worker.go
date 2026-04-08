@@ -21,11 +21,15 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	bmwRelation "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
+	bmwRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+	goRedis "github.com/go-redis/redis/v8"
 )
 
 func init() {
@@ -53,6 +57,33 @@ func startWorker(cmd *cobra.Command, args []string) {
 	// 初始化日志
 	log.InitLogger()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var redisClient goRedis.UniversalClient
+	if config.SchemaProviderType == "redis" {
+		inst := bmwRedis.GetStorageRedisInstance()
+		if inst == nil || inst.Client == nil {
+			logger.Errorf("[schema_provider] redis instance not ready, type=%s", config.SchemaProviderType)
+			cancel()
+			return
+		}
+		redisClient = inst.Client
+	}
+
+	pm, err := relation.NewProviderManager(ctx, nil, config.SchemaProviderType, redisClient, relation.DefaultStaticProviderConfig())
+	if err != nil {
+		// Graceful degradation: log warning but continue with nil provider
+		logger.Warnf("[schema_provider] init failed, degrading gracefully: %v", err)
+	}
+
+	var schemaProvider relation.SchemaProvider
+	if pm != nil {
+		schemaProvider = pm.GetProvider()
+	}
+	// InitSchemaProvider accepts nil provider (falls back to hardcoded config)
+	bmwRelation.InitSchemaProvider(schemaProvider)
+	logger.Infof("[schema_provider] initialized with type=%s", config.SchemaProviderType)
+
 	r := bmwHttp.NewProfHttpService()
 
 	srv := &http.Server{
@@ -66,7 +97,6 @@ func startWorker(cmd *cobra.Command, args []string) {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
-	ctx, cancel := context.WithCancel(context.Background())
 
 	// 1. 启动worker服务
 	workerService, err := service.NewWorkerService(ctx, config.WorkerQueues)
@@ -85,6 +115,7 @@ func startWorker(cmd *cobra.Command, args []string) {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
 			workerService.Stop()
+			_ = pm.Close()
 			cancel()
 			srv.Close()
 			logger.Info("Bye")

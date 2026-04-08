@@ -19,14 +19,17 @@ import (
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
 	pl "github.com/prometheus/prometheus/promql"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 const (
@@ -35,18 +38,121 @@ const (
 )
 
 var (
-	mdl *model
-	mtx sync.Mutex
+	models   map[string]*model // namespace → model
+	mtx      sync.Mutex
+	provider relation.SchemaProvider
+
+	// reloadGroup ensures that concurrent schema change events coalesce into
+	// a single ReloadConfig call, preventing redundant model rebuilds under
+	// notification storms from Redis Pub/Sub.
+	reloadGroup singleflight.Group
 )
 
-func GetModel(ctx context.Context) (cmdb.CMDB, error) {
-	var err error
-	if mdl == nil {
-		mtx.Lock()
-		mdl, err = newModel(ctx)
-		mtx.Unlock()
+// InitSchemaProvider 初始化 SchemaProvider，应在服务启动时（Redis 初始化之后）调用。
+func InitSchemaProvider(p relation.SchemaProvider) {
+	ctx := context.Background()
+	mtx.Lock()
+	defer mtx.Unlock()
+	provider = p
+
+	newModels, err := loadModels(ctx, p)
+	if err != nil {
+		log.Warnf(ctx, "failed to load models from %s: %v", p.Name(), err)
+		return
 	}
-	return mdl, err
+	models = newModels
+	log.Infof(ctx, "v1beta1 models loaded from %s: %d namespaces", p.Name(), len(models))
+
+	if err = p.Subscribe(onSchemaChange); err != nil {
+		log.Warnf(ctx, "failed to subscribe to schema changes: %v", err)
+	}
+}
+
+// loadModels 从 SchemaProvider 加载所有 namespace 的配置并构建对应的 model。
+func loadModels(ctx context.Context, p relation.SchemaProvider) (map[string]*model, error) {
+	adapter := NewConfigAdapter(p)
+	configs, err := adapter.GetConfigs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	newModels := make(map[string]*model, len(configs))
+	for ns, cfg := range configs {
+		m, err := newModel(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build model for namespace %q: %w", ns, err)
+		}
+		newModels[ns] = m
+	}
+	return newModels, nil
+}
+
+// onSchemaChange 在某个 namespace 的 schema 发生变更时被调用，只重建该 namespace 的 model。
+// 使用 singleflight 以 namespace 为 key ，避免短时间内重复 reload。
+func onSchemaChange(kind, namespace string) {
+	ctx := context.Background()
+	log.Infof(ctx, "schema change detected: kind=%s, namespace=%s", kind, namespace)
+
+	_, err, shared := reloadGroup.Do(namespace, func() (interface{}, error) {
+		return nil, reloadNamespaceModel(ctx, namespace)
+	})
+	if err != nil {
+		log.Warnf(ctx, "failed to reload v1beta1 model for namespace %s: %v", namespace, err)
+	}
+	if shared {
+		log.Debugf(ctx, "schema reload for namespace %s was shared with concurrent request", namespace)
+	}
+}
+
+// reloadNamespaceModel 重建指定 namespace 的 model。
+func reloadNamespaceModel(ctx context.Context, namespace string) error {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if provider == nil {
+		return fmt.Errorf("schema provider not initialized")
+	}
+
+	cfg, err := NewConfigAdapter(provider).GetConfigForNamespace(ctx, namespace)
+	if err != nil {
+		return fmt.Errorf("get config for namespace %q: %w", namespace, err)
+	}
+
+	newMdl, err := newModel(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("build model for namespace %q: %w", namespace, err)
+	}
+
+	if models == nil {
+		models = make(map[string]*model)
+	}
+	models[namespace] = newMdl
+	log.Infof(ctx, "v1beta1 model for namespace %q reloaded from %s", namespace, provider.Name())
+	return nil
+}
+
+// GetModel 返回指定 namespace 的 model。
+// 如果 models 尚未初始化（如单元测试场景），使用静态 configData 构建 __all__ namespace 的 model。
+func GetModel(ctx context.Context, namespace string) (cmdb.CMDB, error) {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if models == nil {
+		var err error
+		mdl, err := newModel(ctx, configData)
+		if err != nil {
+			return nil, err
+		}
+		models = map[string]*model{relation.NamespaceAll: mdl}
+	}
+
+	// 先尝试拿具体 namespace，如果没有则回退到 __all__
+	if m, ok := models[namespace]; ok {
+		return m, nil
+	}
+	if m, ok := models[relation.NamespaceAll]; ok {
+		return m, nil
+	}
+	return nil, fmt.Errorf("no model found for namespace %q", namespace)
 }
 
 type model struct {
@@ -55,12 +161,34 @@ type model struct {
 	g graph.Graph[string, string]
 }
 
-// newModel 初始化
-func newModel(ctx context.Context) (*model, error) {
-	var (
-		err error
-		cfg = configData
-	)
+// newModel 根据已加载的 cfg 构建 graph 模型。
+// cfg 由 loadConfig 在服务启动或 reload 时准备好，newModel 不再访问 SchemaProvider。
+func newModel(ctx context.Context, cfg *Config) (*model, error) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "v1beta1-new-model")
+	defer span.End(&err)
+
+	// 记录 trace 信息：配置来源、资源/关联数量和名称
+	span.Set("config-resource-count", len(cfg.Resource))
+	span.Set("config-relation-count", len(cfg.Relation))
+
+	resourceNames := make([]string, 0, len(cfg.Resource))
+	for _, r := range cfg.Resource {
+		resourceNames = append(resourceNames, string(r.Name))
+	}
+	span.Set("config-resource-names", resourceNames)
+
+	relationNames := make([]string, 0, len(cfg.Relation))
+	for _, r := range cfg.Relation {
+		if len(r.Resources) == 2 {
+			relationNames = append(relationNames, fmt.Sprintf("%s->%s", r.Resources[0], r.Resources[1]))
+		}
+	}
+	span.Set("config-relation-names", relationNames)
+
+	// 更新全局 resourceConfig 映射（供 ResourcesIndex/ResourcesInfo/AllResources 使用）
+	updateResourceConfig(cfg)
 
 	// 初始化 graph 存储结构
 	g := graph.New(graph.StringHash)
@@ -215,19 +343,19 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
 
-	span.Set("source", user.Source)
-	span.Set("username", user.Name)
-	span.Set("space-uid", opt.SpaceUid)
-	span.Set("startTs", opt.Start)
-	span.Set("endTs", opt.End)
-	span.Set("step", opt.Step)
-	span.Set("source", opt.Source)
-	span.Set("target", opt.Target)
-	span.Set("index-indexMatcher", opt.IndexMatcher)
-	span.Set("target", opt.PathResource)
+	span.Set("query-source-type", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-space-uid", opt.SpaceUid)
+	span.Set("query-start-ts", opt.Start)
+	span.Set("query-end-ts", opt.End)
+	span.Set("query-step", opt.Step)
+	span.Set("query-resource", opt.Source)
+	span.Set("query-target-resource", opt.Target)
+	span.Set("query-index-matcher", opt.IndexMatcher)
+	span.Set("query-path-resource", opt.PathResource)
 
 	opt.IndexMatcher = opt.IndexMatcher.Rename()
-	span.Set("query-index-indexMatcher", opt.IndexMatcher)
+	span.Set("query-renamed-index-matcher", opt.IndexMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
@@ -252,7 +380,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("query-source", opt.Source)
+	// query-resource already set above
 
 	source = opt.Source
 	target = opt.Target
@@ -268,7 +396,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return source, sourceInfo, hitPath, target, ts, err
 	}
 
-	span.Set("paths", paths)
+	span.Set("query-relation-paths", paths)
 	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 	var errorMessage []string
@@ -295,7 +423,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		).Warn(ctx)
 	}
 
-	span.Set("hit_path", hitPath)
+	span.Set("query-hit-path", hitPath)
 	return source, sourceInfo, hitPath, target, ts, err
 }
 
@@ -431,7 +559,7 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	realPromQL, err := queryTs.ToPromQL(ctx)
 	if err == nil {
-		span.Set("promql", realPromQL)
+		span.Set("query-promql", realPromQL)
 	}
 
 	promQL, err := queryTs.ToPromExpr(ctx, nil)
@@ -508,4 +636,23 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 
 	pick := matchers[len(matchers)-1]
 	return pick.Matchers
+}
+
+// ReloadConfig 重新从 SchemaProvider 加载所有 namespace 的配置并重建 model。
+func ReloadConfig(ctx context.Context) error {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if provider == nil {
+		return fmt.Errorf("schema provider not initialized")
+	}
+
+	newModels, err := loadModels(ctx, provider)
+	if err != nil {
+		return fmt.Errorf("load models from %s: %w", provider.Name(), err)
+	}
+
+	models = newModels
+	log.Infof(ctx, "v1beta1 models reloaded from %s: %d namespaces", provider.Name(), len(models))
+	return nil
 }

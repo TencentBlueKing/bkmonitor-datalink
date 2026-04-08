@@ -9,349 +9,69 @@
 
 package v1beta1
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+import (
+	"sync"
 
-var configData = &Config{
-	Resource: []ResourceConf{
-		{
-			Name: "system",
-			Index: cmdb.Index{
-				"bk_target_ip",
-			},
-		},
-		{
-			Name: "datasource",
-			Index: cmdb.Index{
-				"bk_data_id",
-			},
-		},
-		{
-			Name: "node",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"node",
-			},
-		},
-		{
-			Name: "container",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"pod",
-				"container",
-			},
-			Info: cmdb.Index{
-				"version",
-			},
-		},
-		{
-			Name: "pod",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"pod",
-			},
-		},
-		{
-			Name: "job",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"job",
-			},
-		},
-		{
-			Name: "replicaset",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"replicaset",
-			},
-		},
-		{
-			Name: "deployment",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"deployment",
-			},
-		},
-		{
-			Name: "daemonset",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"daemonset",
-			},
-		},
-		{
-			Name: "statefulset",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"statefulset",
-			},
-		},
-		{
-			Name: "service",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"service",
-			},
-		},
-		{
-			Name: "ingress",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"ingress",
-			},
-		},
-		{
-			Name: "k8s_address",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"address",
-			},
-		},
-		{
-			Name: "domain",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"domain",
-			},
-		},
-		{
-			Name: "apm_service",
-			Index: cmdb.Index{
-				"apm_application_name",
-				"apm_service_name",
-			},
-		},
-		{
-			Name: "apm_service_instance",
-			Index: cmdb.Index{
-				"apm_application_name",
-				"apm_service_name",
-				"apm_service_instance_name",
-			},
-		},
-		{
-			Name: "bklogconfig",
-			Index: cmdb.Index{
-				"bklogconfig_namespace",
-				"bklogconfig_name",
-			},
-		},
-		{
-			Name: "business",
-			Index: cmdb.Index{
-				"bk_biz_id",
-			},
-		},
-		{
-			Name: "set",
-			Index: cmdb.Index{
-				"bk_set_id",
-			},
-		},
-		{
-			Name: "module",
-			Index: cmdb.Index{
-				"bk_module_id",
-			},
-		},
-		{
-			Name: "app_version",
-			Index: cmdb.Index{
-				"app_name",
-				"version",
-			},
-		},
-		{
-			Name: "git_commit",
-			Index: cmdb.Index{
-				"git_repo",
-				"commit_id",
-			},
-		},
-		{
-			Name: "p4_changelist",
-			Index: cmdb.Index{
-				"p4_port",
-				"changelist_id",
-			},
-		},
-		{
-			Name: "svn_revision",
-			Index: cmdb.Index{
-				"svn_repo",
-				"revision",
-			},
-		},
-		{
-			Name: "host",
-			Index: cmdb.Index{
-				"bk_host_id",
-			},
-			Info: cmdb.Index{
-				"version",
-				"env_name",
-				"env_type",
-				"service_version",
-				"service_type",
-			},
-		},
-	},
-	Relation: []RelationConf{
-		{
-			Resources: []cmdb.Resource{
-				"node", "system",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"node", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"job", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"container", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"pod", "replicaset",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"pod", "statefulset",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"daemonset", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"deployment", "replicaset",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"pod", "service",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"datasource", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"datasource", "node",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"ingress", "service",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"k8s_address", "service",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"domain", "service",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"apm_service_instance", "system",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"apm_service_instance", "pod",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"apm_service", "apm_service_instance",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"bklogconfig", "datasource",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"business", "set",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"module", "set",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"host", "module",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"host", "system",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"app_version", "host",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"app_version", "container",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"app_version", "git_commit",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"app_version", "p4_changelist",
-			},
-		},
-		{
-			Resources: []cmdb.Resource{
-				"app_version", "svn_revision",
-			},
-		},
-	},
-}
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+)
 
-var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+var configData = buildConfigData()
 
-func init() {
-	for _, c := range configData.Resource {
-		resourceConfig[c.Name] = c
+func buildConfigData() *Config {
+	resources := make([]ResourceConf, 0, len(relation.DefaultResourceDefinitions()))
+	for _, rd := range relation.DefaultResourceDefinitions() {
+		var index, info cmdb.Index
+		for _, f := range rd.Fields {
+			if f.Required {
+				index = append(index, f.Name)
+			} else {
+				info = append(info, f.Name)
+			}
+		}
+		resources = append(resources, ResourceConf{
+			Name:  cmdb.Resource(rd.Name),
+			Index: index,
+			Info:  info,
+		})
+	}
+
+	relations := make([]RelationConf, 0, len(relation.DefaultRelationDefinitions()))
+	for _, rd := range relation.DefaultRelationDefinitions() {
+		relations = append(relations, RelationConf{
+			Resources: []cmdb.Resource{
+				cmdb.Resource(rd.FromResource),
+				cmdb.Resource(rd.ToResource),
+			},
+		})
+	}
+
+	return &Config{
+		Resource: resources,
+		Relation: relations,
 	}
 }
 
+var resourceConfig = make(map[cmdb.Resource]ResourceConf)
+var resourceConfigMu sync.RWMutex
+
+// updateResourceConfig 更新资源配置映射
+func updateResourceConfig(cfg *Config) {
+	if cfg == nil || len(cfg.Resource) == 0 {
+		cfg = configData
+	}
+	resourceConfigMu.Lock()
+	defer resourceConfigMu.Unlock()
+	newConfig := make(map[cmdb.Resource]ResourceConf, len(cfg.Resource))
+	for _, c := range cfg.Resource {
+		newConfig[c.Name] = c
+	}
+	resourceConfig = newConfig
+}
+
 func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
 	var index cmdb.Index
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Index...)
@@ -360,6 +80,8 @@ func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 }
 
 func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
 	var index []string
 	for _, r := range resources {
 		index = append(index, resourceConfig[r].Info...)
@@ -368,5 +90,11 @@ func ResourcesInfo(resources ...cmdb.Resource) cmdb.Index {
 }
 
 func AllResources() map[cmdb.Resource]ResourceConf {
-	return resourceConfig
+	resourceConfigMu.RLock()
+	defer resourceConfigMu.RUnlock()
+	result := make(map[cmdb.Resource]ResourceConf, len(resourceConfig))
+	for k, v := range resourceConfig {
+		result[k] = v
+	}
+	return result
 }

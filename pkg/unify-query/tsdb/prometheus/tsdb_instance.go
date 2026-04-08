@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	baseInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	tsDBService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
@@ -104,8 +105,15 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
-			stg, _ := tsdb.GetStorage(qry.StorageID)
+			// 非 bkdata：ES 连接信息来自 ReloadTsDBStorage 写入的内存 storageMap（与 Consul/Redis 等配置源同步）
+			stg, stgErr := tsdb.GetStorage(qry.StorageID)
 			if stg == nil {
+				// 元数据路由出的 storage_id 在已加载配置中不存在时常见（迁移记录与 KV 脱节等）
+				span.Set("es-storage-config-missing", true)
+				log.Warnf(ctx,
+					"[get-ts-db-instance] elasticsearch: no entry in in-memory storageMap for storage_id=%s (table_id=%s data_label=%s storage_type=%s source_type=%s lookup_err=%v); check metadata storage_cluster_records vs loaded storage config",
+					qry.StorageID, qry.TableID, qry.DataLabel, qry.StorageType, qry.SourceType, stgErr,
+				)
 				err = fmt.Errorf("%s storage list is empty in %s", metadata.ElasticsearchStorageType, qry.StorageID)
 				return instance
 			}

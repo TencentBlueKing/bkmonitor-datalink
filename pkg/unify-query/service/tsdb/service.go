@@ -145,5 +145,13 @@ func (s *Service) reloadStorage() error {
 		return err
 	}
 
+	// 成功时记录本次 hash，避免下一次 reload 因 hash 未更新而长期短路、内存与配置源不一致
+	s.storageHash = hash
+	ids := make([]string, 0, len(consulData))
+	for k := range consulData {
+		ids = append(ids, k)
+	}
+	// 便于核对当前进程已加载的 storage_id 全集（排查「路由有 id、内存无 id」）
+	log.Infof(s.ctx, "[storage-reload] success: count=%d ids=%v", len(ids), ids)
 	return nil
 }

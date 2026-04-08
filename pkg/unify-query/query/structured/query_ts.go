@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
@@ -708,6 +709,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
 		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
+		if len(tsDB.StorageClusterRecords) > 0 {
+			// 有迁移记录时：打出按查询时间解析出的 storage_id，便于与 GetStorageIDs 内部 ±1h 扩窗逻辑对照
+			span.Set("storage-ids-from-cluster-records", fmt.Sprintf("%v", storageIDs))
+			checkStart := qp.Start.Add(time.Hour * -1).Unix()
+			checkEnd := qp.End.Add(time.Hour * 1).Unix()
+			log.Debugf(ctx,
+				"[storage-cluster-records] table_id=%s data_label=%s router_storage_id=%s query_unix=[%d,%d] expanded_check_unix=[%d,%d] records=%+v resolved_storage_ids=%v",
+				tsDB.TableID, tsDB.DataLabel, tsDB.StorageID, qp.Start.Unix(), qp.End.Unix(), checkStart, checkEnd, tsDB.StorageClusterRecords, storageIDs,
+			)
+		}
 
 		for _, storageID := range storageIDs {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
@@ -718,6 +729,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
 			query.StorageID = storageID
+			if len(tsDB.StorageClusterRecords) > 0 {
+				// 路由侧已选中的 storage_id 是否在内存 storageMap 中存在（与后续 get-ts-db-instance 一致）
+				_, lookupErr := tsdb.GetStorage(storageID)
+				log.Debugf(ctx,
+					"[storage-routing-vs-memory] table_id=%s data_label=%s routed_storage_id=%s router_default_storage_id=%s in_memory_storage_map=%v lookup_err=%v",
+					tsDB.TableID, tsDB.DataLabel, storageID, tsDB.StorageID, lookupErr == nil, lookupErr,
+				)
+			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 			// 如果没有指定查询类型，则通过 storageID 获取

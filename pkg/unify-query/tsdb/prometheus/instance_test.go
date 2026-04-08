@@ -22,9 +22,12 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	promRemote "github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 var (
@@ -725,4 +728,46 @@ NaN @[360000]`,
 			assert.Equal(t, c.expected, a)
 		})
 	}
+}
+
+// TestGetTsDbInstance_ES_StorageIDMissingInMemory 模拟：路由/元数据仍给出某 storage_id（如迁移后 Consul 已删），
+// 但 ReloadTsDBStorage 未加载该 id，GetTsDbInstance 应返回 nil（对应线上 elasticsearch storage list is empty in <id>）。
+func TestGetTsDbInstance_ES_StorageIDMissingInMemory(t *testing.T) {
+	mock.Init()
+
+	ctx := context.Background()
+	// ES 选项仅用于 ReloadTsDBStorage 写入内存时的类型分支，与断言目标无强耦合
+	opt := &tsdb.Options{
+		Es: &tsdb.ESOption{
+			Timeout:    time.Minute,
+			MaxRouting: 4,
+			MaxSize:    100,
+		},
+	}
+
+	err := tsdb.ReloadTsDBStorage(ctx, map[string]*consul.Storage{
+		"5": {
+			Type:     metadata.ElasticsearchStorageType,
+			Address:  "http://127.0.0.1:9200",
+			Username: "u",
+			Password: "p",
+		},
+	}, opt)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		// 避免影响同包其它用例对全局 storageMap 的假设
+		_ = tsdb.ReloadTsDBStorage(context.Background(), map[string]*consul.Storage{}, opt)
+	})
+
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__1"})
+	qry := &metadata.Query{
+		StorageType: metadata.ElasticsearchStorageType,
+		StorageID:   "16",
+		SourceType:  "log",
+		TableID:     "bklog.test",
+		DataLabel:   "test_label",
+	}
+
+	inst := GetTsDbInstance(ctx, qry)
+	require.Nil(t, inst)
 }

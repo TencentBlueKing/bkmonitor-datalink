@@ -78,6 +78,10 @@ type DorisSQLExpr struct {
 	fieldsMap      metadata.FieldsMap
 	fieldAlias     metadata.FieldAlias
 
+	// forceEq 为 true 时，analyzed 字段不使用 MATCH_PHRASE 系列操作符，
+	// 而是直接使用 = / != 进行精确匹配。适用于 TSpider 等不支持全文检索的存储。
+	forceEq bool
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -413,19 +417,15 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			if c.IsWildcard {
 				op = "LIKE"
 			} else {
-				if c.IsPrefix {
+				if !d.forceEq && c.IsPrefix {
 					op = "MATCH_PHRASE_PREFIX"
-				} else if c.IsSuffix {
+				} else if !d.forceEq && c.IsSuffix {
 					op = "MATCH_PHRASE_EDGE"
 				} else {
-					if c.Operator == metadata.ConditionContains {
+					if !d.forceEq && (c.Operator == metadata.ConditionContains || d.isAnalyzed(c.DimensionName)) {
 						op = "MATCH_PHRASE"
 					} else {
-						if d.isAnalyzed(c.DimensionName) {
-							op = "MATCH_PHRASE"
-						} else {
-							op = "="
-						}
+						op = "="
 					}
 				}
 			}
@@ -471,19 +471,15 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			if c.IsWildcard {
 				op = "NOT LIKE"
 			} else {
-				if c.IsPrefix {
+				if !d.forceEq && c.IsPrefix {
 					op = "NOT MATCH_PHRASE_PREFIX"
-				} else if c.IsSuffix {
+				} else if !d.forceEq && c.IsSuffix {
 					op = "NOT MATCH_PHRASE_EDGE"
 				} else {
-					if c.Operator == metadata.ConditionNotContains {
+					if !d.forceEq && (c.Operator == metadata.ConditionNotContains || d.isAnalyzed(c.DimensionName)) {
 						op = "NOT MATCH_PHRASE"
 					} else {
-						if d.isAnalyzed(c.DimensionName) {
-							op = "NOT MATCH_PHRASE"
-						} else {
-							op = "!="
-						}
+						op = "!="
 					}
 				}
 			}

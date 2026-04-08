@@ -673,6 +673,100 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 	}
 }
 
+// TestTSpiderSQLExpr_ParserAllConditions 验证 TSpider forceEq 模式下 analyzed 字段使用 = / != 而非 MATCH_PHRASE
+func TestTSpiderSQLExpr_ParserAllConditions(t *testing.T) {
+	fieldsMap := metadata.FieldsMap{
+		"message": {FieldType: DorisTypeText, IsAnalyzed: true},
+		"level":   {FieldType: DorisTypeText, IsAnalyzed: true},
+		"host":    {FieldType: DorisTypeString},
+	}
+
+	tests := []struct {
+		name      string
+		condition metadata.AllConditions
+		want      string
+	}{
+		{
+			name: "analyzed field equal uses = instead of MATCH_PHRASE",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"error"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`message` = 'error'",
+		},
+		{
+			name: "analyzed field not-equal uses != instead of NOT MATCH_PHRASE",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"debug"},
+						Operator:      metadata.ConditionNotEqual,
+					},
+				},
+			},
+			want: "`message` != 'debug'",
+		},
+		{
+			name: "ConditionContains on analyzed field uses = instead of MATCH_PHRASE",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "level",
+						Value:         []string{"error", "warn"},
+						Operator:      metadata.ConditionContains,
+					},
+				},
+			},
+			want: "(`level` = 'error' OR `level` = 'warn')",
+		},
+		{
+			name: "prefix flag on analyzed field uses = instead of MATCH_PHRASE_PREFIX",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"err"},
+						Operator:      metadata.ConditionEqual,
+						IsPrefix:      true,
+					},
+				},
+			},
+			want: "`message` = 'err'",
+		},
+		{
+			name: "non-analyzed field still uses =",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"server1"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`host` = 'server1'",
+		},
+	}
+
+	e := NewSQLExpr(TSpider).WithFieldsMap(fieldsMap).WithEncode(func(s string) string {
+		return "`" + s + "`"
+	})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := e.ParserAllConditions(tt.condition)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore 字段匹配时空/SelectIndex 应被忽略为 *，避免 COUNT(NULL) 导致 _value_ 恒为 0
 func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
 	fieldsMap := metadata.FieldsMap{

@@ -101,6 +101,7 @@ func NewSQLExpr(key string) SQLExpr {
 		return &TSpiderSQLExpr{
 			DorisSQLExpr: DorisSQLExpr{
 				ignoreFieldSet: set.New[string](),
+				forceEq:        true,
 			},
 		}
 	default:

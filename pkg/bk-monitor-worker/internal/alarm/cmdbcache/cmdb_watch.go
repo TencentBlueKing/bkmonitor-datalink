@@ -167,7 +167,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 
 	// 请求监听资源变化事件API
 	var resp cmdb.ResourceWatchResp
-	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetPathParams(map[string]string{"bk_resource": string(resourceType)}).SetBody(params).SetResult(&resp).Request()
+	err := DoRequest(ctx, w.cmdbApi.ResourceWatch().SetContext(ctx).SetPathParams(map[string]string{"bk_resource": string(resourceType)}).SetBody(params), &resp)
 	err = api.HandleApiResultError(resp.ApiCommonRespMeta, err, "watch cmdb resource api failed")
 	if err != nil {
 		return false, err
@@ -655,7 +655,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				case <-cancelCtx.Done():
 					handler.Close()
 					return
-				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
+				case <-time.After(eventHandleInterval - time.Since(tn)):
 				}
 			}
 		}()

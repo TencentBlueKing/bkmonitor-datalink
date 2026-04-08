@@ -61,7 +61,8 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]any, 
 	bizList := make([]map[string]any, 0)
 	cmdbApi := getCmdbApi(bkTenantId)
 	// 并发请求获取业务列表
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		// 获取总数
 		func(resp any) (int, error) {
@@ -134,7 +135,7 @@ func getBusinessAttribute(ctx context.Context, tenantId string) ([]cmdb.SearchOb
 
 	// 获取业务对象字段说明
 	var attrResult cmdb.SearchObjectAttributeResp
-	_, err := cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]any{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
+	err := DoRequest(ctx, cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]any{"bk_obj_id": "biz"}), &attrResult)
 	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
 	if err != nil {
 		return nil, err

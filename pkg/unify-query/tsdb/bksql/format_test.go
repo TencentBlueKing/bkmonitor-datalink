@@ -373,11 +373,11 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 			wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL IN ('ok', 'fail') AND " + whereTime + " ORDER BY `c` DESC LIMIT 50",
 		},
 		{
-			name:    "subquery_flattened_outer_where",
+			name:    "subquery_preserved_outer_where",
 			db:      "132_lol_new_login_queue_login_1min",
 			field:   "login_rate",
 			userSQL: "SELECT * FROM (SELECT id, cnt FROM tbl WHERE cnt > 0) AS sub WHERE id < 100",
-			wantSQL: "SELECT * FROM `132_lol_new_login_queue_login_1min` WHERE NULL < 100 AND " + whereTime + " LIMIT 100",
+			wantSQL: "SELECT * FROM (SELECT NULL AS id, NULL AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + ") sub WHERE NULL < 100 LIMIT 100",
 		},
 		{
 			name:    "json_extract_split_part_match_all",

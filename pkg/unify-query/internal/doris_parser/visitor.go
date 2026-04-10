@@ -86,6 +86,10 @@ type Statement struct {
 
 	isSubQuery bool
 
+	// isFromSubQuery 为 true 时表示该 Statement 是 FROM 子句中的子查询（AliasedQuery）
+	// 这种子查询不应注入默认 LIMIT
+	isFromSubQuery bool
+
 	nodeMap map[string]Node
 
 	Tables  []string
@@ -112,7 +116,13 @@ func (v *Statement) String() string {
 
 		switch name {
 		case TableItem:
-			if len(v.Tables) > 0 {
+			// 当 FROM 是子查询时，把 Tables/Where 注入子查询内部，保留外层 FROM 结构
+			if tableNode, ok := v.nodeMap[TableItem].(*TableNode); ok && tableNode.SubQuery != nil {
+				tableNode.SubQuery.Tables = v.Tables
+				tableNode.SubQuery.Where = v.Where
+				v.Where = ""
+				res = tableNode.String()
+			} else if len(v.Tables) > 0 {
 				if len(v.Tables) == 1 {
 					res = v.Tables[0]
 				} else {
@@ -180,8 +190,9 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	if v.nodeMap == nil {
 		v.nodeMap = map[string]Node{
 			LimitItem: &LimitNode{
-				ParentLimit:  v.Limit,
-				ParentOffset: v.Offset,
+				ParentLimit:    v.Limit,
+				ParentOffset:   v.Offset,
+				noDefaultLimit: v.isFromSubQuery,
 			},
 		}
 	}
@@ -221,6 +232,9 @@ type LimitNode struct {
 
 	ParentLimit  int
 	ParentOffset int
+
+	// noDefaultLimit 为 true 时，当 SQL 未指定 LIMIT 时不注入默认值（用于 FROM 子查询）
+	noDefaultLimit bool
 }
 
 func (v *LimitNode) getOffsetAndLimit() (string, string) {
@@ -253,7 +267,7 @@ func (v *LimitNode) getOffsetAndLimit() (string, string) {
 
 	if limit > 0 {
 		resultLimit = cast.ToString(limit)
-	} else {
+	} else if !v.noDefaultLimit {
 		resultLimit = defaultLimit
 	}
 
@@ -664,25 +678,42 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 
 type TableNode struct {
 	baseNode
-	Table Node
+	Table    Node
+	SubQuery *Statement // FROM (subquery) alias 中的子查询
+	Alias    string     // 子查询别名
 }
 
 func (v *TableNode) String() string {
+	if v.SubQuery != nil {
+		if v.Alias != "" {
+			return fmt.Sprintf("%s %s", v.SubQuery.String(), v.Alias)
+		}
+		return v.SubQuery.String()
+	}
 	if v.Table == nil {
 		return ""
 	}
-
-	table := v.Table.String()
-	return table
+	return v.Table.String()
 }
 
 func (v *TableNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
-	switch ctx.(type) {
+	switch c := ctx.(type) {
 	case *gen.TableNameContext:
 		v.Table = &StringNode{Name: ctx.GetText()}
+	case *gen.AliasedQueryContext:
+		v.SubQuery = &Statement{
+			isSubQuery:     true,
+			isFromSubQuery: true,
+		}
+		if alias := c.TableAlias(); alias != nil {
+			if ident := alias.StrictIdentifier(); ident != nil {
+				v.Alias = ident.GetText()
+			}
+		}
+		next = v.SubQuery
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
 }

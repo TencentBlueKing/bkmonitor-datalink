@@ -171,7 +171,7 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 
 	// Build request cluster-name → {VmRtList, TableIDList} mapping
 	type clusterRtInfo struct {
-		VmRtList   []string
+		VmRtList    []string
 		TableIDList []string
 	}
 	reqClusterToInfo := make(map[string]*clusterRtInfo)
@@ -876,7 +876,9 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, metadata.DefaultReferenceName)
 
 	// 构建新的 ctx 进行缓存写入，避免影响原查询，因为会有多个查询并发
+	user := metadata.GetUser(ctx)
 	ctx = metadata.InitHashID(ctx)
+	metadata.SetUser(ctx, user)
 	metadata.SetExpand(ctx, query.VMExpand())
 
 	return i.DirectLabelValues(ctx, name, start, end, query.Size, matcher)

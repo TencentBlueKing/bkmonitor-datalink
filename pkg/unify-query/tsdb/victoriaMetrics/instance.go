@@ -876,9 +876,12 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, metadata.DefaultReferenceName)
 
 	// 构建新的 ctx 进行缓存写入，避免影响原查询，因为会有多个查询并发
-	user := metadata.GetUser(ctx)
+	// 浅拷贝 User 避免 SetUser 修改原指针（HashID 字段会被原地改写），防止并发场景下的 data race
+	origUser := metadata.GetUser(ctx)
+	clonedUser := new(metadata.User)
+	*clonedUser = *origUser
 	ctx = metadata.InitHashID(ctx)
-	metadata.SetUser(ctx, user)
+	metadata.SetUser(ctx, clonedUser)
 	metadata.SetExpand(ctx, query.VMExpand())
 
 	return i.DirectLabelValues(ctx, name, start, end, query.Size, matcher)

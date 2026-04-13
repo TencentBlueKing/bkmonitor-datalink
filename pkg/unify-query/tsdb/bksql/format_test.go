@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -278,6 +279,131 @@ func TestNewSqlFactory(t *testing.T) {
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
+		})
+	}
+}
+
+// TestNewQueryFactory_BkSql_TSpider_UserSQL 单段 table_id（Measurement 空）走用户 SQL 时，应选用 TSpider 表达式并完成 ParserSQL，表名仍为 `db` 无 .suffix。
+// wantSQL 为完整 golden（start=1741795260,end=1741796260 时 BuildWhere 追加的区间固定）；解析器改写子句时同步更新本期望值。
+func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1741795260, 0)
+	end := time.Unix(1741796260, 0)
+
+	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
+
+	tests := []struct {
+		name    string
+		db      string
+		dbs     []string
+		field   string
+		userSQL string
+		size    int
+		wantSQL string
+	}{
+		{
+			name:    "basic_dtEventTimeStamp_limit10",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT dtEventTimeStamp FROM tbl WHERE dtEventTimeStamp > 0 LIMIT 10",
+			wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 10",
+		},
+		{
+			name:    "count_star_alias",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT COUNT(*) AS cnt FROM tbl WHERE id > 0",
+			wantSQL: "SELECT COUNT(*) AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 100",
+		},
+		{
+			name:    "select_with_explicit_limit",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT serverIp FROM tbl WHERE 1 = 1 LIMIT 5",
+			wantSQL: "SELECT NULL AS serverIp FROM `132_lol_new_login_queue_login_1min` WHERE 1 = 1 AND " + whereTime + " LIMIT 5",
+		},
+		{
+			name:    "different_table_id_db",
+			db:      "5000140_bklog_demo",
+			field:   "cnt",
+			userSQL: "SELECT dtEventTimeStamp FROM tbl WHERE 1 = 1 LIMIT 3",
+			wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `5000140_bklog_demo` WHERE 1 = 1 AND " + whereTime + " LIMIT 3",
+		},
+		{
+			name:    "multi_db_union_combined",
+			db:      "unused_when_dbs_set",
+			dbs:     []string{"db_a", "db_b"},
+			field:   "login_rate",
+			userSQL: "SELECT 1 FROM tbl",
+			wantSQL: "SELECT 1 FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+		},
+		{
+			name:    "parenthesized_or_and_is_not_null_limit_offset",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT a, b FROM tbl WHERE (dim1 = 'x' OR dim2 > 1) AND dim3 IS NOT NULL ORDER BY a DESC, b ASC LIMIT 20 OFFSET 2",
+			wantSQL: "SELECT NULL AS a, NULL AS b FROM `132_lol_new_login_queue_login_1min` WHERE ( NULL = 'x' OR NULL > 1 ) AND NULL IS NOT NULL  AND " + whereTime + " LIMIT 20 OFFSET 2",
+		},
+		{
+			name:    "match_phrase_count_order_by",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT serverIp, COUNT(*) AS c FROM tbl WHERE log MATCH_PHRASE 'Error' GROUP BY serverIp ORDER BY c DESC LIMIT 30",
+			wantSQL: "SELECT NULL AS serverIp, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL MATCH_PHRASE 'Error' AND " + whereTime + " ORDER BY `c` DESC LIMIT 30",
+		},
+		{
+			name:    "case_when_in_select",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT CASE WHEN level = 'error' THEN 1 ELSE 0 END AS err_flag, dtEventTimeStamp FROM tbl WHERE 1=1",
+			wantSQL: "SELECT CASE WHEN NULL = 'error' THEN 1 ELSE 0 END AS err_flag, NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE 1 = 1 AND " + whereTime + " LIMIT 100",
+		},
+		{
+			name:    "inner_join_qualifiers",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT t1.a FROM tbl t1 INNER JOIN tbl t2 ON t1.id = t2.parent_id WHERE t1.x > 0",
+			wantSQL: "SELECT NULL AS t1__bk_46__a FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 100",
+		},
+		{
+			name:    "in_list_count_order_by",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT city, COUNT(*) AS c FROM tbl WHERE status IN ('ok', 'fail') GROUP BY city HAVING c > 10 ORDER BY c DESC LIMIT 50",
+			wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL IN ('ok', 'fail') AND " + whereTime + " ORDER BY `c` DESC LIMIT 50",
+		},
+		{
+			name:    "subquery_flattened_outer_where",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT * FROM (SELECT id, cnt FROM tbl WHERE cnt > 0) AS sub WHERE id < 100",
+			wantSQL: "SELECT * FROM `132_lol_new_login_queue_login_1min` WHERE NULL < 100 AND " + whereTime + " LIMIT 100",
+		},
+		{
+			name:    "json_extract_split_part_match_all",
+			db:      "132_lol_new_login_queue_login_1min",
+			field:   "login_rate",
+			userSQL: "SELECT JSON_EXTRACT_STRING(__ext, '$.pod') AS pod, split_part(log, '|', 2) AS seg FROM tbl WHERE log MATCH_ALL 'timeout' LIMIT 99",
+			wantSQL: "SELECT JSON_EXTRACT_STRING(NULL, '$.pod') AS pod, split_part(NULL, '|', 2) AS seg FROM `132_lol_new_login_queue_login_1min` WHERE NULL MATCH_ALL 'timeout' AND " + whereTime + " LIMIT 99",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &metadata.Query{
+				StorageType: metadata.BkSqlStorageType,
+				DB:          tt.db,
+				DBs:         tt.dbs,
+				Measurement: "",
+				Field:       tt.field,
+				SQL:         tt.userSQL,
+				Size:        tt.size,
+			}
+			got, err := bksql.NewQueryFactory(ctx, q).WithRangeTime(start, end).SQL()
+			require.NoError(t, err)
+			require.NotEmpty(t, got)
+			assert.Equal(t, tt.wantSQL, got)
+			assert.NotContains(t, got, ".tspider")
 		})
 	}
 }

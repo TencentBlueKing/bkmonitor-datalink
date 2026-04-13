@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 )
 
 func TestQueryToMetric(t *testing.T) {
@@ -286,6 +287,96 @@ func TestQueryToMetric(t *testing.T) {
 			a, _ := json.Marshal(c.metric)
 			b, _ := json.Marshal(metric)
 			assert.Equal(t, string(a), string(b))
+		})
+	}
+}
+
+func TestBkData_SQL_ToFinalSQL(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	start := time.Unix(1741795260, 0)
+	end := time.Unix(1741796260, 0)
+
+	testCases := []struct {
+		name    string
+		query   *Query
+		wantSQL string
+	}{
+		{
+			// doris 表：Measurement="doris"，表名为 `db`.doris
+			// 用户 SQL 的 SELECT/WHERE 被解析后，时间范围条件以 AND (...) 形式追加
+			name: "doris with user sql",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_bklog_unit_test.doris",
+				FieldName:     "gseIndex",
+				ReferenceName: "a",
+				SQL:           "SELECT dtEventTimeStamp, gseIndex FROM `2_bklog_unit_test`.doris WHERE gseIndex > 0 LIMIT 20",
+			},
+			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test`.doris WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
+		},
+		{
+			// tspider 表：Measurement="" 单段 table_id，表名无后缀
+			// NewQueryFactory 检测到 SQL 非空 + BkSqlStorageType + Measurement="" 时选用 TSpiderSQLExpr
+			name: "tspider (no measurement) with user sql",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_bklog_unit_test",
+				FieldName:     "gseIndex",
+				ReferenceName: "a",
+				SQL:           "SELECT dtEventTimeStamp, gseIndex FROM `2_bklog_unit_test` WHERE gseIndex > 0 LIMIT 20",
+			},
+			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test` WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
+		},
+		{
+			// 无用户 SQL：走 buildSQL 路径，SELECT 中包含内置字段 _value_ / _timestamp_
+			name: "doris without user sql (buildSQL path)",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_bklog_unit_test.doris",
+				FieldName:     "gseIndex",
+				ReferenceName: "a",
+				Limit:         10,
+			},
+			wantSQL: "SELECT *, NULL AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_unit_test`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' LIMIT 10",
+		},
+		{
+			// 用户自定义 SQL 仅聚合（count），仍追加时间窗口（与带 SELECT 列表的 user sql 一致）
+			name: "tspider (no measurement) with user sql count(*)",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_bklog_unit_test",
+				FieldName:     "total",
+				ReferenceName: "a",
+				SQL:           "SELECT count(*) FROM 2_bklog_unit_test LIMIT 1",
+			},
+			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test` WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
+		},
+		{
+			// Doris：反引号库表 + count，时间条件以 AND 追加
+			name: "doris with user sql count(*)",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_bklog_unit_test.doris",
+				FieldName:     "total",
+				ReferenceName: "a",
+				SQL:           "SELECT count(*) FROM `2_bklog_unit_test`.doris LIMIT 1",
+			},
+			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test`.doris WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			metric, err := tc.query.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+			require.NoError(t, err)
+			require.Len(t, metric.QueryList, 1)
+
+			gotSQL, err := bksql.NewQueryFactory(ctx, metric.QueryList[0]).WithRangeTime(start, end).SQL()
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantSQL, gotSQL)
 		})
 	}
 }

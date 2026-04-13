@@ -60,7 +60,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
 
-	model, err := v1beta1.GetModel(ctx)
+	model, err := v1beta1.GetModel(ctx, user.SpaceUID)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -145,7 +145,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
 
-	model, err := v1beta1.GetModel(ctx)
+	model, err := v1beta1.GetModel(ctx, user.SpaceUID)
 	if err != nil {
 		resp.failed(ctx, err)
 		return

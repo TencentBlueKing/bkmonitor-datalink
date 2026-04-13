@@ -1993,6 +1993,16 @@ const docTemplate = `{
                     "type": "string",
                     "example": "system.cpu_summary"
                 },
+                "table_id_conditions": {
+                    "description": "TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_\u003c维度\u003e 写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/structured.ConditionField"
+                        }
+                    }
+                },
                 "time_aggregation": {
                     "description": "TimeAggregation 时间聚合方法",
                     "allOf": [
@@ -2265,9 +2275,41 @@ const docTemplate = `{
                 1000000,
                 1000000000,
                 60000000000,
+                3600000000000,
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
+                3600000000000,
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
                 3600000000000
             ],
             "x-enum-varnames": [
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour",
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour",
                 "minDuration",
                 "maxDuration",
                 "Nanosecond",

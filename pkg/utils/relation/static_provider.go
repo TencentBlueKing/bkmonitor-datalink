@@ -124,6 +124,17 @@ func (sp *StaticSchemaProvider) ListResourceDefinitions(namespace string) ([]*Re
 	return result, nil
 }
 
+func (sp *StaticSchemaProvider) ListAllResourceDefinitions() (map[string][]*ResourceDefinition, error) {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	defs := make([]*ResourceDefinition, 0, len(sp.resourceDefinitions))
+	for _, rd := range sp.resourceDefinitions {
+		defs = append(defs, rd)
+	}
+	return map[string][]*ResourceDefinition{NamespaceAll: defs}, nil
+}
+
 // GetRelationDefinition 获取关联定义
 func (sp *StaticSchemaProvider) GetRelationDefinition(namespace, name string) (*RelationDefinition, error) {
 	sp.mu.RLock()
@@ -158,6 +169,17 @@ func (sp *StaticSchemaProvider) ListRelationDefinitions(namespace string) ([]*Re
 	}
 
 	return result, nil
+}
+
+func (sp *StaticSchemaProvider) ListAllRelationDefinitions() (map[string][]*RelationDefinition, error) {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	defs := make([]*RelationDefinition, 0, len(sp.relationDefinitions))
+	for _, rd := range sp.relationDefinitions {
+		defs = append(defs, rd)
+	}
+	return map[string][]*RelationDefinition{NamespaceAll: defs}, nil
 }
 
 // GetResourcePrimaryKeys 获取资源主键字段列表
@@ -228,6 +250,14 @@ func (sp *StaticSchemaProvider) FindRelationByResourceTypes(namespace, fromResou
 
 // Subscribe registers a callback for schema changes
 // StaticSchemaProvider never changes, so callbacks are never invoked
+func (sp *StaticSchemaProvider) Name() string {
+	return "static"
+}
+
+func (sp *StaticSchemaProvider) ListNamespaces() ([]string, error) {
+	return []string{NamespaceAll}, nil
+}
+
 func (sp *StaticSchemaProvider) Subscribe(callback SchemaChangeCallback) error {
 	if callback == nil {
 		return nil // StaticProvider never calls callbacks anyway

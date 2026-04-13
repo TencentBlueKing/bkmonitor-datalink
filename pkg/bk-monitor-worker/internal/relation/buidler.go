@@ -623,7 +623,7 @@ func InitSchemaProvider(provider relation.SchemaProvider) {
 		logger.Warnf("[relation] InitSchemaProvider called with nil provider, ignored")
 		return
 	}
-	
+
 	defaultRelationMetricsBuilder.WithSchemaProvider(provider)
 	logger.Infof("[relation] SchemaProvider initialized successfully")
 }

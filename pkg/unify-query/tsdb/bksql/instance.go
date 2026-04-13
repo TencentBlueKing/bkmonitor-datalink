@@ -143,6 +143,10 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 
 	span.Set("result-size", len(data.List))
 	span.Set("result-sql", data.Sql)
+	// BK Data query_sync 返回 data.device（如 tspider / doris），便于链路区分实际执行引擎
+	if data.Device != "" {
+		span.Set("device", data.Device)
+	}
 
 	return data, nil
 }

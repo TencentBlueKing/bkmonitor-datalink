@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -87,8 +88,15 @@ func ReloadTsDBStorage(ctx context.Context, hash string, tsDBs map[string]*consu
 	storageMap = newStorageMap
 	storageMapHash = hash
 
-	metadata.NewMessage("tsdb_storage", "reload storage: old_hash=%s new_hash=%s count=%d keys=%v",
-		oldHash, hash, len(newStorageMap), newKeys).Info(ctx)
+	// oldHash 为空表示进程内首次写入，会打初始化日志；否则视为配置变更后的重载。
+	if oldHash == "" {
+		log.Infof(ctx, "tsdb storage map initialized: hash=%s count=%d keys=%v", hash, len(newStorageMap), newKeys)
+		metadata.NewMessage("tsdb_storage", "init storage map: hash=%s count=%d keys=%v",
+			hash, len(newStorageMap), newKeys).Info(ctx)
+	} else {
+		metadata.NewMessage("tsdb_storage", "reload storage: old_hash=%s new_hash=%s count=%d keys=%v",
+			oldHash, hash, len(newStorageMap), newKeys).Info(ctx)
+	}
 
 	return nil
 }

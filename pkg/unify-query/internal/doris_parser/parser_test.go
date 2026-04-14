@@ -655,7 +655,7 @@ group by
 		{
 			name: "反正则查询",
 			q:    "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
-			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dteventtimestamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 		},
 		{
 			name: "test-22",
@@ -858,16 +858,23 @@ group by
 		{
 			name:   "bug-subquery-as-from-with-tables",
 			tables: []string{"mapleleaf_100605.bklog_628038_clustered_100605"},
-			q: `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE val != ''`,
+			q:      `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE val != ''`,
 			// Tables 设置为实际表名，子查询 FROM 内部应替换为实际表，外层结构应保留
 			sql: `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE val != '' LIMIT 100`,
+		},
+		// CAST(FLOOR(dtEventTimeStamp/...) * ... AS BIGINT)：dtEventTimeStamp 走全局物理列映射；算术子式内不套「AS 展示名」。
+		{
+			name: "bug-floor-cast-dimension-transform-as-inside-floor",
+			q:    `SELECT CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) AS bucket, COUNT(*) AS cnt WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc' GROUP BY CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) ORDER BY CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) ASC`,
+			sql:  `SELECT CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) AS bucket, COUNT(*) AS cnt WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc' GROUP BY CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) ORDER BY CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) ASC LIMIT 100`,
 		},
 	}
 
 	mock.Init()
 	fieldAlias := map[string]string{
-		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
-		"serverIp":      "test_server_ip",
+		"pod_namespace":    "__ext.io_kubernetes_pod_namespace",
+		"serverIp":         "test_server_ip",
+		"dtEventTimeStamp": "dteventtimestamp",
 	}
 
 	ctx := context.Background()

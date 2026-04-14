@@ -17,6 +17,7 @@ import (
 	shiroups "github.com/shirou/gopsutil/v3/process"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/processsnapshot"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -39,6 +40,8 @@ func (p *procPerfMgr) AllMetaData() ([]define.ProcStat, error) {
 		}
 		ret = append(ret, stat)
 	}
+
+	processsnapshot.UpdateSharedProcStateSnapshot(ret)
 
 	return ret, nil
 }

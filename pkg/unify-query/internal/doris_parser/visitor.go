@@ -960,7 +960,12 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ColumnReferenceContext:
 		col := ctx.GetText()
 		if v.Encode != nil {
-			col, _ = v.Encode(col)
+			first, second := v.Encode(col)
+			if first == metadata.Null && second != "" {
+				col = second
+			} else {
+				col = first
+			}
 		}
 		v.Values = append(v.Values, &StringNode{Name: col})
 	case *gen.ConstantDefaultContext:
@@ -1022,7 +1027,12 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ColumnReferenceContext:
 		col := ctx.GetText()
 		if v.Encode != nil {
-			col, _ = v.Encode(col)
+			first, second := v.Encode(col)
+			if first == metadata.Null && second != "" {
+				col = second
+			} else {
+				col = first
+			}
 		}
 		cn := &StringNode{Name: col}
 		v.nodes = append(v.nodes, cn)

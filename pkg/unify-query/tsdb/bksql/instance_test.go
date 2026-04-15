@@ -119,7 +119,7 @@ func TestInstance_ShowCreateTable_HDFS(t *testing.T) {
 // TestInstance_ShowCreateTable_TSpider 测试 TSpider 存储的 show create table 字段解析。
 // TSpider 使用 "Field" 作为字段名标识，Measurement 为空。
 // 注意：本测试直接调用 QueryFieldMap，覆盖的是底层字段解析能力；
-// TSpider 在正常 InitQueryFactory 路径中不会触发字段查询（见 TestInstance_InitQueryFactory_TSpider_NoFieldQuery）。
+// InitQueryFactory 仅在 BkSql + 用户 SQL（Measurement 为空）等条件下会拉表结构，见 TestInstance_InitQueryFactory_TSpider_UserSQL_FieldMap。
 func TestInstance_ShowCreateTable_TSpider(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
@@ -153,34 +153,80 @@ func TestInstance_ShowCreateTable_TSpider(t *testing.T) {
 	assert.Equal(t, 8, len(fieldsMap))
 }
 
-// TestInstance_InitQueryFactory_TSpider_NoFieldQuery 验证 TSpider 通过 InitQueryFactory 时不触发字段查询。
-// TSpider 的 Measurement 为空字符串，不满足 Doris/HDFS 的判断条件，因此不应执行 SHOW CREATE TABLE。
-// mock 中故意不注册任何 SHOW CREATE TABLE 的 SQL key，若代码误触发字段查询则测试报错。
+// TestInstance_InitQueryFactory_TSpider_NoFieldQuery 验证：TSpider + BkSql 且无用户 SQL 时 InitQueryFactory 不拉表结构。
+// 有用户 SQL 时才会触发 SHOW CREATE（见 TestInstance_InitQueryFactory_TSpider_UserSQL_FieldMap）。
+// mock 中故意不注册任何 SHOW CREATE TABLE 的 SQL key，若代码误触发字段查询则 InitQueryFactory 失败。
 func TestInstance_InitQueryFactory_TSpider_NoFieldQuery(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
 	// 不设置任何 SHOW CREATE TABLE 的 mock 数据
-	// 若 TSpider 错误地触发字段查询，mock 会返回 error，导致 InitQueryFactory 失败
+	// 若错误地触发字段查询，mock 会返回 error，导致 InitQueryFactory 失败
 	mock.BkSQL.Set(map[string]any{})
 
 	end := time.UnixMilli(1730118889181)
 	start := time.UnixMilli(1730118589181)
 
-	// TSpider: Measurement 为空，不触发字段查询
 	query := &metadata.Query{
+		StorageType: metadata.BkSqlStorageType,
 		DB:          "132_lol_new_login_queue_login_1min",
 		Measurement: "",
 		Field:       "login_rate",
+		SQL:         "",
 	}
 
 	fact, err := ins.InitQueryFactory(ctx, query, start, end)
-	// TSpider 不触发字段查询，InitQueryFactory 应成功返回
 	assert.Nil(t, err)
 	assert.NotNil(t, fact)
 
-	// TSpider 不走字段表结构路径，FieldMap 应为 nil
 	assert.Nil(t, fact.FieldMap())
+}
+
+// TestInstance_InitQueryFactory_TSpider_UserSQL_FieldMap 验证单段 table_id + 用户 SQL 时拉取 FieldsMap，并产出带反引号列名的 SQL（非 sum(NULL)）。
+// start/end 与 format_test 中 TSpider 用户 SQL 用例一致，便于 golden 稳定。
+func TestInstance_InitQueryFactory_TSpider_UserSQL_FieldMap(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	ins := createTestInstance(ctx)
+
+	const showCreateKey = "SHOW CREATE TABLE `36_game_bot_num_5min_stat`"
+	mock.BkSQL.Set(map[string]any{
+		showCreateKey: `{"result":true,"message":"成功","code":"00","data":{"list":[
+			{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},
+			{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},
+			{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},
+			{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},
+			{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},
+			{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},
+			{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}
+		]},"errors":null}`,
+	})
+
+	start := time.Unix(1741795260, 0)
+	end := time.Unix(1741796260, 0)
+
+	userSQL := "SELECT dsname, SUM(bot_num) AS total FROM tbl WHERE game_id = 1 GROUP BY dsname ORDER BY total DESC LIMIT 50"
+	query := &metadata.Query{
+		StorageType: metadata.BkSqlStorageType,
+		DB:          "36_game_bot_num_5min_stat",
+		Measurement: "",
+		Field:       "bot_num",
+		SQL:         userSQL,
+	}
+
+	fact, err := ins.InitQueryFactory(ctx, query, start, end)
+	assert.Nil(t, err)
+	assert.NotNil(t, fact)
+
+	fm := fact.FieldMap()
+	assert.NotEmpty(t, fm)
+	assert.Equal(t, "bigint(20)", fm["dtEventTimeStamp"].FieldType)
+	assert.Equal(t, "varchar(128)", fm["dsname"].FieldType)
+	assert.Equal(t, "double", fm["bot_num"].FieldType)
+
+	gotSQL, err := fact.SQL()
+	assert.Nil(t, err)
+	const wantSQL = "SELECT `dsname`, SUM(`bot_num`) AS total FROM `36_game_bot_num_5min_stat` WHERE `game_id` = 1 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') GROUP BY `dsname` ORDER BY `total` DESC LIMIT 50"
+	assert.Equal(t, wantSQL, gotSQL)
 }
 
 func TestInstance_QuerySeriesSet(t *testing.T) {

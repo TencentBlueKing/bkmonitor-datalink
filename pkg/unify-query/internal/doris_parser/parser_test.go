@@ -862,18 +862,18 @@ group by
 			tables: []string{"mapleleaf_100605.bklog_628038_clustered_100605"},
 			q:      `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE val != ''`,
 			// Tables 设置为实际表名，子查询 FROM 内部应替换为实际表，外层结构应保留
-			sql: `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE val != '' LIMIT 100`,
+			sql: `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE ` + "`val`" + ` != '' LIMIT 100`,
 		},
-		// make-sql-with-parser：未知列 val 时 dimTransform 为 (NULL, `val`)，COUNT(DISTINCT val) 须用第二项，不得 COUNT(DISTINCT(NULL))
+		// make-sql-with-parser：FunctionNode/SearchCaseNode 对列引用使用 col, _ = Encode(col)，故 dimTransform 须在第一返回值给出可渲染列名；子查询 AS 别名仍由 Statement 注入 Encode 覆盖外层 FieldNode。
 		{
 			name: "make-sql-with-parser-COUNT-DISTINCT-unknown-subquery-alias-val",
 			q: `SELECT COUNT(DISTINCT val) AS unique_count FROM (
   SELECT regexp_extract(log, 'openid=(\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc'
 ) t WHERE val != '' AND INSTR(val, '19') > 0`,
-			sql: "SELECT COUNT(DISTINCT(`val`)) AS unique_count FROM (SELECT regexp_extract(log, 'openid=(\\\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE NULL != '' AND INSTR(`val`, '19') > 0 LIMIT 100",
+			sql: "SELECT COUNT(DISTINCT(`val`)) AS unique_count FROM (SELECT regexp_extract(log, 'openid=(\\\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE `val` != '' AND INSTR(`val`, '19') > 0 LIMIT 100",
 			dimTransform: func(s string) (string, string) {
 				if s == "val" {
-					return metadata.Null, "`val`"
+					return "`val`", ""
 				}
 				return s, ""
 			},

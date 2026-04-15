@@ -107,7 +107,151 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
+// collectSelectAliases 收集子查询 SELECT 列表中通过 AS 定义的列别名，供外层 Encode 透传。
+func (v *Statement) collectSelectAliases() map[string]struct{} {
+	aliases := make(map[string]struct{})
+	if v.nodeMap == nil {
+		return aliases
+	}
+	selectNode, ok := v.nodeMap[SelectItem]
+	if !ok {
+		return aliases
+	}
+	sn, ok := selectNode.(*SelectNode)
+	if !ok {
+		return aliases
+	}
+	for _, fn := range sn.fieldsNode {
+		fieldNode, ok := fn.(*FieldNode)
+		if !ok {
+			continue
+		}
+		if fieldNode.as != nil {
+			name := strings.Trim(nodeToString(fieldNode.as), "`")
+			if name != "" {
+				aliases[name] = struct{}{}
+			}
+		}
+	}
+	return aliases
+}
+
+func (v *Statement) propagateEncode(encode Encode) {
+	v.Encode = encode
+	propagateEncodeToTree(encode, v)
+}
+
+// propagateEncodeToTree 将 Encode 同步到语法树中所有 Node（含 WHERE/GROUP BY/ORDER BY 等嵌套节点）。
+func propagateEncodeToTree(encode Encode, node Node) {
+	if node == nil {
+		return
+	}
+	node.WithEncode(encode)
+	switch n := node.(type) {
+	case *Statement:
+		if n.nodeMap != nil {
+			for _, child := range n.nodeMap {
+				propagateEncodeToTree(encode, child)
+			}
+		}
+	case *SelectNode:
+		for _, fn := range n.fieldsNode {
+			propagateEncodeToTree(encode, fn)
+		}
+	case *TableNode:
+		propagateEncodeToTree(encode, n.Table)
+		if n.SubQuery != nil {
+			propagateEncodeToTree(encode, n.SubQuery)
+		}
+	case *WhereNode:
+		for _, item := range n.nodes {
+			propagateEncodeToTree(encode, item)
+		}
+	case *AggNode:
+		for _, fn := range n.fieldsNode {
+			propagateEncodeToTree(encode, fn)
+		}
+	case *SortNode:
+		for _, fn := range n.nodes {
+			propagateEncodeToTree(encode, fn)
+		}
+	case *OrderNode:
+		propagateEncodeToTree(encode, n.node)
+		propagateEncodeToTree(encode, n.sort)
+	case *FieldNode:
+		propagateEncodeToTree(encode, n.node)
+		propagateEncodeToTree(encode, n.as)
+		propagateEncodeToTree(encode, n.sort)
+		for _, a := range n.args {
+			propagateEncodeToTree(encode, a)
+		}
+	case *BinaryNode:
+		propagateEncodeToTree(encode, n.Left)
+		propagateEncodeToTree(encode, n.Right)
+		propagateEncodeToTree(encode, n.Op)
+	case *OperatorNode:
+		propagateEncodeToTree(encode, n.Left)
+		propagateEncodeToTree(encode, n.Right)
+		propagateEncodeToTree(encode, n.Op)
+	case *FunctionNode:
+		for _, val := range n.Values {
+			propagateEncodeToTree(encode, val)
+		}
+	case *SearchCaseNode:
+		for _, nn := range n.nodes {
+			propagateEncodeToTree(encode, nn)
+		}
+	case *CastNode:
+		propagateEncodeToTree(encode, n.Value)
+		propagateEncodeToTree(encode, n.As)
+	case *ColumnNode:
+		for _, name := range n.Names {
+			propagateEncodeToTree(encode, name)
+		}
+	case *ValueNode:
+		for _, nn := range n.nodes {
+			propagateEncodeToTree(encode, nn)
+		}
+	case *ConditionNode:
+		propagateEncodeToTree(encode, n.node)
+	case *ParentNode:
+		propagateEncodeToTree(encode, n.node)
+	case *LogicNode:
+		propagateEncodeToTree(encode, n.Op)
+	default:
+		// StringNode、LimitNode、LeftParenNode 等无子 Node
+	}
+}
+
 func (v *Statement) String() string {
+	var restoreEncode Encode
+	needRestore := false
+	if v.nodeMap != nil {
+		if tableNode, ok := v.nodeMap[TableItem].(*TableNode); ok && tableNode.SubQuery != nil {
+			subqueryAliases := tableNode.SubQuery.collectSelectAliases()
+			if len(subqueryAliases) > 0 && v.Encode != nil {
+				original := v.Encode
+				restoreEncode = original
+				needRestore = true
+				v.Encode = func(s string) (string, string) {
+					key := strings.Trim(s, "`")
+					if _, ok := subqueryAliases[key]; ok {
+						return fmt.Sprintf("`%s`", key), ""
+					}
+					return original(s)
+				}
+				v.propagateEncode(v.Encode)
+			}
+		}
+	}
+	if needRestore {
+		orig := restoreEncode
+		defer func() {
+			v.Encode = orig
+			v.propagateEncode(orig)
+		}()
+	}
+
 	var result []string
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
@@ -960,12 +1104,7 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ColumnReferenceContext:
 		col := ctx.GetText()
 		if v.Encode != nil {
-			first, second := v.Encode(col)
-			if first == metadata.Null && second != "" {
-				col = second
-			} else {
-				col = first
-			}
+			col, _ = v.Encode(col)
 		}
 		v.Values = append(v.Values, &StringNode{Name: col})
 	case *gen.ConstantDefaultContext:
@@ -1027,12 +1166,7 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ColumnReferenceContext:
 		col := ctx.GetText()
 		if v.Encode != nil {
-			first, second := v.Encode(col)
-			if first == metadata.Null && second != "" {
-				col = second
-			} else {
-				col = first
-			}
+			col, _ = v.Encode(col)
 		}
 		cn := &StringNode{Name: col}
 		v.nodes = append(v.nodes, cn)

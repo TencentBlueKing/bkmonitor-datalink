@@ -213,6 +213,94 @@ func TestQueryTimestamp(t *testing.T) {
 	}
 }
 
+func TestEquivalentTimestampStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{
+			name: "identical",
+			a:    "1609459200",
+			b:    "1609459200",
+			want: true,
+		},
+		{
+			name: "second vs millisecond same instant",
+			a:    "1609459200",
+			b:    "1609459200000",
+			want: true,
+		},
+		{
+			name: "millisecond vs second same instant",
+			a:    "1609459200000",
+			b:    "1609459200",
+			want: true,
+		},
+		{
+			name: "second vs microsecond same instant",
+			a:    "1609459200",
+			b:    "1609459200000000",
+			want: true,
+		},
+		{
+			name: "second vs nanosecond same instant",
+			a:    "1609459200",
+			b:    "1609459200000000000",
+			want: true,
+		},
+		{
+			name: "millisecond vs microsecond same instant",
+			a:    "1609459200000",
+			b:    "1609459200000000",
+			want: true,
+		},
+		{
+			name: "millisecond vs nanosecond same instant",
+			a:    "1609459200000",
+			b:    "1609459200000000000",
+			want: true,
+		},
+		{
+			name: "microsecond vs nanosecond same instant",
+			a:    "1609459200000000",
+			b:    "1609459200000000000",
+			want: true,
+		},
+		{
+			name: "different instants",
+			a:    "1609459200",
+			b:    "1609459260",
+			want: false,
+		},
+		{
+			name: "non-timestamp strings differ",
+			a:    "hello",
+			b:    "world",
+			want: false,
+		},
+		{
+			name: "non-timestamp identical strings",
+			a:    "hello",
+			b:    "hello",
+			want: true,
+		},
+		{
+			name: "parseable date strings same instant",
+			a:    "2021-01-01 00:00:00",
+			b:    "2021-01-01",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := function.EquivalentTimestampStrings(tt.a, tt.b)
+			assert.Equal(t, tt.want, got, "EquivalentTimestampStrings(%q, %q)", tt.a, tt.b)
+		})
+	}
+}
+
 func TestTimeOffset(t *testing.T) {
 	for name, c := range map[string]struct {
 		t      time.Time

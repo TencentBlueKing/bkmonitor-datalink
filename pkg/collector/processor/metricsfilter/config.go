@@ -288,11 +288,19 @@ func (c *CodeRelabelAction) Validate() error {
 		}
 	}
 
+	op := OpIn
+	values := []any{c.Source}
+	if c.Source == string(opSkip) {
+		// 全局规则，匹配所有服务。
+		op = opSkip
+		values = nil
+	}
+
 	c.rrs = &RelabelRules{
 		Rules: []*RelabelRule{{
 			Label:  labelServiceName,
-			Op:     OpIn,
-			Values: []any{c.Source},
+			Op:     op,
+			Values: values,
 		}},
 	}
 	return c.rrs.Validate()

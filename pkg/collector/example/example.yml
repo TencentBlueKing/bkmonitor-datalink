@@ -1161,6 +1161,8 @@ bk-collector:
         disable_aggregate: false
         # 是否丢弃原始数据，默认 false。开启后会丢弃原始数据，仅保留经过预聚合后的数据。
         is_drop_original: true
+        # 是否基于主调指标派生被调指标，默认 false。开启后会为自身没有上报被调指标的服务补齐服务端视角数据，谨慎开启，避免数据重复。
+        is_derive_server_view: false
         # 需要丢弃原始数据的服务列表，默认（空列表）丢弃全部。
         drop_original_services: ["TestApp.HelloGo"]
         # 聚合间隔

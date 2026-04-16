@@ -872,14 +872,15 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			next = v.Right
 		}
 	case *gen.ValueExpressionDefaultContext:
+		// 算术子式中的列（含函数参数内的 dt/3600 等）应只做物理列映射，不应套用 SELECT 列表的「列 AS 展示名」规则。
 		if v.Op == nil {
 			v.Left = &FieldNode{
-				exprType: selectCtxType,
+				exprType: whereCtxType,
 			}
 			next = v.Left
 		} else {
 			v.Right = &FieldNode{
-				exprType: selectCtxType,
+				exprType: whereCtxType,
 			}
 			next = v.Right
 		}
@@ -1062,6 +1063,10 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 			Name: ctx.GetText(),
 		}
 		next = v.As
+	case *gen.ArithmeticBinaryContext:
+		// CAST(FLOOR(x)*n AS T) 的内层是乘法，必须先建 BinaryNode，否则 n 会按 ConstantDefaultContext 被追加到 FLOOR 的 FunctionNode 上。
+		v.Value = &BinaryNode{}
+		next = v.Value
 	case *gen.FunctionCallContext:
 		v.Value = &FunctionNode{}
 		next = v.Value

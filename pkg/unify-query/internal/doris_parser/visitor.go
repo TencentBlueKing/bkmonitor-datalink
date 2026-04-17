@@ -56,6 +56,7 @@ type Node interface {
 
 	WithAddIgnoreField(func(string))
 	WithEncode(Encode)
+	WithAliasScope(map[string]struct{})
 }
 
 type baseNode struct {
@@ -63,6 +64,7 @@ type baseNode struct {
 
 	AddIgnoreField func(string)
 	Encode         Encode
+	aliasScope     map[string]struct{}
 }
 
 func (n *baseNode) String() string {
@@ -79,6 +81,10 @@ func (n *baseNode) WithEncode(encode Encode) {
 
 func (n *baseNode) WithAddIgnoreField(fn func(string)) {
 	n.AddIgnoreField = fn
+}
+
+func (n *baseNode) WithAliasScope(aliases map[string]struct{}) {
+	n.aliasScope = aliases
 }
 
 type Statement struct {
@@ -107,7 +113,6 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
-// collectSelectAliases 收集子查询 SELECT 列表中通过 AS 定义的列别名，供外层 Encode 透传。
 func (v *Statement) collectSelectAliases() map[string]struct{} {
 	aliases := make(map[string]struct{})
 	if v.nodeMap == nil {
@@ -136,122 +141,7 @@ func (v *Statement) collectSelectAliases() map[string]struct{} {
 	return aliases
 }
 
-func (v *Statement) propagateEncode(encode Encode) {
-	v.Encode = encode
-	propagateEncodeToTree(encode, v)
-}
-
-// propagateEncodeToTree 将 Encode 同步到语法树中所有 Node（含 WHERE/GROUP BY/ORDER BY 等嵌套节点）。
-func propagateEncodeToTree(encode Encode, node Node) {
-	if node == nil {
-		return
-	}
-	node.WithEncode(encode)
-	switch n := node.(type) {
-	case *Statement:
-		if n.nodeMap != nil {
-			for _, child := range n.nodeMap {
-				propagateEncodeToTree(encode, child)
-			}
-		}
-	case *SelectNode:
-		for _, fn := range n.fieldsNode {
-			propagateEncodeToTree(encode, fn)
-		}
-	case *TableNode:
-		propagateEncodeToTree(encode, n.Table)
-		if n.SubQuery != nil {
-			propagateEncodeToTree(encode, n.SubQuery)
-		}
-	case *WhereNode:
-		for _, item := range n.nodes {
-			propagateEncodeToTree(encode, item)
-		}
-	case *AggNode:
-		for _, fn := range n.fieldsNode {
-			propagateEncodeToTree(encode, fn)
-		}
-	case *SortNode:
-		for _, fn := range n.nodes {
-			propagateEncodeToTree(encode, fn)
-		}
-	case *OrderNode:
-		propagateEncodeToTree(encode, n.node)
-		propagateEncodeToTree(encode, n.sort)
-	case *FieldNode:
-		propagateEncodeToTree(encode, n.node)
-		propagateEncodeToTree(encode, n.as)
-		propagateEncodeToTree(encode, n.sort)
-		for _, a := range n.args {
-			propagateEncodeToTree(encode, a)
-		}
-	case *BinaryNode:
-		propagateEncodeToTree(encode, n.Left)
-		propagateEncodeToTree(encode, n.Right)
-		propagateEncodeToTree(encode, n.Op)
-	case *OperatorNode:
-		propagateEncodeToTree(encode, n.Left)
-		propagateEncodeToTree(encode, n.Right)
-		propagateEncodeToTree(encode, n.Op)
-	case *FunctionNode:
-		for _, val := range n.Values {
-			propagateEncodeToTree(encode, val)
-		}
-	case *SearchCaseNode:
-		for _, nn := range n.nodes {
-			propagateEncodeToTree(encode, nn)
-		}
-	case *CastNode:
-		propagateEncodeToTree(encode, n.Value)
-		propagateEncodeToTree(encode, n.As)
-	case *ColumnNode:
-		for _, name := range n.Names {
-			propagateEncodeToTree(encode, name)
-		}
-	case *ValueNode:
-		for _, nn := range n.nodes {
-			propagateEncodeToTree(encode, nn)
-		}
-	case *ConditionNode:
-		propagateEncodeToTree(encode, n.node)
-	case *ParentNode:
-		propagateEncodeToTree(encode, n.node)
-	case *LogicNode:
-		propagateEncodeToTree(encode, n.Op)
-	default:
-		// StringNode、LimitNode、LeftParenNode 等无子 Node
-	}
-}
-
 func (v *Statement) String() string {
-	var restoreEncode Encode
-	needRestore := false
-	if v.nodeMap != nil {
-		if tableNode, ok := v.nodeMap[TableItem].(*TableNode); ok && tableNode.SubQuery != nil {
-			subqueryAliases := tableNode.SubQuery.collectSelectAliases()
-			if len(subqueryAliases) > 0 && v.Encode != nil {
-				original := v.Encode
-				restoreEncode = original
-				needRestore = true
-				v.Encode = func(s string) (string, string) {
-					key := strings.Trim(s, "`")
-					if _, ok := subqueryAliases[key]; ok {
-						return fmt.Sprintf("`%s`", key), ""
-					}
-					return original(s)
-				}
-				v.propagateEncode(v.Encode)
-			}
-		}
-	}
-	if needRestore {
-		orig := restoreEncode
-		defer func() {
-			v.Encode = orig
-			v.propagateEncode(orig)
-		}()
-	}
-
 	var result []string
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
@@ -346,8 +236,18 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodeMap[SelectItem] = &SelectNode{}
 		next = v.nodeMap[SelectItem]
 	case *gen.FromClauseContext:
-		v.nodeMap[TableItem] = &TableNode{}
-		next = v.nodeMap[TableItem]
+		tableNode := &TableNode{
+			onAliasesReady: func(aliases map[string]struct{}) {
+				v.aliasScope = aliases
+				// SELECT 절은 FROM 보다 먼저 파싱되므로 aliasScope 가 없는 상태로 생성됨.
+				// FROM 서브쿼리 파싱 완료 후 SELECT 노드에도 aliasScope 를 전파.
+				if sn, ok := v.nodeMap[SelectItem]; ok {
+					sn.WithAliasScope(aliases)
+				}
+			},
+		}
+		v.nodeMap[TableItem] = tableNode
+		next = tableNode
 	case *gen.WhereClauseContext:
 		v.nodeMap[WhereItem] = &WhereNode{
 			LogicInc: &LogicNodesInc{},
@@ -363,7 +263,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.nodeMap[LimitItem]
 	}
 
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type LimitNode struct {
@@ -487,7 +387,7 @@ func (v *SortNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = fn
 		v.nodes = append(v.nodes, fn)
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type OrderNode struct {
@@ -534,7 +434,7 @@ func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) any {
 		}
 		next = v.node
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type AggNode struct {
@@ -567,7 +467,7 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type WhereNode struct {
@@ -638,7 +538,7 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.add(on)
 		next = on
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type LeftParenNode struct {
@@ -670,7 +570,7 @@ func (v *ParentNode) String() string {
 func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) any {
 	v.node = &ConditionNode{}
 	next := v.node
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type LogicNode struct {
@@ -755,7 +655,7 @@ func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = v.node
 	}
 
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type OperatorNode struct {
@@ -817,7 +717,7 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			next = v.Right
 		}
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type TableNode struct {
@@ -825,6 +725,9 @@ type TableNode struct {
 	Table    Node
 	SubQuery *Statement // FROM (subquery) alias 中的子查询
 	Alias    string     // 子查询别名
+	// onAliasesReady 在子查询解析完毕后由父 Statement 注入，
+	// 用于将子查询的 SELECT 别名集合回传，无需事后遍历整棵树。
+	onAliasesReady func(map[string]struct{})
 }
 
 func (v *TableNode) String() string {
@@ -859,7 +762,12 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) any {
 		}
 		next = v.SubQuery
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	result := visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+
+	if v.SubQuery != nil && v.onAliasesReady != nil {
+		v.onAliasesReady(v.SubQuery.collectSelectAliases())
+	}
+	return result
 }
 
 type SelectNode struct {
@@ -868,6 +776,15 @@ type SelectNode struct {
 	DistinctIndex int
 	Distinct      bool
 	fieldsNode    []Node
+}
+
+// WithAliasScope 는 SelectNode 자신과 이미 파싱된 모든 하위 FieldNode 에 aliasScope 를 전파합니다.
+// SELECT 절은 FROM 절보다 먼저 파싱되므로, 서브쿼리 alias 가 확정된 후 재전파가 필요합니다.
+func (v *SelectNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, fn := range v.fieldsNode {
+		fn.WithAliasScope(aliases)
+	}
 }
 
 func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) any {
@@ -913,7 +830,7 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
 
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type FieldNode struct {
@@ -933,6 +850,14 @@ type FieldNode struct {
 	args []Node
 }
 
+// WithAliasScope 将 aliasScope 向下传播到 node（可能是 FunctionNode）。
+func (v *FieldNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.node != nil {
+		v.node.WithAliasScope(aliases)
+	}
+}
+
 func (v *FieldNode) String() string {
 	var result string
 	result = nodeToString(v.node)
@@ -942,11 +867,18 @@ func (v *FieldNode) String() string {
 	}
 
 	if v.isField && v.Encode != nil {
-		originField, as := v.Encode(result)
-		if v.exprType == selectCtxType && as != "" && v.as == nil {
-			v.as = &StringNode{Name: as}
+		key := strings.Trim(result, "`")
+		if _, isAlias := v.aliasScope[key]; isAlias {
+			// 字段来自子查询 SELECT alias，在外层任何位置（SELECT/WHERE/GROUP BY 等）
+			// 都应保留原名并加反引号，不走 fieldMap 转换（否则会被映射为 Null）。
+			result = fmt.Sprintf("`%s`", key)
+		} else {
+			originField, as := v.Encode(result)
+			if v.exprType == selectCtxType && as != "" && v.as == nil {
+				v.as = &StringNode{Name: as}
+			}
+			result = originField
 		}
-		result = originField
 	}
 
 	if result == metadata.Null {
@@ -981,7 +913,7 @@ func (v *FieldNode) String() string {
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
 	next := visitFieldNode(ctx, v)
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type BinaryNode struct {
@@ -1035,7 +967,7 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &StringNode{Name: ctx.GetText()}
 		}
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type FunctionNode struct {
@@ -1044,6 +976,14 @@ type FunctionNode struct {
 	Distinct bool
 	FuncName string
 	Values   []Node
+}
+
+// WithAliasScope 将 aliasScope 传播到所有已存储的子节点（含 FieldNode）。
+func (v *FunctionNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, val := range v.Values {
+		val.WithAliasScope(aliases)
+	}
 }
 
 func (v *FunctionNode) String() string {
@@ -1102,17 +1042,23 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.FunctionIdentifierContext:
 		v.FuncName = ctx.GetText()
 	case *gen.ColumnReferenceContext:
-		col := ctx.GetText()
-		if v.Encode != nil {
-			col, _ = v.Encode(col)
+		// 用 FieldNode 延迟到渲染时处理 aliasScope 和 Encode，
+		// 避免解析时 aliasScope 尚未就绪（SELECT 比 FROM 先解析）。
+		// 使用 whereCtxType 防止 Encode 返回 (value, alias) 时错误地添加 AS。
+		fn := &FieldNode{
+			exprType: whereCtxType,
+			isField:  true,
+			node:     &ColumnNode{Names: []Node{&StringNode{Name: ctx.GetText()}}},
 		}
-		v.Values = append(v.Values, &StringNode{Name: col})
+		fn.WithEncode(v.Encode)
+		fn.WithAliasScope(v.aliasScope)
+		v.Values = append(v.Values, fn)
 	case *gen.ConstantDefaultContext:
 		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
 	case *gen.StarContext:
 		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type SearchCaseNode struct {
@@ -1176,7 +1122,7 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.nodes = append(v.nodes, sn)
 		next = sn
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type CastNode struct {
@@ -1233,7 +1179,7 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.Value = &StringNode{Name: ctx.GetText()}
 		next = v.Value
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type ColumnNode struct {
@@ -1267,7 +1213,7 @@ func (v *ColumnNode) String() string {
 }
 
 func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v, ctx)
 }
 
 type ValueNode struct {
@@ -1300,7 +1246,7 @@ func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ConstantDefaultContext:
 		v.nodes = append(v.nodes, &StringNode{Name: ctx.GetText()})
 	}
-	return visitChildren(v.AddIgnoreField, v.Encode, next, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
 type StringsNode struct {
@@ -1317,7 +1263,7 @@ func (v *StringsNode) String() string {
 }
 
 func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v, ctx)
 }
 
 type StringNode struct {
@@ -1330,7 +1276,7 @@ func (v *StringNode) String() string {
 }
 
 func (v *StringNode) VisitChildren(ctx antlr.RuleNode) any {
-	return visitChildren(v.AddIgnoreField, v.Encode, v, ctx)
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v, ctx)
 }
 
 func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
@@ -1403,9 +1349,10 @@ func nodeToString(node Node) string {
 	return node.String()
 }
 
-func visitChildren(addIgnoreField func(string), encode Encode, next Node, node antlr.RuleNode) any {
+func visitChildren(addIgnoreField func(string), encode Encode, aliasScope map[string]struct{}, next Node, node antlr.RuleNode) any {
 	next.WithAddIgnoreField(addIgnoreField)
 	next.WithEncode(encode)
+	next.WithAliasScope(aliasScope)
 	for _, child := range node.GetChildren() {
 		if tree, ok := child.(antlr.ParseTree); ok {
 			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())

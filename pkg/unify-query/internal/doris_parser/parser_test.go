@@ -273,8 +273,6 @@ func TestParseDorisSQLWithVisitor(t *testing.T) {
 		limit  int
 		err    error
 		offset int
-		// dimTransform 非 nil 时覆盖默认 fieldAlias，用于模拟 dimTransform 对未知列返回 (metadata.Null, 编码名)
-		dimTransform Encode
 	}{
 		// 用法验证
 		{
@@ -854,9 +852,6 @@ group by
 			q:    `SELECT * FROM t `,
 			sql:  `SELECT * FROM t LIMIT 100`,
 		},
-		// Bug 复现: SQL 包含 FROM (subquery) 时，外层 Tables 不应覆盖子查询 FROM 子句
-		// 预期：子查询 FROM 子句保留，Tables 注入到子查询内部
-		// 实际：子查询被 Tables[0] 直接替换，子查询丢失
 		{
 			name:   "bug-subquery-as-from-with-tables",
 			tables: []string{"mapleleaf_100605.bklog_628038_clustered_100605"},
@@ -864,49 +859,88 @@ group by
 			// Tables 设置为实际表名，子查询 FROM 内部应替换为实际表，外层结构应保留
 			sql: `SELECT COUNT(*) AS total_count FROM (SELECT regexp_extract(log, 'Apr[\s\S]*?(\d{2}:\d{2}:\d{2}(?:\.\d{6})?)[\s\S]*?systemd[\s\S]*?Started[\s\S]*?Session[\s\S]*?of[\s\S]*?user[\s\S]*?root\.', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE ` + "`val`" + ` != '' LIMIT 100`,
 		},
-		// make-sql-with-parser：FunctionNode/SearchCaseNode 对列引用使用 col, _ = Encode(col)，故 dimTransform 须在第一返回值给出可渲染列名；子查询 AS 别名仍由 Statement 注入 Encode 覆盖外层 FieldNode。
 		{
 			name: "make-sql-with-parser-COUNT-DISTINCT-unknown-subquery-alias-val",
 			q: `SELECT COUNT(DISTINCT val) AS unique_count FROM (
   SELECT regexp_extract(log, 'openid=(\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc'
 ) t WHERE val != '' AND INSTR(val, '19') > 0`,
 			sql: "SELECT COUNT(DISTINCT(`val`)) AS unique_count FROM (SELECT regexp_extract(log, 'openid=(\\\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE `val` != '' AND INSTR(`val`, '19') > 0 LIMIT 100",
-			dimTransform: func(s string) (string, string) {
-				if s == "val" {
-					return "`val`", ""
-				}
-				return s, ""
-			},
 		},
 	}
 
 	mock.Init()
 	fieldAlias := map[string]string{
+		// 有实际映射的字段
 		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
 		"serverIp":      "test_server_ip",
+		// 原样保留的字段（value == key，dimTransform 返回 (v, "")）
+		"log":              "log",
+		"path":             "path",
+		"city":             "city",
+		"a":                "a",
+		"b":                "b",
+		"t":                "t",
+		"abc":              "abc",
+		"time":             "time",
+		"field_1":          "field_1",
+		"field_2":          "field_2",
+		"dim_1":            "dim_1",
+		"dim_2":            "dim_2",
+		"dim_3":            "dim_3",
+		"dim_4":            "dim_4",
+		"name":             "name",
+		"namespace":        "namespace",
+		"workload":         "workload",
+		"minute1":          "minute1",
+		"test":             "test",
+		"DEPLOYMENT":       "DEPLOYMENT",
+		"aaa":              "aaa",
+		"item":             "item",
+		"dtEventTimeStamp": "dtEventTimeStamp",
+		"gseIndex":         "gseIndex",
+		"iterationIndex":   "iterationIndex",
+		"__dist_05":        "__dist_05",
+		"__ext":            "__ext",
+		// GROUP BY / ORDER BY 里引用的 AS 别名
+		"ns":                                   "ns",
+		"ct":                                   "ct",
+		"LvlNb":                                "LvlNb",
+		"Obj":                                  "Obj",
+		"FuncName":                             "FuncName",
+		"BNum":                                 "BNum",
+		"imn":                                  "imn",
+		"tick":                                 "tick",
+		"cnt":                                  "cnt",
+		"cat":                                  "cat",
+		"count":                                "count",
+		"openid":                               "openid",
+		"a.b.c":                                "a.b.c",
+		"b.a":                                  "b.a",
+		"a.b":                                  "a.b",
+		"__ext.cluster.extra.name_space":       "__ext.cluster.extra.name_space",
+		"__ext['cluster']['extra.name_space']": "__ext['cluster']['extra.name_space']",
 	}
 
 	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-
-			dimTransform := c.dimTransform
-			if dimTransform == nil {
-				dimTransform = func(s string) (string, string) {
-					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], s
-					}
-					return s, ""
-				}
-			}
-
 			// antlr4 and visitor
 			opt := &Option{
-				DimensionTransform: dimTransform,
-				Tables:             c.tables,
-				Limit:              c.limit,
-				Offset:             c.offset,
+				DimensionTransform: func(s string) (string, string) {
+					key := strings.Trim(s, "`")
+					if v, ok := fieldAlias[key]; ok {
+						// 只有 value != key 时才需要 AS（如 pod_namespace → __ext.xxx）
+						if v != key {
+							return v, key
+						}
+						return v, ""
+					}
+					return metadata.Null, fmt.Sprintf("`%s`", key)
+				},
+				Tables: c.tables,
+				Limit:  c.limit,
+				Offset: c.offset,
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)
 			if c.err != nil {

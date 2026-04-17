@@ -1162,6 +1162,42 @@ func TestAllConditions_MatchResultTableLabels(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
+
+	// table_id_conditions 与 RT labels：同一时刻秒串/毫秒串应对等价匹配（与 QueryTimestamp 等单位语义一致）。
+	// 修复前为严格字符串相等，下列用例会失败，用于复现选表失败问题。
+	t.Run("timestamp_same_instant_eq_second_vs_millisecond", func(t *testing.T) {
+		// 与 internal/function.TestQueryTimestamp 中 valid second / millisecond 用例同一时刻
+		const secStr = "1609459200"
+		const msStr = "1609459200000"
+
+		t.Run("condition_ms_label_sec", func(t *testing.T) {
+			c := AllConditions{{{DimensionName: "cutover_at", Value: []string{msStr}, Operator: ConditionEqual}}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"cutover_at": secStr})
+			require.NoError(t, err)
+			assert.True(t, ok, "条件为毫秒串、标签为秒串时应判定为同一时刻")
+		})
+		t.Run("condition_sec_label_ms", func(t *testing.T) {
+			c := AllConditions{{{DimensionName: "cutover_at", Value: []string{secStr}, Operator: ConditionEqual}}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"cutover_at": msStr})
+			require.NoError(t, err)
+			assert.True(t, ok, "条件为秒串、标签为毫秒串时应判定为同一时刻")
+		})
+		t.Run("different_instant_still_no_match", func(t *testing.T) {
+			c := AllConditions{{{DimensionName: "cutover_at", Value: []string{msStr}, Operator: ConditionEqual}}}
+			ok, err := c.MatchResultTableLabels(map[string]string{"cutover_at": "1609459201"})
+			require.NoError(t, err)
+			assert.False(t, ok, "不同时刻不应因精度兼容而误匹配")
+		})
+	})
+	t.Run("timestamp_same_instant_ne_second_vs_millisecond", func(t *testing.T) {
+		const secStr = "1609459200"
+		const msStr = "1609459200000"
+
+		c := AllConditions{{{DimensionName: "cutover_at", Value: []string{msStr}, Operator: ConditionNotEqual}}}
+		ok, err := c.MatchResultTableLabels(map[string]string{"cutover_at": secStr})
+		require.NoError(t, err)
+		assert.False(t, ok, "ne：标签与排除值为同一时刻（秒/毫秒写法不同）时应视为命中排除值，整组不匹配")
+	})
 }
 
 // TestAllConditions_MatchesResultTableLabels 表标签过滤：仅返回 bool，空或 nil 视为通过（与 MatchResultTableLabels 语义一致）。

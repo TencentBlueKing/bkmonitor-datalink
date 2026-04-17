@@ -796,3 +796,133 @@ processor:
 		}
 	}
 }
+
+func TestCodeRelabelGlobalSource(t *testing.T) {
+	const content = `
+processor:
+  - name: "metrics_filter/code_relabel"
+    config:
+      code_relabel:
+        - metrics: ["rpc_client_handled_total"]
+          source: "*"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes:
+            - rule: "err_200~300"
+              target:
+                action: "upsert"
+                label: "code_type"
+                value: "global_success"
+`
+
+	tests := []relabelBasedCase{
+		{
+			name: "global match service A",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{"service_name": "service.a"},
+				attrs: map[string]string{
+					"callee_server": "my.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_200",
+				},
+			},
+			wantValue: "global_success",
+		},
+		{
+			name: "global match service B",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{"service_name": "completely.different.service"},
+				attrs: map[string]string{
+					"callee_server": "my.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_250",
+				},
+			},
+			wantValue: "global_success",
+		},
+		{
+			name: "global match without service_name",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{},
+				attrs: map[string]string{
+					"callee_server": "my.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_200",
+				},
+			},
+			wantValue: "global_success",
+		},
+		{
+			name: "global miss callee mismatch",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{"service_name": "service.a"},
+				attrs: map[string]string{
+					"callee_server": "other.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_200",
+				},
+			},
+		},
+	}
+
+	testRelabelBasedFactory(t, content, tests)
+}
+
+func TestCodeRelabelGlobalWithServicePriority(t *testing.T) {
+	const content = `
+processor:
+  - name: "metrics_filter/code_relabel"
+    config:
+      code_relabel:
+        - metrics: ["rpc_client_handled_total"]
+          source: "*"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes:
+            - rule: "err_200~300"
+              target:
+                action: "upsert"
+                label: "code_type"
+                value: "global_success"
+        - metrics: ["rpc_client_handled_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes:
+            - rule: "err_200~300"
+              target:
+                action: "upsert"
+                label: "code_type"
+                value: "service_override"
+`
+
+	// 优先级验证，当规则同时满足时，规则越靠后，优先级越高。
+	tests := []relabelBasedCase{
+		{
+			name: "service rule overrides global",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{"service_name": "my.service.name"},
+				attrs: map[string]string{
+					"callee_server": "my.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_200",
+				},
+			},
+			wantValue: "service_override",
+		},
+		{
+			name: "unmatched service falls back to global",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				rs:     map[string]string{"service_name": "other.service"},
+				attrs: map[string]string{
+					"callee_server": "my.server", "callee_service": "my.service",
+					"callee_method": "my.method", "code": "err_200",
+				},
+			},
+			wantValue: "global_success",
+		},
+	}
+
+	testRelabelBasedFactory(t, content, tests)
+}

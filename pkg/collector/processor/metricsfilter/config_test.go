@@ -138,6 +138,18 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid global source",
+			metrics: []string{"test_metric"},
+			source:  "*",
+			services: []*CodeRelabelService{{
+				Name: "my.server;my.service;my.method",
+				Codes: []*CodeRelabelCode{
+					{Rule: "err_200~300"},
+				},
+			}},
+			wantErr: false,
+		},
+		{
 			name:    "invalid no metrics",
 			metrics: []string{},
 			source:  "test.service",
@@ -186,6 +198,28 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 			assert.Equal(t, tt.wantErr, c.Validate() != nil)
 		})
 	}
+}
+
+func TestCodeRelabelGlobalSourceMatch(t *testing.T) {
+	action := CodeRelabelAction{
+		Metrics: []string{"rpc_client_handled_total"},
+		Source:  "*",
+		Services: []*CodeRelabelService{{
+			Name:  "my.server;my.service;my.method",
+			Codes: []*CodeRelabelCode{{Rule: "err_200~300"}},
+		}},
+	}
+	assert.NoError(t, action.Validate())
+
+	assert.True(t, action.MatchMap(createTestMap("service_name", "any.service")))
+	assert.True(t, action.MatchMap(createTestMap("service_name", "another.service")))
+	assert.True(t, action.MatchMap(createTestMap()))
+
+	labels := promlabels.Labels([]prompb.Label{{Name: "service_name", Value: "random.svc"}})
+	assert.True(t, action.MatchLabels(labels))
+
+	labelsEmpty := promlabels.Labels([]prompb.Label{})
+	assert.True(t, action.MatchLabels(labelsEmpty))
 }
 
 func TestRelabelRuleMatch(t *testing.T) {

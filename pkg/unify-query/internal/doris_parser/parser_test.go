@@ -655,7 +655,7 @@ group by
 		{
 			name: "反正则查询",
 			q:    "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
-			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dteventtimestamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 		},
 		{
 			name: "test-22",
@@ -877,13 +877,20 @@ group by
 ) t WHERE val != '' AND unknown_col != ''`,
 			sql: "SELECT `val`, " + metadata.Null + " AS `unknown_col` FROM (SELECT regexp_extract(log, 'uid=(\\\\d+)', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = 'abc') t WHERE `val` != '' AND " + metadata.Null + " != '' LIMIT 100",
 		},
+		// CAST(FLOOR(dtEventTimeStamp/...) * ... AS BIGINT)：dtEventTimeStamp 走全局物理列映射；算术子式内不套「AS 展示名」。
+		{
+			name: "bug-floor-cast-dimension-transform-as-inside-floor",
+			q:    `SELECT CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) AS bucket, COUNT(*) AS cnt WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc' GROUP BY CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) ORDER BY CAST(FLOOR(dtEventTimeStamp / 3600000) * 3600000 AS BIGINT) ASC`,
+			sql:  `SELECT CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) AS bucket, COUNT(*) AS cnt WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc' GROUP BY CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) ORDER BY CAST(FLOOR(dteventtimestamp / 3600000) * 3600000 AS BIGINT) ASC LIMIT 100`,
+		},
 	}
 
 	mock.Init()
 	fieldAlias := map[string]string{
 		// 有实际映射的字段
-		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
-		"serverIp":      "test_server_ip",
+		"pod_namespace":    "__ext.io_kubernetes_pod_namespace",
+		"serverIp":         "test_server_ip",
+		"dtEventTimeStamp": "dteventtimestamp",
 		// 原样保留的字段（value == key，dimTransform 返回 (v, "")）
 		"log":              "log",
 		"path":             "path",
@@ -907,7 +914,6 @@ group by
 		"DEPLOYMENT":       "DEPLOYMENT",
 		"aaa":              "aaa",
 		"item":             "item",
-		"dtEventTimeStamp": "dtEventTimeStamp",
 		"gseIndex":         "gseIndex",
 		"iterationIndex":   "iterationIndex",
 		"__dist_05":        "__dist_05",

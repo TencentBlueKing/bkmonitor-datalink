@@ -250,7 +250,13 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 			foreach.MetricsDataPointWithResource(pdMetrics, func(metric pmetric.Metric, rs, attrs pcommon.Map) {
 				// service_name 需要从 rs 中获取
 				// 其余字段从 attrs 中获取
-				if !action.IsMetricIn(metric.Name()) || !action.MatchMap(rs) {
+				name := metric.Name()
+				if metric.DataType() == pmetric.MetricDataTypeHistogram {
+					// OTLP Histogram 类型指标需补充后缀进行匹配，避免因指标名不完整导致无法命中。
+					name += "_bucket"
+				}
+
+				if !action.IsMetricIn(name) || !action.MatchMap(rs) {
 					return
 				}
 

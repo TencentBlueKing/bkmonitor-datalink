@@ -119,7 +119,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.config = taskConfig.(*configs.ProcCustomConfig)
 	gather.config.Setup()
 	gather.mapper = mapping.NewOperator()
-	gather.ctr = process.ProcCustomPerfCollector
+	gather.ctr = process.NewProcCollector()
 	gather.Init()
 
 	// 快速启动 记录缓存

@@ -227,6 +227,47 @@ func TestInstance_QueryLabelValues(t *testing.T) {
 	}
 }
 
+func TestInstance_QueryLabelValues_FallbackOver24h(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	testUser := &metadata.User{
+		Key:      "bk_monitor:admin",
+		TenantID: "test-tenant-001",
+		SpaceUID: influxdb.SpaceUid,
+	}
+	metadata.SetUser(ctx, testUser)
+	origHashID := testUser.HashID
+
+	start := time.Unix(1730180458, 0)
+	end := time.Unix(1730180458+86401, 0) // >24h
+
+	mock.Vm.Set(map[string]any{
+		`label_values:17301804581730266859pod{__name__="container_cpu_usage_seconds_total_value", result_table_id="2_bcs_prom_computation_result_table_00000", container="unify-query"}`: `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":null,"cluster":"monitor-op","totalRecords":2,"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"status":"success","isPartial":false,"data":["pod-a","pod-b"]}],"select_fields_order":[],"sql":"test","total_record_size":100,"timetaken":0.0,"bksql_call_elapsed_time":0,"device":"vm","result_table_ids":["2_bcs_prom_computation_result_table_00000"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+	})
+
+	query := &metadata.Query{
+		VmRt:        vmRt,
+		VmCondition: vmCondition,
+	}
+
+	res, err := instance.QueryLabelValues(ctx, query, "pod", start, end)
+	assert.NoError(t, err)
+	sort.Strings(res)
+
+	expected := `["pod-a","pod-b"]`
+	actual, _ := json.Marshal(res)
+	assert.Equal(t, expected, string(actual))
+
+	// 验证原始 User 的 HashID 未被 SetUser 污染
+	assert.Equal(t, origHashID, testUser.HashID, "original user's HashID should not be mutated by the fallback path")
+
+	// 验证原始 ctx 中的 User 信息仍然完整
+	origUser := metadata.GetUser(ctx)
+	assert.Equal(t, "test-tenant-001", origUser.TenantID)
+	assert.Equal(t, influxdb.SpaceUid, origUser.SpaceUID)
+}
+
 func TestVmResponse_VmQueryCluster(t *testing.T) {
 	t.Run("with vm_query_cluster", func(t *testing.T) {
 		raw := `{

@@ -866,6 +866,17 @@ group by
 ) t WHERE val != '' AND INSTR(val, '19') > 0`,
 			sql: "SELECT COUNT(DISTINCT(`val`)) AS unique_count FROM (SELECT regexp_extract(log, 'openid=(\\\\d+)', 1) AS val WHERE __dist_05 = '28649ce18e429ba5af10e4d18f5b4abc') t WHERE `val` != '' AND INSTR(`val`, '19') > 0 LIMIT 100",
 		},
+		// 验证：既不在 fieldAlias 里、又不是子查询 alias 的字段，应被 dimTransform 处理为 Null。
+		// unknown_col 在 SELECT 里 → Null AS `unknown_col`
+		// unknown_col 在 WHERE 里  → Null
+		{
+			name:   "unknown-field-not-in-fieldAlias-becomes-null",
+			tables: []string{"mapleleaf_100605.bklog_628038_clustered_100605"},
+			q: `SELECT val, unknown_col FROM (
+  SELECT regexp_extract(log, 'uid=(\\d+)', 1) AS val WHERE __dist_05 = 'abc'
+) t WHERE val != '' AND unknown_col != ''`,
+			sql: "SELECT `val`, " + metadata.Null + " AS `unknown_col` FROM (SELECT regexp_extract(log, 'uid=(\\\\d+)', 1) AS val FROM mapleleaf_100605.bklog_628038_clustered_100605 WHERE __dist_05 = 'abc') t WHERE `val` != '' AND " + metadata.Null + " != '' LIMIT 100",
+		},
 	}
 
 	mock.Init()

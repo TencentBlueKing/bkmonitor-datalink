@@ -807,6 +807,16 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"\""}}`,
 			sql: "`log` MATCH_PHRASE ''",
 		},
+		"text 字段空字符串转 exists": {
+			q:   `log:""`,
+			es:  `{"exists":{"field":"log"}}`,
+			sql: "`log` IS NOT NULL",
+		},
+		"text 字段空字符串 AND 其他条件": {
+			q:   `log:"" AND level:error`,
+			es:  `{"bool":{"must":[{"exists":{"field":"log"}},{"term":{"level":"error"}}]}}`,
+			sql: "`log` IS NOT NULL AND `level` = 'error'",
+		},
 
 		// =================================================================
 		// Test Suite: complex_combinations from antlr4_lucene_test_cases.json

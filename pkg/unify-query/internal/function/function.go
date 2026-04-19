@@ -97,6 +97,19 @@ func StringToTime(s string) (t time.Time, ok bool) {
 	return t, ok
 }
 
+// EquivalentTimestampStrings 判断两字符串是否表示同一时刻：相等，或均可被 StringToTime 解析且 time.Equal。
+func EquivalentTimestampStrings(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ta, okA := StringToTime(a)
+	tb, okB := StringToTime(b)
+	if !okA || !okB {
+		return false
+	}
+	return ta.Equal(tb)
+}
+
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {

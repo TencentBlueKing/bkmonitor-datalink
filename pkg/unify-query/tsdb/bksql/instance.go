@@ -199,6 +199,21 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.Field
 	return fieldsMap, nil
 }
 
+// needFieldMap 判断是否需要执行 QueryFieldMap 并注入 FieldsMap。
+func needFieldMap(query *metadata.Query) bool {
+	if query == nil {
+		return false
+	}
+	switch query.Measurement {
+	case sql_expr.Doris, sql_expr.HDFS:
+		return true
+	case "":
+		return query.StorageType == metadata.BkSqlStorageType && query.SQL != ""
+	default:
+		return false
+	}
+}
+
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
 	var err error
 
@@ -208,8 +223,9 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// Doris / HDFS 均需获取字段表结构
-	if query.Measurement == sql_expr.Doris || query.Measurement == sql_expr.HDFS {
+	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
+	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
+	if needFieldMap(query) {
 		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
 			return nil, err

@@ -22,8 +22,6 @@ type Service struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	wg         *sync.WaitGroup
-
-	storageHash string
 }
 
 // Type
@@ -114,7 +112,7 @@ func (s *Service) reloadStorage() error {
 		return err
 	}
 	hash := consul.HashIt(consulData)
-	if hash == s.storageHash {
+	if hash == inner.StorageMapHash() {
 		log.Debugf(context.TODO(), "storage hash not changed")
 		return err
 	}
@@ -139,7 +137,7 @@ func (s *Service) reloadStorage() error {
 			MaxSize:    EsMaxSize,
 		},
 	}
-	err = inner.ReloadTsDBStorage(s.ctx, consulData, options)
+	err = inner.ReloadTsDBStorage(s.ctx, hash, consulData, options)
 	if err != nil {
 		log.Errorf(context.TODO(), "reload storage failed %v", err)
 		return err

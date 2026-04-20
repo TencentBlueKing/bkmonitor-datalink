@@ -742,7 +742,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			// 如果没有指定查询类型，则通过 storageID 获取
 			if query.StorageType == "" {
-				stg, _ := tsdb.GetStorage(query.StorageID)
+				stg, _ := tsdb.GetStorage(ctx, query.StorageID)
 				if stg != nil {
 					query.StorageType = stg.Type
 				}

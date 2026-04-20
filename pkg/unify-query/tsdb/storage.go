@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -82,6 +83,8 @@ func ReloadTsDBStorage(ctx context.Context, hash string, tsDBs map[string]*consu
 	for k := range newStorageMap {
 		newKeys = append(newKeys, k)
 	}
+	// 与 storageMapKeysLocked 一致：按 storage ID 数值升序，便于日志对照。
+	sortStorageIDKeysAsc(newKeys)
 
 	span.Set("old_hash", oldHash)
 	span.Set("new_hash", hash)
@@ -173,7 +176,19 @@ func storageMapKeysLocked() []string {
 	for k := range storageMap {
 		keys = append(keys, k)
 	}
-	//确保返回的keys列表排序稳定
-	sort.Strings(keys)
+	sortStorageIDKeysAsc(keys)
 	return keys
+}
+
+// sortStorageIDKeysAsc 按 storage ID 的数值升序排列（ID 为十进制整数字符串时）。
+// 任一方无法解析为整数时，对二者使用字符串字典序比较，保证顺序稳定可复现。
+func sortStorageIDKeysAsc(keys []string) {
+	sort.Slice(keys, func(i, j int) bool {
+		ai, errI := strconv.Atoi(keys[i])
+		aj, errJ := strconv.Atoi(keys[j])
+		if errI == nil && errJ == nil {
+			return ai < aj
+		}
+		return keys[i] < keys[j]
+	})
 }

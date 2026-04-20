@@ -12,6 +12,7 @@ package tsdb
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -172,5 +173,7 @@ func storageMapKeysLocked() []string {
 	for k := range storageMap {
 		keys = append(keys, k)
 	}
+	//确保返回的keys列表排序稳定
+	sort.Strings(keys)
 	return keys
 }

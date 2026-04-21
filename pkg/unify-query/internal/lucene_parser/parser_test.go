@@ -1269,6 +1269,16 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"term":{"field":""}}`,
 			sql: "`field` = ''",
 		},
+		"edge_analyzed_field_empty_value_becomes_exists": {
+			q:   `log:""`,
+			es:  `{"exists":{"field":"log"}}`,
+			sql: "`log` IS NOT NULL",
+		},
+		"edge_analyzed_field_empty_value_negated_becomes_not_exists": {
+			q:   `NOT log:""`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NULL",
+		},
 		"edge_field_with_underscore": {
 			q:   `_field:value`,
 			es:  `{"term":{"_field":"value"}}`,

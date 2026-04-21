@@ -1264,17 +1264,17 @@ func TestLuceneParser(t *testing.T) {
 		// =================================================================
 		// Test Suite: additional_edge_cases - 额外边界情况测试
 		// =================================================================
-		"edge_empty_field_value": {
+		"edge_empty_field_value_non_analyzed_becomes_exists": {
 			q:   `field:""`,
-			es:  `{"term":{"field":""}}`,
-			sql: "`field` = ''",
+			es:  `{"exists":{"field":"field"}}`,
+			sql: "`field` IS NOT NULL",
 		},
-		"edge_analyzed_field_empty_value_becomes_exists": {
+		"edge_empty_field_value_analyzed_becomes_exists": {
 			q:   `log:""`,
 			es:  `{"exists":{"field":"log"}}`,
 			sql: "`log` IS NOT NULL",
 		},
-		"edge_analyzed_field_empty_value_negated_becomes_not_exists": {
+		"edge_empty_field_value_negated_becomes_not_exists": {
 			q:   `NOT log:""`,
 			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
 			sql: "`log` IS NULL",

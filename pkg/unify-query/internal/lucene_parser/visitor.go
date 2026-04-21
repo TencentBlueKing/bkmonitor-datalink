@@ -420,14 +420,14 @@ func (n *ConditionNode) String() string {
 
 	switch op {
 	case "=":
-		if fieldOption.IsAnalyzed {
-			if value == "" && n.field != nil {
-				// field:"" 语义为字段存在，与 ES query_string 行为一致
-				if n.reverseOp {
-					return fmt.Sprintf("%s IS NULL", field)
-				}
-				return fmt.Sprintf("%s IS NOT NULL", field)
+		if value == "" && n.field != nil {
+			// field:"" 语义为字段存在，与分词无关
+			if n.reverseOp {
+				return fmt.Sprintf("%s IS NULL", field)
 			}
+			return fmt.Sprintf("%s IS NOT NULL", field)
+		}
+		if fieldOption.IsAnalyzed {
 			if n.reverseOp {
 				op = "NOT MATCH_PHRASE"
 			} else {
@@ -637,24 +637,22 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				break
 			}
 
-				if fieldOption.IsAnalyzed {
-					if value == "" && n.field != nil {
-						// field:"" 语义为字段存在，与 ES query_string 行为一致
-						result = elastic.NewExistsQuery(field)
-					} else {
+				if value == "" && n.field != nil {
+					// field:"" 语义为字段存在，与分词无关
+					result = elastic.NewExistsQuery(field)
+				} else if fieldOption.IsAnalyzed {
 					cq := elastic.NewMatchPhraseQuery(field, value)
 					if cv.Boost != "" {
 						cq.Boost(cast.ToFloat64(cv.Boost))
 					}
 					result = cq
+				} else {
+					cq := elastic.NewTermQuery(field, value)
+					if cv.Boost != "" {
+						cq.Boost(cast.ToFloat64(cv.Boost))
+					}
+					result = cq
 				}
-			} else {
-				cq := elastic.NewTermQuery(field, value)
-				if cv.Boost != "" {
-					cq.Boost(cast.ToFloat64(cv.Boost))
-				}
-				result = cq
-			}
 		}
 	}
 

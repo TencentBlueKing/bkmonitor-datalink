@@ -690,7 +690,9 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 }
 
 // validateQueryTsDataSource 针对 bklog / bkapm 数据源做基础校验：
-// 当 data_source 为 bklog 或 bkapm 时，TableID 为空则必须提供非空的 TableIDConditions，其他 data_source 不做处理，保持原流程。
+// 当 data_source 为 bklog 或 bkapm 时，TableID 为空则必须提供有效的 TableIDConditions，其他 data_source 不做处理，保持原流程。
+// "有效" 的判定：AllConditions 中至少存在一个 DimensionName 非空的 ConditionField；
+// 涵盖 nil、`[]`、`[[]]`、`[[{}]]` 以及所有字段全零值等"空壳"形态，避免此类请求退化为全空间盲扫。
 func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 	if queryTs == nil {
 		return nil
@@ -703,7 +705,7 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 		if ds != structured.BkLog && ds != structured.BkApm {
 			continue
 		}
-		if string(q.TableID) == "" && len(q.TableIDConditions) == 0 {
+		if string(q.TableID) == "" && !hasEffectiveTableIDConditions(q.TableIDConditions) {
 			return fmt.Errorf(
 				"data_source 为 %q 时，table_id 与 table_id_conditions 不能同时为空（reference_name=%s）",
 				ds, q.ReferenceName,
@@ -711,4 +713,17 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 		}
 	}
 	return nil
+}
+
+// hasEffectiveTableIDConditions 判断 table_id_conditions 是否存在可用于匹配结果表 Labels 的条件：
+// 只要 AllConditions 中存在一个 DimensionName 非空的 ConditionField，即视为有效（与 MatchResultTableLabels 的匹配前提一致）。
+func hasEffectiveTableIDConditions(conds structured.AllConditions) bool {
+	for _, group := range conds {
+		for _, c := range group {
+			if c.DimensionName != "" {
+				return true
+			}
+		}
+	}
+	return false
 }

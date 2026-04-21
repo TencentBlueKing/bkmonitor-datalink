@@ -703,6 +703,157 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 	}
 }
 
+func TestValidateQueryTsDataSource(t *testing.T) {
+	testCases := map[string]struct {
+		queryTs   *structured.QueryTs
+		expectErr bool
+	}{
+		"nil queryTs": {
+			queryTs:   nil,
+			expectErr: false,
+		},
+		"bkmonitor with empty table_id and no conditions": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{DataSource: structured.BkMonitor, TableID: "", ReferenceName: "a"},
+				},
+			},
+			expectErr: false,
+		},
+		"bkdata with empty table_id and no conditions": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{DataSource: structured.BkData, TableID: "", ReferenceName: "a"},
+				},
+			},
+			expectErr: false,
+		},
+		"bklog with non-empty table_id": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{DataSource: structured.BkLog, TableID: "result_table.es", ReferenceName: "a"},
+				},
+			},
+			expectErr: false,
+		},
+		"bklog with valid table_id_conditions": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       "",
+						ReferenceName: "a",
+						TableIDConditions: structured.AllConditions{
+							{{DimensionName: "bk_biz_id", Value: []string{"2"}, Operator: "eq"}},
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		"bklog with table_id_conditions nil": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{DataSource: structured.BkLog, TableID: "", ReferenceName: "a", TableIDConditions: nil},
+				},
+			},
+			expectErr: true,
+		},
+		"bklog with table_id_conditions empty outer []": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:        structured.BkLog,
+						TableID:           "",
+						ReferenceName:     "a",
+						TableIDConditions: structured.AllConditions{},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"bklog with table_id_conditions [[]]": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:        structured.BkLog,
+						TableID:           "",
+						ReferenceName:     "a",
+						TableIDConditions: structured.AllConditions{{}},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"bklog with table_id_conditions [[{}]] empty ConditionField": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       "",
+						ReferenceName: "a",
+						TableIDConditions: structured.AllConditions{
+							{{}},
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"bkapm with table_id_conditions [[{}]] empty ConditionField": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkApm,
+						TableID:       "",
+						ReferenceName: "b",
+						TableIDConditions: structured.AllConditions{
+							{{}},
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"bklog mixed groups: only the second group has effective condition": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       "",
+						ReferenceName: "a",
+						TableIDConditions: structured.AllConditions{
+							{{}},
+							{{DimensionName: "bk_biz_id", Value: []string{"2"}, Operator: "eq"}},
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		"multiple queries: second bklog query fails validation": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{DataSource: structured.BkMonitor, TableID: "", ReferenceName: "a"},
+					{DataSource: structured.BkLog, TableID: "", ReferenceName: "b", TableIDConditions: structured.AllConditions{{{}}}},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			err := validateQueryTsDataSource(c.queryTs)
+			if c.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestPromQLQueryHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())

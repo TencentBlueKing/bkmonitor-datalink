@@ -53,7 +53,11 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-exemplar")
-	defer span.End(&err)
+	defer func() {
+		resp.TraceID = span.TraceID()
+		resp.Status = metadata.GetStatus(ctx)
+		span.End(&err)
+	}()
 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
@@ -582,11 +586,6 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		if ql.From == 0 && queryTs.From > 0 {
 			ql.From = queryTs.From
 		}
-
-		if ql.TableID == "" {
-			err = fmt.Errorf("tableID is empty")
-			return nil, err
-		}
 	}
 
 	// 开启时间 Reference 模式
@@ -1041,9 +1040,14 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 		err       error
 		res       any
 		isPartial bool
+		resp      = NewPromData(query.ResultColumns)
 	)
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
-	defer span.End(&err)
+	defer func() {
+		resp.TraceID = span.TraceID()
+		resp.Status = metadata.GetStatus(ctx)
+		span.End(&err)
+	}()
 
 	err = query.ToTime(ctx)
 	if err != nil {
@@ -1103,7 +1107,6 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any,
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
-	resp := NewPromData(query.ResultColumns)
 	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {

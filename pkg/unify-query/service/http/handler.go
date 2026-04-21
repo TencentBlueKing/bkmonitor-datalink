@@ -188,6 +188,14 @@ func HandlerQueryExemplar(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryExemplar,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
 		resp.failed(ctx, metadata.NewMessage(
@@ -253,6 +261,14 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	listData.TraceID = span.TraceID()
 
+	if err = validateQueryTsDataSource(queryTs); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -267,6 +283,7 @@ func HandlerQueryRaw(c *gin.Context) {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
 
+	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }
 
@@ -322,6 +339,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		queryTs.SpaceUid = user.SpaceUID
 	}
 
+	if err = validateQueryTsDataSource(queryTs); err != nil {
+		return
+	}
+
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindowTimeout
 	}
@@ -373,6 +394,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }
 
@@ -434,6 +456,14 @@ func HandlerQueryTs(c *gin.Context) {
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
+
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
@@ -584,6 +614,14 @@ func HandlerQueryReference(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryReference,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	res, err := queryReferenceWithPromEngine(ctx, query)
 	if err != nil {
 		resp.failed(ctx, metadata.NewMessage(
@@ -649,4 +687,28 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		return
 	}
 	resp.success(ctx, res)
+}
+
+// validateQueryTsDataSource 针对 bklog / bkapm 数据源做基础校验：
+// 当 data_source 为 bklog 或 bkapm 时，TableID 为空则必须提供非空的 TableIDConditions，其他 data_source 不做处理，保持原流程。
+func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
+	if queryTs == nil {
+		return nil
+	}
+	for _, q := range queryTs.QueryList {
+		if q == nil {
+			continue
+		}
+		ds := q.DataSource
+		if ds != structured.BkLog && ds != structured.BkApm {
+			continue
+		}
+		if string(q.TableID) == "" && len(q.TableIDConditions) == 0 {
+			return fmt.Errorf(
+				"data_source 为 %q 时，table_id 与 table_id_conditions 不能同时为空（reference_name=%s）",
+				ds, q.ReferenceName,
+			)
+		}
+	}
+	return nil
 }

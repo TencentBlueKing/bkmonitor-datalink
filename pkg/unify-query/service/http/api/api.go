@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -191,6 +192,193 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
 			if d.TargetList == nil {
 				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
+			}
+
+			lock.Lock()
+			data.Data[idx] = d
+			lock.Unlock()
+		})
+	}
+	sendWg.Wait()
+
+	resp.success(ctx, data)
+}
+
+// HandlerAPIRelationV1Beta3MultiResource
+// @Summary  query relation multi resource (v1beta3, SurrealDB)
+// @ID       relation_multi_resource_query_v1beta3
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID"
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      cmdb.RelationMultiResourceRequest			  true   "json data"
+// @Success  200                   	{object}  cmdb.RelationV1Beta3MultiResourceResponse
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /api/v1/relation/v1beta3/multi_resource [post]
+func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
+	var (
+		ctx = c.Request.Context()
+
+		user = metadata.GetUser(ctx)
+		err  error
+
+		resp = &response{
+			c: c,
+		}
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-v1beta3")
+	defer span.End(&err)
+
+	request := new(cmdb.RelationMultiResourceRequest)
+	err = json.NewDecoder(c.Request.Body).Decode(request)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	paramsBody, _ := json.Marshal(request)
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
+
+	model, err := v1beta3.GetModel(ctx)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	data := new(cmdb.RelationV1Beta3MultiResourceResponse)
+	data.TraceID = span.TraceID()
+	data.Data = make([]cmdb.RelationV1Beta3MultiResourceResponseData, len(request.QueryList))
+
+	var (
+		sendWg sync.WaitGroup
+		lock   sync.Mutex
+	)
+	p, _ := ants.NewPool(RelationMaxRouting)
+	defer p.Release()
+
+	for idx, qry := range request.QueryList {
+		idx := idx
+		qry := qry
+		sendWg.Add(1)
+		_ = p.Submit(func() {
+			defer sendWg.Done()
+			d := cmdb.RelationV1Beta3MultiResourceResponseData{
+				Code: http.StatusOK,
+			}
+
+			timestamp := cast.ToString(qry.Timestamp)
+			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, err = model.QueryDynamicPaths(
+				ctx,
+				qry.LookBackDelta, user.SpaceUID, timestamp,
+				qry.TargetType, qry.SourceType,
+				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
+				qry.PathResource,
+			)
+			if err != nil {
+				d.Message = err.Error()
+				d.Code = http.StatusBadRequest
+			}
+
+			if d.TargetList == nil {
+				d.TargetList = make(cmdb.Matchers, 0)
+			}
+			if d.Paths == nil {
+				d.Paths = make([]cmdb.PathV2, 0)
+			}
+
+			lock.Lock()
+			data.Data[idx] = d
+			lock.Unlock()
+		})
+	}
+	sendWg.Wait()
+
+	resp.success(ctx, data)
+}
+
+// HandlerAPIRelationV1Beta3MultiResourceRange
+// @Summary  query relation multi resource range (v1beta3, SurrealDB)
+// @ID       relation_multi_resource_query_range_v1beta3
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID"
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      cmdb.RelationMultiResourceRangeRequest			  true   "json data"
+// @Success  200                   	{object}  cmdb.RelationV1Beta3MultiResourceRangeResponse
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /api/v1/relation/v1beta3/multi_resource_range [post]
+func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
+	var (
+		ctx = c.Request.Context()
+
+		user = metadata.GetUser(ctx)
+		err  error
+
+		resp = &response{
+			c: c,
+		}
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-v1beta3")
+	defer span.End(&err)
+
+	request := new(cmdb.RelationMultiResourceRangeRequest)
+	err = json.NewDecoder(c.Request.Body).Decode(request)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	paramsBody, _ := json.Marshal(request)
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
+
+	model, err := v1beta3.GetModel(ctx)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	data := new(cmdb.RelationV1Beta3MultiResourceRangeResponse)
+	data.TraceID = span.TraceID()
+	data.Data = make([]cmdb.RelationV1Beta3MultiResourceRangeResponseData, len(request.QueryList))
+
+	var (
+		sendWg sync.WaitGroup
+		lock   sync.Mutex
+	)
+	p, _ := ants.NewPool(RelationMaxRouting)
+	defer p.Release()
+
+	for idx, qry := range request.QueryList {
+		idx := idx
+		qry := qry
+		sendWg.Add(1)
+		_ = p.Submit(func() {
+			defer sendWg.Done()
+			d := cmdb.RelationV1Beta3MultiResourceRangeResponseData{
+				Code: http.StatusOK,
+			}
+
+			startTs := cast.ToString(qry.StartTs)
+			endTs := cast.ToString(qry.EndTs)
+			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, err = model.QueryDynamicPathsRange(
+				ctx,
+				qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs,
+				qry.TargetType, qry.SourceType,
+				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
+				qry.PathResource,
+			)
+			if err != nil {
+				d.Message = err.Error()
+				d.Code = http.StatusBadRequest
+			}
+
+			if d.TargetList == nil {
+				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
+			}
+			if d.Paths == nil {
+				d.Paths = make([]cmdb.PathV2, 0)
 			}
 
 			lock.Lock()

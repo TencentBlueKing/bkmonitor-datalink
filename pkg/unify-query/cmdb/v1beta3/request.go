@@ -11,6 +11,7 @@ package v1beta3
 
 // QueryRequest 关联查询请求
 type QueryRequest struct {
+	SpaceUID                 string             `json:"space_uid,omitempty"`                  // 空间 UID（bkcc__<biz> 形式），用于定位 binding
 	Timestamp                int64              `json:"timestamp"`                            // 查询时间点（毫秒时间戳）
 	SourceType               ResourceType       `json:"source_type"`                          // 源资源类型
 	SourceInfo               map[string]string  `json:"source_info"`                          // 源资源过滤条件

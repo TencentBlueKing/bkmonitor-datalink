@@ -34,6 +34,8 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 			if err != nil {
 				return nil, err
 			}
+			// 为默认 Model 注入 binding 解析器
+			model.SetResolver(GetBindingResolver())
 			defaultModel = model
 		}
 	}
@@ -44,12 +46,21 @@ type GraphQueryExecutor interface {
 	Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error)
 }
 
+// GraphQueryExecutorWithBinding 是 GraphQueryExecutor 的可选扩展，
+// 允许 executor 接受 binding 上下文（database / namespace）。
+// BKBaseSurrealDBClient 实现了这个扩展接口。
+type GraphQueryExecutorWithBinding interface {
+	GraphQueryExecutor
+	ExecuteWithBinding(ctx context.Context, spaceUID string, binding BindingInfo, dsl string, start, end int64) ([]*LivenessGraph, error)
+}
+
 // Model v2 CMDB 实现，基于 SurrealDB 图查询
 type Model struct {
 	executor GraphQueryExecutor
+	resolver *BindingResolver
 }
 
-// NewModel 创建 Model 实例
+// NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
 func NewModel(ctx context.Context, executor GraphQueryExecutor) (*Model, error) {
 	return &Model{executor: executor}, nil
 }
@@ -57,6 +68,11 @@ func NewModel(ctx context.Context, executor GraphQueryExecutor) (*Model, error) 
 // SetExecutor 设置查询执行器（用于测试）
 func (m *Model) SetExecutor(executor GraphQueryExecutor) {
 	m.executor = executor
+}
+
+// SetResolver 注入 binding 解析器（生产路径用；测试可以留空）
+func (m *Model) SetResolver(resolver *BindingResolver) {
+	m.resolver = resolver
 }
 
 func (m *Model) QueryResourceMatcher(
@@ -90,6 +106,7 @@ func (m *Model) QueryResourceMatcher(
 	}
 
 	req := &QueryRequest{
+		SpaceUID:      spaceUid,
 		Timestamp:     timestamp,
 		SourceType:    FromCMDBResource(source),
 		SourceInfo:    matcherToMap(indexMatcher),
@@ -145,6 +162,7 @@ func (m *Model) QueryDynamicPaths(
 	}
 
 	req := &QueryRequest{
+		SpaceUID:      spaceUid,
 		Timestamp:     timestamp,
 		SourceType:    FromCMDBResource(source),
 		SourceInfo:    matcherToMap(indexMatcher),
@@ -210,6 +228,7 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 
 	req := &QueryRequest{
+		SpaceUID:      spaceUid,
 		Timestamp:     end,
 		SourceType:    FromCMDBResource(source),
 		SourceInfo:    matcherToMap(indexMatcher),
@@ -279,6 +298,7 @@ func (m *Model) QueryDynamicPathsRange(
 	}
 
 	req := &QueryRequest{
+		SpaceUID:      spaceUid,
 		Timestamp:     end,
 		SourceType:    FromCMDBResource(source),
 		SourceInfo:    matcherToMap(indexMatcher),
@@ -312,6 +332,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	span.Set("source-info", req.SourceInfo)
 	span.Set("max-hops", req.MaxHops)
 	span.Set("look-back-delta", req.LookBackDelta)
+	span.Set("space-uid", req.SpaceUID)
 
 	builder := NewSurrealQueryBuilder(req)
 	sql := builder.Build()
@@ -332,7 +353,15 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	}
 
 	if m.executor != nil {
-		graphs, err = m.executor.Execute(ctx, sql, queryStart, queryEnd)
+		start := time.Now()
+		graphs, err = m.executeGraphQuery(ctx, req, sql, queryStart, queryEnd)
+		elapsed := time.Since(start).Seconds()
+		status := "ok"
+		if err != nil {
+			status = CategorizeError(err)
+			ObserveError(req.SpaceUID, status)
+		}
+		ObserveQueryDuration(req.SpaceUID, status, elapsed)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -345,6 +374,24 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	span.Set("matchers-count", len(matchers))
 
 	return graphs, paths, matchers, nil
+}
+
+// executeGraphQuery 根据 resolver / executor 能力选择最合适的调用路径。
+//
+//  1. 若同时具备 resolver 与支持 binding 的 executor，则先 resolve binding，
+//     再走 ExecuteWithBinding，DSL 前会加 "USE NS ... DB ...;" 前缀。
+//  2. 否则退化到原始 Execute（全局 result_table_id，单测 / 旧路径）。
+func (m *Model) executeGraphQuery(ctx context.Context, req *QueryRequest, sql string, start, end int64) ([]*LivenessGraph, error) {
+	if m.resolver != nil && req.SpaceUID != "" {
+		if ex, ok := m.executor.(GraphQueryExecutorWithBinding); ok {
+			binding, err := m.resolver.Resolve(ctx, req.SpaceUID)
+			if err != nil {
+				return nil, err
+			}
+			return ex.ExecuteWithBinding(ctx, req.SpaceUID, *binding, sql, start, end)
+		}
+	}
+	return m.executor.Execute(ctx, sql, start, end)
 }
 
 // toResourceTypes 将 []cmdb.Resource 转换为 []ResourceType

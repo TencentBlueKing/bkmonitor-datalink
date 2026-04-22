@@ -238,3 +238,115 @@ type QCloudMonitorConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	FileContent string `json:"fileContent"`
 }
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+type ProcessMonitorList struct {
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []ProcessMonitor `json:"items"`
+}
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+type ProcessMonitor struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec ProcessMonitorSpec `json:"spec,omitempty"`
+}
+
+type ProcessMonitorSpec struct {
+	// DataID is the dataID of the ProcessMonitor.
+	//
+	// +optional
+	DataID int `json:"dataID"`
+
+	// Interval is the frequency at which the task collect process stats.
+	Interval Duration `json:"interval"`
+
+	// EnableThread indicates whether to collect thread stats.
+	//
+	// +optional
+	EnableThread bool `json:"enableThread"`
+
+	// Selector to select Pod objects.
+	Selector LabelSelector `json:"selector"`
+
+	// NamespaceSelector to select which namespaces the Endpoints objects are discovered from.
+	NamespaceSelector NamespaceSelector `json:"namespaceSelector,omitempty"`
+
+	// Processes is the list of process rules.
+	Processes []ProcessRule `json:"processes"`
+}
+
+type NamespaceSelector struct {
+	// Boolean describing whether all namespaces are selected in contrast to a
+	// list restricting them.
+	Any bool `json:"any,omitempty"`
+
+	// List of namespace names to select from.
+	MatchNames []string `json:"matchNames,omitempty"`
+}
+
+type LabelSelector struct {
+	// matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+	// map is equivalent to an element of matchExpressions, whose key field is "key", the
+	// operator is "In", and the values array contains only "value". The requirements are ANDed.
+	//
+	// +optional
+	MatchLabels map[string]string `json:"matchLabels,omitempty"`
+
+	// matchExpressions is a list of label selector requirements. The requirements are ANDed.
+	//
+	// +optional
+	MatchExpressions []LabelSelectorRequirement `json:"matchExpressions,omitempty"`
+}
+
+// LabelSelectorRequirement is a label selector requirement is a selector that contains values, a key,
+// and an operator that relates the key and values.
+type LabelSelectorRequirement struct {
+	// key is the label key that the selector applies to.
+	// +patchMergeKey=key
+	// +patchStrategy=merge
+	Key string `json:"key"`
+
+	// operator represents a key's relationship to a set of values.
+	// Valid operators are In, NotIn, Exists and DoesNotExist.
+	//
+	// +kubebuilder:validation:Enum=In;NotIn;Exists;DoesNotExist
+	Operator string `json:"operator"`
+
+	// values is an array of string values. If the operator is In or NotIn,
+	// the values array must be non-empty. If the operator is Exists or DoesNotExist,
+	// the values array must be empty. This array is replaced during a strategic
+	// merge patch.
+	//
+	// +optional
+	Values []string `json:"values,omitempty"`
+}
+
+type ProcessRule struct {
+	// MatchPattern is the regexp pattern to match process.
+	//
+	// +kubebuilder:validation:MinLength=1
+	MatchPattern string `json:"matchPattern"`
+
+	// ExcludePattern is the regexp pattern to exclude process.
+	//
+	// +optional
+	ExcludePattern string `json:"excludePattern"`
+
+	// ProcessNamePattern is the regexp pattern to extract process name.
+	//
+	// pick the last part of the match pattern
+	//
+	// +optional
+	ProcessNamePattern string `json:"processNamePattern"`
+
+	// ExtractPattern is the pattern to extract process dimensions.
+	//
+	// +optional
+	ExtractPattern string `json:"extractPattern"`
+}

@@ -701,11 +701,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
 	}
-	// bklog非指标数据源，跳过容器指标专用分支（isK8s=true 时仅允许 bk_split_measurement）
-	isSkipK8s := metadata.GetQueryParams(ctx).IsSkipK8s
-	if q.DataSource == BkLog {
-		isSkipK8s = true
-	}
 	if len(tsDBs) == 0 {
 		tsDBs, err = GetTsDBList(ctx, &TsDBOption{
 			SpaceUid:          spaceUid,
@@ -714,7 +709,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			IsRegexp:          q.IsRegexp,
 			AllConditions:     allConditions,
 			IsSkipSpace:       metadata.GetUser(ctx).IsSkipSpace(),
-			IsSkipK8s:         isSkipK8s,
+			IsSkipK8s:         metadata.GetQueryParams(ctx).IsSkipK8s,
 			IsSkipField:       isSkipField,
 			TableIDConditions: q.TableIDConditions,
 		})

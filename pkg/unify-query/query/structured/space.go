@@ -126,8 +126,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		}
 	}
 
-	// 只有在容器场景下的特殊逻辑
-	if isK8s {
+	// 容器场景下的特殊过滤逻辑：仅在未显式提供 table_id_conditions 时生效。
+	// 若调用方已通过 table_id_conditions 按 Labels 显式路由，则信任该选择，不再叠加"仅 bk_split_measurement / BcsClusterID 匹配"的容器默认规则，
+	// 避免把 bklog/bkapm 等非 split-measurement 的 RT 误过滤掉。
+	if isK8s && len(tableIDConditions) == 0 {
 		// 增加在非单指标单表下，判断如果强行指定了单指标单表则对其进行修改以支持 vm 查询
 		isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
 

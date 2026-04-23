@@ -406,7 +406,7 @@ func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 
 // TestE2E_Query_BkLog_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：
 // DataSource=bklog 且 table_id 为空、仅靠 TableIDConditions 选表时，应能命中非 split-measurement 的日志类 RT；
-// 锁住 query_ts.go 里为 bklog/bkapm 自动置 IsSkipK8s=true 的修复。
+// 锁住 space.NewTsDBs 中"显式 table_id_conditions 时绕过容器默认过滤"的修复语义。
 func TestE2E_Query_BkLog_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 	mock.Init()
 	ctx := md.InitHashID(context.Background())
@@ -426,7 +426,7 @@ func TestE2E_Query_BkLog_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.
 	assert.NoError(t, err)
 	assert.NotNil(t, metric)
 	// mock 中 ResultTableEs 为 ES 存储、无 MeasurementType、Labels scene=k8s；
-	// 修复前会被 isK8s 分支过滤；修复后 bklog 路径自动置 IsSkipK8s=true，可命中。
+	// 修复前会被 isK8s 分支误过滤；修复后 space.NewTsDBs 在 table_id_conditions 非空时跳过容器默认过滤，可命中。
 	assert.NotEmpty(t, metric.QueryList, "bklog + table_id_conditions(scene=k8s) 应命中非 split-measurement 的 RT")
 }
 

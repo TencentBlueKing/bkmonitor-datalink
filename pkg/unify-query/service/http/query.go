@@ -527,6 +527,20 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				if size == 0 {
 					slice.Status = redisUtil.StatusCompleted
+
+					// 可疑完成：slice 已经累计过 offset（即至少拿到过一轮数据或已尝试续拉）却在当前轮拿到 0 条，
+					// 这通常意味着底层网关沉默失败（典型场景：bkdata _search/scroll 返回 HTTP 200 但 hits 缺失）。
+					// 只在 Offset>0 时告警，避免把"首轮本就无数据"的正常空查询污染为 WARN。
+					if slice.Offset > 0 {
+						span.Set("scroll-suspicious-done-slice", newQry.TableUUID())
+						span.Set("scroll-suspicious-done-offset", slice.Offset)
+						span.Set("scroll-suspicious-done-scroll-id", slice.ScrollID)
+						metadata.NewMessage(
+							metadata.MsgQueryRawScroll,
+							"scroll 续拉命中 0 条被判完成：slice=%s, offset=%d, scroll_id=%s",
+							newQry.TableUUID(), slice.Offset, slice.ScrollID,
+						).Warn(ctx)
+					}
 				}
 
 				resultTableOptions.SetOption(newQry.TableUUID(), option)
@@ -546,6 +560,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	close(errCh)
 
 	receiveWg.Wait()
+
+	// Session 终态快照：只在本轮判定 Done 时写入，一次 trace 就能直接看到"为什么这次就结束了"。
+	// 与信号 1/2 形成闭环：若 session 所有 slice 都以 completed+Offset==Limit 在单轮终结、同时
+	// 能看到 es-result-hits-nil / scroll-suspicious-done-* 信号，即可锁定底层网关沉默失败。
+	if session.Done() {
+		finalSession, _ := json.Marshal(session)
+		span.Set("session-final", string(finalSession))
+		span.Set("session-final-total", total)
+	}
 
 	return total, list, resultTableOptions, session.Done(), err
 }

@@ -358,6 +358,7 @@ func MockSpaceRouter(ctx context.Context) {
 					FieldAlias: map[string]string{
 						"alias_ns": "__ext.host.bk_set_name",
 					},
+					Labels: map[string]string{"scene": "k8s", "stream": "file"},
 				},
 				ResultTableEs1: &ir.ResultTableDetail{
 					StorageId:   3,

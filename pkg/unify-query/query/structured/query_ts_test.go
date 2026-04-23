@@ -404,6 +404,32 @@ func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 	assert.NotEmpty(t, metric.QueryList, "表标签 scene=log 应匹配到带 Labels 的 RT")
 }
 
+// TestE2E_Query_BkLog_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：
+// DataSource=bklog 且 table_id 为空、仅靠 TableIDConditions 选表时，应能命中非 split-measurement 的日志类 RT；
+// 锁住 query_ts.go 里为 bklog/bkapm 自动置 IsSkipK8s=true 的修复。
+func TestE2E_Query_BkLog_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	query := &Query{
+		DataSource:    BkLog,
+		TableID:       "",
+		FieldName:     "dtEventTimeStamp",
+		ReferenceName: "a",
+		TableIDConditions: AllConditions{
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+		},
+	}
+
+	metric, err := query.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, metric)
+	// mock 中 ResultTableEs 为 ES 存储、无 MeasurementType、Labels scene=k8s；
+	// 修复前会被 isK8s 分支过滤；修复后 bklog 路径自动置 IsSkipK8s=true，可命中。
+	assert.NotEmpty(t, metric.QueryList, "bklog + table_id_conditions(scene=k8s) 应命中非 split-measurement 的 RT")
+}
+
 // TestQueryTs_StructToPromQL_WithTableIDConditions 独立方向：从 QueryTs 结构体（带 TableIDConditions）转为 PromQL，
 // 单组 AND 输出 __bk_query_label_selector_<维度>；多组 OR 无法写进单条 PromQL，应报错。
 func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {

@@ -336,11 +336,20 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	isK8sFeatureFlag := featureFlag.GetIsK8sFeatureFlag(s.ctx)
 
+	// 仅在启用了 table_id_conditions 时跟踪是否有候选 RT 的 Labels 命中，避免后续失败原因不在 Labels 时追加误导文案
+	anyLabelMatched := len(tableIDCondsForFilter) == 0
 	for _, tID := range tableIDs.ToArray() {
 		spaceRt := s.GetSpaceRtInfo(tID)
 		// 如果不跳过空间，则取 space 和 tableIDs 的交集
 		if !opt.IsSkipSpace && spaceRt == nil {
 			continue
+		}
+		if !anyLabelMatched {
+			if rt := s.router.GetResultTable(s.ctx, tID, false); rt != nil {
+				if tableIDCondsForFilter.MatchesResultTableLabels(rt.Labels) {
+					anyLabelMatched = true
+				}
+			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
 		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, tableIDCondsForFilter)
@@ -354,8 +363,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	if len(tsDBs) == 0 {
 		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)
-		if len(tableIDCondsForFilter) > 0 {
-			routerMessage += "；已启用 table_id_conditions，无命中时请核对 Labels 与条件是否一致"
+		if len(tableIDCondsForFilter) > 0 && !anyLabelMatched {
+			routerMessage += "；已启用 table_id_conditions，无 RT 的 Labels 命中条件"
 		}
 		return nil, nil
 	}

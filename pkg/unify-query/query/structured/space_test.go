@@ -336,4 +336,42 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		assert.Contains(t, tableIDs, influxdb.ResultTableInfluxDB)
 		assert.Contains(t, tableIDs, influxdb.ResultTableVM)
 	})
+
+	// 非 split-measurement 的 RT（如 bklog 日志表 ResultTableEs，Labels scene=k8s）：
+	// IsSkipK8s=false 时会被容器指标分支误杀；IsSkipK8s=true（bklog/bkapm 路径）时 Labels 命中即可通过。
+	t.Run("non_split_rt_with_is_skip_k8s_false_is_filtered", func(t *testing.T) {
+		opt := *optBase
+		opt.FieldName = "dtEventTimeStamp"
+		opt.IsRegexp = false
+		opt.IsSkipField = true
+		opt.IsSkipK8s = false
+		opt.TableIDConditions = AllConditions{
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+		}
+		tsdb, err := sf.DataList(&opt)
+		require.NoError(t, err)
+		tableIDs := make([]string, 0, len(tsdb))
+		for _, d := range tsdb {
+			tableIDs = append(tableIDs, d.TableID)
+		}
+		assert.NotContains(t, tableIDs, influxdb.ResultTableEs, "IsSkipK8s=false 时容器分支会把非 split-measurement 的 RT 过滤掉")
+	})
+
+	t.Run("non_split_rt_with_is_skip_k8s_true_passes", func(t *testing.T) {
+		opt := *optBase
+		opt.FieldName = "dtEventTimeStamp"
+		opt.IsRegexp = false
+		opt.IsSkipField = true
+		opt.IsSkipK8s = true
+		opt.TableIDConditions = AllConditions{
+			{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}},
+		}
+		tsdb, err := sf.DataList(&opt)
+		require.NoError(t, err)
+		tableIDs := make([]string, 0, len(tsdb))
+		for _, d := range tsdb {
+			tableIDs = append(tableIDs, d.TableID)
+		}
+		assert.Contains(t, tableIDs, influxdb.ResultTableEs, "IsSkipK8s=true 时非 split-measurement 的 RT 在 Labels 命中后应被选中（bklog/bkapm 路径）")
+	})
 }

@@ -717,3 +717,108 @@ UTC
 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 `)
 }
+
+// TestFormatDataToQueryResult_ValueParsing 覆盖 FormatDataToQueryResult 对 bkdata query_sync list 的常见形态：
+//
+// - 首条 _value_ 为 null：首点 value 为 0，后续点须保留真实数值（与线上 query_sync 首条 null 场景一致）。
+// - 中间窗口 _value_ 为 null：该点 0，后续点不丢。
+// - _value_ 为字符串数值须能 cast 成 float。
+func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	start := time.Unix(1776758700, 0)
+	end := time.Unix(1777104300, 0)
+
+	baseQuery := func() *metadata.Query {
+		return &metadata.Query{
+			DataSource:  "bkdata",
+			StorageType: metadata.BkSqlStorageType,
+			TableID:     "100768_p4_log",
+			DB:          "100768_p4_log",
+			Measurement: "",
+			Field:       "cmd_time",
+			Aggregates: metadata.Aggregates{
+				{
+					Name:   "avg",
+					Window: time.Minute * 5,
+				},
+			},
+		}
+	}
+
+	for name, c := range map[string]struct {
+		query    *metadata.Query
+		list     []map[string]any
+		expected map[int64]float64
+	}{
+		"first _value_ is nil": {
+			query: baseQuery(),
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 1.23},
+				{"_timestamp_": int64(1776759300000), "_value_": 2.34},
+				{"_timestamp_": int64(1776759600000), "_value_": 3.45},
+			},
+			expected: map[int64]float64{
+				1776758700000: 0,
+				1776759000000: 1.23,
+				1776759300000: 2.34,
+				1776759600000: 3.45,
+			},
+		},
+		"all valid values (baseline)": {
+			query: baseQuery(),
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": 0.1},
+				{"_timestamp_": int64(1776759000000), "_value_": 1.23},
+				{"_timestamp_": int64(1776759300000), "_value_": 2.34},
+			},
+			expected: map[int64]float64{
+				1776758700000: 0.1,
+				1776759000000: 1.23,
+				1776759300000: 2.34,
+			},
+		},
+		"middle _value_ is nil (baseline)": {
+			query: baseQuery(),
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": 0.1},
+				{"_timestamp_": int64(1776759000000), "_value_": nil},
+				{"_timestamp_": int64(1776759300000), "_value_": 2.34},
+			},
+			expected: map[int64]float64{
+				1776758700000: 0.1,
+				1776759000000: 0,
+				1776759300000: 2.34,
+			},
+		},
+		"string typed _value_ (baseline)": {
+			query: baseQuery(),
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": "1.23"},
+				{"_timestamp_": int64(1776759000000), "_value_": "2.34"},
+			},
+			expected: map[int64]float64{
+				1776758700000: 1.23,
+				1776759000000: 2.34,
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(start, end)
+
+			_, err := fact.SQL()
+			require.NoError(t, err)
+
+			res, err := fact.FormatDataToQueryResult(ctx, c.list)
+			require.NoError(t, err)
+			require.Len(t, res.Timeseries, 1, "expected single timeseries")
+
+			actual := make(map[int64]float64, len(res.Timeseries[0].Samples))
+			for _, s := range res.Timeseries[0].Samples {
+				actual[s.Timestamp] = s.Value
+			}
+			assert.Equal(t, c.expected, actual)
+		})
+	}
+}

@@ -383,26 +383,24 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err
 	}
-	// 异常分支专用 span：用于诊断 bkdata 等网关返回 HTTP 200、但响应体里 hits 缺失或内嵌 error 的场景。
-	// 这类响应不会触发 handleESError，导致 scroll 续拉被误判为完成；这里只在异常路径 set，正常路径零开销，
-	// 与下方 res.Hits != nil 时记录的 total_hits / hits_length 形成互补。
+	// handleESError 对 (res=nil, err=io.EOF) 会返回 nil，所以后续读取 res 的 span 统一放在 res != nil 内。
 	if res != nil {
+		// 诊断网关返回 200 但 hits 缺失 / 内嵌 error 的场景（会让 scroll 续拉被误判为完成）。
 		if res.Hits == nil {
 			span.Set("es-result-hits-nil", true)
-			// 同步记录 scroll_id，便于在 trace 里直接定位是哪一轮 scroll 续拉拿到了空 hits。
 			span.Set("es-result-scroll-id", res.ScrollId)
 		}
 		if res.Error != nil {
 			span.Set("es-result-error-type", res.Error.Type)
 			span.Set("es-result-error-reason", res.Error.Reason)
 		}
-	}
-	if res.Hits != nil {
-		span.Set("total_hits", res.Hits.TotalHits)
-		span.Set("hits_length", len(res.Hits.Hits))
-	}
-	if res.Aggregations != nil {
-		span.Set("aggregations_length", len(res.Aggregations))
+		if res.Hits != nil {
+			span.Set("total_hits", res.Hits.TotalHits)
+			span.Set("hits_length", len(res.Hits.Hits))
+		}
+		if res.Aggregations != nil {
+			span.Set("aggregations_length", len(res.Aggregations))
+		}
 	}
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())

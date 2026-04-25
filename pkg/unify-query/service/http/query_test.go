@@ -1481,7 +1481,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			expectError: true,
-			errorMsg:    "查询原始数据报错: query error: 原始数据查询异常: es 查询失败: Elasticsearch error from http://127.0.0.1:93002: [illegal_argument_exception] Failed to parse field [dtEventTimeStamp] (indices: v2_2_bklog_test_20240814_0) ",
+			errorMsg:    "查询原始数据报错: query error: 原始数据查询异常: es 查询失败: Elasticsearch error from http://127.0.0.1:93002: [illegal_argument_exception] Failed to parse field [dtEventTimeStamp] (indices: v2_2_bklog_test_20240814_0)",
 		},
 		"query collections.attributes.db.statement": {
 			queryTs: &structured.QueryTs{
@@ -4718,6 +4718,91 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 			t.Errorf("number %d mismatch: expected %v, got %v", i+1, expected, actual)
 		}
 	}
+}
+
+// TestQueryRawPartialSuccessMultiRoute 一路 ES 成功、一路失败时：err 为 nil，错误收敛到 status.message，仍可返回成功路数据。
+func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__2"})
+
+	influxdb.MockSpaceRouter(ctx)
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_multi_merge"
+	const okRT = "pr_ok_rt"
+	const failRT = "pr_fail_rt"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, failRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, okRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     okRT,
+		DB:          "pr_ok_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_ok",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, failRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     failRT,
+		DB:          "pr_fail_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_fail",
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[okRT] = &ir.SpaceResultTable{TableId: okRT}
+	space[failRT] = &ir.SpaceResultTable{TableId: failRT}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	const esURL = "http://127.0.0.1:93002"
+	mapBody := `{"pr_ok_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_ok_idx", httpmock.NewStringResponder(http.StatusOK, mapBody))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_ok_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, mapBody))
+
+	failMap := `{"pr_fail_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_fail_idx", httpmock.NewStringResponder(http.StatusOK, failMap))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_fail_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, failMap))
+
+	okSearch := `{"took":1,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"pr_ok_idx","_id":"x1","_source":{"dtEventTimeStamp":"1752141800000","log":"partial-ok"}}]}}`
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_ok_idx/_search", httpmock.NewStringResponder(http.StatusOK, okSearch))
+
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_fail_idx/_search", httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":"mock failure"}`))
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				TableID:   mergeTable,
+				FieldList: []string{"dtEventTimeStamp", "log"},
+			},
+		},
+		Start: "1752141400000",
+		End:   "1752141900000",
+		Limit: 50,
+	}
+
+	total, list, _, qerr := queryRawWithInstance(ctx, queryTs)
+	assert.NoError(t, qerr)
+	assert.Greater(t, total, int64(0))
+	assert.NotEmpty(t, list)
+
+	st := metadata.GetStatus(ctx)
+	assert.NotNil(t, st)
+	assert.Equal(t, metadata.QueryRawPartial, st.Code)
+	assert.Contains(t, st.Message, "查询原始数据部分失败:")
+	assert.Contains(t, st.Message, "query error:")
 }
 
 func getIntValue(value any) int64 {

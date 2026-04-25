@@ -140,7 +140,7 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 	}
 
 	if query.DB == "" {
-		return fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return fmt.Errorf("%s 元数据中 db(ES 索引前缀)为空", query.TableID)
 	}
 	return nil
 }

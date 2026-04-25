@@ -670,8 +670,6 @@ func HandlerFieldMap(c *gin.Context) {
 				return
 			}
 
-			span.Set(fmt.Sprintf("field-map-length-%s", qry.TableUUID()), len(res))
-
 			for k, v := range res {
 				lock.Lock()
 				if _, ok := dataMap[k]; !ok {

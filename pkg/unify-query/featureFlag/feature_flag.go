@@ -19,12 +19,7 @@ import (
 func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	var (
 		user = metadata.GetUser(ctx)
-		err  error
-		span *trace.Span
 	)
-
-	ctx, span = trace.NewSpan(ctx, "get-bk-data-table-id-auth-feature-flag")
-	defer span.End(&err)
 
 	u := FFUser(user.HashID, map[string]any{
 		"name":     user.Name,
@@ -32,10 +27,7 @@ func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 		"spaceUid": user.SpaceUID,
 		"tableID":  tableID,
 	})
-
-	span.Set("ff-user-custom", u.GetCustom())
 	status := BoolVariation(ctx, u, "bk-data-table-id-auth", false)
-	span.Set("ff-status", status)
 
 	return status
 }

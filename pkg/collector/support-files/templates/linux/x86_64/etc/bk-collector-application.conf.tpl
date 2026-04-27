@@ -285,7 +285,7 @@ default:
               - '{{ drop_key }}'
               {%- endfor %}
           replace:
-            {%- for replace_config in resource_filter_config.replace %}
+            {%- for replace_config in resource_filter_config_logs.replace %}
             - source: '{{ replace_config.source }}'
               destination: '{{ replace_config.destination }}'
               extract_pattern: '{{ replace_config.extract_pattern }}'
@@ -314,7 +314,7 @@ default:
               {%- endfor %}
           {%- endif %}
           replace:
-            {%- for replace_config in resource_filter_config.replace %}
+            {%- for replace_config in resource_filter_config_metrics.replace %}
             - source: '{{ replace_config.source }}'
               destination: '{{ replace_config.destination }}'
               extract_pattern: '{{ replace_config.extract_pattern }}'

@@ -130,7 +130,6 @@ func (c *DiskROCollector) getRODisk() []beat.MapStr {
 	var (
 		retList            []beat.MapStr
 		MountPointInfoList []*MountPointInfo
-		shouldReport       bool
 	)
 
 	// 此处只关心物理设备的分区，其他系统生成的分区不必关注
@@ -144,6 +143,7 @@ func (c *DiskROCollector) getRODisk() []beat.MapStr {
 	}
 	MountPointInfoList = NewBatchMountPointInfo(partitions)
 	for _, mp := range MountPointInfoList {
+		shouldReport := false
 		c.deviceMap[mp.Device] = true
 		// 判断是否满足白名单，如果是直接返回告警
 		if mp.IsReadOnly() && mp.IsMatchRule(c.whiteList) {

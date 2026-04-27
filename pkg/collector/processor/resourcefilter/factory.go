@@ -237,12 +237,16 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 			return
 		}
 
+		// 复制原始值，防止下面的 Remove 操作导致原始值被删除
+		copyValue := pcommon.NewValueEmpty()
+		v.CopyTo(copyValue)
+
 		rs.Attributes().Remove(action.Source)
 		if action.ExtractPattern != "" {
-			extractedValue := p.extractByRegex(v.AsString(), action)
+			extractedValue := p.extractByRegex(copyValue.AsString(), action)
 			rs.Attributes().UpsertString(action.Destination, extractedValue)
 		} else {
-			rs.Attributes().Upsert(action.Destination, v)
+			rs.Attributes().Upsert(action.Destination, copyValue)
 		}
 	}
 

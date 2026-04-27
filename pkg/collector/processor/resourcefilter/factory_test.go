@@ -924,6 +924,8 @@ processor:
 		// 修改原始值以包含前缀和后缀
 		attrs := testkits.FirstSpanAttrs(record.Data)
 		attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+		attrs.UpsertString("service.namespace", "Dev")
+		attrs.UpsertString("net.host.ip", "127.0.0.1")
 
 		testkits.MustProcess(t, factory, record)
 

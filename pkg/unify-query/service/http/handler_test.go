@@ -568,6 +568,20 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}]}`,
 		},
+		"test field map in es with table_id_conditions (ignored when table_id specified)": {
+			handler: HandlerFieldMap,
+			method:  http.MethodPost,
+			infoParams: &Params{
+				DataSource: "bklog",
+				TableID:    "result_table.unify_query",
+				TableIDConditions: structured.AllConditions{
+					{
+						{DimensionName: "scene", Value: []string{"log"}, Operator: structured.ConditionEqual},
+					},
+				},
+			},
+			expected: `{"data":[{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.container_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","origin_field":"__ext","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"cloudId","field_type":"integer","origin_field":"cloudId","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","origin_field":"dtEventTimeStamp","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"file","field_type":"keyword","origin_field":"file","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"gseIndex","field_type":"long","origin_field":"gseIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"iterationIndex","field_type":"integer","origin_field":"iterationIndex","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"level","field_type":"keyword","origin_field":"level","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"message","field_type":"text","origin_field":"message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"report_time","field_type":"keyword","origin_field":"report_time","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"serverIp","field_type":"keyword","origin_field":"serverIp","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},{"alias_name":"","field_name":"time","field_type":"date","origin_field":"time","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},{"alias_name":"","field_name":"trace_id","field_type":"keyword","origin_field":"trace_id","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}]}`,
+		},
 		"test field map in es direct": {
 			handler: HandlerFieldMap,
 			method:  http.MethodPost,
@@ -611,6 +625,98 @@ func TestAPIHandler(t *testing.T) {
 				c.handler(ginC)
 				assert.Equal(t, c.expected, w.body())
 			}
+		})
+	}
+}
+
+// TestInfoParamsDecode 验证 info 类接口入参 Params 的 JSON 反序列化；
+// 重点守 table_id_conditions 字段：与 /query/ts 协议保持一致，避免 JSON 多余字段被静默丢弃。
+func TestInfoParamsDecode(t *testing.T) {
+	testCases := map[string]struct {
+		body   string
+		expect func(t *testing.T, p *Params)
+	}{
+		"table_id_conditions": {
+			body: `{
+				"data_source": "bklog",
+				"table_id": "",
+				"metric_name": "log",
+				"table_id_conditions": [
+					[
+						{"field_name": "scene", "value": ["log"], "op": "eq"},
+						{"field_name": "cluster_id", "value": ["1"], "op": "eq"}
+					],
+					[
+						{"field_name": "scene", "value": ["k8s"], "op": "eq"}
+					]
+				]
+			}`,
+			expect: func(t *testing.T, p *Params) {
+				assert.Len(t, p.TableIDConditions, 2)
+				assert.Len(t, p.TableIDConditions[0], 2)
+				assert.Equal(t, "scene", p.TableIDConditions[0][0].DimensionName)
+				assert.Equal(t, []string{"log"}, p.TableIDConditions[0][0].Value)
+				assert.Equal(t, structured.ConditionEqual, p.TableIDConditions[0][0].Operator)
+				assert.Equal(t, "cluster_id", p.TableIDConditions[0][1].DimensionName)
+				assert.Len(t, p.TableIDConditions[1], 1)
+				assert.Equal(t, []string{"k8s"}, p.TableIDConditions[1][0].Value)
+			},
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			var params Params
+			err := json.Unmarshal([]byte(c.body), &params)
+			assert.NoError(t, err)
+			c.expect(t, &params)
+		})
+	}
+}
+
+// TestInfoParamsToQueryRef 验证 info 类接口将 Params 转换为 QueryReference 的行为。
+// 覆盖 bk_log_search 场景化查询：仅传 table_id_conditions、不传 table_id / metric_name 时，
+// 应透传到底层 space 路由并选中对应 RT，而不是因早退判断被拒为 "empty table id, metric missing"。
+func TestInfoParamsToQueryRef(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
+	testCases := map[string]struct {
+		params     *Params
+		expectedRT string
+	}{
+		"route by table_id_conditions when table_id and metric_name empty": {
+			params: &Params{
+				DataSource: "bklog",
+				TableIDConditions: structured.AllConditions{
+					{
+						{DimensionName: "scene", Value: []string{"k8s"}, Operator: structured.ConditionEqual},
+						{DimensionName: "stream", Value: []string{"file"}, Operator: structured.ConditionEqual},
+					},
+				},
+			},
+			expectedRT: influxdb.ResultTableEs,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			queryRef, err := infoParamsToQueryRef(ctx, c.params)
+			assert.NoError(t, err)
+
+			hit := false
+			for _, qm := range queryRef {
+				for _, q := range qm {
+					for _, sub := range q.QueryList {
+						if sub.TableID == c.expectedRT {
+							hit = true
+						}
+					}
+				}
+			}
+			assert.Truef(t, hit, "expected RT %q to be matched by TableIDConditions", c.expectedRT)
 		})
 	}
 }

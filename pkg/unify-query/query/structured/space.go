@@ -281,7 +281,9 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 
-	if opt.TableID == "" && opt.FieldName == "" {
+	// 允许调用方仅通过 table_id_conditions 做全空间扫表路由
+	// 仅当 table_id、metric_name、table_id_conditions 三者都缺失时才判为"入参不完整"直接拒绝
+	if opt.TableID == "" && opt.FieldName == "" && len(opt.TableIDConditions) == 0 {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 	tsDBs := make([]*query.TsDBV2, 0)

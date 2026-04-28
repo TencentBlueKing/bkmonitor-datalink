@@ -429,23 +429,23 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			} else {
 				op = "="
 			}
-		}
 
-		for _, v := range c.Value {
-			if c.IsWildcard {
-				v = d.likeValue(v)
-			} else if key == metadata.Null {
-				// key 为 null 时，根据 IsPrefix/IsSuffix 转换值
-				if c.IsPrefix {
-					v = v + "*"
-				} else if c.IsSuffix {
-					v = "*" + v
+			for _, v := range c.Value {
+				if c.IsWildcard {
+					v = d.likeValue(v)
+				} else if key == metadata.Null {
+					// key 为 null 时，根据 IsPrefix/IsSuffix 转换值
+					if c.IsPrefix {
+						v = v + "*"
+					} else if c.IsSuffix {
+						v = "*" + v
+					}
 				}
+				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 			}
-			filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 		}
 
-	key = ""
+		key = ""
 	if len(filter) == 1 {
 		val = filter[0]
 	} else {

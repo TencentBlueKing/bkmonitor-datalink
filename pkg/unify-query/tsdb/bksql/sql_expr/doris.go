@@ -338,6 +338,9 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
+	if key == metadata.Null {
+		return "", nil
+	}
 
 	// 对值进行转义处理
 	for i, v := range c.Value {

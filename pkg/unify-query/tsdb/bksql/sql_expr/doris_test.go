@@ -509,6 +509,31 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`serverIp` = '127.0.0.1' AND `path` = '/var/host/data/bcs/lib/docker/containers/npc/npc-json.log' AND CAST(__ext['container_id'] AS STRING) = 'npc' AND (`gseIndex` < 101010 OR `gseIndex` = '101010' AND `iterationIndex` < 11 OR `gseIndex` = '101010' AND `iterationIndex` = '11' AND `dtEventTimeStamp` < 1760514288000)",
 		},
 		{
+			name: "unknown field in fieldsMap should be skipped not generate NULL MATCH_PHRASE",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "__ext.labels.k8s_app",
+						Value:         []string{"zonesvr", "scenesvr", "homesvr"},
+						Operator:      metadata.ConditionContains,
+					},
+					{
+						DimensionName: "loglevel",
+						Value:         []string{"INFO", "WARN", "ERROR"},
+						Operator:      metadata.ConditionContains,
+					},
+					{
+						DimensionName: "__ext.io_kubernetes_pod_namespace",
+						Value:         []string{"nrc-prod"},
+						Operator:      metadata.ConditionContains,
+					},
+				},
+			},
+			// __ext.labels.k8s_app 和 __ext.io_kubernetes_pod_namespace 均不在 fieldsMap 中
+			// 期望：未知字段的条件被跳过，不产生 NULL MATCH_PHRASE 'xxx' 非法 SQL
+			want: "(`loglevel` MATCH_PHRASE 'INFO' OR `loglevel` MATCH_PHRASE 'WARN' OR `loglevel` MATCH_PHRASE 'ERROR')",
+		},
+		{
 			name: "doris 条件合并 - 有个全都是公共条件",
 			condition: metadata.AllConditions{
 				{
@@ -658,6 +683,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		"code":                             {FieldType: DorisTypeInt},
 		"cpu_usage":                        {FieldType: DorisTypeInt},
 		"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
+		"loglevel":                         {FieldType: DorisTypeText, IsAnalyzed: true},
 	})
 
 	for _, tt := range tests {

@@ -161,9 +161,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
 
-		message      strings.Builder
-		successPaths atomic.Uint32
-		lock         sync.Mutex
+		errorMessage   strings.Builder
+		successedPaths atomic.Uint32
+		lock           sync.Mutex
 
 		allLabelMap  = make(map[string][]function.LabelMapValue)
 		allFieldsMap = make(metadata.FieldsMap)
@@ -180,7 +180,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 		for e := range errCh {
-			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+			errorMessage.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
 	}()
 
@@ -363,7 +363,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				successPaths.Add(1)
+				successedPaths.Add(1)
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
 				lock.Lock()
@@ -378,9 +378,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	// 等待数据组装完毕
 	receiveWg.Wait()
 
-	if message.Len() > 0 {
-		partialDetail := strings.TrimSpace(message.String())
-		if successPaths.Load() > 0 {
+	if errorMessage.Len() > 0 {
+		partialDetail := strings.TrimSpace(errorMessage.String())
+		if successedPaths.Load() > 0 {
 			err = nil
 			span.Set("partial_errors", partialDetail)
 			const warnPrefix = "查询原始数据部分失败: "

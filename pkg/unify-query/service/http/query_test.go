@@ -4805,6 +4805,88 @@ func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
 	assert.Contains(t, st.Message, "query error:")
 }
 
+// TestQueryTsPartialSuccessMultiRoute query/ts 多路查询时，至少一路成功应返回成功并标记 QueryTsPartial。
+func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
+	mock.Init()
+	promql.MockEngine()
+
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{Key: "username:test", SpaceUID: "bkcc__2", SkipSpace: "true"})
+
+	influxdb.MockSpaceRouter(ctx)
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_ts_partial_merge"
+	const failRT = "pr_ts_partial_fail_rt"
+	const okRT = "system.cpu_summary"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, failRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, failRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     failRT,
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_ts_fail",
+		Fields:      []string{"usage"},
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	space[failRT] = &ir.SpaceResultTable{TableId: failRT}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	start := time.UnixMilli(1717027200000)
+	end := time.UnixMilli(1717027500000)
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				DataSource:    "",
+				TableID:       structured.TableID(mergeTable),
+				FieldName:     "usage",
+				ReferenceName: "a",
+				Limit:         1,
+				TimeAggregation: structured.TimeAggregation{
+					Function: "count_over_time",
+					Window:   "60s",
+				},
+				AggregateMethodList: structured.AggregateMethodList{
+					{
+						Method: "count",
+					},
+				},
+			},
+		},
+		MetricMerge: "a",
+		Start:       strconv.FormatInt(start.Unix(), 10),
+		End:         strconv.FormatInt(end.Unix(), 10),
+		Step:        "60s",
+		Instant:     false,
+	}
+
+	res, qErr := queryTsWithPromEngine(ctx, queryTs)
+	if !assert.NoError(t, qErr) {
+		return
+	}
+
+	data, ok := res.(*PromData)
+	assert.True(t, ok)
+	assert.NotNil(t, data)
+
+	st := data.Status
+	assert.NotNil(t, st)
+	assert.Equal(t, metadata.QueryTsPartial, st.Code)
+	assert.Contains(t, st.Message, "查询时序数据部分失败:")
+	assert.Contains(t, st.Message, "query error:")
+}
+
 func getIntValue(value any) int64 {
 	switch v := value.(type) {
 	case string:

@@ -353,9 +353,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
-	if key == metadata.Null {
-		return "", nil
-	}
 
 	// 对值进行转义处理
 	for i, v := range c.Value {
@@ -417,36 +414,44 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				filter = append(filter, value)
 			}
 		} else {
-			if c.IsWildcard {
+			if key == metadata.Null || d.forceEq {
+				op = "="
+			} else if c.IsWildcard {
 				op = "LIKE"
+			} else if c.IsPrefix {
+				op = "MATCH_PHRASE_PREFIX"
+			} else if c.IsSuffix {
+				op = "MATCH_PHRASE_EDGE"
+			} else if c.Operator == metadata.ConditionContains {
+				op = "MATCH_PHRASE"
+			} else if d.isAnalyzed(c.DimensionName) {
+				op = "MATCH_PHRASE"
 			} else {
-				if !d.forceEq && c.IsPrefix {
-					op = "MATCH_PHRASE_PREFIX"
-				} else if !d.forceEq && c.IsSuffix {
-					op = "MATCH_PHRASE_EDGE"
-				} else {
-					if !d.forceEq && (c.Operator == metadata.ConditionContains || d.isAnalyzed(c.DimensionName)) {
-						op = "MATCH_PHRASE"
-					} else {
-						op = "="
-					}
-				}
-			}
-
-			for _, v := range c.Value {
-				if c.IsWildcard {
-					v = d.likeValue(v)
-				}
-				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
+				op = "="
 			}
 		}
 
-		key = ""
-		if len(filter) == 1 {
-			val = filter[0]
-		} else {
-			val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
+		for _, v := range c.Value {
+			if c.IsWildcard {
+				v = d.likeValue(v)
+			} else if key == metadata.Null {
+				// key 为 null 时，根据 IsPrefix/IsSuffix 转换值
+				if c.IsPrefix {
+					v = v + "*"
+				} else if c.IsSuffix {
+					v = "*" + v
+				}
+			}
+			filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 		}
+	}
+
+	key = ""
+	if len(filter) == 1 {
+		val = filter[0]
+	} else {
+		val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
+	}
 	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
 		if len(c.Value) == 1 && c.Value[0] == "" {
@@ -471,36 +476,38 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				filter = append(filter, value)
 			}
 		} else {
-			if c.IsWildcard {
+			// key 为 null 时，使用 = 或 != 代替分词操作
+			if key == metadata.Null || d.forceEq {
+				op = "!="
+			} else if c.IsWildcard {
 				op = "NOT LIKE"
+			} else if c.IsPrefix {
+				op = "NOT MATCH_PHRASE_PREFIX"
+			} else if c.IsSuffix {
+				op = "NOT MATCH_PHRASE_EDGE"
+			} else if c.Operator == metadata.ConditionNotContains {
+				op = "NOT MATCH_PHRASE"
+			} else if d.isAnalyzed(c.DimensionName) {
+				op = "NOT MATCH_PHRASE"
 			} else {
-				if !d.forceEq && c.IsPrefix {
-					op = "NOT MATCH_PHRASE_PREFIX"
-				} else if !d.forceEq && c.IsSuffix {
-					op = "NOT MATCH_PHRASE_EDGE"
-				} else {
-					if !d.forceEq && (c.Operator == metadata.ConditionNotContains || d.isAnalyzed(c.DimensionName)) {
-						op = "NOT MATCH_PHRASE"
-					} else {
-						op = "!="
-					}
-				}
-			}
-
-			for _, v := range c.Value {
-				if c.IsWildcard {
-					v = d.likeValue(v)
-				}
-				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
+				op = "!="
 			}
 		}
 
-		key = ""
-		if len(filter) == 1 {
-			val = filter[0]
-		} else {
-			val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+		for _, v := range c.Value {
+			if c.IsWildcard {
+				v = d.likeValue(v)
+			}
+			filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 		}
+	}
+
+	key = ""
+	if len(filter) == 1 {
+		val = filter[0]
+	} else {
+		val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+	}
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"

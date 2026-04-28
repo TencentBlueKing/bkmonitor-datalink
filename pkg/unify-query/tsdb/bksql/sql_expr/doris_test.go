@@ -510,7 +510,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`serverIp` = '127.0.0.1' AND `path` = '/var/host/data/bcs/lib/docker/containers/npc/npc-json.log' AND CAST(__ext['container_id'] AS STRING) = 'npc' AND (`gseIndex` < 101010 OR `gseIndex` = '101010' AND `iterationIndex` < 11 OR `gseIndex` = '101010' AND `iterationIndex` = '11' AND `dtEventTimeStamp` < 1760514288000)",
 		},
 		{
-			name: "unknown field in fieldsMap should be skipped not generate NULL MATCH_PHRASE",
+			name: "unknown field in fieldsMap should use NULL = instead of NULL MATCH_PHRASE",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -530,12 +530,85 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			// __ext.labels.k8s_app 和 __ext.io_kubernetes_pod_namespace 均不在 fieldsMap 中
-			// 期望：未知字段的条件被跳过，不产生 NULL MATCH_PHRASE 'xxx' 非法 SQL
-			want: "(`loglevel` MATCH_PHRASE 'INFO' OR `loglevel` MATCH_PHRASE 'WARN' OR `loglevel` MATCH_PHRASE 'ERROR')",
+		// __ext.labels.k8s_app 和 __ext.io_kubernetes_pod_namespace 均不在 fieldsMap 中
+		// key == metadata.Null，生成 NULL = 'xxx' 而不是 NULL MATCH_PHRASE 'xxx'
+		want: "(NULL = 'zonesvr' OR NULL = 'scenesvr' OR NULL = 'homesvr') AND (`loglevel` MATCH_PHRASE 'INFO' OR `loglevel` MATCH_PHRASE 'WARN' OR `loglevel` MATCH_PHRASE 'ERROR') AND NULL = 'nrc-prod'",
+	},
+	{
+		name: "none_exist_field_with_contains_operator",
+		condition: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.nonexist_field",
+					Value:         []string{"test"},
+					Operator:      metadata.ConditionContains,
+				},
+			},
 		},
-		{
-			name: "doris 条件合并 - 有个全都是公共条件",
+		// 字段不存在时，key == metadata.Null，应生成 NULL = 'test'
+		want: "NULL = 'test'",
+	},
+	{
+		name: "none_exist_field_with_isPrefix_contains_operator",
+		condition: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.nonexist_field",
+					Value:         []string{"test"},
+					Operator:      metadata.ConditionContains,
+					IsPrefix:      true,
+				},
+			},
+		},
+		// 字段不存在时，key == metadata.Null，应生成 NULL = 'test*'
+		want: "NULL = 'test*'",
+	},
+	{
+		name: "none_exist_field_with_isSuffix_contains_operator",
+		condition: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.nonexist_field",
+					Value:         []string{"test"},
+					Operator:      metadata.ConditionContains,
+					IsSuffix:      true,
+				},
+			},
+		},
+		// 字段不存在时，key == metadata.Null，应生成 NULL = '*test'
+		want: "NULL = '*test'",
+	},
+	{
+		name: "none_exist_field_with_not_contains_operator",
+		condition: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.nonexist_field",
+					Value:         []string{"test"},
+					Operator:      metadata.ConditionNotContains,
+				},
+			},
+		},
+		// 字段不存在时，key == metadata.Null，应生成 NULL != 'test'
+		want: "NULL != 'test'",
+	},
+	{
+		name: "none_exist_field_with_isPrefix_and_isAnalyzed_field",
+		condition: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.nonexist_field",
+					Value:         []string{"test"},
+					Operator:      metadata.ConditionContains,
+					IsPrefix:      true,
+				},
+			},
+		},
+		// 字段不存在时，key == metadata.Null，应生成 NULL = 'test*'
+		want: "NULL = 'test*'",
+	},
+	{
+		name: "doris 条件合并 - 有个全都是公共条件",
 			condition: metadata.AllConditions{
 				{
 					{

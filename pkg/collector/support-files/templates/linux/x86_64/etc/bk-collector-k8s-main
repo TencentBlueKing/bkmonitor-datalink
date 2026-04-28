@@ -353,6 +353,7 @@
           tars:
             {{- if .Values.exporter.converter.tars }}
             is_drop_original: {{ .Values.exporter.converter.tars.isDropOriginal }}
+            is_derive_server_view: {{ .Values.exporter.converter.tars.isDeriveServerView }}
             drop_original_services:
             {{- range .Values.exporter.converter.tars.dropOriginalServices }}
               - {{ . }}

@@ -414,10 +414,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				filter = append(filter, value)
 			}
 		} else {
-			if key == metadata.Null || d.forceEq {
-				op = "="
-			} else if c.IsWildcard {
+			if c.IsWildcard {
 				op = "LIKE"
+			} else if key == metadata.Null || d.forceEq {
+				op = "="
 			} else if c.IsPrefix {
 				op = "MATCH_PHRASE_PREFIX"
 			} else if c.IsSuffix {
@@ -475,12 +475,12 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				filter = append(filter, value)
 			}
 		} else {
-			// key 为 null 时，使用 = 或 != 代替分词操作
-			if key == metadata.Null || d.forceEq {
-				op = "!="
-		} else {
+			// key 为 null 或 forceEq 时，使用 = 或 != 代替分词操作；
+			// 但 IsWildcard 优先，因为 TSpider 不支持分词但支持 LIKE。
 			if c.IsWildcard {
 				op = "NOT LIKE"
+			} else if key == metadata.Null || d.forceEq {
+				op = "!="
 			} else if c.IsPrefix {
 				op = "NOT MATCH_PHRASE_PREFIX"
 			} else if c.IsSuffix {
@@ -490,7 +490,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			} else {
 				op = "!="
 			}
-		}
 
 			for _, v := range c.Value {
 				if c.IsWildcard {

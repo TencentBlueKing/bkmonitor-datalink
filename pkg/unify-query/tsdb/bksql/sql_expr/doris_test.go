@@ -851,6 +851,61 @@ func TestTSpiderSQLExpr_ParserAllConditions(t *testing.T) {
 			},
 			want: "`host` = 'server1'",
 		},
+		{
+			name: "forceEq with IsWildcard on analyzed field uses LIKE instead of =",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"*err*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`message` LIKE '%err%'",
+		},
+		{
+			name: "forceEq with IsWildcard and NotEqual uses NOT LIKE instead of !=",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"*debug*"},
+						Operator:      metadata.ConditionNotContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`message` NOT LIKE '%debug%'",
+		},
+		{
+			name: "forceEq without IsWildcard still uses = on analyzed field",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"error"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`message` = 'error'",
+		},
+		{
+			name: "forceEq with IsWildcard on non-analyzed field uses LIKE",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"*srv*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`host` LIKE '%srv%'",
+		},
 	}
 
 	e := NewSQLExpr(TSpider).WithFieldsMap(fieldsMap).WithEncode(func(s string) string {

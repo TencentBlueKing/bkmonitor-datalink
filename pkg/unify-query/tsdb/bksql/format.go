@@ -145,6 +145,11 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 
 	for k, d := range data {
 		if d == nil {
+			// SQL 聚合首行常为 NULL。若直接 continue，首行 nd 会缺少 `_value_`/`_timestamp_` 键；
+			// FormatDataToQueryResult 只在首行推断 keys，缺 `_value_` 则后续行永远进不了 Value 分支，整列被当成 0。
+			if k == sql_expr.Value || k == sql_expr.TimeStamp {
+				newData[k] = nil
+			}
 			continue
 		}
 		// 忽略内置字段

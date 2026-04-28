@@ -36,6 +36,11 @@ const (
 
 	QueryRawError = "QUERY_RAW_ERROR"
 
+	// QueryRawPartial 原始查询多路合并时部分子查询失败、但至少一路成功
+	QueryRawPartial = "QUERY_RAW_PARTIAL"
+	// QueryTsPartial 时序查询多路合并时部分子查询失败、但至少一路成功
+	QueryTsPartial = "QUERY_TS_PARTIAL"
+
 	StorageTimeout = "STORAGE_TIMEOUT"
 	StorageError   = "STORAGE_ERROR"
 

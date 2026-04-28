@@ -16,6 +16,7 @@ package controllers
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -29,15 +30,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
-func NewContainerdRuntime() define.Runtime {
+func criV1Alpha2Rewriter(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	method = strings.Replace(method, "/runtime.v1.RuntimeService/", "/runtime.v1alpha2.RuntimeService/", 1)
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
 	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
 	utils.CheckError(err)
 
 	timeout := time.Second * 10
-	dialOpt := grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-		return winio.DialPipe(config.ContainerdAddress, &timeout)
-	})
-	conn, err := grpc.DialContext(context.Background(), "", dialOpt, grpc.WithInsecure())
+	dialOpts := []grpc.DialOption{
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return winio.DialPipe(config.ContainerdAddress, &timeout)
+		}),
+		grpc.WithInsecure(),
+	}
+	if useV1Alpha2 {
+		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(criV1Alpha2Rewriter))
+	}
+	conn, err := grpc.DialContext(context.Background(), "", dialOpts...)
 	utils.CheckError(err)
 
 	return &ContainerdRuntime{
@@ -45,26 +57,6 @@ func NewContainerdRuntime() define.Runtime {
 			containerdClient: client,
 			log:              ctrl.Log.WithName("containerd"),
 		},
-		criClient: &CRIClientV1Alpha2{client: v1.NewRuntimeServiceClient(conn)},
-	}
-}
-
-func NewContainerdV2Runtime() define.Runtime {
-	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
-	utils.CheckError(err)
-
-	timeout := time.Second * 10
-	dialOpt := grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-		return winio.DialPipe(config.ContainerdAddress, &timeout)
-	})
-	conn, err := grpc.DialContext(context.Background(), "", dialOpt, grpc.WithInsecure())
-	utils.CheckError(err)
-
-	return &ContainerdV2Runtime{
-		ContainerdBase: ContainerdBase{
-			containerdClient: client,
-			log:              ctrl.Log.WithName("containerd"),
-		},
-		criClient: &CRIClientV1{client: v1.NewRuntimeServiceClient(conn)},
+		cri: &criClient{client: v1.NewRuntimeServiceClient(conn)},
 	}
 }

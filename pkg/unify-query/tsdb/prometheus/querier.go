@@ -11,9 +11,12 @@ package prometheus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
@@ -107,8 +110,13 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 		set storage.SeriesSet
 
+		successedPaths atomic.Uint32
+
 		setCh    = make(chan storage.SeriesSet, 1)
 		recvDone = make(chan struct{})
+
+		errorMessage strings.Builder
+		lock         sync.Mutex
 
 		wg  sync.WaitGroup
 		err error
@@ -148,6 +156,16 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	p, _ := ants.NewPool(q.maxRouting)
 	defer p.Release()
 
+	// 统一收敛子路由错误，最终用于 partial status 或全失败报错。
+	recordQueryError := func(queryErr error) {
+		if queryErr == nil {
+			return
+		}
+		lock.Lock()
+		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		lock.Unlock()
+	}
+
 	for i, query := range queryList {
 		wg.Add(1)
 		err = p.Submit(func() {
@@ -173,10 +191,22 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				endTime = function.MsIntMergeNs(hints.End, qp.End)
 			}
 
-			setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
+			// 逐路查询：失败只记录，不立即中断其他路由；成功路由进入 merge 阶段。
+			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
+			if currentSet == nil {
+				recordQueryError(fmt.Errorf("query series set is nil"))
+				return
+			}
+			if setErr := currentSet.Err(); setErr != nil {
+				recordQueryError(setErr)
+				return
+			}
+
+			successedPaths.Add(1)
+			setCh <- currentSet
 		})
 		if err != nil {
-			setCh <- storage.ErrSeriesSet(err)
+			recordQueryError(err)
 			wg.Done()
 		}
 	}
@@ -184,6 +214,27 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	close(setCh)
 	<-recvDone
+
+	// 多路并发后的兜底语义：
+	// 1) 至少一路成功：返回成功数据，并通过 status 标记部分失败；
+	// 2) 全部失败：保持历史行为，整体返回错误。
+	if errorMessage.Len() > 0 {
+		partialDetail := strings.TrimSpace(errorMessage.String())
+		if successedPaths.Load() > 0 {
+			span.Set("partial_errors", partialDetail)
+			const warnPrefix = "查询时序数据部分失败: "
+			fullMsg := warnPrefix + partialDetail
+			if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+				fullMsg = existing.Message + "; " + fullMsg
+			}
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, fullMsg)
+		} else {
+			return storage.ErrSeriesSet(metadata.NewMessage(
+				metadata.MsgQueryTs,
+				"查询异常",
+			).Error(ctx, errors.New(partialDetail)))
+		}
+	}
 
 	return set
 }

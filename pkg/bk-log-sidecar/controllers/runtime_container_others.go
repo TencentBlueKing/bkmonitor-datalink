@@ -16,6 +16,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/containerd/containerd"
@@ -28,13 +29,27 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
-// NewContainerdRuntime new container Runtime
-func NewContainerdRuntime() define.Runtime {
+// criV1Alpha2Rewriter rewrites gRPC method paths from runtime.v1.RuntimeService
+// to runtime.v1alpha2.RuntimeService for containerd < 1.6 which only supports CRI v1alpha2.
+// The protobuf wire format is identical between v1 and v1alpha2, only the service path differs.
+func criV1Alpha2Rewriter(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	method = strings.Replace(method, "/runtime.v1.RuntimeService/", "/runtime.v1alpha2.RuntimeService/", 1)
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+// NewContainerdRuntime creates a Runtime for containerd.
+// When useV1Alpha2 is true, a gRPC interceptor rewrites CRI method paths to
+// runtime.v1alpha2 for containerd < 1.6.
+func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
 	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
 	utils.CheckError(err)
 
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("unix://%s", config.ContainerdAddress), grpc.WithInsecure())
+	dialOpts := []grpc.DialOption{grpc.WithInsecure()}
+	if useV1Alpha2 {
+		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(criV1Alpha2Rewriter))
+	}
+	conn, err := grpc.DialContext(ctx, fmt.Sprintf("unix://%s", config.ContainerdAddress), dialOpts...)
 	utils.CheckError(err)
 
 	return &ContainerdRuntime{
@@ -42,23 +57,6 @@ func NewContainerdRuntime() define.Runtime {
 			containerdClient: client,
 			log:              ctrl.Log.WithName("containerd"),
 		},
-		criClient: &CRIClientV1Alpha2{client: v1.NewRuntimeServiceClient(conn)},
-	}
-}
-
-func NewContainerdV2Runtime() define.Runtime {
-	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
-	utils.CheckError(err)
-
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("unix://%s", config.ContainerdAddress), grpc.WithInsecure())
-	utils.CheckError(err)
-
-	return &ContainerdV2Runtime{
-		ContainerdBase: ContainerdBase{
-			containerdClient: client,
-			log:              ctrl.Log.WithName("containerd"),
-		},
-		criClient: &CRIClientV1{client: v1.NewRuntimeServiceClient(conn)},
+		cri: &criClient{client: v1.NewRuntimeServiceClient(conn)},
 	}
 }

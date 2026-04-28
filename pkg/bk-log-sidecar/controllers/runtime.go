@@ -29,13 +29,10 @@ func NewRuntime(runtimeVersion string) define.Runtime {
 		}
 
 		version := parts[1]
-		if utils.CompareVersion(version, "1.4") >= 0 {
-			return NewContainerdV2Runtime()
-		} else {
-			return NewContainerdRuntime()
-		}
+		useV1Alpha2 := utils.CompareVersion(version, "1.6") < 0
+		return NewContainerdRuntime(useV1Alpha2)
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeEks)) {
-		return NewContainerdRuntime()
+		return NewContainerdRuntime(true)
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeDocker)) {
 		return NewDockerRuntime()
 	} else {

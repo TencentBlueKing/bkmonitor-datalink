@@ -122,43 +122,39 @@ func Print() string {
 	return str
 }
 
-// GetStorage 从内存 map 按 storageID 取 Storage。
-// 诊断日志（遍历全表 keys、metadata.Info）仅在两类场景打出，避免热路径每条请求扫 map：
-//   - miss：便于核对请求的 ID 与当前内存中的 ID 列表；
-//   - 本次 Reload 之后第一次成功命中：CompareAndSwap 保证全进程仅一次。
-//
-// 其余成功命中只写 span 的 storage_id、storage_hash。
+// 仅在 miss 时创建 get-tsdb-storage-miss span 便于链路关联。
 func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
-	var err error
-	ctx, span := trace.NewSpan(ctx, "get-tsdb-storage")
-	defer span.End(&err)
-
 	storageLock.RLock()
-	defer storageLock.RUnlock()
-
-	span.Set("storage_id", storageID)
-	span.Set("storage_hash", storageMapHash)
-
 	storage, ok := storageMap[storageID]
 	if !ok {
-		// miss：始终打全量 keys；并取消「首次命中」待打标记，避免紧接着的成功请求再打一份全量 keys。
 		keys := storageMapKeysLocked()
-		span.Set("storage_keys", fmt.Sprintf("%v", keys))
+		hash := storageMapHash
 		getStorageKeysLogPending.Store(false)
+		storageLock.RUnlock()
+
+		var err error
+		_, span := trace.NewSpan(ctx, "get-tsdb-storage-miss")
+		span.Set("storage_id", storageID)
+		span.Set("storage_hash", hash)
+		span.Set("storage_keys", fmt.Sprintf("%v", keys))
 		metadata.NewMessage("tsdb_storage", "get storage miss: id=%s hash=%s map_keys=%v",
-			storageID, storageMapHash, keys).Info(ctx)
+			storageID, hash, keys).Info(ctx)
 		err = fmt.Errorf("%s: storageID: %s", ErrStorageNotFound, storageID)
+		span.End(&err)
 		return nil, err
 	}
 
 	// 仅当 pending 仍为 true 时进入：原子地从 true 翻成 false，保证多 goroutine 下只有一次会打「重载后首次命中」全量 keys。
 	if getStorageKeysLogPending.CompareAndSwap(true, false) {
 		keys := storageMapKeysLocked()
-		span.Set("storage_keys", fmt.Sprintf("%v", keys))
+		hash := storageMapHash
+		storageLock.RUnlock()
 		metadata.NewMessage("tsdb_storage", "get storage: id=%s hash=%s map_keys=%v",
-			storageID, storageMapHash, keys).Info(ctx)
+			storageID, hash, keys).Info(ctx)
+		return storage, nil
 	}
 
+	storageLock.RUnlock()
 	return storage, nil
 }
 

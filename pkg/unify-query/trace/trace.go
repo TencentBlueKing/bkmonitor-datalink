@@ -56,6 +56,15 @@ func (s *Span) TraceID() string {
 	return traceID.String()
 }
 
+// TraceIDFromContext 从 ctx 提取 trace id，无有效链路时返回空字符串
+func TraceIDFromContext(ctx context.Context) string {
+	traceID := oteltrace.SpanFromContext(ctx).SpanContext().TraceID()
+	if !traceID.IsValid() {
+		return ""
+	}
+	return traceID.String()
+}
+
 // Set attribute 打点
 func (s *Span) Set(key string, value any) {
 	if s.span == nil {

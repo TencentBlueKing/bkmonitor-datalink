@@ -215,11 +215,6 @@ func needFieldMap(query *metadata.Query) bool {
 }
 
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
-	var err error
-
-	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
-	defer span.End(&err)
-
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
@@ -238,10 +233,6 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 				keepColumns = append(keepColumns, k)
 			}
 		}
-		out, _ := json.Marshal(fieldsMap)
-		span.Set("table_fields_map", string(out))
-
-		span.Set("keep-columns", keepColumns)
 		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
 	}
 

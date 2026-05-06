@@ -53,6 +53,9 @@ const (
 
 	// query router 配置
 	QueryRouterForceVmClusterNameConfigPath = "query_router.force_vm_cluster_name"
+
+	// TsdbStorageMissReloadCooldownConfigPath GetStorage miss 后触发 Consul 刷新的最短间隔（节流）。
+	TsdbStorageMissReloadCooldownConfigPath = "tsdb.storage_miss_reload_cooldown"
 )
 
 var (

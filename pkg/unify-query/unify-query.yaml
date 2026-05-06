@@ -40,6 +40,9 @@ influxdb:
 es:
   max_concurrency: 200
   alias_refresh_period: 1m
+tsdb:
+  # GetStorage 未命中时，触发 Consul 刷新内存的最短间隔（节流）
+  storage_miss_reload_cooldown: 10m
 http:
   multiTenantMode: false
   address: 127.0.0.1

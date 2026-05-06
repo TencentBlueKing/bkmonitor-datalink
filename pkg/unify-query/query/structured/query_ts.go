@@ -869,8 +869,6 @@ func (q *Query) BuildMetadataQuery(
 	if measurement != "" {
 		measurements = []string{measurement}
 	}
-	jsonString, _ := json.Marshal(tsDB)
-	span.Set("tsdb-json", jsonString)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -1032,7 +1030,7 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
-	jsonString, _ = json.Marshal(query)
+	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
 	return query

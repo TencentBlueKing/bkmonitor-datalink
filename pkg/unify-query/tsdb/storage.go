@@ -122,16 +122,33 @@ func Print() string {
 	return str
 }
 
+// getStorageLookupLocked 在 RLock 内解析 storageID，返回实例与诊断字段；函数返回时读锁已释放。
+func getStorageLookupLocked(storageID string) (storage *Storage, miss bool, keys []string, hash string, logFirstHit bool) {
+	storageLock.RLock()
+	defer storageLock.RUnlock()
+
+	var ok bool
+	storage, ok = storageMap[storageID]
+	if !ok {
+		keys = storageMapKeysLocked()
+		hash = storageMapHash
+		getStorageKeysLogPending.Store(false)
+		miss = true
+		return
+	}
+	if logFirstHit = getStorageKeysLogPending.CompareAndSwap(true, false); logFirstHit {
+		// 多 goroutine 下仅一次打出「重载后首次命中」全量 keys。
+		keys = storageMapKeysLocked()
+		hash = storageMapHash
+	}
+	return
+}
+
 // 仅在 miss 时创建 get-tsdb-storage-miss span 便于链路关联。
 func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
-	storageLock.RLock()
-	storage, ok := storageMap[storageID]
-	if !ok {
-		keys := storageMapKeysLocked()
-		hash := storageMapHash
-		getStorageKeysLogPending.Store(false)
-		storageLock.RUnlock()
+	storage, miss, keys, hash, logFirstHit := getStorageLookupLocked(storageID)
 
+	if miss {
 		var err error
 		_, span := trace.NewSpan(ctx, "get-tsdb-storage-miss")
 		span.Set("storage_id", storageID)
@@ -143,18 +160,10 @@ func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
 		span.End(&err)
 		return nil, err
 	}
-
-	// 仅当 pending 仍为 true 时进入：原子地从 true 翻成 false，保证多 goroutine 下只有一次会打「重载后首次命中」全量 keys。
-	if getStorageKeysLogPending.CompareAndSwap(true, false) {
-		keys := storageMapKeysLocked()
-		hash := storageMapHash
-		storageLock.RUnlock()
+	if logFirstHit {
 		metadata.NewMessage("tsdb_storage", "get storage: id=%s hash=%s map_keys=%v",
 			storageID, hash, keys).Info(ctx)
-		return storage, nil
 	}
-
-	storageLock.RUnlock()
 	return storage, nil
 }
 

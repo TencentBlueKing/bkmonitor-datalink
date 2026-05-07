@@ -53,7 +53,7 @@ func (s *Service) Reload(ctx context.Context) {
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "prometheus service context update success.")
 
-	inner.ReloadStorageFromConsul = s.reloadStorage
+	inner.SetStorageMissReloadFunc(s.reloadStorage)
 
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {

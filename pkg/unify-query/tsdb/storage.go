@@ -27,32 +27,141 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// defaultStorageMissReloadCooldown：配置未加载或未设置时的默认最短刷新间隔。
+// defaultStorageMissReloadCooldown：配置未加载或未设置时的默认最短刷新间隔
 const defaultStorageMissReloadCooldown = 10 * time.Minute
 
+// missReloadSingleflightKey：所有 miss 刷新共享同一 singleflight key，用于合并并发请求
 const storageMissReloadSingleflightKey = "tsdb-storage-miss-reload"
 
-// storageMissReloadCooldownNanos：GetStorage miss 触发 Consul 刷新的最短间隔（纳秒），运行时由 SetStorageMissReloadCooldown 写入。
-var storageMissReloadCooldownNanos atomic.Int64
+// StorageMissReloadStrategy 负责在 GetStorage miss 后按策略触发 reload
+type StorageMissReloadStrategy interface {
+	ReloadAfterMiss(ctx context.Context, storageID string)
+}
 
-func init() {
-	storageMissReloadCooldownNanos.Store(int64(defaultStorageMissReloadCooldown))
+// cooldownStorageMissReloadStrategy 将 miss 后的 reload 合并为单次执行，并限制最小触发间隔。
+type cooldownStorageMissReloadStrategy struct {
+	cooldownNanos atomic.Int64
+	lastAttempt   atomic.Int64
+	group         singleflight.Group
+
+	// reloadFn 运行时可被 service 层替换，因此通过读写锁保护热路径读取。
+	reloadFnLock sync.RWMutex
+	reloadFn     func() error
+}
+
+func newCooldownStorageMissReloadStrategy(cooldown time.Duration, reloadFn func() error) *cooldownStorageMissReloadStrategy {
+	s := &cooldownStorageMissReloadStrategy{}
+	s.SetCooldown(cooldown)
+	s.SetReloadFunc(reloadFn)
+	return s
 }
 
 // SetStorageMissReloadCooldown 由配置加载逻辑调用（如 service/tsdb hook）。d<=0 时回退为 defaultStorageMissReloadCooldown。
 func SetStorageMissReloadCooldown(d time.Duration) {
-	if d <= 0 {
-		d = defaultStorageMissReloadCooldown
-	}
-	storageMissReloadCooldownNanos.Store(int64(d))
+	defaultStorageMissReloadStrategy.SetCooldown(d)
 }
 
-func storageMissReloadCooldown() time.Duration {
-	n := storageMissReloadCooldownNanos.Load()
+// SetStorageMissReloadFunc 由上层服务注入 reload 实现。
+func SetStorageMissReloadFunc(reloadFn func() error) {
+	defaultStorageMissReloadStrategy.SetReloadFunc(reloadFn)
+}
+
+func (s *cooldownStorageMissReloadStrategy) cooldown() time.Duration {
+	n := s.cooldownNanos.Load()
 	if n <= 0 {
 		return defaultStorageMissReloadCooldown
 	}
 	return time.Duration(n)
+}
+
+func (s *cooldownStorageMissReloadStrategy) SetCooldown(d time.Duration) {
+	if d <= 0 {
+		d = defaultStorageMissReloadCooldown
+	}
+	s.cooldownNanos.Store(int64(d))
+}
+
+func (s *cooldownStorageMissReloadStrategy) SetReloadFunc(reloadFn func() error) {
+	s.reloadFnLock.Lock()
+	defer s.reloadFnLock.Unlock()
+	s.reloadFn = reloadFn
+}
+
+func (s *cooldownStorageMissReloadStrategy) getReloadFunc() func() error {
+	s.reloadFnLock.RLock()
+	defer s.reloadFnLock.RUnlock()
+	return s.reloadFn
+}
+
+func (s *cooldownStorageMissReloadStrategy) ReloadAfterMiss(logCtx context.Context, storageID string) {
+	reloadFn := s.getReloadFunc()
+	if reloadFn == nil {
+		log.Infof(logCtx, "tsdb storage miss reload func not set")
+		return
+	}
+
+	_, _, _ = s.group.Do(storageMissReloadSingleflightKey, func() (interface{}, error) {
+		now := time.Now()
+		lastNano := s.lastAttempt.Load()
+		// 先判断冷却窗口；只有真正允许发起 reload 时才更新时间戳。
+		if lastNano != 0 && now.Sub(time.Unix(0, lastNano)) < s.cooldown() {
+			log.Infof(logCtx, "tsdb storage miss reload cooldown: %v", s.cooldown())
+			return nil, nil
+		}
+
+		s.lastAttempt.Store(now.UnixNano())
+		// 只有真正进入 reload 执行窗口时才读取并打印当前 Consul 里的 storage id 列表,cooldown 跳过和并发不会重复打这条日志
+		logReloadStorageMissWithConsulIDs(logCtx, storageID)
+
+		// singleflight 保证并发 miss 只会有一个 goroutine 实际执行 reloadFn。
+		if err := reloadFn(); err != nil {
+			log.Infof(logCtx, "tsdb storage miss reload from consul failed: requested_storage_id=%s reload_err=%v", storageID, err)
+			return nil, err
+		}
+		return nil, nil
+	})
+}
+
+// resetForTest 用于测试重置状态
+func (s *cooldownStorageMissReloadStrategy) resetForTest() {
+	s.lastAttempt.Store(0)
+	s.SetCooldown(defaultStorageMissReloadCooldown)
+	s.SetReloadFunc(nil)
+	s.group.Forget(storageMissReloadSingleflightKey)
+}
+
+func loadConsulStorageIDs() (ids []string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Consul 实例未初始化等异常场景下，失败日志不能再因为取 ids 而 panic。
+			err = fmt.Errorf("load consul storage ids panic: %v", r)
+		}
+	}()
+
+	storages, err := getTsDBStorageInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	ids = make([]string, 0, len(storages))
+	for storageID := range storages {
+		ids = append(ids, storageID)
+	}
+	sortStorageIDKeysAsc(ids)
+	return ids, nil
+}
+
+func logReloadStorageMissWithConsulIDs(ctx context.Context, storageID string) {
+	ids, err := loadConsulStorageIDs()
+	if err != nil {
+		// 记录“本次 reload 触发时无法读取 Consul 列表”，但不影响后续 reload 尝试本身。
+		log.Infof(ctx, "tsdb storage miss reload trigger: requested_storage_id=%s consul_storage_ids_err=%v",
+			storageID, err)
+		return
+	}
+
+	log.Infof(ctx, "tsdb storage miss reload trigger: requested_storage_id=%s consul_storage_ids=%v",
+		storageID, ids)
 }
 
 var (
@@ -60,14 +169,28 @@ var (
 	storageMapHash string
 	storageLock    = new(sync.RWMutex)
 
-	storageMissReloadGroup singleflight.Group
-
-	// lastMissReloadAttemptUnixNano：上一次 miss 路径实际发起 ReloadStorageFromConsul 尝试的时间（Unix 纳秒）。
-	lastMissReloadAttemptUnixNano atomic.Int64
-
-	// ReloadStorageFromConsul 由上层（如 prometheus tsdb Service）注入；miss 时在释放读锁后按需调用
-	ReloadStorageFromConsul func() error
+	// 默认策略用于当前全局 storage map 模式下的 miss reload，可被测试或上层注入替换。
+	defaultStorageMissReloadStrategy = newCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, nil)
+	storageMissReloadStrategyLock    sync.RWMutex
+	storageMissReloadStrategy        StorageMissReloadStrategy = defaultStorageMissReloadStrategy
+	getTsDBStorageInfo                                         = consul.GetTsDBStorageInfo
 )
+
+// SetStorageMissReloadStrategy 设置 GetStorage miss 时使用的 reload 策略；nil 时回退默认实现。
+func SetStorageMissReloadStrategy(strategy StorageMissReloadStrategy) {
+	if strategy == nil {
+		strategy = defaultStorageMissReloadStrategy
+	}
+	storageMissReloadStrategyLock.Lock()
+	defer storageMissReloadStrategyLock.Unlock()
+	storageMissReloadStrategy = strategy
+}
+
+func getStorageMissReloadStrategy() StorageMissReloadStrategy {
+	storageMissReloadStrategyLock.RLock()
+	defer storageMissReloadStrategyLock.RUnlock()
+	return storageMissReloadStrategy
+}
 
 // StorageMapHash 返回最近一次 ReloadTsDBStorage 写入的配置哈希（与 Consul 侧 hash 比对用于短路 reload）
 func StorageMapHash() string {
@@ -161,7 +284,6 @@ func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
 	// 1.尝试从内存 map 中获取 Storage
 	storageLock.RLock()
 	storage, ok := storageMap[storageID]
-	hashBeforeMiss := storageMapHash
 	storageLock.RUnlock()
 	// 2.如果获取成功，则返回 Storage
 	if ok {
@@ -169,33 +291,22 @@ func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
 		return storage, nil
 	}
 	// 3.如果获取失败，从 Consul 中获取 Storage
-	//   3.1 全局 singleflight 合并并发刷新，singleflight.Group，并发时只请求一次；
-	//   3.2 设置storageMissReloadCooldown 冷却间隔 10min ,避免频繁请求consul, 配置文件写入
-	//   3.3 - 当前时间-上次刷新时间 < storageMissReloadCooldown 则跳过本次 Consul 调用；
-	//       - 当前时间-上次刷新时间 >= storageMissReloadCooldown ,发起从consul刷入内存的尝试 使用 reloadStorage 函数刷新
+	// miss 后交给策略对象处理 reload；默认实现会做 singleflight 合并、cooldown 节流并在真正触发 reload 时打印当前 Consul 中实际存在的 storage id 列表。
 	var err error
-	ctx, span := trace.NewSpan(ctx, "get-tsdb-storage")
-	defer span.End(&err)
 
-	ReloadStorageAfterMiss(ctx)
+	getStorageMissReloadStrategy().ReloadAfterMiss(ctx, storageID)
 
 	// 4.如果第二次获取成功，则返回 Storage
 	storageLock.RLock()
 	storage, ok = storageMap[storageID]
-	hashAfterReload := storageMapHash
 	storageLock.RUnlock()
 
 	if ok {
 		metric.TsDBGetStorageInc(ctx, metric.StorageResultHitAfterReload)
 		return storage, nil
 	}
-	// 5.如果第二次获取失败，则返回错误 span中打印storage_id、storage_hash、storage_hash_after_reload
+	// 5.如果第二次获取失败，则返回错误
 	metric.TsDBGetStorageInc(ctx, metric.StorageResultMiss)
-	span.Set("storage_id", storageID)
-	span.Set("storage_hash", hashBeforeMiss)
-	span.Set("storage_hash_after_reload", hashAfterReload)
-	metadata.NewMessage("tsdb_storage", "get storage miss: id=%s hash_before=%s hash_after=%s",
-		storageID, hashBeforeMiss, hashAfterReload).Info(ctx)
 	err = fmt.Errorf("%s: storageID: %s", ErrStorageNotFound, storageID)
 	return nil, err
 }
@@ -218,29 +329,5 @@ func sortStorageIDKeysAsc(keys []string) {
 			return ai < aj
 		}
 		return keys[i] < keys[j]
-	})
-}
-
-// ReloadStorageAfterMiss 在 GetStorage miss 路径调用：合并并发（singleflight）、并按 storageMissReloadCooldown() 节流对 Consul 的刷新尝试
-func ReloadStorageAfterMiss(logCtx context.Context) {
-	if ReloadStorageFromConsul == nil {
-		return
-	}
-	// 全局 singleflight 合并并发刷新，singleflight.Group，并发时只请求一次
-	_, _, _ = storageMissReloadGroup.Do(storageMissReloadSingleflightKey, func() (interface{}, error) {
-		now := time.Now()
-		lastNano := lastMissReloadAttemptUnixNano.Load()
-		if lastNano != 0 {
-			if now.Sub(time.Unix(0, lastNano)) < storageMissReloadCooldown() {
-				return nil, nil
-			}
-		}
-		lastMissReloadAttemptUnixNano.Store(now.UnixNano())
-		//超过storageMissReloadCooldown ,发起从consul刷入内存
-		if rerr := ReloadStorageFromConsul(); rerr != nil {
-			// logCtx 仅用于刷新失败时的日志
-			log.Warnf(logCtx, "tsdb storage miss reload from consul failed: %v", rerr)
-		}
-		return nil, nil
 	})
 }

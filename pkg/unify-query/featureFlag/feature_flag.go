@@ -51,8 +51,6 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 		"tableID":  tableID,
 	})
 
-	span.Set("ff-user-custom", ffUser.GetCustom())
-
 	// 如果匹配不到，则默认查询 vm
 	status := BoolVariation(ctx, ffUser, "must-vm-query", true)
 

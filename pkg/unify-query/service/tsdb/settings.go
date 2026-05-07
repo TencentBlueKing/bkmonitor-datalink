@@ -95,4 +95,7 @@ var (
 	EsMaxSize    int
 
 	QueryRouterForceVmClusterName string
+
+	// StorageMissReloadCooldown GetStorage miss 后触发 Consul 刷新的最短间隔，由 initConfig 从 viper 读取
+	StorageMissReloadCooldown time.Duration
 )

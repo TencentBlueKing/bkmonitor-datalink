@@ -62,10 +62,10 @@ func TestGetStorage_hit_doesNotTriggerReload(t *testing.T) {
 func TestGetStorage_miss_reloadSecondHit(t *testing.T) {
 	resetStorageTestState(t)
 
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, func() error {
 		SetStorage("99", &Storage{Address: "from-reload"})
 		return nil
-	})
+	}))
 	st, err := GetStorage(context.Background(), "99")
 	require.NoError(t, err)
 	require.Equal(t, "from-reload", st.Address)
@@ -76,11 +76,11 @@ func TestGetStorage_missReload_singleflight(t *testing.T) {
 	resetStorageTestState(t)
 	var calls atomic.Int32
 	var wg sync.WaitGroup
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, func() error {
 		calls.Add(1)
 		time.Sleep(20 * time.Millisecond)
 		return nil
-	})
+	}))
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
@@ -95,12 +95,11 @@ func TestGetStorage_missReload_singleflight(t *testing.T) {
 // TestGetStorage_missReload_cooldown：首次 miss 会触发一次 reload；冷却期内第二次 miss 不再调用 ReloadStorageFromConsul。
 func TestGetStorage_missReload_cooldown(t *testing.T) {
 	resetStorageTestState(t)
-	SetStorageMissReloadCooldown(time.Hour)
 	var calls atomic.Int32
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(time.Hour, func() error {
 		calls.Add(1)
 		return nil
-	})
+	}))
 
 	ctx := context.Background()
 	_, err := GetStorage(ctx, "nope")
@@ -115,9 +114,9 @@ func TestGetStorage_missReload_cooldown(t *testing.T) {
 // TestGetStorage_missReload_returnsErrorStillFails：reload 回调返回错误时 GetStorage 仍为 ErrStorageNotFound，且不 panic。
 func TestGetStorage_missReload_returnsErrorStillFails(t *testing.T) {
 	resetStorageTestState(t)
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, func() error {
 		return errors.New("consul down")
-	})
+	}))
 	_, err := GetStorage(context.Background(), "id")
 	require.Error(t, err)
 }
@@ -134,9 +133,9 @@ func TestGetStorage_missReloadFetchesConsulStorageIDs(t *testing.T) {
 			"11": {},
 		}, nil
 	}
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, func() error {
 		return nil
-	})
+	}))
 
 	_, err := GetStorage(context.Background(), "404")
 	require.Error(t, err)
@@ -155,9 +154,9 @@ func TestGetStorage_missReloadFailureStillFetchesConsulStorageIDs(t *testing.T) 
 			"11": {},
 		}, nil
 	}
-	SetStorageMissReloadFunc(func() error {
+	SetStorageMissReloadStrategy(NewCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, func() error {
 		return errors.New("consul down")
-	})
+	}))
 
 	_, err := GetStorage(context.Background(), "404")
 	require.Error(t, err)

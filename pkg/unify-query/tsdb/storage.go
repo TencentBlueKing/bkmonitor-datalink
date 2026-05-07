@@ -56,14 +56,9 @@ func newCooldownStorageMissReloadStrategy(cooldown time.Duration, reloadFn func(
 	return s
 }
 
-// SetStorageMissReloadCooldown 由配置加载逻辑调用（如 service/tsdb hook）。d<=0 时回退为 defaultStorageMissReloadCooldown。
-func SetStorageMissReloadCooldown(d time.Duration) {
-	defaultStorageMissReloadStrategy.SetCooldown(d)
-}
-
-// SetStorageMissReloadFunc 由上层服务注入 reload 实现。
-func SetStorageMissReloadFunc(reloadFn func() error) {
-	defaultStorageMissReloadStrategy.SetReloadFunc(reloadFn)
+// NewCooldownStorageMissReloadStrategy 构造默认的 miss reload 策略：cooldown 节流 + singleflight 合并，由 service 层在启动/Reload 时通过 SetStorageMissReloadStrategy 注入。
+func NewCooldownStorageMissReloadStrategy(cooldown time.Duration, reloadFn func() error) StorageMissReloadStrategy {
+	return newCooldownStorageMissReloadStrategy(cooldown, reloadFn)
 }
 
 func (s *cooldownStorageMissReloadStrategy) cooldown() time.Duration {
@@ -169,7 +164,7 @@ var (
 	storageMapHash string
 	storageLock    = new(sync.RWMutex)
 
-	// 默认策略用于当前全局 storage map 模式下的 miss reload，可被测试或上层注入替换。
+	// 默认策略：未注入时作为 noop 占位（reloadFn 为 nil），等 service 层在 Reload 中通过 ，SetStorageMissReloadStrategy 注入真实的 cooldown + reloadFn 实现。
 	defaultStorageMissReloadStrategy = newCooldownStorageMissReloadStrategy(defaultStorageMissReloadCooldown, nil)
 	storageMissReloadStrategyLock    sync.RWMutex
 	storageMissReloadStrategy        StorageMissReloadStrategy = defaultStorageMissReloadStrategy

@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
-	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 // setDefaultConfig 配置初始化参数
@@ -97,7 +96,8 @@ func initConfig() {
 	EsMaxRouting = viper.GetInt(EsMaxRoutingConfigPath)
 	EsMaxSize = viper.GetInt(EsMaxSizeConfigPath)
 
-	inner.SetStorageMissReloadCooldown(viper.GetDuration(TsdbStorageMissReloadCooldownConfigPath))
+	// storage缺失重载冷却时间
+	StorageMissReloadCooldown = viper.GetDuration(TsdbStorageMissReloadCooldownConfigPath)
 }
 
 // init 初始化，通过 eventBus 加载配置读取前和读取后操作

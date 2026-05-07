@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -164,6 +165,7 @@ func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
 	storageLock.RUnlock()
 	// 2.如果获取成功，则返回 Storage
 	if ok {
+		metric.TsDBGetStorageInc(ctx, metric.StorageResultHit)
 		return storage, nil
 	}
 	// 3.如果获取失败，从 Consul 中获取 Storage
@@ -184,9 +186,11 @@ func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
 	storageLock.RUnlock()
 
 	if ok {
+		metric.TsDBGetStorageInc(ctx, metric.StorageResultHitAfterReload)
 		return storage, nil
 	}
 	// 5.如果第二次获取失败，则返回错误 span中打印storage_id、storage_hash、storage_hash_after_reload
+	metric.TsDBGetStorageInc(ctx, metric.StorageResultMiss)
 	span.Set("storage_id", storageID)
 	span.Set("storage_hash", hashBeforeMiss)
 	span.Set("storage_hash_after_reload", hashAfterReload)

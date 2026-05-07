@@ -33,6 +33,11 @@ const (
 	StatusReceived = "received"
 	StatusSuccess  = "success"
 	StatusFailed   = "failed"
+
+	// StorageResult* 用于 unify_query_tsdb_get_storage_total 的 result 标签，区分 GetStorage 三类返回路径。
+	StorageResultHit            = "hit"
+	StorageResultHitAfterReload = "hit_after_reload"
+	StorageResultMiss           = "miss"
 )
 
 const (
@@ -124,6 +129,15 @@ var (
 		},
 		[]string{"space_uid", "table_id", "is_match", "is_ff"},
 	)
+
+	tsDBGetStorageTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_get_storage_total",
+			Help:      "tsdb GetStorage call count by result",
+		},
+		[]string{"result"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -169,6 +183,12 @@ func JWTRequestInc(ctx context.Context, api, jwtAppCode, jwtAppUserName, spaceUI
 
 func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {
 	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch, isFF)
+	counterInc(ctx, metric)
+}
+
+// TsDBGetStorageInc 在 tsdb.GetStorage 的每条返回路径上递增一次，result 取 StorageResultHit / StorageResultHitAfterReload / StorageResultMiss。
+func TsDBGetStorageInc(ctx context.Context, result string) {
+	metric, _ := tsDBGetStorageTotal.GetMetricWithLabelValues(result)
 	counterInc(ctx, metric)
 }
 

@@ -100,7 +100,7 @@ func (s *cooldownStorageMissReloadStrategy) ReloadAfterMiss(logCtx context.Conte
 		lastNano := s.lastAttempt.Load()
 		// 先判断冷却窗口；只有真正允许发起 reload 时才更新时间戳。
 		if lastNano != 0 && now.Sub(time.Unix(0, lastNano)) < s.cooldown() {
-			log.Errorf(logCtx, "tsdb storage miss reload cooldown: %v", s.cooldown())
+			log.Infof(logCtx, "tsdb storage miss reload cooldown: %v", s.cooldown())
 			return nil, nil
 		}
 

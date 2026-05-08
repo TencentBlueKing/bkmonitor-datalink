@@ -36,6 +36,11 @@ const (
 )
 
 const (
+	ResultHit  = "hit"
+	ResultMiss = "miss"
+)
+
+const (
 	_ = 1 << (10 * iota)
 	KB
 	MB
@@ -124,6 +129,24 @@ var (
 		},
 		[]string{"space_uid", "table_id", "is_match", "is_ff"},
 	)
+
+	tsDBGetStorageTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_get_storage_total",
+			Help:      "unify-query tsdb get storage result",
+		},
+		[]string{"result"},
+	)
+
+	tsDBGetStorageMissIDTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_get_storage_miss_id_total",
+			Help:      "unify-query tsdb get storage missing storage id",
+		},
+		[]string{"storage_id"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -169,6 +192,20 @@ func JWTRequestInc(ctx context.Context, api, jwtAppCode, jwtAppUserName, spaceUI
 
 func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {
 	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch, isFF)
+	counterInc(ctx, metric)
+}
+
+// TSDBGetStorageTotalInc 统计 GetStorage 调用结果总量。
+// result 目前使用 hit/miss，可用于计算 miss 比例并观察整体命中率变化。
+func TSDBGetStorageTotalInc(ctx context.Context, result string) {
+	metric, _ := tsDBGetStorageTotal.GetMetricWithLabelValues(result)
+	counterInc(ctx, metric)
+}
+
+// TSDBGetStorageMissIDTotalInc 记录缺失 storageID 的次数，便于直接定位异常 ID
+// eg. unify_query_tsdb_get_storage_miss_id_total{storage_id="2"} = 3
+func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
+	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(storageID)
 	counterInc(ctx, metric)
 }
 

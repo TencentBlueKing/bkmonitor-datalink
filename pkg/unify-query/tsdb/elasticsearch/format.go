@@ -99,18 +99,28 @@ type TimeSeriesResult struct {
 	Error         error
 }
 
-func mapData(prefix string, data map[string]any, res map[string]any) {
+func mapData(prefix string, data map[string]any, res map[string]any) bool {
+	hasLeaf := false
 	for k, v := range data {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
+
 		switch nv := v.(type) {
 		case map[string]any:
-			mapData(k, nv, res)
+			if mapData(k, nv, res) {
+				hasLeaf = true
+				continue
+			}
+			//当嵌套对象没有任何叶子字段产出时，回退保留该对象，避免路径在最终结果中整段丢失
+			res[k] = precision.ProcessValue(nv)
+			hasLeaf = true
 		default:
 			res[k] = precision.ProcessValue(nv)
+			hasLeaf = true
 		}
 	}
+	return hasLeaf
 }
 
 type ValueAgg struct {

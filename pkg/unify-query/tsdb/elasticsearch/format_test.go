@@ -1672,9 +1672,9 @@ func TestFormatFactory_Orders(t *testing.T) {
 	}
 
 	for name, c := range map[string]struct {
-		timeField    metadata.TimeField
-		orders       metadata.Orders
-		expected     metadata.Orders
+		timeField metadata.TimeField
+		orders    metadata.Orders
+		expected  metadata.Orders
 	}{
 		"time field uses timeField.Type as unmapped_type": {
 			timeField: metadata.TimeField{
@@ -1745,6 +1745,97 @@ func TestFormatFactory_Orders(t *testing.T) {
 
 			got := fact.Orders()
 			assert.Equal(t, c.expected, got)
+		})
+	}
+}
+
+func TestFormatFactory_SetData(t *testing.T) {
+	ctx := context.Background()
+
+	for name, c := range map[string]struct {
+		source         map[string]any
+		expectedValues map[string]any
+		notContains    []string
+	}{
+		// 还原场景：直查 ES 的 _source 含嵌套 body，叶子为 {}；
+		// SetData 经 mapData 拍平后应保留带点路径，否则前端经 uq 看不到 body。
+		"preserves body with empty object leaves": {
+			source: map[string]any{
+				"source": "skill_rating",
+				"meta": map[string]any{
+					"Reason":    "MatchmakingDataChanged",
+					"game_mode": "mode10v10",
+				},
+				"body": map[string]any{
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+						"98456436-466c600000d": map[string]any{},
+					},
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+				},
+			},
+			expectedValues: map[string]any{
+				"meta.Reason":    "MatchmakingDataChanged",
+				"meta.game_mode": "mode10v10",
+				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
+				"body.old_matchmaking_data.98456436-466c600000d": map[string]any{},
+				"body.new_matchmaking_data.76346346-466c600000e": map[string]any{},
+			},
+		},
+		"keeps flattened leaf when scalar exists": {
+			source: map[string]any{
+				"body": map[string]any{
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{
+							"score": 99,
+						},
+					},
+				},
+			},
+			expectedValues: map[string]any{
+				"body.new_matchmaking_data.76346346-466c600000e.score": 99,
+			},
+			notContains: []string{
+				"body.new_matchmaking_data.76346346-466c600000e",
+			},
+		},
+		"mixed nested fallback and flatten": {
+			source: map[string]any{
+				"body": map[string]any{
+					"region": "ap-sh",
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{
+							"score": 100,
+						},
+					},
+				},
+			},
+			expectedValues: map[string]any{
+				"body.region": "ap-sh",
+				"body.old_matchmaking_data.76346346-466c600000e":       map[string]any{},
+				"body.new_matchmaking_data.76346346-466c600000e.score": 100,
+			},
+			notContains: []string{
+				"body.new_matchmaking_data.76346346-466c600000e",
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fact := NewFormatFactory(ctx)
+			fact.SetData(c.source)
+
+			for k, expected := range c.expectedValues {
+				assert.Equal(t, expected, fact.data[k])
+			}
+
+			for _, key := range c.notContains {
+				assert.NotContains(t, fact.data, key)
+			}
 		})
 	}
 }

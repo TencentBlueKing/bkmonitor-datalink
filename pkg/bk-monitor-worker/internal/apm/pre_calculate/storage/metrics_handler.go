@@ -11,15 +11,20 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -77,8 +82,10 @@ type MetricDimensionsHandler struct {
 	relationMetricDimensions *relationMetricsCollector
 	flowMetricCollector      *flowMetricsCollector
 
-	promClient *remote.PrometheusWriter
-	logger     monitorLogger.Logger
+	promClient       *remote.PrometheusWriter
+	relationReporter remote.Reporter
+	relationSpaceUID string
+	logger           monitorLogger.Logger
 }
 
 func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
@@ -95,27 +102,39 @@ func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
 	}
 }
 
-func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
+func (m *MetricDimensionsHandler) cleanUpAndReport(kind int, c MetricCollector) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	writeReq := c.Collect()
 	metrics.RecordApmPreCalcOperateStorageCount(m.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 	metrics.RecordApmPreCalcSaveStorageTotal(m.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
+	if len(writeReq.Timeseries) == 0 {
+		return
+	}
+
+	if kind == PromRelationMetric && m.relationReporter != nil && m.relationSpaceUID != "" {
+		if err := m.relationReporter.Do(context.Background(), m.relationSpaceUID, writeReq.Timeseries...); err != nil {
+			metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
+			m.logger.Errorf("[TraceMetricsReport] DataId: %s report relation metrics to centralized space(%s) failed, error: %s", m.dataId, m.relationSpaceUID, err)
+		}
+		return
+	}
+
 	if err := m.promClient.WriteBatch(context.Background(), "", writeReq); err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
 		m.logger.Errorf("[TraceMetricsReport] DataId: %s report to prometheus failed, error: %s", m.dataId, err)
 	}
 }
 
-func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
+func (m *MetricDimensionsHandler) LoopCollect(kind int, c MetricCollector) {
 	ticker := time.NewTicker(c.Ttl())
 	m.logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
 
 	for {
 		select {
 		case <-ticker.C:
-			m.cleanUpAndReport(c)
+			m.cleanUpAndReport(kind, c)
 		case <-m.ctx.Done():
 			ticker.Stop()
 			m.logger.Infof("[MetricReport] stop report metrics")
@@ -125,32 +144,57 @@ func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
 }
 
 func (m *MetricDimensionsHandler) Close() {
-	m.cleanUpAndReport(m.relationMetricDimensions)
-	m.cleanUpAndReport(m.flowMetricCollector)
+	m.cleanUpAndReport(PromRelationMetric, m.relationMetricDimensions)
+	m.cleanUpAndReport(PromFlowMetric, m.flowMetricCollector)
 }
 
 func NewMetricDimensionHandler(ctx context.Context, dataId string,
-	config remote.PrometheusWriterOptions,
+	writerConfig remote.PrometheusWriterOptions,
 	metricsConfig MetricConfigOptions,
 ) *MetricDimensionsHandler {
 	token := core.GetMetadataCenter().GetToken(dataId)
+	bkBizId := core.GetMetadataCenter().GetBaseInfo(dataId).BkBizId
+	relationSpaceUID := bkBizIdToSpaceUID(bkBizId)
+	relationReporter, _ := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, writerConfig.Url)
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
+			"prometheus host: %s \nconfigHeaders: %v \ndataId(%s) -> token: %s \nrelationSpaceUID: %s \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		config.Url, config.Headers, dataId, token,
+		writerConfig.Url, writerConfig.Headers, dataId, token, relationSpaceUID,
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
-		promClient:               remote.NewPrometheusWriterClient(token, config.Url, config.Headers),
+		promClient:               remote.NewPrometheusWriterClient(token, writerConfig.Url, writerConfig.Headers),
+		relationReporter:         relationReporter,
+		relationSpaceUID:         relationSpaceUID,
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,
 		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}
-	go h.LoopCollect(h.relationMetricDimensions)
-	go h.LoopCollect(h.flowMetricCollector)
+	go h.LoopCollect(PromRelationMetric, h.relationMetricDimensions)
+	go h.LoopCollect(PromFlowMetric, h.flowMetricCollector)
 	return h
+}
+
+// 根据业务ID获取空间UID
+// 正数业务ID为bkcc类型，直接拼接；非正数业务ID需要查询Space表获取真实的空间类型和空间ID
+func bkBizIdToSpaceUID(bkBizId string) string {
+	bizId, err := strconv.Atoi(bkBizId)
+	if err != nil {
+		return ""
+	}
+
+	if bizId > 0 {
+		return fmt.Sprintf("bkcc__%d", bizId)
+	}
+
+	var s space.Space
+	if err := mysql.GetDBSession().DB.Where("id = ?", -bizId).First(&s).Error; err != nil {
+		monitorLogger.Errorf("[MetricDimension] failed to get space by id(%d), error: %s", -bizId, err)
+		return ""
+	}
+	return s.SpaceUid()
 }

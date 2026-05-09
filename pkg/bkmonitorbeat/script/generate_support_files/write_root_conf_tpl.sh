@@ -55,7 +55,7 @@ resource_limit:
 {%- if extra_vars is defined and extra_vars.disable_resource_limit is defined and extra_vars.disable_resource_limit == "true" %}
   enabled: false
 {%- elif cmdb_instance.host.bk_cpu and cmdb_instance.host.bk_mem %}
-{%- set resource_limit = resource_limit | default({}) -%}
+{%- set resource_limit = resource_limit | default({}) %}
   enabled: true
   cpu: {{
     [

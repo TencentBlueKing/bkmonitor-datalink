@@ -136,7 +136,7 @@ var (
 			Name:      "tsdb_get_storage_total",
 			Help:      "unify-query tsdb get storage result",
 		},
-		[]string{"result"},
+		[]string{"result", "version", "commit_id"},
 	)
 
 	tsDBGetStorageMissIDTotal = promauto.NewCounterVec(
@@ -145,7 +145,7 @@ var (
 			Name:      "tsdb_get_storage_miss_id_total",
 			Help:      "unify-query tsdb get storage missing storage id",
 		},
-		[]string{"storage_id"},
+		[]string{"storage_id", "version", "commit_id"},
 	)
 )
 
@@ -197,15 +197,18 @@ func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF stri
 
 // TSDBGetStorageTotalInc 统计 GetStorage 调用结果总量。
 // result 目前使用 hit/miss，可用于计算 miss 比例并观察整体命中率变化。
+// version、commit_id 与 api_request_total 一致，由构建 -ldflags 注入 config，便于按发版排查
 func TSDBGetStorageTotalInc(ctx context.Context, result string) {
-	metric, _ := tsDBGetStorageTotal.GetMetricWithLabelValues(result)
+	params := append([]string{}, result, config.Version, config.CommitHash)
+	metric, _ := tsDBGetStorageTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 
 // TSDBGetStorageMissIDTotalInc 记录缺失 storageID 的次数，便于直接定位异常 ID
-// eg. unify_query_tsdb_get_storage_miss_id_total{storage_id="2"} = 3
+// eg. unify_query_tsdb_get_storage_miss_id_total{storage_id="2",version="...",commit_id="..."} = 3
 func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
-	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(storageID)
+	params := append([]string{}, storageID, config.Version, config.CommitHash)
+	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 

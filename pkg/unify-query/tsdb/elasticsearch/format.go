@@ -99,28 +99,24 @@ type TimeSeriesResult struct {
 	Error         error
 }
 
-func mapData(prefix string, data map[string]any, res map[string]any) bool {
-	hasLeaf := false
+// mapData 将嵌套的 map 按 ESStep 拍平成点路径键写入 res。
+// 当嵌套值为空对象（map[string]any{}）时，直接以点路径键保留原对象，避免该分支因为没有任何叶子字段而在最终结果中整段丢失。
+func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
-
 		switch nv := v.(type) {
 		case map[string]any:
-			if mapData(k, nv, res) {
-				hasLeaf = true
+			if len(nv) == 0 {
+				res[k] = precision.ProcessValue(nv)
 				continue
 			}
-			//当嵌套对象没有任何叶子字段产出时，回退保留该对象，避免路径在最终结果中整段丢失
-			res[k] = precision.ProcessValue(nv)
-			hasLeaf = true
+			mapData(k, nv, res)
 		default:
 			res[k] = precision.ProcessValue(nv)
-			hasLeaf = true
 		}
 	}
-	return hasLeaf
 }
 
 type ValueAgg struct {

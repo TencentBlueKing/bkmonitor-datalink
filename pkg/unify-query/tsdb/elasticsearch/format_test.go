@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -1777,6 +1778,7 @@ func TestFormatFactory_SetData(t *testing.T) {
 				},
 			},
 			expectedValues: map[string]any{
+				"source":         "skill_rating",
 				"meta.Reason":    "MatchmakingDataChanged",
 				"meta.game_mode": "mode10v10",
 				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
@@ -1822,6 +1824,29 @@ func TestFormatFactory_SetData(t *testing.T) {
 			},
 			notContains: []string{
 				"body.new_matchmaking_data.76346346-466c600000e",
+			},
+		},
+		// 精度回归：空对象分支与 json.Number 同时存在时，
+		// 大整数仍应经 precision.ProcessValue 处理为 uint，避免精度丢失。
+		"preserves big number alongside empty object": {
+			source: map[string]any{
+				"body": map[string]any{
+					"stats": map[string]any{
+						// 9223372036854775808 = math.MaxInt64 + 1，超出 int64 范围
+						"trace_id": stdjson.Number("9223372036854775808"),
+					},
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+				},
+			},
+			expectedValues: map[string]any{
+				"body.stats.trace_id":                            uint(9223372036854775808),
+				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
+			},
+			notContains: []string{
+				"body.stats",
+				"body.old_matchmaking_data",
 			},
 		},
 	} {

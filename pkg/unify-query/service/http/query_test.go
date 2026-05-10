@@ -4805,6 +4805,107 @@ func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
 	assert.Contains(t, st.Message, "query error:")
 }
 
+// TestQueryRaw_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该结果表，raw 请求不失败、无数据。
+func TestQueryRaw_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+				Limit:         10,
+			},
+		},
+		Start: "1723594000",
+		End:   "1723595000",
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "millisecond",
+					},
+				},
+			},
+		},
+	}
+
+	total, list, _, err := queryRawWithInstance(ctx, qts)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, list)
+}
+
+// TestQueryRawWithScroll_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该表：单次 scroll 不报错且会话可 Done。
+func TestQueryRawWithScroll_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_scroll_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+			},
+		},
+		Start:    "1757051309",
+		End:      "1757054909",
+		Step:     "1m",
+		Limit:    10,
+		Scroll:   "1m",
+		SliceMax: 1,
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "second",
+					},
+				},
+			},
+		},
+	}
+
+	queryByte, _ := json.Marshal(qts)
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, string(queryByte), ScrollWindowTimeout, ScrollSessionLockTimeout, qts.SliceMax, qts.Limit)
+	if err != nil {
+		t.Skipf("Redis: %v", err)
+		return
+	}
+	defer func() { _ = session.Clear(ctx) }()
+
+	_, list, _, done, err := queryRawWithScroll(ctx, qts, session)
+	assert.NoError(t, err)
+	assert.Empty(t, list)
+	assert.True(t, done, "skipped bad table should mark slice completed so session Done")
+}
+
 // TestQueryTsPartialSuccessMultiRoute query/ts 多路查询时，至少一路成功应返回成功并标记 QueryTsPartial。
 func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
 	mock.Init()

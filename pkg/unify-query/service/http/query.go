@@ -41,6 +41,22 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
+// elasticsearchMissingIndexPrefix 表示 ES 查询缺少可用的索引前缀（db / dbs），此时下游 checkQuery 与 getAlias 必然失败；跳过可避免 raw / scroll 整批被单个元数据异常的表导致报错
+func elasticsearchMissingIndexPrefix(q *metadata.Query) bool {
+	if q == nil || q.StorageType != metadata.ElasticsearchStorageType {
+		return false
+	}
+	if strings.TrimSpace(q.DB) != "" {
+		return false
+	}
+	for _, db := range q.DBs {
+		if strings.TrimSpace(db) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
@@ -335,6 +351,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					sendWg.Done()
 				}()
 
+				if elasticsearchMissingIndexPrefix(qry) {
+					metadata.NewMessage(
+						metadata.MsgQueryRaw,
+						"%s ES 元数据 db(索引前缀)为空且无有效 dbs，已跳过该结果表",
+						qry.TableID,
+					).Warn(ctx)
+					return
+				}
+
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					errCh <- metadata.NewMessage(
@@ -501,6 +526,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}()
 
 				if slice.Done() {
+					return
+				}
+
+				if elasticsearchMissingIndexPrefix(newQry) {
+					slice.Status = redisUtil.StatusCompleted
+					metadata.NewMessage(
+						metadata.MsgQueryRawScroll,
+						"%s ES 元数据 db(索引前缀)为空且无有效 dbs，已跳过该结果表",
+						newQry.TableID,
+					).Warn(ctx)
 					return
 				}
 

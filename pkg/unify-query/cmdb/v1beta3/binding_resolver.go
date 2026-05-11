@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -31,6 +32,11 @@ import (
 // bk_data.address），因此不能复用 GetBkDataAPI().QueryUrl()。鉴权 header 仍然
 // 通过 GetBkDataAPI().Headers() 注入（X-Bkapi-Authorization + X-Bkbase-Authorization）。
 const BindingResourceAPIURLConfigPath = "cmdb.v1beta3.bkbase.resource_api_url"
+
+const (
+	graphRelationBindingLabelKey   = "bkm_data_link_strategy"
+	graphRelationBindingLabelValue = "graph_relation_time_series"
+)
 
 // BindingInfo 是 SurrealDBBinding 对象里 unify-query 查询需要的字段，
 // 对应 bkbase 回填的 metadata.annotations.{database, namespace} + storage name。
@@ -195,7 +201,7 @@ func (r *BindingResolver) fetchFromBKBase(ctx context.Context, bizID string) (*B
 	url := fmt.Sprintf("%s/surrealdbbindings/?label_selector=bk_biz_id=%s", strings.TrimRight(baseURL, "/"), bizID)
 
 	var resp bindingListResponse
-	headers := bkapi.GetBkDataAPI().Headers(map[string]string{"Content-Type": "application/json"})
+	headers := metadata.Headers(ctx, bkapi.GetBkDataAPI().Headers(map[string]string{"Content-Type": "application/json"}))
 	_, err := r.curl.Request(ctx, curl.Get, curl.Options{
 		UrlPath: url,
 		Headers: headers,
@@ -208,7 +214,7 @@ func (r *BindingResolver) fetchFromBKBase(ctx context.Context, bizID string) (*B
 		return nil, fmt.Errorf("bkbase list SurrealDBBinding response error: code=%s, message=%s", resp.Code, resp.Message)
 	}
 
-	// 过滤 phase=Ok 的 candidate，直接取第一条
+	candidates := make([]*BindingInfo, 0, len(resp.Data))
 	for i := range resp.Data {
 		item := &resp.Data[i]
 		if item.Status.Phase != "Ok" {
@@ -220,14 +226,29 @@ func (r *BindingResolver) fetchFromBKBase(ctx context.Context, bizID string) (*B
 			// phase=Ok 但 annotations 缺失，跳过
 			continue
 		}
-		return &BindingInfo{
+		info := &BindingInfo{
 			Name:        item.Metadata.Name,
 			BkBizID:     item.Metadata.Labels["bk_biz_id"],
 			Database:    db,
 			Namespace:   ns,
 			ClusterName: item.Spec.Storage.Name,
 			Phase:       item.Status.Phase,
-		}, nil
+		}
+		if item.Metadata.Labels[graphRelationBindingLabelKey] == graphRelationBindingLabelValue {
+			return info, nil
+		}
+		candidates = append(candidates, info)
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		return nil, fmt.Errorf(
+			"multiple usable SurrealDBBinding found for bk_biz_id=%s, missing %s=%s label",
+			bizID,
+			graphRelationBindingLabelKey,
+			graphRelationBindingLabelValue,
+		)
 	}
 	return nil, nil
 }

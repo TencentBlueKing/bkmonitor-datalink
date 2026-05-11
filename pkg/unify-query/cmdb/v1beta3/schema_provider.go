@@ -10,6 +10,9 @@
 package v1beta3
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -28,6 +31,41 @@ type v1beta3SchemaProviderAdapter struct {
 	provider relation.SchemaProvider
 }
 
+var relationSchemaOrder = map[RelationType]int{
+	RelationNodeWithSystem:                   0,
+	RelationNodeWithPod:                      1,
+	RelationJobWithPod:                       2,
+	RelationPodWithReplicaSet:                3,
+	RelationPodWithStatefulSet:               4,
+	RelationDaemonSetWithPod:                 5,
+	RelationDeploymentWithReplicaSet:         6,
+	RelationPodWithService:                   7,
+	RelationIngressWithService:               8,
+	RelationK8sAddressWithService:            9,
+	RelationDomainWithService:                10,
+	RelationAPMServiceInstanceWithPod:        11,
+	RelationAPMServiceInstanceWithSystem:     12,
+	RelationAPMServiceWithAPMServiceInstance: 13,
+	RelationContainerWithPod:                 14,
+	RelationDataSourceWithPod:                15,
+	RelationDataSourceWithNode:               16,
+	RelationBKLogConfigWithDataSource:        17,
+	RelationBizWithSet:                       18,
+	RelationModuleWithSet:                    19,
+	RelationHostWithModule:                   20,
+	RelationHostWithSystem:                   21,
+	RelationAppVersionWithContainer:          22,
+	RelationAppVersionWithSystem:             23,
+	RelationContainerWithEnvironment:         24,
+	RelationEnvironmentWithSystem:            25,
+	RelationAppVersionWithGitCommit:          26,
+	RelationPodToPod:                         27,
+	RelationPodToSystem:                      28,
+	RelationSystemToPod:                      29,
+	RelationSystemToSystem:                   30,
+	RelationServiceToService:                 31,
+}
+
 func (a *v1beta3SchemaProviderAdapter) GetResourcePrimaryKeys(resourceType ResourceType) []string {
 	return a.provider.GetResourcePrimaryKeys(relation.ResourceType(resourceType))
 }
@@ -37,13 +75,24 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas() []RelationSchema {
 	result := make([]RelationSchema, len(schemas))
 	for i, schema := range schemas {
 		result[i] = RelationSchema{
-			RelationType: RelationType(schema.RelationName),
+			RelationType: normalizeRelationName(schema.RelationName),
 			Category:     RelationCategory(schema.Category),
 			FromType:     ResourceType(schema.FromType),
 			ToType:       ResourceType(schema.ToType),
 			IsBelongsTo:  schema.IsBelongsTo,
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		leftOrder, leftOK := relationSchemaOrder[result[i].RelationType]
+		rightOrder, rightOK := relationSchemaOrder[result[j].RelationType]
+		if leftOK && rightOK {
+			return leftOrder < rightOrder
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
+		return result[i].RelationType < result[j].RelationType
+	})
 	return result
 }
 
@@ -55,12 +104,20 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		return nil, err
 	}
 	return &RelationSchema{
-		RelationType: RelationType(schema.RelationName),
+		RelationType: normalizeRelationName(schema.RelationName),
 		Category:     RelationCategory(schema.Category),
 		FromType:     ResourceType(schema.FromType),
 		ToType:       ResourceType(schema.ToType),
 		IsBelongsTo:  schema.IsBelongsTo,
 	}, nil
+}
+
+func normalizeRelationName(name relation.RelationName) RelationType {
+	relationName := string(name)
+	if _, bareName, ok := strings.Cut(relationName, ":"); ok {
+		relationName = bareName
+	}
+	return RelationType(relationName)
 }
 
 // NewSchemaProviderFromRelation 创建 v1beta3 SchemaProvider from relation.SchemaProvider

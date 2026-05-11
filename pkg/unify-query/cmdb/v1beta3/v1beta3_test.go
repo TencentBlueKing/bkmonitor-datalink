@@ -524,6 +524,46 @@ func TestQueryResourceMatcherRange(t *testing.T) {
 	}
 }
 
+func TestQueryResourceMatcherRangeRejectsNonPositiveStep(t *testing.T) {
+	ctx := context.Background()
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcherRange(
+		ctx,
+		"10m",
+		"test-space",
+		"0s",
+		"0",
+		"300",
+		"pod",
+		"node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "step must be greater than 0")
+}
+
+func TestQueryLivenessGraphRejectsUnknownResourceType(t *testing.T) {
+	ctx := context.Background()
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+
+	_, _, _, err = model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "node; DELETE node",
+		SourceInfo: map[string]string{
+			"node": "node-1",
+		},
+		TargetType: ResourceTypePod,
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unknown resource type")
+}
+
 func matchersEqual(a, b cmdb.Matcher) bool {
 	if len(a) != len(b) {
 		return false

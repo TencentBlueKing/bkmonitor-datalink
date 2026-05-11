@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -162,7 +163,7 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	var resp BKBaseResponse
 	_, err = c.curl.Request(ctx, curl.Post, curl.Options{
 		UrlPath: url,
-		Headers: dataAPI.Headers(map[string]string{"Content-Type": "application/json"}),
+		Headers: metadata.Headers(ctx, dataAPI.Headers(map[string]string{"Content-Type": "application/json"})),
 		Body:    requestBody,
 		Timeout: c.timeout,
 	}, &resp)

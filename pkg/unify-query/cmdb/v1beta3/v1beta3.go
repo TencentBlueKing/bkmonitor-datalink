@@ -11,6 +11,7 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -327,6 +328,10 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
 	defer span.End(&err)
 
+	if err := validateQueryResources(req); err != nil {
+		return nil, nil, nil, err
+	}
+
 	span.Set("source-type", req.SourceType)
 	span.Set("target-type", req.TargetType)
 	span.Set("source-info", req.SourceInfo)
@@ -439,7 +444,37 @@ func parseStep(step string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return d.Milliseconds(), nil
+	stepMs := d.Milliseconds()
+	if stepMs <= 0 {
+		return 0, fmt.Errorf("step must be greater than 0, got %q", step)
+	}
+	return stepMs, nil
+}
+
+func validateQueryResources(req *QueryRequest) error {
+	provider := NewStaticSchemaProvider()
+	known := make(map[ResourceType]struct{})
+	for _, schema := range provider.ListRelationSchemas() {
+		known[schema.FromType] = struct{}{}
+		known[schema.ToType] = struct{}{}
+	}
+	for _, resourceType := range []ResourceType{req.SourceType, req.TargetType} {
+		if resourceType == "" {
+			return fmt.Errorf("resource type cannot be empty")
+		}
+		if _, ok := known[resourceType]; !ok {
+			return fmt.Errorf("unknown resource type %q", resourceType)
+		}
+	}
+	for _, resourceType := range req.PathResource {
+		if resourceType == "" {
+			continue
+		}
+		if _, ok := known[resourceType]; !ok {
+			return fmt.Errorf("unknown path resource type %q", resourceType)
+		}
+	}
+	return nil
 }
 
 func matcherToMap(m cmdb.Matcher) map[string]string {
@@ -487,6 +522,9 @@ type targetNodeInfo struct {
 
 func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceType, start, end, stepMs int64) []cmdb.MatchersWithTimestamp {
 	if len(graphs) == 0 {
+		return nil
+	}
+	if stepMs <= 0 {
 		return nil
 	}
 

@@ -268,15 +268,16 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 			}
 
 			timestamp := cast.ToString(qry.Timestamp)
-			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, err = model.QueryDynamicPaths(
+			var queryErr error
+			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, queryErr = model.QueryDynamicPaths(
 				ctx,
 				qry.LookBackDelta, user.SpaceUID, timestamp,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
-			if err != nil {
-				d.Message = err.Error()
+			if queryErr != nil {
+				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
 			}
 
@@ -362,15 +363,16 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, err = model.QueryDynamicPathsRange(
+			var queryErr error
+			d.SourceType, d.SourceInfo, d.Paths, d.TargetType, d.TargetList, queryErr = model.QueryDynamicPathsRange(
 				ctx,
 				qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
-			if err != nil {
-				d.Message = err.Error()
+			if queryErr != nil {
+				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
 			}
 

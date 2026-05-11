@@ -1905,6 +1905,78 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	}
 }
 
+// TestQueryTs_ToQueryReference_DataSourceAlias 验证 SaaS 命名（bk_data / bk_log_search / bk_apm）
+// 经 ToQueryReference 入口被规范化为内部命名（bkdata / bklog / bkapm），其中 bk_data 别名应正确进入 BkSql 分支。
+func TestQueryTs_ToQueryReference_DataSourceAlias(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	t.Run("bk_data alias enters BkSql branch", func(t *testing.T) {
+		ts := &QueryTs{
+			SpaceUid: influxdb.SpaceUid, // bkcc__2，满足 BkData 分支「业务空间下查询」校验
+			QueryList: []*Query{
+				{
+					DataSource:    "bk_data", // SaaS 命名，期望被规范化为 BkData
+					TableID:       "2_table_id",
+					FieldName:     "kube_pod_info",
+					ReferenceName: "a",
+				},
+			},
+			MetricMerge: "a",
+			Start:       "1718865258",
+			End:         "1718868858",
+			Step:        "1m",
+		}
+
+		ref, err := ts.ToQueryReference(ctx)
+		require.NoError(t, err)
+
+		// 规范化后写回 QueryTs.QueryList（指针原地修改）
+		assert.Equal(t, BkData, ts.QueryList[0].DataSource, "bk_data 应被规范化为 bkdata")
+
+		// 走通 BkSql 分支：StorageType == BkSqlStorageType，DB 非空
+		require.Contains(t, ref, "a")
+		require.NotEmpty(t, ref["a"])
+		require.NotEmpty(t, ref["a"][0].QueryList)
+		q := ref["a"][0].QueryList[0]
+		assert.Equal(t, BkData, q.DataSource)
+		assert.Equal(t, md.BkSqlStorageType, q.StorageType, "bkdata 应正确进入 BkSql 分支")
+		assert.NotEmpty(t, q.DB, "BkSql 分支 DB 不应为空")
+	})
+
+	t.Run("bk_log_search and bk_apm aliases normalized", func(t *testing.T) {
+		ts := &QueryTs{
+			SpaceUid: influxdb.SpaceUid,
+			QueryList: []*Query{
+				{
+					DataSource:    "bk_log_search",
+					TableID:       "result_table.es",
+					FieldName:     "kube_pod_info",
+					ReferenceName: "a",
+				},
+				{
+					DataSource:    "bk_apm",
+					TableID:       "",
+					FieldName:     "kube_pod_info",
+					ReferenceName: "b",
+				},
+			},
+			MetricMerge: "a + b",
+			Start:       "1718865258",
+			End:         "1718868858",
+			Step:        "1m",
+		}
+
+		_, err := ts.ToQueryReference(ctx)
+		require.NoError(t, err)
+
+		// 规范化原地写回 QueryTs.QueryList[*].DataSource
+		assert.Equal(t, BkLog, ts.QueryList[0].DataSource, "bk_log_search 应被规范化为 bklog")
+		assert.Equal(t, BkApm, ts.QueryList[1].DataSource, "bk_apm 应被规范化为 bkapm")
+	})
+}
+
 func TestAggregations(t *testing.T) {
 	for name, c := range map[string]struct {
 		query *Query

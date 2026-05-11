@@ -158,6 +158,38 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 	}
 }
 
+// TestNormalizeDataSource 覆盖 SaaS 别名映射、内部值原样返回、空串、未知值四类输入。
+func TestNormalizeDataSource(t *testing.T) {
+	testCases := map[string]struct {
+		input string
+		want  string
+	}{
+		// 别名 -> 内部值
+		"alias bk_data":       {"bk_data", BkData},
+		"alias bk_log_search": {"bk_log_search", BkLog},
+		"alias bk_apm":        {"bk_apm", BkApm},
+
+		// 内部值原样返回
+		"internal bkdata":    {BkData, BkData},
+		"internal bklog":     {BkLog, BkLog},
+		"internal bkapm":     {BkApm, BkApm},
+		"internal bkmonitor": {BkMonitor, BkMonitor},
+		"internal custom":    {Custom, Custom},
+
+		// 空串保留给上游 ToQueryMetric 自动补默认 BkMonitor 使用
+		"empty": {"", ""},
+
+		// 未知值原样返回，不静默吞掉
+		"unknown": {"unknown_source", "unknown_source"},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, NormalizeDataSource(tc.input))
+		})
+	}
+}
+
 // TestMakeRouteFromLabelMatch
 func TestMakeRouteFromLabelMatch(t *testing.T) {
 	miss := []*labels.Matcher{}

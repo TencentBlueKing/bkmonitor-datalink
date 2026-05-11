@@ -38,6 +38,23 @@ var dataSourceMap = map[string]struct{}{
 	BkApm:          {},
 }
 
+// DataSourceAliases SaaS 侧（alert/detail、bk_log_search 等接口）历史命名 -> unify-query 内部命名。
+// 仅作用于结构化字段 Query.DataSource 入口；不参与 dataSourceMap（指标名前缀解析不受影响）。
+var DataSourceAliases = map[string]string{
+	"bk_data":       BkData, // bk_data       -> bkdata
+	"bk_log_search": BkLog,  // bk_log_search -> bklog
+	"bk_apm":        BkApm,  // bk_apm        -> bkapm
+}
+
+// NormalizeDataSource 规范化外部传入的 data_source 值；非别名原样返回（包括空串与未知值）。
+// 空串保留给上游 ToQueryMetric 自动补默认 BkMonitor 使用；未知值不静默吞掉，便于排障。
+func NormalizeDataSource(s string) string {
+	if v, ok := DataSourceAliases[s]; ok {
+		return v
+	}
+	return s
+}
+
 type TableID string
 
 // Split 按照格式解析 TableID

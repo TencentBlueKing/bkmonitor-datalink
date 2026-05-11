@@ -430,15 +430,11 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 }
 
 func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	_, span := trace.NewSpan(ctx, "get-alias")
-
 	allAlias := make([]string, 0)
 	dbs := query.DBs
 	if len(dbs) == 0 {
 		dbs = []string{query.DB}
 	}
-
-	span.Set("dbs", dbs)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
@@ -450,8 +446,6 @@ func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, e
 		alias := i.explainDB(ctx, db, query.NeedAddTime, start, end, query.SourceType)
 		allAlias = append(allAlias, alias...)
 	}
-
-	span.Set("alias", allAlias)
 
 	if len(allAlias) == 0 {
 		return nil, metadata.NewMessage(

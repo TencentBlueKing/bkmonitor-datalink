@@ -333,10 +333,7 @@ func (i *Instance) makeSQL(
 		groupList  = make([]string, 0)
 
 		sqlBuilder strings.Builder
-		err        error
 	)
-	ctx, span := trace.NewSpan(ctx, "influxdb-make-sqlBuilder")
-	defer span.End(&err)
 
 	if len(query.Aggregates) > 1 {
 		return "", fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)

@@ -1381,13 +1381,34 @@ const docTemplate = `{
                 }
             }
         },
+        "http.CheckRouteRow": {
+            "type": "object",
+            "properties": {
+                "reference_name": {"type": "string"},
+                "metric_name": {"type": "string"},
+                "table_id": {"type": "string"},
+                "db": {"type": "string"},
+                "data_label": {"type": "string"},
+                "data_source": {"type": "string"},
+                "storage_type": {"type": "string"},
+                "storage_id": {"type": "string"},
+                "measurement": {"type": "string"}
+            }
+        },
         "http.CheckQueryTsDataResponse": {
             "type": "object",
             "properties": {
                 "data": {
-                    "description": "Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实 TSDB。",
+                    "description": "Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody。非直查若某存储无预览体则该项不出现在 data 中；可为空数组，此时若 route_rows 非空仍返回 200 表示仅路由预览。",
                     "type": "array",
                     "items": {}
+                },
+                "route_rows": {
+                    "description": "与 ToQueryReference 展开后的子查询对应的路由摘要，用于排障（不调真实 TSDB）。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.CheckRouteRow"
+                    }
                 },
                 "trace_id": {
                     "description": "TraceID 链路 ID（与 trace span 一致）。",

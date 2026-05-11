@@ -31,12 +31,65 @@ import (
 
 // --- 响应体
 
+// CheckRouteRow Check 单条子查询路由摘要（与 metadata.Query 同源；不含敏感字段；不调真实 TSDB）。
+type CheckRouteRow struct {
+	ReferenceName string `json:"reference_name"`
+	MetricName    string `json:"metric_name,omitempty"`
+	TableID       string `json:"table_id"`
+	DB            string `json:"db,omitempty"`
+	DataLabel     string `json:"data_label,omitempty"`
+	DataSource    string `json:"data_source,omitempty"`
+	StorageType   string `json:"storage_type,omitempty"`
+	StorageID     string `json:"storage_id,omitempty"`
+	Measurement   string `json:"measurement,omitempty"`
+}
+
 // CheckQueryTsDataResponse check 接口成功响应体。
 type CheckQueryTsDataResponse struct {
-	// Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实 TSDB。
+	// Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则该项不出现在 data 中。
+	// Data 可为空：当仅有路由预览（RouteRows 非空）且各存储未实现 GetRequestBody 预览体时，不调真实 TSDB 仍返回 200。
 	Data []any `json:"data"`
+	// RouteRows 与 ToQueryReference 展开后的每条子查询一一对应，用于路由排障（如 table_id、db 是否为空）。与 data 是否为空无关。
+	RouteRows []CheckRouteRow `json:"route_rows,omitempty"`
 	// TraceID 链路 ID（与 trace span 一致）。
 	TraceID string `json:"trace_id"`
+}
+
+// collectRouteRows 从 QueryReference 汇总子查询路由字段；reference 名排序以保证输出稳定。
+func collectRouteRows(qr metadata.QueryReference) []CheckRouteRow {
+	if len(qr) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, len(qr))
+	for ref := range qr {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	rows := make([]CheckRouteRow, 0)
+	for _, refName := range refs {
+		for _, qm := range qr[refName] {
+			if qm == nil {
+				continue
+			}
+			for _, qry := range qm.QueryList {
+				if qry == nil {
+					continue
+				}
+				rows = append(rows, CheckRouteRow{
+					ReferenceName: refName,
+					MetricName:    qm.MetricName,
+					TableID:       qry.TableID,
+					DB:            qry.DB,
+					DataLabel:     qry.DataLabel,
+					DataSource:    qry.DataSource,
+					StorageType:   qry.StorageType,
+					StorageID:     qry.StorageID,
+					Measurement:   qry.Measurement,
+				})
+			}
+		}
+	}
+	return rows
 }
 
 // --- HTTP Handlers
@@ -77,15 +130,16 @@ func HandlerCheckQueryTs(c *gin.Context) {
 		queryTs.SpaceUid = user.SpaceUID
 	}
 
-	data, err := checkQueryTsData(ctx, queryTs)
+	data, routeRows, err := checkQueryTsData(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
 	resp.success(ctx, CheckQueryTsDataResponse{
-		Data:    data,
-		TraceID: span.TraceID(),
+		Data:      data,
+		RouteRows: routeRows,
+		TraceID:   span.TraceID(),
 	})
 }
 
@@ -131,15 +185,16 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 		queryTs.SpaceUid = user.SpaceUID
 	}
 
-	data, err := checkQueryTsData(ctx, queryTs)
+	data, routeRows, err := checkQueryTsData(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
 	resp.success(ctx, CheckQueryTsDataResponse{
-		Data:    data,
-		TraceID: span.TraceID(),
+		Data:      data,
+		RouteRows: routeRows,
+		TraceID:   span.TraceID(),
 	})
 }
 
@@ -147,12 +202,13 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 
 // checkQueryTsData 将 QueryTs 转为 QueryReference，再按直查/非直查组装预览（不调真实 TSDB）。
 // 直查 VM：vmCheckMetricql 后 SetCheckPreviewMetricQL；与 queryTsToInstanceAndStmt 同源 GetTsDbInstance(VM)，Instance.GetRequestBody(ctx) 产出 VmQueryCheckBody。
-// 非直查：统一经 GetTsDbInstance + GetRequestBody，默认实现返回 nil 预览体则跳过。todo: 未来扩展具体预览体
-func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error) {
+// 非直查：统一经 GetTsDbInstance + GetRequestBody，默认实现返回 nil 预览体则跳过；若 RouteRows 非空仍返回 200 以便路由排障。
+func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, routeRows []CheckRouteRow, err error) {
 	qr, err := checkQueryTsToReference(ctx, q)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	routeRows = collectRouteRows(qr)
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 与 queryTsToInstanceAndStmt 直查分支一致：ToVmExpand + SetExpand，后续与 DirectQuery 同源读 GetExpand。
@@ -161,7 +217,7 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 
 		promQL, err := vmCheckMetricql(ctx, q, qr)
 		if err != nil {
-			return nil, err
+			return nil, routeRows, err
 		}
 		metadata.SetCheckPreviewMetricQL(ctx, promQL)
 		instance := prometheus.GetTsDbInstance(ctx, &metadata.Query{
@@ -169,16 +225,16 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
-			return nil, fmt.Errorf("instance is null for direct vm check")
+			return nil, routeRows, fmt.Errorf("instance is null for direct vm check")
 		}
 		item, err := getCheckPreview(ctx, instance)
 		if err != nil {
-			return nil, err
+			return nil, routeRows, err
 		}
 		if item == nil {
-			return nil, fmt.Errorf("empty check preview for direct vm check")
+			return nil, routeRows, fmt.Errorf("empty check preview for direct vm check")
 		}
-		return []any{item}, nil
+		return []any{item}, routeRows, nil
 	}
 
 	// 非直查：遍历子查询 GetTsDbInstance + getCheckPreview（GetRequestBody 默认 nil 预览体则跳过）todo: 未来扩展各存储预览体
@@ -203,15 +259,18 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) ([]any, error)
 		}
 	})
 	if rangeErr != nil {
-		return nil, rangeErr
+		return nil, routeRows, rangeErr
 	}
-	if len(out) == 0 {
-		return nil, metadata.NewMessage(
+	if len(out) == 0 && len(routeRows) == 0 {
+		return nil, nil, metadata.NewMessage(
 			metadata.MsgQueryReference,
 			"未解析到可路由的查询",
 		).Error(ctx, fmt.Errorf("empty check query reference"))
 	}
-	return out, nil
+	if out == nil {
+		out = []any{}
+	}
+	return out, routeRows, nil
 }
 
 // --- QueryReference（与 queryTsToInstanceAndStmt 前置对齐）

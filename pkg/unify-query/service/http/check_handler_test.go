@@ -110,6 +110,52 @@ func resultTableIDFromResponse(t *testing.T, v any) []string {
 	return out
 }
 
+func TestCollectRouteRows_ReferenceOrderStable(t *testing.T) {
+	qr := metadata.QueryReference{
+		"z": {{QueryList: []*metadata.Query{{TableID: "tz"}}}},
+		"a": {{QueryList: []*metadata.Query{{TableID: "ta"}}}},
+	}
+	rows := collectRouteRows(qr)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "a", rows[0].ReferenceName)
+	assert.Equal(t, "ta", rows[0].TableID)
+	assert.Equal(t, "z", rows[1].ReferenceName)
+	assert.Equal(t, "tz", rows[1].TableID)
+}
+
+func TestCheckQueryTsData_BklogES_RouteRowsWithoutPreviewBody(t *testing.T) {
+	ctx := e2eCheckContext(t)
+	body := []byte(`{
+		"space_uid": "bkcc__2",
+		"query_list": [{
+			"data_source": "bklog",
+			"table_id": "result_table.es",
+			"field_name": "level",
+			"reference_name": "a",
+			"function": [{"method": "count", "dimensions": ["level"], "window": "60s"}]
+		}],
+		"metric_merge": "a",
+		"start_time": "1718865258",
+		"end_time": "1718868858",
+		"step": "60s",
+		"timezone": "UTC"
+	}`)
+	var qts structured.QueryTs
+	require.NoError(t, json.Unmarshal(body, &qts))
+	data, routeRows, err := checkQueryTsData(ctx, &qts)
+	require.NoError(t, err)
+	assert.Empty(t, data, "ES 默认无 GetRequestBody 预览体时 data 应为空")
+	require.NotEmpty(t, routeRows, "仍应返回 route_rows 便于路由排障")
+	var sawEs bool
+	for _, r := range routeRows {
+		if r.TableID == influxdb.ResultTableEs && r.StorageType == metadata.ElasticsearchStorageType {
+			sawEs = true
+			break
+		}
+	}
+	assert.True(t, sawEs, "应含 ES 结果表路由: %+v", routeRows)
+}
+
 func TestEndToEndHandlerCheckQueryTs_Success_VMPreview(t *testing.T) {
 	ctx := e2eCheckContext(t)
 	// system.cpu_detail / system.disk 在 router_mock 中走 must-vm-query，路由为 VM；IsDirectQuery 为 true，返回单条 VM 预览。
@@ -135,11 +181,13 @@ func TestEndToEndHandlerCheckQueryTs_Success_VMPreview(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data    []map[string]any `json:"data"`
-		TraceID string           `json:"trace_id"`
+		Data      []map[string]any `json:"data"`
+		RouteRows []CheckRouteRow  `json:"route_rows"`
+		TraceID   string           `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1, "直查 VM 路径应产出一条预览")
+	require.NotEmpty(t, resp.RouteRows, "check 应附带路由摘要")
 	assert.Equal(t, metadata.VictoriaMetricsStorageType, resp.Data[0]["storage_type"])
 	gotMql, ok := resp.Data[0]["metricql"].(string)
 	require.True(t, ok)
@@ -171,11 +219,13 @@ func TestEndToEndHandlerCheckQueryTs_Success_VMPreview_Division(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data    []map[string]any `json:"data"`
-		TraceID string           `json:"trace_id"`
+		Data      []map[string]any `json:"data"`
+		RouteRows []CheckRouteRow  `json:"route_rows"`
+		TraceID   string           `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
+	require.NotEmpty(t, resp.RouteRows)
 	gotMql, ok := resp.Data[0]["metricql"].(string)
 	require.True(t, ok)
 	assert.Equal(t, wantMql, gotMql)
@@ -207,11 +257,13 @@ func TestEndToEndHandlerCheckQueryTs_Success_MetricMergeSingleRef(t *testing.T) 
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data    []map[string]any `json:"data"`
-		TraceID string           `json:"trace_id"`
+		Data      []map[string]any `json:"data"`
+		RouteRows []CheckRouteRow  `json:"route_rows"`
+		TraceID   string           `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
+	require.NotEmpty(t, resp.RouteRows)
 	assert.Equal(t, metadata.VictoriaMetricsStorageType, resp.Data[0]["storage_type"])
 	gotMql, ok := resp.Data[0]["metricql"].(string)
 	require.True(t, ok)
@@ -473,11 +525,13 @@ func TestEndToEndHandlerCheckQueryPromQL_Success_VMPreview(t *testing.T) {
 	w := runCheckHandler(t, req, HandlerCheckQueryPromQL)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data    []map[string]any `json:"data"`
-		TraceID string           `json:"trace_id"`
+		Data      []map[string]any `json:"data"`
+		RouteRows []CheckRouteRow  `json:"route_rows"`
+		TraceID   string           `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
+	require.NotEmpty(t, resp.RouteRows)
 	assert.Equal(t, metadata.VictoriaMetricsStorageType, resp.Data[0]["storage_type"])
 	gotMql, ok := resp.Data[0]["metricql"].(string)
 	require.True(t, ok)

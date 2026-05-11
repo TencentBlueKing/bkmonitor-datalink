@@ -654,10 +654,11 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data` | array | 每项为某子查询存储 **`tsdb.Instance.GetRequestBody(ctx)`** 的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody` |
+| `data` | array | 每项为某子查询存储 **`tsdb.Instance.GetRequestBody(ctx)`** 的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody`。**可为空数组**：当各存储未实现预览体时，若 `route_rows` 非空仍返回 **HTTP 200**（仅路由预览，不调 TSDB） |
+| `route_rows` | array | 与 **`ToQueryReference`** 展开后的子查询一一对应的路由摘要（`table_id`、`db`、`data_label`、`storage_type` 等），用于与正式查询对齐排障 |
 | `trace_id` | string | 链路追踪 ID |
 
-**失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。
+**失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。当 **`route_rows` 与 `data` 皆为空**（无任何子查询路由）时仍为 400。
 
 ### 5.1 直查 VM 时 `data[]` 元素形态（`VmQueryCheckBody`）
 
@@ -669,7 +670,7 @@
 
 ### 5.2 非直查
 
-当前实现：遍历子查询 `GetTsDbInstance`，再调用 **`GetRequestBody(ctx)`**；**`DefaultInstance`** 等无预览体时返回 **(nil, nil)**，该子查询**不产生** `data` 元素（内部打日志跳过）。若遍历结束后 **`data` 仍为空** 则 **400**（「未解析到可路由的查询」），而非 200 空数组。
+遍历子查询 `GetTsDbInstance`，再调用 **`GetRequestBody(ctx)`**；**`DefaultInstance`** 等无预览体时返回 **(nil, nil)**，该子查询**不产生** `data` 元素（内部打日志跳过）。**若遍历结束后 `data` 仍为空，但 `ToQueryReference` 已展开出子查询**，则 **`route_rows` 非空**，接口返回 **200** 且 `data` 为空数组，便于路由排障；仅当 **`route_rows` 与 `data` 皆空** 时返回 **400**（「未解析到可路由的查询」）。
 
 ### 5.3 校验结构体查询
 

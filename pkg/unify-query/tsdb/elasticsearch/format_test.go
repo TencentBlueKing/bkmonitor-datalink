@@ -1754,9 +1754,8 @@ func TestFormatFactory_SetData(t *testing.T) {
 	ctx := context.Background()
 
 	for name, c := range map[string]struct {
-		source         map[string]any
-		expectedValues map[string]any
-		notContains    []string
+		source       map[string]any
+		expectedData map[string]any
 	}{
 		// 还原场景：直查 ES 的 _source 含嵌套 body，叶子为 {}；
 		// SetData 经 mapData 拍平后应保留带点路径，否则前端经 uq 看不到 body。
@@ -1777,13 +1776,35 @@ func TestFormatFactory_SetData(t *testing.T) {
 					},
 				},
 			},
-			expectedValues: map[string]any{
+			expectedData: map[string]any{
 				"source":         "skill_rating",
 				"meta.Reason":    "MatchmakingDataChanged",
 				"meta.game_mode": "mode10v10",
 				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
 				"body.old_matchmaking_data.98456436-466c600000d": map[string]any{},
 				"body.new_matchmaking_data.76346346-466c600000e": map[string]any{},
+			},
+		},
+		"preserves completely empty nested object": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{},
+				},
+			},
+			expectedData: map[string]any{
+				"x.y": map[string]any{},
+			},
+		},
+		"flattens partial empty nested object with scalar": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{},
+					"z": 1,
+				},
+			},
+			expectedData: map[string]any{
+				"x.y": map[string]any{},
+				"x.z": 1,
 			},
 		},
 		"keeps flattened leaf when scalar exists": {
@@ -1796,11 +1817,8 @@ func TestFormatFactory_SetData(t *testing.T) {
 					},
 				},
 			},
-			expectedValues: map[string]any{
+			expectedData: map[string]any{
 				"body.new_matchmaking_data.76346346-466c600000e.score": 99,
-			},
-			notContains: []string{
-				"body.new_matchmaking_data.76346346-466c600000e",
 			},
 		},
 		"mixed nested fallback and flatten": {
@@ -1817,13 +1835,62 @@ func TestFormatFactory_SetData(t *testing.T) {
 					},
 				},
 			},
-			expectedValues: map[string]any{
+			expectedData: map[string]any{
 				"body.region": "ap-sh",
 				"body.old_matchmaking_data.76346346-466c600000e":       map[string]any{},
 				"body.new_matchmaking_data.76346346-466c600000e.score": 100,
 			},
-			notContains: []string{
-				"body.new_matchmaking_data.76346346-466c600000e",
+		},
+		"flattens deeply mixed levels": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{
+						"empty": map[string]any{},
+						"z": map[string]any{
+							"name": "leaf",
+							"n":    stdjson.Number("42"),
+						},
+					},
+					"enabled": true,
+				},
+			},
+			expectedData: map[string]any{
+				"x.y.empty":  map[string]any{},
+				"x.y.z.name": "leaf",
+				"x.y.z.n":    42,
+				"x.enabled":  true,
+			},
+		},
+		"keeps null empty array nested array and scalar values": {
+			source: map[string]any{
+				"nil_value": nil,
+				"empty_arr": []any{},
+				"arr": []any{
+					map[string]any{
+						"k":     stdjson.Number("7"),
+						"empty": map[string]any{},
+					},
+					"text",
+				},
+				"obj": map[string]any{
+					"number": stdjson.Number("3.14"),
+					"flag":   false,
+					"empty":  map[string]any{},
+				},
+			},
+			expectedData: map[string]any{
+				"nil_value": nil,
+				"empty_arr": []any{},
+				"arr": []any{
+					map[string]any{
+						"k":     7,
+						"empty": map[string]any{},
+					},
+					"text",
+				},
+				"obj.number": 3.14,
+				"obj.flag":   false,
+				"obj.empty":  map[string]any{},
 			},
 		},
 		// 精度回归：空对象分支与 json.Number 同时存在时，
@@ -1840,13 +1907,9 @@ func TestFormatFactory_SetData(t *testing.T) {
 					},
 				},
 			},
-			expectedValues: map[string]any{
+			expectedData: map[string]any{
 				"body.stats.trace_id":                            uint(9223372036854775808),
 				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
-			},
-			notContains: []string{
-				"body.stats",
-				"body.old_matchmaking_data",
 			},
 		},
 	} {
@@ -1854,13 +1917,41 @@ func TestFormatFactory_SetData(t *testing.T) {
 			fact := NewFormatFactory(ctx)
 			fact.SetData(c.source)
 
-			for k, expected := range c.expectedValues {
-				assert.Equal(t, expected, fact.data[k])
-			}
-
-			for _, key := range c.notContains {
-				assert.NotContains(t, fact.data, key)
-			}
+			assert.Equal(t, c.expectedData, fact.data)
 		})
+	}
+}
+
+func BenchmarkFormatFactory_SetData_LargeNestedObject(b *testing.B) {
+	ctx := context.Background()
+	source := map[string]any{
+		"source": "benchmark",
+		"body":   make(map[string]any, 1024),
+	}
+
+	body := source["body"].(map[string]any)
+	for i := 0; i < 1024; i++ {
+		body[fmt.Sprintf("entity_%04d", i)] = map[string]any{
+			"score":  stdjson.Number(fmt.Sprintf("%d", i)),
+			"active": i%2 == 0,
+			"empty":  map[string]any{},
+			"tags": []any{
+				stdjson.Number(fmt.Sprintf("%d", i)),
+				map[string]any{"nested_empty": map[string]any{}},
+			},
+			"deep": map[string]any{
+				"level_1": map[string]any{
+					"level_2": map[string]any{
+						"value": stdjson.Number(fmt.Sprintf("%d.5", i)),
+					},
+				},
+			},
+		}
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		fact := NewFormatFactory(ctx)
+		fact.SetData(source)
 	}
 }

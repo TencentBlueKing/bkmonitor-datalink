@@ -101,6 +101,7 @@ type TimeSeriesResult struct {
 
 // mapData 将嵌套的 map 按 ESStep 拍平成点路径键写入 res。
 // 当嵌套值为空对象（map[string]any{}）时，直接以点路径键保留原对象，避免该分支因为没有任何叶子字段而在最终结果中整段丢失。
+// null、数组及其他非对象类型按叶子值处理；数组内部仅做精度转换，不参与点路径展开。
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {

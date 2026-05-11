@@ -312,6 +312,7 @@ prometheus:
 - 使用 Elasticsearch Query DSL
 - 支持 Lucene 到 ES Query 的转换
 - 支持滚动查询（Scroll API）
+- `_source` 结果会按点路径扁平化返回；空对象叶子会保留为空 map，`null`、空数组、数组及非对象类型作为叶子值保留，避免嵌套空结构在格式化阶段丢失。
 
 **配置示例**：
 ```yaml
@@ -516,4 +517,3 @@ A: 使用 Go 的 `golang.org/x/time/rate` 包实现限流功能。
 - InfluxDB：`tsdb/influxdb/`
 - VictoriaMetrics：`tsdb/victoriaMetrics/`
 - Prometheus：`tsdb/prometheus/`
-

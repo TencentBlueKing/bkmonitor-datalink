@@ -1519,17 +1519,19 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	// 初始化数据库
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
 	db := mysql.GetDBSession().DB
 	// 准备测试数据
 	tableID := "bklog.test_rt"
 	storageClusterID := uint(1)
 	dataLabel := "test_label"
+	labels := json.RawMessage(`{"scene":"entity"}`)
 
-	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel}
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel, Labels: labels}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
 	assert.NoError(t, rtObj1.Create(db))
-
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
 	// 创建DorisStorage记录
 	dorisStorages := []storage.DorisStorage{
@@ -1542,7 +1544,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 		},
 	}
 	for _, dorisStorage := range dorisStorages {
-		db.Delete(&storage.ESStorage{}, "table_id = ?", dorisStorage.TableID)
+		db.Delete(&storage.DorisStorage{}, "table_id = ?", dorisStorage.TableID)
 		err := db.Create(&dorisStorage).Error
 		assert.NoError(t, err, "Failed to insert DorisStorage")
 	}
@@ -1578,7 +1580,93 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	// 执行测试方法
 	pusher := NewSpacePusher()
 	err := pusher.PushDorisTableIdDetail([]string{tableID}, false)
-	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	detailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID)
+	var detail map[string]any
+	err = json.Unmarshal([]byte(detailStr), &detail)
+	assert.NoError(t, err, "doris detail should be valid JSON")
+	assert.Equal(t, "bklog_test_rt_bkbase", detail["db"])
+	assert.Equal(t, "test_label", detail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "entity"}, detail["labels"])
+	assert.Equal(t, map[string]any{"pod_id": "__ext.pod_id", "pod_name": "__ext.pod_name"}, detail["field_alias"])
+}
+
+func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	virtualTableID := "bklog.virtual_doris"
+	currentTableID := "bklog.current_doris"
+	originTableID := "bklog.real_doris"
+	missingOriginTableID := "bklog.missing_origin_doris"
+	virtualDataLabel := "current_virtual_label"
+	currentDataLabel := "current_table_label"
+	originDataLabel := "origin_label"
+
+	for _, tableID := range []string{virtualTableID, currentTableID, originTableID, missingOriginTableID} {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+		db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
+		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ?", tableID)
+	}
+
+	resultTables := []resulttable.ResultTable{
+		{TableId: virtualTableID, IsDeleted: false, IsEnable: true, DataLabel: &virtualDataLabel, Labels: json.RawMessage(`{"scene":"virtual"}`)},
+		{TableId: currentTableID, IsDeleted: false, IsEnable: true, DataLabel: &currentDataLabel, Labels: json.RawMessage(`{"scene":"current"}`)},
+		{TableId: originTableID, IsDeleted: false, IsEnable: true, DataLabel: &originDataLabel, Labels: json.RawMessage(`{"scene":"origin"}`)},
+		{TableId: missingOriginTableID, IsDeleted: false, IsEnable: true, Labels: json.RawMessage(`{"scene":"missing"}`)},
+	}
+	for _, rt := range resultTables {
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	dorisStorages := []storage.DorisStorage{
+		{TableID: virtualTableID, BkbaseTableID: "", OriginTableId: originTableID, SourceType: "log"},
+		{TableID: currentTableID, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID, SourceType: "log"},
+		{TableID: originTableID, BkbaseTableID: "bklog_real_doris", SourceType: "log"},
+		{TableID: missingOriginTableID, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist", SourceType: "log"},
+	}
+	for _, dorisStorage := range dorisStorages {
+		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+	}
+
+	fieldAlias := resulttable.ESFieldQueryAliasOption{
+		TableID:    virtualTableID,
+		FieldPath:  "__ext.pod_name",
+		PathType:   "keyword",
+		QueryAlias: "pod_name",
+		IsDeleted:  false,
+	}
+	assert.NoError(t, db.Create(&fieldAlias).Error, "Failed to insert ESFieldQueryAliasOption")
+
+	err := NewSpacePusher().PushDorisTableIdDetail([]string{virtualTableID, currentTableID, missingOriginTableID}, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	virtualDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, virtualTableID)
+	var virtualDetail map[string]any
+	err = json.Unmarshal([]byte(virtualDetailStr), &virtualDetail)
+	assert.NoError(t, err, "virtual doris detail should be valid JSON")
+	assert.Equal(t, "bklog_real_doris", virtualDetail["db"])
+	assert.Equal(t, "current_virtual_label", virtualDetail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "virtual"}, virtualDetail["labels"])
+	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, virtualDetail["field_alias"])
+
+	currentDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, currentTableID)
+	var currentDetail map[string]any
+	err = json.Unmarshal([]byte(currentDetailStr), &currentDetail)
+	assert.NoError(t, err, "current doris detail should be valid JSON")
+	assert.Equal(t, "bklog_current_doris", currentDetail["db"])
+	assert.Equal(t, "current_table_label", currentDetail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "current"}, currentDetail["labels"])
+
+	missingOriginDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, missingOriginTableID)
+	var missingOriginDetail map[string]any
+	err = json.Unmarshal([]byte(missingOriginDetailStr), &missingOriginDetail)
+	assert.NoError(t, err, "missing origin doris detail should be valid JSON")
+	assert.Equal(t, "bklog_missing_origin_fallback", missingOriginDetail["db"])
+	assert.Equal(t, map[string]any{"scene": "missing"}, missingOriginDetail["labels"])
 }
 
 func TestSpacePusher_ComposeData(t *testing.T) {
@@ -1928,48 +2016,87 @@ func TestNormalizeResultTableLabels(t *testing.T) {
 }
 
 func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{})
-
 	tableID1 := "bklog.test_rt_doris_labels"
 	tableID2 := "bklog.test_rt_doris_invalid_labels"
+	tableID3 := "bklog.virtual_doris"
+	tableID4 := "bklog.missing_origin_doris"
+	originTableID := "bklog.real_doris"
 	dataLabel := "test_label"
 	labels1 := json.RawMessage(`{"env":"prod"}`)
 	labels2 := json.RawMessage(`["unexpected"]`)
 
-	resultTables := []resulttable.ResultTable{
-		{
-			TableId:   tableID1,
-			DataLabel: &dataLabel,
-			Labels:    labels1,
-		},
-		{
-			TableId: tableID2,
-			Labels:  labels2,
-		},
-	}
-	for _, rt := range resultTables {
-		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-	}
-
 	spacePusher := SpacePusher{}
 
-	_, detailStr, err := spacePusher.composeDorisTableIdDetail(tableID1, "bklog_test_rt_bkbase", nil)
+	composedTableID, detailStr, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID1, BkbaseTableID: "bklog_test_rt_bkbase"},
+		resultTableDetailMeta{DataLabel: dataLabel, Labels: normalizeResultTableLabels(tableID1, labels1)},
+		nil,
+		nil,
+	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	assert.Equal(t, tableID1, composedTableID, "entity doris detail key should be current table_id")
 	var actualDetail map[string]any
 	err = json.Unmarshal([]byte(detailStr), &actualDetail)
 	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_test_rt_bkbase", actualDetail["db"], "entity doris db should use current bkbase_table_id")
 	assert.Equal(t, map[string]any{"env": "prod"}, actualDetail["labels"], "labels should be object")
 	assert.Equal(t, "test_label", actualDetail["data_label"], "data_label should be preserved")
 
-	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(tableID2, "bklog_test_rt_bkbase", nil)
+	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID2, BkbaseTableID: "bklog_test_rt_bkbase"},
+		resultTableDetailMeta{Labels: normalizeResultTableLabels(tableID2, labels2)},
+		nil,
+		nil,
+	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
 	var actualDetail2 map[string]any
 	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 	assert.Equal(t, map[string]any{}, actualDetail2["labels"], "non-object labels should fallback to empty map")
+
+	composedTableID3, detailStr3, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "", OriginTableId: originTableID},
+		resultTableDetailMeta{DataLabel: "current_label", Labels: map[string]any{"scene": "virtual"}},
+		map[string]storage.DorisStorage{
+			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
+		},
+		map[string]string{"pod_name": "__ext.pod_name"},
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	assert.Equal(t, tableID3, composedTableID3, "virtual doris detail key should be current table_id")
+	var actualDetail3 map[string]any
+	err = json.Unmarshal([]byte(detailStr3), &actualDetail3)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_real_doris", actualDetail3["db"], "virtual doris db should use origin bkbase_table_id")
+	assert.Equal(t, "current_label", actualDetail3["data_label"], "data_label should come from current result table")
+	assert.Equal(t, map[string]any{"scene": "virtual"}, actualDetail3["labels"], "labels should come from current result table")
+	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, actualDetail3["field_alias"], "field alias should come from current table_id")
+
+	_, detailStr4, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID},
+		resultTableDetailMeta{},
+		map[string]storage.DorisStorage{
+			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
+		},
+		nil,
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail4 map[string]any
+	err = json.Unmarshal([]byte(detailStr4), &actualDetail4)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_current_doris", actualDetail4["db"], "current bkbase_table_id should be preferred when present")
+
+	_, detailStr5, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID4, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist"},
+		resultTableDetailMeta{},
+		map[string]storage.DorisStorage{},
+		nil,
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail5 map[string]any
+	err = json.Unmarshal([]byte(detailStr5), &actualDetail5)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_missing_origin_fallback", actualDetail5["db"], "missing origin should fallback to current bkbase_table_id")
 }
 
 func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {

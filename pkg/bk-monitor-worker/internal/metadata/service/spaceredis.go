@@ -850,6 +850,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 	dorisQuerySet := storage.NewDorisStorageQuerySet(db).Select(
 		storage.DorisStorageDBSchema.TableID,
 		storage.DorisStorageDBSchema.BkbaseTableID,
+		storage.DorisStorageDBSchema.OriginTableId,
 	)
 
 	// 如果过滤结果表存在，则添加过滤条件
@@ -868,6 +869,28 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 	var tidList []string
 	for _, doris := range dorisStorageList {
 		tidList = append(tidList, doris.TableID)
+	}
+
+	rtMetaMap, err := s.getResultTableDetailMetaMap(tidList)
+	if err != nil {
+		logger.Errorf("PushDorisTableIdDetail: failed to get result table metadata map, error: %s", err)
+		return err
+	}
+
+	originTableIdSet := make(map[string]struct{})
+	for _, doris := range dorisStorageList {
+		if doris.OriginTableId != "" {
+			originTableIdSet[doris.OriginTableId] = struct{}{}
+		}
+	}
+	originTableIdList := make([]string, 0, len(originTableIdSet))
+	for tableId := range originTableIdSet {
+		originTableIdList = append(originTableIdList, tableId)
+	}
+	originDorisMap, err := s.getDorisStorageMap(originTableIdList)
+	if err != nil {
+		logger.Errorf("PushDorisTableIdDetail: failed to get origin doris storage map, error: %s", err)
+		return err
 	}
 
 	// 获取查询别名映射关系
@@ -893,14 +916,14 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 			tableId := doris.TableID
 			bkbaseTableId := doris.BkbaseTableID
 
-			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s]", tableId, bkbaseTableId)
+			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s],origin_table_id->[%s]", tableId, bkbaseTableId, doris.OriginTableId)
 
 			var fieldAliasSettings map[string]string
 			if fieldAliasMap != nil {
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(tableId, doris.BkbaseTableID, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -1003,6 +1026,71 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 
 	logger.Infof("getFieldAliasMap: Field alias map generated: %+v", fieldAliasMap)
 	return fieldAliasMap, nil
+}
+
+type resultTableDetailMeta struct {
+	DataLabel string
+	Labels    map[string]any
+}
+
+func resultTableDataLabel(dataLabel *string) string {
+	if dataLabel == nil {
+		return ""
+	}
+	return *dataLabel
+}
+
+func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[string]resultTableDetailMeta, error) {
+	db := mysql.GetDBSession().DB
+	metaMap := make(map[string]resultTableDetailMeta)
+	if len(tableIDList) == 0 {
+		return metaMap, nil
+	}
+
+	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
+		var resultTables []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.DataLabel,
+			resulttable.ResultTableDBSchema.Labels,
+		).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
+			return nil, err
+		}
+
+		for _, rt := range resultTables {
+			metaMap[rt.TableId] = resultTableDetailMeta{
+				DataLabel: resultTableDataLabel(rt.DataLabel),
+				Labels:    normalizeResultTableLabels(rt.TableId, rt.Labels),
+			}
+		}
+	}
+
+	return metaMap, nil
+}
+
+func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]storage.DorisStorage, error) {
+	db := mysql.GetDBSession().DB
+	dorisMap := make(map[string]storage.DorisStorage)
+	if len(tableIDList) == 0 {
+		return dorisMap, nil
+	}
+
+	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
+		var dorisStorageList []storage.DorisStorage
+		if err := storage.NewDorisStorageQuerySet(db).Select(
+			storage.DorisStorageDBSchema.TableID,
+			storage.DorisStorageDBSchema.BkbaseTableID,
+			storage.DorisStorageDBSchema.OriginTableId,
+		).TableIDIn(chunkTableIDList...).All(&dorisStorageList); err != nil {
+			return nil, err
+		}
+
+		for _, doris := range dorisStorageList {
+			dorisMap[doris.TableID] = doris
+		}
+	}
+
+	return dorisMap, nil
 }
 
 func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[string]any {
@@ -1207,21 +1295,21 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	return tableId, detailStr, err
 }
 
-func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId string, fieldAliasSettings map[string]string) (string, string, error) {
-	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s]", tableId, bkbaseTableId)
-
-	db := mysql.GetDBSession().DB
-
-	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(
-		resulttable.ResultTableDBSchema.DataLabel,
-		resulttable.ResultTableDBSchema.Labels,
-	).TableIdEq(tableId).One(&rt); err != nil {
-		return tableId, "", err
+func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, fieldAliasSettings map[string]string) (string, string, error) {
+	tableId := doris.TableID
+	bkbaseTableId := doris.BkbaseTableID
+	if bkbaseTableId == "" && doris.OriginTableId != "" {
+		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
+			bkbaseTableId = originDoris.BkbaseTableID
+		}
 	}
+	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s], origin_table_id [%s]", tableId, bkbaseTableId, doris.OriginTableId)
 
 	if fieldAliasSettings == nil {
 		fieldAliasSettings = make(map[string]string)
+	}
+	if rtMeta.Labels == nil {
+		rtMeta.Labels = make(map[string]any)
 	}
 
 	// 组装数据
@@ -1229,8 +1317,8 @@ func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId st
 		"storage_type": models.StorageTypeBkSql,
 		"db":           bkbaseTableId,
 		"measurement":  models.DorisMeasurement,
-		"data_label":   rt.DataLabel,
-		"labels":       normalizeResultTableLabels(tableId, rt.Labels),
+		"data_label":   rtMeta.DataLabel,
+		"labels":       rtMeta.Labels,
 		"field_alias":  fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {

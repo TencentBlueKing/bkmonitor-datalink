@@ -254,6 +254,12 @@ var defaultRelationDefinitions = []*RelationDefinition{
 	{Namespace: NamespaceAll, Name: "app_version_git_commit", FromResource: "app_version", ToResource: "git_commit"},
 	{Namespace: NamespaceAll, Name: "app_version_p4_changelist", FromResource: "app_version", ToResource: "p4_changelist"},
 	{Namespace: NamespaceAll, Name: "app_version_svn_revision", FromResource: "app_version", ToResource: "svn_revision"},
+	{Namespace: NamespaceAll, Name: "pod_to_pod", FromResource: "pod", ToResource: "pod", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "pod_to_pod_flow"}},
+	{Namespace: NamespaceAll, Name: "pod_to_system", FromResource: "pod", ToResource: "system", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "pod_to_system_flow"}},
+	{Namespace: NamespaceAll, Name: "system_to_pod", FromResource: "system", ToResource: "pod", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "system_to_pod_flow"}},
+	{Namespace: NamespaceAll, Name: "system_to_system", FromResource: "system", ToResource: "system", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "system_to_system_flow"}},
+	{Namespace: NamespaceAll, Name: "service_to_service", FromResource: "service", ToResource: "service", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "service_to_service_flow"}},
+	{Namespace: NamespaceAll, Name: "apm_service_to_apm_service", FromResource: "apm_service", ToResource: "apm_service", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "apm_service_to_apm_service_flow"}},
 }
 
 // DefaultStaticProviderConfig 返回包含完整默认 schema 的 StaticProviderConfig。
@@ -274,9 +280,10 @@ func DefaultStaticProviderConfig() StaticProviderConfig {
 	for _, rd := range defaultRelationDefinitions {
 		relationSchemas = append(relationSchemas, RelationSchema{
 			RelationName: RelationName(rd.Name),
-			Category:     RelationCategoryStatic,
+			Category:     ToRelationCategory(rd.Category),
 			FromType:     ResourceType(rd.FromResource),
 			ToType:       ResourceType(rd.ToResource),
+			IsBelongsTo:  rd.IsBelongsTo,
 		})
 	}
 

@@ -72,6 +72,7 @@ var DefaultRelationSchemas = []RelationSchema{
 	{"system_to_pod", RelationCategoryDynamic, "system", "pod", false},
 	{"system_to_system", RelationCategoryDynamic, "system", "system", false},
 	{"service_to_service", RelationCategoryDynamic, "service", "service", false},
+	{"apm_service_to_apm_service", RelationCategoryDynamic, "apm_service", "apm_service", false},
 }
 
 // NewDefaultStaticSchemaProvider creates a StaticSchemaProvider with default data

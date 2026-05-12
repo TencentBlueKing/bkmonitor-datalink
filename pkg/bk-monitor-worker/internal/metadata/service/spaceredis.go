@@ -2693,6 +2693,8 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 		).
 		BkTenantIdEq(bkTenantId).
 		TableIdIn(tableIds...).
+		IsEnableEq(true).
+		IsDeletedEq(false).
 		All(&rtList); err != nil {
 		return nil, err
 	}

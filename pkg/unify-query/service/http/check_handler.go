@@ -217,9 +217,6 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, r
 			"未解析到可路由的查询",
 		).Error(ctx, fmt.Errorf("empty check query reference"))
 	}
-	if out == nil {
-		out = []any{}
-	}
 	return out, routeInfo, nil
 }
 

@@ -1972,8 +1972,16 @@ func TestQueryTs_ToQueryReference_DataSourceAlias(t *testing.T) {
 		require.NoError(t, err)
 
 		// 规范化原地写回 QueryTs.QueryList[*].DataSource
-		assert.Equal(t, BkLog, ts.QueryList[0].DataSource, "bk_log_search 应被规范化为 bklog")
-		assert.Equal(t, BkApm, ts.QueryList[1].DataSource, "bk_apm 应被规范化为 bkapm")
+		require.Len(t, ts.QueryList, 2)
+		for i, tc := range []struct {
+			want string
+			msg  string
+		}{
+			{BkLog, "bk_log_search 应被规范化为 bklog"},
+			{BkApm, "bk_apm 应被规范化为 bkapm"},
+		} {
+			assert.Equal(t, tc.want, ts.QueryList[i].DataSource, tc.msg)
+		}
 	})
 }
 

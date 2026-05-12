@@ -159,7 +159,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
 		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
-		query.DataSource = NormalizeDataSource(query.DataSource)
+		query.DataSource = normalizeDataSource(query.DataSource)
 
 		// 时间复用
 		query.Timezone = q.Timezone

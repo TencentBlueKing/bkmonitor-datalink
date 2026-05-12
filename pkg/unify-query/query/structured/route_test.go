@@ -165,27 +165,27 @@ func TestNormalizeDataSource(t *testing.T) {
 		want  string
 	}{
 		// 别名 -> 内部值
-		"alias bk_data":       {"bk_data", BkData},
-		"alias bk_log_search": {"bk_log_search", BkLog},
-		"alias bk_apm":        {"bk_apm", BkApm},
+		"alias bk_data":       {input: "bk_data", want: BkData},
+		"alias bk_log_search": {input: "bk_log_search", want: BkLog},
+		"alias bk_apm":        {input: "bk_apm", want: BkApm},
 
 		// 内部值原样返回
-		"internal bkdata":    {BkData, BkData},
-		"internal bklog":     {BkLog, BkLog},
-		"internal bkapm":     {BkApm, BkApm},
-		"internal bkmonitor": {BkMonitor, BkMonitor},
-		"internal custom":    {Custom, Custom},
+		"internal bkdata":    {input: BkData, want: BkData},
+		"internal bklog":     {input: BkLog, want: BkLog},
+		"internal bkapm":     {input: BkApm, want: BkApm},
+		"internal bkmonitor": {input: BkMonitor, want: BkMonitor},
+		"internal custom":    {input: Custom, want: Custom},
 
 		// 空串保留给上游 ToQueryMetric 自动补默认 BkMonitor 使用
-		"empty": {"", ""},
+		"empty": {input: "", want: ""},
 
 		// 未知值原样返回，不静默吞掉
-		"unknown": {"unknown_source", "unknown_source"},
+		"unknown": {input: "unknown_source", want: "unknown_source"},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.want, NormalizeDataSource(tc.input))
+			assert.Equal(t, tc.want, normalizeDataSource(tc.input))
 		})
 	}
 }

@@ -138,10 +138,13 @@ definitions:
     properties:
       data:
         description: Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM
-          常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL
-          写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则跳过该项；若最终无任何元素则 400。不下发真实
-          TSDB。
+          常为单元素 VmQueryCheckBody。非直查无预览体则该项不出现；可为空数组，若 route_info 非空仍 200 表示仅路由预览。
         items: {}
+        type: array
+      route_info:
+        description: 与 ToQueryReference 展开后的子查询对应的路由摘要（不调真实 TSDB）。
+        items:
+          $ref: '#/definitions/metadata.CheckRouteInfo'
         type: array
       trace_id:
         description: TraceID 链路 ID（与 trace span 一致）。
@@ -281,6 +284,27 @@ definitions:
   metadata.Collapse:
     properties:
       field:
+        type: string
+    type: object
+  metadata.CheckRouteInfo:
+    properties:
+      data_label:
+        type: string
+      data_source:
+        type: string
+      db:
+        type: string
+      measurement:
+        type: string
+      metric_name:
+        type: string
+      reference_name:
+        type: string
+      storage_id:
+        type: string
+      storage_type:
+        type: string
+      table_id:
         type: string
     type: object
   metadata.FieldAlias:

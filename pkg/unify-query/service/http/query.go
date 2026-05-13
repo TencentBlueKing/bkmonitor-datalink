@@ -41,6 +41,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
+func warnElasticsearchIndexPrefixMissing(ctx context.Context, qry *metadata.Query, msgType string) {
+	metadata.NewMessage(
+		msgType,
+		"%s ES 元数据 db(索引前缀)为空且无有效 dbs，已跳过该结果表",
+		qry.TableID,
+	).Warn(ctx)
+}
+
+func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef metadata.QueryReference, msgType string, onSkip func(*metadata.Query)) metadata.QueryReference {
+	return queryRef.Filter(func(qry *metadata.Query) bool {
+		if !qry.IsElasticsearchIndexPrefixMissing() {
+			return true
+		}
+
+		warnElasticsearchIndexPrefixMissing(ctx, qry, msgType)
+		if onSkip != nil {
+			onSkip(qry)
+		}
+		return false
+	})
+}
+
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
@@ -175,6 +197,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if err != nil {
 		return total, list, resultTableOptions, err
 	}
+	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
 
 	receiveWg.Add(1)
 	go func() {
@@ -435,6 +458,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			"查询参数配置异常",
 		).Error(ctx, err)
 	}
+	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
+		for i := 0; i < session.SliceLength(); i++ {
+			sliceQry := *qry
+			sliceQry.SliceID = cast.ToString(i)
+			slice := session.Slice(sliceQry.TableUUID())
+			slice.Status = redisUtil.StatusCompleted
+			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
+		}
+	})
 
 	receiveWg.Add(1)
 	go func() {

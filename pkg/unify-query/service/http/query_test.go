@@ -4805,6 +4805,186 @@ func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
 	assert.Contains(t, st.Message, "query error:")
 }
 
+// TestQueryRaw_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该结果表，raw 请求不失败、无数据。
+func TestQueryRaw_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+				Limit:         10,
+			},
+		},
+		Start: "1723594000",
+		End:   "1723595000",
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "millisecond",
+					},
+				},
+			},
+		},
+	}
+
+	total, list, _, err := queryRawWithInstance(ctx, qts)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, list)
+}
+
+// TestQueryRaw_ES_mixed_empty_db_and_ok 多结果表一路 ES 的 db 为空（跳过）、一路正常：应返回正常路数据且不应标记 Raw 部分失败。
+func TestQueryRaw_ES_mixed_empty_db_and_ok(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__2"})
+
+	influxdb.MockSpaceRouter(ctx)
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_empty_db_mixed_merge"
+	const okRT = "pr_empty_db_ok_rt"
+	const badRT = "pr_empty_db_bad_rt"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, badRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, okRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     okRT,
+		DB:          "pr_mixed_ok_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_mixed_ok",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, badRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     badRT,
+		DB:          "",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_mixed_bad",
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[okRT] = &ir.SpaceResultTable{TableId: okRT}
+	space[badRT] = &ir.SpaceResultTable{TableId: badRT}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	const esURL = "http://127.0.0.1:93002"
+	mapBody := `{"pr_mixed_ok_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_mixed_ok_idx", httpmock.NewStringResponder(http.StatusOK, mapBody))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_mixed_ok_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, mapBody))
+
+	okSearch := `{"took":1,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"pr_mixed_ok_idx","_id":"x1","_source":{"dtEventTimeStamp":"1752141800000","log":"mixed-ok"}}]}}`
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_mixed_ok_idx/_search", httpmock.NewStringResponder(http.StatusOK, okSearch))
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				TableID:   mergeTable,
+				FieldList: []string{"dtEventTimeStamp", "log"},
+			},
+		},
+		Start: "1752141400000",
+		End:   "1752141900000",
+		Limit: 50,
+	}
+
+	total, list, _, qerr := queryRawWithInstance(ctx, queryTs)
+	assert.NoError(t, qerr)
+	assert.Greater(t, total, int64(0))
+	assert.NotEmpty(t, list)
+	assert.Equal(t, "mixed-ok", list[0]["log"])
+
+	st := metadata.GetStatus(ctx)
+	if st != nil {
+		assert.NotEqual(t, metadata.QueryRawPartial, st.Code, "跳过缺索引前缀的 ES 子任务不应记为 Raw 部分失败")
+	}
+}
+
+// TestQueryRawWithScroll_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该表：单次 scroll 不报错且会话可 Done。
+func TestQueryRawWithScroll_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_scroll_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+			},
+		},
+		Start:    "1757051309",
+		End:      "1757054909",
+		Step:     "1m",
+		Limit:    10,
+		Scroll:   "1m",
+		SliceMax: 1,
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "second",
+					},
+				},
+			},
+		},
+	}
+
+	queryByte, _ := json.Marshal(qts)
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, string(queryByte), ScrollWindowTimeout, ScrollSessionLockTimeout, qts.SliceMax, qts.Limit)
+	if err != nil {
+		t.Skipf("Redis: %v", err)
+		return
+	}
+	defer func() { _ = session.Clear(ctx) }()
+
+	_, list, _, done, err := queryRawWithScroll(ctx, qts, session)
+	assert.NoError(t, err)
+	assert.Empty(t, list)
+	assert.True(t, done, "skipped bad table should mark slice completed so session Done")
+}
+
 // TestQueryTsPartialSuccessMultiRoute query/ts 多路查询时，至少一路成功应返回成功并标记 QueryTsPartial。
 func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
 	mock.Init()

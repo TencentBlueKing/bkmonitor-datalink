@@ -240,6 +240,22 @@ func (q *Query) GetMergeDBStatus() bool {
 	return false
 }
 
+// IsElasticsearchIndexPrefixMissing 表示 ES 查询缺少可用的索引前缀（db / dbs）。
+func (q *Query) IsElasticsearchIndexPrefixMissing() bool {
+	if q == nil || q.StorageType != ElasticsearchStorageType {
+		return false
+	}
+	if strings.TrimSpace(q.DB) != "" {
+		return false
+	}
+	for _, db := range q.DBs {
+		if strings.TrimSpace(db) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (q *Query) VMExpand() *VmExpand {
 	return &VmExpand{
 		ResultTableList: []string{q.VmRt},
@@ -449,6 +465,34 @@ func (qRef QueryReference) Count() int {
 	})
 
 	return i
+}
+
+func (qRef QueryReference) Filter(fn func(qry *Query) bool) QueryReference {
+	filtered := make(QueryReference, len(qRef))
+	for refName, references := range qRef {
+		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
+
+			queryList := make(QueryList, 0, len(reference.QueryList))
+			for _, query := range reference.QueryList {
+				if query == nil || !fn(query) {
+					continue
+				}
+				queryList = append(queryList, query)
+			}
+			if len(queryList) == 0 {
+				continue
+			}
+
+			nextReference := *reference
+			nextReference.QueryList = queryList
+			filtered[refName] = append(filtered[refName], &nextReference)
+		}
+	}
+
+	return filtered
 }
 
 // Range 遍历查询列表

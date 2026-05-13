@@ -389,8 +389,8 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		err      error
 		ok       bool
 		val      influxdb.GenericKV
-		recvErr  bool
-		batchErr bool
+		recvErr  bool // genericCh 曾收到带 Err 的项（如 HScan 失败、JSON 解析失败）
+		batchErr bool // 任一批 BatchAdd 写本地 KV 失败
 	)
 	batchSize := int64(r.batchSize)
 	entities := make([]influxdb.GenericKV, 0)
@@ -432,6 +432,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				entities = entities[:0]
 			}
 			if !ok {
+				// 仅 SpaceAllKey 打点，避免非法 key 造成 Prometheus 高基数
 				if influxdb.IsSpaceAllRouterKey(key) {
 					if recvErr || batchErr {
 						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)

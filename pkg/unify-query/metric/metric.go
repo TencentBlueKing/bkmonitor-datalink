@@ -228,8 +228,7 @@ func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
 	counterInc(ctx, metric)
 }
 
-// RedisRouterLoadResultInc 记录一次 space_tsdb LoadRouter 结束时的结果；route_key 须由调用方保证为 SpaceAllKey 之一。
-// result 须为 RedisRouterLoadResultSuccess 或 RedisRouterLoadResultFailure。
+// RedisRouterLoadResultInc 记录一次 LoadRouter 结束：success 表示 Redis 扫描与 BatchAdd 均无错误；failure 表示出现过 channel 错误或 BatchAdd 失败。route_key 须为 SpaceAllKey。
 func RedisRouterLoadResultInc(ctx context.Context, routeKey, result string) {
 	if result != RedisRouterLoadResultSuccess && result != RedisRouterLoadResultFailure {
 		return

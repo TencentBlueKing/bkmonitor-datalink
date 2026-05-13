@@ -381,6 +381,7 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes bool) error {
 	r.rwLock.Lock()
 	defer r.rwLock.Unlock()
+	metric.RedisRouterLoadInc(ctx, key)
 	start := time.Now()
 	defer func() {
 		log.Debugf(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))

@@ -147,6 +147,16 @@ var (
 		},
 		[]string{"storage_id", "version", "commit_id"},
 	)
+
+	// redis_router_load_total 仅统计 space_tsdb：每次从 Redis HScan 全量同步一条空间路由 Hash 时 +1
+	redisRouterLoadTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "redis_router_load_total",
+			Help:      "unify-query space_tsdb: times each space routing hash is fully loaded from Redis (HScan)",
+		},
+		[]string{"route_key", "version", "commit_id"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -209,6 +219,13 @@ func TSDBGetStorageTotalInc(ctx context.Context, result string) {
 func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
 	params := append([]string{}, storageID, config.Version, config.CommitHash)
 	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+// RedisRouterLoadInc 仅用于 space_tsdb：每次 LoadRouter 从 Redis 全量扫描一条路由 Hash 时 +1
+func RedisRouterLoadInc(ctx context.Context, routeKey string) {
+	params := append([]string{}, routeKey, config.Version, config.CommitHash)
+	metric, _ := redisRouterLoadTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 

@@ -764,9 +764,13 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 
 	// 如果过滤结果表存在，则添加过滤条件
 	if len(tableIdList) != 0 {
-		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
-			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
-			return err
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.ESStorage
+			if err := esQuerySet.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", chunkTableIdList, err)
+				return err
+			}
+			esStorageList = append(esStorageList, tempList...)
 		}
 	} else {
 		if err := esQuerySet.All(&esStorageList); err != nil {
@@ -854,9 +858,13 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 
 	// 如果过滤结果表存在，则添加过滤条件
 	if len(tableIdList) != 0 {
-		if err := dorisQuerySet.TableIDIn(tableIdList...).All(&dorisStorageList); err != nil {
-			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", tableIdList, err)
-			return err
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.DorisStorage
+			if err := dorisQuerySet.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+				logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", chunkTableIdList, err)
+				return err
+			}
+			dorisStorageList = append(dorisStorageList, tempList...)
 		}
 	} else {
 		if err := dorisQuerySet.All(&dorisStorageList); err != nil {
@@ -974,10 +982,14 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 		resulttable.ESFieldQueryAliasOptionDBSchema.IsDeleted,
 	)
 
-	err := fieldAliasQuerySet.TableIDIn(tableIDList...).IsDeletedEq(false).All(&aliasRecords)
-	if err != nil {
-		logger.Errorf("getFieldAliasMap: Error getting field alias map for table_ids: %v, error: %v", tableIDList, err)
-		return nil, err
+	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
+		var tempRecords []resulttable.ESFieldQueryAliasOption
+		err := fieldAliasQuerySet.TableIDIn(chunkTableIDList...).IsDeletedEq(false).All(&tempRecords)
+		if err != nil {
+			logger.Errorf("getFieldAliasMap: Error getting field alias map for table_ids: %v, error: %v", chunkTableIDList, err)
+			return nil, err
+		}
+		aliasRecords = append(aliasRecords, tempRecords...)
 	}
 
 	// 按table_id分组构建别名映射

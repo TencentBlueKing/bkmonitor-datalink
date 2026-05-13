@@ -40,6 +40,12 @@ const (
 	ResultMiss = "miss"
 )
 
+// RedisRouterLoadResult 为 unify_query_redis_router_load_total 的 result 标签取值（固定 success|failure，基数可控）。
+const (
+	RedisRouterLoadResultSuccess = "success"
+	RedisRouterLoadResultFailure = "failure"
+)
+
 const (
 	_ = 1 << (10 * iota)
 	KB
@@ -148,14 +154,14 @@ var (
 		[]string{"storage_id", "version", "commit_id"},
 	)
 
-	// redis_router_load_total 仅统计 space_tsdb：每次从 Redis HScan 全量同步一条空间路由 Hash 时 +1
+	// redis_router_load_total：space_tsdb LoadRouter 每次结束记 1 次，result 为 success 或 failure（route_key 仅 SpaceAllKey）
 	redisRouterLoadTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
 			Name:      "redis_router_load_total",
-			Help:      "unify-query space_tsdb: times each space routing hash is fully loaded from Redis (HScan)",
+			Help:      "unify-query space_tsdb: full LoadRouter from Redis (HScan) outcomes by route_key and result (success|failure)",
 		},
-		[]string{"route_key", "version", "commit_id"},
+		[]string{"route_key", "result", "version", "commit_id"},
 	)
 )
 
@@ -222,9 +228,13 @@ func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
 	counterInc(ctx, metric)
 }
 
-// RedisRouterLoadInc 仅用于 space_tsdb：每次 LoadRouter 从 Redis 全量扫描一条路由 Hash 时 +1
-func RedisRouterLoadInc(ctx context.Context, routeKey string) {
-	params := append([]string{}, routeKey, config.Version, config.CommitHash)
+// RedisRouterLoadResultInc 记录一次 space_tsdb LoadRouter 结束时的结果；route_key 须由调用方保证为 SpaceAllKey 之一。
+// result 须为 RedisRouterLoadResultSuccess 或 RedisRouterLoadResultFailure。
+func RedisRouterLoadResultInc(ctx context.Context, routeKey, result string) {
+	if result != RedisRouterLoadResultSuccess && result != RedisRouterLoadResultFailure {
+		return
+	}
+	params := append([]string{}, routeKey, result, config.Version, config.CommitHash)
 	metric, _ := redisRouterLoadTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }

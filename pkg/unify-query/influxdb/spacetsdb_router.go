@@ -381,15 +381,16 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes bool) error {
 	r.rwLock.Lock()
 	defer r.rwLock.Unlock()
-	metric.RedisRouterLoadInc(ctx, key)
 	start := time.Now()
 	defer func() {
 		log.Debugf(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))
 	}()
 	var (
-		err error
-		ok  bool
-		val influxdb.GenericKV
+		err      error
+		ok       bool
+		val      influxdb.GenericKV
+		recvErr  bool
+		batchErr bool
 	)
 	batchSize := int64(r.batchSize)
 	entities := make([]influxdb.GenericKV, 0)
@@ -404,10 +405,11 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		case val, ok = <-genericCh:
 			if ok {
 				if val.Err != nil {
+					recvErr = true
 					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由加载异常 %v",
-						err,
+						val.Err,
 					).Warn(ctx)
 					continue
 				}
@@ -418,6 +420,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false, printBytes)
 				if err != nil {
+					batchErr = true
 					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由 %s 添加异常 %v",
@@ -429,6 +432,13 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				entities = entities[:0]
 			}
 			if !ok {
+				if influxdb.IsSpaceAllRouterKey(key) {
+					if recvErr || batchErr {
+						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
+					} else {
+						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultSuccess)
+					}
+				}
 				return nil
 			}
 		}

@@ -407,3 +407,13 @@ func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 	}
 	return
 }
+
+// IsSpaceAllRouterKey 判断 key 是否为 space 侧支持 Redis 全量 HScan 同步的路由 Hash（与 SpaceAllKey 一致）。
+func IsSpaceAllRouterKey(key string) bool {
+	for _, k := range SpaceAllKey {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}

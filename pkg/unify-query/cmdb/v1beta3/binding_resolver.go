@@ -194,7 +194,10 @@ func (r *BindingResolver) cacheSize() int {
 }
 
 func (r *BindingResolver) fetchFromBKBase(ctx context.Context, bizID string) (*BindingInfo, error) {
-	baseURL := viper.GetString(BindingResourceAPIURLConfigPath)
+	baseURL := BindingResourceAPIURL
+	if baseURL == "" {
+		baseURL = viper.GetString(BindingResourceAPIURLConfigPath)
+	}
 	if baseURL == "" {
 		return nil, fmt.Errorf("binding resource api url not configured (%s)", BindingResourceAPIURLConfigPath)
 	}

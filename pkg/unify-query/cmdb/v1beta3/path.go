@@ -62,7 +62,7 @@ func WithMaxHops(maxHops int) PathFinderOption {
 // 如果不提供 schemaProvider,将使用默认的 StaticSchemaProvider
 func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 	pf := &PathFinder{
-		schemaProvider:    NewStaticSchemaProvider(),
+		schemaProvider:    GetSchemaProvider(),
 		allowedCategories: []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 		dynamicDirection:  DirectionBoth,
 		maxHops:           DefaultMaxHops,
@@ -76,6 +76,10 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]cmdb.PathV2, error) {
 	if source == target {
+		paths := pf.findSelfRelationPaths(source, pathResource)
+		if len(paths) > 0 {
+			return paths, nil
+		}
 		return []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: string(source)}}}}, nil
 	}
 
@@ -91,6 +95,29 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	}
 
 	return results, nil
+}
+
+func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType, pathResource []ResourceType) []cmdb.PathV2 {
+	if len(pathResource) > 0 {
+		return nil
+	}
+
+	var results []cmdb.PathV2
+	for _, rel := range pf.getRelationsForType(resourceType) {
+		if rel.TargetType != resourceType {
+			continue
+		}
+		results = append(results, cmdb.PathV2{Steps: []cmdb.PathStepV2{
+			{ResourceType: string(resourceType)},
+			{
+				ResourceType: string(resourceType),
+				RelationType: string(rel.Schema.RelationType),
+				Category:     string(rel.Schema.Category),
+				Direction:    string(rel.Direction),
+			},
+		}})
+	}
+	return results
 }
 
 // dfs 深度优先搜索所有路径

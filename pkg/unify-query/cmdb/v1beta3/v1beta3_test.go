@@ -17,14 +17,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 type mockGraphQueryExecutor struct {
 	graphs []*LivenessGraph
 	err    error
+	sql    string
 }
 
 func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
+	m.sql = sql
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -562,6 +565,53 @@ func TestQueryLivenessGraphRejectsUnknownResourceType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "unknown resource type")
+}
+
+func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom_source": {"custom_id"},
+			"custom_target": {"target_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom_source_to_custom_target",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "custom_source",
+				ToType:       "custom_target",
+			},
+		},
+	})
+	InitSchemaProvider(provider)
+	t.Cleanup(func() { InitSchemaProvider(nil) })
+
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+
+	_, paths, _, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id": "source-1",
+		},
+		TargetType: "custom_target",
+		MaxHops:    1,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "custom_source"},
+		{
+			ResourceType: "custom_target",
+			RelationType: "custom_source_to_custom_target",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+	assert.Contains(t, executor.sql, "entity_data: { custom_id: custom_id }")
+	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id }")
 }
 
 func matchersEqual(a, b cmdb.Matcher) bool {

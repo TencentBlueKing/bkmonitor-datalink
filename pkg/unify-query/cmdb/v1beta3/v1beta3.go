@@ -57,13 +57,14 @@ type GraphQueryExecutorWithBinding interface {
 
 // Model v2 CMDB 实现，基于 SurrealDB 图查询
 type Model struct {
-	executor GraphQueryExecutor
-	resolver *BindingResolver
+	executor       GraphQueryExecutor
+	resolver       *BindingResolver
+	schemaProvider SchemaProvider
 }
 
 // NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
 func NewModel(ctx context.Context, executor GraphQueryExecutor) (*Model, error) {
-	return &Model{executor: executor}, nil
+	return &Model{executor: executor, schemaProvider: GetSchemaProvider()}, nil
 }
 
 // SetExecutor 设置查询执行器（用于测试）
@@ -74,6 +75,14 @@ func (m *Model) SetExecutor(executor GraphQueryExecutor) {
 // SetResolver 注入 binding 解析器（生产路径用；测试可以留空）
 func (m *Model) SetResolver(resolver *BindingResolver) {
 	m.resolver = resolver
+}
+
+// SetSchemaProvider injects the schema used by validation, path discovery and
+// SQL generation. Passing nil keeps the current provider unchanged.
+func (m *Model) SetSchemaProvider(provider SchemaProvider) {
+	if provider != nil {
+		m.schemaProvider = provider
+	}
 }
 
 func (m *Model) QueryResourceMatcher(
@@ -328,7 +337,12 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
 	defer span.End(&err)
 
-	if err := validateQueryResources(req); err != nil {
+	provider := m.schemaProvider
+	if provider == nil {
+		provider = GetSchemaProvider()
+	}
+
+	if err := validateQueryResources(req, provider); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -339,7 +353,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	span.Set("look-back-delta", req.LookBackDelta)
 	span.Set("space-uid", req.SpaceUID)
 
-	builder := NewSurrealQueryBuilder(req)
+	builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
 	sql := builder.Build()
 	queryStart, queryEnd := req.GetQueryRange()
 
@@ -351,6 +365,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 		WithAllowedCategories(req.AllowedRelationTypes...),
 		WithDynamicDirection(req.DynamicRelationDirection),
 		WithMaxHops(req.MaxHops),
+		WithSchemaProvider(provider),
 	)
 	paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 	if err != nil {
@@ -451,8 +466,10 @@ func parseStep(step string) (int64, error) {
 	return stepMs, nil
 }
 
-func validateQueryResources(req *QueryRequest) error {
-	provider := NewStaticSchemaProvider()
+func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
+	if provider == nil {
+		provider = GetSchemaProvider()
+	}
 	known := make(map[ResourceType]struct{})
 	for _, schema := range provider.ListRelationSchemas() {
 		known[schema.FromType] = struct{}{}

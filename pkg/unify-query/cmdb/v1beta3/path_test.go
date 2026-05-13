@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 func TestPathFinder_FindAllPaths(t *testing.T) {
@@ -219,4 +220,39 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			assert.Equal(t, tc.Expected, paths)
 		})
 	}
+}
+
+func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "system_to_system",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "system",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryDynamic),
+		WithDynamicDirection(DirectionOutbound),
+		WithMaxHops(1),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, nil)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "system"},
+		{
+			ResourceType: "system",
+			RelationType: "system_to_system",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
 }

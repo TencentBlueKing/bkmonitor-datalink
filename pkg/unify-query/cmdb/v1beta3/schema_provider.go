@@ -12,6 +12,7 @@ package v1beta3
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
@@ -31,39 +32,63 @@ type v1beta3SchemaProviderAdapter struct {
 	provider relation.SchemaProvider
 }
 
+var (
+	defaultSchemaProviderMu sync.RWMutex
+	defaultSchemaProvider   SchemaProvider = NewStaticSchemaProvider()
+)
+
+// InitSchemaProvider injects the relation schema provider initialized by the
+// service layer. Passing nil falls back to the static default schema.
+func InitSchemaProvider(provider relation.SchemaProvider) {
+	defaultSchemaProviderMu.Lock()
+	defer defaultSchemaProviderMu.Unlock()
+	if provider == nil {
+		defaultSchemaProvider = NewStaticSchemaProvider()
+		return
+	}
+	defaultSchemaProvider = NewSchemaProviderFromRelation(provider)
+}
+
+func GetSchemaProvider() SchemaProvider {
+	defaultSchemaProviderMu.RLock()
+	defer defaultSchemaProviderMu.RUnlock()
+	return defaultSchemaProvider
+}
+
 var relationSchemaOrder = map[RelationType]int{
-	RelationNodeWithSystem:                   0,
-	RelationNodeWithPod:                      1,
-	RelationJobWithPod:                       2,
-	RelationPodWithReplicaSet:                3,
-	RelationPodWithStatefulSet:               4,
-	RelationDaemonSetWithPod:                 5,
-	RelationDeploymentWithReplicaSet:         6,
-	RelationPodWithService:                   7,
-	RelationIngressWithService:               8,
-	RelationK8sAddressWithService:            9,
-	RelationDomainWithService:                10,
-	RelationAPMServiceInstanceWithPod:        11,
-	RelationAPMServiceInstanceWithSystem:     12,
-	RelationAPMServiceWithAPMServiceInstance: 13,
-	RelationContainerWithPod:                 14,
-	RelationDataSourceWithPod:                15,
-	RelationDataSourceWithNode:               16,
-	RelationBKLogConfigWithDataSource:        17,
-	RelationBizWithSet:                       18,
-	RelationModuleWithSet:                    19,
-	RelationHostWithModule:                   20,
-	RelationHostWithSystem:                   21,
-	RelationAppVersionWithContainer:          22,
-	RelationAppVersionWithSystem:             23,
-	RelationContainerWithEnvironment:         24,
-	RelationEnvironmentWithSystem:            25,
-	RelationAppVersionWithGitCommit:          26,
-	RelationPodToPod:                         27,
-	RelationPodToSystem:                      28,
-	RelationSystemToPod:                      29,
-	RelationSystemToSystem:                   30,
-	RelationServiceToService:                 31,
+	RelationNodeWithSystem:                     0,
+	RelationNodeWithPod:                        1,
+	RelationJobWithPod:                         2,
+	RelationPodWithReplicaSet:                  3,
+	RelationPodWithStatefulSet:                 4,
+	RelationDaemonSetWithPod:                   5,
+	RelationDeploymentWithReplicaSet:           6,
+	RelationPodWithService:                     7,
+	RelationIngressWithService:                 8,
+	RelationK8sAddressWithService:              9,
+	RelationDomainWithService:                  10,
+	RelationAPMServiceInstanceWithPod:          11,
+	RelationAPMServiceInstanceWithSystem:       12,
+	RelationAPMServiceWithAPMServiceInstance:   13,
+	RelationContainerWithPod:                   14,
+	RelationDataSourceWithPod:                  15,
+	RelationDataSourceWithNode:                 16,
+	RelationBKLogConfigWithDataSource:          17,
+	RelationBizWithSet:                         18,
+	RelationModuleWithSet:                      19,
+	RelationHostWithModule:                     20,
+	RelationHostWithSystem:                     21,
+	RelationAppVersionWithContainer:            22,
+	RelationAppVersionWithSystem:               23,
+	RelationContainerWithEnvironment:           24,
+	RelationEnvironmentWithSystem:              25,
+	RelationAppVersionWithGitCommit:            26,
+	RelationPodToPod:                           27,
+	RelationPodToSystem:                        28,
+	RelationSystemToPod:                        29,
+	RelationSystemToSystem:                     30,
+	RelationServiceToService:                   31,
+	RelationType("apm_service_to_apm_service"): 32,
 }
 
 func (a *v1beta3SchemaProviderAdapter) GetResourcePrimaryKeys(resourceType ResourceType) []string {

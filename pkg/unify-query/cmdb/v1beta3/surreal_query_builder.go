@@ -59,10 +59,15 @@ type SurrealQueryBuilder struct {
 // NewSurrealQueryBuilder 创建查询构建器
 // 如果不提供 schemaProvider,将使用默认的 StaticSchemaProvider
 func NewSurrealQueryBuilder(request *QueryRequest, opts ...PathFinderOption) *SurrealQueryBuilder {
+	return NewSurrealQueryBuilderWithSchemaProvider(request, GetSchemaProvider(), opts...)
+}
+
+func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider SchemaProvider, opts ...PathFinderOption) *SurrealQueryBuilder {
 	request.Normalize()
 
-	// 默认使用 StaticSchemaProvider
-	provider := NewStaticSchemaProvider()
+	if provider == nil {
+		provider = GetSchemaProvider()
+	}
 
 	// 创建 PathFinder 时传入 SchemaProvider
 	allOpts := append([]PathFinderOption{

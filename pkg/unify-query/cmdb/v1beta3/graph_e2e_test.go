@@ -66,7 +66,7 @@ SELECT {
             target: {
                 entity_type: 'system',
                 entity_id: <string>target_id,
-                entity_data: { bk_cloud_id: target_id.bk_cloud_id, bk_target_ip: target_id.bk_target_ip },
+                entity_data: { bk_target_ip: target_id.bk_target_ip },
                 liveness: (SELECT * FROM system_liveness_record WHERE system_id = $parent.target_id AND period_end >= $start AND period_start <= $end)
             }
         } FROM node_with_system WHERE source_id = $parent.id
@@ -261,7 +261,7 @@ SELECT {
     root: {
         entity_type: meta::tb(id),
         entity_id: <string>id,
-        entity_data: { bk_cloud_id: bk_cloud_id, bk_target_ip: bk_target_ip },
+        entity_data: { bk_target_ip: bk_target_ip },
         created_at: created_at,
         updated_at: updated_at,
         liveness: (SELECT * FROM system_liveness_record WHERE system_id = $parent.id AND period_end >= $start AND period_start <= $end)
@@ -293,7 +293,7 @@ SELECT {
             target: {
                 entity_type: 'system',
                 entity_id: <string>target_id,
-                entity_data: { bk_cloud_id: target_id.bk_cloud_id, bk_target_ip: target_id.bk_target_ip },
+                entity_data: { bk_target_ip: target_id.bk_target_ip },
                 liveness: (SELECT * FROM system_liveness_record WHERE system_id = $parent.target_id AND period_end >= $start AND period_start <= $end)
             }
         } FROM system_to_system WHERE source_id = $parent.id
@@ -301,8 +301,7 @@ SELECT {
     }
 } AS result
 FROM system
-WHERE bk_cloud_id = '0'
-  AND bk_target_ip = '192.168.1.1'
+WHERE bk_target_ip = '192.168.1.1'
   AND (SELECT count() FROM only system_liveness_record WHERE system_id = $parent.id AND $end >= period_start AND $start <= period_end GROUP ALL) > 0
 LIMIT 10;`,
 		MockResponse: []map[string]any{
@@ -435,7 +434,7 @@ SELECT {
             target: {
                 entity_type: 'system',
                 entity_id: <string>target_id,
-                entity_data: { bk_cloud_id: target_id.bk_cloud_id, bk_target_ip: target_id.bk_target_ip },
+                entity_data: { bk_target_ip: target_id.bk_target_ip },
                 liveness: (SELECT * FROM system_liveness_record WHERE system_id = $parent.target_id AND period_end >= $start AND period_start <= $end)
             }
         } FROM node_with_system WHERE source_id = $parent.id

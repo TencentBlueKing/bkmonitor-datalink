@@ -42,6 +42,7 @@ var (
 	BKBaseSurrealDBResultTableID string
 	BKBaseSurrealDBTimeout       time.Duration
 	BindingCacheTTL              time.Duration
+	BindingResourceAPIURL        string
 )
 
 // BKBaseSurrealDBClient 通过 bkbase query_sync 接口转发 SurrealQL 查询。

@@ -77,9 +77,7 @@ var DefaultRelationSchemas = []RelationSchema{
 
 // NewDefaultStaticSchemaProvider creates a StaticSchemaProvider with default data
 func NewDefaultStaticSchemaProvider() *StaticSchemaProvider {
-	config := StaticProviderConfig{
-		ResourcePrimaryKeys: DefaultResourcePrimaryKeys,
-		RelationSchemas:     DefaultRelationSchemas,
-	}
+	config := DefaultStaticProviderConfig()
+	config.RelationSchemas = DefaultRelationSchemas
 	return NewStaticSchemaProvider(config)
 }

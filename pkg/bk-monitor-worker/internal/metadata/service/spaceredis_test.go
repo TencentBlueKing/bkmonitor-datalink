@@ -1581,6 +1581,181 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 }
 
+func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ESFieldQueryAliasOption{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_alias_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		record := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&record).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	aliasMap, err := NewSpacePusher().getFieldAliasMap(tableIDs)
+	assert.NoError(t, err, "getFieldAliasMap should not return an error")
+	assert.Len(t, aliasMap, tableCount, "field alias map should include records from all chunks")
+	assert.Equal(t, "__ext.field_000", aliasMap[tableIDs[0]]["alias_000"])
+	lastFieldPath := fmt.Sprintf("__ext.field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, aliasMap[tableIDs[tableCount-1]][lastQueryAlias])
+}
+
+func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.ESStorage{}, &resulttable.ESFieldQueryAliasOption{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_es_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ESStorage{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTableOption{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ClusterRecord{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		rt := resulttable.ResultTable{
+			TableId:    tableID,
+			IsDeleted:  false,
+			IsEnable:   true,
+			BkTenantId: tenant.DefaultTenantId,
+		}
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+		esStorage := storage.ESStorage{
+			TableID:          tableID,
+			StorageClusterID: uint(i + 1),
+			SourceType:       "log",
+			IndexSet:         fmt.Sprintf("index_%03d", i),
+			NeedCreateIndex:  true,
+		}
+		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
+
+		aliasRecord := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.es_field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("es_alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	err := NewSpacePusher().PushEsTableIdDetail(tableIDs, false)
+	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+
+	details := client.HGetAll(cfg.ResultTableDetailKey)
+	assert.Len(t, details, tableCount, "result_table_detail should include ES records from all chunks")
+
+	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
+	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
+	assert.NotEmpty(t, firstDetailStr, "first chunk ES table detail should be written")
+	assert.NotEmpty(t, lastDetailStr, "last chunk ES table detail should be written")
+
+	var lastDetail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last ES detail should be valid JSON")
+	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
+	assert.True(t, ok, "last ES detail should include field_alias")
+	lastFieldPath := fmt.Sprintf("__ext.es_field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("es_alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
+}
+
+func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_doris_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.DorisStorage{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		rt := resulttable.ResultTable{
+			TableId:    tableID,
+			IsDeleted:  false,
+			IsEnable:   true,
+			BkTenantId: tenant.DefaultTenantId,
+		}
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+		dorisStorage := storage.DorisStorage{
+			TableID:          tableID,
+			BkbaseTableID:    fmt.Sprintf("bkbase_%03d", i),
+			SourceType:       "log",
+			IndexSet:         fmt.Sprintf("index_%03d", i),
+			TableType:        "primary_table",
+			StorageClusterID: uint(i + 1),
+		}
+		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+
+		aliasRecord := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.doris_field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("doris_alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	err := NewSpacePusher().PushDorisTableIdDetail(tableIDs, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	details := client.HGetAll(cfg.ResultTableDetailKey)
+	assert.Len(t, details, tableCount, "result_table_detail should include Doris records from all chunks")
+
+	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
+	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
+	assert.NotEmpty(t, firstDetailStr, "first chunk Doris table detail should be written")
+	assert.NotEmpty(t, lastDetailStr, "last chunk Doris table detail should be written")
+
+	var lastDetail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last Doris detail should be valid JSON")
+	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
+	assert.True(t, ok, "last Doris detail should include field_alias")
+	lastFieldPath := fmt.Sprintf("__ext.doris_field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("doris_alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
+}
+
 func TestSpacePusher_ComposeData(t *testing.T) {
 	// 初始化数据库
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")

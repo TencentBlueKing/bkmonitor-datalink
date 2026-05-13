@@ -614,6 +614,205 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id }")
 }
 
+func TestDefaultStaticSchemaProviderMatchesServiceStaticProvider(t *testing.T) {
+	buildSQL := func() string {
+		return NewSurrealQueryBuilder(&QueryRequest{
+			Timestamp:  300000,
+			SourceType: ResourceTypeNode,
+			SourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00001",
+				"node":           "node-1",
+			},
+			TargetType: ResourceTypePod,
+			MaxHops:    1,
+		}).Build()
+	}
+
+	InitSchemaProvider(nil)
+	defaultSQL := buildSQL()
+
+	InitSchemaProvider(relation.NewDefaultStaticSchemaProvider())
+	t.Cleanup(func() { InitSchemaProvider(nil) })
+	serviceSQL := buildSQL()
+
+	assert.Equal(t, defaultSQL, serviceSQL)
+	assert.Contains(t, serviceSQL, "FROM node_with_pod")
+	assert.NotContains(t, serviceSQL, "FROM node_pod")
+}
+
+func TestQueryLivenessGraphUsesSpaceUIDSchemaNamespace(t *testing.T) {
+	ctx := context.Background()
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"pod":  resourceDefinition("pod", "global_pod"),
+				"node": resourceDefinition("node", "global_node"),
+			},
+			"bkcc__2": {
+				"pod": resourceDefinition("pod", "biz_pod"),
+			},
+		},
+		relations: map[string][]*relation.RelationDefinition{
+			relation.NamespaceAll: {
+				{Name: "global_pod_node", FromResource: "pod", ToResource: "node", Category: "static"},
+			},
+			"bkcc__2": {
+				{Name: "biz_pod_node", FromResource: "pod", ToResource: "node", Category: "static"},
+			},
+		},
+	})
+
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(provider)
+
+	_, paths, _, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		SpaceUID:   "bkcc__2",
+		Timestamp:  300000,
+		SourceType: ResourceTypePod,
+		SourceInfo: map[string]string{
+			"biz_pod": "pod-1",
+		},
+		TargetType: ResourceTypeNode,
+		MaxHops:    1,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "node",
+			RelationType: "biz_pod_node",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+	assert.Contains(t, executor.sql, "FROM biz_pod_node")
+	assert.Contains(t, executor.sql, "entity_data: { biz_pod: biz_pod }")
+	assert.Contains(t, executor.sql, "entity_data: { global_node: target_id.global_node }")
+	assert.NotContains(t, executor.sql, "global_pod_node")
+}
+
+func resourceDefinition(name string, primaryKeys ...string) *relation.ResourceDefinition {
+	fields := make([]relation.FieldDefinition, 0, len(primaryKeys))
+	for _, primaryKey := range primaryKeys {
+		fields = append(fields, relation.FieldDefinition{Name: primaryKey, Required: true})
+	}
+	return &relation.ResourceDefinition{Name: name, Fields: fields}
+}
+
+type namespaceRelationProvider struct {
+	resources map[string]map[string]*relation.ResourceDefinition
+	relations map[string][]*relation.RelationDefinition
+}
+
+func (p *namespaceRelationProvider) Name() string { return "namespace-relation-provider" }
+
+func (p *namespaceRelationProvider) ListNamespaces() ([]string, error) {
+	namespaces := make([]string, 0, len(p.resources)+len(p.relations))
+	seen := map[string]struct{}{}
+	for namespace := range p.resources {
+		if _, ok := seen[namespace]; !ok {
+			namespaces = append(namespaces, namespace)
+			seen[namespace] = struct{}{}
+		}
+	}
+	for namespace := range p.relations {
+		if _, ok := seen[namespace]; !ok {
+			namespaces = append(namespaces, namespace)
+			seen[namespace] = struct{}{}
+		}
+	}
+	return namespaces, nil
+}
+
+func (p *namespaceRelationProvider) GetResourceDefinition(namespace, name string) (*relation.ResourceDefinition, error) {
+	if nsResources, ok := p.resources[namespace]; ok {
+		if resourceDef, ok := nsResources[name]; ok {
+			return resourceDef, nil
+		}
+	}
+	return nil, relation.ErrResourceDefinitionNotFound
+}
+
+func (p *namespaceRelationProvider) ListResourceDefinitions(namespace string) ([]*relation.ResourceDefinition, error) {
+	nsResources := p.resources[namespace]
+	result := make([]*relation.ResourceDefinition, 0, len(nsResources))
+	for _, resourceDef := range nsResources {
+		result = append(result, resourceDef)
+	}
+	return result, nil
+}
+
+func (p *namespaceRelationProvider) ListAllResourceDefinitions() (map[string][]*relation.ResourceDefinition, error) {
+	result := make(map[string][]*relation.ResourceDefinition, len(p.resources))
+	for namespace := range p.resources {
+		result[namespace], _ = p.ListResourceDefinitions(namespace)
+	}
+	return result, nil
+}
+
+func (p *namespaceRelationProvider) GetRelationDefinition(namespace, name string) (*relation.RelationDefinition, error) {
+	for _, relationDef := range p.relations[namespace] {
+		if relationDef.Name == name {
+			return relationDef, nil
+		}
+	}
+	return nil, relation.ErrRelationDefinitionNotFound
+}
+
+func (p *namespaceRelationProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
+	return append([]*relation.RelationDefinition(nil), p.relations[namespace]...), nil
+}
+
+func (p *namespaceRelationProvider) ListAllRelationDefinitions() (map[string][]*relation.RelationDefinition, error) {
+	result := make(map[string][]*relation.RelationDefinition, len(p.relations))
+	for namespace, relationDefs := range p.relations {
+		result[namespace] = append([]*relation.RelationDefinition(nil), relationDefs...)
+	}
+	return result, nil
+}
+
+func (p *namespaceRelationProvider) GetResourcePrimaryKeys(resourceType relation.ResourceType) []string {
+	resourceDef, err := p.GetResourceDefinition(relation.NamespaceAll, string(resourceType))
+	if err != nil {
+		return nil
+	}
+	return resourceDef.GetPrimaryKeys()
+}
+
+func (p *namespaceRelationProvider) GetRelationSchema(relationType relation.RelationName) (*relation.RelationSchema, error) {
+	relationDef, err := p.GetRelationDefinition(relation.NamespaceAll, string(relationType))
+	if err != nil {
+		return nil, err
+	}
+	schema := relation.ToRelationSchema(relationDef)
+	return &schema, nil
+}
+
+func (p *namespaceRelationProvider) ListRelationSchemas() []relation.RelationSchema {
+	relationDefs := p.relations[relation.NamespaceAll]
+	result := make([]relation.RelationSchema, 0, len(relationDefs))
+	for _, relationDef := range relationDefs {
+		result = append(result, relation.ToRelationSchema(relationDef))
+	}
+	return result
+}
+
+func (p *namespaceRelationProvider) FindRelationByResourceTypes(namespace, fromResource, toResource string, directionType relation.DirectionType) (*relation.RelationDefinition, bool) {
+	for _, relationDef := range p.relations[namespace] {
+		if relationDef.FromResource == fromResource && relationDef.ToResource == toResource {
+			return relationDef, true
+		}
+	}
+	return nil, false
+}
+
+func (p *namespaceRelationProvider) Subscribe(callback relation.SchemaChangeCallback) error {
+	return nil
+}
+
 func matchersEqual(a, b cmdb.Matcher) bool {
 	if len(a) != len(b) {
 		return false

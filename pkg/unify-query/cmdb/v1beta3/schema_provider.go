@@ -21,9 +21,9 @@ import (
 // 注意：此接口使用 v1beta3 的类型系统，与 relation.SchemaProvider 不同
 type SchemaProvider interface {
 	// GetResourcePrimaryKeys 获取资源类型的主键字段列表
-	GetResourcePrimaryKeys(resourceType ResourceType) []string
+	GetResourcePrimaryKeys(namespace string, resourceType ResourceType) []string
 	// ListRelationSchemas 列出所有关联 Schema
-	ListRelationSchemas() []RelationSchema
+	ListRelationSchemas(namespace string) []RelationSchema
 }
 
 // v1beta3SchemaProviderAdapter v1beta3 SchemaProvider 适配器
@@ -91,12 +91,45 @@ var relationSchemaOrder = map[RelationType]int{
 	RelationType("apm_service_to_apm_service"): 32,
 }
 
-func (a *v1beta3SchemaProviderAdapter) GetResourcePrimaryKeys(resourceType ResourceType) []string {
-	return a.provider.GetResourcePrimaryKeys(relation.ResourceType(resourceType))
+func normalizeSchemaNamespace(namespace string) string {
+	if namespace == "" {
+		return relation.NamespaceAll
+	}
+	return namespace
 }
 
-func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas() []RelationSchema {
-	schemas := a.provider.ListRelationSchemas()
+func (a *v1beta3SchemaProviderAdapter) GetResourcePrimaryKeys(namespace string, resourceType ResourceType) []string {
+	ns := normalizeSchemaNamespace(namespace)
+	resourceDef, err := a.provider.GetResourceDefinition(ns, string(resourceType))
+	if err == nil {
+		return resourceDef.GetPrimaryKeys()
+	}
+	if ns != relation.NamespaceAll {
+		resourceDef, err = a.provider.GetResourceDefinition(relation.NamespaceAll, string(resourceType))
+		if err == nil {
+			return resourceDef.GetPrimaryKeys()
+		}
+	}
+	return []string{}
+}
+
+func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []RelationSchema {
+	ns := normalizeSchemaNamespace(namespace)
+	definitions, err := a.provider.ListRelationDefinitions(ns)
+	if err != nil {
+		definitions = nil
+	}
+	if len(definitions) == 0 && ns != relation.NamespaceAll {
+		definitions, err = a.provider.ListRelationDefinitions(relation.NamespaceAll)
+		if err != nil {
+			definitions = nil
+		}
+	}
+	schemas := make([]relation.RelationSchema, 0, len(definitions))
+	for _, definition := range definitions {
+		schema := relation.ToRelationSchema(definition)
+		schemas = append(schemas, schema)
+	}
 	result := make([]RelationSchema, len(schemas))
 	for i, schema := range schemas {
 		result[i] = RelationSchema{

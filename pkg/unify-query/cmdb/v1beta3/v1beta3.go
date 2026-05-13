@@ -341,6 +341,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	if provider == nil {
 		provider = GetSchemaProvider()
 	}
+	req.Normalize()
 
 	if err := validateQueryResources(req, provider); err != nil {
 		return nil, nil, nil, err
@@ -366,6 +367,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 		WithDynamicDirection(req.DynamicRelationDirection),
 		WithMaxHops(req.MaxHops),
 		WithSchemaProvider(provider),
+		WithNamespace(req.SchemaNamespace()),
 	)
 	paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 	if err != nil {
@@ -471,7 +473,7 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 		provider = GetSchemaProvider()
 	}
 	known := make(map[ResourceType]struct{})
-	for _, schema := range provider.ListRelationSchemas() {
+	for _, schema := range provider.ListRelationSchemas(req.SchemaNamespace()) {
 		known[schema.FromType] = struct{}{}
 		known[schema.ToType] = struct{}{}
 	}

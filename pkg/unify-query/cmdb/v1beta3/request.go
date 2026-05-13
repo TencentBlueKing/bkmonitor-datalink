@@ -9,6 +9,8 @@
 
 package v1beta3
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+
 // QueryRequest 关联查询请求
 type QueryRequest struct {
 	SpaceUID                 string             `json:"space_uid,omitempty"`                  // 空间 UID（bkcc__<biz> 形式），用于定位 binding
@@ -44,6 +46,14 @@ func (r *QueryRequest) Normalize() {
 	if len(r.AllowedRelationTypes) == 0 {
 		r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic}
 	}
+}
+
+// SchemaNamespace returns the ResourceDefinition / RelationDefinition namespace used by v1beta3 schema lookup.
+func (r *QueryRequest) SchemaNamespace() string {
+	if r == nil || r.SpaceUID == "" {
+		return relation.NamespaceAll
+	}
+	return r.SpaceUID
 }
 
 // GetQueryRange 获取查询时间范围

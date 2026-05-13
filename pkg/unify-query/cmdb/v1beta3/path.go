@@ -18,6 +18,7 @@ import (
 // PathFinder 路径发现器，用于查找资源之间的关联路径
 type PathFinder struct {
 	schemaProvider    SchemaProvider
+	namespace         string
 	allowedCategories []RelationCategory
 	dynamicDirection  TraversalDirection
 	maxHops           int
@@ -32,6 +33,13 @@ func WithSchemaProvider(provider SchemaProvider) PathFinderOption {
 		if provider != nil {
 			pf.schemaProvider = provider
 		}
+	}
+}
+
+// WithNamespace sets the ResourceDefinition / RelationDefinition namespace for schema lookup.
+func WithNamespace(namespace string) PathFinderOption {
+	return func(pf *PathFinder) {
+		pf.namespace = namespace
 	}
 }
 
@@ -63,6 +71,7 @@ func WithMaxHops(maxHops int) PathFinderOption {
 func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 	pf := &PathFinder{
 		schemaProvider:    GetSchemaProvider(),
+		namespace:         "",
 		allowedCategories: []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 		dynamicDirection:  DirectionBoth,
 		maxHops:           DefaultMaxHops,
@@ -214,7 +223,7 @@ func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*Relation
 	var results []*RelationQueryInfo
 
 	// 从 SchemaProvider 获取所有关联 Schema
-	schemas := pf.schemaProvider.ListRelationSchemas()
+	schemas := pf.schemaProvider.ListRelationSchemas(pf.namespace)
 
 	for i := range schemas {
 		schema := &schemas[i]

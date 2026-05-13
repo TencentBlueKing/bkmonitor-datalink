@@ -294,17 +294,29 @@ func mockConsulData(dataId string) []byte {
 
 // NewMockMetaCenter 创建一个 mock 的 consul 元数据获取
 func NewMockMetaCenter(t *testing.T, dataId string) *core.MetadataCenter {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockStore := store.NewMockStore(ctrl)
-	mockStore.EXPECT().Get(gomock.Any()).Return(mockConsulData(dataId), nil)
-
 	centerInstance := &core.MetadataCenter{
 		Mapping: &sync.Map{},
-		Consul:  mockStore,
+		Consul:  store.CreateDummyStore(),
 	}
-
-	_ = centerInstance.AddDataId(dataId)
+	centerInstance.AddDataIdAndInfo(dataId, dataId, core.DataIdInfo{
+		BaseInfo: core.BaseInfo{
+			BkBizId:   "2",
+			BkBizName: "BlueKing",
+			AppId:     "1",
+			AppName:   "testApp",
+		},
+		TraceKafka: core.TraceKafkaConfig{
+			Host:  "127.0.0.1",
+			Topic: "topic",
+		},
+		TraceEs: core.TraceEsConfig{
+			IndexName: "testIndexName",
+			Host:      "127.0.0.1:9200",
+		},
+		SaveEs: core.TraceEsConfig{
+			IndexName: "testIndexName",
+			Host:      "127.0.0.1:9200",
+		},
+	})
 	return centerInstance
 }

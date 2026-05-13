@@ -40,13 +40,21 @@ var (
 // InitSchemaProvider injects the relation schema provider initialized by the
 // service layer. Passing nil falls back to the static default schema.
 func InitSchemaProvider(provider relation.SchemaProvider) {
-	defaultSchemaProviderMu.Lock()
-	defer defaultSchemaProviderMu.Unlock()
-	if provider == nil {
-		defaultSchemaProvider = NewStaticSchemaProvider()
-		return
+	nextProvider := SchemaProvider(NewStaticSchemaProvider())
+	if provider != nil {
+		nextProvider = NewSchemaProviderFromRelation(provider)
 	}
-	defaultSchemaProvider = NewSchemaProviderFromRelation(provider)
+
+	defaultSchemaProviderMu.Lock()
+	defaultSchemaProvider = nextProvider
+	defaultSchemaProviderMu.Unlock()
+
+	modelMutex.Lock()
+	model := defaultModel
+	modelMutex.Unlock()
+	if model != nil {
+		model.SetSchemaProvider(nextProvider)
+	}
 }
 
 func GetSchemaProvider() SchemaProvider {

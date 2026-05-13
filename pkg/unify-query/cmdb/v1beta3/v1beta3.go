@@ -57,9 +57,10 @@ type GraphQueryExecutorWithBinding interface {
 
 // Model v2 CMDB 实现，基于 SurrealDB 图查询
 type Model struct {
-	executor       GraphQueryExecutor
-	resolver       *BindingResolver
-	schemaProvider SchemaProvider
+	executor         GraphQueryExecutor
+	resolver         *BindingResolver
+	schemaProvider   SchemaProvider
+	schemaProviderMu sync.RWMutex
 }
 
 // NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
@@ -81,8 +82,20 @@ func (m *Model) SetResolver(resolver *BindingResolver) {
 // SQL generation. Passing nil keeps the current provider unchanged.
 func (m *Model) SetSchemaProvider(provider SchemaProvider) {
 	if provider != nil {
+		m.schemaProviderMu.Lock()
+		defer m.schemaProviderMu.Unlock()
 		m.schemaProvider = provider
 	}
+}
+
+func (m *Model) getSchemaProvider() SchemaProvider {
+	m.schemaProviderMu.RLock()
+	provider := m.schemaProvider
+	m.schemaProviderMu.RUnlock()
+	if provider == nil {
+		return GetSchemaProvider()
+	}
+	return provider
 }
 
 func (m *Model) QueryResourceMatcher(
@@ -337,10 +350,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
 	defer span.End(&err)
 
-	provider := m.schemaProvider
-	if provider == nil {
-		provider = GetSchemaProvider()
-	}
+	provider := m.getSchemaProvider()
 	req.Normalize()
 
 	if err := validateQueryResources(req, provider); err != nil {

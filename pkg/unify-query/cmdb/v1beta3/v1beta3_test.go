@@ -614,6 +614,120 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id }")
 }
 
+func TestInitSchemaProviderRefreshesDefaultModel(t *testing.T) {
+	ctx := context.Background()
+	InitSchemaProvider(nil)
+
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+
+	modelMutex.Lock()
+	previousModel := defaultModel
+	defaultModel = model
+	modelMutex.Unlock()
+	t.Cleanup(func() {
+		modelMutex.Lock()
+		defaultModel = previousModel
+		modelMutex.Unlock()
+		InitSchemaProvider(nil)
+	})
+
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom_source": {"custom_id"},
+			"custom_target": {"target_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom_source_to_custom_target",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "custom_source",
+				ToType:       "custom_target",
+			},
+		},
+	})
+	InitSchemaProvider(provider)
+
+	_, paths, _, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id": "source-1",
+		},
+		TargetType: "custom_target",
+		MaxHops:    1,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "custom_source"},
+		{
+			ResourceType: "custom_target",
+			RelationType: "custom_source_to_custom_target",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+	assert.Contains(t, executor.sql, "FROM custom_source_to_custom_target")
+}
+
+func TestQueryLivenessGraphDefaultsEmptyTargetTypeToSourceType(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom_source": {"custom_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom_source_to_custom_source",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "custom_source",
+				ToType:       "custom_source",
+			},
+		},
+	})
+	InitSchemaProvider(provider)
+	t.Cleanup(func() { InitSchemaProvider(nil) })
+
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+
+	req := &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id": "source-1",
+		},
+		MaxHops: 1,
+	}
+	_, paths, _, err := model.QueryLivenessGraph(ctx, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, ResourceType("custom_source"), req.TargetType)
+	assert.ElementsMatch(t, []cmdb.PathV2{
+		{Steps: []cmdb.PathStepV2{
+			{ResourceType: "custom_source"},
+			{
+				ResourceType: "custom_source",
+				RelationType: "custom_source_to_custom_source",
+				Category:     "dynamic",
+				Direction:    "outbound",
+			},
+		}},
+		{Steps: []cmdb.PathStepV2{
+			{ResourceType: "custom_source"},
+			{
+				ResourceType: "custom_source",
+				RelationType: "custom_source_to_custom_source",
+				Category:     "dynamic",
+				Direction:    "inbound",
+			},
+		}},
+	}, paths)
+}
+
 func TestDefaultStaticSchemaProviderMatchesServiceStaticProvider(t *testing.T) {
 	buildSQL := func() string {
 		return NewSurrealQueryBuilder(&QueryRequest{

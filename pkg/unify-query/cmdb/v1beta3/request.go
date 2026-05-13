@@ -43,6 +43,10 @@ func (r *QueryRequest) Normalize() {
 	if r.DynamicRelationDirection == "" {
 		r.DynamicRelationDirection = DirectionBoth
 	}
+	// 如果 target 为空，则使用 source 作为 target，用于 info 数据展示
+	if r.TargetType == "" {
+		r.TargetType = r.SourceType
+	}
 	if len(r.AllowedRelationTypes) == 0 {
 		r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic}
 	}

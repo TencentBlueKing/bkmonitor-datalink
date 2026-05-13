@@ -3546,11 +3546,18 @@ func (s *SpaceRedisClearer) ClearRtDetail() {
 	}
 	var rtIdList []string
 	for _, rt := range rtList {
+		reformattedTableId := reformatTableId(rt.TableId)
 		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			rtIdList = append(rtIdList, fmt.Sprintf("%s|%s", rt.TableId, rt.BkTenantId))
+			if reformattedTableId != rt.TableId {
+				rtIdList = append(rtIdList, fmt.Sprintf("%s|%s", reformattedTableId, rt.BkTenantId))
+			}
 		} else {
 			rtIdList = append(rtIdList, rt.TableId)
+			if reformattedTableId != rt.TableId {
+				rtIdList = append(rtIdList, reformattedTableId)
+			}
 		}
 	}
 	// 获取存在于redis，而不在db中的数据，然后针对key进行删除

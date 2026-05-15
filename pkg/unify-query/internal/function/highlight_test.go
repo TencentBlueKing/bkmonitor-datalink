@@ -378,6 +378,46 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			expected: "age<mark>12</mark>",
 		},
 		{
+			name: "regex alternation group",
+			text: "status=warn status=info",
+			keywords: []LabelMapValue{
+				{Value: "status=(error|warn)", Operator: metadata.ConditionRegEqual},
+			},
+			expected: "<mark>status=warn</mark> status=info",
+		},
+		{
+			name: "regex ip address",
+			text: "client=10.0.1.25 path=/api",
+			keywords: []LabelMapValue{
+				{Value: `\b\d{1,3}(?:\.\d{1,3}){3}\b`, Operator: metadata.ConditionRegEqual},
+			},
+			expected: "client=<mark>10.0.1.25</mark> path=/api",
+		},
+		{
+			name: "regex repeated bracket values",
+			text: "err [id=123] ok [id=456]",
+			keywords: []LabelMapValue{
+				{Value: `\[id=\d+\]`, Operator: metadata.ConditionRegEqual},
+			},
+			expected: "err <mark>[id=123]</mark> ok <mark>[id=456]</mark>",
+		},
+		{
+			name: "regex anchor matches prefix only",
+			text: "ERROR 500 failed ERROR 404",
+			keywords: []LabelMapValue{
+				{Value: `^ERROR\s+\d+`, Operator: metadata.ConditionRegEqual},
+			},
+			expected: "<mark>ERROR 500</mark> failed ERROR 404",
+		},
+		{
+			name: "regex unicode alternation",
+			text: "user=喜羊羊42 user=懒羊羊",
+			keywords: []LabelMapValue{
+				{Value: `(灰太狼|喜羊羊)\d+`, Operator: metadata.ConditionRegEqual},
+			},
+			expected: "user=<mark>喜羊羊42</mark> user=懒羊羊",
+		},
+		{
 			name: "invalid regex is skipped",
 			text: "age12",
 			keywords: []LabelMapValue{

@@ -3487,7 +3487,7 @@ func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[
 		BkTenantIdEq(spaceObj.BkTenantId).
 		IsDeletedEq(false).
 		IsEnableEq(true).
-		TableIdLike("%apm_global.precalculate_storage%").
+		TableIdLike("apm_global.%").
 		All(&rtList); err != nil {
 		return nil, err
 	}

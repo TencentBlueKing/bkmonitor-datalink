@@ -2802,16 +2802,54 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 	err = resultTable2.Create(db)
 	assert.NoError(t, err)
 
+	resultTable3 := resulttable.ResultTable{
+		TableId:        "apm_global.shared_trace_0002",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err = resultTable3.Create(db)
+	assert.NoError(t, err)
+
+	resultTable4 := resulttable.ResultTable{
+		TableId:        "apm_other.shared_trace_0002",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err = resultTable4.Create(db)
+	assert.NoError(t, err)
+
 	// 测试 composeApmAllTypeTableIds
 	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
-	expected := map[string]map[string]any(map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}}})
+	expected := map[string]map[string]any{
+		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}},
+		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}},
+		"apm_global.shared_trace_0002":      {"filters": []map[string]any{{"biz_id": "-1050"}}},
+	}
 
 	assert.NoError(t, err)
-	assert.Equal(t, expected, bkciData, "Expected 2 table IDs for bkci space")
+	assert.Equal(t, expected, bkciData, "Expected apm_global.* table IDs for bkci space")
+	_, ok := bkciData["apm_global.shared_trace_0002"]
+	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
+	_, ok = bkciData["apm_other.shared_trace_0002"]
+	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
 
 	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
-	expected = map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}}}
-	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
+	expected = map[string]map[string]any{
+		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}},
+		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}},
+		"apm_global.shared_trace_0002":      {"filters": []map[string]any{{"biz_id": "-1051"}}},
+	}
+	assert.Equal(t, expected, bksaasData, "Expected apm_global.* table IDs for bksaas space")
+	_, ok = bksaasData["apm_global.shared_trace_0002"]
+	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
+	_, ok = bksaasData["apm_other.shared_trace_0002"]
+	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
 }
 
 func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {

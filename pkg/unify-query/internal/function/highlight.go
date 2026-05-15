@@ -34,8 +34,9 @@ type HighLightFactory struct {
 }
 
 type LabelMapValue struct {
-	Value    string `json:"value"`
-	Operator string `json:"operator"`
+	Value      string `json:"value"`
+	Operator   string `json:"operator"`
+	IsWildcard bool   `json:"is_wildcard,omitempty"`
 }
 
 type LabelMapOption struct {
@@ -53,7 +54,7 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	labelMap := make(map[string][]LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabels := func(key string, operator string, values ...string) {
+	addLabels := func(key string, operator string, isWildcard bool, values ...string) {
 		if len(values) == 0 {
 			return
 		}
@@ -62,12 +63,13 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 		switch operator {
 		case metadata.ConditionEqual, metadata.ConditionContains, metadata.ConditionRegEqual, metadata.ConditionExact:
 			for _, value := range values {
-				checkKey := key + ":" + value + ":" + operator
+				checkKey := key + ":" + value + ":" + operator + ":" + cast.ToString(isWildcard)
 				if _, ok := labelCheck[checkKey]; !ok {
 					labelCheck[checkKey] = struct{}{}
 					labelMap[key] = append(labelMap[key], LabelMapValue{
-						Value:    value,
-						Operator: operator,
+						Value:      value,
+						Operator:   operator,
+						IsWildcard: isWildcard,
 					})
 				}
 			}
@@ -76,13 +78,15 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 
 	for _, condition := range qry.AllConditions {
 		for _, cond := range condition {
-			addLabels(cond.DimensionName, highlightOperator(cond.Operator, cond.IsWildcard), cond.Value...)
+			addLabels(cond.DimensionName, highlightOperator(cond.Operator, cond.IsWildcard), cond.IsWildcard, cond.Value...)
 		}
 	}
 
 	if qry.QueryString != "" {
 		node := lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{})
-		lucene_parser.ConditionNodeWalk(node, addLabels)
+		lucene_parser.ConditionNodeWalk(node, func(key string, operator string, values ...string) {
+			addLabels(key, operator, false, values...)
+		})
 	}
 
 	return labelMap
@@ -186,6 +190,7 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 type highlightPatternKey struct {
 	value         string
 	operator      string
+	isWildcard    bool
 	caseSensitive bool
 }
 
@@ -197,13 +202,14 @@ func (h *HighLightFactory) highlightRegexp(kw LabelMapValue) *regexp.Regexp {
 	key := highlightPatternKey{
 		value:         kw.Value,
 		operator:      kw.Operator,
+		isWildcard:    kw.IsWildcard,
 		caseSensitive: h.isCaseSensitive,
 	}
 	if re, ok := h.regexCache[key]; ok {
 		return re
 	}
 
-	pattern, err := buildHighlightPattern(kw.Value, kw.Operator == metadata.ConditionRegEqual, h.isCaseSensitive)
+	pattern, err := buildHighlightPattern(kw.Value, kw.Operator == metadata.ConditionRegEqual, kw.IsWildcard, h.isCaseSensitive)
 	if err != nil || pattern == "" {
 		h.regexCache[key] = nil
 		return nil
@@ -229,14 +235,16 @@ type highlightInterval struct {
 	end   int
 }
 
-func buildHighlightPattern(kw string, isRegex bool, caseSensitive bool) (string, error) {
+func buildHighlightPattern(kw string, isRegex bool, isWildcard bool, caseSensitive bool) (string, error) {
 	if kw == "" {
 		return "", nil
 	}
 
 	pattern := kw
-	if !isRegex {
-		pattern = buildLiteralHighlightPattern(kw)
+	if !isRegex && isWildcard {
+		pattern = buildWildcardHighlightPattern(kw)
+	} else if !isRegex {
+		pattern = regexp.QuoteMeta(kw)
 	}
 	if !caseSensitive {
 		pattern = "(?i:" + pattern + ")"
@@ -248,12 +256,13 @@ func buildHighlightPattern(kw string, isRegex bool, caseSensitive bool) (string,
 	return pattern, nil
 }
 
-func buildLiteralHighlightPattern(kw string) string {
-	start, end := 0, len(kw)
-	for start < end && isHighlightWildcard(kw[start]) {
+func buildWildcardHighlightPattern(kw string) string {
+	chars := []rune(kw)
+	start, end := 0, len(chars)
+	for start < end && chars[start] == '*' {
 		start++
 	}
-	for end > start && isHighlightWildcard(kw[end-1]) {
+	for end > start && chars[end-1] == '*' && !isEscapedHighlightChar(chars, end-1) {
 		end--
 	}
 	if start >= end {
@@ -261,10 +270,17 @@ func buildLiteralHighlightPattern(kw string) string {
 	}
 
 	var builder strings.Builder
-	for _, r := range kw[start:end] {
+	for i := start; i < end; i++ {
+		r := chars[i]
+		if r == '\\' && i+1 < end && (isHighlightWildcard(chars[i+1]) || chars[i+1] == '\\') {
+			builder.WriteString(regexp.QuoteMeta(string(chars[i+1])))
+			i++
+			continue
+		}
+
 		switch r {
 		case '*':
-			builder.WriteString(".*")
+			builder.WriteString(".*?")
 		case '?':
 			builder.WriteByte('.')
 		default:
@@ -274,8 +290,16 @@ func buildLiteralHighlightPattern(kw string) string {
 	return builder.String()
 }
 
-func isHighlightWildcard(c byte) bool {
+func isHighlightWildcard(c rune) bool {
 	return c == '*' || c == '?'
+}
+
+func isEscapedHighlightChar(chars []rune, pos int) bool {
+	backslashes := 0
+	for i := pos - 1; i >= 0 && chars[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 func mergeHighlightIntervals(intervals []highlightInterval) []highlightInterval {

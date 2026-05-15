@@ -61,7 +61,7 @@ func TestQuery_LabelMap(t *testing.T) {
 				},
 			},
 			expected: map[string][]LabelMapValue{
-				"log": {{Value: "*灰太狼*", Operator: metadata.ConditionContains}},
+				"log": {{Value: "*灰太狼*", Operator: metadata.ConditionContains, IsWildcard: true}},
 			},
 			data: map[string]any{
 				"log": "PlayerLogin |488744| 灰太狼 login",
@@ -276,7 +276,7 @@ func TestQuery_LabelMap(t *testing.T) {
 				},
 				"region": {
 					{Value: "us-east-1", Operator: metadata.ConditionEqual},
-					{Value: "us-east-2", Operator: metadata.ConditionContains},
+					{Value: "us-east-2", Operator: metadata.ConditionContains, IsWildcard: true},
 				},
 			},
 		},
@@ -359,7 +359,7 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			name: "wildcard trims leading and trailing wildcards",
 			text: "XabcY",
 			keywords: []LabelMapValue{
-				{Value: "*abc*", Operator: metadata.ConditionContains},
+				{Value: "*abc*", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
 			expected: "X<mark>abc</mark>Y",
 		},
@@ -367,7 +367,7 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			name: "wildcard prefix",
 			text: "abcdef",
 			keywords: []LabelMapValue{
-				{Value: "abc*", Operator: metadata.ConditionContains},
+				{Value: "abc*", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
 			expected: "<mark>abc</mark>def",
 		},
@@ -375,7 +375,7 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			name: "wildcard suffix",
 			text: "xyzabc",
 			keywords: []LabelMapValue{
-				{Value: "*abc", Operator: metadata.ConditionContains},
+				{Value: "*abc", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
 			expected: "xyz<mark>abc</mark>",
 		},
@@ -383,9 +383,34 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			name: "wildcard middle expansion",
 			text: "axxxxc",
 			keywords: []LabelMapValue{
-				{Value: "*a*c*", Operator: metadata.ConditionContains},
+				{Value: "*a*c*", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
 			expected: "<mark>axxxxc</mark>",
+		},
+		{
+			name: "exact literal preserves wildcard characters",
+			text: "error? error1 a*b axxxb",
+			keywords: []LabelMapValue{
+				{Value: "error?", Operator: metadata.ConditionEqual},
+				{Value: "a*b", Operator: metadata.ConditionExact},
+			},
+			expected: "<mark>error?</mark> error1 <mark>a*b</mark> axxxb",
+		},
+		{
+			name: "wildcard honors escaped wildcard characters",
+			text: "pa*tialX paZZtialY",
+			keywords: []LabelMapValue{
+				{Value: `*pa\*tial?`, Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>pa*tialX</mark> paZZtialY",
+		},
+		{
+			name: "wildcard uses non greedy internal star",
+			text: "foo1bar ... foo2bar",
+			keywords: []LabelMapValue{
+				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>foo1bar</mark> ... <mark>foo2bar</mark>",
 		},
 		{
 			name: "regex highlights actual matched text",

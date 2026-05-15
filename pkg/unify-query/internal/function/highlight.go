@@ -75,13 +75,7 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 
 	for _, condition := range qry.AllConditions {
 		for _, cond := range condition {
-			op := cond.Operator
-			values := cond.Value
-			if cond.IsWildcard {
-				op = metadata.ConditionContains
-			}
-
-			addLabels(cond.DimensionName, op, values...)
+			addLabels(cond.DimensionName, highlightOperator(cond.Operator, cond.IsWildcard), cond.Value...)
 		}
 	}
 
@@ -91,6 +85,19 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	}
 
 	return labelMap
+}
+
+func highlightOperator(operator string, isWildcard bool) string {
+	if !isWildcard {
+		return operator
+	}
+
+	switch operator {
+	case metadata.ConditionEqual, metadata.ConditionContains:
+		return metadata.ConditionContains
+	default:
+		return operator
+	}
 }
 
 func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata.FieldsMap, maxAnalyzedOffset int) *HighLightFactory {

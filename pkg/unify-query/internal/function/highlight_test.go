@@ -71,6 +71,32 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "negative wildcard condition is not highlighted",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "message",
+							Value:         []string{"%debug%"},
+							Operator:      metadata.ConditionNotEqual,
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "message",
+							Value:         []string{"trace"},
+							Operator:      metadata.ConditionNotContains,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{},
+			data: map[string]any{
+				"message": "debug trace info",
+			},
+			highLightData: map[string]any{},
+		},
+		{
 			name: "只有 QueryString",
 			query: &metadata.Query{
 				QueryString: "level:warning",

@@ -18,6 +18,7 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -25,6 +26,78 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+// preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
+// 1. 预计算表路由 2. 短链路表路由
+func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	logger.Info("start pre fetch space table ids task")
+
+	pusher := service.NewSpacePusher()
+	prefetchedValuesBySpace := make(service.SpaceTableIdValuesBySpace)
+
+	recordRuleValuesBySpace, err := preFetchRecordRuleTableIdValues(pusher)
+	if err != nil {
+		return nil, err
+	}
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleValuesBySpace)
+
+	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(pusher, spaceList)
+	if err != nil {
+		return nil, err
+	}
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, shortLinkValuesBySpace)
+
+	logger.Infof("pre fetch space table ids success, space_count [%d]", len(prefetchedValuesBySpace))
+	return prefetchedValuesBySpace, nil
+}
+
+func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	var recordRuleList []recordrule.RecordRule
+	if err := recordrule.NewRecordRuleQuerySet(db).
+		Select(
+			recordrule.RecordRuleDBSchema.SpaceType,
+			recordrule.RecordRuleDBSchema.SpaceId,
+			recordrule.RecordRuleDBSchema.TableId,
+		).
+		All(&recordRuleList); err != nil {
+		logger.Errorf("pre fetch record rule table ids failed, err: %s", err)
+		return nil, err
+	}
+
+	valuesBySpace := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
+	logger.Infof("pre fetch record rule table ids success, record_rule_count [%d], space_count [%d]", len(recordRuleList), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func preFetchVMShortLinkTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	var shortLinkRecords []space.VMShortLinkRecord
+	// 短链路路由在预取阶段一次性查出，并提前拼成 space_to_result_table 的 Redis value。
+	// 下游只按 space key 合并，避免每个空间重复查询短链路记录。
+	if err := db.Model(&space.VMShortLinkRecord{}).
+		Select("bk_tenant_id, space_type, space_id, table_id, is_global, query_router_config").
+		Where("is_enabled = ? AND is_deleted = ?", true, false).
+		Find(&shortLinkRecords).Error; err != nil {
+		logger.Errorf("pre fetch vm short link table ids failed, err: %s", err)
+		return nil, err
+	}
+
+	valuesBySpace := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
+	logger.Infof("pre fetch vm short link table ids success, record_count [%d], space_count [%d]", len(shortLinkRecords), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func mergeSpaceTableIdValuesBySpace(dst, src service.SpaceTableIdValuesBySpace) {
+	for spaceKey, values := range src {
+		if _, ok := dst[spaceKey]; !ok {
+			dst[spaceKey] = make(service.SpaceTableIdValues)
+		}
+		for tableId, value := range values {
+			dst[spaceKey][tableId] = value
+		}
+	}
+}
 
 // PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
@@ -56,6 +129,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}
 
+	// 预获取空间路由信息
+	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(ctx, t, spaceList)
+	if preFetchErr != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo pre fetch space table ids failed, err: %s", preFetchErr)
+		return preFetchErr
+	}
+
 	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
@@ -85,7 +165,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId); err != nil {
+			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValuesBySpace); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}

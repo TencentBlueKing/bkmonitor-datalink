@@ -1145,7 +1145,7 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 	assert.NoError(t, dsRtObj1.Create(db))
 
 	spaceType, spaceId := "bksaas", "demo"
-	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId, nil)
+	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(data))
 }
@@ -2432,6 +2432,103 @@ func TestSpacePusher_PushTableIdDetailWithRecordRuleOverride(t *testing.T) {
 	assert.Equal(t, []any{"metric_from_rule", "metric_from_rule_2"}, detail["fields"], "record rule metrics should override rt fields")
 }
 
+func TestSpacePusher_ComposeRecordRuleTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRule{
+		{
+			SpaceType: "bkcc",
+			SpaceId:   "1001",
+			TableId:   "record_rule_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKey("bkcc", "1001"): {
+			"record_rule_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
+func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	shortLinkRecords := []space.VMShortLinkRecord{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "vm_short_link_rt",
+		},
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkci",
+			SpaceId:    "project_a",
+			TableId:    "global_vm_short_link_rt",
+			IsGlobal:   true,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "configured_global_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"space_type":"all","filter_key":"project_id","filter_value":"space_id"}`,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "partial_config_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"filter_key":"custom_biz"}`,
+		},
+	}
+	spaceList := []space.Space{
+		{Id: 100, BkTenantId: "system", SpaceTypeId: "bkcc", SpaceId: "1001"},
+		{Id: 101, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_a"},
+		{Id: 102, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_b"},
+		{Id: 103, BkTenantId: "other", SpaceTypeId: "bkci", SpaceId: "project_c"},
+	}
+
+	data := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKey("bkcc", "1001"): {
+			"vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "1001"}},
+			},
+		},
+		SpaceRouteKey("bkci", "project_a"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+		SpaceRouteKey("bkci", "project_b"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"bk_biz_id": "-102"}},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "project_b"}},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"custom_biz": "-102"}},
+			},
+		},
+	}, data)
+}
+
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 	db := mysql.GetDBSession().DB
@@ -2561,7 +2658,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", nil)
+	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", SpaceTableIdValuesBySpace{})
 	if err != nil {
 		return
 	}
@@ -2591,7 +2688,7 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project")
+	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", SpaceTableIdValuesBySpace{})
 	if err != nil {
 		return
 	}
@@ -2630,7 +2727,7 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", nil)
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", SpaceTableIdValuesBySpace{})
 	if err != nil {
 		return
 	}

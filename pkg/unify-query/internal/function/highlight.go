@@ -30,6 +30,7 @@ type HighLightFactory struct {
 	fieldsMap         metadata.FieldsMap
 	maxAnalyzedOffset int
 	isCaseSensitive   bool
+	regexCache        map[highlightPatternKey]*regexp.Regexp
 }
 
 type LabelMapValue struct {
@@ -105,6 +106,7 @@ func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata
 		labelMap:          labelMap,
 		fieldsMap:         fieldsMap,
 		maxAnalyzedOffset: maxAnalyzedOffset,
+		regexCache:        make(map[highlightPatternKey]*regexp.Regexp),
 	}
 }
 
@@ -161,12 +163,8 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	for _, kw := range keywords {
 		switch kw.Operator {
 		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains, metadata.ConditionExact:
-			pattern, err := buildHighlightPattern(kw.Value, kw.Operator == metadata.ConditionRegEqual, h.isCaseSensitive)
-			if err != nil || pattern == "" {
-				continue
-			}
-			re, err := regexp.Compile(pattern)
-			if err != nil {
+			re := h.highlightRegexp(kw)
+			if re == nil {
 				continue
 			}
 			for _, match := range re.FindAllStringIndex(analyzablePart, -1) {
@@ -183,6 +181,40 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	}
 
 	return renderHighlight(analyzablePart, mergeHighlightIntervals(intervals)) + remainingPart
+}
+
+type highlightPatternKey struct {
+	value         string
+	operator      string
+	caseSensitive bool
+}
+
+func (h *HighLightFactory) highlightRegexp(kw LabelMapValue) *regexp.Regexp {
+	if h.regexCache == nil {
+		h.regexCache = make(map[highlightPatternKey]*regexp.Regexp)
+	}
+
+	key := highlightPatternKey{
+		value:         kw.Value,
+		operator:      kw.Operator,
+		caseSensitive: h.isCaseSensitive,
+	}
+	if re, ok := h.regexCache[key]; ok {
+		return re
+	}
+
+	pattern, err := buildHighlightPattern(kw.Value, kw.Operator == metadata.ConditionRegEqual, h.isCaseSensitive)
+	if err != nil || pattern == "" {
+		h.regexCache[key] = nil
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		h.regexCache[key] = nil
+		return nil
+	}
+	h.regexCache[key] = re
+	return re
 }
 
 func (h *HighLightFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {

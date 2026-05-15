@@ -84,8 +84,8 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 
 	if qry.QueryString != "" {
 		node := lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{})
-		lucene_parser.ConditionNodeWalk(node, func(key string, operator string, values ...string) {
-			addLabels(key, operator, false, values...)
+		lucene_parser.ConditionNodeWalk(node, func(key string, operator string, isWildcard bool, values ...string) {
+			addLabels(key, operator, isWildcard, values...)
 		})
 	}
 
@@ -280,9 +280,9 @@ func buildWildcardHighlightPattern(kw string) string {
 
 		switch r {
 		case '*':
-			builder.WriteString(".*?")
+			builder.WriteString("(?s:.*?)")
 		case '?':
-			builder.WriteByte('.')
+			builder.WriteString("(?s:.)")
 		default:
 			builder.WriteString(regexp.QuoteMeta(string(r)))
 		}

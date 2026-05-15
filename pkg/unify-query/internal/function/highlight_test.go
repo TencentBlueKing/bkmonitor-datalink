@@ -147,7 +147,7 @@ func TestQuery_LabelMap(t *testing.T) {
 			expected: map[string][]LabelMapValue{
 				"file": {
 					{
-						Value: "elasticsearch/query_string", Operator: metadata.ConditionContains,
+						Value: "*elasticsearch/query_string*", Operator: metadata.ConditionContains, IsWildcard: true,
 					},
 				},
 				"level": {
@@ -179,6 +179,21 @@ func TestQuery_LabelMap(t *testing.T) {
 				"trace_id": []string{
 					"my<mark>12356</mark>bro",
 				},
+			},
+		},
+		{
+			name: "query string wildcard preserves pattern",
+			query: &metadata.Query{
+				QueryString: "message:foo*bar",
+			},
+			expected: map[string][]LabelMapValue{
+				"message": {{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true}},
+			},
+			data: map[string]any{
+				"message": "foo123bar foobar",
+			},
+			highLightData: map[string]any{
+				"message": []string{`<mark>foo123bar</mark> <mark>foobar</mark>`},
 			},
 		},
 		{
@@ -411,6 +426,14 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
 			expected: "<mark>foo1bar</mark> ... <mark>foo2bar</mark>",
+		},
+		{
+			name: "wildcard spans newline",
+			text: "foo\nbar fooXbar",
+			keywords: []LabelMapValue{
+				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>foo\nbar</mark> <mark>fooXbar</mark>",
 		},
 		{
 			name: "regex highlights actual matched text",

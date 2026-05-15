@@ -47,6 +47,30 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "wildcard condition highlight",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Value:         []string{"*灰太狼*"},
+							Operator:      metadata.ConditionContains,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"log": {{Value: "*灰太狼*", Operator: metadata.ConditionContains}},
+			},
+			data: map[string]any{
+				"log": "PlayerLogin |488744| 灰太狼 login",
+			},
+			highLightData: map[string]any{
+				"log": []string{`PlayerLogin |488744| <mark>灰太狼</mark> login`},
+			},
+		},
+		{
 			name: "只有 QueryString",
 			query: &metadata.Query{
 				QueryString: "level:warning",
@@ -285,6 +309,121 @@ func TestQuery_LabelMap(t *testing.T) {
 				resultData := hf.Process(tc.data)
 				assert.Equal(t, tc.highLightData, resultData, "Query.HighLightFactory result should match expected")
 			}
+		})
+	}
+}
+
+func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
+	testCases := []struct {
+		name      string
+		text      string
+		keywords  []LabelMapValue
+		fieldsMap metadata.FieldsMap
+		expected  string
+	}{
+		{
+			name: "literal matches all occurrences",
+			text: "abc123abc",
+			keywords: []LabelMapValue{
+				{Value: "abc", Operator: metadata.ConditionEqual},
+			},
+			expected: "<mark>abc</mark>123<mark>abc</mark>",
+		},
+		{
+			name: "wildcard trims leading and trailing wildcards",
+			text: "XabcY",
+			keywords: []LabelMapValue{
+				{Value: "*abc*", Operator: metadata.ConditionContains},
+			},
+			expected: "X<mark>abc</mark>Y",
+		},
+		{
+			name: "wildcard prefix",
+			text: "abcdef",
+			keywords: []LabelMapValue{
+				{Value: "abc*", Operator: metadata.ConditionContains},
+			},
+			expected: "<mark>abc</mark>def",
+		},
+		{
+			name: "wildcard suffix",
+			text: "xyzabc",
+			keywords: []LabelMapValue{
+				{Value: "*abc", Operator: metadata.ConditionContains},
+			},
+			expected: "xyz<mark>abc</mark>",
+		},
+		{
+			name: "wildcard middle expansion",
+			text: "axxxxc",
+			keywords: []LabelMapValue{
+				{Value: "*a*c*", Operator: metadata.ConditionContains},
+			},
+			expected: "<mark>axxxxc</mark>",
+		},
+		{
+			name: "regex highlights actual matched text",
+			text: "axxb",
+			keywords: []LabelMapValue{
+				{Value: "a.*b", Operator: metadata.ConditionRegEqual},
+			},
+			expected: "<mark>axxb</mark>",
+		},
+		{
+			name: "regex character class",
+			text: "age12",
+			keywords: []LabelMapValue{
+				{Value: "[0-9]+", Operator: metadata.ConditionRegEqual},
+			},
+			expected: "age<mark>12</mark>",
+		},
+		{
+			name: "invalid regex is skipped",
+			text: "age12",
+			keywords: []LabelMapValue{
+				{Value: "(", Operator: metadata.ConditionRegEqual},
+				{Value: "age", Operator: metadata.ConditionEqual},
+			},
+			expected: "<mark>age</mark>12",
+		},
+		{
+			name: "overlapped matches are merged",
+			text: "0123456789",
+			keywords: []LabelMapValue{
+				{Value: "34567", Operator: metadata.ConditionEqual},
+				{Value: "56789", Operator: metadata.ConditionEqual},
+			},
+			expected: "012<mark>3456789</mark>",
+		},
+		{
+			name: "case sensitive regex",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: true},
+			},
+			expected: "ERROR <mark>error</mark>",
+		},
+		{
+			name: "case insensitive regex",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: false},
+			},
+			expected: "<mark>ERROR</mark> <mark>error</mark>",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
+			result := h.Process(map[string]any{"log": tc.text})
+			assert.Equal(t, map[string]any{"log": []string{tc.expected}}, result)
 		})
 	}
 }

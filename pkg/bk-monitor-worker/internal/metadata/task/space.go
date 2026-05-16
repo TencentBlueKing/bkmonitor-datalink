@@ -73,6 +73,10 @@ func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.Space
 func preFetchVMShortLinkTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	db := mysql.GetDBSession().DB
 	var shortLinkRecords []space.VMShortLinkRecord
+	if !db.HasTable(&space.VMShortLinkRecord{}) {
+		logger.Warnf("pre fetch vm short link table ids skipped, table [%s] not exists", space.VMShortLinkRecord{}.TableName())
+		return make(service.SpaceTableIdValuesBySpace), nil
+	}
 	// 短链路路由在预取阶段一次性查出，并提前拼成 space_to_result_table 的 Redis value。
 	// 下游只按 space key 合并，避免每个空间重复查询短链路记录。
 	if err := db.Model(&space.VMShortLinkRecord{}).

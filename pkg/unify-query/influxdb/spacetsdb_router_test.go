@@ -17,10 +17,13 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	goRedis "github.com/go-redis/redis/v8"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	innerRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -193,6 +196,23 @@ func (s *TestSuite) TestReloadKeyWithBigData() {
 	}
 }
 
+func (s *TestSuite) TestLoadRouterCanceledCountsFailure() {
+	failureBefore := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultFailure)
+	successBefore := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultSuccess)
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	err := s.router.LoadRouter(ctx, routerInfluxdb.ResultTableDetailKey, true)
+	s.Require().NoError(err)
+
+	failureAfter := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultFailure)
+	successAfter := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultSuccess)
+
+	s.Equal(failureBefore+1, failureAfter, "canceled load should increment failure counter")
+	s.Equal(successBefore, successAfter, "canceled load should not increment success counter")
+}
+
 func (s *TestSuite) TestMultiTenantSupport() {
 	s.setupMultiTenantData()
 	s.testTenantDataIsolation()
@@ -299,4 +319,36 @@ func (s *TestSuite) createContext(tenantID string) context.Context {
 	}
 	metadata.SetUser(ctx, user)
 	return ctx
+}
+
+func getRedisRouterLoadMetricValue(routeKey, result string) float64 {
+	metricFamilies, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return 0
+	}
+	for _, family := range metricFamilies {
+		if family.GetName() != "unify_query_redis_router_load_total" {
+			continue
+		}
+		for _, item := range family.GetMetric() {
+			if matchMetricLabels(item, routeKey, result) && item.GetCounter() != nil {
+				return item.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+func matchMetricLabels(item *dto.Metric, routeKey, result string) bool {
+	hasRouteKey := false
+	hasResult := false
+	for _, label := range item.GetLabel() {
+		switch label.GetName() {
+		case "route_key":
+			hasRouteKey = label.GetValue() == routeKey
+		case "result":
+			hasResult = label.GetValue() == result
+		}
+	}
+	return hasRouteKey && hasResult
 }

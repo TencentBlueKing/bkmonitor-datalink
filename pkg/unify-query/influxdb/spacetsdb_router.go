@@ -434,7 +434,8 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 			if !ok {
 				// 仅 SpaceAllKey 打点，避免非法 key 造成 Prometheus 高基数
 				if influxdb.IsSpaceAllRouterKey(key) {
-					if recvErr || batchErr {
+					// ctx 被取消时，HScan 可能提前结束但不会显式透传 GenericKV.Err，记为 failure
+					if recvErr || batchErr || ctx.Err() != nil {
 						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
 					} else {
 						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultSuccess)

@@ -497,7 +497,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	// 多协程查询数据
 	var (
-		wg sync.WaitGroup
+		wg         sync.WaitGroup
+		optionLock sync.Mutex
 	)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
@@ -581,7 +582,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					slice.Status = redisUtil.StatusCompleted
 				}
 
+				optionLock.Lock()
 				resultTableOptions.SetOption(localQry.TableUUID(), option)
+				optionLock.Unlock()
 			}); submitErr != nil {
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,

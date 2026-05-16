@@ -68,7 +68,7 @@ type RecordRuleV4 struct {
 	AutoRefresh            bool       `gorm:"column:auto_refresh" json:"auto_refresh"`
 	LastCheckTime          *time.Time `gorm:"column:last_check_time" json:"last_check_time"`
 	LastRefreshTime        *time.Time `gorm:"column:last_refresh_time" json:"last_refresh_time"`
-	DeletedAtTime          *time.Time `gorm:"column:deleted_at" json:"deleted_at"`
+	DeletedAt              *time.Time `gorm:"column:deleted_at" json:"deleted_at"`
 	OperationLockToken     string     `gorm:"column:operation_lock_token;size:64" json:"operation_lock_token"`
 	OperationLockOwner     string     `gorm:"column:operation_lock_owner;size:128" json:"operation_lock_owner"`
 	OperationLockReason    string     `gorm:"column:operation_lock_reason;size:64" json:"operation_lock_reason"`

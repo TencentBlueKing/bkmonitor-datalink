@@ -27,6 +27,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+const (
+	// recordRuleV4DeletedRetentionDays 保留已删除 V4 预计算表的路由窗口，避免删除后一段时间内历史查询提前 404。
+	recordRuleV4DeletedRetentionDays = 180
+)
+
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
 // 1. 预计算表路由 2. 短链路表路由
 func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
@@ -85,7 +90,7 @@ func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.Spa
 	}
 
 	var recordRuleList []recordrule.RecordRuleV4
-	queryableDeletedAt := time.Now().AddDate(0, 0, -180)
+	queryableDeletedAt := time.Now().AddDate(0, 0, -recordRuleV4DeletedRetentionDays)
 	if err := db.Unscoped().Table(tableName).
 		Select("bk_tenant_id, space_type, space_id, table_id").
 		Where("deleted_at IS NULL OR deleted_at > ?", queryableDeletedAt).

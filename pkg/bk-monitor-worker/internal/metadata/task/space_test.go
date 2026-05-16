@@ -171,7 +171,7 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 			DesiredStatus: "deleted",
 			Status:        "deleted",
 			Conditions:    "{}",
-			DeletedAtTime: &recentDeletedAt,
+			DeletedAt:     &recentDeletedAt,
 		},
 		{
 			BkTenantId:    "system",
@@ -184,7 +184,7 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 			DesiredStatus: "deleted",
 			Status:        "deleted",
 			Conditions:    "{}",
-			DeletedAtTime: &expiredDeletedAt,
+			DeletedAt:     &expiredDeletedAt,
 		},
 	}
 	for _, record := range records {

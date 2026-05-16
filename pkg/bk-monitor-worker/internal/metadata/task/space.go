@@ -197,7 +197,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValuesBySpace); err != nil {
+			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId)]
+			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}

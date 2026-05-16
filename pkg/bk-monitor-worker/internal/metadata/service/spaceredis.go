@@ -2033,7 +2033,7 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 }
 
 // PushSpaceTableIds 推送空间及对应的结果表和过滤条件
-func (s *SpacePusher) PushSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValuesBySpace SpaceTableIdValuesBySpace) error {
+func (s *SpacePusher) PushSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) error {
 	// NOTE:该操作比较特殊，Publish操作需要在这里进行而不能直接在HSetWithCompareAndPublish中进行
 
 	isSuccess := false
@@ -2042,7 +2042,7 @@ func (s *SpacePusher) PushSpaceTableIds(bkTenantId, spaceType, spaceId string, p
 	// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
 	switch spaceType {
 	case models.SpaceTypeBKCC:
-		isSuccess, err = s.pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValuesBySpace)
+		isSuccess, err = s.pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValues)
 		logger.Infof("PushSpaceTableIds:push bkcc space table_id data success, space_type [%s], space_id [%s]", spaceType, spaceId)
 		if err != nil {
 			logger.Errorf("PushSpaceTableIds:push bkcc space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
@@ -2050,14 +2050,14 @@ func (s *SpacePusher) PushSpaceTableIds(bkTenantId, spaceType, spaceId string, p
 		}
 	case models.SpaceTypeBKCI:
 		// 开启容器服务，则需要处理集群+业务+构建机+其它(在当前空间下创建的插件、自定义上报等)
-		isSuccess, err = s.pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValuesBySpace)
+		isSuccess, err = s.pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValues)
 		logger.Infof("PushSpaceTableIds:push bkci space table_id data success, space_type [%s], space_id [%s]", spaceType, spaceId)
 		if err != nil {
 			logger.Errorf("PushSpaceTableIds:push bkci space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
 			return err
 		}
 	case models.SpaceTypeBKSAAS:
-		isSuccess, err = s.pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValuesBySpace)
+		isSuccess, err = s.pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId, prefetchedSpaceTableIdValues)
 		logger.Infof("PushSpaceTableIds:push bksaas space table_id data success, space_type [%s], space_id [%s]", spaceType, spaceId)
 		if err != nil {
 			logger.Errorf("PushSpaceTableIds:push bksaas space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
@@ -2082,7 +2082,7 @@ func (s *SpacePusher) composeValue(values *map[string]map[string]any, composedDa
 }
 
 // 推送 bkcc 类型空间数据
-func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValuesBySpace SpaceTableIdValuesBySpace) (bool, error) {
+func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) (bool, error) {
 	logger.Infof("pushBkccSpaceTableIds:start to push bkcc space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	// 组装基础数据,需要filters
 	values, errMetric := s.composeData(bkTenantId, spaceType, spaceId, nil, nil, nil)
@@ -2094,9 +2094,8 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		values = make(map[string]map[string]any)
 	}
 
-	// 合并预取的空间路由数据
-	prefetchedValues := prefetchedSpaceTableIdValuesBySpace[SpaceRouteKey(spaceType, spaceId)]
-	s.composeValue(&values, &prefetchedValues)
+	// 合并当前空间预取的路由数据
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 追加es空间路由表,不需要filters
 	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
@@ -2159,7 +2158,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 }
 
 // 推送 bcs 类型空间下的关联业务的数据
-func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValuesBySpace SpaceTableIdValuesBySpace) (bool, error) {
+func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) (bool, error) {
 	logger.Infof("pushBkciSpaceTableIds: start to push biz of bcs space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBcsSpaceBizTableIds(spaceType, spaceId)
 	if err != nil {
@@ -2203,9 +2202,8 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
 
-	// 合并预取的空间路由数据
-	prefetchedValues := prefetchedSpaceTableIdValuesBySpace[SpaceRouteKey(spaceType, spaceId)]
-	s.composeValue(&values, &prefetchedValues)
+	// 合并当前空间预取的路由数据
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 追加es空间结果表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
@@ -2263,7 +2261,7 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 }
 
 // 推送 bksaas 类型空间下的数据
-func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValuesBySpace SpaceTableIdValuesBySpace) (bool, error) {
+func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) (bool, error) {
 	logger.Infof("pushBksaasSpaceTableIds: start to push bksaas space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBksaasSpaceClusterTableIds(spaceType, spaceId)
 	if err != nil {
@@ -2280,9 +2278,8 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &bksaasOtherValues)
 
-	// 合并预取的空间路由数据
-	prefetchedValues := prefetchedSpaceTableIdValuesBySpace[SpaceRouteKey(spaceType, spaceId)]
-	s.composeValue(&values, &prefetchedValues)
+	// 合并当前空间预取的路由数据
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 追加es空间路由表
 	esValues, esErr := s.ComposeEsTableIds(spaceType, spaceId)

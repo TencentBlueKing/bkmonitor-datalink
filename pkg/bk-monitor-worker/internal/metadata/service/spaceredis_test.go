@@ -2679,7 +2679,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", SpaceTableIdValuesBySpace{})
+	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2709,7 +2709,7 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", SpaceTableIdValuesBySpace{})
+	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2748,7 +2748,7 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", SpaceTableIdValuesBySpace{})
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}

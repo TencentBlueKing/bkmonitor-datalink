@@ -1535,6 +1535,7 @@ func (f RecordRuleDBSchemaField) String() string {
 // RecordRuleDBSchema stores db field names of RecordRule
 var RecordRuleDBSchema = struct {
 	Id            RecordRuleDBSchemaField
+	BkTenantId    RecordRuleDBSchemaField
 	SpaceType     RecordRuleDBSchemaField
 	SpaceId       RecordRuleDBSchemaField
 	TableId       RecordRuleDBSchemaField
@@ -1554,6 +1555,7 @@ var RecordRuleDBSchema = struct {
 }{
 
 	Id:            RecordRuleDBSchemaField("id"),
+	BkTenantId:    RecordRuleDBSchemaField("bk_tenant_id"),
 	SpaceType:     RecordRuleDBSchemaField("space_type"),
 	SpaceId:       RecordRuleDBSchemaField("space_id"),
 	TableId:       RecordRuleDBSchemaField("table_id"),
@@ -1577,6 +1579,7 @@ var RecordRuleDBSchema = struct {
 func (o *RecordRule) Update(db *gorm.DB, fields ...RecordRuleDBSchemaField) error {
 	dbNameToFieldName := map[string]any{
 		"id":               o.Id,
+		"bk_tenant_id":     o.BkTenantId,
 		"space_type":       o.SpaceType,
 		"space_id":         o.SpaceId,
 		"table_id":         o.TableId,

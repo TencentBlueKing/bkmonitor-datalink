@@ -2436,16 +2436,17 @@ func TestSpacePusher_ComposeRecordRuleTableIdValuesBySpace(t *testing.T) {
 	pusher := NewSpacePusher()
 	recordRuleList := []recordrule.RecordRule{
 		{
-			SpaceType: "bkcc",
-			SpaceId:   "1001",
-			TableId:   "record_rule_rt",
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_rt",
 		},
 	}
 
 	data := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
 
 	assert.Equal(t, SpaceTableIdValuesBySpace{
-		SpaceRouteKey("bkcc", "1001"): {
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
 			"record_rule_rt.__default__": {
 				"filters": []map[string]any{},
 			},

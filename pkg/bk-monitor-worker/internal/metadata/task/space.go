@@ -67,6 +67,7 @@ func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.Space
 	var recordRuleList []recordrule.RecordRule
 	if err := recordrule.NewRecordRuleQuerySet(db).
 		Select(
+			recordrule.RecordRuleDBSchema.BkTenantId,
 			recordrule.RecordRuleDBSchema.SpaceType,
 			recordrule.RecordRuleDBSchema.SpaceId,
 			recordrule.RecordRuleDBSchema.TableId,
@@ -207,12 +208,9 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			prefetchedValues := make(service.SpaceTableIdValues)
-			mergeSpaceTableIdValues(prefetchedValues, prefetchedValuesBySpace[service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId)])
-			tenantSpaceRouteKey := service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
-			if tenantSpaceRouteKey != service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId) {
-				mergeSpaceTableIdValues(prefetchedValues, prefetchedValuesBySpace[tenantSpaceRouteKey])
-			}
+			// 所有预取路由（v1/v4 RecordRule + VM 短链路）统一按 (tenant, spaceType, spaceId) 入桶，
+			// 此处直接按当前空间的租户键一次取出即可，不再做 plain key 兼容合并。
+			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)]
 			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return

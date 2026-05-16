@@ -21,6 +21,7 @@ import (
 // gen:qs
 type RecordRule struct {
 	Id            int    `gorm:"primary_key" json:"id"`
+	BkTenantId    string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	SpaceType     string `gorm:"size:64" json:"spaceType"`
 	SpaceId       string `gorm:"size:128" json:"space_id"`
 	TableId       string `gorm:"size:128" json:"table_id"`

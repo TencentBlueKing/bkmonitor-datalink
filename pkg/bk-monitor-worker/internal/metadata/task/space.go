@@ -85,9 +85,10 @@ func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.Spa
 	}
 
 	var recordRuleList []recordrule.RecordRuleV4
-	if err := db.Table(tableName).
+	queryableDeletedAt := time.Now().AddDate(0, 0, -180)
+	if err := db.Unscoped().Table(tableName).
 		Select("bk_tenant_id, space_type, space_id, table_id").
-		Where("desired_status != ?", "deleted").
+		Where("deleted_at IS NULL OR deleted_at > ?", queryableDeletedAt).
 		Find(&recordRuleList).Error; err != nil {
 		logger.Errorf("pre fetch record rule v4 table ids failed, err: %s", err)
 		return nil, err

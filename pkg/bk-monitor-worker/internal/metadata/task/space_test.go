@@ -11,6 +11,7 @@ package task
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -129,9 +130,11 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	assert.NoError(t, db.AutoMigrate(&recordrule.RecordRuleV4{}).Error)
 
-	tableIds := []string{"prefetch_record_rule_v4_rt", "prefetch_record_rule_v4_deleted_rt"}
+	tableIds := []string{"prefetch_record_rule_v4_rt", "prefetch_record_rule_v4_deleting_rt", "prefetch_record_rule_v4_recent_deleted_rt", "prefetch_record_rule_v4_expired_deleted_rt"}
 	assert.NoError(t, db.Delete(&recordrule.RecordRuleV4{}, "table_id in (?)", tableIds).Error)
 
+	recentDeletedAt := time.Now().AddDate(0, 0, -179)
+	expiredDeletedAt := time.Now().AddDate(0, 0, -181)
 	records := []recordrule.RecordRuleV4{
 		{
 			BkTenantId:    "system",
@@ -149,13 +152,39 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 			BkTenantId:    "system",
 			SpaceType:     "bkcc",
 			SpaceId:       "1001",
-			Name:          "record_rule_v4_deleted",
-			FlowName:      "rrv4_record_rule_v4_deleted",
-			TableId:       "prefetch_record_rule_v4_deleted_rt",
-			DstVmTableId:  "vm_prefetch_record_rule_v4_deleted_rt",
+			Name:          "record_rule_v4_deleting",
+			FlowName:      "rrv4_record_rule_v4_deleting",
+			TableId:       "prefetch_record_rule_v4_deleting_rt",
+			DstVmTableId:  "vm_prefetch_record_rule_v4_deleting_rt",
 			DesiredStatus: "deleted",
 			Status:        "deleting",
 			Conditions:    "{}",
+		},
+		{
+			BkTenantId:    "system",
+			SpaceType:     "bkcc",
+			SpaceId:       "1001",
+			Name:          "record_rule_v4_recent_deleted",
+			FlowName:      "rrv4_record_rule_v4_recent_deleted",
+			TableId:       "prefetch_record_rule_v4_recent_deleted_rt",
+			DstVmTableId:  "vm_prefetch_record_rule_v4_recent_deleted_rt",
+			DesiredStatus: "deleted",
+			Status:        "deleted",
+			Conditions:    "{}",
+			DeletedAtTime: &recentDeletedAt,
+		},
+		{
+			BkTenantId:    "system",
+			SpaceType:     "bkcc",
+			SpaceId:       "1001",
+			Name:          "record_rule_v4_expired_deleted",
+			FlowName:      "rrv4_record_rule_v4_expired_deleted",
+			TableId:       "prefetch_record_rule_v4_expired_deleted_rt",
+			DstVmTableId:  "vm_prefetch_record_rule_v4_expired_deleted_rt",
+			DesiredStatus: "deleted",
+			Status:        "deleted",
+			Conditions:    "{}",
+			DeletedAtTime: &expiredDeletedAt,
 		},
 	}
 	for _, record := range records {
@@ -166,7 +195,9 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_record_rule_v4_rt.__default__"])
-	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")], "prefetch_record_rule_v4_deleted_rt.__default__")
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_record_rule_v4_deleting_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_record_rule_v4_recent_deleted_rt.__default__"])
+	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")], "prefetch_record_rule_v4_expired_deleted_rt.__default__")
 }
 
 func TestPreFetchRecordRuleV4TableIdValuesSkipWhenTableNotExists(t *testing.T) {

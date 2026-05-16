@@ -2170,7 +2170,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	// 追加 bcs 集群结果表
 	bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
-	logger.Errorf("bcs values %v", bcsValues)
 	if err != nil {
 		logger.Errorf("pushBkciSpaceTableIds: compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 	}
@@ -2192,7 +2191,7 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加跨空间的结果表
 	bkciCrossValues, err := s.composeBkciCrossTableIds(bkTenantId, spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds: compose bcs space bkci cross table_id data failed, space_type [%s], space_id [%s], err: %s")
+		logger.Errorf("pushBkciSpaceTableIds: compose bcs space bkci cross table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 	}
 	s.composeValue(&values, &bkciCrossValues)
 	// 追加全空间空间的结果表

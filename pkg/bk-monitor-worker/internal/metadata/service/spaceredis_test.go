@@ -2453,6 +2453,27 @@ func TestSpacePusher_ComposeRecordRuleTableIdValuesBySpace(t *testing.T) {
 	}, data)
 }
 
+func TestSpacePusher_ComposeRecordRuleV4TableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRuleV4{
+		{
+			SpaceType: "bkcc",
+			SpaceId:   "1001",
+			TableId:   "record_rule_v4_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKey("bkcc", "1001"): {
+			"record_rule_v4_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
 func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 	pusher := NewSpacePusher()
 	shortLinkRecords := []space.VMShortLinkRecord{

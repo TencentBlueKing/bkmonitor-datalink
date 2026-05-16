@@ -2361,6 +2361,21 @@ func (s *SpacePusher) ComposeRecordRuleTableIdValuesBySpace(recordRuleList []rec
 	return valuesBySpace
 }
 
+// ComposeRecordRuleV4TableIdValuesBySpace compose record rule v4 redis values grouped by space.
+func (s *SpacePusher) ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList []recordrule.RecordRuleV4) SpaceTableIdValuesBySpace {
+	valuesBySpace := make(SpaceTableIdValuesBySpace)
+	for _, recordRuleObj := range recordRuleList {
+		key := SpaceRouteKey(recordRuleObj.SpaceType, recordRuleObj.SpaceId)
+		if _, ok := valuesBySpace[key]; !ok {
+			valuesBySpace[key] = make(SpaceTableIdValues)
+		}
+
+		reformattedTableId := reformatTableId(recordRuleObj.TableId)
+		valuesBySpace[key][reformattedTableId] = s.composeRecordRuleTableIdValue(recordRuleObj.SpaceType, recordRuleObj.SpaceId, recordRuleObj.TableId)
+	}
+	return valuesBySpace
+}
+
 func (s *SpacePusher) composeRecordRuleTableIdValue(spaceType, spaceId, tableId string) map[string]any {
 	options := FilterBuildContext{
 		SpaceType: spaceType,

@@ -41,6 +41,12 @@ func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Spa
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleValuesBySpace)
 
+	recordRuleV4ValuesBySpace, err := preFetchRecordRuleV4TableIdValues(pusher)
+	if err != nil {
+		return nil, err
+	}
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleV4ValuesBySpace)
+
 	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(pusher, spaceList)
 	if err != nil {
 		return nil, err
@@ -67,6 +73,28 @@ func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.Space
 
 	valuesBySpace := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
 	logger.Infof("pre fetch record rule table ids success, record_rule_count [%d], space_count [%d]", len(recordRuleList), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	tableName := recordrule.RecordRuleV4{}.TableName()
+	if !db.HasTable(tableName) {
+		logger.Warnf("pre fetch record rule v4 table ids skipped, table [%s] not exists", tableName)
+		return make(service.SpaceTableIdValuesBySpace), nil
+	}
+
+	var recordRuleList []recordrule.RecordRuleV4
+	if err := db.Table(tableName).
+		Select("space_type, space_id, table_id").
+		Where("desired_status != ?", "deleted").
+		Find(&recordRuleList).Error; err != nil {
+		logger.Errorf("pre fetch record rule v4 table ids failed, err: %s", err)
+		return nil, err
+	}
+
+	valuesBySpace := pusher.ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList)
+	logger.Infof("pre fetch record rule v4 table ids success, record_rule_count [%d], space_count [%d]", len(recordRuleList), len(valuesBySpace))
 	return valuesBySpace, nil
 }
 

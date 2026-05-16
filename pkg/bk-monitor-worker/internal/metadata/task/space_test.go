@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -121,4 +122,61 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 		assert.NotContains(t, values, "prefetch_disabled_rt.__default__")
 		assert.NotContains(t, values, "prefetch_deleted_rt.__default__")
 	}
+}
+
+func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	assert.NoError(t, db.AutoMigrate(&recordrule.RecordRuleV4{}).Error)
+
+	tableIds := []string{"prefetch_record_rule_v4_rt", "prefetch_record_rule_v4_deleted_rt"}
+	assert.NoError(t, db.Delete(&recordrule.RecordRuleV4{}, "table_id in (?)", tableIds).Error)
+
+	records := []recordrule.RecordRuleV4{
+		{
+			BkTenantId:    "system",
+			SpaceType:     "bkcc",
+			SpaceId:       "1001",
+			Name:          "record_rule_v4",
+			FlowName:      "rrv4_record_rule_v4",
+			TableId:       "prefetch_record_rule_v4_rt",
+			DstVmTableId:  "vm_prefetch_record_rule_v4_rt",
+			DesiredStatus: "running",
+			Status:        "running",
+			Conditions:    "{}",
+		},
+		{
+			BkTenantId:    "system",
+			SpaceType:     "bkcc",
+			SpaceId:       "1001",
+			Name:          "record_rule_v4_deleted",
+			FlowName:      "rrv4_record_rule_v4_deleted",
+			TableId:       "prefetch_record_rule_v4_deleted_rt",
+			DstVmTableId:  "vm_prefetch_record_rule_v4_deleted_rt",
+			DesiredStatus: "deleted",
+			Status:        "deleting",
+			Conditions:    "{}",
+		},
+	}
+	for _, record := range records {
+		assert.NoError(t, db.Create(&record).Error)
+	}
+
+	data, err := preFetchRecordRuleV4TableIdValues(service.NewSpacePusher())
+
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkcc", "1001")]["prefetch_record_rule_v4_rt.__default__"])
+	assert.NotContains(t, data[service.SpaceRouteKey("bkcc", "1001")], "prefetch_record_rule_v4_deleted_rt.__default__")
+}
+
+func TestPreFetchRecordRuleV4TableIdValuesSkipWhenTableNotExists(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	tableName := recordrule.RecordRuleV4{}.TableName()
+	assert.NoError(t, db.DropTableIfExists(tableName).Error)
+
+	data, err := preFetchRecordRuleV4TableIdValues(service.NewSpacePusher())
+
+	assert.NoError(t, err)
+	assert.Empty(t, data)
 }

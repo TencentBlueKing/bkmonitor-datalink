@@ -176,9 +176,6 @@ func TestQuery_LabelMap(t *testing.T) {
 				"level": []string{
 					`<mark>warn</mark>`,
 				},
-				"trace_id": []string{
-					"my<mark>12356</mark>bro",
-				},
 			},
 		},
 		{
@@ -428,68 +425,12 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			expected: "<mark>foo1bar</mark> ... <mark>foo2bar</mark>",
 		},
 		{
-			name: "wildcard spans newline",
+			name: "wildcard does not span newline",
 			text: "foo\nbar fooXbar",
 			keywords: []LabelMapValue{
 				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
 			},
-			expected: "<mark>foo\nbar</mark> <mark>fooXbar</mark>",
-		},
-		{
-			name: "regex highlights actual matched text",
-			text: "axxb",
-			keywords: []LabelMapValue{
-				{Value: "a.*b", Operator: metadata.ConditionRegEqual},
-			},
-			expected: "<mark>axxb</mark>",
-		},
-		{
-			name: "regex character class",
-			text: "age12",
-			keywords: []LabelMapValue{
-				{Value: "[0-9]+", Operator: metadata.ConditionRegEqual},
-			},
-			expected: "age<mark>12</mark>",
-		},
-		{
-			name: "regex alternation group",
-			text: "status=warn status=info",
-			keywords: []LabelMapValue{
-				{Value: "status=(error|warn)", Operator: metadata.ConditionRegEqual},
-			},
-			expected: "<mark>status=warn</mark> status=info",
-		},
-		{
-			name: "regex ip address",
-			text: "client=10.0.1.25 path=/api",
-			keywords: []LabelMapValue{
-				{Value: `\b\d{1,3}(?:\.\d{1,3}){3}\b`, Operator: metadata.ConditionRegEqual},
-			},
-			expected: "client=<mark>10.0.1.25</mark> path=/api",
-		},
-		{
-			name: "regex repeated bracket values",
-			text: "err [id=123] ok [id=456]",
-			keywords: []LabelMapValue{
-				{Value: `\[id=\d+\]`, Operator: metadata.ConditionRegEqual},
-			},
-			expected: "err <mark>[id=123]</mark> ok <mark>[id=456]</mark>",
-		},
-		{
-			name: "regex anchor matches prefix only",
-			text: "ERROR 500 failed ERROR 404",
-			keywords: []LabelMapValue{
-				{Value: `^ERROR\s+\d+`, Operator: metadata.ConditionRegEqual},
-			},
-			expected: "<mark>ERROR 500</mark> failed ERROR 404",
-		},
-		{
-			name: "regex unicode alternation",
-			text: "user=喜羊羊42 user=懒羊羊",
-			keywords: []LabelMapValue{
-				{Value: `(灰太狼|喜羊羊)\d+`, Operator: metadata.ConditionRegEqual},
-			},
-			expected: "user=<mark>喜羊羊42</mark> user=懒羊羊",
+			expected: "foo\nbar <mark>fooXbar</mark>",
 		},
 		{
 			name: "invalid regex is skipped",
@@ -509,28 +450,6 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			},
 			expected: "012<mark>3456789</mark>",
 		},
-		{
-			name: "case sensitive regex",
-			text: "ERROR error",
-			keywords: []LabelMapValue{
-				{Value: "error", Operator: metadata.ConditionRegEqual},
-			},
-			fieldsMap: metadata.FieldsMap{
-				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: true},
-			},
-			expected: "ERROR <mark>error</mark>",
-		},
-		{
-			name: "case insensitive regex",
-			text: "ERROR error",
-			keywords: []LabelMapValue{
-				{Value: "error", Operator: metadata.ConditionRegEqual},
-			},
-			fieldsMap: metadata.FieldsMap{
-				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: false},
-			},
-			expected: "<mark>ERROR</mark> <mark>error</mark>",
-		},
 	}
 
 	for _, tc := range testCases {
@@ -538,6 +457,41 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
 			result := h.Process(map[string]any{"log": tc.text})
 			assert.Equal(t, map[string]any{"log": []string{tc.expected}}, result)
+		})
+	}
+}
+
+func TestHighLightFactory_RegexConditionsDoNotHighlight(t *testing.T) {
+	testCases := []struct {
+		name      string
+		text      string
+		keywords  []LabelMapValue
+		fieldsMap metadata.FieldsMap
+	}{
+		{
+			name: "regex condition is skipped",
+			text: "axxb",
+			keywords: []LabelMapValue{
+				{Value: "a.*b", Operator: metadata.ConditionRegEqual},
+			},
+		},
+		{
+			name: "case insensitive regex condition is skipped",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: false},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
+			result := h.Process(map[string]any{"log": tc.text})
+			assert.Empty(t, result)
 		})
 	}
 }

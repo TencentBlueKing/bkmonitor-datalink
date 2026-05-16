@@ -240,11 +240,13 @@ func buildHighlightPattern(kw string, isRegex bool, isWildcard bool, caseSensiti
 		return "", nil
 	}
 
-	pattern := kw
-	if !isRegex && isWildcard {
+	if isRegex {
+		return "", nil
+	}
+
+	pattern := regexp.QuoteMeta(kw)
+	if isWildcard {
 		pattern = buildWildcardHighlightPattern(kw)
-	} else if !isRegex {
-		pattern = regexp.QuoteMeta(kw)
 	}
 	if !caseSensitive {
 		pattern = "(?i:" + pattern + ")"
@@ -280,9 +282,9 @@ func buildWildcardHighlightPattern(kw string) string {
 
 		switch r {
 		case '*':
-			builder.WriteString("(?s:.*?)")
+			builder.WriteString("[^\r\n]*?")
 		case '?':
-			builder.WriteString("(?s:.)")
+			builder.WriteString("[^\r\n]")
 		default:
 			builder.WriteString(regexp.QuoteMeta(string(r)))
 		}

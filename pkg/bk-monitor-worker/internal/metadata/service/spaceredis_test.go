@@ -2457,16 +2457,17 @@ func TestSpacePusher_ComposeRecordRuleV4TableIdValuesBySpace(t *testing.T) {
 	pusher := NewSpacePusher()
 	recordRuleList := []recordrule.RecordRuleV4{
 		{
-			SpaceType: "bkcc",
-			SpaceId:   "1001",
-			TableId:   "record_rule_v4_rt",
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_v4_rt",
 		},
 	}
 
 	data := pusher.ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList)
 
 	assert.Equal(t, SpaceTableIdValuesBySpace{
-		SpaceRouteKey("bkcc", "1001"): {
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
 			"record_rule_v4_rt.__default__": {
 				"filters": []map[string]any{},
 			},
@@ -2517,7 +2518,7 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 	data := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
 
 	assert.Equal(t, SpaceTableIdValuesBySpace{
-		SpaceRouteKey("bkcc", "1001"): {
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
 			"vm_short_link_rt.__default__": {
 				"filters": []map[string]any{},
 			},
@@ -2525,7 +2526,7 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 				"filters": []map[string]any{{"project_id": "1001"}},
 			},
 		},
-		SpaceRouteKey("bkci", "project_a"): {
+		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
 			"global_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{},
 			},
@@ -2536,7 +2537,7 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 				"filters": []map[string]any{},
 			},
 		},
-		SpaceRouteKey("bkci", "project_b"): {
+		SpaceRouteKeyWithTenant("system", "bkci", "project_b"): {
 			"global_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"bk_biz_id": "-102"}},
 			},

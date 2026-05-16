@@ -206,12 +206,20 @@ type SpacePusher struct {
 // SpaceTableIdValues stores redis values keyed by result table ID.
 type SpaceTableIdValues = map[string]map[string]any
 
-// SpaceTableIdValuesBySpace stores redis values grouped by space_type and space_id.
+// SpaceTableIdValuesBySpace stores redis values grouped by space route key.
 type SpaceTableIdValuesBySpace map[string]SpaceTableIdValues
 
 // SpaceRouteKey returns the grouping key used by space route prefetch.
 func SpaceRouteKey(spaceType, spaceId string) string {
 	return fmt.Sprintf("%s__%s", spaceType, spaceId)
+}
+
+// SpaceRouteKeyWithTenant returns the tenant-scoped grouping key used by space route prefetch.
+func SpaceRouteKeyWithTenant(bkTenantId, spaceType, spaceId string) string {
+	if bkTenantId == "" {
+		return SpaceRouteKey(spaceType, spaceId)
+	}
+	return fmt.Sprintf("%s|%s", SpaceRouteKey(spaceType, spaceId), bkTenantId)
 }
 
 func NewSpacePusher() *SpacePusher {
@@ -2361,7 +2369,7 @@ func (s *SpacePusher) ComposeRecordRuleTableIdValuesBySpace(recordRuleList []rec
 func (s *SpacePusher) ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList []recordrule.RecordRuleV4) SpaceTableIdValuesBySpace {
 	valuesBySpace := make(SpaceTableIdValuesBySpace)
 	for _, recordRuleObj := range recordRuleList {
-		key := SpaceRouteKey(recordRuleObj.SpaceType, recordRuleObj.SpaceId)
+		key := SpaceRouteKeyWithTenant(recordRuleObj.BkTenantId, recordRuleObj.SpaceType, recordRuleObj.SpaceId)
 		if _, ok := valuesBySpace[key]; !ok {
 			valuesBySpace[key] = make(SpaceTableIdValues)
 		}
@@ -2385,32 +2393,33 @@ func (s *SpacePusher) composeRecordRuleTableIdValue(spaceType, spaceId, tableId 
 // ComposeVMShortLinkTableIdValuesBySpace compose vm short link redis values grouped by space.
 func (s *SpacePusher) ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords []space.VMShortLinkRecord, spaceList []space.Space) SpaceTableIdValuesBySpace {
 	valuesBySpace := make(SpaceTableIdValuesBySpace)
-	spacesByType := make(map[string][]space.Space)
 	spacesByTypeAndTenant := make(map[string][]space.Space)
 	spacesByTenant := make(map[string][]space.Space)
+	tenantBySpaceRoute := make(map[string]string)
 	// 提前构建不同维度的空间索引，后续根据 query_router_config 快速确定全局短链路覆盖范围。
 	for _, sp := range spaceList {
-		spacesByType[sp.SpaceTypeId] = append(spacesByType[sp.SpaceTypeId], sp)
+		tenantBySpaceRoute[SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId)] = sp.BkTenantId
 		key := vmShortLinkGlobalSpaceKey(sp.SpaceTypeId, sp.BkTenantId)
 		spacesByTypeAndTenant[key] = append(spacesByTypeAndTenant[key], sp)
 		spacesByTenant[sp.BkTenantId] = append(spacesByTenant[sp.BkTenantId], sp)
 	}
 
 	for _, record := range shortLinkRecords {
+		bkTenantId := s.getVMShortLinkTenantId(record, tenantBySpaceRoute)
 		if record.IsGlobal {
 			routerConfig := s.parseVMShortLinkQueryRouterConfig(record)
-			targetSpaces := s.getVMShortLinkTargetSpaces(record, routerConfig, spaceList, spacesByType, spacesByTypeAndTenant, spacesByTenant)
+			targetSpaces := s.getVMShortLinkTargetSpaces(routerConfig, bkTenantId, spacesByTypeAndTenant, spacesByTenant)
 			for _, sp := range targetSpaces {
 				filters := []map[string]any{}
 				// 全局短链路的所属空间可直接访问；扩展到其他空间时必须带 filter，避免查询范围放大。
 				if sp.SpaceTypeId != record.SpaceType || sp.SpaceId != record.SpaceId {
 					filters = s.buildVMShortLinkGlobalFilters(sp, routerConfig)
 				}
-				s.addVMShortLinkTableIdValue(valuesBySpace, sp.SpaceTypeId, sp.SpaceId, record.TableId, filters)
+				s.addVMShortLinkTableIdValue(valuesBySpace, sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, record.TableId, filters)
 			}
 			continue
 		}
-		s.addVMShortLinkTableIdValue(valuesBySpace, record.SpaceType, record.SpaceId, record.TableId, nil)
+		s.addVMShortLinkTableIdValue(valuesBySpace, bkTenantId, record.SpaceType, record.SpaceId, record.TableId, nil)
 	}
 	return valuesBySpace
 }
@@ -2452,26 +2461,24 @@ func (s *SpacePusher) parseVMShortLinkQueryRouterConfig(record space.VMShortLink
 	return config
 }
 
+func (s *SpacePusher) getVMShortLinkTenantId(record space.VMShortLinkRecord, tenantBySpaceRoute map[string]string) string {
+	if record.BkTenantId != "" {
+		return record.BkTenantId
+	}
+	return tenantBySpaceRoute[SpaceRouteKey(record.SpaceType, record.SpaceId)]
+}
+
 func (s *SpacePusher) getVMShortLinkTargetSpaces(
-	record space.VMShortLinkRecord,
 	config vmShortLinkQueryRouterConfig,
-	spaceList []space.Space,
-	spacesByType map[string][]space.Space,
+	bkTenantId string,
 	spacesByTypeAndTenant map[string][]space.Space,
 	spacesByTenant map[string][]space.Space,
 ) []space.Space {
-	// space_type=all 表示覆盖所有空间类型；否则只覆盖配置指定的空间类型。
-	// 当记录带租户 ID 时，覆盖范围继续按租户收敛。
+	// space_type=all 表示覆盖租户内所有空间类型；否则只覆盖该租户下配置指定的空间类型。
 	if config.SpaceType == models.SpaceTypeAll {
-		if record.BkTenantId != "" {
-			return spacesByTenant[record.BkTenantId]
-		}
-		return spaceList
+		return spacesByTenant[bkTenantId]
 	}
-	if record.BkTenantId != "" {
-		return spacesByTypeAndTenant[vmShortLinkGlobalSpaceKey(config.SpaceType, record.BkTenantId)]
-	}
-	return spacesByType[config.SpaceType]
+	return spacesByTypeAndTenant[vmShortLinkGlobalSpaceKey(config.SpaceType, bkTenantId)]
 }
 
 func vmShortLinkGlobalSpaceKey(spaceType, bkTenantId string) string {
@@ -2496,8 +2503,8 @@ func (s *SpacePusher) getVMShortLinkBkBizIDFilterValue(sp space.Space) string {
 	return strconv.Itoa(-sp.Id)
 }
 
-func (s *SpacePusher) addVMShortLinkTableIdValue(valuesBySpace SpaceTableIdValuesBySpace, spaceType, spaceId, tableId string, filters []map[string]any) {
-	key := SpaceRouteKey(spaceType, spaceId)
+func (s *SpacePusher) addVMShortLinkTableIdValue(valuesBySpace SpaceTableIdValuesBySpace, bkTenantId, spaceType, spaceId, tableId string, filters []map[string]any) {
+	key := SpaceRouteKeyWithTenant(bkTenantId, spaceType, spaceId)
 	if _, ok := valuesBySpace[key]; !ok {
 		valuesBySpace[key] = make(SpaceTableIdValues)
 	}

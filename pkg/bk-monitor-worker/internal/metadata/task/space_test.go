@@ -103,21 +103,21 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 	data, err := preFetchVMShortLinkTableIdValues(service.NewSpacePusher(), spaceList)
 
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkcc", "1001")]["prefetch_vm_short_link_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "1001"}}}, data[service.SpaceRouteKey("bkcc", "1001")]["prefetch_global_all_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_vm_short_link_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "1001"}}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_global_all_rt.__default__"])
 
-	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkci", "project_a")]["prefetch_global_bkci_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkci", "project_a")]["prefetch_global_all_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkci", "project_a")]["prefetch_partial_config_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_a")]["prefetch_global_bkci_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_a")]["prefetch_global_all_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_a")]["prefetch_partial_config_rt.__default__"])
 
-	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-102"}}}, data[service.SpaceRouteKey("bkci", "project_b")]["prefetch_global_bkci_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "project_b"}}}, data[service.SpaceRouteKey("bkci", "project_b")]["prefetch_global_all_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{{"custom_biz": "-102"}}}, data[service.SpaceRouteKey("bkci", "project_b")]["prefetch_partial_config_rt.__default__"])
-	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "app_a"}}}, data[service.SpaceRouteKey("bksaas", "app_a")]["prefetch_global_all_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-102"}}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_b")]["prefetch_global_bkci_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "project_b"}}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_b")]["prefetch_global_all_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"custom_biz": "-102"}}}, data[service.SpaceRouteKeyWithTenant("system", "bkci", "project_b")]["prefetch_partial_config_rt.__default__"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "app_a"}}}, data[service.SpaceRouteKeyWithTenant("system", "bksaas", "app_a")]["prefetch_global_all_rt.__default__"])
 
-	assert.NotContains(t, data[service.SpaceRouteKey("bkci", "project_c")], "prefetch_global_bkci_rt.__default__", "short link records should be isolated by tenant")
-	assert.NotContains(t, data[service.SpaceRouteKey("bkci", "project_c")], "prefetch_global_all_rt.__default__", "short link records should be isolated by tenant")
-	assert.NotContains(t, data[service.SpaceRouteKey("bkci", "project_c")], "prefetch_partial_config_rt.__default__", "short link records should be isolated by tenant")
+	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("other", "bkci", "project_c")], "prefetch_global_bkci_rt.__default__", "short link records should be isolated by tenant")
+	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("other", "bkci", "project_c")], "prefetch_global_all_rt.__default__", "short link records should be isolated by tenant")
+	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("other", "bkci", "project_c")], "prefetch_partial_config_rt.__default__", "short link records should be isolated by tenant")
 	for _, values := range data {
 		assert.NotContains(t, values, "prefetch_disabled_rt.__default__")
 		assert.NotContains(t, values, "prefetch_deleted_rt.__default__")
@@ -165,8 +165,8 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 	data, err := preFetchRecordRuleV4TableIdValues(service.NewSpacePusher())
 
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKey("bkcc", "1001")]["prefetch_record_rule_v4_rt.__default__"])
-	assert.NotContains(t, data[service.SpaceRouteKey("bkcc", "1001")], "prefetch_record_rule_v4_deleted_rt.__default__")
+	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_record_rule_v4_rt.__default__"])
+	assert.NotContains(t, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")], "prefetch_record_rule_v4_deleted_rt.__default__")
 }
 
 func TestPreFetchRecordRuleV4TableIdValuesSkipWhenTableNotExists(t *testing.T) {

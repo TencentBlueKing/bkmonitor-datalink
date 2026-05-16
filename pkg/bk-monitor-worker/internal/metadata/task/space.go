@@ -86,7 +86,7 @@ func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.Spa
 
 	var recordRuleList []recordrule.RecordRuleV4
 	if err := db.Table(tableName).
-		Select("space_type, space_id, table_id").
+		Select("bk_tenant_id, space_type, space_id, table_id").
 		Where("desired_status != ?", "deleted").
 		Find(&recordRuleList).Error; err != nil {
 		logger.Errorf("pre fetch record rule v4 table ids failed, err: %s", err)
@@ -125,9 +125,13 @@ func mergeSpaceTableIdValuesBySpace(dst, src service.SpaceTableIdValuesBySpace) 
 		if _, ok := dst[spaceKey]; !ok {
 			dst[spaceKey] = make(service.SpaceTableIdValues)
 		}
-		for tableId, value := range values {
-			dst[spaceKey][tableId] = value
-		}
+		mergeSpaceTableIdValues(dst[spaceKey], values)
+	}
+}
+
+func mergeSpaceTableIdValues(dst, src service.SpaceTableIdValues) {
+	for tableId, value := range src {
+		dst[tableId] = value
 	}
 }
 
@@ -197,7 +201,12 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId)]
+			prefetchedValues := make(service.SpaceTableIdValues)
+			mergeSpaceTableIdValues(prefetchedValues, prefetchedValuesBySpace[service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId)])
+			tenantSpaceRouteKey := service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
+			if tenantSpaceRouteKey != service.SpaceRouteKey(sp.SpaceTypeId, sp.SpaceId) {
+				mergeSpaceTableIdValues(prefetchedValues, prefetchedValuesBySpace[tenantSpaceRouteKey])
+			}
 			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return

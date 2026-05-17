@@ -35,6 +35,7 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 	// 初始化模拟数据库配置
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
+	cleanupRefreshTimeSeriesMetricTestData(db)
 	bkTenantID := "system"
 
 	// 准备数据
@@ -141,4 +142,78 @@ func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {
 
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsGroup.TimeSeriesGroupID).FieldNameEq("metric_expired").One(&metricExpired)
 	assert.ErrorIs(t, gorm.ErrRecordNotFound, err)
+}
+
+func TestRefreshTimeSeriesMetric_ZeroBkDataIDQueryFromBkData(t *testing.T) {
+	// 初始化模拟数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	cleanupRefreshTimeSeriesMetricTestData(db)
+	bkTenantID := "system"
+
+	tsGroup := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID: 0,
+			TableID:  "test_zero_bk_data_id.base",
+			IsEnable: true,
+		},
+		BkTenantId:          bkTenantID,
+		TimeSeriesGroupID:   3344,
+		TimeSeriesGroupName: "test_zero_bk_data_id_group",
+	}
+	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsGroup.TimeSeriesGroupID)
+	db.Delete(&tsGroup, "time_series_group_id = ?", tsGroup.TimeSeriesGroupID)
+	err := tsGroup.Create(db)
+	assert.NoError(t, err)
+
+	vmTableName := "vm_zero_bk_data_id"
+	vmTable := storage.AccessVMRecord{
+		BkTenantId:      bkTenantID,
+		ResultTableId:   tsGroup.TableID,
+		VmResultTableId: vmTableName,
+	}
+	db.Delete(&vmTable)
+	err = vmTable.Create(db)
+	assert.NoError(t, err)
+
+	bkdataPatch := gomonkey.ApplyMethod(reflect.TypeOf(apiservice.Bkdata), "QueryMetricAndDimension", func(_ apiservice.BkdataService, bkTenantId string, storage string, rt string, metricGroupDimensions string) ([]map[string]any, error) {
+		if bkTenantId != bkTenantID || rt != vmTableName {
+			return nil, nil
+		}
+		return []map[string]any{
+			{
+				"field_name": "metric_zero_bk_data_id",
+				"tag_value_list": map[string]any{
+					"target": map[string]any{"last_update_time": 1685503141},
+				},
+				"last_modify_time": float64(time.Now().Add(-600 * time.Second).Unix()),
+				"is_active":        true,
+			},
+		}, nil
+	})
+	defer bkdataPatch.Reset()
+
+	mockerClient, redisPatch := mocker.DependenceRedisMocker()
+	defer redisPatch.Reset()
+	mockerClient.ZcountValue = 0
+
+	ctx := context.TODO()
+	task := &ta.Task{}
+	err = RefreshTimeSeriesMetric(ctx, task)
+	assert.NoError(t, err)
+
+	var metric customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(tsGroup.TimeSeriesGroupID).FieldNameEq("metric_zero_bk_data_id").One(&metric)
+	assert.NoError(t, err)
+	assert.Equal(t, "test_zero_bk_data_id.metric_zero_bk_data_id", metric.TableID)
+}
+
+func cleanupRefreshTimeSeriesMetricTestData(db *gorm.DB) {
+	groupIDs := []uint{3343, 3344}
+	tableIDs := []string{"test_for_metric_update.base", "test_zero_bk_data_id.base"}
+	db.Delete(&customreport.TimeSeriesMetric{}, "group_id IN (?)", groupIDs)
+	db.Delete(&customreport.TimeSeriesScope{}, "group_id IN (?)", groupIDs)
+	db.Delete(&customreport.TimeSeriesGroup{}, "time_series_group_id IN (?)", groupIDs)
+	db.Delete(&storage.AccessVMRecord{}, "result_table_id IN (?)", tableIDs)
+	db.Delete(&resulttable.ResultTableField{}, "table_id IN (?)", tableIDs)
 }

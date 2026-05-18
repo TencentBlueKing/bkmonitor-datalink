@@ -2455,8 +2455,7 @@ func (s *SpacePusher) ComposeRelatedBkciTableIds(spaceType, spaceId string) (map
 	// 获取关联的BKCI类型的空间ID列表
 	relatedSpaces, err := s.GetRelatedSpaces(spaceType, spaceId, models.SpaceTypeBKCI)
 	if err != nil {
-		logger.Errorf("ComposeRelatedBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s], err: %s", spaceType, spaceId, err)
-		return nil, err
+		return nil, errors.Wrapf(err, "ComposeRelatedBkciTableIds, get related bkci spaces failed,space_type->[%s],space_id->[%s]", spaceType, spaceId)
 	}
 
 	logger.Infof("ComposeRelatedBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
@@ -2464,8 +2463,7 @@ func (s *SpacePusher) ComposeRelatedBkciTableIds(spaceType, spaceId string) (map
 		// 获取该BKCI空间对应的业务ID（负数）
 		bizId, err := s.getBizIdBySpace(models.SpaceTypeBKCI, bkciSpaceId)
 		if err != nil {
-			logger.Errorf("ComposeRelatedBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
-			continue
+			return nil, errors.Wrapf(err, "ComposeRelatedBkciTableIds, get biz_id by space [%s] failed", bkciSpaceId)
 		}
 		bizIdsList = append(bizIdsList, bizId)
 	}

@@ -2096,7 +2096,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 组装基础数据,需要filters
 	values, errMetric := s.composeData(bkTenantId, spaceType, spaceId, nil, nil, nil)
 	if errMetric != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
 		return false, errors.Wrapf(errMetric, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	// 如果为空，则初始化一次
@@ -2107,7 +2106,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 添加预计算结果表,不需要filters
 	recordRuleValues, errRecordRule := s.composeRecordRuleTableIds(spaceType, spaceId)
 	if errRecordRule != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose record rule table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errRecordRule)
 		return false, errors.Wrapf(errRecordRule, "pushBkccSpaceTableIds:compose record rule table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &recordRuleValues)
@@ -2118,7 +2116,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加es空间路由表,不需要filters
 	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
 	if errEs != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEs)
 		return false, errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose es space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &esValues)
@@ -2126,7 +2123,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加Doris空间路由表,不需要filters
 	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
 	if errDoris != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
 		return false, errors.Wrapf(errDoris, "pushBkccSpaceTableIds:compose doris space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &dorisValues)
@@ -2134,7 +2130,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加关联的BKCI相关的ES结果表,不需要filters
 	esBkciValues, errEsBkci := s.ComposeRelatedBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEsBkci)
 		return false, errors.Wrapf(errEsBkci, "pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	logger.Infof("pushBkccSpaceTableIds:compose es bkci space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, esBkciValues)
@@ -2163,7 +2158,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		logger.Infof("pushBkccSpaceTableIds:start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		if err != nil {
-			logger.Errorf("pushBkccSpaceTableIds:failed to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 			return false, errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], isSuccess [%t]", key, redisKey, valuesStr, isSuccess)
@@ -2178,7 +2172,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	logger.Infof("pushBkciSpaceTableIds： start to push biz of bcs space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBcsSpaceBizTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose bcs space biz table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose bcs space biz table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	// 处理为空的情况
@@ -2189,7 +2182,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
 	logger.Infof("pushBkciSpaceTableIds: bcs values %v", bcsValues)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose bcs space cluster table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &bcsValues)
@@ -2197,14 +2189,12 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加 bkci 空间级别的结果表
 	bkciLevelValues, err := s.composeBkciLevelTableIds(bkTenantId, spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose bcs space bkci level table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose bcs space bkci level table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &bkciLevelValues)
 	// 追加剩余的结果表
 	bkciOtherValues, err := s.composeBkciOtherTableIds(bkTenantId, spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose bcs space bkci other table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose bcs space bkci other table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &bkciOtherValues)
@@ -2212,14 +2202,12 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加跨空间的结果表
 	bkciCrossValues, err := s.composeBkciCrossTableIds(bkTenantId, spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose bcs space bkci cross table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose bcs space bkci cross table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &bkciCrossValues)
 	// 追加全空间空间的结果表
 	allTypeTableIdValues, err := s.composeAllTypeTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
@@ -2227,7 +2215,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加预计算路由
 	recordRuleValues, errRecordRule := s.composeRecordRuleTableIds(spaceType, spaceId)
 	if errRecordRule != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose record rule table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errRecordRule)
 		return false, errors.Wrapf(errRecordRule, "pushBkciSpaceTableIds: compose record rule table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &recordRuleValues)
@@ -2235,7 +2222,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加es空间结果表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds：compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose es space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &esValues)
@@ -2243,7 +2229,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加Doris空间结果表
 	dorisValues, err := s.ComposeDorisTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds：compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBkciSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &dorisValues)
@@ -2274,7 +2259,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		logger.Infof("pushBkciSpaceTableIds:start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		if err != nil {
-			logger.Errorf("pushBkciSpaceTableIds: push bkci space [%s] value [%v] failed, err: %s", redisKey, valuesStr, err)
 			return false, errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 		}
 		logger.Infof("push and publish redis space_to_result_table, space_type [%s], space_id [%s] isSuccess [%v]", spaceType, spaceId, isSuccess)
@@ -2289,7 +2273,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	logger.Infof("pushBksaasSpaceTableIds: start to push bksaas space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBksaasSpaceClusterTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: pushBksaasSpaceTableIds error, compose bksaas space: [%s__%s] error: %s", spaceType, spaceId, err)
 		return false, errors.Wrapf(err, "pushBksaasSpaceTableIds: compose bksaas space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	logger.Infof("pushBksaasSpaceTableIds: pushBksaasSpaceTableIds values: %v", values)
@@ -2298,14 +2281,12 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	bksaasOtherValues, errOther := s.composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId)
 	if errOther != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: compose bksaas space other table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errOther)
 		return false, errors.Wrapf(errOther, "pushBksaasSpaceTableIds: compose bksaas space other table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &bksaasOtherValues)
 	// 追加预计算空间路由
 	recordRuleValues, errRecordRule := s.composeRecordRuleTableIds(spaceType, spaceId)
 	if errRecordRule != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: compose record rule table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errRecordRule)
 		return false, errors.Wrapf(errRecordRule, "pushBksaasSpaceTableIds: compose record rule table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &recordRuleValues)
@@ -2313,7 +2294,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	// 追加es空间路由表
 	esValues, esErr := s.ComposeEsTableIds(spaceType, spaceId)
 	if esErr != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, esErr)
 		return false, errors.Wrapf(esErr, "pushBksaasSpaceTableIds: compose es space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &esValues)
@@ -2321,14 +2301,12 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	// 追加Doris空间路由表
 	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
 	if errDoris != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
 		return false, errors.Wrapf(errDoris, "pushBksaasSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &dorisValues)
 
 	allTypeTableIdValues, allTypeErr := s.composeAllTypeTableIds(spaceType, spaceId)
 	if allTypeErr != nil {
-		logger.Errorf("pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, allTypeErr)
 		return false, errors.Wrapf(allTypeErr, "pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s]", spaceType, spaceId)
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
@@ -2359,7 +2337,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		logger.Infof("pushBksaasSpaceTableIds: start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
 		if err != nil {
-			logger.Errorf("pushBksaasSpaceTableIds: push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 			return false, errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 		}
 		logger.Infof("pushBksaasSpaceTableIds: push and publish redis space_to_result_table, space_type [%s], space_id [%s] isSuccess [%v]", spaceType, spaceId, isSuccess)

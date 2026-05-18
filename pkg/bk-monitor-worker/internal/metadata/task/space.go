@@ -59,10 +59,30 @@ func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []sp
 		logger.Errorf("pre fetch apm all type table ids failed, err: %s", err)
 		return nil, err
 	}
+	logger.Infof(
+		"pre fetch apm all type table ids queried, query_condition [is_deleted=false, is_enable=true, table_id like apm_global.%%], result_table_count [%d], table_ids [%v], log_limit [%d]",
+		len(rtList),
+		limitedApmAllTypeTableIds(rtList, 20),
+		20,
+	)
 
 	valuesBySpace := pusher.ComposeApmAllTypeTableIdValuesBySpace(rtList, spaceList)
 	logger.Infof("pre fetch apm all type table ids success, result_table_count [%d], space_count [%d]", len(rtList), len(valuesBySpace))
 	return valuesBySpace, nil
+}
+
+func limitedApmAllTypeTableIds(rtList []resulttable.ResultTable, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	tableIds := make([]string, 0, limit)
+	for _, rt := range rtList {
+		if len(tableIds) >= limit {
+			break
+		}
+		tableIds = append(tableIds, rt.TableId)
+	}
+	return tableIds
 }
 
 func mergeSpaceTableIdValuesBySpace(dst, src service.SpaceTableIdValuesBySpace) {

@@ -2225,9 +2225,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &recordRuleValues)
 
-	// 合并当前空间预取的路由数据
-	s.composeValue(&values, &prefetchedSpaceTableIdValues)
-
 	// 追加es空间结果表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	if err != nil {
@@ -2241,6 +2238,9 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		logger.Errorf("pushBkciSpaceTableIds：compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 	}
 	s.composeValue(&values, &dorisValues)
+
+	// 合并当前空间预取的路由数据。当前预取值为 APM 全局结果表，需保留旧实现最后合并的覆盖优先级。
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 推送数据
 	if len(values) != 0 {
@@ -2299,9 +2299,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &recordRuleValues)
 
-	// 合并当前空间预取的路由数据
-	s.composeValue(&values, &prefetchedSpaceTableIdValues)
-
 	// 追加es空间路由表
 	esValues, esErr := s.ComposeEsTableIds(spaceType, spaceId)
 	if esErr != nil {
@@ -2321,6 +2318,9 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		logger.Errorf("pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, allTypeErr)
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
+
+	// 合并当前空间预取的路由数据。当前预取值为 APM 全局结果表，需保留旧实现最后合并的覆盖优先级。
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 推送数据
 	if len(values) != 0 {

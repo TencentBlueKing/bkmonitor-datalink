@@ -176,6 +176,9 @@ func TestQuery_LabelMap(t *testing.T) {
 				"level": []string{
 					`<mark>warn</mark>`,
 				},
+				"trace_id": []string{
+					`my<mark>12356</mark>bro`,
+				},
 			},
 		},
 		{
@@ -461,22 +464,24 @@ func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
 	}
 }
 
-func TestHighLightFactory_RegexConditionsDoNotHighlight(t *testing.T) {
+func TestHighLightFactory_RegexConditionsHighlight(t *testing.T) {
 	testCases := []struct {
 		name      string
 		text      string
 		keywords  []LabelMapValue
 		fieldsMap metadata.FieldsMap
+		expected  string
 	}{
 		{
-			name: "regex condition is skipped",
+			name: "regex condition highlights matching span",
 			text: "axxb",
 			keywords: []LabelMapValue{
 				{Value: "a.*b", Operator: metadata.ConditionRegEqual},
 			},
+			expected: "<mark>axxb</mark>",
 		},
 		{
-			name: "case insensitive regex condition is skipped",
+			name: "case insensitive regex condition highlights matching spans",
 			text: "ERROR error",
 			keywords: []LabelMapValue{
 				{Value: "error", Operator: metadata.ConditionRegEqual},
@@ -484,6 +489,18 @@ func TestHighLightFactory_RegexConditionsDoNotHighlight(t *testing.T) {
 			fieldsMap: metadata.FieldsMap{
 				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: false},
 			},
+			expected: "<mark>ERROR</mark> <mark>error</mark>",
+		},
+		{
+			name: "case sensitive regex condition only highlights exact case",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: true},
+			},
+			expected: "ERROR <mark>error</mark>",
 		},
 	}
 
@@ -491,7 +508,7 @@ func TestHighLightFactory_RegexConditionsDoNotHighlight(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
 			result := h.Process(map[string]any{"log": tc.text})
-			assert.Empty(t, result)
+			assert.Equal(t, map[string]any{"log": []string{tc.expected}}, result)
 		})
 	}
 }

@@ -33,7 +33,7 @@ const (
 )
 
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
-// 1. 预计算表路由 2. 短链路表路由
+// 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由
 func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	logger.Info("start pre fetch space table ids task")
 
@@ -57,6 +57,12 @@ func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Spa
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, shortLinkValuesBySpace)
+
+	apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(pusher, spaceList)
+	if err != nil {
+		return nil, err
+	}
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
 
 	logger.Infof("pre fetch space table ids success, space_count [%d]", len(prefetchedValuesBySpace))
 	return prefetchedValuesBySpace, nil
@@ -125,6 +131,48 @@ func preFetchVMShortLinkTableIdValues(pusher *service.SpacePusher, spaceList []s
 	valuesBySpace := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
 	logger.Infof("pre fetch vm short link table ids success, record_count [%d], space_count [%d]", len(shortLinkRecords), len(valuesBySpace))
 	return valuesBySpace, nil
+}
+
+func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.BkBizIdAlias,
+			resulttable.ResultTableDBSchema.BkTenantId,
+		).
+		IsDeletedEq(false).
+		IsEnableEq(true).
+		TableIdLike("apm_global.%").
+		All(&rtList); err != nil {
+		logger.Errorf("pre fetch apm all type table ids failed, err: %s", err)
+		return nil, err
+	}
+	logger.Infof(
+		"pre fetch apm all type table ids queried, query_condition [is_deleted=false, is_enable=true, table_id like apm_global.%%], result_table_count [%d], table_ids [%v], log_limit [%d]",
+		len(rtList),
+		limitedApmAllTypeTableIds(rtList, 20),
+		20,
+	)
+
+	valuesBySpace := pusher.ComposeApmAllTypeTableIdValuesBySpace(rtList, spaceList)
+	logger.Infof("pre fetch apm all type table ids success, result_table_count [%d], space_count [%d]", len(rtList), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func limitedApmAllTypeTableIds(rtList []resulttable.ResultTable, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	tableIds := make([]string, 0, limit)
+	for _, rt := range rtList {
+		if len(tableIds) >= limit {
+			break
+		}
+		tableIds = append(tableIds, rt.TableId)
+	}
+	return tableIds
 }
 
 func mergeSpaceTableIdValuesBySpace(dst, src service.SpaceTableIdValuesBySpace) {
@@ -208,7 +256,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			// 所有预取路由（v1/v4 RecordRule + VM 短链路）统一按 (tenant, spaceType, spaceId) 入桶，
+			// 所有预取路由（v1/v4 RecordRule + VM 短链路 + APM）统一按 (tenant, spaceType, spaceId) 入桶，
 			// 此处直接按当前空间的租户键一次取出即可，不再做 plain key 兼容合并。
 			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)]
 			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {

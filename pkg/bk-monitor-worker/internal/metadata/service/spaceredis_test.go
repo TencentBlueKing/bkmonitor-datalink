@@ -2880,86 +2880,109 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 	cleanTestData()       // 测试开始前清理数据
 	defer cleanTestData() // 测试结束后清理数据
 
-	// 准备测试用数据
-
 	// 准备 Space 测试数据
+	otherTenantID := "tenant_b"
 	spaceObjs := []space.Space{
 		{
-			SpaceTypeId: "bkci",
+			SpaceTypeId: models.SpaceTypeBKCI,
 			SpaceId:     "test_bkci_space",
 			SpaceName:   "testSpace6",
 			Id:          1050,
+			BkTenantId:  tenant.DefaultTenantId,
 		},
 		{
-			SpaceTypeId: "bksaas",
+			SpaceTypeId: models.SpaceTypeBKSAAS,
 			SpaceId:     "test_bksaas_space",
 			SpaceName:   "testSpace7",
 			Id:          1051,
+			BkTenantId:  tenant.DefaultTenantId,
+		},
+		{
+			SpaceTypeId: models.SpaceTypeBKCC,
+			SpaceId:     "1001",
+			SpaceName:   "testSpace8",
+			Id:          1052,
+			BkTenantId:  tenant.DefaultTenantId,
+		},
+		{
+			SpaceTypeId: models.SpaceTypeBKSAAS,
+			SpaceId:     "test_bksaas_other_tenant",
+			SpaceName:   "testSpace9",
+			Id:          2051,
+			BkTenantId:  otherTenantID,
 		},
 	}
 	insertTestData(t, db, spaceObjs)
 
 	// 准备 ResultTable 测试数据
-	resultTable := resulttable.ResultTable{
-		TableId:        "apm_global.precalculate_storage_1",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:        "apm_global.precalculate_storage_1",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.precalculate_storage_2",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.shared_trace_0002",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_other.shared_trace_0002",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.other_tenant_storage",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     otherTenantID,
+		},
 	}
-	err := resultTable.Create(db)
-	assert.NoError(t, err)
+	insertTestData(t, db, resultTables)
 
-	resultTable2 := resulttable.ResultTable{
-		TableId:        "apm_global.precalculate_storage_2",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
-	}
-	err = resultTable2.Create(db)
-	assert.NoError(t, err)
-
-	resultTable3 := resulttable.ResultTable{
-		TableId:        "apm_global.shared_trace_0002",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
-	}
-	err = resultTable3.Create(db)
-	assert.NoError(t, err)
-
-	resultTable4 := resulttable.ResultTable{
-		TableId:        "apm_other.shared_trace_0002",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
-	}
-	err = resultTable4.Create(db)
-	assert.NoError(t, err)
-
-	// 测试 composeApmAllTypeTableIds
-	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
+	// 测试 ComposeApmAllTypeTableIdValuesBySpace
+	apmDataBySpace := NewSpacePusher().ComposeApmAllTypeTableIdValuesBySpace(resultTables, spaceObjs)
+	bkciData := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKCI, "test_bkci_space")]
 	expected := map[string]map[string]any{
 		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}},
 		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}},
 		"apm_global.shared_trace_0002":      {"filters": []map[string]any{{"biz_id": "-1050"}}},
 	}
 
-	assert.NoError(t, err)
 	assert.Equal(t, expected, bkciData, "Expected apm_global.* table IDs for bkci space")
 	_, ok := bkciData["apm_global.shared_trace_0002"]
 	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
 	_, ok = bkciData["apm_other.shared_trace_0002"]
 	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
 
-	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
+	_, ok = bkciData["apm_global.other_tenant_storage"]
+	assert.False(t, ok, "Expected other tenant table IDs to be excluded")
+
+	bksaasData := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKSAAS, "test_bksaas_space")]
 	expected = map[string]map[string]any{
 		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}},
 		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}},
@@ -2970,6 +2993,16 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
 	_, ok = bksaasData["apm_other.shared_trace_0002"]
 	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
+
+	bkccData, ok := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKCC, "1001")]
+	assert.False(t, ok, "Expected bkcc space to be excluded")
+	assert.Nil(t, bkccData)
+
+	otherTenantData := apmDataBySpace[SpaceRouteKeyWithTenant(otherTenantID, models.SpaceTypeBKSAAS, "test_bksaas_other_tenant")]
+	expected = map[string]map[string]any{
+		"apm_global.other_tenant_storage": {"filters": []map[string]any{{"biz_id": "-2051"}}},
+	}
+	assert.Equal(t, expected, otherTenantData, "Expected tenant-scoped apm_global table IDs for bksaas space")
 }
 
 func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {

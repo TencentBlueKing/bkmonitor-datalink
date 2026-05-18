@@ -2092,6 +2092,16 @@ func (s *SpacePusher) composeValue(values *map[string]map[string]any, composedDa
 	}
 }
 
+func filterApmAllTypeTableIdValues(values SpaceTableIdValues) SpaceTableIdValues {
+	apmValues := make(SpaceTableIdValues)
+	for tid, val := range values {
+		if strings.HasPrefix(tid, "apm_global.") {
+			apmValues[tid] = val
+		}
+	}
+	return apmValues
+}
+
 // 推送 bkcc 类型空间数据
 func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) (bool, error) {
 	logger.Infof("pushBkccSpaceTableIds:start to push bkcc space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
@@ -2229,12 +2239,8 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &dorisValues)
 
-	// 追加APM全局结果表
-	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
-	if errApmAllType != nil {
-		logger.Errorf("pushBkciSpaceTableIds: compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
-	}
-	logger.Infof("pushBkciSpaceTableIds: compose apm all type space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, apmAllTypeValues)
+	// APM 全局结果表保留原先最后合并的覆盖优先级。
+	apmAllTypeValues := filterApmAllTypeTableIdValues(prefetchedSpaceTableIdValues)
 	s.composeValue(&values, &apmAllTypeValues)
 
 	// 推送数据
@@ -2311,12 +2317,8 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
 
-	// 追加APM全局结果表
-	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
-	if errApmAllType != nil {
-		logger.Errorf("pushBksaasSpaceTableIds:compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
-	}
-	logger.Infof("pushBksaasSpaceTableIds:compose apm all type space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, apmAllTypeValues)
+	// APM 全局结果表保留原先最后合并的覆盖优先级。
+	apmAllTypeValues := filterApmAllTypeTableIdValues(prefetchedSpaceTableIdValues)
 	s.composeValue(&values, &apmAllTypeValues)
 
 	// 推送数据
@@ -3587,54 +3589,48 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 	return dataValuesToRedis, nil
 }
 
-// composeApmAllTypeTableIds 组装 APM 特殊空间类型的结果表数据（仅限 bkci 和 bksaas）
-func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]any, error) {
-	logger.Infof("start to push apm all space type table_id, space_type: %s, space_id: %s", spaceType, spaceId)
-
-	db := mysql.GetDBSession().DB
-
-	var spaceObj space.Space
-	dataValues := make(map[string]map[string]any)
-	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
-		return dataValues, err
-	}
-
-	// 过滤包含特定字符串的结果表
-	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).
-		Select(
-			resulttable.ResultTableDBSchema.TableId,
-			resulttable.ResultTableDBSchema.BkBizIdAlias,
-		).
-		BkTenantIdEq(spaceObj.BkTenantId).
-		IsDeletedEq(false).
-		IsEnableEq(true).
-		TableIdLike("apm_global.%").
-		All(&rtList); err != nil {
-		return nil, err
-	}
-
-	// format: {"table_id": {"filters": [{"bk_biz_id": "-id"}]}}
+// ComposeApmAllTypeTableIdValuesBySpace 组装 APM 特殊空间类型的结果表数据（仅限 bkci 和 bksaas）
+func (s *SpacePusher) ComposeApmAllTypeTableIdValuesBySpace(rtList []resulttable.ResultTable, spaceList []space.Space) SpaceTableIdValuesBySpace {
+	valuesBySpace := make(SpaceTableIdValuesBySpace)
+	apmRtListByTenant := make(map[string][]resulttable.ResultTable)
 	for _, rt := range rtList {
-		options := FilterBuildContext{
-			SpaceType:      spaceType,
-			SpaceId:        spaceId,
-			TableId:        rt.TableId,
-			ExtraStringVal: strconv.Itoa(-spaceObj.Id),
-			FilterAlias:    rt.BkBizIdAlias,
+		if !strings.HasPrefix(rt.TableId, "apm_global.") {
+			continue
 		}
-		filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
-		dataValues[rt.TableId] = map[string]any{"filters": filters}
+		apmRtListByTenant[rt.BkTenantId] = append(apmRtListByTenant[rt.BkTenantId], rt)
 	}
 
-	// 二段式校验&补充
-	dataValuesToRedis := make(map[string]map[string]any)
-	for tid, values := range dataValues {
-		reformattedTid := reformatTableId(tid)
-		dataValuesToRedis[reformattedTid] = values
+	for _, sp := range spaceList {
+		if sp.SpaceTypeId != models.SpaceTypeBKCI && sp.SpaceTypeId != models.SpaceTypeBKSAAS {
+			continue
+		}
+		apmRtList := apmRtListByTenant[sp.BkTenantId]
+		if len(apmRtList) == 0 {
+			continue
+		}
+
+		key := SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
+		if _, ok := valuesBySpace[key]; !ok {
+			valuesBySpace[key] = make(SpaceTableIdValues)
+		}
+		for _, rt := range apmRtList {
+			reformattedTableId := reformatTableId(rt.TableId)
+			valuesBySpace[key][reformattedTableId] = s.composeApmAllTypeTableIdValue(sp, rt)
+		}
 	}
-	logger.Infof("compose apm all space type table_id, space_type: %s, space_id: %s, data: %v", spaceType, spaceId, dataValues)
-	return dataValuesToRedis, nil
+	return valuesBySpace
+}
+
+func (s *SpacePusher) composeApmAllTypeTableIdValue(sp space.Space, rt resulttable.ResultTable) map[string]any {
+	options := FilterBuildContext{
+		SpaceType:      sp.SpaceTypeId,
+		SpaceId:        sp.SpaceId,
+		TableId:        rt.TableId,
+		ExtraStringVal: strconv.Itoa(-sp.Id),
+		FilterAlias:    rt.BkBizIdAlias,
+	}
+	filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
+	return map[string]any{"filters": filters}
 }
 
 // SpaceRedisClearer 清理空间路由缓存

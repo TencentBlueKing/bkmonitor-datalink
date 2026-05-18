@@ -26,6 +26,60 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
+func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	logger.Info("start pre fetch space table ids task")
+
+	pusher := service.NewSpacePusher()
+	prefetchedValuesBySpace := make(service.SpaceTableIdValuesBySpace)
+
+	apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(pusher, spaceList)
+	if err != nil {
+		return nil, err
+	}
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
+
+	logger.Infof("pre fetch space table ids success, space_count [%d]", len(prefetchedValuesBySpace))
+	return prefetchedValuesBySpace, nil
+}
+
+func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.BkBizIdAlias,
+			resulttable.ResultTableDBSchema.BkTenantId,
+		).
+		IsDeletedEq(false).
+		IsEnableEq(true).
+		TableIdLike("apm_global.%").
+		All(&rtList); err != nil {
+		logger.Errorf("pre fetch apm all type table ids failed, err: %s", err)
+		return nil, err
+	}
+
+	valuesBySpace := pusher.ComposeApmAllTypeTableIdValuesBySpace(rtList, spaceList)
+	logger.Infof("pre fetch apm all type table ids success, result_table_count [%d], space_count [%d]", len(rtList), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func mergeSpaceTableIdValuesBySpace(dst, src service.SpaceTableIdValuesBySpace) {
+	for spaceKey, values := range src {
+		if _, ok := dst[spaceKey]; !ok {
+			dst[spaceKey] = make(service.SpaceTableIdValues)
+		}
+		mergeSpaceTableIdValues(dst[spaceKey], values)
+	}
+}
+
+func mergeSpaceTableIdValues(dst, src service.SpaceTableIdValues) {
+	for tableId, value := range src {
+		dst[tableId] = value
+	}
+}
+
 // PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
@@ -54,6 +108,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		if sp.BkTenantId != "" {
 			bkTenantIdSet[sp.BkTenantId] = struct{}{}
 		}
+	}
+
+	// 预获取空间路由信息
+	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(ctx, t, spaceList)
+	if preFetchErr != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo pre fetch space table ids failed, err: %s", preFetchErr)
+		return preFetchErr
 	}
 
 	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
@@ -85,7 +146,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId); err != nil {
+			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)]
+			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}

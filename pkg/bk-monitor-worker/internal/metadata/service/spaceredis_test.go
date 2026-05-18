@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	miniredis "github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/jinzhu/gorm"
@@ -2755,6 +2757,126 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 		return
 	}
 	println(isPublish)
+}
+
+func TestSpacePusher_pushSpaceTableIdsReturnOnComposeError(t *testing.T) {
+	setupStorageRedisForTest(t)
+
+	tests := []struct {
+		name      string
+		spaceType string
+		spaceId   string
+		push      func(*SpacePusher, string, string, string) (bool, error)
+		patch     func(*gomonkey.Patches, *SpacePusher, error)
+	}{
+		{
+			name:      "bkcc compose es error",
+			spaceType: models.SpaceTypeBKCC,
+			spaceId:   "fail_fast_bkcc",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeData", func(_ *SpacePusher, bkTenantId string, spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]any, options *optionx.Options) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"metric.rt": {}}, nil
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeRelatedBkciTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+		{
+			name:      "bkci compose cluster error",
+			spaceType: models.SpaceTypeBKCI,
+			spaceId:   "fail_fast_bkci",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeBcsSpaceBizTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"biz.rt": {}}, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBcsSpaceClusterTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciLevelTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciOtherTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciCrossTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeAllTypeTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+		{
+			name:      "bksaas compose other error",
+			spaceType: models.SpaceTypeBKSAAS,
+			spaceId:   "fail_fast_bksaas",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeBksaasSpaceClusterTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"cluster.rt": {}}, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBksaasOtherTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeAllTypeTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := redis.GetStorageRedisInstance()
+			assert.NoError(t, client.Delete(cfg.SpaceToResultTableKey))
+
+			expectedErr := errors.New("compose failed")
+			patches := gomonkey.NewPatches()
+			var target *SpacePusher
+			tt.patch(patches, target, expectedErr)
+			defer patches.Reset()
+
+			isPublish, err := tt.push(NewSpacePusher(), tenant.DefaultTenantId, tt.spaceType, tt.spaceId)
+
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), expectedErr.Error())
+			}
+			assert.False(t, isPublish)
+
+			redisKey := fmt.Sprintf("%s__%s", tt.spaceType, tt.spaceId)
+			if cfg.EnableMultiTenantMode {
+				redisKey = fmt.Sprintf("%s|%s", redisKey, tenant.DefaultTenantId)
+			}
+			assert.Empty(t, client.HGet(cfg.SpaceToResultTableKey, redisKey))
+		})
+	}
 }
 
 func TestBuildFiltersByUsage(t *testing.T) {

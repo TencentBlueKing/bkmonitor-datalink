@@ -4985,6 +4985,78 @@ func TestQueryRawWithScroll_ES_empty_db_skipped(t *testing.T) {
 	assert.True(t, done, "skipped bad table should mark slice completed so session Done")
 }
 
+// TestQueryRawWithScroll_CollectsResultTableOptions 覆盖多 slice 并发写 resultTableOptions 的场景。
+func TestQueryRawWithScroll_CollectsResultTableOptions(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	mock.Es.Set(map[string]any{
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"00","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":11,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"01","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":12,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"02","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":13,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"10","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":100,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"11","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":200,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"12","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+	})
+
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				TableID:     "multi_es",
+				KeepColumns: []string{"level"},
+			},
+		},
+		MetricMerge: "a",
+		Start:       "1757051309",
+		End:         "1757054909",
+		Step:        "1m",
+		Limit:       2,
+		Scroll:      "1m",
+		SliceMax:    3,
+	}
+
+	queryByte, _ := json.Marshal(qts)
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, string(queryByte), ScrollWindowTimeout, ScrollSessionLockTimeout, qts.SliceMax, qts.Limit)
+	if err != nil {
+		t.Skipf("Redis: %v", err)
+		return
+	}
+	defer func() { _ = session.Clear(ctx) }()
+
+	total, list, options, done, err := queryRawWithScroll(ctx, qts, session)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(12), total)
+	assert.Len(t, list, 12)
+	assert.False(t, done)
+	assert.Len(t, options, 6)
+
+	for _, tc := range []struct {
+		key        string
+		scrollID   string
+		sliceIndex int
+		from       int
+	}{
+		{key: "result_table.es|3|0", scrollID: "00", sliceIndex: 0, from: 0},
+		{key: "result_table.es|3|1", scrollID: "01", sliceIndex: 1, from: 2},
+		{key: "result_table.es|3|2", scrollID: "02", sliceIndex: 2, from: 4},
+		{key: "result_table.es_with_time_filed|3|0", scrollID: "10", sliceIndex: 0, from: 0},
+		{key: "result_table.es_with_time_filed|3|1", scrollID: "11", sliceIndex: 1, from: 2},
+		{key: "result_table.es_with_time_filed|3|2", scrollID: "12", sliceIndex: 2, from: 4},
+	} {
+		option := options.GetOption(tc.key)
+		if assert.NotNil(t, option, tc.key) {
+			assert.Equal(t, tc.scrollID, option.ScrollID)
+			assert.Equal(t, tc.sliceIndex, option.SliceIndex)
+			assert.Equal(t, 3, option.SliceMax)
+			if assert.NotNil(t, option.From) {
+				assert.Equal(t, tc.from, *option.From)
+			}
+		}
+	}
+}
+
 // TestQueryTsPartialSuccessMultiRoute query/ts 多路查询时，至少一路成功应返回成功并标记 QueryTsPartial。
 func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
 	mock.Init()

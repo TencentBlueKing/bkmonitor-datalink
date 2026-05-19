@@ -12,6 +12,7 @@ package influxdb
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -48,6 +49,11 @@ type TestSuite struct {
 
 func (s *TestSuite) SetupTest() {
 	var err error
+	if globalSpaceTsDbRouter != nil {
+		_ = globalSpaceTsDbRouter.Stop()
+		globalSpaceTsDbRouter = nil
+	}
+	MultiTenantMode = false
 	s.miniRedis, err = miniredis.Run()
 	s.Require().NoError(err)
 	s.client = goRedis.NewClient(&goRedis.Options{
@@ -80,7 +86,8 @@ func (s *TestSuite) SetupTest() {
 		"script_hhb_test.group3",
 		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\",\"bk_data_id\": 11}")
 
-	router, err := SetSpaceTsDbRouter(s.ctx, "spacetsdb_test.db", "spacetsdb_test", "bkmonitorv3:spaces", 100, false)
+	kvPath := filepath.Join(s.T().TempDir(), "spacetsdb_test.db")
+	router, err := SetSpaceTsDbRouter(s.ctx, kvPath, "spacetsdb_test", "bkmonitorv3:spaces", 100, false)
 	if err != nil {
 		panic(err)
 	}
@@ -98,6 +105,12 @@ func (s *TestSuite) SetupBigData() {
 }
 
 func (s *TestSuite) TearDownTest() {
+	if s.router != nil {
+		_ = s.router.Stop()
+		s.router = nil
+	}
+	globalSpaceTsDbRouter = nil
+	MultiTenantMode = false
 	if s.client != nil {
 		s.client.Del(
 			s.ctx,
@@ -255,28 +268,28 @@ func (s *TestSuite) testTenantDataIsolation() {
 	MultiTenantMode = true
 	ctx1 := s.createContext("tenant1")
 	space1 := s.router.GetSpace(ctx1, "test_space")
-	s.Assert().NotNil(space1)
+	s.Require().NotNil(space1)
 	s.Assert().Contains(space1, "test_table1")
 
 	rt1 := s.router.GetResultTable(ctx1, "test_table1", false)
-	s.Assert().NotNil(rt1)
+	s.Require().NotNil(rt1)
 	s.Assert().Equal("tenant1_cluster", rt1.ClusterName)
 
 	rtList1 := s.router.GetDataLabelRelatedRts(ctx1, "test_label")
-	s.Assert().NotNil(rtList1)
+	s.Require().NotNil(rtList1)
 	s.Assert().Contains(rtList1, "test_table1")
 
 	ctx2 := s.createContext("tenant2")
 	space2 := s.router.GetSpace(ctx2, "test_space")
-	s.Assert().NotNil(space2)
+	s.Require().NotNil(space2)
 	s.Assert().Contains(space2, "test_table2")
 
 	rt2 := s.router.GetResultTable(ctx2, "test_table2", false)
-	s.Assert().NotNil(rt2)
+	s.Require().NotNil(rt2)
 	s.Assert().Equal("tenant2_cluster", rt2.ClusterName)
 
 	rtList2 := s.router.GetDataLabelRelatedRts(ctx2, "test_label")
-	s.Assert().NotNil(rtList2)
+	s.Require().NotNil(rtList2)
 	s.Assert().Contains(rtList2, "test_table2")
 
 	s.Assert().NotContains(space1, "test_table2") // 验证隔离
@@ -288,27 +301,27 @@ func (s *TestSuite) testNormalDataAccess() {
 	ctx := s.createContext("system")
 
 	space := s.router.GetSpace(ctx, "test_space")
-	s.Assert().NotNil(space)
+	s.Require().NotNil(space)
 	s.Assert().Contains(space, "test_table_system")
 
 	rt := s.router.GetResultTable(ctx, "test_table_system", false)
-	s.Assert().NotNil(rt)
+	s.Require().NotNil(rt)
 	s.Assert().Equal("system_cluster", rt.ClusterName)
 
 	rtList := s.router.GetDataLabelRelatedRts(ctx, "test_label")
-	s.Assert().NotNil(rtList)
+	s.Require().NotNil(rtList)
 	s.Assert().Contains(rtList, "test_table_system")
 
 	spaceWithSuffix := s.router.GetSpace(ctx, "test_space|system")
-	s.Assert().NotNil(spaceWithSuffix)
+	s.Require().NotNil(spaceWithSuffix)
 	s.Assert().Contains(spaceWithSuffix, "test_table_system_with_suffix")
 
 	rtWithSuffix := s.router.GetResultTable(ctx, "test_table_system_with_suffix|system", false)
-	s.Assert().NotNil(rtWithSuffix)
+	s.Require().NotNil(rtWithSuffix)
 	s.Assert().Equal("system_cluster_with_suffix", rtWithSuffix.ClusterName)
 
 	rtListWithSuffix := s.router.GetDataLabelRelatedRts(ctx, "test_label|system")
-	s.Assert().NotNil(rtListWithSuffix)
+	s.Require().NotNil(rtListWithSuffix)
 	s.Assert().Contains(rtListWithSuffix, "test_table_system_with_suffix")
 }
 

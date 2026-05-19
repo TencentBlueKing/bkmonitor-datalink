@@ -1,6 +1,7 @@
 {
   "biz_id": "2",
   "biz_name": "BlueKing",
+  "bk_tenant_id": "",
   "app_id": "1",
   "app_name": "testApp",
   "trace_id": "5d8f5140b03d2ffaa51fe278ed020d88",

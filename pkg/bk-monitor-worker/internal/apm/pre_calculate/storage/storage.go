@@ -17,6 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
@@ -192,11 +193,11 @@ type Proxy struct {
 
 	config ProxyOptions
 
-	traceEs                  *esStorage
-	saveEs                   *esStorage
-	cache                    CacheOperator
-	bloomFilter              BloomOperator
-	prometheusMetricsHandler *MetricDimensionsHandler
+	traceEs                   *esStorage
+	saveEs                    *esStorage
+	cache                     CacheOperator
+	bloomFilter               BloomOperator
+	prometheusMetricsHandlers map[core.AppKey]*MetricDimensionsHandler
 
 	ctx             context.Context
 	saveRequestChan chan SaveRequest
@@ -284,7 +285,12 @@ loop:
 			case Prometheus:
 				// Metrics of prometheus is directly handed over to handler (Sending is triggered by handler)
 				item := r.Data.(PrometheusStorageData)
-				p.prometheusMetricsHandler.Add(item)
+				handler, ok := p.prometheusMetricsHandlers[item.AppKey]
+				if !ok {
+					p.logger.Warnf("Prometheus storage data appKey not found, dataId: %s appKey: %+v", p.dataId, item.AppKey)
+					continue
+				}
+				handler.Add(item)
 			default:
 				p.logger.Warnf("An invalid storage SAVE request was received: %s", r.Target)
 			}
@@ -312,7 +318,9 @@ loop:
 		case <-p.ctx.Done():
 			ticker.Stop()
 			p.cache.Close()
-			p.prometheusMetricsHandler.Close()
+			for _, handler := range p.prometheusMetricsHandlers {
+				handler.Close()
+			}
 			break loop
 		}
 	}
@@ -393,16 +401,23 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		return nil, err
 	}
 
+	prometheusMetricsHandlers := make(map[core.AppKey]*MetricDimensionsHandler)
+	for _, baseInfo := range core.GetMetadataCenter().ListBaseInfos(dataId) {
+		prometheusMetricsHandlers[baseInfo.AppKey()] = NewMetricDimensionHandler(
+			ctx, dataId, baseInfo, opt.prometheusWriterConfig, opt.metricsConfig,
+		)
+	}
+
 	return &Proxy{
-		dataId:                   dataId,
-		config:                   opt,
-		traceEs:                  traceEsInstance,
-		saveEs:                   saveEsInstance,
-		cache:                    cache,
-		bloomFilter:              bloomFilter,
-		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.prometheusWriterConfig, opt.metricsConfig),
-		ctx:                      ctx,
-		saveRequestChan:          make(chan SaveRequest, opt.saveReqBufferSize),
-		logger:                   monitorLogger.With(zap.String("name", "storage"), zap.String("dataId", dataId)),
+		dataId:                    dataId,
+		config:                    opt,
+		traceEs:                   traceEsInstance,
+		saveEs:                    saveEsInstance,
+		cache:                     cache,
+		bloomFilter:               bloomFilter,
+		prometheusMetricsHandlers: prometheusMetricsHandlers,
+		ctx:                       ctx,
+		saveRequestChan:           make(chan SaveRequest, opt.saveReqBufferSize),
+		logger:                    monitorLogger.With(zap.String("name", "storage"), zap.String("dataId", dataId)),
 	}, nil
 }

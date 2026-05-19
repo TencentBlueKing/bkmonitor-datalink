@@ -205,6 +205,14 @@ func HandleSpacePrint(c *gin.Context) {
 	}
 	res := ""
 	if refresh {
+		// refresh 触发 LoadRouter 全表 HScan，type_key 须为 SpaceAllKey
+		if !routerInfluxdb.IsSpaceAllRouterKey(typeKey) {
+			c.String(400, fmt.Sprintf(
+				"invalid type_key for refresh: %q, must be one of: %s",
+				typeKey, strings.Join(routerInfluxdb.SpaceAllKey, ", "),
+			))
+			return
+		}
 		res += fmt.Sprintf("Refresh %s \n", typeKey)
 		err = router.LoadRouter(ctx, typeKey, true)
 		if err != nil {

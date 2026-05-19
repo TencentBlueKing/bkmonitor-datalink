@@ -40,6 +40,12 @@ const (
 	ResultMiss = "miss"
 )
 
+// RedisRouterLoadResult 为 unify_query_redis_router_load_total 的 result 标签取值（固定 success|failure，基数可控）。
+const (
+	RedisRouterLoadResultSuccess = "success"
+	RedisRouterLoadResultFailure = "failure"
+)
+
 const (
 	_ = 1 << (10 * iota)
 	KB
@@ -147,6 +153,16 @@ var (
 		},
 		[]string{"storage_id", "version", "commit_id"},
 	)
+
+	// redis_router_load_total：space_tsdb LoadRouter 每次结束记 1 次，result 为 success 或 failure（route_key 仅 SpaceAllKey）
+	redisRouterLoadTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "redis_router_load_total",
+			Help:      "unify-query space_tsdb: full LoadRouter from Redis (HScan) outcomes by route_key and result (success|failure)",
+		},
+		[]string{"route_key", "result", "version", "commit_id"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -209,6 +225,16 @@ func TSDBGetStorageTotalInc(ctx context.Context, result string) {
 func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
 	params := append([]string{}, storageID, config.Version, config.CommitHash)
 	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+// RedisRouterLoadResultInc 记录一次 LoadRouter 结束：success 表示 Redis 扫描与 BatchAdd 均无错误；failure 表示出现过 channel 错误或 BatchAdd 失败。route_key 须为 SpaceAllKey。
+func RedisRouterLoadResultInc(ctx context.Context, routeKey, result string) {
+	if result != RedisRouterLoadResultSuccess && result != RedisRouterLoadResultFailure {
+		return
+	}
+	params := append([]string{}, routeKey, result, config.Version, config.CommitHash)
+	metric, _ := redisRouterLoadTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 

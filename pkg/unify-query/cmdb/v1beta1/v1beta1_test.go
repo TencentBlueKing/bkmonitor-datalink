@@ -28,7 +28,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
-var testModel, _ = newModel(context.Background(), configData)
+var testModel = mustNewTestModel()
+
+func mustNewTestModel() *model {
+	m, err := newModel(context.Background(), configData)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
 
 func TestModel_Resources(t *testing.T) {
 	mock.Init()
@@ -36,7 +44,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "bklogconfig", "business", "container", "daemonset", "datasource", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "p4_changelist", "pod", "replicaset", "service", "set", "statefulset", "svn_revision", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "biz", "bklogconfig", "container", "daemonset", "datasource", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "p4_changelist", "pod", "replicaset", "service", "set", "statefulset", "svn_revision", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -846,8 +854,8 @@ func TestInitSchemaProvider_MultiNamespace(t *testing.T) {
 			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "bcs_cluster_id", Required: true}, {Name: "node", Required: true}}},
 		},
 		[]*relation.RelationDefinition{
-			{Namespace: "__all__", Name: "host_system", FromResource: "host", ToResource: "system"},
-			{Namespace: "bkcc__2", Name: "node_pod", FromResource: "node", ToResource: "pod"},
+			{Namespace: "__all__", Name: "host_with_system", FromResource: "host", ToResource: "system"},
+			{Namespace: "bkcc__2", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
 		},
 	)
 
@@ -900,7 +908,7 @@ func TestReloadNamespaceModel_AsyncUpdate(t *testing.T) {
 			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
 		},
 		[]*relation.RelationDefinition{
-			{Namespace: "bkcc__2", Name: "pod_node", FromResource: "pod", ToResource: "node"},
+			{Namespace: "bkcc__2", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
 		},
 	)
 
@@ -981,8 +989,8 @@ func TestNamespaceIsolation_GraphIndependent(t *testing.T) {
 			{Namespace: "bkcc__2", Name: "node", Fields: []relation.FieldDefinition{{Name: "node", Required: true}}},
 		},
 		[]*relation.RelationDefinition{
-			{Namespace: "__all__", Name: "host_system", FromResource: "host", ToResource: "system"},
-			{Namespace: "bkcc__2", Name: "pod_node", FromResource: "pod", ToResource: "node"},
+			{Namespace: "__all__", Name: "host_with_system", FromResource: "host", ToResource: "system"},
+			{Namespace: "bkcc__2", Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
 		},
 	)
 

@@ -12,6 +12,8 @@ package window
 import (
 	"testing"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 )
 
@@ -68,4 +70,36 @@ func TestMetricsHandleResult(t *testing.T) {
 			t.Fatal("Not equal")
 		}
 	})
+}
+
+func TestDynamicRelationFlowMetric(t *testing.T) {
+	dataId := "12345"
+	p := initialProcessor(t, dataId, true)
+	p.metricProcessor.dynamicRelationFlowReportEnabled = true
+
+	event := fileTracesToEvent("complex.json")
+	resultChan := make(chan storage.SaveRequest, 1000)
+	p.PreProcess(resultChan, event)
+
+	var relationLabels []string
+	for len(resultChan) > 0 {
+		item := <-resultChan
+		if item.Target != storage.Prometheus {
+			continue
+		}
+		data, ok := item.Data.(storage.PrometheusStorageData)
+		if !ok || data.Kind != storage.PromRelationMetric {
+			continue
+		}
+		labels, ok := data.Value.([]string)
+		if !ok {
+			continue
+		}
+		relationLabels = append(relationLabels, labels...)
+	}
+
+	expect := "__name__=system_to_system_flow,from_bk_target_ip=192.168.0.1,to_bk_target_ip=192.168.0.5"
+	if !slices.Contains(relationLabels, expect) {
+		t.Fatalf("dynamic relation label not found: %s", expect)
+	}
 }

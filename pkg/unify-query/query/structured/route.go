@@ -274,6 +274,9 @@ func MetricsToRouter(matchers ...*labels.Matcher) (*Route, []*labels.Matcher, er
 			newMatcher = append(newMatcher, m)
 		}
 	}
+	if route == nil {
+		err = ErrMetricMissing
+	}
 
 	return route, newMatcher, err
 }

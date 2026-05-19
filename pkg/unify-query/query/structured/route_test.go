@@ -222,3 +222,16 @@ func TestMakeRouteFromLabelMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestMetricsToRouterMissingMetric(t *testing.T) {
+	matchers := []*labels.Matcher{
+		labels.MustNewMatcher(labels.MatchRegexp, "namespace", "Development"),
+		labels.MustNewMatcher(labels.MatchRegexp, "service_name", ".+"),
+	}
+
+	route, remaining, err := MetricsToRouter(matchers...)
+
+	assert.Nil(t, route)
+	assert.Equal(t, matchers, remaining)
+	assert.ErrorIs(t, err, ErrMetricMissing)
+}

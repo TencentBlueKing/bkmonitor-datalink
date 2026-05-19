@@ -13,23 +13,74 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-func TestToStandardSpanFromMappingBaseInfo(t *testing.T) {
-	span := ToStandardSpanFromMapping(mappingSpan(map[string]any{
-		"bk_biz_id": "2",
-		"app_name":  "testApp",
-	}))
+func TestOriginMessageUnmarshalBaseInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message string
+		wantBiz string
+		wantApp string
+	}{
+		{
+			name:    "with base info",
+			message: `{"dataid":1573230,"items":[{"bk_biz_id":2,"app_name":"bkop"}]}`,
+			wantBiz: "2",
+			wantApp: "bkop",
+		},
+		{
+			name:    "with negative biz id",
+			message: `{"dataid":1573230,"items":[{"bk_biz_id":-111,"app_name":"space-app"}]}`,
+			wantBiz: "-111",
+			wantApp: "space-app",
+		},
+		{
+			name:    "without base info",
+			message: `{"dataid":1573230,"items":[{"trace_id":"trace-id"}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var msg OriginMessage
+			require.NoError(t, jsonx.Unmarshal([]byte(tc.message), &msg))
+			require.Len(t, msg.Items, 1)
 
-	assert.Equal(t, "2", span.BkBizId)
-	assert.Equal(t, "testApp", span.AppName)
+			span := ToStandardSpan(msg.Items[0])
+			assert.Equal(t, tc.wantBiz, span.BkBizId)
+			assert.Equal(t, tc.wantApp, span.AppName)
+		})
+	}
 }
 
-func TestToStandardSpanFromMappingMissingBaseInfo(t *testing.T) {
-	span := ToStandardSpanFromMapping(mappingSpan(nil))
+func TestToStandardSpanFromMappingBaseInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fields  map[string]any
+		wantBiz string
+		wantApp string
+	}{
+		{
+			name: "with base info",
+			fields: map[string]any{
+				"bk_biz_id": "2",
+				"app_name":  "testApp",
+			},
+			wantBiz: "2",
+			wantApp: "testApp",
+		},
+		{
+			name: "without base info",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			span := ToStandardSpanFromMapping(mappingSpan(tc.fields))
 
-	assert.Empty(t, span.BkBizId)
-	assert.Empty(t, span.AppName)
+			assert.Equal(t, tc.wantBiz, span.BkBizId)
+			assert.Equal(t, tc.wantApp, span.AppName)
+		})
+	}
 }
 
 func mappingSpan(fields map[string]any) map[string]any {

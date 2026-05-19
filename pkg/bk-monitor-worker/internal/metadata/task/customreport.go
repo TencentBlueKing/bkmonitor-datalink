@@ -104,9 +104,16 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		// 如果不存在 vm rt, 则不会通过bkbase查询
 		vmRt, ok := rtMapVmRt[[2]string{eg.BkTenantId, eg.TableID}]
 
-		var ds resulttable.DataSource
-		if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(eg.BkDataID).BkTenantIdEq(eg.BkTenantId).One(&ds); err != nil {
-			logger.Errorf("RefreshTimeSeriesMetric:table_id %s found datasource record error, %v", eg.TableID, err)
+		createdFrom := ""
+		if eg.BkDataID == 0 {
+			// bk_data_id 为 0 表示没有 monitor 侧 DataSource，指标发现直接按 BKBase RT 处理。
+			createdFrom = common.DataIdFromBkData
+		} else {
+			var ds resulttable.DataSource
+			if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(eg.BkDataID).BkTenantIdEq(eg.BkTenantId).One(&ds); err != nil {
+				logger.Errorf("RefreshTimeSeriesMetric:table_id %s found datasource record error, %v", eg.TableID, err)
+			}
+			createdFrom = ds.CreatedFrom
 		}
 
 		if !ok {
@@ -116,7 +123,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			// 判断是否在白名单中
 			logger.Infof("RefreshTimeSeriesMetric:table_id %s ,data_id %v in white list, will query metrics from bkdata", eg.TableID, eg.BkDataID)
 			queryFromBkdata = true
-		} else if ds.CreatedFrom == common.DataIdFromBkData {
+		} else if createdFrom == common.DataIdFromBkData {
 			logger.Infof("RefreshTimeSeriesMetric:table_id %s ,data_id %v created from bkbase, will query metrics from bkdata", eg.TableID, eg.BkDataID)
 			// 如果TSGroup的创建来源是计算平台，则需从计算平台获取相应的指标
 			queryFromBkdata = true

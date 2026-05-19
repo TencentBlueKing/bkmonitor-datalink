@@ -2434,6 +2434,126 @@ func TestSpacePusher_PushTableIdDetailWithRecordRuleOverride(t *testing.T) {
 	assert.Equal(t, []any{"metric_from_rule", "metric_from_rule_2"}, detail["fields"], "record rule metrics should override rt fields")
 }
 
+func TestSpacePusher_ComposeRecordRuleTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRule{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"record_rule_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
+func TestSpacePusher_ComposeRecordRuleV4TableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRuleV4{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_v4_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"record_rule_v4_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
+func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	shortLinkRecords := []space.VMShortLinkRecord{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "vm_short_link_rt",
+		},
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkci",
+			SpaceId:    "project_a",
+			TableId:    "global_vm_short_link_rt",
+			IsGlobal:   true,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "configured_global_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"space_type":"all","filter_key":"project_id","filter_value":"space_id"}`,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "partial_config_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"filter_key":"custom_biz"}`,
+		},
+	}
+	spaceList := []space.Space{
+		{Id: 100, BkTenantId: "system", SpaceTypeId: "bkcc", SpaceId: "1001"},
+		{Id: 101, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_a"},
+		{Id: 102, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_b"},
+		{Id: 103, BkTenantId: "other", SpaceTypeId: "bkci", SpaceId: "project_c"},
+	}
+
+	data := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "1001"}},
+			},
+		},
+		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+		SpaceRouteKeyWithTenant("system", "bkci", "project_b"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"bk_biz_id": "-102"}},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "project_b"}},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"custom_biz": "-102"}},
+			},
+		},
+	}, data)
+}
+
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 	db := mysql.GetDBSession().DB
@@ -2563,7 +2683,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", nil)
+	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2593,7 +2713,7 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", nil)
+	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2632,7 +2752,7 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", nil)
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2659,9 +2779,6 @@ func TestSpacePusher_pushSpaceTableIdsReturnOnComposeError(t *testing.T) {
 			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
 				patches.ApplyPrivateMethod(target, "composeData", func(_ *SpacePusher, bkTenantId string, spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]any, options *optionx.Options) (map[string]map[string]any, error) {
 					return map[string]map[string]any{"metric.rt": {}}, nil
-				})
-				patches.ApplyPrivateMethod(target, "composeRecordRuleTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
-					return nil, nil
 				})
 				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
 					return nil, expectedErr
@@ -2700,9 +2817,6 @@ func TestSpacePusher_pushSpaceTableIdsReturnOnComposeError(t *testing.T) {
 				patches.ApplyPrivateMethod(target, "composeAllTypeTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
 					return nil, nil
 				})
-				patches.ApplyPrivateMethod(target, "composeRecordRuleTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
-					return nil, nil
-				})
 				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
 					return nil, nil
 				})
@@ -2724,9 +2838,6 @@ func TestSpacePusher_pushSpaceTableIdsReturnOnComposeError(t *testing.T) {
 				})
 				patches.ApplyPrivateMethod(target, "composeBksaasOtherTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 					return nil, expectedErr
-				})
-				patches.ApplyPrivateMethod(target, "composeRecordRuleTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
-					return nil, nil
 				})
 				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
 					return nil, nil

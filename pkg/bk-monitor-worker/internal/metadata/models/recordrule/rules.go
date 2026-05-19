@@ -9,7 +9,11 @@
 
 package recordrule
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+import (
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+)
 
 //go:generate goqueryset -in rules.go -out qs_rules_gen.go
 
@@ -17,6 +21,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/inte
 // gen:qs
 type RecordRule struct {
 	Id            int    `gorm:"primary_key" json:"id"`
+	BkTenantId    string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	SpaceType     string `gorm:"size:64" json:"spaceType"`
 	SpaceId       string `gorm:"size:128" json:"space_id"`
 	TableId       string `gorm:"size:128" json:"table_id"`
@@ -35,4 +40,43 @@ type RecordRule struct {
 // TableName table alias name
 func (RecordRule) TableName() string {
 	return "metadata_recordrule"
+}
+
+// RecordRuleV4 v4 record rule model
+type RecordRuleV4 struct {
+	Id                     int        `gorm:"primary_key" json:"id"`
+	Creator                string     `gorm:"column:creator;size:64" json:"creator"`
+	CreatedAt              time.Time  `gorm:"column:created_at" json:"created_at"`
+	Updater                string     `gorm:"column:updater;size:64" json:"updater"`
+	UpdatedAt              time.Time  `gorm:"column:updated_at" json:"updated_at"`
+	SpaceType              string     `gorm:"column:space_type;size:64" json:"space_type"`
+	SpaceId                string     `gorm:"column:space_id;size:128" json:"space_id"`
+	BkTenantId             string     `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
+	Name                   string     `gorm:"column:name;size:128" json:"name"`
+	Description            string     `gorm:"column:description;type:text" json:"description"`
+	DataLabel              string     `gorm:"column:data_label;size:128" json:"data_label"`
+	FlowName               string     `gorm:"column:flow_name;size:128" json:"flow_name"`
+	TableId                string     `gorm:"column:table_id;size:128" json:"table_id"`
+	DstVmTableId           string     `gorm:"column:dst_vm_table_id;size:128" json:"dst_vm_table_id"`
+	DstVmStorageName       string     `gorm:"column:dst_vm_storage_name;size:128" json:"dst_vm_storage_name"`
+	Generation             int        `gorm:"column:generation;type:int" json:"generation"`
+	CurrentSpecId          *int       `gorm:"column:current_spec_id" json:"current_spec_id"`
+	AppliedResolvedId      *int       `gorm:"column:applied_resolved_id" json:"applied_resolved_id"`
+	DesiredStatus          string     `gorm:"column:desired_status;size:32" json:"desired_status"`
+	AppliedDesiredStatus   string     `gorm:"column:applied_desired_status;size:32" json:"applied_desired_status"`
+	Status                 string     `gorm:"column:status;size:32" json:"status"`
+	Conditions             string     `gorm:"column:conditions;type:json" json:"conditions"`
+	AutoRefresh            bool       `gorm:"column:auto_refresh" json:"auto_refresh"`
+	LastCheckTime          *time.Time `gorm:"column:last_check_time" json:"last_check_time"`
+	LastRefreshTime        *time.Time `gorm:"column:last_refresh_time" json:"last_refresh_time"`
+	DeletedAt              *time.Time `gorm:"column:deleted_at" json:"deleted_at"`
+	OperationLockToken     string     `gorm:"column:operation_lock_token;size:64" json:"operation_lock_token"`
+	OperationLockOwner     string     `gorm:"column:operation_lock_owner;size:128" json:"operation_lock_owner"`
+	OperationLockReason    string     `gorm:"column:operation_lock_reason;size:64" json:"operation_lock_reason"`
+	OperationLockExpiresAt *time.Time `gorm:"column:operation_lock_expires_at" json:"operation_lock_expires_at"`
+}
+
+// TableName table alias name
+func (RecordRuleV4) TableName() string {
+	return "metadata_recordrulev4"
 }

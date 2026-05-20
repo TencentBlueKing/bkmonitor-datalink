@@ -2092,16 +2092,6 @@ func (s *SpacePusher) composeValue(values *map[string]map[string]any, composedDa
 	}
 }
 
-func filterApmAllTypeTableIdValues(values SpaceTableIdValues) SpaceTableIdValues {
-	apmValues := make(SpaceTableIdValues)
-	for tid, val := range values {
-		if strings.HasPrefix(tid, "apm_global.") {
-			apmValues[tid] = val
-		}
-	}
-	return apmValues
-}
-
 // 推送 bkcc 类型空间数据
 func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId string, prefetchedSpaceTableIdValues SpaceTableIdValues) (bool, error) {
 	logger.Infof("pushBkccSpaceTableIds:start to push bkcc space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
@@ -2114,9 +2104,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	if values == nil {
 		values = make(map[string]map[string]any)
 	}
-
-	// 合并当前空间预取的路由数据
-	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 追加es空间路由表,不需要filters
 	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
@@ -2139,6 +2126,10 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	logger.Infof("pushBkccSpaceTableIds:compose es bkci space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, esBkciValues)
 	s.composeValue(&values, &esBkciValues)
+
+	// 合并当前空间预取的路由数据，优先级高于普通结果表路由。
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
+
 	if len(values) != 0 {
 		var redisKey string
 
@@ -2217,9 +2208,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
 
-	// 合并当前空间预取的路由数据
-	s.composeValue(&values, &prefetchedSpaceTableIdValues)
-
 	// 追加es空间结果表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	if err != nil {
@@ -2234,9 +2222,8 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &dorisValues)
 
-	// APM 全局结果表保留原先最后合并的覆盖优先级。
-	apmAllTypeValues := filterApmAllTypeTableIdValues(prefetchedSpaceTableIdValues)
-	s.composeValue(&values, &apmAllTypeValues)
+	// 合并当前空间预取的路由数据，优先级高于普通结果表路由。
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 推送数据
 	if len(values) != 0 {
@@ -2287,9 +2274,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &bksaasOtherValues)
 
-	// 合并当前空间预取的路由数据
-	s.composeValue(&values, &prefetchedSpaceTableIdValues)
-
 	// 追加es空间路由表
 	esValues, esErr := s.ComposeEsTableIds(spaceType, spaceId)
 	if esErr != nil {
@@ -2310,9 +2294,8 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
 
-	// APM 全局结果表保留原先最后合并的覆盖优先级。
-	apmAllTypeValues := filterApmAllTypeTableIdValues(prefetchedSpaceTableIdValues)
-	s.composeValue(&values, &apmAllTypeValues)
+	// 合并当前空间预取的路由数据，优先级高于普通结果表路由。
+	s.composeValue(&values, &prefetchedSpaceTableIdValues)
 
 	// 推送数据
 	if len(values) != 0 {

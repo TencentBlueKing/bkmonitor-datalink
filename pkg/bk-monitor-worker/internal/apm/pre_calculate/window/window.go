@@ -30,6 +30,8 @@ type SpanStatus struct {
 }
 
 type Span struct {
+	BkBizId      int            `json:"bk_biz_id"`
+	AppName      string         `json:"app_name"`
 	TraceId      string         `json:"trace_id"`
 	ParentSpanId string         `json:"parent_span_id"`
 	EndTime      int            `json:"end_time"`
@@ -49,6 +51,8 @@ func init() {
 
 func ToStandardSpan(originSpan Span) StandardSpan {
 	standardSpan := StandardSpan{
+		BkBizId:      kafkaBizIDToString(originSpan.BkBizId),
+		AppName:      originSpan.AppName,
 		TraceId:      originSpan.TraceId,
 		SpanId:       originSpan.SpanId,
 		SpanName:     originSpan.SpanName,
@@ -61,6 +65,13 @@ func ToStandardSpan(originSpan Span) StandardSpan {
 	}
 	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
 	return standardSpan
+}
+
+func kafkaBizIDToString(bkBizId int) string {
+	if bkBizId == 0 {
+		return ""
+	}
+	return strconv.Itoa(bkBizId)
 }
 
 func exactStandardFields(standardSpan StandardSpan, originSpan Span) map[string]string {
@@ -122,6 +133,12 @@ func ToStandardSpanFromMapping(originSpan map[string]any) *StandardSpan {
 		StatusCode:   core.SpanStatusCode(int(originSpan["status"].(map[string]any)["code"].(float64))),
 		Kind:         int(originSpan["kind"].(float64)),
 	}
+	if bkBizId, ok := originSpan["bk_biz_id"].(string); ok {
+		standardSpan.BkBizId = bkBizId
+	}
+	if appName, ok := originSpan["app_name"].(string); ok {
+		standardSpan.AppName = appName
+	}
 
 	standardSpan.Collections = exactStandardFieldsFromMapping(standardSpan, originSpan)
 	return &standardSpan
@@ -181,6 +198,8 @@ type CollectTrace struct {
 }
 
 type StandardSpan struct {
+	BkBizId      string
+	AppName      string
 	TraceId      string
 	SpanId       string
 	SpanName     string

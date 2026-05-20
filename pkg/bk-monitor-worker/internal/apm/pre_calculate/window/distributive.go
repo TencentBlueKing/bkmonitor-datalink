@@ -206,7 +206,11 @@ func (w *DistributiveWindow) Handle(spanChan <-chan []StandardSpan, errorReceive
 loop:
 	for {
 		select {
-		case m := <-spanChan:
+		case m, ok := <-spanChan:
+			if !ok {
+				w.logger.Infof("Handle span stopped because spanChan closed.")
+				break loop
+			}
 			start := time.Now()
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)

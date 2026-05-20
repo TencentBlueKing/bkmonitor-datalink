@@ -50,9 +50,9 @@ func TestExists(t *testing.T) {
 }
 
 func TestKeyHash(t *testing.T) {
-	h, err := highwayhash.New([]byte("test"))
+	h, err := highwayhash.New([]byte("12345678901234567890123456789012"))
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 
 	traceId := "b55ad0120589eb93716f5e3e3bd2244e"

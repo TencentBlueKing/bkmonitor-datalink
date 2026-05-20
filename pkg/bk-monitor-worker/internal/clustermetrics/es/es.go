@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -152,10 +153,15 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 				}
 
 				// 填充默认维度
+				bkTenantID := c.BkTenantID
+				if bkTenantID == "" {
+					bkTenantID = tenant.DefaultTenantId
+				}
 				d["bk_biz_id"] = bkBizID
 				d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
 				d["cluster_name"] = c.ClusterName
 				d["display_name"] = c.DisplayName
+				d["bk_tenant_id"] = bkTenantID
 				if index, ok := d["index"].(string); ok {
 					bizMatch := targetBizRe.FindStringSubmatch(index)
 					if len(bizMatch) > 0 {

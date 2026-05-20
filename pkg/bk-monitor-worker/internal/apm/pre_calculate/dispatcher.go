@@ -11,6 +11,9 @@ package pre_calculate
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
@@ -18,11 +21,10 @@ import (
 )
 
 type dispatcher struct {
-	ctx          context.Context
-	dataId       string
-	routes       map[core.AppKey]chan []window.StandardSpan
-	singleTarget chan []window.StandardSpan
-	errChan      chan<- error
+	ctx     context.Context
+	dataId  string
+	routes  map[core.AppKey]chan []window.StandardSpan
+	errChan chan<- error
 }
 
 func newDispatcher(
@@ -31,25 +33,19 @@ func newDispatcher(
 	routes map[core.AppKey]chan []window.StandardSpan,
 	errChan chan<- error,
 ) *dispatcher {
-	var singleTarget chan []window.StandardSpan
-	if len(routes) == 1 {
-		for _, spanChan := range routes {
-			singleTarget = spanChan
-		}
-	}
-
 	return &dispatcher{
-		ctx:          ctx,
-		dataId:       dataId,
-		routes:       routes,
-		singleTarget: singleTarget,
-		errChan:      errChan,
+		ctx:     ctx,
+		dataId:  dataId,
+		routes:  routes,
+		errChan: errChan,
 	}
 }
 
 func (d *dispatcher) Run(messageChan <-chan []window.StandardSpan) {
 	defer runtimex.HandleCrashToChan(d.errChan)
 	defer d.closeBundleSpanChans()
+
+	apmLogger.Infof("[Dispatcher] start, dataId: %s apps: %s", d.dataId, formatDispatcherAppKeys(d.routes))
 
 	buckets := make(map[chan []window.StandardSpan][]window.StandardSpan, len(d.routes))
 	for _, spanChan := range d.routes {
@@ -79,7 +75,7 @@ func (d *dispatcher) dispatchBatch(batch []window.StandardSpan, buckets map[chan
 
 	for _, span := range batch {
 		appKey := core.AppKey{BkBizId: span.BkBizId, AppName: span.AppName}
-		if spanChan := d.route(appKey); spanChan != nil {
+		if spanChan := d.routes[appKey]; spanChan != nil {
 			buckets[spanChan] = append(buckets[spanChan], span)
 		}
 	}
@@ -99,15 +95,17 @@ func (d *dispatcher) dispatchBatch(batch []window.StandardSpan, buckets map[chan
 	}
 }
 
-func (d *dispatcher) route(appKey core.AppKey) chan []window.StandardSpan {
-	if appKey.IsZero() {
-		return d.singleTarget
-	}
-	return d.routes[appKey]
-}
-
 func (d *dispatcher) closeBundleSpanChans() {
 	for _, spanChan := range d.routes {
 		close(spanChan)
 	}
+}
+
+func formatDispatcherAppKeys(routes map[core.AppKey]chan []window.StandardSpan) string {
+	apps := make([]string, 0, len(routes))
+	for appKey := range routes {
+		apps = append(apps, fmt.Sprintf("{bkBizId:%s appName:%s}", appKey.BkBizId, appKey.AppName))
+	}
+	sort.Strings(apps)
+	return strings.Join(apps, ",")
 }

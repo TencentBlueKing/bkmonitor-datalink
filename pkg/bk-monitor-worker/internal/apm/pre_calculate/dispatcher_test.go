@@ -56,7 +56,7 @@ func TestDispatcherRun(t *testing.T) {
 	assert.False(t, okB)
 }
 
-func TestDispatcherRunSingleBundleFallback(t *testing.T) {
+func TestDispatcherRunDropsMissingAppKey(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -73,7 +73,7 @@ func TestDispatcherRunSingleBundleFallback(t *testing.T) {
 	close(input)
 
 	gotA := <-spanChanA
-	assert.ElementsMatch(t, []string{"trace-a", "trace-fallback"}, traceIds(gotA))
+	assert.ElementsMatch(t, []string{"trace-a"}, traceIds(gotA))
 
 	_, okA := <-spanChanA
 	assert.False(t, okA)
@@ -92,10 +92,10 @@ func BenchmarkDispatcherDispatchBatch(b *testing.B) {
 	// goarch: arm64
 	// pkg: github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate
 	// cpu: Apple M4 Pro
-	// BenchmarkDispatcherDispatchBatch/apps_10_batch_10000-14         	    3097	    363035 ns/op	 1557599 B/op	      10 allocs/op
-	// BenchmarkDispatcherDispatchBatch/apps_20_batch_10000-14         	    3252	    341311 ns/op	 1639573 B/op	      20 allocs/op
-	// BenchmarkDispatcherDispatchBatch/apps_50_batch_10000-14         	    3234	    361697 ns/op	 1639830 B/op	      50 allocs/op
-	// BenchmarkDispatcherDispatchBatch/apps_100_batch_10000-14        	    3020	    393525 ns/op	 1639829 B/op	     100 allocs/op
+	// BenchmarkDispatcherDispatchBatch/apps_10_batch_10000-14         	    2874	    373474 ns/op	 1557687 B/op	      10 allocs/op
+	// BenchmarkDispatcherDispatchBatch/apps_20_batch_10000-14         	    3051	    363022 ns/op	 1639650 B/op	      20 allocs/op
+	// BenchmarkDispatcherDispatchBatch/apps_50_batch_10000-14         	    2970	    388789 ns/op	 1639956 B/op	      50 allocs/op
+	// BenchmarkDispatcherDispatchBatch/apps_100_batch_10000-14        	    2781	    405983 ns/op	 1639951 B/op	     100 allocs/op
 
 	for _, tc := range []struct {
 		name      string

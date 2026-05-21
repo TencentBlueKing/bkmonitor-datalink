@@ -323,8 +323,8 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 func TestFindMetricsAttributes(t *testing.T) {
 	t.Run("Exist", func(t *testing.T) {
 		m := pcommon.NewMap()
-		m.InsertString("net.host", "host")
-		m.InsertString("net.port", "port")
+		m.PutString("net.host", "host")
+		m.PutString("net.port", "port")
 
 		found := findMetricsAttributes("attributes.net.port", m)
 		assert.True(t, found)
@@ -332,8 +332,8 @@ func TestFindMetricsAttributes(t *testing.T) {
 
 	t.Run("Exist but empty value", func(t *testing.T) {
 		m := pcommon.NewMap()
-		m.InsertString("net.host", "host")
-		m.InsertString("net.port", "")
+		m.PutString("net.host", "host")
+		m.PutString("net.port", "")
 
 		found := findMetricsAttributes("attributes.net.port", m)
 		assert.False(t, found)

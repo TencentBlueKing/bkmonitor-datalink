@@ -193,15 +193,15 @@ func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
 	switch rule.Target {
 	case targetCookie:
 		if val, ok := cookies[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			span.Attributes().PutString(key, val)
 		}
 	case targetHeader:
 		if val, ok := headers[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			span.Attributes().PutString(key, val)
 		}
 	case targetParams:
 		if val, ok := params[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			span.Attributes().PutString(key, val)
 		}
 	}
 }

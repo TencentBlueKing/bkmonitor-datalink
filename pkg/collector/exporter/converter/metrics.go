@@ -60,7 +60,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			scopeMetric := scopeMetricsSlice.At(j)
 			dimensions := pcommon.NewMap()
 			rs.CopyTo(dimensions)
-			dimensions.InsertString("scope_name", scopeMetric.Scope().Name())
+			dimensions.PutString("scope_name", scopeMetric.Scope().Name())
 			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
 				for _, dp := range c.Extract(metrics.At(k), dimensions) {
@@ -97,12 +97,12 @@ func toFloatValue(dp pmetric.NumberDataPoint) float64 {
 	var val float64
 	switch dp.ValueType() {
 	case pmetric.NumberDataPointValueTypeDouble:
-		val = dp.DoubleVal()
+		val = dp.DoubleValue()
 	case pmetric.NumberDataPointValueTypeInt:
-		val = float64(dp.IntVal())
+		val = float64(dp.IntValue())
 	}
 
-	if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+	if dp.Flags().NoRecordedValue() {
 		val = math.Float64frombits(value.StaleNaN)
 	}
 	return val
@@ -167,17 +167,17 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 		}
 
 		// 追加 buckets 指标
-		bounds := dp.MExplicitBounds()
-		bucketCounts := dp.MBucketCounts()
+		bounds := dp.ExplicitBounds()
+		bucketCounts := dp.BucketCounts()
 		var cumulativeCount uint64
-		for j := 0; j < len(bounds) && j < len(bucketCounts); j++ {
-			cumulativeCount += bucketCounts[j]
+		for j := 0; j < bounds.Len() && j < bucketCounts.Len(); j++ {
+			cumulativeCount += bucketCounts.At(j)
 			val := float64(cumulativeCount)
-			if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+			if dp.Flags().NoRecordedValue() {
 				val = math.Float64frombits(value.StaleNaN)
 			}
 
-			fv := strconv.FormatFloat(bounds[j], 'f', -1, 64)
+			fv := strconv.FormatFloat(bounds.At(j), 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
 				Dimensions: utils.MergeMapWith(dimensions, "le", fv),
@@ -188,7 +188,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 
 		// 追加 +Inf bucket
 		val := float64(dp.Count())
-		if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+		if dp.Flags().NoRecordedValue() {
 			val = math.Float64frombits(value.StaleNaN)
 		}
 		m := otMetricMapper{

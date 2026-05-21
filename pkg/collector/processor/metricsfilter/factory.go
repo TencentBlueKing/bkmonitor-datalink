@@ -84,10 +84,10 @@ func upsertLabels(labels *[]*dto.LabelPair, name, value string) {
 func buildPushGatewayAttrs(pd *define.PushGatewayData, metric *dto.Metric) pcommon.Map {
 	attrs := pcommon.NewMap()
 	for k, v := range pd.Labels {
-		attrs.UpsertString(k, v)
+		attrs.PutString(k, v)
 	}
 	for _, label := range metric.Label {
-		attrs.UpsertString(label.GetName(), label.GetValue())
+		attrs.PutString(label.GetName(), label.GetValue())
 	}
 	return attrs
 }
@@ -182,7 +182,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				target := action.Target
 				switch action.Target.Action {
 				case relabelUpsert:
-					attrs.UpsertString(target.Label, target.Value)
+					attrs.PutString(target.Label, target.Value)
 				}
 			})
 		}
@@ -201,7 +201,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			target := action.Target
 			switch target.Action {
 			case relabelUpsert:
-				lbs.Upsert(target.Label, target.Value)
+				lbs.Put(target.Label, target.Value)
 			}
 			ts.Labels = lbs
 		}
@@ -272,7 +272,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 						target := code.Target
 						switch target.Action {
 						case relabelUpsert:
-							attrs.UpsertString(target.Label, target.Value)
+							attrs.PutString(target.Label, target.Value)
 							return // 每个指标只可能命中一次
 						}
 					}
@@ -303,7 +303,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 					target := code.Target
 					switch target.Action {
 					case relabelUpsert:
-						lbs.Upsert(target.Label, target.Value)
+						lbs.Put(target.Label, target.Value)
 						ts.Labels = lbs
 						return // 每个指标只可能命中一次
 					}

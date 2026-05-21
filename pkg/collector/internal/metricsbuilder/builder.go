@@ -34,7 +34,7 @@ func New(kvs ...ResourceKv) *Builder {
 	pbMetrics := pmetric.NewMetrics()
 	rs := pbMetrics.ResourceMetrics().AppendEmpty()
 	for _, kv := range kvs {
-		rs.Resource().Attributes().InsertString(kv.Key, kv.Value)
+		rs.Resource().Attributes().PutString(kv.Key, kv.Value)
 	}
 	scopeMetrics := rs.ScopeMetrics().AppendEmpty()
 	scopeMetrics.Metrics()
@@ -47,7 +47,7 @@ func (b Builder) Get() pmetric.Metrics {
 
 func (b Builder) Build(name string, ms ...Metric) {
 	metrics := b.metricSlice.AppendEmpty()
-	metrics.SetDataType(pmetric.MetricDataTypeGauge)
+	metrics.SetEmptyGauge()
 	metrics.SetName(name)
 
 	for _, m := range ms {
@@ -55,7 +55,7 @@ func (b Builder) Build(name string, ms ...Metric) {
 		metric.SetDoubleVal(m.Val)
 		metric.SetTimestamp(m.Ts)
 		for k, v := range m.Dimensions {
-			metric.Attributes().UpsertString(k, v)
+			metric.Attributes().PutString(k, v)
 		}
 	}
 }

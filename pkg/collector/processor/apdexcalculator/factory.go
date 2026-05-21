@@ -142,7 +142,7 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
 		status := calculator.Calc(utils.CalcSpanDuration(span), rule.ApdexT)
-		attrs.UpsertString(rule.Destination, status)
+		attrs.PutString(rule.Destination, status)
 	})
 }
 
@@ -197,7 +197,7 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 
 				calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
 				status := calculator.Calc(dp.DoubleVal(), rule.ApdexT)
-				attrs.UpsertString(rule.Destination, status)
+				attrs.PutString(rule.Destination, status)
 			}
 		}
 	})

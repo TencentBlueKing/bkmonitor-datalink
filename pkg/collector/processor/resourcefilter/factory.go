@@ -136,7 +136,7 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 			}
 			values = append(values, v.AsString())
 		}
-		rs.Attributes().UpsertString(action.Destination, strings.Join(values, action.Separator))
+		rs.Attributes().PutString(action.Destination, strings.Join(values, action.Separator))
 	}
 
 	switch record.RecordType {
@@ -153,7 +153,7 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 // addAction 新增维度
 func (p *resourceFilter) addAction(record *define.Record, config Config) {
 	handle := func(rs pcommon.Resource, action AddAction) {
-		rs.Attributes().UpsertString(action.Label, action.Value)
+		rs.Attributes().PutString(action.Label, action.Value)
 	}
 
 	switch record.RecordType {
@@ -244,9 +244,9 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 		rs.Attributes().Remove(action.Source)
 		if action.ExtractPattern != "" {
 			extractedValue := p.extractByRegex(copyValue.AsString(), action)
-			rs.Attributes().UpsertString(action.Destination, extractedValue)
+			rs.Attributes().PutString(action.Destination, extractedValue)
 		} else {
-			rs.Attributes().Upsert(action.Destination, copyValue)
+			copyValue.CopyTo(rs.Attributes().PutEmpty(action.Destination))
 		}
 	}
 
@@ -302,7 +302,7 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 			}
 
 			for dk, dv := range dims {
-				rs.Attributes().InsertString(dk, dv)
+				rs.Attributes().PutString(dk, dv)
 			}
 			return // 找到一次即可
 		}
@@ -334,7 +334,7 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 	handle := func(rs pcommon.Resource, action FromRecordAction) {
 		switch action.Source {
 		case "request.client.ip":
-			rs.Attributes().InsertString(action.Destination, record.RequestClient.IP)
+			rs.Attributes().PutString(action.Destination, record.RequestClient.IP)
 		}
 	}
 
@@ -372,11 +372,11 @@ func (p *resourceFilter) fromMetadataAction(record *define.Record, config Config
 			switch field {
 			case "*": // 补充所有 metadata 维度
 				for k, v := range record.Metadata {
-					rs.Attributes().InsertString(k, v)
+					rs.Attributes().PutString(k, v)
 				}
 			default:
 				if v, ok := record.Metadata[field]; ok {
-					rs.Attributes().InsertString(field, v)
+					rs.Attributes().PutString(field, v)
 				}
 			}
 		}
@@ -397,7 +397,7 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 		for _, field := range action.Keys {
 			switch field {
 			case define.TokenAppName:
-				rs.Attributes().InsertString(field, record.Token.AppName)
+				rs.Attributes().PutString(field, record.Token.AppName)
 			}
 		}
 	}
@@ -430,11 +430,11 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 		if !ok || v.AsString() == "" {
 			switch action.Type {
 			case "string":
-				rs.Attributes().UpsertString(action.Key, action.StringValue())
+				rs.Attributes().PutString(action.Key, action.StringValue())
 			case "int":
-				rs.Attributes().UpsertInt(action.Key, int64(action.IntValue()))
+				rs.Attributes().PutInt(action.Key, int64(action.IntValue()))
 			case "bool":
-				rs.Attributes().UpsertBool(action.Key, action.BoolValue())
+				rs.Attributes().PutBool(action.Key, action.BoolValue())
 			}
 		}
 	}
@@ -490,12 +490,12 @@ func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 			switch strings.ToLower(v.AsString()) {
 			case sdkSkyWalking:
 				if src, ok := rs.Get(keySw8TraceID); ok {
-					rs.InsertString(keyOriginTraceID, src.AsString())
+					rs.PutString(keyOriginTraceID, src.AsString())
 					// 删除 sw8.trace_id 冗余字段
 					rs.Remove(keySw8TraceID)
 				}
 			case sdkOpenTelemetry:
-				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())
+				rs.PutString(keyOriginTraceID, span.TraceID().HexString())
 			}
 		})
 		record.Data = pdTraces

@@ -117,10 +117,10 @@ func (p *attributeFilter) Process(record *define.Record) (*define.Record, error)
 func (p *attributeFilter) fromTokenAction(record *define.Record, config Config) {
 	handle := func(attrs pcommon.Map, action FromTokenAction) {
 		if action.BizId != "" {
-			attrs.UpsertInt(action.BizId, int64(record.Token.BizId))
+			attrs.PutInt(action.BizId, int64(record.Token.BizId))
 		}
 		if action.AppName != "" {
-			attrs.UpsertString(action.AppName, record.Token.AppName)
+			attrs.PutString(action.AppName, record.Token.AppName)
 		}
 	}
 
@@ -151,7 +151,7 @@ func (p *attributeFilter) asStringAction(record *define.Record, config Config) {
 		if !ok {
 			return
 		}
-		attrs.UpsertString(key, v.AsString())
+		attrs.PutString(key, v.AsString())
 	}
 
 	switch record.RecordType {
@@ -185,7 +185,7 @@ func (p *attributeFilter) asIntAction(record *define.Record, config Config) {
 			logger.Debugf("parse attribute key '%s' as int failed, error: %s", key, err)
 			return
 		}
-		attrs.UpsertInt(key, i)
+		attrs.PutInt(key, i)
 	}
 
 	switch record.RecordType {
@@ -235,7 +235,7 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
 					if _, exist := rule.upper[key]; exist {
 						d = utils.FirstUpper(v.AsString(), d)
-						attrs.UpdateString(key, d)
+						attrs.PutString(key, d)
 					} else {
 						d = v.AsString()
 					}
@@ -243,7 +243,7 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 				keys = append(keys, d)
 			}
 			// 匹配到直接插入返回，不再进行后续 rule 匹配
-			attrs.UpsertString(action.Destination, strings.Join(keys, rule.Separator))
+			attrs.PutString(action.Destination, strings.Join(keys, rule.Separator))
 			return true
 		}
 
@@ -269,13 +269,13 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 				key := action.DefaultFrom
 				// 判定常量情况直接插入
 				if strings.HasPrefix(key, fields.PrefixConst) {
-					attrs.UpsertString(action.Destination, key[len(fields.PrefixConst):])
+					attrs.PutString(action.Destination, key[len(fields.PrefixConst):])
 					continue
 				}
 				// 匹配到 span_name 插入 span.Name(), 否则直接跳过
 				switch key {
 				case "span_name":
-					attrs.UpsertString(action.Destination, span.Name())
+					attrs.PutString(action.Destination, span.Name())
 				}
 			}
 		})
@@ -340,7 +340,7 @@ func (p *attributeFilter) cutAction(record *define.Record, config Config) {
 			// 对于长度超出的情况，进行裁剪
 			value := v.AsString()
 			if len(value) > action.MaxLength {
-				attrs.UpsertString(k, value[:action.MaxLength])
+				attrs.PutString(k, value[:action.MaxLength])
 			}
 		}
 	}

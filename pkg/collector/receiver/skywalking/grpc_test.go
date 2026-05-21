@@ -228,9 +228,9 @@ func TestEmptyImpl(t *testing.T) {
 
 	t.Run("ManagementService", func(t *testing.T) {
 		svc := &ManagementService{}
-		_, err := svc.KeepAlive(nil, nil)
+		_, err := svc.KeepAlive(context.TODO(), nil)
 		assert.NoError(t, err)
-		_, err = svc.ReportInstanceProperties(nil, nil)
+		_, err = svc.ReportInstanceProperties(context.TODO(), nil)
 		assert.NoError(t, err)
 	})
 
@@ -238,13 +238,13 @@ func TestEmptyImpl(t *testing.T) {
 		svc := &ProfileService{}
 		err := svc.CollectSnapshot(nil)
 		assert.NoError(t, err)
-		_, err = svc.GetProfileTaskCommands(nil, nil)
+		_, err = svc.GetProfileTaskCommands(context.TODO(), nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("ClrService", func(t *testing.T) {
 		svc := &ClrService{}
-		_, err := svc.Collect(nil, nil)
+		_, err := svc.Collect(context.TODO(), nil)
 		assert.NoError(t, err)
 	})
 }

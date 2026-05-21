@@ -217,7 +217,7 @@ func TestStringToTraceID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := swTraceIDToTraceID(tt.segmentObject.traceID)
-			assert.Equal(t, tt.want, got.Bytes())
+			assert.Equal(t, tt.want, [16]byte(got))
 		})
 	}
 }
@@ -291,7 +291,7 @@ func TestSegmentIdToSpanId(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := segmentIDToSpanID(tt.args.segmentID, tt.args.spanID)
-			assert.Equal(t, tt.want, got.Bytes())
+			assert.Equal(t, tt.want, [8]byte(got))
 		})
 	}
 }
@@ -319,7 +319,7 @@ func TestSegmentIdToSpanIdUnique(t *testing.T) {
 		tt := tests[i]
 		t.Run(tt.name, func(t *testing.T) {
 			got := segmentIDToSpanID(tt.args.segmentID, tt.args.spanID)
-			results[i] = got.Bytes()
+				results[i] = got
 		})
 	}
 
@@ -376,7 +376,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Entry", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -389,7 +389,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Entry/PeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -399,7 +399,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Entry/WithoutPeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		Refs := []*agentv3.SegmentReference{{ParentService: "TestParentService"}}
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", Refs)
 		swTagsToAttributesByRule(dest, swSpan)
@@ -410,7 +410,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Entry/WithoutRefs", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -420,7 +420,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Exit", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Exit, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -434,7 +434,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Exit/PeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.PutString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Exit, agentv3.SpanLayer_Http, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -479,7 +479,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Mysql/MysqlClient/execute"
 		dbStatement := "SELECT data_id FROM TABLE WHERE XXXX"
-		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
+		dest.PutString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Database, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -494,7 +494,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Redis/MysqlClient/execute"
 		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
-		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
+		dest.PutString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
@@ -511,7 +511,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Redis/MysqlClient/execute"
 		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
-		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
+		dest.PutString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 

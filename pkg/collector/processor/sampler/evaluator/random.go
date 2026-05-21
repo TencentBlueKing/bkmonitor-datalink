@@ -96,7 +96,7 @@ func (e randomEvaluator) processTraces(pdTraces ptrace.Traces) ptrace.Traces {
 		// If one assumes random trace ids hashing may seems avoidable, however, traces can be coming from sources
 		// with various different criteria to generate trace id and perhaps were already sampled without hashing.
 		// Hashing here prevents bias due to such systems.
-		tidBytes := span.TraceID().Bytes()
+		tidBytes := span.TraceID()
 		sampled := sp == mustSampleSpan ||
 			e.hash(tidBytes[:], e.hashSeed)&bitMaskHashBuckets < e.scaledSamplingRate
 		return !sampled

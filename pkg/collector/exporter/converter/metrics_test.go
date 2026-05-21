@@ -85,8 +85,8 @@ func TestConvertHistogramMetrics(t *testing.T) {
 
 	dp := testkits.FirstHistogramPoint(metrics)
 	dp.SetTimestamp(0)
-	dp.SetMExplicitBounds([]float64{1, 2, 3})
-	dp.SetMBucketCounts([]uint64{4, 3, 2, 1})
+	dp.ExplicitBounds().FromRaw([]float64{1, 2, 3})
+	dp.BucketCounts().FromRaw([]uint64{4, 3, 2, 1})
 	dp.SetSum(100)
 	dp.SetCount(10)
 	dp.SetMin(1)

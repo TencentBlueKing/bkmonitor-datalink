@@ -25,7 +25,7 @@ func (ls *Labels) Get(name string) (prompb.Label, bool) {
 	return prompb.Label{}, false
 }
 
-func (ls *Labels) Upsert(name, value string) {
+func (ls *Labels) Put(name, value string) {
 	if ls == nil {
 		return
 	}

@@ -447,9 +447,17 @@ instance:
             {%- for rule_config in instance_config.apdex_config.rules %}
             - kind: '{{ rule_config.kind }}'
               predicate_key: '{{ rule_config.predicate_key }}'
+              {% if instance_config.apdex_config.predicate_value is defined %}
+              predicate_value: '{{ instance_config.apdex_config.predicate_value }}'
+              {%- endif %}
               metric_name: '{{ rule_config.metric_name }}'
               destination: '{{ rule_config.destination }}'
-              apdex_t: {{ rule_config.apdex_t }} # ms
+              apdex_t: {{ rule_config.apdex_t }}
+              {%- if rule_config.duration %}
+              duration:
+                start_event: {{ rule_config.duration.start_event }}
+                end_event: {{ rule_config.duration.end_event }}
+              {% endif %}
             {%- endfor %}
 {%- endif %}
 

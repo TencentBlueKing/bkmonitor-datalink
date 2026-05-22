@@ -171,7 +171,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			bq.out <- NewProxyMapStr(dc.dataID, data)
 
 		// 数据不做聚合
-		case define.RecordPingserver, define.RecordFta, define.RecordBeat:
+		case define.RecordPingserver, define.RecordFta, define.RecordBeat, define.RecordNetworkFlow:
 			for _, item := range data {
 				bq.out <- item
 			}

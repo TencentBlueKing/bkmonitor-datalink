@@ -43,6 +43,7 @@ const (
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
 	SourceLogPush     = "logpush"
+	SourceNetworkFlow = "networkflow"
 
 	KeyToken        = "X-BK-TOKEN"
 	KeyDataID       = "X-BK-DATA-ID"
@@ -66,6 +67,7 @@ const (
 	RecordPushGateway    RecordType = "pushgateway"
 	RecordFta            RecordType = "fta"
 	RecordRemoteWrite    RecordType = "remotewrite"
+	RecordNetworkFlow    RecordType = "networkflow"
 	RecordProxy          RecordType = "proxy"
 	RecordPingserver     RecordType = "pingserver"
 	RecordBeat           RecordType = "beat"
@@ -93,6 +95,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordPushGateway
 	case RecordRemoteWrite.S():
 		t = RecordRemoteWrite
+	case RecordNetworkFlow.S():
+		t = RecordNetworkFlow
 	case RecordProxy.S():
 		t = RecordProxy
 	case RecordPingserver.S():
@@ -124,6 +128,7 @@ const (
 	RequestICMP    RequestType = "icmp"
 	RequestDerived RequestType = "derived"
 	RequestTars    RequestType = "tars"
+	RequestUDP     RequestType = "udp"
 )
 
 type RequestClient struct {

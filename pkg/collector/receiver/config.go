@@ -22,6 +22,13 @@ type Config struct {
 	AdminServer HttpServerConfig `config:"admin_server"`
 	GrpcServer  GrpcServerConfig `config:"grpc_server"`
 	TarsServer  TarsServerConfig `config:"tars_server"`
+	NetworkFlow NetworkFlowConfig `config:"networkflow"`
+}
+
+type NetworkFlowConfig struct {
+	Enabled   bool     `config:"enabled"`
+	DataID    int32    `config:"dataid"`
+	Listeners []string `config:"listeners"`
 }
 
 type HttpServerConfig struct {

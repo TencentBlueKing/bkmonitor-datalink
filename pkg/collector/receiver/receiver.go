@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/grpcmiddleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/httpmiddleware"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/networkflow"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -37,6 +38,7 @@ type Receiver struct {
 	wg sync.WaitGroup
 
 	config      Config
+	networkflow *networkflow.Receiver
 	adminServer *http.Server // 管理员服务 一般不对外暴露
 	recvServer  *http.Server // 接收服务
 	recvTls     *transport.TLSConfig
@@ -104,7 +106,13 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 
 	return &Receiver{
-		config:  c,
+		config: c,
+		networkflow: networkflow.New(
+			c.NetworkFlow.Enabled,
+			c.NetworkFlow.DataID,
+			c.NetworkFlow.Listeners,
+			publishRecord,
+		),
 		recvTls: tlsConfig,
 		recvServer: &http.Server{
 			Handler:      RecvHttpRouter(),
@@ -234,6 +242,11 @@ func (r *Receiver) Start() error {
 	logger.Info("receiver start working...")
 
 	r.ready()
+	if r.networkflow != nil {
+		if err := r.networkflow.Start(); err != nil {
+			return err
+		}
+	}
 	errs := make(chan error, 8)
 
 	// 启动 Recv HTTP 服务
@@ -370,6 +383,11 @@ func (r *Receiver) shutdownGrpcServer() {
 }
 
 func (r *Receiver) Stop() error {
+	if r.networkflow != nil {
+		if err := r.networkflow.Stop(); err != nil && !errors.Is(err, networkflow.ErrNotStarted) {
+			return err
+		}
+	}
 	if err := r.shutdownRecvServer(); err != nil {
 		return err
 	}

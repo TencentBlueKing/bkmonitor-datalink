@@ -50,18 +50,19 @@ type EventConverter interface {
 
 func NewCommonConverter(conf *Config) Converter {
 	return commonConverter{
-		traces:      tracesConverter{},
-		metrics:     metricsConverter{},
-		logs:        logsConverter{},
-		pushGateway: pushGatewayConverter{},
-		remoteWrite: remoteWriteConverter{},
-		proxy:       proxyConverter{},
-		pingserver:  pingserverConverter{},
-		profiles:    profilesConverter{},
-		fta:         ftaConverter{},
-		beat:        beatConverter{},
-		logPush:     logPushConverter{},
-		tars:        newTarsConverter(conf.Tars),
+		traces:       tracesConverter{},
+		metrics:      metricsConverter{},
+		logs:         logsConverter{},
+		pushGateway:  pushGatewayConverter{},
+		remoteWrite:  remoteWriteConverter{},
+		proxy:        proxyConverter{},
+		pingserver:   pingserverConverter{},
+		profiles:     profilesConverter{},
+		fta:          ftaConverter{},
+		beat:         beatConverter{},
+		logPush:      logPushConverter{},
+		tars:         newTarsConverter(conf.Tars),
+		networkflow:  networkflowConverter{},
 	}
 }
 
@@ -78,6 +79,7 @@ type commonConverter struct {
 	beat        EventConverter
 	logPush     EventConverter
 	tars        EventConverter
+	networkflow EventConverter
 }
 
 func (c commonConverter) Clean() {
@@ -110,6 +112,8 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 		c.tars.Convert(record, f)
 	case define.RecordLogPush:
 		c.logPush.Convert(record, f)
+	case define.RecordNetworkFlow:
+		c.networkflow.Convert(record, f)
 	}
 }
 

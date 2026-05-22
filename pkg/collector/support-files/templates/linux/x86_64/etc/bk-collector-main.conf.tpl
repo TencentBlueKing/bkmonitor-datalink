@@ -186,6 +186,16 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
+    # NetworkFlow Receiver Config
+    networkflow:
+      # 是否启动 NetworkFlow UDP 接收
+      enabled: false
+      # 直接注入导出 dataid，不经过 token
+      dataid: 1100015
+      # 支持 netflow/ipfix/sflow/flow
+      listeners:
+        - "netflow://0.0.0.0:2055"
+
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"
@@ -394,6 +404,10 @@ bk-collector:
 
     - name: "pingserver_pipeline/common"
       type: "pingserver"
+      processors:
+
+    - name: "networkflow_pipeline/common"
+      type: "networkflow"
       processors:
 
     - name: "fta_pipeline/common"

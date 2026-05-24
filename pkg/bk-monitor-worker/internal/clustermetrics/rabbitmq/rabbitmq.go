@@ -190,42 +190,76 @@ func CollectAndReportMetrics(ctx context.Context, instance cfg.RabbitMQClusterMe
 func collectMetrics(ctx context.Context, instance cfg.RabbitMQClusterMetricInstance) ([]*clustermetrics.MetricData, error) {
 	client := newAPIClient(instance)
 	timestamp := time.Now().UnixMilli()
+	result := make([]*clustermetrics.MetricData, 0)
+	var collectErrs []error
 
 	overview, err := client.getOverview(ctx)
 	if err != nil {
-		return []*clustermetrics.MetricData{newMetricData(instance, timestamp, map[string]float64{metricUp: 0}, nil)}, err
+		logger.Warnf("rabbitmq instance [%s] get overview failed: %v", instance.Name, err)
+		collectErrs = append(collectErrs, err)
 	}
 
-	nodes, err := client.getNodes(ctx)
-	if err != nil {
-		logger.Warnf("rabbitmq instance [%s] get nodes failed: %v", instance.Name, err)
+	nodes, nodesErr := client.getNodes(ctx)
+	if nodesErr != nil {
+		logger.Warnf("rabbitmq instance [%s] get nodes failed: %v", instance.Name, nodesErr)
+		collectErrs = append(collectErrs, nodesErr)
 	}
 
-	result := []*clustermetrics.MetricData{
-		newMetricData(instance, timestamp, buildOverviewMetrics(overview, nodes), nil),
-	}
-
-	queues, err := client.getQueues(ctx)
-	if err != nil {
-		return result, err
+	overviewCollected := err == nil
+	if overviewCollected {
+		result = append(result, newMetricData(instance, timestamp, buildOverviewMetrics(overview, nodes, nodesErr == nil), nil))
 	}
 
 	filter, err := newQueueFilter(instance)
 	if err != nil {
 		return result, err
 	}
-	for _, queue := range queues {
-		if !filter.match(queue) {
-			continue
+
+	queues, err := client.getQueues(ctx)
+	if err != nil {
+		logger.Warnf("rabbitmq instance [%s] get queues failed: %v", instance.Name, err)
+		collectErrs = append(collectErrs, err)
+	} else {
+		for _, queue := range queues {
+			if !filter.match(queue) {
+				continue
+			}
+			result = append(result, newMetricData(instance, timestamp, buildQueueMetrics(queue), map[string]any{
+				"vhost": queue.Vhost,
+				"queue": queue.Name,
+				"state": queue.State,
+			}))
 		}
-		result = append(result, newMetricData(instance, timestamp, buildQueueMetrics(queue), map[string]any{
-			"vhost": queue.Vhost,
-			"queue": queue.Name,
-			"state": queue.State,
-		}))
 	}
 
-	return result, nil
+	if !overviewCollected && (nodesErr == nil || err == nil) {
+		result = append([]*clustermetrics.MetricData{
+			newMetricData(instance, timestamp, buildFallbackOverviewMetrics(nodes, nodesErr == nil), nil),
+		}, result...)
+	}
+
+	if len(result) > 0 {
+		return result, nil
+	}
+	return []*clustermetrics.MetricData{
+		newMetricData(instance, timestamp, map[string]float64{metricUp: 0}, nil),
+	}, collectError(collectErrs)
+}
+
+func collectError(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err != nil {
+			messages = append(messages, err.Error())
+		}
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	return errors.Errorf("collect rabbitmq metrics failed: %s", strings.Join(messages, "; "))
 }
 
 func validateInstance(instance cfg.RabbitMQClusterMetricInstance) error {
@@ -316,7 +350,7 @@ func (c *apiClient) getJSON(ctx context.Context, reqURL string, result any) erro
 	return nil
 }
 
-func buildOverviewMetrics(overview overviewResponse, nodes []nodeResponse) map[string]float64 {
+func buildOverviewMetrics(overview overviewResponse, nodes []nodeResponse, includeNodeAlarms bool) map[string]float64 {
 	metrics := map[string]float64{
 		metricUp:                     1,
 		metricQueueTotal:             overview.ObjectTotals.Queues,
@@ -336,6 +370,20 @@ func buildOverviewMetrics(overview overviewResponse, nodes []nodeResponse) map[s
 		metricRedeliverRate:          overview.MessageStats.RedeliverDetails.Rate,
 	}
 
+	appendNodeAlarmMetrics(metrics, nodes, includeNodeAlarms)
+	return metrics
+}
+
+func buildFallbackOverviewMetrics(nodes []nodeResponse, includeNodeAlarms bool) map[string]float64 {
+	metrics := map[string]float64{metricUp: 1}
+	appendNodeAlarmMetrics(metrics, nodes, includeNodeAlarms)
+	return metrics
+}
+
+func appendNodeAlarmMetrics(metrics map[string]float64, nodes []nodeResponse, includeNodeAlarms bool) {
+	if !includeNodeAlarms {
+		return
+	}
 	for _, node := range nodes {
 		if node.MemAlarm {
 			metrics[metricMemoryAlarm] = 1
@@ -350,8 +398,6 @@ func buildOverviewMetrics(overview overviewResponse, nodes []nodeResponse) map[s
 	if _, ok := metrics[metricDiskFreeAlarm]; !ok {
 		metrics[metricDiskFreeAlarm] = 0
 	}
-
-	return metrics
 }
 
 func buildQueueMetrics(queue queueResponse) map[string]float64 {

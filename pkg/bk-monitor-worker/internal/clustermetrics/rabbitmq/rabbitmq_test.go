@@ -125,6 +125,46 @@ func TestCollectAndReportMetricsReportsDownWhenOverviewFails(t *testing.T) {
 	assert.Equal(t, float64(0), report.Data[0].Metrics[metricUp])
 }
 
+func TestCollectAndReportMetricsKeepsQueuesWhenOverviewAndNodesForbidden(t *testing.T) {
+	var report clustermetrics.CustomReportData
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/overview":
+			w.WriteHeader(http.StatusForbidden)
+		case r.URL.Path == "/api/nodes":
+			w.WriteHeader(http.StatusForbidden)
+		case r.URL.EscapedPath() == "/api/queues/%2F":
+			_, _ = w.Write([]byte(`[
+				{
+					"name": "important.queue", "vhost": "/", "state": "running",
+					"messages": 6, "messages_ready": 4, "messages_unacknowledged": 2,
+					"consumers": 2
+				}
+			]`))
+		case r.URL.Path == "/report":
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&report))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	setReportConfig(t, server.URL+"/report")
+	instance := newTestInstance(t, server.URL, cfg.RabbitMQClusterMetricInstance{
+		Name:   "main-rabbitmq",
+		Vhosts: []string{"/"},
+	})
+
+	require.NoError(t, CollectAndReportMetrics(context.Background(), instance))
+	require.Len(t, report.Data, 2)
+	assert.Equal(t, float64(1), report.Data[0].Metrics[metricUp])
+	_, ok := report.Data[0].Metrics[metricMemoryAlarm]
+	assert.False(t, ok)
+	assert.Equal(t, "important.queue", report.Data[1].Dimension["queue"])
+	assert.Equal(t, float64(4), report.Data[1].Metrics[metricQueueMessagesReady])
+}
+
 func TestQueueFilter(t *testing.T) {
 	filter, err := newQueueFilter(cfg.RabbitMQClusterMetricInstance{
 		Vhosts:              []string{"/"},

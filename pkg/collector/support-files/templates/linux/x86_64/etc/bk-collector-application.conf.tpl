@@ -47,9 +47,17 @@ default:
             {%- for rule_config in apdex_config.rules %}
             - kind: '{{ rule_config.kind }}'
               predicate_key: '{{ rule_config.predicate_key }}'
+              {% if apdex_config.predicate_value is defined %}
+              predicate_value: '{{ apdex_config.predicate_value }}'
+              {%- endif %}
               metric_name: '{{ rule_config.metric_name }}'
               destination: '{{ rule_config.destination }}'
-              apdex_t: {{ rule_config.apdex_t }} # ms
+              apdex_t: {{ rule_config.apdex_t }}
+              {%- if rule_config.duration %}
+              duration:
+                start_event: {{ rule_config.duration.start_event }}
+                end_event: {{ rule_config.duration.end_event }}
+              {% endif %}
             {%- endfor %}
 {%- endif %}
 
@@ -259,12 +267,6 @@ default:
               {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
               - '{{ drop_key }}'
               {%- endfor %}
-          replace:
-            {%- for replace_config in resource_filter_config.replace %}
-            - source: '{{ replace_config.source }}'
-              destination: '{{ replace_config.destination }}'
-              extract_pattern: '{{ replace_config.extract_pattern }}'
-            {%- endfor %}
 {%- endif %}
 
 {% if resource_filter_config_logs is defined %}
@@ -284,12 +286,6 @@ default:
               {%- for drop_key in resource_filter_config_logs.get("drop", {}).get("keys", []) %}
               - '{{ drop_key }}'
               {%- endfor %}
-          replace:
-            {%- for replace_config in resource_filter_config_logs.replace %}
-            - source: '{{ replace_config.source }}'
-              destination: '{{ replace_config.destination }}'
-              extract_pattern: '{{ replace_config.extract_pattern }}'
-            {%- endfor %}
 {%- endif %}
 
 {% if resource_filter_config_metrics is defined %}
@@ -313,12 +309,6 @@ default:
               - '{{ drop_key }}'
               {%- endfor %}
           {%- endif %}
-          replace:
-            {%- for replace_config in resource_filter_config_metrics.replace %}
-            - source: '{{ replace_config.source }}'
-              destination: '{{ replace_config.destination }}'
-              extract_pattern: '{{ replace_config.extract_pattern }}'
-            {%- endfor %}
           {%- if resource_filter_config_metrics.get("from_token") %}
           from_token:
             keys:
@@ -447,9 +437,17 @@ instance:
             {%- for rule_config in instance_config.apdex_config.rules %}
             - kind: '{{ rule_config.kind }}'
               predicate_key: '{{ rule_config.predicate_key }}'
+              {% if instance_config.apdex_config.predicate_value is defined %}
+              predicate_value: '{{ instance_config.apdex_config.predicate_value }}'
+              {%- endif %}
               metric_name: '{{ rule_config.metric_name }}'
               destination: '{{ rule_config.destination }}'
-              apdex_t: {{ rule_config.apdex_t }} # ms
+              apdex_t: {{ rule_config.apdex_t }}
+              {%- if rule_config.duration %}
+              duration:
+                start_event: {{ rule_config.duration.start_event }}
+                end_event: {{ rule_config.duration.end_event }}
+              {% endif %}
             {%- endfor %}
 {%- endif %}
 

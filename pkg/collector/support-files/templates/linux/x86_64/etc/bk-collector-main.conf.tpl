@@ -324,8 +324,53 @@ bk-collector:
     - name: "traces_deriver/max"
     - name: "traces_deriver/count"
     - name: "traces_deriver/duration"
+    # 新增：LCP (最大内容绘制) 按分钟统计
+    - name: "traces_deriver/web_vitals"
+      config:
+        operations:
+          # 统计 LCP 耗时直方图（单位：秒，配置中的数值将由累加器乘以 1e9 转为纳秒）
+          - type: "bucket"
+            metric_name: "web_vital_lcp_bucket"
+            publish_interval: "60s"
+            gc_interval: "1h"
+            buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
+            max_series: 10
+            rules:
+              - kind: "SPAN_KIND_INTERNAL"
+                predicate_key: "attributes.web_vital.value"
+                dimensions:
+                  - "resource.service.name"
+                  - "resource.browser.user_agent"
+                  - "attributes.page.url"
+                  - "resource.name"
+                  - "attributes.rum_apdex_type"
+    # 页面加载耗时
+    - name: "apdex_calculator/rum_apdex_common"
+      config:
+        calculator:
+          type: "standard"
+        rules:
+          - kind: "SPAN_KIND_INTERNAL"
+            # documentLoad span: loadEventEnd - fetchStart ~= span end - span start
+            predicate_key: "span_name"
+            predicate_value: "documentLoad"
+            destination: "rum_view_load_apdex_type"
+            apdex_t: 500 # ms
+          - kind: "SPAN_KIND_CLIENT"
+            predicate_key: "attributes.http.method"
+            destination: "rum_api_request_apdex_type"
+            apdex_t: 500 # ms
+            duration:
+              start_event: "fetchStart"
+              end_event: "responseEnd"
 
   pipeline:
+    - name: "rum_pipeline/direct"
+      type: "rum"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+        - "apdex_calculator/rum_apdex_common"
     - name: "traces_pipeline/common"
       type: "traces"
       processors:

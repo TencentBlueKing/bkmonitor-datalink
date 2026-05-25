@@ -97,10 +97,10 @@ func (p *apdexCalculator) Process(record *define.Record) (*define.Record, error)
 	case define.RecordMetrics:
 		p.processMetrics(record)
 		return record, nil
-	case define.RecordTraces:
+	case define.RecordTraces, define.RecordRum:
 		p.processTraces(record)
+		return record, nil
 	}
-
 	return nil, nil
 }
 
@@ -124,12 +124,14 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 		attrs := span.Attributes()
 		config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 		kind := span.Kind().String()
-
+		if span.Name() == "HTTP GET" {
+			// Special case for HTTP spans created by OpenTelemetry SDK, which have span name "HTTP GET/POST/PUT/DELETE" but kind SERVER/CLIENT. We want to match them with rules of kind "HTTP" instead of "SERVER"/"CLIENT".
+			println(span.Name())
+		}
 		predicateKeys := config.GetPredicateKeys(kind)
 		var foundPk string
 		for _, pk := range predicateKeys {
-			// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-			if findMetricsAttributes(pk, attrs) {
+			if findTracePredicate(pk, rs, span) {
 				foundPk = pk
 				break
 			}
@@ -226,4 +228,40 @@ func findMetricsAttributes(pk string, attrs pcommon.Map) bool {
 		return false
 	}
 	return false
+}
+
+// findTracePredicate checks whether the predicate key is present and non-empty in traces/rum context.
+//
+// Supported predicate sources:
+// - "span_name": reads span.Name().
+// - "attributes.*": reads span attributes.
+// - "resource.*": reads resource attributes.
+//
+// Note: the function only checks existence/non-empty, and does not compare expected values.
+func findTracePredicate(pk string, rs pcommon.Map, span ptrace.Span) bool {
+	if pk == "span_name" {
+		// Special key for span name, not a prefixed field path.
+		return span.Name() != ""
+	}
+
+	ff, s := fields.DecodeFieldFrom(pk)
+	switch ff {
+	case fields.FieldFromAttributes:
+		// attributes.<key>
+		v, ok := span.Attributes().Get(s)
+		if ok {
+			return v.AsString() != ""
+		}
+		return false
+	case fields.FieldFromResource:
+		// resource.<key>
+		v, ok := rs.Get(s)
+		if ok {
+			return v.AsString() != ""
+		}
+		return false
+	default:
+		// Unsupported source for traces/rum predicate.
+		return false
+	}
 }

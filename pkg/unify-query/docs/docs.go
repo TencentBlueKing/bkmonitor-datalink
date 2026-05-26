@@ -1715,6 +1715,9 @@ const docTemplate = `{
                 },
                 "storage_id": {
                     "type": "string"
+                },
+                "storage_type": {
+                    "type": "string"
                 }
             }
         },

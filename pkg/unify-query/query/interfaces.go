@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
@@ -21,11 +20,18 @@ import (
 type Filter map[string]string
 
 type Record struct {
-	StorageID  string `json:"storage_id,omitempty"`
-	EnableTime int64  `json:"enable_time,omitempty"`
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageType string `json:"storage_type,omitempty"`
+	EnableTime  int64  `json:"enable_time,omitempty"`
 }
 
 type StorageClusterRecords []Record
+
+type StorageRoute struct {
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageType string `json:"storage_type,omitempty"`
+	EnableTime  int64  `json:"enable_time,omitempty"`
+}
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
@@ -73,14 +79,35 @@ func (z *TsDBV2) String() string {
 	)
 }
 
-// GetStorageIDs 通过查询时间获取存储 ID 的列表
-func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
+// GetStorageRoutes 通过查询时间获取存储路由列表
+func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []StorageRoute {
 	// 如果没有迁移记录，则直接返回存储 ID
 	if len(z.StorageClusterRecords) == 0 {
-		return []string{z.StorageID}
+		return []StorageRoute{{
+			StorageID:   z.StorageID,
+			StorageType: z.StorageType,
+		}}
 	}
 
-	storageIDSet := set.New[string]()
+	storageRoutes := make([]StorageRoute, 0)
+	routeKeys := make(map[string]struct{})
+	addRoute := func(record Record) {
+		storageType := record.StorageType
+		if storageType == "" {
+			storageType = z.StorageType
+		}
+		key := fmt.Sprintf("%s\x00%s", record.StorageID, storageType)
+		if _, ok := routeKeys[key]; ok {
+			return
+		}
+		routeKeys[key] = struct{}{}
+		storageRoutes = append(storageRoutes, StorageRoute{
+			StorageID:   record.StorageID,
+			StorageType: storageType,
+			EnableTime:  record.EnableTime,
+		})
+	}
+
 	// 遍历 storageClusterRecords 记录，按照开启时间倒序
 	for _, record := range z.StorageClusterRecords {
 		// 开始时间和结束时间分别扩 1h 预留查询量
@@ -89,7 +116,7 @@ func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
 
 		// 开启时间小于结束时间则加入查询队列
 		if record.EnableTime < checkEnd {
-			storageIDSet.Add(record.StorageID)
+			addRoute(record)
 		}
 
 		// 开启时间小于开始时间，则退出该循环
@@ -98,5 +125,20 @@ func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
 		}
 	}
 
-	return storageIDSet.ToArray()
+	return storageRoutes
+}
+
+// GetStorageIDs 通过查询时间获取存储 ID 的列表
+func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
+	routes := z.GetStorageRoutes(start, end)
+	storageIDs := make([]string, 0, len(routes))
+	storageIDSet := make(map[string]struct{})
+	for _, route := range routes {
+		if _, ok := storageIDSet[route.StorageID]; ok {
+			continue
+		}
+		storageIDSet[route.StorageID] = struct{}{}
+		storageIDs = append(storageIDs, route.StorageID)
+	}
+	return storageIDs
 }

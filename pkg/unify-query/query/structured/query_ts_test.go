@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	uqQuery "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
@@ -289,6 +290,49 @@ func TestQueryToMetric(t *testing.T) {
 			assert.Equal(t, string(a), string(b))
 		})
 	}
+}
+
+func TestQueryToMetricStorageClusterRecordStorageType(t *testing.T) {
+	ctx := md.InitHashID(context.Background())
+	start := time.Unix(1500, 0)
+	end := time.Unix(2500, 0)
+	md.GetQueryParams(ctx).SetTime(start, start, end, time.Minute, "s", "UTC")
+
+	queryMetric, err := (&Query{
+		DataSource:    BkLog,
+		TableID:       "result_table.es",
+		FieldName:     "dtEventTimeStamp",
+		ReferenceName: "a",
+	}).ToQueryMetric(ctx, influxdb.SpaceUid, TsDBs{
+		&uqQuery.TsDBV2{
+			TableID:     "result_table.es",
+			DataLabel:   "log_index_set_test",
+			StorageID:   "1",
+			StorageType: md.ElasticsearchStorageType,
+			DB:          "es_index",
+			Measurement: "__default__",
+			StorageClusterRecords: []uqQuery.Record{
+				{
+					StorageID:   "2",
+					StorageType: md.BkSqlStorageType,
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "1",
+					EnableTime: 1000,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, queryMetric.QueryList, 2)
+
+	storageTypes := make(map[string]string)
+	for _, query := range queryMetric.QueryList {
+		storageTypes[query.StorageID] = query.StorageType
+	}
+	assert.Equal(t, md.BkSqlStorageType, storageTypes["2"])
+	assert.Equal(t, md.ElasticsearchStorageType, storageTypes["1"])
 }
 
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {

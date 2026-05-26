@@ -731,9 +731,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
+		storageRoutes := tsDB.GetStorageRoutes(qp.Start, qp.End)
 
-		for _, storageID := range storageIDs {
+		for _, storageRoute := range storageRoutes {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
 				continue
@@ -741,7 +741,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
-			query.StorageID = storageID
+			query.StorageID = storageRoute.StorageID
+			if storageRoute.StorageType != "" {
+				query.StorageType = storageRoute.StorageType
+			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 			// 如果没有指定查询类型，则通过 storageID 获取

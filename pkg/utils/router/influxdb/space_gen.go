@@ -528,6 +528,12 @@ func (z *Record) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "StorageID")
 				return
 			}
+		case "StorageType":
+			z.StorageType, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "StorageType")
+				return
+			}
 		case "EnableTime":
 			z.EnableTime, err = dc.ReadInt64()
 			if err != nil {
@@ -547,15 +553,25 @@ func (z *Record) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z Record) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 2
+	// map header, size 3
 	// write "StorageID"
-	err = en.Append(0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+	err = en.Append(0x83, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 	if err != nil {
 		return
 	}
 	err = en.WriteInt64(z.StorageID)
 	if err != nil {
 		err = msgp.WrapError(err, "StorageID")
+		return
+	}
+	// write "StorageType"
+	err = en.Append(0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.StorageType)
+	if err != nil {
+		err = msgp.WrapError(err, "StorageType")
 		return
 	}
 	// write "EnableTime"
@@ -574,10 +590,13 @@ func (z Record) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z Record) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 2
+	// map header, size 3
 	// string "StorageID"
-	o = append(o, 0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+	o = append(o, 0x83, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 	o = msgp.AppendInt64(o, z.StorageID)
+	// string "StorageType"
+	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.StorageType)
 	// string "EnableTime"
 	o = append(o, 0xaa, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x54, 0x69, 0x6d, 0x65)
 	o = msgp.AppendInt64(o, z.EnableTime)
@@ -608,6 +627,12 @@ func (z *Record) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "StorageID")
 				return
 			}
+		case "StorageType":
+			z.StorageType, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "StorageType")
+				return
+			}
 		case "EnableTime":
 			z.EnableTime, bts, err = msgp.ReadInt64Bytes(bts)
 			if err != nil {
@@ -628,7 +653,7 @@ func (z *Record) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z Record) Msgsize() (s int) {
-	s = 1 + 10 + msgp.Int64Size + 11 + msgp.Int64Size
+	s = 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageType) + 11 + msgp.Int64Size
 	return
 }
 
@@ -699,6 +724,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 						z.StorageClusterRecords[za0001].StorageID, err = dc.ReadInt64()
 						if err != nil {
 							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
+							return
+						}
+					case "StorageType":
+						z.StorageClusterRecords[za0001].StorageType, err = dc.ReadString()
+						if err != nil {
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageType")
 							return
 						}
 					case "EnableTime":
@@ -1001,15 +1032,25 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		return
 	}
 	for za0001 := range z.StorageClusterRecords {
-		// map header, size 2
+		// map header, size 3
 		// write "StorageID"
-		err = en.Append(0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+		err = en.Append(0x83, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 		if err != nil {
 			return
 		}
 		err = en.WriteInt64(z.StorageClusterRecords[za0001].StorageID)
 		if err != nil {
 			err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
+			return
+		}
+		// write "StorageType"
+		err = en.Append(0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteString(z.StorageClusterRecords[za0001].StorageType)
+		if err != nil {
+			err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageType")
 			return
 		}
 		// write "EnableTime"
@@ -1283,10 +1324,13 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = append(o, 0xb5, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x73)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.StorageClusterRecords)))
 	for za0001 := range z.StorageClusterRecords {
-		// map header, size 2
+		// map header, size 3
 		// string "StorageID"
-		o = append(o, 0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+		o = append(o, 0x83, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 		o = msgp.AppendInt64(o, z.StorageClusterRecords[za0001].StorageID)
+		// string "StorageType"
+		o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+		o = msgp.AppendString(o, z.StorageClusterRecords[za0001].StorageType)
 		// string "EnableTime"
 		o = append(o, 0xaa, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x54, 0x69, 0x6d, 0x65)
 		o = msgp.AppendInt64(o, z.StorageClusterRecords[za0001].EnableTime)
@@ -1438,6 +1482,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 						z.StorageClusterRecords[za0001].StorageID, bts, err = msgp.ReadInt64Bytes(bts)
 						if err != nil {
 							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
+							return
+						}
+					case "StorageType":
+						z.StorageClusterRecords[za0001].StorageType, bts, err = msgp.ReadStringBytes(bts)
+						if err != nil {
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageType")
 							return
 						}
 					case "EnableTime":
@@ -1699,7 +1749,11 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ResultTableDetail) Msgsize() (s int) {
-	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize + (len(z.StorageClusterRecords) * (22 + msgp.Int64Size + msgp.Int64Size)) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 14 + msgp.StringPrefixSize + len(z.CmdbLevelVmRt) + 7 + msgp.ArrayHeaderSize
+	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize
+	for za0001 := range z.StorageClusterRecords {
+		s += 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageClusterRecords[za0001].StorageType) + 11 + msgp.Int64Size
+	}
+	s += 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 14 + msgp.StringPrefixSize + len(z.CmdbLevelVmRt) + 7 + msgp.ArrayHeaderSize
 	for za0002 := range z.Fields {
 		s += msgp.StringPrefixSize + len(z.Fields[za0002])
 	}

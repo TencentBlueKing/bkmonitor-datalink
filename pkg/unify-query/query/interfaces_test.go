@@ -54,3 +54,53 @@ func TestTsDBV2_GetStorageIDs(t *testing.T) {
 	sort.Strings(expected)
 	assert.Equal(t, expected, ids)
 }
+
+func TestTsDBV2_GetStorageRoutes(t *testing.T) {
+	start := time.Unix(1500, 0)
+	end := time.Unix(2500, 0)
+
+	t.Run("storage type fallback to tsdb", func(t *testing.T) {
+		db := &TsDBV2{
+			StorageID:   "1",
+			StorageType: "elasticsearch",
+		}
+
+		assert.Equal(t, []StorageRoute{
+			{
+				StorageID:   "1",
+				StorageType: "elasticsearch",
+			},
+		}, db.GetStorageRoutes(start, end))
+	})
+
+	t.Run("record storage type overrides tsdb storage type", func(t *testing.T) {
+		db := &TsDBV2{
+			StorageID:   "1",
+			StorageType: "elasticsearch",
+			StorageClusterRecords: []Record{
+				{
+					StorageID:   "3",
+					StorageType: "bk_sql",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "2",
+					EnableTime: 1000,
+				},
+			},
+		}
+
+		assert.Equal(t, []StorageRoute{
+			{
+				StorageID:   "3",
+				StorageType: "bk_sql",
+				EnableTime:  2000,
+			},
+			{
+				StorageID:   "2",
+				StorageType: "elasticsearch",
+				EnableTime:  1000,
+			},
+		}, db.GetStorageRoutes(start, end))
+	})
+}

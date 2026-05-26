@@ -68,8 +68,9 @@ type TimeField struct {
 }
 
 type Record struct {
-	StorageID  int64 `json:"storage_id,omitempty"`
-	EnableTime int64 `json:"enable_time,omitempty"`
+	StorageID   int64  `json:"storage_id,omitempty"`
+	StorageType string `json:"storage_type,omitempty"`
+	EnableTime  int64  `json:"enable_time,omitempty"`
 }
 
 //go:generate msgp -tests=false

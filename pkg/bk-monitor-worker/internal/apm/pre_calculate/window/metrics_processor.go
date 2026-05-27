@@ -44,10 +44,8 @@ var (
 type MetricProcessor struct {
 	ctx context.Context
 
-	bkBizId string
-	appName string
-	appId   string
-	dataId  string
+	baseInfo core.BaseInfo
+	dataId   string
 
 	enabledLayer4Report               bool
 	podInstanceErrorFlowReportEnabled bool
@@ -81,7 +79,7 @@ func (m *MetricProcessor) findSpanMetric(
 				[]string{
 					pair("__name__", storage.ApmServiceInstanceRelation),
 					pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-					pair("apm_application_name", m.appName),
+					pair("apm_application_name", m.baseInfo.AppName),
 					pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
 				},
 				",",
@@ -102,7 +100,7 @@ func (m *MetricProcessor) findSpanMetric(
 					[]string{
 						pair("__name__", storage.ApmServicePodRelation),
 						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-						pair("apm_application_name", m.appName),
+						pair("apm_application_name", m.baseInfo.AppName),
 						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
 						pair("bcs_cluster_id", bcsClusterId),
 						pair("namespace", span.GetFieldValue(core.K8sNamespace)),
@@ -120,7 +118,7 @@ func (m *MetricProcessor) findSpanMetric(
 					[]string{
 						pair("__name__", storage.ApmServiceSystemRelation),
 						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-						pair("apm_application_name", m.appName),
+						pair("apm_application_name", m.baseInfo.AppName),
 						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
 						pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField)),
 					},
@@ -198,7 +196,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", cServiceSpanName),
 					pair("from_apm_service_name", cService),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryHttp),
 					pair("from_apm_service_kind", storage.KindService),
 					pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
@@ -206,7 +204,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("from_span_grpc_status_code", pairs[0].GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", sServiceSpanName),
 					pair("to_apm_service_name", sService),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryHttp),
 					pair("to_apm_service_kind", storage.KindService),
 					pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
@@ -266,7 +264,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 						pair("to_instance_name", sService),
 						pair("to_span_name", sServiceSpanName),
 						pair("to_apm_service_name", sService),
-						pair("to_apm_application_name", m.appName),
+						pair("to_apm_application_name", m.baseInfo.AppName),
 						pair("to_apm_service_category", storage.CategoryHttp),
 						pair("to_apm_service_kind", storage.KindService),
 						pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
@@ -290,7 +288,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 						pair("from_instance_name", cService),
 						pair("from_span_name", cServiceSpanName),
 						pair("from_apm_service_name", cService),
-						pair("from_apm_application_name", m.appName),
+						pair("from_apm_application_name", m.baseInfo.AppName),
 						pair("from_apm_service_category", storage.CategoryHttp),
 						pair("from_apm_service_kind", storage.KindService),
 						pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
@@ -328,7 +326,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("from_bk_target_ip", parentIp),
 					pair("to_span_name", sServiceSpanName),
 					pair("to_apm_service_name", sService),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryHttp),
 					pair("to_apm_service_kind", storage.KindService),
 					pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
@@ -349,7 +347,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("__name__", storage.ApmServiceSystemFlow),
 					pair("from_span_name", cServiceSpanName),
 					pair("from_apm_service_name", cService),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryHttp),
 					pair("from_apm_service_kind", storage.KindService),
 					pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
@@ -444,7 +442,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", spanName),
 					pair("from_apm_service_name", serviceName),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryHttp),
 					pair("from_apm_service_kind", storage.KindService),
 					pair("from_apm_service_span_kind", strconv.Itoa(aloneNode.Kind)),
@@ -452,7 +450,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("from_span_grpc_status_code", aloneNode.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", spanName),
 					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee)),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryHttp),
 					pair("to_apm_service_kind", storage.KindVirtualService),
 					pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(aloneNode.Kind))),
@@ -473,7 +471,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", spanName),
 					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller)),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryHttp),
 					pair("from_apm_service_kind", storage.KindVirtualService),
 					pair("from_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(aloneNode.Kind))),
@@ -481,7 +479,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("from_span_grpc_status_code", aloneNode.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", spanName),
 					pair("to_apm_service_name", serviceName),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryHttp),
 					pair("to_apm_service_kind", storage.KindService),
 					pair("to_apm_service_span_kind", strconv.Itoa(aloneNode.Kind)),
@@ -545,7 +543,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 				pair("__name__", storage.ApmServiceFlow),
 				pair("from_span_name", spanName),
 				pair("from_apm_service_name", serviceName),
-				pair("from_apm_application_name", m.appName),
+				pair("from_apm_application_name", m.baseInfo.AppName),
 				pair("from_apm_service_category", storage.CategoryHttp),
 				pair("from_apm_service_kind", storage.KindService),
 				pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
@@ -553,7 +551,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 				pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
 				pair("to_span_name", spanName),
 				pair("to_apm_service_name", componentName),
-				pair("to_apm_application_name", m.appName),
+				pair("to_apm_application_name", m.baseInfo.AppName),
 				pair("to_apm_service_category", storage.CategoryDb),
 				pair("to_apm_service_kind", storage.KindComponent),
 				pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
@@ -580,7 +578,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", spanName),
 					pair("from_apm_service_name", serviceName),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryHttp),
 					pair("from_apm_service_kind", storage.KindService),
 					pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
@@ -588,7 +586,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 					pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", spanName),
 					pair("to_apm_service_name", componentName),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryMessaging),
 					pair("to_apm_service_kind", storage.KindComponent),
 					pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
@@ -610,7 +608,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", spanName),
 					pair("from_apm_service_name", componentName),
-					pair("from_apm_application_name", m.appName),
+					pair("from_apm_application_name", m.baseInfo.AppName),
 					pair("from_apm_service_category", storage.CategoryMessaging),
 					pair("from_apm_service_kind", storage.KindComponent),
 					pair("from_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
@@ -618,7 +616,7 @@ func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 					pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", spanName),
 					pair("to_apm_service_name", serviceName),
-					pair("to_apm_application_name", m.appName),
+					pair("to_apm_application_name", m.baseInfo.AppName),
 					pair("to_apm_service_category", storage.CategoryHttp),
 					pair("to_apm_service_kind", storage.KindService),
 					pair("to_apm_service_span_kind", strconv.Itoa(span.Kind)),
@@ -681,7 +679,7 @@ func (m *MetricProcessor) findComponentInstanceRelation(
 		[]string{
 			pair("__name__", storage.ApmServiceInstanceRelation),
 			pair("apm_service_name", componentName),
-			pair("apm_application_name", m.appName),
+			pair("apm_application_name", m.baseInfo.AppName),
 			pair("apm_service_instance_name", strings.Join(instanceIds, ":")),
 		},
 		",",
@@ -736,7 +734,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 			pair("__name__", storage.ApmServiceFlow),
 			pair("from_span_name", spanName),
 			pair("from_apm_service_name", serviceName),
-			pair("from_apm_application_name", m.appName),
+			pair("from_apm_application_name", m.baseInfo.AppName),
 			pair("from_apm_service_category", storage.CategoryHttp),
 			pair("from_apm_service_kind", storage.KindService),
 			pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
@@ -745,7 +743,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 			// 自定义服务 flow span_name 两边都一致
 			pair("to_span_name", spanName),
 			pair("to_apm_service_name", fmt.Sprintf("%s:%s", peerServiceType, peerService)),
-			pair("to_apm_application_name", m.appName),
+			pair("to_apm_application_name", m.baseInfo.AppName),
 			pair("to_apm_service_category", storage.CategoryHttp),
 			pair("to_apm_service_kind", storage.KindCustomService),
 			pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
@@ -767,6 +765,7 @@ func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricC
 		metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
 	}
 
+	data.AppKey = m.baseInfo.AppKey()
 	receiver <- storage.SaveRequest{
 		Target: storage.Prometheus,
 		Data:   data,
@@ -787,14 +786,14 @@ func (m *MetricProcessor) refreshCustomService() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
-	intBizId, _ := strconv.Atoi(m.bkBizId)
+	intBizId, _ := strconv.Atoi(m.baseInfo.BkBizId)
 	refreshFromDb := func() {
 		var result []models.CustomServiceConfig
 		err := models.NewCustomServiceConfigQuerySet(
 			mysql.GetDBSession().DB,
-		).BkBizIdEq(intBizId).AppNameEq(m.appName).ConfigLevelEq("app_level").ConfigKeyEq(m.appName).TypeEq("http").All(&result)
+		).BkBizIdEq(intBizId).AppNameEq(m.baseInfo.AppName).ConfigLevelEq("app_level").ConfigKeyEq(m.baseInfo.AppName).TypeEq("http").All(&result)
 		if err != nil {
-			logger.Warnf("Something got error during query custom service! BkBizId: %s AppName: %s exception: %s", m.bkBizId, m.appName, err)
+			logger.Warnf("Something got error during query custom service! BkBizId: %s AppName: %s exception: %s", m.baseInfo.BkBizId, m.baseInfo.AppName, err)
 			return
 		}
 		var rules []models.CustomServiceRule
@@ -820,15 +819,12 @@ func pair(k, v string) string {
 	return k + "=" + v
 }
 
-func newMetricProcessor(ctx context.Context, dataId string, processorOpts ProcessorOptions) *MetricProcessor {
-	logger.Infof("[RelationMetric] create metric processor, dataId: %s", dataId)
-	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
+func newMetricProcessor(ctx context.Context, dataId string, baseInfo core.BaseInfo, processorOpts ProcessorOptions) *MetricProcessor {
+	logger.Infof("[RelationMetric] create metric processor, dataId: %s appKey: %+v", dataId, baseInfo.AppKey())
 	p := MetricProcessor{
 		ctx:                               ctx,
 		dataId:                            dataId,
-		bkBizId:                           baseInfo.BkBizId,
-		appName:                           baseInfo.AppName,
-		appId:                             baseInfo.AppId,
+		baseInfo:                          baseInfo,
 		enabledLayer4Report:               processorOpts.metricLayer4ReportEnabled,
 		podInstanceErrorFlowReportEnabled: processorOpts.podInstanceErrorFlowReportEnabled,
 		podApmErrorFlowReportEnabled:      processorOpts.podApmErrorFlowReportEnabled,

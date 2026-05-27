@@ -30,7 +30,8 @@ const (
 )
 
 type PrometheusStorageData struct {
-	Kind int
+	AppKey core.AppKey
+	Kind   int
 	// Kind -> Relation Value -> []string
 	// Kind -> Flow Value -> map[string]FlowMetricRecordStats
 	Value any
@@ -129,22 +130,24 @@ func (m *MetricDimensionsHandler) Close() {
 	m.cleanUpAndReport(m.flowMetricCollector)
 }
 
-func NewMetricDimensionHandler(ctx context.Context, dataId string,
+func NewMetricDimensionHandler(
+	ctx context.Context,
+	dataId string,
+	baseInfo core.BaseInfo,
 	config remote.PrometheusWriterOptions,
 	metricsConfig MetricConfigOptions,
 ) *MetricDimensionsHandler {
-	token := core.GetMetadataCenter().GetToken(dataId)
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
+			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) appKey(%+v) -> token: %s \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		config.Url, config.Headers, dataId, token,
+		config.Url, config.Headers, dataId, baseInfo.AppKey(), baseInfo.Token,
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
-		promClient:               remote.NewPrometheusWriterClient(token, config.Url, config.Headers),
+		promClient:               remote.NewPrometheusWriterClient(baseInfo.Token, config.Url, config.Headers),
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,

@@ -135,7 +135,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 			return errors.WithMessagef(err, "CollectAndReportMetrics:collect es %s metrics failed", metricType)
 		}
 
-		esMetrics := make([]*clustermetrics.EsMetric, 0)
+		esMetrics := make([]*clustermetrics.MetricData, 0)
 
 		for _, mf := range metricFamilies {
 			// 处理指标数据
@@ -179,7 +179,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo) error {
 						d["table_id"])
 				}
 
-				esm := &clustermetrics.EsMetric{
+				esm := &clustermetrics.MetricData{
 					Metrics:   m,
 					Target:    cfg.ESClusterMetricTarget,
 					Timestamp: timestamp,

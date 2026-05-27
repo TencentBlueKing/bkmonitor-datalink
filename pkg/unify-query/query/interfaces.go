@@ -19,10 +19,21 @@ import (
 
 type Filter map[string]string
 
+// Record 表示 storage_cluster_records 中的一条时间分段路由。
+// 当一个 RT 在不同时间段写入不同存储（例如 ES + Doris）时，UQ 会用这里的字段覆盖外层 result_table_detail。
 type Record struct {
-	StorageID   string `json:"storage_id,omitempty"`
+	// StorageID 是该时间段命中的存储集群 ID，用于定位底层存储实例。
+	StorageID string `json:"storage_id,omitempty"`
+	// StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
 	StorageType string `json:"storage_type,omitempty"`
-	EnableTime  int64  `json:"enable_time,omitempty"`
+	// StorageName / ClusterName 表示存储集群名，Doris 查询 BKBase 时会透传为 properties.cluster_name。
+	StorageName string `json:"storage_name,omitempty"`
+	ClusterName string `json:"cluster_name,omitempty"`
+	// DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris 使用 bkbase_table_id + doris。
+	DB          string `json:"db,omitempty"`
+	Measurement string `json:"measurement,omitempty"`
+	// EnableTime 是该路由开始生效的 Unix 秒级时间戳。
+	EnableTime int64 `json:"enable_time,omitempty"`
 }
 
 type StorageClusterRecords []Record
@@ -86,11 +97,28 @@ func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []Record {
 	storageRoutes := make([]Record, 0)
 	routeKeys := make(map[string]struct{})
 	addRoute := func(record Record) {
+		// 兼容旧 Redis 数据：record 缺少字段时，继续使用外层 result_table_detail 的配置。
 		storageType := record.StorageType
 		if storageType == "" {
 			storageType = z.StorageType
 		}
-		key := fmt.Sprintf("%s\x00%s", record.StorageID, storageType)
+		storageName := record.StorageName
+		if storageName == "" {
+			storageName = z.StorageName
+		}
+		clusterName := record.ClusterName
+		if clusterName == "" {
+			clusterName = z.ClusterName
+		}
+		db := record.DB
+		if db == "" {
+			db = z.DB
+		}
+		measurement := record.Measurement
+		if measurement == "" {
+			measurement = z.Measurement
+		}
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", record.StorageID, storageType, db, measurement)
 		if _, ok := routeKeys[key]; ok {
 			return
 		}
@@ -98,6 +126,10 @@ func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []Record {
 		storageRoutes = append(storageRoutes, Record{
 			StorageID:   record.StorageID,
 			StorageType: storageType,
+			StorageName: storageName,
+			ClusterName: clusterName,
+			DB:          db,
+			Measurement: measurement,
 			EnableTime:  record.EnableTime,
 		})
 	}

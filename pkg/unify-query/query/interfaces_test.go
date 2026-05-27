@@ -64,4 +64,51 @@ func TestTsDBV2_GetStorageRoutes(t *testing.T) {
 			},
 		}, db.GetStorageRoutes(start, end))
 	})
+
+	t.Run("record route metadata overrides tsdb metadata with fallback", func(t *testing.T) {
+		db := &TsDBV2{
+			StorageID:   "1",
+			StorageType: "elasticsearch",
+			StorageName: "es_default",
+			ClusterName: "es_default",
+			DB:          "es_index",
+			Measurement: "__default__",
+			StorageClusterRecords: []Record{
+				{
+					StorageID:   "3",
+					StorageType: "bk_sql",
+					StorageName: "doris_default",
+					ClusterName: "doris_default",
+					DB:          "bkbase_table",
+					Measurement: "doris",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "2",
+					EnableTime: 1000,
+				},
+			},
+		}
+
+		assert.Equal(t, []Record{
+			{
+				StorageID:   "3",
+				StorageType: "bk_sql",
+				StorageName: "doris_default",
+				ClusterName: "doris_default",
+				DB:          "bkbase_table",
+				Measurement: "doris",
+				EnableTime:  2000,
+			},
+			{
+				StorageID:   "2",
+				StorageType: "elasticsearch",
+				StorageName: "es_default",
+				ClusterName: "es_default",
+				DB:          "es_index",
+				Measurement: "__default__",
+				EnableTime:  1000,
+			},
+		}, db.GetStorageRoutes(start, end))
+	})
 }

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/jinzhu/gorm"
+	"github.com/samber/lo"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -60,8 +62,12 @@ func (ClusterRecord) TableName() string {
 }
 
 // ComposeTableIDStorageClusterRecords 组装指定 table_id 的历史存储集群记录
-func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[string]any, error) {
+func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTableID ...string) ([]map[string]any, error) {
 	logger.Infof("compose_table_id_storage_cluster_records: try to get storage cluster records for table_id->[%s]", tableID)
+	routeTableID := tableID
+	if len(currentTableID) > 0 && currentTableID[0] != "" {
+		routeTableID = currentTableID[0]
+	}
 
 	var records []ClusterRecord
 	// 查询数据库：过滤 table_id 和 is_deleted，按 create_time 升序排列
@@ -77,6 +83,118 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[str
 		return nil, err
 	}
 
+	clusterIDList := lo.Uniq(lo.FilterMap(records, func(record ClusterRecord, _ int) (uint, bool) {
+		if record.ClusterID > 0 {
+			return uint(record.ClusterID), true
+		}
+		return 0, false
+	}))
+
+	clusterInfoMap := make(map[uint]ClusterInfo, len(clusterIDList))
+	hasDorisRoute := false
+	hasESRoute := false
+	if len(clusterIDList) > 0 {
+		var clusterInfoList []ClusterInfo
+		if err = NewClusterInfoQuerySet(db).
+			Select(ClusterInfoDBSchema.ClusterID, ClusterInfoDBSchema.ClusterName, ClusterInfoDBSchema.ClusterType).
+			ClusterIDIn(clusterIDList...).
+			All(&clusterInfoList); err != nil {
+			logger.Errorf("compose_table_id_storage_cluster_records: failed to query cluster info for table_id->[%s], error: %v", tableID, err)
+			return nil, err
+		}
+		for _, clusterInfo := range clusterInfoList {
+			clusterInfoMap[clusterInfo.ClusterID] = clusterInfo
+			switch clusterInfo.ClusterType {
+			case models.StorageTypeDoris:
+				hasDorisRoute = true
+			case models.StorageTypeES:
+				hasESRoute = true
+			}
+		}
+	}
+
+	// Doris 路由不能只写 storage_type=bk_sql，还要补 bkbase_table_id 和 doris measurement，
+	// 否则 UQ 会沿用外层 ES detail 的 db/measurement 去拼 BKSQL。
+	dorisRoute := map[string]any{}
+	if hasDorisRoute && db.HasTable(DorisStorage{}) {
+		var dorisStorage DorisStorage
+		if err = NewDorisStorageQuerySet(db).
+			Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.OriginTableId, DorisStorageDBSchema.StorageClusterID).
+			TableIDEq(routeTableID).
+			One(&dorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+			logger.Errorf("compose_table_id_storage_cluster_records: failed to query doris storage for table_id->[%s], error: %v", routeTableID, err)
+			return nil, err
+		}
+		if dorisStorage.BkbaseTableID == "" && routeTableID != tableID {
+			if err = NewDorisStorageQuerySet(db).
+				Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.OriginTableId, DorisStorageDBSchema.StorageClusterID).
+				TableIDEq(tableID).
+				One(&dorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+				logger.Errorf("compose_table_id_storage_cluster_records: failed to query doris storage for table_id->[%s], error: %v", tableID, err)
+				return nil, err
+			}
+		}
+		if dorisStorage.BkbaseTableID == "" && dorisStorage.OriginTableId != "" {
+			var originDorisStorage DorisStorage
+			if err = NewDorisStorageQuerySet(db).
+				Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.StorageClusterID).
+				TableIDEq(dorisStorage.OriginTableId).
+				One(&originDorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+				logger.Errorf("compose_table_id_storage_cluster_records: failed to query origin doris storage for table_id->[%s], origin_table_id->[%s], error: %v", tableID, dorisStorage.OriginTableId, err)
+				return nil, err
+			}
+			if dorisStorage.BkbaseTableID == "" {
+				dorisStorage.BkbaseTableID = originDorisStorage.BkbaseTableID
+			}
+			if dorisStorage.StorageClusterID == 0 {
+				dorisStorage.StorageClusterID = originDorisStorage.StorageClusterID
+			}
+		}
+		if dorisStorage.BkbaseTableID != "" {
+			dorisRoute["db"] = dorisStorage.BkbaseTableID
+			dorisRoute["measurement"] = models.DorisMeasurement
+		}
+	}
+
+	// ES 路由同样补齐 index_set 和默认 measurement，支持外层是 Doris 时按时间段回查 ES。
+	esRoute := map[string]any{}
+	if hasESRoute && db.HasTable(ESStorage{}) {
+		var esStorage ESStorage
+		if err = NewESStorageQuerySet(db).
+			Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId).
+			TableIDEq(routeTableID).
+			One(&esStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+			logger.Errorf("compose_table_id_storage_cluster_records: failed to query es storage for table_id->[%s], error: %v", routeTableID, err)
+			return nil, err
+		}
+		if esStorage.IndexSet == "" && routeTableID != tableID {
+			if err = NewESStorageQuerySet(db).
+				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId).
+				TableIDEq(tableID).
+				One(&esStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+				logger.Errorf("compose_table_id_storage_cluster_records: failed to query es storage for table_id->[%s], error: %v", tableID, err)
+				return nil, err
+			}
+		}
+		if esStorage.IndexSet == "" && esStorage.OriginTableId != "" {
+			var originESStorage ESStorage
+			if err = NewESStorageQuerySet(db).
+				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet).
+				TableIDEq(esStorage.OriginTableId).
+				One(&originESStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
+				logger.Errorf("compose_table_id_storage_cluster_records: failed to query origin es storage for table_id->[%s], origin_table_id->[%s], error: %v", tableID, esStorage.OriginTableId, err)
+				return nil, err
+			}
+			if esStorage.IndexSet == "" {
+				esStorage.IndexSet = originESStorage.IndexSet
+			}
+		}
+		if esStorage.IndexSet != "" {
+			esRoute["db"] = esStorage.IndexSet
+			esRoute["measurement"] = models.TSGroupDefaultMeasurement
+		}
+	}
+
 	// 组装结果集
 	result := make([]map[string]any, 0)
 	for _, record := range records {
@@ -86,11 +204,28 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[str
 			enableTimestamp = record.EnableTime.Unix()
 		}
 
-		// 追加到结果集合
-		result = append(result, map[string]any{
+		route := map[string]any{
 			"storage_id":  record.ClusterID,
 			"enable_time": enableTimestamp,
-		})
+		}
+		if clusterInfo, ok := clusterInfoMap[uint(record.ClusterID)]; ok {
+			storageType := clusterInfo.ClusterType
+			if storageType == models.StorageTypeDoris {
+				// metadata_clusterinfo 中 Doris 的 cluster_type 是 doris，UQ 查询侧使用 bk_sql。
+				storageType = models.StorageTypeBkSql
+				for k, v := range dorisRoute {
+					route[k] = v
+				}
+			} else if storageType == models.StorageTypeES {
+				for k, v := range esRoute {
+					route[k] = v
+				}
+			}
+			route["storage_type"] = storageType
+		}
+
+		// 追加到结果集合
+		result = append(result, route)
 	}
 
 	logger.Infof("compose_table_id_storage_cluster_records: get storage cluster records for table_id->[%s] success, records->[%v]", tableID, result)

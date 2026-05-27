@@ -986,7 +986,17 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, fieldAliasSettings)
+			realTableId := tableId
+			if doris.OriginTableId != "" {
+				realTableId = doris.OriginTableId
+			}
+			clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:failed to get storage cluster records, table_id: %s, real_table_id: %s, error: %s", tableId, realTableId, err)
+				return
+			}
+
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, clusterRecords, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -1310,7 +1320,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		realTableId = storageIns.OriginTableId
 	}
 
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
 	if err != nil {
 		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
 		return "", "", err
@@ -1363,7 +1373,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	return tableId, detailStr, err
 }
 
-func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, storageClusterNameMap map[uint]string, fieldAliasSettings map[string]string) (string, string, error) {
+func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, storageClusterNameMap map[uint]string, clusterRecords []map[string]any, fieldAliasSettings map[string]string) (string, string, error) {
 	tableId := doris.TableID
 	bkbaseTableId := doris.BkbaseTableID
 	storageClusterID := doris.StorageClusterID
@@ -1386,13 +1396,16 @@ func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMe
 
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type": models.StorageTypeBkSql,
-		"storage_name": storageClusterNameMap[storageClusterID],
-		"db":           bkbaseTableId,
-		"measurement":  models.DorisMeasurement,
-		"data_label":   rtMeta.DataLabel,
-		"labels":       rtMeta.Labels,
-		"field_alias":  fieldAliasSettings, // 添加字段别名
+		"storage_type":            models.StorageTypeBkSql,
+		"storage_id":              storageClusterID,
+		"storage_name":            storageClusterNameMap[storageClusterID],
+		"cluster_name":            storageClusterNameMap[storageClusterID],
+		"db":                      bkbaseTableId,
+		"measurement":             models.DorisMeasurement,
+		"storage_cluster_records": clusterRecords,
+		"data_label":              rtMeta.DataLabel,
+		"labels":                  rtMeta.Labels,
+		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
 		return tableId, "", err

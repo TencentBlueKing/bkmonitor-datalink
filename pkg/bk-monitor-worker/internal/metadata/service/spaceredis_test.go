@@ -2209,6 +2209,8 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 		resultTableDetailMeta{DataLabel: dataLabel, Labels: normalizeResultTableLabels(tableID1, labels1)},
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
 	assert.Equal(t, tableID1, composedTableID, "entity doris detail key should be current table_id")
@@ -2224,6 +2226,8 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 		resultTableDetailMeta{Labels: normalizeResultTableLabels(tableID2, labels2)},
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
 	var actualDetail2 map[string]any
@@ -2237,6 +2241,8 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 		map[string]storage.DorisStorage{
 			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
 		},
+		nil,
+		nil,
 		map[string]string{"pod_name": "__ext.pod_name"},
 	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
@@ -2256,6 +2262,8 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
 		},
 		nil,
+		nil,
+		nil,
 	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
 	var actualDetail4 map[string]any
@@ -2267,6 +2275,8 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 		storage.DorisStorage{TableID: tableID4, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist"},
 		resultTableDetailMeta{},
 		map[string]storage.DorisStorage{},
+		nil,
+		nil,
 		nil,
 	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")

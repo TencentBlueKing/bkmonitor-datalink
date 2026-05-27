@@ -742,8 +742,23 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
 			query.StorageID = storageRoute.StorageID
+			// storageRoute 是按时间段命中的完整路由信息；存在时必须覆盖外层 RT detail，
+			// 否则 ES + Doris 混合场景会用外层存储的 db/measurement 去查另一种存储。
 			if storageRoute.StorageType != "" {
 				query.StorageType = storageRoute.StorageType
+			}
+			if storageRoute.StorageName != "" {
+				query.StorageName = storageRoute.StorageName
+			}
+			if storageRoute.ClusterName != "" {
+				query.ClusterName = storageRoute.ClusterName
+			}
+			if storageRoute.DB != "" {
+				query.DB = storageRoute.DB
+			}
+			if storageRoute.Measurement != "" {
+				query.Measurement = storageRoute.Measurement
+				query.Measurements = []string{storageRoute.Measurement}
 			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 

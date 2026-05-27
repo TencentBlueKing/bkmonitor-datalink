@@ -32,23 +32,37 @@ type MetadataCenter struct {
 // ConsulInfo info of Consul
 type ConsulInfo struct {
 	Token       string           `json:"token"`
+	IsShared    bool             `json:"is_shared"`
 	BkBizId     int              `json:"bk_biz_id"`
 	BkTenantId  string           `json:"bk_tenant_id"`
 	BkBizName   any              `json:"bk_biz_name"`
 	AppId       int              `json:"app_id"`
 	AppName     string           `json:"app_name"`
+	Apps        []ConsulAppInfo  `json:"apps"`
 	KafkaInfo   TraceKafkaConfig `json:"kafka_info"`
 	TraceEsInfo TraceEsConfig    `json:"trace_es_info"`
 	SaveEsInfo  TraceEsConfig    `json:"save_es_info"`
 }
 
+// ConsulAppInfo describes one app in a shared data_id consul payload.
+type ConsulAppInfo struct {
+	Token      string `json:"token"`
+	BkBizId    int    `json:"bk_biz_id"`
+	BkTenantId string `json:"bk_tenant_id"`
+	BkBizName  any    `json:"bk_biz_name"`
+	AppId      int    `json:"app_id"`
+	AppName    string `json:"app_name"`
+}
+
 // DataIdInfo global DataId info in pre-calculate
 type DataIdInfo struct {
 	// DataId of trace datasource
-	DataId string
-	Token  string
+	DataId   string
+	Token    string
+	IsShared bool
 
 	BaseInfo BaseInfo
+	Apps     map[AppKey]BaseInfo
 
 	TraceEs    TraceEsConfig
 	SaveEs     TraceEsConfig
@@ -63,6 +77,38 @@ type BaseInfo struct {
 	BkBizName string
 	AppId     string
 	AppName   string
+	Token     string
+}
+
+// AppKey identifies one APM application under a trace data_id.
+type AppKey struct {
+	BkBizId string
+	AppName string
+}
+
+func (b BaseInfo) AppKey() AppKey {
+	return AppKey{BkBizId: b.BkBizId, AppName: b.AppName}
+}
+
+func (k AppKey) IsZero() bool {
+	return k.BkBizId == "" || k.AppName == ""
+}
+
+func newBaseInfo(token, bkTenantId string, bkBizId int, bkBizName any, appId int, appName string) BaseInfo {
+	return BaseInfo{
+		Token:      token,
+		BkTenantId: bkTenantId,
+		BkBizId:    strconv.Itoa(bkBizId),
+		BkBizName:  formatBizName(bkBizName),
+		AppId:      strconv.Itoa(appId),
+		AppName:    appName,
+	}
+}
+
+func addBaseInfo(apps map[AppKey]BaseInfo, baseInfo BaseInfo) {
+	if appKey := baseInfo.AppKey(); !appKey.IsZero() {
+		apps[appKey] = baseInfo
+	}
 }
 
 // TraceEsConfig es config
@@ -117,6 +163,17 @@ func InitMetadataCenter(c *MetadataCenter) {
 func (c *MetadataCenter) AddDataIdAndInfo(dataId, token string, info DataIdInfo) {
 	info.DataId = dataId
 	info.Token = token
+	if info.IsShared {
+		if info.Apps == nil {
+			info.Apps = make(map[AppKey]BaseInfo)
+		}
+	} else {
+		if info.BaseInfo.Token == "" {
+			info.BaseInfo.Token = token
+		}
+		info.Apps = make(map[AppKey]BaseInfo, 1)
+		addBaseInfo(info.Apps, info.BaseInfo)
+	}
 	c.Mapping.Store(dataId, info)
 }
 
@@ -148,28 +205,46 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 		return fmt.Errorf("failed to parse value to ApmInfo, value: %s. error: %s", bytesData, err)
 	}
 
-	// if it is a business of space-type, then the bkBizName is negative(eg. -4332771)
-	var bizName string
-	switch apmInfo.BkBizName.(type) {
-	case float64:
-		bizName = strconv.FormatFloat(apmInfo.BkBizName.(float64), 'f', -1, 64)
-	default:
-		bizName = apmInfo.BkBizName.(string)
-	}
-
 	info.Token = apmInfo.Token
-	info.BaseInfo = BaseInfo{
-		BkTenantId: apmInfo.BkTenantId,
-
-		BkBizId:   strconv.Itoa(apmInfo.BkBizId),
-		BkBizName: bizName,
-		AppId:     strconv.Itoa(apmInfo.AppId),
-		AppName:   apmInfo.AppName,
+	info.IsShared = apmInfo.IsShared
+	if info.IsShared {
+		info.Apps = make(map[AppKey]BaseInfo, len(apmInfo.Apps))
+		for _, app := range apmInfo.Apps {
+			addBaseInfo(info.Apps, newBaseInfo(
+				app.Token,
+				app.BkTenantId,
+				app.BkBizId,
+				app.BkBizName,
+				app.AppId,
+				app.AppName,
+			))
+		}
+	} else {
+		info.Apps = make(map[AppKey]BaseInfo, 1)
+		info.BaseInfo = newBaseInfo(
+			apmInfo.Token,
+			apmInfo.BkTenantId,
+			apmInfo.BkBizId,
+			apmInfo.BkBizName,
+			apmInfo.AppId,
+			apmInfo.AppName,
+		)
+		addBaseInfo(info.Apps, info.BaseInfo)
 	}
 	info.TraceKafka = apmInfo.KafkaInfo
 	info.TraceEs = apmInfo.TraceEsInfo
 	info.SaveEs = apmInfo.SaveEsInfo
 	return nil
+}
+
+func formatBizName(v any) string {
+	// if it is a business of space-type, then the bkBizName is negative(eg. -4332771)
+	switch value := v.(type) {
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	default:
+		return value.(string)
+	}
 }
 
 // CheckUpdate check the info whether updated
@@ -192,6 +267,11 @@ func (c *MetadataCenter) CheckUpdate(dataId string) (bool, string) {
 	return false, ""
 }
 
+func (c *MetadataCenter) IsShared(dataId string) bool {
+	v, _ := c.Mapping.Load(dataId)
+	return v.(DataIdInfo).IsShared
+}
+
 // GetKafkaConfig get kafka config of DataId
 func (c *MetadataCenter) GetKafkaConfig(dataId string) TraceKafkaConfig {
 	v, _ := c.Mapping.Load(dataId)
@@ -210,10 +290,15 @@ func (c *MetadataCenter) GetSaveEsConfig(dataId string) TraceEsConfig {
 	return v.(DataIdInfo).SaveEs
 }
 
-// GetBaseInfo get biz info of DataId
-func (c *MetadataCenter) GetBaseInfo(dataId string) BaseInfo {
+// ListBaseInfos lists app contexts under a DataId.
+func (c *MetadataCenter) ListBaseInfos(dataId string) []BaseInfo {
 	v, _ := c.Mapping.Load(dataId)
-	return v.(DataIdInfo).BaseInfo
+	info := v.(DataIdInfo)
+	baseInfos := make([]BaseInfo, 0, len(info.Apps))
+	for _, baseInfo := range info.Apps {
+		baseInfos = append(baseInfos, baseInfo)
+	}
+	return baseInfos
 }
 
 // GetToken of DataId

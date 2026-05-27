@@ -113,8 +113,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		}
 	}
 
-	// Doris 路由不能只写 storage_type=bk_sql，还要补 bkbase_table_id 和 doris measurement，
-	// 否则 UQ 会沿用外层 ES detail 的 db/measurement 去拼 BKSQL。
+	// Doris 分段路由需要携带 BKBase 表名和 doris measurement，用于 UQ 生成该时间段的 BKSQL 查询目标。
 	dorisRoute := map[string]any{}
 	if hasDorisRoute && db.HasTable(DorisStorage{}) {
 		var dorisStorage DorisStorage

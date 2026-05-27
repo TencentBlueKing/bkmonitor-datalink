@@ -22,6 +22,7 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -910,37 +911,24 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		return err
 	}
 
-	originTableIdSet := make(map[string]struct{})
-	for _, doris := range dorisStorageList {
+	originTableIdList := lo.Uniq(lo.FilterMap(dorisStorageList, func(doris storage.DorisStorage, _ int) (string, bool) {
 		if doris.OriginTableId != "" {
-			originTableIdSet[doris.OriginTableId] = struct{}{}
+			return doris.OriginTableId, true
 		}
-	}
-	originTableIdList := make([]string, 0, len(originTableIdSet))
-	for tableId := range originTableIdSet {
-		originTableIdList = append(originTableIdList, tableId)
-	}
+		return "", false
+	}))
 	originDorisMap, err := s.getDorisStorageMap(originTableIdList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get origin doris storage map, error: %s", err)
 		return err
 	}
 
-	storageClusterIDSet := make(map[uint]struct{})
-	for _, doris := range dorisStorageList {
+	storageClusterIDList := lo.Uniq(lo.FilterMap(append(dorisStorageList, lo.Values(originDorisMap)...), func(doris storage.DorisStorage, _ int) (uint, bool) {
 		if doris.StorageClusterID != 0 {
-			storageClusterIDSet[doris.StorageClusterID] = struct{}{}
+			return doris.StorageClusterID, true
 		}
-	}
-	for _, doris := range originDorisMap {
-		if doris.StorageClusterID != 0 {
-			storageClusterIDSet[doris.StorageClusterID] = struct{}{}
-		}
-	}
-	storageClusterIDList := make([]uint, 0, len(storageClusterIDSet))
-	for storageClusterID := range storageClusterIDSet {
-		storageClusterIDList = append(storageClusterIDList, storageClusterID)
-	}
+		return 0, false
+	}))
 	storageClusterNameMap := make(map[uint]string, len(storageClusterIDList))
 	if len(storageClusterIDList) > 0 {
 		var storageClusterList []storage.ClusterInfo

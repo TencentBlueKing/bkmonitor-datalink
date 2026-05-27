@@ -84,11 +84,13 @@ func TestClient_QuerySync(t *testing.T) {
 
 	res := MockClient().QuerySync(
 		ctx,
-		fmt.Sprintf(
-			`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
-			start.UnixMilli(),
-			end.UnixMilli(),
-		),
+		bksql.QuerySyncRequest{
+			SQL: fmt.Sprintf(
+				`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
+				start.UnixMilli(),
+				end.UnixMilli(),
+			),
+		},
 		nil,
 	)
 

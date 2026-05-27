@@ -10,50 +10,11 @@
 package query
 
 import (
-	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
-
-func TestTsDBV2_GetStorageIDs(t *testing.T) {
-	db := &TsDBV2{
-		StorageID: "16",
-		StorageClusterRecords: []Record{
-			{
-				StorageID:  "16",
-				EnableTime: 1757401605, // 2025-09-09 15:06:45
-			},
-			{
-				StorageID:  "5",
-				EnableTime: 1756969402, // 2025-09-04 15:03:22
-			},
-			{
-				StorageID:  "27",
-				EnableTime: 1756957849, // 2025-09-04 11:50:49
-			},
-			{
-				StorageID:  "26",
-				EnableTime: 1756894884, // 2025-09-03 18:21:24
-			},
-			{
-				StorageID:  "16",
-				EnableTime: 1753789890, // 2025-07-29 19:51:30
-			},
-		},
-	}
-
-	start := time.UnixMilli(1757399805337) // 2025-09-09 14:36:45
-	end := time.UnixMilli(1757401605337)   // 2025-09-09 15:06:45
-
-	ids := db.GetStorageIDs(start, end)
-	// 由于set返回顺序不确定，需要排序后比较
-	sort.Strings(ids)
-	expected := []string{"16", "5"}
-	sort.Strings(expected)
-	assert.Equal(t, expected, ids)
-}
 
 func TestTsDBV2_GetStorageRoutes(t *testing.T) {
 	start := time.Unix(1500, 0)
@@ -65,7 +26,7 @@ func TestTsDBV2_GetStorageRoutes(t *testing.T) {
 			StorageType: "elasticsearch",
 		}
 
-		assert.Equal(t, []StorageRoute{
+		assert.Equal(t, []Record{
 			{
 				StorageID:   "1",
 				StorageType: "elasticsearch",
@@ -90,7 +51,7 @@ func TestTsDBV2_GetStorageRoutes(t *testing.T) {
 			},
 		}
 
-		assert.Equal(t, []StorageRoute{
+		assert.Equal(t, []Record{
 			{
 				StorageID:   "3",
 				StorageType: "bk_sql",

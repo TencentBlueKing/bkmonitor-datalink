@@ -94,7 +94,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
-func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
+func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
@@ -106,11 +106,14 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	ctx, span = trace.NewSpan(ctx, "sql-query")
 	defer span.End(&err)
 
-	if sql == "" {
+	if req.SQL == "" {
 		return data, nil
 	}
 
-	span.Set("query-sql", sql)
+	span.Set("query-sql", req.SQL)
+	if req.ClusterName != "" {
+		span.Set("query-cluster-name", req.ClusterName)
+	}
 
 	user := metadata.GetUser(ctx)
 
@@ -121,7 +124,7 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	defer cancel()
 
 	// 发起异步查询
-	res := i.client.QuerySync(ctx, sql, span)
+	res := i.client.QuerySync(ctx, req, span)
 	if res == nil {
 		return nil, nil
 	}
@@ -151,14 +154,28 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.FieldsMap, error) {
+func queryClusterName(query *metadata.Query) string {
+	if query == nil {
+		return ""
+	}
+	return query.StorageName
+}
+
+func newQuerySyncRequest(sql string, query *metadata.Query) QuerySyncRequest {
+	return QuerySyncRequest{
+		SQL:         sql,
+		ClusterName: queryClusterName(query),
+	}
+}
+
+func (i *Instance) getFieldsMap(ctx context.Context, req QuerySyncRequest) (metadata.FieldsMap, error) {
 	fieldsMap := make(metadata.FieldsMap)
 
-	if sql == "" {
+	if req.SQL == "" {
 		return nil, nil
 	}
 
-	data, err := i.sqlQuery(ctx, sql)
+	data, err := i.sqlQuery(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +304,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		}
 
 		sql := f.expr.DescribeTableSQL(table)
-		res, err := i.getFieldsMap(ctx, sql)
+		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))
 		if err != nil {
 			continue
 		}
@@ -361,7 +378,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return size, total, option, err
 	}
 
-	data, err := i.sqlQuery(ctx, sql)
+	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
 		return size, total, option, err
@@ -427,7 +444,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(err)
 	}
 
-	data, err := i.sqlQuery(ctx, sql)
+	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
 		err = metadata.NewMessage(
 			metadata.MsgQueryBKSQL,
@@ -490,7 +507,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	data, err := i.sqlQuery(ctx, sql)
+	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
 		return nil, err
 	}
@@ -539,7 +556,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
-	data, err := i.sqlQuery(ctx, sql)
+	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +635,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, err
 	}
 
-	distinctData, err := i.sqlQuery(ctx, distinctSQL)
+	distinctData, err := i.sqlQuery(ctx, newQuerySyncRequest(distinctSQL, query))
 	if err != nil {
 		return nil, err
 	}

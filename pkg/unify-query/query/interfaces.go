@@ -27,12 +27,6 @@ type Record struct {
 
 type StorageClusterRecords []Record
 
-type StorageRoute struct {
-	StorageID   string `json:"storage_id,omitempty"`
-	StorageType string `json:"storage_type,omitempty"`
-	EnableTime  int64  `json:"enable_time,omitempty"`
-}
-
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
 	TableID         string              `json:"table_id"`
@@ -80,16 +74,16 @@ func (z *TsDBV2) String() string {
 }
 
 // GetStorageRoutes 通过查询时间获取存储路由列表
-func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []StorageRoute {
+func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []Record {
 	// 如果没有迁移记录，则直接返回存储 ID
 	if len(z.StorageClusterRecords) == 0 {
-		return []StorageRoute{{
+		return []Record{{
 			StorageID:   z.StorageID,
 			StorageType: z.StorageType,
 		}}
 	}
 
-	storageRoutes := make([]StorageRoute, 0)
+	storageRoutes := make([]Record, 0)
 	routeKeys := make(map[string]struct{})
 	addRoute := func(record Record) {
 		storageType := record.StorageType
@@ -101,7 +95,7 @@ func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []StorageRoute {
 			return
 		}
 		routeKeys[key] = struct{}{}
-		storageRoutes = append(storageRoutes, StorageRoute{
+		storageRoutes = append(storageRoutes, Record{
 			StorageID:   record.StorageID,
 			StorageType: storageType,
 			EnableTime:  record.EnableTime,
@@ -126,19 +120,4 @@ func (z *TsDBV2) GetStorageRoutes(start, end time.Time) []StorageRoute {
 	}
 
 	return storageRoutes
-}
-
-// GetStorageIDs 通过查询时间获取存储 ID 的列表
-func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
-	routes := z.GetStorageRoutes(start, end)
-	storageIDs := make([]string, 0, len(routes))
-	storageIDSet := make(map[string]struct{})
-	for _, route := range routes {
-		if _, ok := storageIDSet[route.StorageID]; ok {
-			continue
-		}
-		storageIDSet[route.StorageID] = struct{}{}
-		storageIDs = append(storageIDs, route.StorageID)
-	}
-	return storageIDs
 }

@@ -879,6 +879,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		storage.DorisStorageDBSchema.TableID,
 		storage.DorisStorageDBSchema.BkbaseTableID,
 		storage.DorisStorageDBSchema.OriginTableId,
+		storage.DorisStorageDBSchema.StorageClusterID,
 	)
 
 	// 如果过滤结果表存在，则添加过滤条件
@@ -925,6 +926,36 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		return err
 	}
 
+	storageClusterIDSet := make(map[uint]struct{})
+	for _, doris := range dorisStorageList {
+		if doris.StorageClusterID != 0 {
+			storageClusterIDSet[doris.StorageClusterID] = struct{}{}
+		}
+	}
+	for _, doris := range originDorisMap {
+		if doris.StorageClusterID != 0 {
+			storageClusterIDSet[doris.StorageClusterID] = struct{}{}
+		}
+	}
+	storageClusterIDList := make([]uint, 0, len(storageClusterIDSet))
+	for storageClusterID := range storageClusterIDSet {
+		storageClusterIDList = append(storageClusterIDList, storageClusterID)
+	}
+	storageClusterNameMap := make(map[uint]string, len(storageClusterIDList))
+	if len(storageClusterIDList) > 0 {
+		var storageClusterList []storage.ClusterInfo
+		if err = storage.NewClusterInfoQuerySet(db).
+			Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).
+			ClusterIDIn(storageClusterIDList...).
+			All(&storageClusterList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: failed to get doris cluster info map, error: %s", err)
+			return err
+		}
+		for _, cluster := range storageClusterList {
+			storageClusterNameMap[cluster.ClusterID] = cluster.ClusterName
+		}
+	}
+
 	// 获取查询别名映射关系
 	fieldAliasMap, err := s.getFieldAliasMap(tidList)
 	if err != nil {
@@ -955,7 +986,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -1117,6 +1148,7 @@ func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]stora
 			storage.DorisStorageDBSchema.TableID,
 			storage.DorisStorageDBSchema.BkbaseTableID,
 			storage.DorisStorageDBSchema.OriginTableId,
+			storage.DorisStorageDBSchema.StorageClusterID,
 		).TableIDIn(chunkTableIDList...).All(&dorisStorageList); err != nil {
 			return nil, err
 		}
@@ -1331,12 +1363,16 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	return tableId, detailStr, err
 }
 
-func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, fieldAliasSettings map[string]string) (string, string, error) {
+func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, storageClusterNameMap map[uint]string, fieldAliasSettings map[string]string) (string, string, error) {
 	tableId := doris.TableID
 	bkbaseTableId := doris.BkbaseTableID
+	storageClusterID := doris.StorageClusterID
 	if bkbaseTableId == "" && doris.OriginTableId != "" {
 		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
 			bkbaseTableId = originDoris.BkbaseTableID
+			if storageClusterID == 0 {
+				storageClusterID = originDoris.StorageClusterID
+			}
 		}
 	}
 	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s], origin_table_id [%s]", tableId, bkbaseTableId, doris.OriginTableId)
@@ -1351,6 +1387,7 @@ func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMe
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type": models.StorageTypeBkSql,
+		"storage_name": storageClusterNameMap[storageClusterID],
 		"db":           bkbaseTableId,
 		"measurement":  models.DorisMeasurement,
 		"data_label":   rtMeta.DataLabel,

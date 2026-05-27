@@ -216,6 +216,9 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 				for k, v := range dorisRoute {
 					route[k] = v
 				}
+				// Doris 分段路由必须携带命中的集群名，否则 BKBase query_sync 无法按 segment 切换 properties.cluster_name。
+				route["storage_name"] = clusterInfo.ClusterName
+				route["cluster_name"] = clusterInfo.ClusterName
 			} else if storageType == models.StorageTypeES {
 				for k, v := range esRoute {
 					route[k] = v

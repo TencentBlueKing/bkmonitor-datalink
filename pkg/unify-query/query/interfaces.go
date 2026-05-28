@@ -14,7 +14,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
@@ -23,19 +22,36 @@ const StorageClusterRecordOverlap = time.Hour
 
 type Filter map[string]string
 
+// Record 表示 storage_cluster_records 中的一条时间分段路由。
+// 当一个 RT 在不同时间段写入不同存储（例如 ES + Doris）时，UQ 会用这里的字段覆盖外层 result_table_detail。
 type Record struct {
-	StorageID  string `json:"storage_id,omitempty"`
-	EnableTime int64  `json:"enable_time,omitempty"`
+	// StorageID 是该时间段命中的存储集群 ID，用于定位底层存储实例。
+	StorageID string `json:"storage_id,omitempty"`
+	// StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
+	StorageType string `json:"storage_type,omitempty"`
+	// StorageName / ClusterName 表示存储集群名，Doris 查询 BKBase 时会透传为 properties.cluster_name。
+	StorageName string `json:"storage_name,omitempty"`
+	ClusterName string `json:"cluster_name,omitempty"`
+	// DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris 使用 bkbase_table_id + doris。
+	DB          string `json:"db,omitempty"`
+	Measurement string `json:"measurement,omitempty"`
+	// EnableTime 是该路由开始生效的 Unix 秒级时间戳。
+	EnableTime int64 `json:"enable_time,omitempty"`
 }
 
 type StorageClusterRecords []Record
 
 type StorageIDRange struct {
-	StorageID  string
-	Start      time.Time
-	End        time.Time
-	QueryStart time.Time
-	QueryEnd   time.Time
+	StorageID   string
+	StorageType string
+	StorageName string
+	ClusterName string
+	DB          string
+	Measurement string
+	Start       time.Time
+	End         time.Time
+	QueryStart  time.Time
+	QueryEnd    time.Time
 }
 
 func (r StorageIDRange) IsZero() bool {
@@ -92,42 +108,37 @@ func (z *TsDBV2) String() string {
 	)
 }
 
-// GetStorageIDs 通过查询时间获取存储 ID 的列表
-func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
-	// 如果没有迁移记录，则直接返回存储 ID
-	if len(z.StorageClusterRecords) == 0 {
-		return []string{z.StorageID}
+func (z *TsDBV2) storageRouteFromRecord(record Record) Record {
+	// 兼容旧 Redis 数据：record 缺少字段时，继续使用外层 result_table_detail 的配置。
+	storageType := record.StorageType
+	if storageType == "" {
+		storageType = z.StorageType
 	}
-
-	storageIDSet := set.New[string]()
-	// 遍历 storageClusterRecords 记录，按照开启时间倒序
-	for _, record := range z.StorageClusterRecords {
-		// 开始时间和结束时间分别扩 1h 预留查询量
-		checkStart := start.Add(time.Hour * -1).Unix()
-		checkEnd := end.Add(time.Hour * 1).Unix()
-
-		// 开启时间小于结束时间则加入查询队列
-		if record.EnableTime < checkEnd {
-			storageIDSet.Add(record.StorageID)
-		}
-
-		// 开启时间小于开始时间，则退出该循环
-		if record.EnableTime < checkStart {
-			break
-		}
+	storageName := record.StorageName
+	if storageName == "" {
+		storageName = z.StorageName
 	}
-
-	return storageIDSet.ToArray()
-}
-
-// GetStorageIDRanges 通过查询时间获取存储 ID 以及该存储在本次查询中的有效时间段。
-func (z *TsDBV2) GetStorageIDRanges(start, end time.Time) []StorageIDRange {
-	return z.GetStorageIDRangesWithOverlap(start, end, 0)
-}
-
-// GetStorageIDRangesWithOverlap 通过查询时间和额外回看窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
-func (z *TsDBV2) GetStorageIDRangesWithOverlap(start, end time.Time, extraOverlap time.Duration) []StorageIDRange {
-	return z.GetStorageIDRangesWithDirectionalOverlap(start, end, extraOverlap, 0)
+	clusterName := record.ClusterName
+	if clusterName == "" {
+		clusterName = z.ClusterName
+	}
+	db := record.DB
+	if db == "" {
+		db = z.DB
+	}
+	measurement := record.Measurement
+	if measurement == "" {
+		measurement = z.Measurement
+	}
+	return Record{
+		StorageID:   record.StorageID,
+		StorageType: storageType,
+		StorageName: storageName,
+		ClusterName: clusterName,
+		DB:          db,
+		Measurement: measurement,
+		EnableTime:  record.EnableTime,
+	}
 }
 
 // GetStorageIDRangesWithDirectionalOverlap 通过查询时间和前后方向的额外窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
@@ -172,6 +183,7 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 	}
 	// 遍历 storageClusterRecords 记录，按照开启时间倒序
 	for i, record := range records {
+		route := z.storageRouteFromRecord(record)
 		recordStart := time.Unix(record.EnableTime, 0)
 		recordEnd := checkEnd
 		if i > 0 {
@@ -190,9 +202,14 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 		routeStart := maxTime(routeCheckStart, recordStart)
 		routeEnd := minTime(routeCheckEnd, recordEnd)
 		storageRange := StorageIDRange{
-			StorageID:  record.StorageID,
-			QueryStart: queryStart,
-			QueryEnd:   queryEnd,
+			StorageID:   route.StorageID,
+			StorageType: route.StorageType,
+			StorageName: route.StorageName,
+			ClusterName: route.ClusterName,
+			DB:          route.DB,
+			Measurement: route.Measurement,
+			QueryStart:  queryStart,
+			QueryEnd:    queryEnd,
 		}
 		if routeStart.Before(routeEnd) {
 			storageRange.Start = routeStart

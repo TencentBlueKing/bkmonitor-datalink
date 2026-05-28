@@ -369,6 +369,8 @@ definitions:
         type: integer
       storage_id:
         type: string
+      storage_type:
+        type: string
     type: object
   query.TsDBV2:
     properties:

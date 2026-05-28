@@ -67,8 +67,20 @@ type TimeField struct {
 	Unit string `json:"unit"`
 }
 
+// Record 是 Redis 中 result_table_detail.storage_cluster_records 的单条时间分段路由。
+// 字段需要和 UQ query.Record 保持一致，供 msgp 缓存和路由反序列化使用。
 type Record struct {
-	StorageID  int64 `json:"storage_id,omitempty"`
+	// StorageID 是该时间段命中的存储集群 ID。
+	StorageID int64 `json:"storage_id,omitempty"`
+	// StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
+	StorageType string `json:"storage_type,omitempty"`
+	// StorageName / ClusterName 表示存储集群名，Doris 查询 BKBase 时会透传为 properties.cluster_name。
+	StorageName string `json:"storage_name,omitempty"`
+	ClusterName string `json:"cluster_name,omitempty"`
+	// DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris 使用 bkbase_table_id + doris。
+	DB          string `json:"db,omitempty"`
+	Measurement string `json:"measurement,omitempty"`
+	// EnableTime 是该路由开始生效的 Unix 秒级时间戳。
 	EnableTime int64 `json:"enable_time,omitempty"`
 }
 

@@ -870,19 +870,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	// 查询路由匹配中的 tsDB 列表
 	routeBaseStart, routeBaseEnd := q.routeTimeRange(qp)
 	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
-	routeStart := routeBaseStart.Add(-routeLookback)
-	routeEnd := routeBaseEnd.Add(routeLookForward)
 	for _, tsDB := range tsDBs {
 		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(routeBaseStart, routeBaseEnd, routeLookback, routeLookForward)
-		if len(storageRanges) == 0 {
-			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，并补上 PromQL range/offset 需要的额外回看窗口。
-			// 无迁移记录时 GetStorageIDRangesWithOverlap 会返回默认 storage_id；这里主要兜底迁移记录存在但时间窗口完全不相交的场景。
-			for _, storageID := range tsDB.GetStorageIDs(routeStart, routeEnd) {
-				storageRanges = append(storageRanges, queryMod.StorageIDRange{
-					StorageID: storageID,
-				})
-			}
-		}
 
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
@@ -893,6 +882,24 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
 			query.StorageID = storageRange.StorageID
+			// storageRange 是按时间段命中的完整路由信息；存在时必须覆盖外层 RT detail，
+			// 否则 ES + Doris 混合场景会用外层存储的 db/measurement 去查另一种存储。
+			if storageRange.StorageType != "" {
+				query.StorageType = storageRange.StorageType
+			}
+			if storageRange.StorageName != "" {
+				query.StorageName = storageRange.StorageName
+			}
+			if storageRange.ClusterName != "" {
+				query.ClusterName = storageRange.ClusterName
+			}
+			if storageRange.DB != "" {
+				query.DB = storageRange.DB
+			}
+			if storageRange.Measurement != "" {
+				query.Measurement = storageRange.Measurement
+				query.Measurements = []string{storageRange.Measurement}
+			}
 			if !storageRange.IsZero() {
 				query.RouteStart = storageRange.Start
 				query.RouteEnd = storageRange.End

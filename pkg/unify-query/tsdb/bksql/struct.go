@@ -25,6 +25,16 @@ const (
 type Params struct {
 	SQL           string `json:"sql"`
 	PreferStorage string `json:"prefer_storage"`
+	Properties    any    `json:"properties,omitempty"`
+}
+
+type QuerySyncRequest struct {
+	SQL         string
+	ClusterName string
+}
+
+type QuerySyncProperties struct {
+	ClusterName string `json:"cluster_name,omitempty"`
 }
 
 type Result struct {

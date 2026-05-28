@@ -80,14 +80,20 @@ func (c *ProcessbeatConfig) InitIdent() error {
 	// 需要在计算 indent 之前进行 dataid 替换 否则 reload 不会生效
 
 	storage := tenant.DefaultStorage()
-	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
-		c.PortDataId = v
+	if c.PortDataId != 0 {
+		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
+			c.PortDataId = v
+		}
 	}
-	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
-		c.TopDataId = v
+	if c.TopDataId != 0 {
+		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
+			c.TopDataId = v
+		}
 	}
-	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
-		c.PerfDataId = v
+	if c.PerfDataId != 0 {
+		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
+			c.PerfDataId = v
+		}
 	}
 
 	return c.initIdent(c)

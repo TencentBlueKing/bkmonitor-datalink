@@ -65,7 +65,7 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: time.Minute,
 		},
-		"falls back to step when aggregate has no window": {
+		"plain avg without aggregate window has no bucket duration": {
 			name: "avg",
 			queries: []*Query{
 				{
@@ -77,7 +77,7 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: 5 * time.Minute,
-			expected: 5 * time.Minute,
+			expected: 0,
 		},
 		"uses avg window when select hint uses avg alias": {
 			name: "avg",

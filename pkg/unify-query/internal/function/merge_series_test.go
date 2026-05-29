@@ -668,6 +668,17 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 10,
 		},
+		"single overlap only route with zero time range is filtered": {
+			// 只有 overlap-only 路由返回该 label 时，也不能因为单 series early return 泄漏 inactive storage 样本。
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value:     30,
+					zeroRange: true,
+				},
+			},
+			expected: 0,
+		},
 	}
 
 	for name, tc := range testCases {
@@ -702,18 +713,23 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, bucketStep))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
+			if tc.expected == 0 && len(tc.routes) == 1 && tc.routes[0].zeroRange {
+				assert.Empty(t, ts)
+				return
+			}
+			expectedSamples := []prompb.Sample{
+				{
+					Value:     tc.expected,
+					Timestamp: bucketStart.UnixMilli(),
+				},
+			}
 			assert.Equal(t, mock.TimeSeriesList{
 				{
 					Labels: []prompb.Label{
 						{Name: "__name__", Value: "up"},
 						{Name: "job", Value: "elasticsearch"},
 					},
-					Samples: []prompb.Sample{
-						{
-							Value:     tc.expected,
-							Timestamp: bucketStart.UnixMilli(),
-						},
-					},
+					Samples: expectedSamples,
 				},
 			}, ts)
 		})

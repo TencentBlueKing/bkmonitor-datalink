@@ -136,6 +136,9 @@ func mergeBucketDuration(name string, queryList []*Query, fallback time.Duration
 		}
 	}
 
+	if isAvgBucketFunc(name) {
+		return 0
+	}
 	return fallback
 }
 

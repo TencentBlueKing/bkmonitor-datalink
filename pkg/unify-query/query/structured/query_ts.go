@@ -833,7 +833,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				continue
 			}
 
-			storageUUID := storageMergeUUID(query)
+			storageUUID := query.StorageUUID()
 			if oq, ok := queryMap[storageUUID]; ok {
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
 				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
@@ -864,21 +864,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
-}
-
-func storageMergeUUID(query *metadata.Query) string {
-	if query == nil {
-		return ""
-	}
-
-	return fmt.Sprintf(
-		"%s|route:%d-%d|query:%d-%d",
-		query.StorageUUID(),
-		query.RouteStart.UnixNano(),
-		query.RouteEnd.UnixNano(),
-		query.RouteQueryStart.UnixNano(),
-		query.RouteQueryEnd.UnixNano(),
-	)
 }
 
 func (q *Query) BuildMetadataQuery(

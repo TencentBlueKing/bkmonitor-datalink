@@ -291,7 +291,7 @@ func TestQueryToMetric(t *testing.T) {
 	}
 }
 
-func TestStorageMergeUUIDIncludesRouteRange(t *testing.T) {
+func TestStorageUUIDIncludesRouteRange(t *testing.T) {
 	base := &md.Query{
 		StorageType: md.BkSqlStorageType,
 		StorageID:   "0",
@@ -310,8 +310,19 @@ func TestStorageMergeUUIDIncludesRouteRange(t *testing.T) {
 	second.RouteQueryStart = time.Unix(240, 0)
 	second.RouteQueryEnd = time.Unix(460, 0)
 
-	assert.Equal(t, first.StorageUUID(), second.StorageUUID())
-	assert.NotEqual(t, storageMergeUUID(&first), storageMergeUUID(&second))
+	firstWithoutRange := first
+	secondWithoutRange := second
+	firstWithoutRange.RouteStart = time.Time{}
+	firstWithoutRange.RouteEnd = time.Time{}
+	firstWithoutRange.RouteQueryStart = time.Time{}
+	firstWithoutRange.RouteQueryEnd = time.Time{}
+	secondWithoutRange.RouteStart = time.Time{}
+	secondWithoutRange.RouteEnd = time.Time{}
+	secondWithoutRange.RouteQueryStart = time.Time{}
+	secondWithoutRange.RouteQueryEnd = time.Time{}
+
+	assert.Equal(t, firstWithoutRange.StorageUUID(), secondWithoutRange.StorageUUID())
+	assert.NotEqual(t, first.StorageUUID(), second.StorageUUID())
 }
 
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {

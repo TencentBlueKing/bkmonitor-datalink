@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -69,11 +70,16 @@ func (q *Query) StorageUUID() string {
 	var l []string
 	for _, s := range []any{
 		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
+		q.RouteStart.UnixNano(), q.RouteEnd.UnixNano(), q.RouteQueryStart.UnixNano(), q.RouteQueryEnd.UnixNano(),
 	} {
 		switch ns := s.(type) {
 		case string:
 			if ns != "" {
 				l = append(l, ns)
+			}
+		case int64:
+			if ns != 0 {
+				l = append(l, fmt.Sprintf("%d", ns))
 			}
 		default:
 			nt, _ := json.Marshal(ns)

@@ -511,10 +511,11 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 	)
 
 	type routeSeries struct {
-		value     float64
-		start     time.Time
-		end       time.Time
-		withRange bool
+		value        float64
+		start        time.Time
+		end          time.Time
+		withRange    bool
+		invalidRange bool
 	}
 
 	testCases := map[string]struct {
@@ -632,9 +633,9 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 20,
 		},
-		"overlap only route without effective range is ignored": {
-			// 第二段只有 1h overlap 查询范围，没有真实 route 生效区间，不能按整段 bucket 参与权重。
-			// (10*300) / 300 = 10
+		"unranged series uses full bucket weight": {
+			// mixed route 合并中，普通无 route 时间段的 series 不能被丢弃，按完整 bucket 参与权重。
+			// (10*300 + 30*300) / (300 + 300) = 20
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -645,6 +646,24 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 				{
 					value: 30,
+				},
+			},
+			expected: 20,
+		},
+		"invalid route time range is ignored": {
+			// 带有无效 route 时间范围的 series 没有可用覆盖时长，不能参与加权。
+			// (10*300) / 300 = 10
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value:     10,
+					start:     bucketStart,
+					end:       bucketEnd,
+					withRange: true,
+				},
+				{
+					value:        30,
+					invalidRange: true,
 				},
 			},
 			expected: 10,
@@ -674,6 +693,9 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				if tc.withRange || route.withRange {
 					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
 				}
+				if route.invalidRange {
+					routeSet = invalidTimeRangeSeriesSet{SeriesSet: routeSet}
+				}
 				sets = append(sets, routeSet)
 			}
 
@@ -696,4 +718,20 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			}, ts)
 		})
 	}
+}
+
+type invalidTimeRangeSeriesSet struct {
+	storage.SeriesSet
+}
+
+func (s invalidTimeRangeSeriesSet) At() storage.Series {
+	return invalidTimeRangeSeries{Series: s.SeriesSet.At()}
+}
+
+type invalidTimeRangeSeries struct {
+	storage.Series
+}
+
+func (s invalidTimeRangeSeries) TimeRange() (int64, int64) {
+	return 1, 1
 }

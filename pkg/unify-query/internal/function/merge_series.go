@@ -186,18 +186,22 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 	weightMap := make(map[int64]float64)
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
-		if !ok {
-			continue
-		}
-		start, end := tr.TimeRange()
-		if start >= end {
-			continue
+		start, end := int64(0), int64(0)
+		if ok {
+			start, end = tr.TimeRange()
+			if start >= end {
+				continue
+			}
 		}
 		it := s.Iterator(nil)
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
-			// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
-			weight := overlapDuration(t, t+stepMs, start, end)
+			// 无 route 时间段的普通 series 使用完整 bucket 权重，避免 mixed route 合并时被丢弃。
+			weight := stepMs
+			if ok {
+				// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
+				weight = overlapDuration(t, t+stepMs, start, end)
+			}
 			if weight <= 0 {
 				continue
 			}

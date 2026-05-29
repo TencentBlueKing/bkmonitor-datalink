@@ -11,12 +11,15 @@ package query
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
+
+const StorageClusterRecordOverlap = time.Hour
 
 type Filter map[string]string
 
@@ -26,6 +29,22 @@ type Record struct {
 }
 
 type StorageClusterRecords []Record
+
+type StorageIDRange struct {
+	StorageID  string
+	Start      time.Time
+	End        time.Time
+	QueryStart time.Time
+	QueryEnd   time.Time
+}
+
+func (r StorageIDRange) IsZero() bool {
+	return r.Start.IsZero() || r.End.IsZero() || !r.Start.Before(r.End)
+}
+
+func (r StorageIDRange) QueryIsZero() bool {
+	return r.QueryStart.IsZero() || r.QueryEnd.IsZero() || !r.QueryStart.Before(r.QueryEnd)
+}
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
@@ -99,4 +118,70 @@ func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
 	}
 
 	return storageIDSet.ToArray()
+}
+
+// GetStorageIDRanges 通过查询时间获取存储 ID 以及该存储在本次查询中的有效时间段。
+func (z *TsDBV2) GetStorageIDRanges(start, end time.Time) []StorageIDRange {
+	// 没有迁移记录时只返回 storage_id，不填时间范围，避免普通单路由查询覆盖原有 step hints。
+	if len(z.StorageClusterRecords) == 0 {
+		return []StorageIDRange{
+			{
+				StorageID: z.StorageID,
+			},
+		}
+	}
+
+	records := append(StorageClusterRecords{}, z.StorageClusterRecords...)
+	sort.SliceStable(records, func(i, j int) bool {
+		return records[i].EnableTime > records[j].EnableTime
+	})
+
+	ranges := make([]StorageIDRange, 0, len(records))
+	checkStart := start.Add(-StorageClusterRecordOverlap)
+	checkEnd := end.Add(StorageClusterRecordOverlap)
+	// 遍历 storageClusterRecords 记录，按照开启时间倒序
+	for i, record := range records {
+		recordStart := time.Unix(record.EnableTime, 0)
+		recordEnd := checkEnd
+		if i > 0 {
+			// 倒序列表中，上一条记录是更新的 storage 生效点，也就是当前 storage 的结束时间。
+			recordEnd = time.Unix(records[i-1].EnableTime, 0)
+		}
+		// 查询范围保留迁移前后 1h 重叠，兼容切换边界数据可能落在相邻 storage 的情况。
+		queryStart := maxTime(checkStart, recordStart.Add(-StorageClusterRecordOverlap))
+		queryEnd := minTime(checkEnd, recordEnd.Add(StorageClusterRecordOverlap))
+		if !queryStart.Before(queryEnd) {
+			continue
+		}
+
+		// 权重范围只使用真实命中的 route 区间，避免 1h 查询重叠影响跨切换点 bucket 的时间权重。
+		routeStart := maxTime(start, recordStart)
+		routeEnd := minTime(end, recordEnd)
+		storageRange := StorageIDRange{
+			StorageID:  record.StorageID,
+			QueryStart: queryStart,
+			QueryEnd:   queryEnd,
+		}
+		if routeStart.Before(routeEnd) {
+			storageRange.Start = routeStart
+			storageRange.End = routeEnd
+		}
+		ranges = append(ranges, storageRange)
+	}
+
+	return ranges
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

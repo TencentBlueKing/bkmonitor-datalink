@@ -93,12 +93,77 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 		}
 
 		queryList = append(queryList, &Query{
-			instance: instance,
-			qry:      qry,
+			instance:   instance,
+			qry:        qry,
+			start:      qry.RouteStart,
+			end:        qry.RouteEnd,
+			queryStart: qry.RouteQueryStart,
+			queryEnd:   qry.RouteQueryEnd,
 		})
 	})
 
 	return queryList
+}
+
+func mergeFuncName(hints *storage.SelectHints, queryList []*Query) string {
+	if hints != nil && hints.Func != "" {
+		return hints.Func
+	}
+
+	for _, query := range queryList {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		if name := query.qry.Aggregates.OuterAggName(); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func mergeBucketDuration(name string, queryList []*Query, fallback time.Duration) time.Duration {
+	name = strings.ToLower(name)
+	for _, query := range queryList {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		aggregates := query.qry.Aggregates
+		for i := len(aggregates) - 1; i >= 0; i-- {
+			agg := aggregates[i]
+			if isSameBucketFunc(name, strings.ToLower(agg.Name)) && agg.Window > 0 {
+				return agg.Window
+			}
+		}
+	}
+
+	return fallback
+}
+
+func isSameBucketFunc(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return isAvgBucketFunc(a) && isAvgBucketFunc(b)
+}
+
+func isAvgBucketFunc(name string) bool {
+	switch name {
+	case function.Avg, function.AvgOT, function.Mean:
+		return true
+	default:
+		return false
+	}
+}
+
+func intersectTimeRange(start, end, routeStart, routeEnd time.Time) (time.Time, time.Time, bool) {
+	if routeStart.After(start) {
+		start = routeStart
+	}
+	if routeEnd.Before(end) {
+		end = routeEnd
+	}
+
+	return start, end, start.Before(end)
 }
 
 // selectFn 获取原始数据
@@ -127,20 +192,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	qp := metadata.GetQueryParams(ctx)
 
-	go func() {
-		defer func() {
-			recvDone <- struct{}{}
-		}()
-		var sets []storage.SeriesSet
-		for s := range setCh {
-			if s != nil {
-				sets = append(sets, s)
-			}
-		}
-
-		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(hints.Func))
-	}()
-
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
 			referenceName = m.Value
@@ -152,6 +203,25 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	span.Set("reference_name", referenceName)
 
 	queryList := q.getQueryList(referenceName)
+	mergeFunc := mergeFuncName(hints, queryList)
+	bucketDuration := mergeBucketDuration(mergeFunc, queryList, qp.Step)
+	span.Set("merge_func", mergeFunc)
+	span.Set("merge_bucket_duration", bucketDuration)
+
+	go func() {
+		defer func() {
+			recvDone <- struct{}{}
+		}()
+		var sets []storage.SeriesSet
+		for s := range setCh {
+			if s != nil {
+				sets = append(sets, s)
+			}
+		}
+
+		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
+		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
+	}()
 
 	p, _ := ants.NewPool(q.maxRouting)
 	defer p.Release()
@@ -190,6 +260,21 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 				endTime = function.MsIntMergeNs(hints.End, qp.End)
 			}
+			weightStartTime := startTime
+			weightEndTime := endTime
+			if query.hasQueryTimeRange() {
+				// 分段路由查询保留 SelectHints 的 range/lookback 扩展，只用 route 时间段裁剪本路实际查询范围。
+				var ok bool
+				startTime, endTime, ok = intersectTimeRange(startTime, endTime, query.queryStart, query.queryEnd)
+				if !ok {
+					return
+				}
+			}
+			if query.hasTimeRange() {
+				// 权重使用 route 时间段而不是本次查询时间段，避免跨切换点 bucket 权重失真。
+				weightStartTime = query.start
+				weightEndTime = query.end
+			}
 
 			// 逐路查询：失败只记录，不立即中断其他路由；成功路由进入 merge 阶段。
 			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
@@ -203,7 +288,11 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 
 			successedPaths.Add(1)
-			setCh <- currentSet
+			if query.hasTimeRange() {
+				setCh <- function.NewTimeRangeSeriesSet(currentSet, weightStartTime, weightEndTime)
+			} else {
+				setCh <- currentSet
+			}
 		})
 		if err != nil {
 			recordQueryError(err)

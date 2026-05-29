@@ -12,6 +12,7 @@ package function
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/prompb"
@@ -20,6 +21,10 @@ import (
 )
 
 func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) storage.Series {
+	return NewMergeSeriesSetWithFuncAndSortByStep(name, 0)
+}
+
+func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) func(...storage.Series) storage.Series {
 	return func(series ...storage.Series) storage.Series {
 		// 处理空输入
 		if len(series) == 0 {
@@ -31,9 +36,15 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 			return series[0]
 		}
 
+		name = strings.ToLower(name)
+		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；没有有效时间段的 overlap-only route 不参与权重。
+		if isAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
+			return mergeAvgSeriesSetWithTimeWeight(series, step)
+		}
+
 		// 根据name选择聚合函数
 		var aggFunc func(float64, float64) float64
-		switch strings.ToLower(name) {
+		switch name {
 		case Min, MinOT:
 			aggFunc = func(a, b float64) float64 {
 				if a < b {
@@ -48,6 +59,10 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 				}
 				return b
 			}
+		case Avg, AvgOT, Mean:
+			aggFunc = func(a, b float64) float64 {
+				return a + b
+			}
 		default: // 默认使用sum
 			aggFunc = func(a, b float64) float64 {
 				return a + b
@@ -56,6 +71,7 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 
 		// 按时间戳合并值
 		valueMap := make(map[int64]float64)
+		countMap := make(map[int64]float64)
 		for _, s := range series {
 			it := s.Iterator(nil)
 			for it.Next() == chunkenc.ValFloat {
@@ -65,6 +81,7 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 				} else {
 					valueMap[t] = v
 				}
+				countMap[t]++
 			}
 			if err := it.Err(); err != nil {
 				return &storage.SeriesEntry{
@@ -80,6 +97,12 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 
 		sortedData := make([]prompb.Sample, 0, len(valueMap))
 		for t, v := range valueMap {
+			if isAvgFunc(name) {
+				// 缺少 route 时间范围或 step 时无法计算时间权重，回退为同 timestamp 普通平均。
+				if count := countMap[t]; count > 0 {
+					v = v / count
+				}
+			}
 			sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
 		}
 		sort.Slice(sortedData, func(i, j int) bool {
@@ -96,6 +119,137 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 			},
 		}
 	}
+}
+
+// SeriesTimeRange 标记某条 Series 在本次查询中实际覆盖的 route 时间段，单位为毫秒时间戳。
+type SeriesTimeRange interface {
+	TimeRange() (start, end int64)
+}
+
+func NewTimeRangeSeriesSet(set storage.SeriesSet, start, end time.Time) storage.SeriesSet {
+	if set == nil || start.IsZero() || end.IsZero() || !start.Before(end) {
+		return set
+	}
+
+	return &timeRangeSeriesSet{
+		SeriesSet: set,
+		start:     start.UnixMilli(),
+		end:       end.UnixMilli(),
+	}
+}
+
+type timeRangeSeriesSet struct {
+	storage.SeriesSet
+	start int64
+	end   int64
+}
+
+func (s *timeRangeSeriesSet) At() storage.Series {
+	return &timeRangeSeries{
+		Series: s.SeriesSet.At(),
+		start:  s.start,
+		end:    s.end,
+	}
+}
+
+type timeRangeSeries struct {
+	storage.Series
+	start int64
+	end   int64
+}
+
+func (s *timeRangeSeries) TimeRange() (int64, int64) {
+	return s.start, s.end
+}
+
+func hasAnyTimeRange(series ...storage.Series) bool {
+	for _, s := range series {
+		tr, ok := s.(SeriesTimeRange)
+		if !ok {
+			continue
+		}
+		start, end := tr.TimeRange()
+		if start < end {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration) storage.Series {
+	stepMs := step.Milliseconds()
+	if stepMs <= 0 {
+		return NewMergeSeriesSetWithFuncAndSort(Avg)(series...)
+	}
+
+	valueMap := make(map[int64]float64)
+	weightMap := make(map[int64]float64)
+	for _, s := range series {
+		tr, ok := s.(SeriesTimeRange)
+		if !ok {
+			continue
+		}
+		start, end := tr.TimeRange()
+		if start >= end {
+			continue
+		}
+		it := s.Iterator(nil)
+		for it.Next() == chunkenc.ValFloat {
+			t, v := it.At()
+			// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
+			weight := overlapDuration(t, t+stepMs, start, end)
+			if weight <= 0 {
+				continue
+			}
+			// 加权平均 = sum(avg * overlap) / sum(overlap)
+			valueMap[t] += v * float64(weight)
+			weightMap[t] += float64(weight)
+		}
+		if err := it.Err(); err != nil {
+			return &storage.SeriesEntry{
+				Lset: series[0].Labels(),
+				SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
+					return &seriesIterator{
+						err: err,
+					}
+				},
+			}
+		}
+	}
+
+	sortedData := make([]prompb.Sample, 0, len(valueMap))
+	for t, v := range valueMap {
+		if weight := weightMap[t]; weight > 0 {
+			v = v / weight
+		}
+		sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
+	}
+	sort.Slice(sortedData, func(i, j int) bool {
+		return sortedData[i].Timestamp < sortedData[j].Timestamp
+	})
+
+	return &storage.SeriesEntry{
+		Lset: series[0].Labels(),
+		SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
+			return &seriesIterator{
+				list: sortedData,
+				idx:  -1,
+			}
+		},
+	}
+}
+
+func overlapDuration(start, end, otherStart, otherEnd int64) int64 {
+	if start < otherStart {
+		start = otherStart
+	}
+	if end > otherEnd {
+		end = otherEnd
+	}
+	if start >= end {
+		return 0
+	}
+	return end - start
 }
 
 type seriesIterator struct {

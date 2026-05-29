@@ -22,6 +22,7 @@ const (
 	Min   = "min"
 	Max   = "max"
 	Avg   = "avg"
+	Mean  = "mean"
 	Sum   = "sum"
 	Count = "count"
 
@@ -32,11 +33,22 @@ const (
 	CountOT = "count_over_time"
 )
 
+func isAvgFunc(name string) bool {
+	switch strings.ToLower(name) {
+	case Avg, AvgOT, Mean:
+		return true
+	default:
+		return false
+	}
+}
+
 // MergeSamplesWithFuncAndSort 合并 samples 数据，如果相同时间的进行函数处理，并且按照时间排序
 func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sample) []prompb.Sample {
 	return func(samplesList ...[]prompb.Sample) []prompb.Sample {
+		name = strings.ToLower(name)
+
 		var aggFunc func(i, j float64) float64
-		switch strings.ToLower(name) {
+		switch name {
 		case Min:
 			aggFunc = func(i, j float64) float64 {
 				if i < j {
@@ -87,15 +99,14 @@ func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sampl
 
 		for i, timestamp := range timestamps {
 			var value float64
-			switch name {
 			// Avg 方法需要等所有的数据合并了之后，再做计算
-			case Avg:
+			if isAvgFunc(name) {
 				if countMap[timestamp] > 0 {
 					value = sampleMap[timestamp] / countMap[timestamp]
 				} else {
 					value = 0
 				}
-			default:
+			} else {
 				value = sampleMap[timestamp]
 			}
 

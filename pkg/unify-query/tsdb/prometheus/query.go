@@ -17,8 +17,18 @@ import (
 )
 
 type Query struct {
-	instance tsdb.Instance
-	qry      *metadata.Query
-	start    time.Time
-	end      time.Time
+	instance   tsdb.Instance
+	qry        *metadata.Query
+	start      time.Time
+	end        time.Time
+	queryStart time.Time
+	queryEnd   time.Time
+}
+
+func (q *Query) hasTimeRange() bool {
+	return !q.start.IsZero() && !q.end.IsZero() && q.start.Before(q.end)
+}
+
+func (q *Query) hasQueryTimeRange() bool {
+	return !q.queryStart.IsZero() && !q.queryEnd.IsZero() && q.queryStart.Before(q.queryEnd)
 }

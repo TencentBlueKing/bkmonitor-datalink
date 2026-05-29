@@ -54,3 +54,115 @@ func TestTsDBV2_GetStorageIDs(t *testing.T) {
 	sort.Strings(expected)
 	assert.Equal(t, expected, ids)
 }
+
+func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
+	var (
+		start      = time.UnixMilli(1757401305000) // 2025-09-09 15:01:45
+		switchTime = time.Unix(1757401605, 0)      // 2025-09-09 15:06:45
+		end        = time.UnixMilli(1757401905000) // 2025-09-09 15:11:45
+		records    = []Record{
+			{
+				StorageID:  "16",
+				EnableTime: switchTime.Unix(),
+			},
+			{
+				StorageID:  "5",
+				EnableTime: 1756969402,
+			},
+		}
+	)
+
+	testCases := map[string]struct {
+		db       *TsDBV2
+		start    time.Time
+		end      time.Time
+		expected []StorageIDRange
+	}{
+		"no storage cluster records keeps only storage id": {
+			db: &TsDBV2{
+				StorageID: "16",
+			},
+			start: start,
+			end:   end,
+			expected: []StorageIDRange{
+				{
+					StorageID: "16",
+				},
+			},
+		},
+		"query crosses storage switch time": {
+			db: &TsDBV2{
+				StorageID:             "16",
+				StorageClusterRecords: records,
+			},
+			start: start,
+			end:   end,
+			expected: []StorageIDRange{
+				{
+					StorageID:  "16",
+					Start:      switchTime,
+					End:        end,
+					QueryStart: switchTime.Add(-StorageClusterRecordOverlap),
+					QueryEnd:   end.Add(StorageClusterRecordOverlap),
+				},
+				{
+					StorageID:  "5",
+					Start:      start,
+					End:        switchTime,
+					QueryStart: start.Add(-StorageClusterRecordOverlap),
+					QueryEnd:   switchTime.Add(StorageClusterRecordOverlap),
+				},
+			},
+		},
+		"query after storage switch time": {
+			db: &TsDBV2{
+				StorageID:             "16",
+				StorageClusterRecords: records,
+			},
+			start: switchTime.Add(time.Minute),
+			end:   switchTime.Add(5 * time.Minute),
+			expected: []StorageIDRange{
+				{
+					StorageID:  "16",
+					Start:      switchTime.Add(time.Minute),
+					End:        switchTime.Add(5 * time.Minute),
+					QueryStart: switchTime.Add(-59 * time.Minute),
+					QueryEnd:   switchTime.Add(65 * time.Minute),
+				},
+				{
+					StorageID:  "5",
+					QueryStart: switchTime.Add(-59 * time.Minute),
+					QueryEnd:   switchTime.Add(StorageClusterRecordOverlap),
+				},
+			},
+		},
+		"query before storage switch time": {
+			db: &TsDBV2{
+				StorageID:             "16",
+				StorageClusterRecords: records,
+			},
+			start: switchTime.Add(-5 * time.Minute),
+			end:   switchTime.Add(-time.Minute),
+			expected: []StorageIDRange{
+				{
+					StorageID:  "16",
+					QueryStart: switchTime.Add(-StorageClusterRecordOverlap),
+					QueryEnd:   switchTime.Add(59 * time.Minute),
+				},
+				{
+					StorageID:  "5",
+					Start:      switchTime.Add(-5 * time.Minute),
+					End:        switchTime.Add(-time.Minute),
+					QueryStart: switchTime.Add(-65 * time.Minute),
+					QueryEnd:   switchTime.Add(59 * time.Minute),
+				},
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.db.GetStorageIDRanges(tc.start, tc.end))
+		})
+	}
+}

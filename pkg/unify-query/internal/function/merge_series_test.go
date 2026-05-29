@@ -11,6 +11,7 @@ package function_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
@@ -349,7 +350,7 @@ func TestMergeSeriesSet(t *testing.T) {
 					},
 				},
 			},
-			fn: function.NewMergeSeriesSetWithFuncAndSort("max"),
+			fn: function.NewMergeSeriesSetWithFuncAndSort(function.Max),
 		},
 		"two queryResult with mergeSeriesSetWithFuncAndSort min": {
 			qrs: []*prompb.QueryResult{
@@ -416,6 +417,71 @@ func TestMergeSeriesSet(t *testing.T) {
 			},
 			fn: function.NewMergeSeriesSetWithFuncAndSort("min"),
 		},
+		"two queryResult with mergeSeriesSetWithFuncAndSort avg": {
+			qrs: []*prompb.QueryResult{
+				{
+					Timeseries: []*prompb.TimeSeries{
+						ts1, ts2,
+					},
+				},
+				{
+					Timeseries: []*prompb.TimeSeries{
+						ts3, ts4,
+					},
+				},
+			},
+			ts: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "up",
+						},
+						{
+							Name:  "job",
+							Value: "elasticsearch",
+						},
+					},
+					Samples: []prompb.Sample{
+						{
+							Value:     5,
+							Timestamp: 60,
+						},
+						{
+							Value:     6,
+							Timestamp: 120,
+						},
+					},
+				},
+				{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "up",
+						},
+						{
+							Name:  "job",
+							Value: "prometheus",
+						},
+					},
+					Samples: []prompb.Sample{
+						{
+							Value:     2.5,
+							Timestamp: 0,
+						},
+						{
+							Value:     5,
+							Timestamp: 60,
+						},
+						{
+							Value:     3,
+							Timestamp: 120,
+						},
+					},
+				},
+			},
+			fn: function.NewMergeSeriesSetWithFuncAndSort(function.Avg),
+		},
 	}
 
 	for name, tc := range testCases {
@@ -433,6 +499,201 @@ func TestMergeSeriesSet(t *testing.T) {
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
 			assert.Equal(t, tc.ts, ts)
+		})
+	}
+}
+
+func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
+	var (
+		bucketStart = time.UnixMilli(0)
+		bucketStep  = 5 * time.Minute
+		bucketEnd   = bucketStart.Add(bucketStep)
+	)
+
+	type routeSeries struct {
+		value     float64
+		start     time.Time
+		end       time.Time
+		withRange bool
+	}
+
+	testCases := map[string]struct {
+		fn        string
+		routes    []routeSeries
+		withRange bool
+		expected  float64
+	}{
+		"avg uses route overlap as weight": {
+			// bucket 为 [0s, 300s)，两段 route 覆盖时长分别是 132s 和 168s。
+			// (10*132 + 30*168) / (132 + 168) = 21.2
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(132 * time.Second),
+				},
+				{
+					value: 30,
+					start: bucketStart.Add(132 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expected:  21.2,
+		},
+		"mean uses route overlap as weight": {
+			// mean 是 avg 的别名，同样要按 route 覆盖时长加权。
+			// (10*132 + 30*168) / (132 + 168) = 21.2
+			fn: function.Mean,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(132 * time.Second),
+				},
+				{
+					value: 30,
+					start: bucketStart.Add(132 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expected:  21.2,
+		},
+		"avg_over_time uses route overlap as weight": {
+			// avg_over_time 也是 avg 类函数，同样要按 route 覆盖时长加权。
+			// (10*132 + 30*168) / (132 + 168) = 21.2
+			fn: function.AvgOT,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(132 * time.Second),
+				},
+				{
+					value: 30,
+					start: bucketStart.Add(132 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expected:  21.2,
+		},
+		"equal route overlap matches arithmetic average": {
+			// 两段 route 覆盖时长相等时，加权平均结果应等同于普通平均。
+			// (10*150 + 30*150) / (150 + 150) = 20
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(150 * time.Second),
+				},
+				{
+					value: 30,
+					start: bucketStart.Add(150 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expected:  20,
+		},
+		"route without bucket overlap is ignored": {
+			// 第二段 route 不覆盖当前 bucket，只使用第一段 route 的值。
+			// (10*300) / 300 = 10
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketEnd,
+				},
+				{
+					value: 30,
+					start: bucketEnd,
+					end:   bucketEnd.Add(bucketStep),
+				},
+			},
+			withRange: true,
+			expected:  10,
+		},
+		"missing route time range falls back to arithmetic average": {
+			// 没有 route 时间范围就无法计算权重，保持原来的普通平均逻辑。
+			// (10 + 30) / 2 = 20
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value: 10,
+				},
+				{
+					value: 30,
+				},
+			},
+			expected: 20,
+		},
+		"overlap only route without effective range is ignored": {
+			// 第二段只有 1h overlap 查询范围，没有真实 route 生效区间，不能按整段 bucket 参与权重。
+			// (10*300) / 300 = 10
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value:     10,
+					start:     bucketStart,
+					end:       bucketEnd,
+					withRange: true,
+				},
+				{
+					value: 30,
+				},
+			},
+			expected: 10,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			sets := make([]storage.SeriesSet, 0, len(tc.routes))
+			for _, route := range tc.routes {
+				routeSet := remote.FromQueryResult(true, &prompb.QueryResult{
+					Timeseries: []*prompb.TimeSeries{
+						{
+							Labels: []prompb.Label{
+								{Name: "__name__", Value: "up"},
+								{Name: "job", Value: "elasticsearch"},
+							},
+							Samples: []prompb.Sample{
+								{
+									Value:     route.value,
+									Timestamp: bucketStart.UnixMilli(),
+								},
+							},
+						},
+					},
+				})
+				if tc.withRange || route.withRange {
+					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
+				}
+				sets = append(sets, routeSet)
+			}
+
+			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, bucketStep))
+			ts, err := mock.SeriesSetToTimeSeries(set)
+			assert.Nil(t, err)
+			assert.Equal(t, mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{
+						{Name: "__name__", Value: "up"},
+						{Name: "job", Value: "elasticsearch"},
+					},
+					Samples: []prompb.Sample{
+						{
+							Value:     tc.expected,
+							Timestamp: bucketStart.UnixMilli(),
+						},
+					},
+				},
+			}, ts)
 		})
 	}
 }

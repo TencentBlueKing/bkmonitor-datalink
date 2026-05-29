@@ -731,9 +731,17 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
+		storageRanges := tsDB.GetStorageIDRanges(qp.Start, qp.End)
+		if len(storageRanges) == 0 {
+			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，避免边界数据因为 route range 裁剪被漏查。
+			for _, storageID := range tsDB.GetStorageIDs(qp.Start, qp.End) {
+				storageRanges = append(storageRanges, queryMod.StorageIDRange{
+					StorageID: storageID,
+				})
+			}
+		}
 
-		for _, storageID := range storageIDs {
+		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
 				continue
@@ -741,7 +749,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
-			query.StorageID = storageID
+			query.StorageID = storageRange.StorageID
+			if !storageRange.IsZero() {
+				query.RouteStart = storageRange.Start
+				query.RouteEnd = storageRange.End
+			}
+			if !storageRange.QueryIsZero() {
+				query.RouteQueryStart = storageRange.QueryStart
+				query.RouteQueryEnd = storageRange.QueryEnd
+			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 			// 如果没有指定查询类型，则通过 storageID 获取
@@ -820,7 +836,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			storageUUID := query.StorageUUID()
 			if oq, ok := queryMap[storageUUID]; ok {
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
-				oq.DBs = append(oq.DBs, query.DB)
+				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
+				if query.TableID < oq.TableID {
+					query.DBs = append(oq.DBs, query.DB)
+					queryMap[storageUUID] = query
+				} else {
+					oq.DBs = append(oq.DBs, query.DB)
+				}
 			} else {
 				query.DBs = []string{query.DB}
 				queryMap[storageUUID] = query

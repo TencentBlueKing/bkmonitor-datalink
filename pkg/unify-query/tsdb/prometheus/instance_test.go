@@ -43,6 +43,92 @@ func (q *queryable) Querier(ctx context.Context, mint, maxt int64) (storage.Quer
 	return &querier{}, nil
 }
 
+func TestMergeBucketDuration(t *testing.T) {
+	testCases := map[string]struct {
+		name     string
+		queries  []*Query
+		fallback time.Duration
+		expected time.Duration
+	}{
+		"uses aggregate window when function matches": {
+			name: "avg_over_time",
+			queries: []*Query{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "sum"},
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"falls back to step when aggregate has no window": {
+			name: "avg",
+			queries: []*Query{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg"},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 5 * time.Minute,
+		},
+		"uses avg window when select hint uses avg alias": {
+			name: "avg",
+			queries: []*Query{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"falls back to step when function does not match": {
+			name: "max",
+			queries: []*Query{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 5 * time.Minute,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, mergeBucketDuration(tc.name, tc.queries, tc.fallback))
+		})
+	}
+}
+
+func TestIntersectTimeRange(t *testing.T) {
+	start := time.Unix(100, 0)
+	end := time.Unix(200, 0)
+
+	rangeStart, rangeEnd, ok := intersectTimeRange(start, end, time.Unix(120, 0), time.Unix(180, 0))
+	assert.True(t, ok)
+	assert.Equal(t, time.Unix(120, 0), rangeStart)
+	assert.Equal(t, time.Unix(180, 0), rangeEnd)
+
+	_, _, ok = intersectTimeRange(start, end, time.Unix(200, 0), time.Unix(300, 0))
+	assert.False(t, ok)
+}
+
 type querier struct{}
 
 // LabelValues 返回可能的标签(维度)值。

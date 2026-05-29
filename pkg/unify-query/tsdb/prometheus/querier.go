@@ -290,6 +290,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			successedPaths.Add(1)
 			if query.hasTimeRange() {
 				setCh <- function.NewTimeRangeSeriesSet(currentSet, weightStartTime, weightEndTime)
+			} else if query.hasQueryTimeRange() {
+				// 迁移 overlap-only 路由只有查询扩展范围，没有真实生效范围，不能按普通无 range series 参与 avg 权重。
+				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
 			} else {
 				setCh <- currentSet
 			}

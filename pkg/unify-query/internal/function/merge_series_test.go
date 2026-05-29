@@ -511,11 +511,11 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 	)
 
 	type routeSeries struct {
-		value        float64
-		start        time.Time
-		end          time.Time
-		withRange    bool
-		invalidRange bool
+		value     float64
+		start     time.Time
+		end       time.Time
+		withRange bool
+		zeroRange bool
 	}
 
 	testCases := map[string]struct {
@@ -650,8 +650,8 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 20,
 		},
-		"invalid route time range is ignored": {
-			// 带有无效 route 时间范围的 series 没有可用覆盖时长，不能参与加权。
+		"overlap only route with zero time range is ignored": {
+			// 迁移 overlap-only 路由只有查询扩展范围，没有真实 route 生效区间，不能参与加权。
 			// (10*300) / 300 = 10
 			fn: function.Avg,
 			routes: []routeSeries{
@@ -662,8 +662,8 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 					withRange: true,
 				},
 				{
-					value:        30,
-					invalidRange: true,
+					value:     30,
+					zeroRange: true,
 				},
 			},
 			expected: 10,
@@ -693,8 +693,8 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				if tc.withRange || route.withRange {
 					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
 				}
-				if route.invalidRange {
-					routeSet = invalidTimeRangeSeriesSet{SeriesSet: routeSet}
+				if route.zeroRange {
+					routeSet = function.NewZeroTimeRangeSeriesSet(routeSet)
 				}
 				sets = append(sets, routeSet)
 			}
@@ -718,20 +718,4 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			}, ts)
 		})
 	}
-}
-
-type invalidTimeRangeSeriesSet struct {
-	storage.SeriesSet
-}
-
-func (s invalidTimeRangeSeriesSet) At() storage.Series {
-	return invalidTimeRangeSeries{Series: s.SeriesSet.At()}
-}
-
-type invalidTimeRangeSeries struct {
-	storage.Series
-}
-
-func (s invalidTimeRangeSeries) TimeRange() (int64, int64) {
-	return 1, 1
 }

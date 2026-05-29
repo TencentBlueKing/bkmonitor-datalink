@@ -138,6 +138,16 @@ func NewTimeRangeSeriesSet(set storage.SeriesSet, start, end time.Time) storage.
 	}
 }
 
+func NewZeroTimeRangeSeriesSet(set storage.SeriesSet) storage.SeriesSet {
+	if set == nil {
+		return nil
+	}
+
+	return &timeRangeSeriesSet{
+		SeriesSet: set,
+	}
+}
+
 type timeRangeSeriesSet struct {
 	storage.SeriesSet
 	start int64

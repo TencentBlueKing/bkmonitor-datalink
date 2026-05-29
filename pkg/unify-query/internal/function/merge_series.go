@@ -33,9 +33,6 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 
 		// 处理单个series的情况
 		if len(series) == 1 {
-			if isZeroTimeRangeSeries(series[0]) {
-				return emptySeries(series[0])
-			}
 			return series[0]
 		}
 
@@ -146,7 +143,9 @@ func NewZeroTimeRangeSeriesSet(set storage.SeriesSet) storage.SeriesSet {
 		return nil
 	}
 
-	return storage.EmptySeriesSet()
+	return &timeRangeSeriesSet{
+		SeriesSet: set,
+	}
 }
 
 type timeRangeSeriesSet struct {
@@ -185,26 +184,6 @@ func hasAnyTimeRange(series ...storage.Series) bool {
 		}
 	}
 	return false
-}
-
-func isZeroTimeRangeSeries(series storage.Series) bool {
-	tr, ok := series.(SeriesTimeRange)
-	if !ok {
-		return false
-	}
-	start, end := tr.TimeRange()
-	return start >= end
-}
-
-func emptySeries(series storage.Series) storage.Series {
-	return &storage.SeriesEntry{
-		Lset: series.Labels(),
-		SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-			return &seriesIterator{
-				idx: -1,
-			}
-		},
-	}
 }
 
 func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration) storage.Series {

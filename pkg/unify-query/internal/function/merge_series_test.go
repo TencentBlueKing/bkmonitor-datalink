@@ -668,8 +668,12 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 10,
 		},
-		"single overlap only route with zero time range is filtered": {
-			// 只有 overlap-only 路由返回该 label 时，也不能因为单 series early return 泄漏 inactive storage 样本。
+		"single overlap only route with zero time range is preserved": {
+			// 只有 overlap-only 路由返回该 label 时，需要保留边界样本，避免迁移 overlap 查询失效。
+			// 这里的问题不是 avg 权重计算，而是 overlap-only route 查询本身的兜底语义：
+			// GetStorageIDRanges 会在迁移切换点前后额外查询相邻 storage，用来找回可能只写到相邻后端的边界样本。
+			// 这些 route 没有真实生效时间段，所以不能参与 time-weighted avg 的权重；但它们查到的样本仍然要保留给最终结果。
+			// 当前实现用 NewZeroTimeRangeSeriesSet 直接返回 EmptySeriesSet，会在进入 merge 前就把这些样本全部丢掉。
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -677,7 +681,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 					zeroRange: true,
 				},
 			},
-			expected: 0,
+			expected: 30,
 		},
 	}
 
@@ -713,10 +717,6 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, bucketStep))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
-			if tc.expected == 0 && len(tc.routes) == 1 && tc.routes[0].zeroRange {
-				assert.Empty(t, ts)
-				return
-			}
 			expectedSamples := []prompb.Sample{
 				{
 					Value:     tc.expected,
@@ -734,4 +734,43 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			}, ts)
 		})
 	}
+}
+
+func TestZeroTimeRangeSeriesSetPreservesOverlapSamples(t *testing.T) {
+	// NewZeroTimeRangeSeriesSet 的语义应该是“样本可查询、avg 加权时零权重”，不是“直接丢弃样本”。
+	// overlap-only route 是为迁移边界兜底查询相邻 storage；如果这里返回空 SeriesSet，
+	// 那么 sum/max/普通返回路径以及单路 avg 都会在 merge 前丢掉这些边界样本。
+	set := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "up"},
+					{Name: "job", Value: "elasticsearch"},
+				},
+				Samples: []prompb.Sample{
+					{
+						Value:     30,
+						Timestamp: 0,
+					},
+				},
+			},
+		},
+	})
+
+	ts, err := mock.SeriesSetToTimeSeries(function.NewZeroTimeRangeSeriesSet(set))
+	assert.Nil(t, err)
+	assert.Equal(t, mock.TimeSeriesList{
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "up"},
+				{Name: "job", Value: "elasticsearch"},
+			},
+			Samples: []prompb.Sample{
+				{
+					Value:     30,
+					Timestamp: 0,
+				},
+			},
+		},
+	}, ts)
 }

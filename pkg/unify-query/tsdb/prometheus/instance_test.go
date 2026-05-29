@@ -117,16 +117,102 @@ func TestMergeBucketDuration(t *testing.T) {
 }
 
 func TestIntersectTimeRange(t *testing.T) {
-	start := time.Unix(100, 0)
-	end := time.Unix(200, 0)
+	testCases := map[string]struct {
+		start      time.Time
+		end        time.Time
+		queryStart time.Time
+		queryEnd   time.Time
+		expectedS  time.Time
+		expectedE  time.Time
+		expectedOK bool
+	}{
+		"select range inside route query range is unchanged": {
+			start:      time.Unix(120, 0),
+			end:        time.Unix(180, 0),
+			queryStart: time.Unix(100, 0),
+			queryEnd:   time.Unix(200, 0),
+			expectedS:  time.Unix(120, 0),
+			expectedE:  time.Unix(180, 0),
+			expectedOK: true,
+		},
+		"select range outside route query range is skipped": {
+			start:      time.Unix(100, 0),
+			end:        time.Unix(200, 0),
+			queryStart: time.Unix(200, 0),
+			queryEnd:   time.Unix(300, 0),
+			expectedOK: false,
+		},
+		"select range partially outside route query range keeps full select range": {
+			// 对于已选中的路由，SelectHints.Start/End 是 PromQL 引擎计算表达式实际需要的取数范围。
+			// routeQueryStart/End 只用来判断这一路是否需要查询，不能把已经扩展过的 SelectHints 再裁窄。
+			start:      time.Unix(90, 0),
+			end:        time.Unix(210, 0),
+			queryStart: time.Unix(100, 0),
+			queryEnd:   time.Unix(200, 0),
+			expectedS:  time.Unix(90, 0),
+			expectedE:  time.Unix(210, 0),
+			expectedOK: true,
+		},
+	}
 
-	rangeStart, rangeEnd, ok := intersectTimeRange(start, end, time.Unix(120, 0), time.Unix(180, 0))
-	assert.True(t, ok)
-	assert.Equal(t, time.Unix(120, 0), rangeStart)
-	assert.Equal(t, time.Unix(180, 0), rangeEnd)
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			query := &Query{
+				queryStart: tc.queryStart,
+				queryEnd:   tc.queryEnd,
+			}
+			rangeStart, rangeEnd, ok := query.intersectTimeRange(tc.start, tc.end)
+			assert.Equal(t, tc.expectedOK, ok)
+			if !tc.expectedOK {
+				return
+			}
+			assert.Equal(t, tc.expectedS, rangeStart)
+			assert.Equal(t, tc.expectedE, rangeEnd)
+		})
+	}
+}
 
-	_, _, ok = intersectTimeRange(start, end, time.Unix(200, 0), time.Unix(300, 0))
-	assert.False(t, ok)
+func TestIntersectTimeRangePreservesSelectHintsLongLookback(t *testing.T) {
+	testCases := map[string]struct {
+		hintStart       time.Time
+		hintEnd         time.Time
+		routeQueryStart time.Time
+		routeQueryEnd   time.Time
+	}{
+		"long lookback extends before route query start": {
+			// 这里的问题是 SelectHints.Start/End 表示 PromQL 引擎计算表达式实际需要的取数范围。
+			// 对 avg_over_time(metric[2h]) 这类 range selector，第一个计算点需要查询开始时间之前的 2h 样本，
+			// 因此 SelectHints.Start 会早于用户查询开始时间，也可能早于迁移路由的 1h overlap 查询窗口。
+			// routeQueryStart/End 只是迁移路由为了多查相邻 storage 设置的 overlap 判断范围，
+			// 它不能反过来把 SelectHints 已经扩展出来的长 lookback 范围裁掉。
+			hintStart:       time.Unix(0, 0),
+			hintEnd:         time.Unix(200, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(260, 0),
+		},
+		"select hint end can also extend beyond route query end": {
+			// 右边界同样保持 SelectHints 原值：如果上层已经决定这个 storage route 需要查询，
+			// 这里不应该再把实际取数范围裁回 routeQueryEnd，否则可能破坏 range/lookback 所需样本。
+			hintStart:       time.Unix(100, 0),
+			hintEnd:         time.Unix(300, 0),
+			routeQueryStart: time.Unix(40, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			query := &Query{
+				queryStart: tc.routeQueryStart,
+				queryEnd:   tc.routeQueryEnd,
+			}
+
+			rangeStart, rangeEnd, ok := query.intersectTimeRange(tc.hintStart, tc.hintEnd)
+			assert.True(t, ok)
+			assert.Equal(t, tc.hintStart, rangeStart)
+			assert.Equal(t, tc.hintEnd, rangeEnd)
+		})
+	}
 }
 
 type querier struct{}

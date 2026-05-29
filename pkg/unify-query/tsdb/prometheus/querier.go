@@ -158,15 +158,11 @@ func isAvgBucketFunc(name string) bool {
 	}
 }
 
-func intersectTimeRange(start, end, routeStart, routeEnd time.Time) (time.Time, time.Time, bool) {
-	if routeStart.After(start) {
-		start = routeStart
+func (q *Query) intersectTimeRange(start, end time.Time) (time.Time, time.Time, bool) {
+	if !start.Before(q.queryEnd) || !q.queryStart.Before(end) {
+		return start, end, false
 	}
-	if routeEnd.Before(end) {
-		end = routeEnd
-	}
-
-	return start, end, start.Before(end)
+	return start, end, true
 }
 
 // selectFn 获取原始数据
@@ -266,9 +262,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			weightStartTime := startTime
 			weightEndTime := endTime
 			if query.hasQueryTimeRange() {
-				// 分段路由查询保留 SelectHints 的 range/lookback 扩展，只用 route 时间段裁剪本路实际查询范围。
+				// 分段路由只用 route 查询时间段判断本路是否相关，不裁剪 SelectHints 的 range/lookback 扩展。
 				var ok bool
-				startTime, endTime, ok = intersectTimeRange(startTime, endTime, query.queryStart, query.queryEnd)
+				startTime, endTime, ok = query.intersectTimeRange(startTime, endTime)
 				if !ok {
 					return
 				}

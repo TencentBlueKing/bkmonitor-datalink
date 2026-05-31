@@ -409,15 +409,16 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	// series 计算需要按照时间排序
-	query.Orders = append(metadata.Orders{
+	// series 计算需要按照时间排序。这里不能原地修改入参 query，调用方可能在多路查询中复用同一个 *metadata.Query。
+	seriesQuery := *query
+	seriesQuery.Orders = append(metadata.Orders{
 		{
 			Name: sql_expr.FieldTime,
 			Ast:  true,
 		},
-	}, query.Orders...)
+	}, append(metadata.Orders(nil), query.Orders...)...)
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, &seriesQuery, start, end)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

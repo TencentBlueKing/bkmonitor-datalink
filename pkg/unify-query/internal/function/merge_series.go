@@ -10,6 +10,7 @@
 package function
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -37,87 +38,143 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 		}
 
 		name = strings.ToLower(name)
-		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；没有有效时间段的 overlap-only route 不参与权重。
+		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
 		if isAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
 			return mergeAvgSeriesSetWithTimeWeight(series, step)
 		}
 
-		// 根据name选择聚合函数
-		var aggFunc func(float64, float64) float64
-		switch name {
-		case Min, MinOT:
-			aggFunc = func(a, b float64) float64 {
-				if a < b {
-					return a
-				}
-				return b
-			}
-		case Max, MaxOT:
-			aggFunc = func(a, b float64) float64 {
-				if a > b {
-					return a
-				}
-				return b
-			}
-		case Avg, AvgOT, Mean:
-			aggFunc = func(a, b float64) float64 {
-				return a + b
-			}
-		default: // 默认使用sum
-			aggFunc = func(a, b float64) float64 {
-				return a + b
-			}
+		return mergeSeriesSetWithFunc(name, series)
+	}
+}
+
+// mergeSeriesSetWithFunc 按函数名合并同 label series；非 avg 分段路由会先按 route 生效范围过滤样本。
+func mergeSeriesSetWithFunc(name string, series []storage.Series) storage.Series {
+	valueMap := make(map[int64]float64)
+	countMap := make(map[int64]float64)
+	candidateValueMap := make(map[int64]float64)
+	candidateCountMap := make(map[int64]float64)
+	aggFunc := seriesAggFunc(name)
+	isRouteRangeFilterEnabled := !isAvgFunc(name) && hasAnyTimeRange(series...)
+
+	addSample := func(values, counts map[int64]float64, t int64, v float64) {
+		if existing, ok := values[t]; ok {
+			values[t] = aggFunc(existing, v)
+		} else {
+			values[t] = v
+		}
+		counts[t]++
+	}
+
+	for _, s := range series {
+		tr, ok := s.(SeriesTimeRange)
+		start, end := int64(0), int64(0)
+		if ok {
+			start, end = tr.TimeRange()
 		}
 
-		// 按时间戳合并值
-		valueMap := make(map[int64]float64)
-		countMap := make(map[int64]float64)
-		for _, s := range series {
-			it := s.Iterator(nil)
-			for it.Next() == chunkenc.ValFloat {
-				t, v := it.At()
-				if existing, ok := valueMap[t]; ok {
-					valueMap[t] = aggFunc(existing, v)
-				} else {
-					valueMap[t] = v
+		it := s.Iterator(nil)
+		for it.Next() == chunkenc.ValFloat {
+			t, v := it.At()
+			if isRouteRangeFilterEnabled && ok {
+				if start >= end {
+					addSample(candidateValueMap, candidateCountMap, t, v)
+					continue
 				}
-				countMap[t]++
-			}
-			if err := it.Err(); err != nil {
-				return &storage.SeriesEntry{
-					Lset: series[0].Labels(),
-					SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-						return &seriesIterator{
-							err: err,
-						}
-					},
+				if t < start || t >= end {
+					continue
 				}
 			}
+			addSample(valueMap, countMap, t, v)
 		}
+		if err := it.Err(); err != nil {
+			return newErrSeries(series[0], err)
+		}
+	}
 
-		sortedData := make([]prompb.Sample, 0, len(valueMap))
-		for t, v := range valueMap {
-			if isAvgFunc(name) {
-				// 缺少 route 时间范围或 step 时无法计算时间权重，回退为同 timestamp 普通平均。
-				if count := countMap[t]; count > 0 {
-					v = v / count
-				}
-			}
-			sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
-		}
-		sort.Slice(sortedData, func(i, j int) bool {
-			return sortedData[i].Timestamp < sortedData[j].Timestamp
-		})
+	if isRouteRangeFilterEnabled {
+		mergeCandidateSamples(valueMap, countMap, candidateValueMap, candidateCountMap)
+	}
 
-		return &storage.SeriesEntry{
-			Lset: series[0].Labels(),
-			SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-				return &seriesIterator{
-					list: sortedData,
-					idx:  -1,
-				}
-			},
+	return newSampleSeries(series[0], mergeSeriesSamples(name, valueMap, countMap))
+}
+
+// seriesAggFunc 返回同 timestamp 多条样本的合并函数；avg 类在调用方用 countMap 做二次平均。
+func seriesAggFunc(name string) func(float64, float64) float64 {
+	switch name {
+	case Min, MinOT:
+		return func(a, b float64) float64 {
+			if a < b {
+				return a
+			}
+			return b
 		}
+	case Max, MaxOT:
+		return func(a, b float64) float64 {
+			if a > b {
+				return a
+			}
+			return b
+		}
+	default:
+		return func(a, b float64) float64 {
+			return a + b
+		}
+	}
+}
+
+// mergeCandidateSamples 将仅来自迁移重叠查询的候选样本补入主结果；同 timestamp 已有有效 route 样本时不覆盖。
+func mergeCandidateSamples(
+	valueMap, countMap, candidateValueMap, candidateCountMap map[int64]float64,
+) {
+	for t, v := range candidateValueMap {
+		if _, ok := valueMap[t]; ok {
+			continue
+		}
+		valueMap[t] = v
+		countMap[t] = candidateCountMap[t]
+	}
+}
+
+// mergeSeriesSamples 将合并后的 timestamp map 转成有序样本，并处理缺少时间权重时的 avg 普通平均。
+func mergeSeriesSamples(name string, valueMap, countMap map[int64]float64) []prompb.Sample {
+	sortedData := make([]prompb.Sample, 0, len(valueMap))
+	for t, v := range valueMap {
+		if isAvgFunc(name) {
+			// 缺少 route 时间范围或 step 时无法计算时间权重，回退为同 timestamp 普通平均。
+			if count := countMap[t]; count > 0 {
+				v = v / count
+			}
+		}
+		sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
+	}
+	sort.Slice(sortedData, func(i, j int) bool {
+		return sortedData[i].Timestamp < sortedData[j].Timestamp
+	})
+	return sortedData
+}
+
+// newErrSeries 返回带 iterator 错误的 Series，用于把底层遍历错误传递给调用方。
+func newErrSeries(template storage.Series, err error) storage.Series {
+	return &storage.SeriesEntry{
+		Lset: template.Labels(),
+		SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
+			return &seriesIterator{
+				err: err,
+			}
+		},
+	}
+}
+
+// newSampleSeries 用已有 labels 和内存样本构造可遍历的 Series。
+func newSampleSeries(template storage.Series, samples []prompb.Sample) storage.Series {
+	return &storage.SeriesEntry{
+		Lset: template.Labels(),
+		SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
+			return &seriesIterator{
+				list: samples,
+				idx:  -1,
+			}
+		},
 	}
 }
 
@@ -194,8 +251,9 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 
 	valueMap := make(map[int64]float64)
 	weightMap := make(map[int64]float64)
-	fallbackValueMap := make(map[int64]float64)
-	fallbackCountMap := make(map[int64]float64)
+	integerValueMap := make(map[int64]bool)
+	candidateValueMap := make(map[int64]float64)
+	candidateCountMap := make(map[int64]float64)
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
 		start, end := int64(0), int64(0)
@@ -206,8 +264,8 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
 			if ok && start >= end {
-				fallbackValueMap[t] += v
-				fallbackCountMap[t]++
+				candidateValueMap[t] += v
+				candidateCountMap[t]++
 				continue
 			}
 			// 无 route 时间段的普通 series 使用完整 bucket 权重，避免 mixed route 合并时被丢弃。
@@ -222,6 +280,12 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 			// 加权平均 = sum(avg * overlap) / sum(overlap)
 			valueMap[t] += v * float64(weight)
 			weightMap[t] += float64(weight)
+			if _, ok := integerValueMap[t]; !ok {
+				integerValueMap[t] = true
+			}
+			if !isInteger(v) {
+				integerValueMap[t] = false
+			}
 		}
 		if err := it.Err(); err != nil {
 			return &storage.SeriesEntry{
@@ -236,17 +300,20 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 	}
 
 	sortedData := make([]prompb.Sample, 0, len(valueMap))
-	for t, v := range fallbackValueMap {
+	for t, v := range candidateValueMap {
 		if weightMap[t] > 0 {
 			continue
 		}
-		if count := fallbackCountMap[t]; count > 0 {
+		if count := candidateCountMap[t]; count > 0 {
 			valueMap[t] = v / count
 		}
 	}
 	for t, v := range valueMap {
 		if weight := weightMap[t]; weight > 0 {
 			v = v / weight
+			if integerValueMap[t] {
+				v = math.Round(v)
+			}
 		}
 		sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
 	}
@@ -276,6 +343,10 @@ func overlapDuration(start, end, otherStart, otherEnd int64) int64 {
 		return 0
 	}
 	return end - start
+}
+
+func isInteger(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Trunc(v) == v
 }
 
 type seriesIterator struct {

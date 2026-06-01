@@ -503,6 +503,155 @@ func TestMergeSeriesSet(t *testing.T) {
 	}
 }
 
+func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
+	var (
+		firstS1Start  = time.Unix(100, 0)
+		firstS1End    = time.Unix(200, 0)
+		secondS1Start = time.Unix(300, 0)
+		secondS1End   = time.Unix(400, 0)
+	)
+	sample := func(value float64, timestamp time.Time) prompb.Sample {
+		return prompb.Sample{
+			Value:     value,
+			Timestamp: timestamp.UnixMilli(),
+		}
+	}
+
+	type routeSeries struct {
+		samples   []prompb.Sample
+		start     time.Time
+		end       time.Time
+		zeroRange bool
+	}
+
+	testCases := map[string]struct {
+		fn       string
+		routes   []routeSeries
+		expected []prompb.Sample
+	}{
+		"sum 不应重复累计同 storage 回切窗口查回的完整 SelectHints 样本": {
+			// 场景：storage 路由发生 A -> B -> A 回切。
+			//
+			// s1: [100s-------------200s)
+			// s2:                  [200s-------------300s)
+			// s1:                                    [300s-------------400s)
+			//
+			// 同一个 physical storage=s1 有两个不连续 route window。selectFn 为保留 range/lookback
+			// 会对两段 s1 route 都下发完整 SelectHints 范围，如果同一后端两次都返回完整样本，
+			// 非 avg merge 不能像两个独立 storage 一样直接按 timestamp 累加。
+			fn: function.Sum,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(7, time.Unix(120, 0)),
+						sample(11, time.Unix(320, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(7, time.Unix(120, 0)),
+						sample(11, time.Unix(320, 0)),
+					},
+					start: secondS1Start,
+					end:   secondS1End,
+				},
+			},
+			expected: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+				sample(11, time.Unix(320, 0)),
+			},
+		},
+		"count 不应重复累计同 storage 回切窗口查回的完整 SelectHints 样本": {
+			fn: function.Count,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(1, time.Unix(120, 0)),
+						sample(1, time.Unix(320, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(1, time.Unix(120, 0)),
+						sample(1, time.Unix(320, 0)),
+					},
+					start: secondS1Start,
+					end:   secondS1End,
+				},
+			},
+			expected: []prompb.Sample{
+				sample(1, time.Unix(120, 0)),
+				sample(1, time.Unix(320, 0)),
+			},
+		},
+		"仅来自迁移重叠查询的候选样本不覆盖有效 route 样本": {
+			fn: function.Sum,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(7, time.Unix(120, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(100, time.Unix(120, 0)),
+						sample(11, time.Unix(320, 0)),
+					},
+					zeroRange: true,
+				},
+			},
+			expected: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+				sample(11, time.Unix(320, 0)),
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			sets := make([]storage.SeriesSet, 0, len(tc.routes))
+			for _, route := range tc.routes {
+				routeSet := remote.FromQueryResult(true, &prompb.QueryResult{
+					Timeseries: []*prompb.TimeSeries{
+						{
+							Labels: []prompb.Label{
+								{Name: "__name__", Value: "up"},
+								{Name: "job", Value: "rollback-storage"},
+							},
+							Samples: route.samples,
+						},
+					},
+				})
+				if route.zeroRange {
+					routeSet = function.NewZeroTimeRangeSeriesSet(routeSet)
+				} else {
+					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
+				}
+				sets = append(sets, routeSet)
+			}
+
+			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(tc.fn))
+			ts, err := mock.SeriesSetToTimeSeries(set)
+			assert.Nil(t, err)
+			assert.Equal(t, mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{
+						{Name: "__name__", Value: "up"},
+						{Name: "job", Value: "rollback-storage"},
+					},
+					Samples: tc.expected,
+				},
+			}, ts)
+		})
+	}
+}
+
 func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 	var (
 		bucketStart = time.UnixMilli(0)
@@ -545,7 +694,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// 权重：路由 A 覆盖 132s，路由 B 覆盖 168s。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -560,7 +709,30 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21.2,
+			expected:  21,
+		},
+		"avg 按路由覆盖时长加权时遇到小数分段会保留浮点结果": {
+			// 时间轴：
+			// bucket:   [0s------------------------------300s)
+			// 路由 A:   [0s----------132s) value=10
+			// 路由 B:                 [132s--------------300s) value=30.5
+			// 权重：只要参与加权的任一分段 avg 是小数，最终结果继续保留 float64。
+			// 结果：(10*132 + 30.5*168) / (132 + 168) = 21.48
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(132 * time.Second),
+				},
+				{
+					value: 30.5,
+					start: bucketStart.Add(132 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expected:  21.48,
 		},
 		"mean 按路由覆盖时长加权": {
 			// 时间轴：
@@ -568,7 +740,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// mean 是 avg 的别名，同样按路由覆盖时长加权。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
 			fn: function.Mean,
 			routes: []routeSeries{
 				{
@@ -583,7 +755,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21.2,
+			expected:  21,
 		},
 		"avg_over_time 按路由覆盖时长加权": {
 			// 时间轴：
@@ -591,7 +763,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// avg_over_time 也是 avg 类函数，同样按路由覆盖时长加权。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
 			fn: function.AvgOT,
 			routes: []routeSeries{
 				{
@@ -606,7 +778,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21.2,
+			expected:  21,
 		},
 		"avg_over_time 缺少 bucket 宽度时会退化为普通平均": {
 			// 时间轴：

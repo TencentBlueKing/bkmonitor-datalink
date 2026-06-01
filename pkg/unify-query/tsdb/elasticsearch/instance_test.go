@@ -11,14 +11,22 @@ package elasticsearch
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jarcoal/httpmock"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -26,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	uqtrace "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func TestInstance_getAlias(t *testing.T) {
@@ -1507,4 +1516,178 @@ func TestInstance_QuerySeries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecordESQueryShards(t *testing.T) {
+	log.InitTestLogger()
+
+	t.Run("records shard counters on healthy response", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-1"}}, &elastic.SearchResult{
+			TimedOut: false,
+			Shards: &elastic.ShardsInfo{
+				Total:      4,
+				Successful: 4,
+				Failed:     0,
+				Skipped:    1,
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.False(t, timedOut)
+		shardsTotal, ok := esSpanAttrInt(attrs, "shards_total")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), shardsTotal)
+		shardsSkipped, ok := esSpanAttrInt(attrs, "shards_skipped")
+		require.True(t, ok)
+		assert.Equal(t, int64(1), shardsSkipped)
+		_, ok = esSpanAttrInt(attrs, "shards_failures_count")
+		assert.False(t, ok)
+		_, ok = esSpanAttrString(attrs, "shards_failures_sample")
+		assert.False(t, ok)
+	})
+
+	t.Run("records bounded failure sample", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		longReason := strings.Repeat("x", esShardFailureReasonMaxLength+64)
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-*"}}, &elastic.SearchResult{
+			Shards: &elastic.ShardsInfo{
+				Total:      5,
+				Successful: 1,
+				Failed:     4,
+				Failures: []*elastic.ShardOperationFailedException{
+					{Shard: 1, Index: "index-1", Reason: map[string]interface{}{"type": "illegal_argument_exception", "reason": longReason}},
+					{Shard: 2, Index: "index-2", Reason: map[string]interface{}{"reason": "second"}},
+					{Shard: 3, Index: "index-3", Reason: map[string]interface{}{"reason": "third"}},
+					{Shard: 4, Index: "index-4", Reason: map[string]interface{}{"reason": "fourth"}},
+				},
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		shardsFailed, ok := esSpanAttrInt(attrs, "shards_failed")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), shardsFailed)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), failuresCount)
+		failuresSampleJson, ok := esSpanAttrString(attrs, "shards_failures_sample")
+		require.True(t, ok)
+		assert.NotContains(t, failuresSampleJson, "index-4")
+
+		var failuresSample []esShardFailureSample
+		require.NoError(t, stdjson.Unmarshal([]byte(failuresSampleJson), &failuresSample))
+		require.Len(t, failuresSample, esShardFailureSampleLimit)
+		assert.Equal(t, 1, failuresSample[0].Shard)
+		assert.Equal(t, "index-1", failuresSample[0].Index)
+		assert.LessOrEqual(t, len([]rune(failuresSample[0].Reason)), esShardFailureReasonMaxLength)
+	})
+
+	t.Run("records timeout without failures", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-1"}}, &elastic.SearchResult{
+			TimedOut: true,
+			Shards: &elastic.ShardsInfo{
+				Total:      2,
+				Successful: 2,
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.True(t, timedOut)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(0), failuresCount)
+		_, ok = esSpanAttrString(attrs, "shards_failures_sample")
+		assert.False(t, ok)
+	})
+
+	t.Run("handles nil result and nil shards", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		assert.NotPanics(t, func() {
+			recordESQueryShards(context.Background(), span, nil, nil)
+		})
+		var err error
+		span.End(&err)
+		assert.Empty(t, endedSpanAttrs(t, rec))
+
+		rec = setupESTraceRecorder(t)
+		_, span = uqtrace.NewSpan(context.Background(), "test-span")
+		assert.NotPanics(t, func() {
+			recordESQueryShards(context.Background(), span, nil, &elastic.SearchResult{TimedOut: true})
+		})
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.True(t, timedOut)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(0), failuresCount)
+	})
+}
+
+func setupESTraceRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+	})
+	return rec
+}
+
+func endedSpanAttrs(t *testing.T, rec *tracetest.SpanRecorder) []attribute.KeyValue {
+	t.Helper()
+	ended := rec.Ended()
+	require.Len(t, ended, 1)
+	return ended[0].Attributes()
+}
+
+func esSpanAttrBool(attrs []attribute.KeyValue, key string) (bool, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsBool(), true
+		}
+	}
+	return false, false
+}
+
+func esSpanAttrInt(attrs []attribute.KeyValue, key string) (int64, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsInt64(), true
+		}
+	}
+	return 0, false
+}
+
+func esSpanAttrString(attrs []attribute.KeyValue, key string) (string, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
 }

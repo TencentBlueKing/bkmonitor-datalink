@@ -509,9 +509,21 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 		bucketStep  = 5 * time.Minute
 		bucketEnd   = bucketStart.Add(bucketStep)
 	)
+	sample := func(value float64, timestamp time.Time) prompb.Sample {
+		return prompb.Sample{
+			Value:     value,
+			Timestamp: timestamp.UnixMilli(),
+		}
+	}
+	// 注释中的时间轴统一按 5 分钟 bucket 展示：
+	// bucket: 表示当前待合并的统计桶，[0s, 300s)。
+	// 生效路由: 表示该路由在当前时间段真实承载数据写入，可参与 avg 权重计算。
+	// 无区间序列: 表示没有 route 时间范围的普通序列，按完整 bucket 参与权重。
+	// 重叠查询部分: 表示迁移切换点前后为兜底边界样本额外查询的相邻存储，真实生效区间为 0。
 
 	type routeSeries struct {
 		value     float64
+		samples   []prompb.Sample
 		start     time.Time
 		end       time.Time
 		withRange bool
@@ -519,14 +531,19 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		fn        string
-		routes    []routeSeries
-		withRange bool
-		expected  float64
+		fn              string
+		routes          []routeSeries
+		withRange       bool
+		expected        float64
+		expectedSamples []prompb.Sample
 	}{
-		"avg uses route overlap as weight": {
-			// bucket 为 [0s, 300s)，两段 route 覆盖时长分别是 132s 和 168s。
-			// (10*132 + 30*168) / (132 + 168) = 21.2
+		"avg 按路由覆盖时长加权": {
+			// 时间轴：
+			// bucket:   [0s------------------------------300s)
+			// 路由 A:   [0s----------132s) value=10
+			// 路由 B:                 [132s--------------300s) value=30
+			// 权重：路由 A 覆盖 132s，路由 B 覆盖 168s。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -543,9 +560,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expected:  21.2,
 		},
-		"mean uses route overlap as weight": {
-			// mean 是 avg 的别名，同样要按 route 覆盖时长加权。
-			// (10*132 + 30*168) / (132 + 168) = 21.2
+		"mean 按路由覆盖时长加权": {
+			// 时间轴：
+			// bucket:   [0s------------------------------300s)
+			// 路由 A:   [0s----------132s) value=10
+			// 路由 B:                 [132s--------------300s) value=30
+			// mean 是 avg 的别名，同样按路由覆盖时长加权。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
 			fn: function.Mean,
 			routes: []routeSeries{
 				{
@@ -562,9 +583,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expected:  21.2,
 		},
-		"avg_over_time uses route overlap as weight": {
-			// avg_over_time 也是 avg 类函数，同样要按 route 覆盖时长加权。
-			// (10*132 + 30*168) / (132 + 168) = 21.2
+		"avg_over_time 按路由覆盖时长加权": {
+			// 时间轴：
+			// bucket:   [0s------------------------------300s)
+			// 路由 A:   [0s----------132s) value=10
+			// 路由 B:                 [132s--------------300s) value=30
+			// avg_over_time 也是 avg 类函数，同样按路由覆盖时长加权。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2
 			fn: function.AvgOT,
 			routes: []routeSeries{
 				{
@@ -581,9 +606,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expected:  21.2,
 		},
-		"equal route overlap matches arithmetic average": {
-			// 两段 route 覆盖时长相等时，加权平均结果应等同于普通平均。
-			// (10*150 + 30*150) / (150 + 150) = 20
+		"路由覆盖时长相等时等同于普通平均": {
+			// 时间轴：
+			// bucket:   [0s------------------------------300s)
+			// 路由 A:   [0s--------------150s) value=10
+			// 路由 B:                       [150s-------300s) value=30
+			// 权重：两段路由各覆盖 150s，加权平均应等同于普通平均。
+			// 结果：(10*150 + 30*150) / (150 + 150) = 20
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -600,9 +629,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expected:  20,
 		},
-		"route without bucket overlap is ignored": {
-			// 第二段 route 不覆盖当前 bucket，只使用第一段 route 的值。
-			// (10*300) / 300 = 10
+		"与当前 bucket 无交集的路由会被忽略": {
+			// 时间轴：
+			// 当前 bucket: [0s----------------------------300s)
+			// 路由 A:      [0s-----------------------------300s) value=10
+			// 路由 B:                                      [300s----------------600s) value=30
+			// 权重：路由 B 从 300s 才开始，与当前 bucket 没有交集，当前 bucket 只使用路由 A。
+			// 结果：(10*300) / 300 = 10
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -612,16 +645,20 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 				{
 					value: 30,
-					start: bucketEnd,
+					start: bucketEnd, // 这一段开始是上一段的结束
 					end:   bucketEnd.Add(bucketStep),
 				},
 			},
 			withRange: true,
 			expected:  10,
 		},
-		"missing route time range falls back to arithmetic average": {
-			// 没有 route 时间范围就无法计算权重，保持原来的普通平均逻辑。
-			// (10 + 30) / 2 = 20
+		"缺少路由时间范围时回退到普通平均": {
+			// 时间轴：
+			// bucket:      [0s----------------------------300s)
+			// 序列 A:      10@0s，无 route 时间范围
+			// 序列 B:      30@0s，无 route 时间范围
+			// 权重：两条序列都没有 route 时间范围，无法计算覆盖时长，回退到普通平均。
+			// 结果：(10 + 30) / 2 = 20
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -633,9 +670,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 20,
 		},
-		"unranged series uses full bucket weight": {
-			// mixed route 合并中，普通无 route 时间段的 series 不能被丢弃，按完整 bucket 参与权重。
-			// (10*300 + 30*300) / (300 + 300) = 20
+		"无区间序列按完整 bucket 参与加权": {
+			// 时间轴：
+			// bucket:     [0s-----------------------------300s)
+			// 生效路由:   [0s------------------------------300s) value=10
+			// 无区间序列: value=30，按完整 bucket 参与权重
+			// 权重：混合合并时，无 route 时间范围的普通序列不能丢弃，按 300s 参与加权。
+			// 结果：(10*300 + 30*300) / (300 + 300) = 20
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -650,9 +691,13 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 20,
 		},
-		"overlap only route with zero time range is ignored": {
-			// 迁移 overlap-only 路由只有查询扩展范围，没有真实 route 生效区间，不能参与加权。
-			// (10*300) / 300 = 10
+		"仅用于重叠查询的零时间范围路由会被忽略": {
+			// 时间轴：
+			// bucket:      [0s------------------------------300s)
+			// 生效路由:    [0s-------------------------------300s) value=10
+			// 重叠查询部分: value=30，仅兜底查相邻存储，真实生效区间为 0
+			// 权重：重叠查询部分只有查询扩展范围，没有真实生效区间，不能参与加权。
+			// 结果：(10*300) / 300 = 10
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -668,20 +713,36 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			expected: 10,
 		},
-		"single overlap only route with zero time range is preserved": {
-			// 只有 overlap-only 路由返回该 label 时，需要保留边界样本，避免迁移 overlap 查询失效。
-			// 这里的问题不是 avg 权重计算，而是 overlap-only route 查询本身的兜底语义：
-			// GetStorageIDRanges 会在迁移切换点前后额外查询相邻 storage，用来找回可能只写到相邻后端的边界样本。
-			// 这些 route 没有真实生效时间段，所以不能参与 time-weighted avg 的权重；但它们查到的样本仍然要保留给最终结果。
-			// 当前实现用 NewZeroTimeRangeSeriesSet 直接返回 EmptySeriesSet，会在进入 merge 前就把这些样本全部丢掉。
+		"仅用于重叠查询的路由会保留生效路由缺失的样本": {
+			// 时间轴：
+			// bucket 1:    [0s------------------------------300s)
+			// bucket 2:    [300s----------------------------600s)
+			// 生效路由:    [10@0s------------------------------------------)
+			// 重叠查询部分:                         30@300s，仅兜底查相邻存储，真实生效区间为 0
+			// 权重：重叠查询部分不参与已有 bucket 的 avg 权重。
+			// 样本：30@300s 是生效路由缺失的边界样本，最终结果仍然要保留。
+			// 当前 bug：zero-range series 被整条 continue，导致 30@bucketStep 在检查 timestamp 前就被丢弃。
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
-					value:     30,
+					samples: []prompb.Sample{
+						sample(10, bucketStart),
+					},
+					start:     bucketStart,
+					end:       bucketStart.Add(2 * bucketStep),
+					withRange: true,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(30, bucketStart.Add(bucketStep)),
+					},
 					zeroRange: true,
 				},
 			},
-			expected: 30,
+			expectedSamples: []prompb.Sample{
+				sample(10, bucketStart),
+				sample(30, bucketStart.Add(bucketStep)),
+			},
 		},
 	}
 
@@ -689,6 +750,12 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			sets := make([]storage.SeriesSet, 0, len(tc.routes))
 			for _, route := range tc.routes {
+				samples := route.samples
+				if samples == nil {
+					samples = []prompb.Sample{
+						sample(route.value, bucketStart),
+					}
+				}
 				routeSet := remote.FromQueryResult(true, &prompb.QueryResult{
 					Timeseries: []*prompb.TimeSeries{
 						{
@@ -696,12 +763,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 								{Name: "__name__", Value: "up"},
 								{Name: "job", Value: "elasticsearch"},
 							},
-							Samples: []prompb.Sample{
-								{
-									Value:     route.value,
-									Timestamp: bucketStart.UnixMilli(),
-								},
-							},
+							Samples: samples,
 						},
 					},
 				})
@@ -717,11 +779,11 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, bucketStep))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
-			expectedSamples := []prompb.Sample{
-				{
-					Value:     tc.expected,
-					Timestamp: bucketStart.UnixMilli(),
-				},
+			expectedSamples := tc.expectedSamples
+			if expectedSamples == nil {
+				expectedSamples = []prompb.Sample{
+					sample(tc.expected, bucketStart),
+				}
 			}
 			assert.Equal(t, mock.TimeSeriesList{
 				{
@@ -734,43 +796,4 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			}, ts)
 		})
 	}
-}
-
-func TestZeroTimeRangeSeriesSetPreservesOverlapSamples(t *testing.T) {
-	// NewZeroTimeRangeSeriesSet 的语义应该是“样本可查询、avg 加权时零权重”，不是“直接丢弃样本”。
-	// overlap-only route 是为迁移边界兜底查询相邻 storage；如果这里返回空 SeriesSet，
-	// 那么 sum/max/普通返回路径以及单路 avg 都会在 merge 前丢掉这些边界样本。
-	set := remote.FromQueryResult(true, &prompb.QueryResult{
-		Timeseries: []*prompb.TimeSeries{
-			{
-				Labels: []prompb.Label{
-					{Name: "__name__", Value: "up"},
-					{Name: "job", Value: "elasticsearch"},
-				},
-				Samples: []prompb.Sample{
-					{
-						Value:     30,
-						Timestamp: 0,
-					},
-				},
-			},
-		},
-	})
-
-	ts, err := mock.SeriesSetToTimeSeries(function.NewZeroTimeRangeSeriesSet(set))
-	assert.Nil(t, err)
-	assert.Equal(t, mock.TimeSeriesList{
-		{
-			Labels: []prompb.Label{
-				{Name: "__name__", Value: "up"},
-				{Name: "job", Value: "elasticsearch"},
-			},
-			Samples: []prompb.Sample{
-				{
-					Value:     30,
-					Timestamp: 0,
-				},
-			},
-		},
-	}, ts)
 }

@@ -194,18 +194,22 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 
 	valueMap := make(map[int64]float64)
 	weightMap := make(map[int64]float64)
+	fallbackValueMap := make(map[int64]float64)
+	fallbackCountMap := make(map[int64]float64)
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
 		start, end := int64(0), int64(0)
 		if ok {
 			start, end = tr.TimeRange()
-			if start >= end {
-				continue
-			}
 		}
 		it := s.Iterator(nil)
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
+			if ok && start >= end {
+				fallbackValueMap[t] += v
+				fallbackCountMap[t]++
+				continue
+			}
 			// 无 route 时间段的普通 series 使用完整 bucket 权重，避免 mixed route 合并时被丢弃。
 			weight := stepMs
 			if ok {
@@ -232,6 +236,14 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 	}
 
 	sortedData := make([]prompb.Sample, 0, len(valueMap))
+	for t, v := range fallbackValueMap {
+		if weightMap[t] > 0 {
+			continue
+		}
+		if count := fallbackCountMap[t]; count > 0 {
+			valueMap[t] = v / count
+		}
+	}
 	for t, v := range valueMap {
 		if weight := weightMap[t]; weight > 0 {
 			v = v / weight

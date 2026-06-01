@@ -548,16 +548,16 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 						sample(7, time.Unix(120, 0)),
 						sample(11, time.Unix(320, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 				{
 					samples: []prompb.Sample{
 						sample(7, time.Unix(120, 0)),
 						sample(11, time.Unix(320, 0)),
 					},
-					start: secondS1Start,
-					end:   secondS1End,
+					start: secondS1Start, // 300s
+					end:   secondS1End,   // 400s
 				},
 			},
 			expected: []prompb.Sample{
@@ -574,16 +574,16 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 						sample(1, time.Unix(120, 0)),
 						sample(1, time.Unix(320, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 				{
 					samples: []prompb.Sample{
 						sample(1, time.Unix(120, 0)),
 						sample(1, time.Unix(320, 0)),
 					},
-					start: secondS1Start,
-					end:   secondS1End,
+					start: secondS1Start, // 300s
+					end:   secondS1End,   // 400s
 				},
 			},
 			expected: []prompb.Sample{
@@ -598,8 +598,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 					samples: []prompb.Sample{
 						sample(7, time.Unix(120, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 				{
 					samples: []prompb.Sample{
@@ -622,8 +622,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 						sample(5, time.Unix(90, 0)),
 						sample(7, time.Unix(120, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 			},
 			expected: []prompb.Sample{
@@ -632,6 +632,10 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			},
 		},
 		"多条 route 合并时保留 route start 前的 lookback 样本": {
+			// 场景：route A 从 100s 生效，但 SelectHints 为 Prometheus lookback 提前查回了 90s 样本。
+			// 多 route 同 label 合并时会进入 mergeSeriesSetWithFunc 的 route 过滤逻辑。
+			// 旧逻辑只判断 timestamp：90s < route start 100s，会命中 !isSampleInRouteRange 后 continue。
+			// 当前逻辑在有 step 时按 [90s, 150s) 与 [100s, 200s) 是否相交判断，因此保留 90s 样本。
 			fn:   function.Sum,
 			step: time.Minute,
 			routes: []routeSeries{
@@ -640,8 +644,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 						sample(5, time.Unix(90, 0)),
 						sample(7, time.Unix(120, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 				{
 					samples: []prompb.Sample{
@@ -711,16 +715,16 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 						sample(10, time.Unix(120, 0)),
 						sample(30, time.Unix(320, 0)),
 					},
-					start: firstS1Start,
-					end:   firstS1End,
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
 				},
 				{
 					samples: []prompb.Sample{
 						sample(10, time.Unix(120, 0)),
 						sample(30, time.Unix(320, 0)),
 					},
-					start: secondS1Start,
-					end:   secondS1End,
+					start: secondS1Start, // 300s
+					end:   secondS1End,   // 400s
 				},
 			},
 			expected: []prompb.Sample{

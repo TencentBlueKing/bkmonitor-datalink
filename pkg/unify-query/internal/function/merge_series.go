@@ -260,30 +260,39 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 		return NewMergeSeriesSetWithFuncAndSort(Avg)(series...)
 	}
 
+	// valueMap/weightMap 记录同 timestamp 的加权分子和分母，最终按 sum(avg*overlap)/sum(overlap) 输出。
 	valueMap := make(map[int64]float64)
 	weightMap := make(map[int64]float64)
+	// candidate* 记录仅来自迁移重叠查询的零权重样本；只有有效 route 没有同 timestamp 样本时才兜底补入。
 	candidateValueMap := make(map[int64]float64)
 	candidateCountMap := make(map[int64]float64)
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
-		start, end := int64(0), int64(0)
-		if ok {
-			start, end = tr.TimeRange()
-		}
 		it := s.Iterator(nil)
+		if !ok {
+			for it.Next() == chunkenc.ValFloat {
+				t, v := it.At()
+				// 无 route 时间段的普通 series 使用完整 bucket 权重，避免 mixed route 合并时被丢弃。
+				valueMap[t] += v * float64(stepMs)
+				weightMap[t] += float64(stepMs)
+			}
+			if err := it.Err(); err != nil {
+				return newErrSeries(series[0], err)
+			}
+			continue
+		}
+
+		start, end := tr.TimeRange()
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
-			if ok && start >= end {
+			// start >= end 表示该路由只有扩展查询范围、没有真实生效区间，不能参与 avg 权重。
+			if start >= end {
 				candidateValueMap[t] += v
 				candidateCountMap[t]++
 				continue
 			}
-			// 无 route 时间段的普通 series 使用完整 bucket 权重，避免 mixed route 合并时被丢弃。
-			weight := stepMs
-			if ok {
-				// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
-				weight = overlapDuration(t, t+stepMs, start, end)
-			}
+			// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
+			weight := overlapDuration(t, t+stepMs, start, end)
 			if weight <= 0 {
 				continue
 			}
@@ -292,14 +301,7 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 			weightMap[t] += float64(weight)
 		}
 		if err := it.Err(); err != nil {
-			return &storage.SeriesEntry{
-				Lset: series[0].Labels(),
-				SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-					return &seriesIterator{
-						err: err,
-					}
-				},
-			}
+			return newErrSeries(series[0], err)
 		}
 	}
 

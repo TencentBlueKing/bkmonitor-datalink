@@ -11,6 +11,7 @@ package cmd
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/es"
 	"os"
 	"os/signal"
 	"syscall"
@@ -59,6 +60,7 @@ var rootCmd = &cobra.Command{
 			&promql.Service{},
 			&http.Service{},
 			&featureFlag.Service{},
+			&es.Service{},
 		}
 		log.Infof(context.TODO(), "http service started.")
 

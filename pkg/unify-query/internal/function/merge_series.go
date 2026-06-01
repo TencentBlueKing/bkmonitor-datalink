@@ -75,7 +75,7 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 					addSample(candidateValueMap, candidateCountMap, t, v)
 					continue
 				}
-				if !isSampleInRouteRange(name, stepMs, t, start, end) {
+				if !isSampleInRouteRange(stepMs, t, start, end) {
 					continue
 				}
 			}
@@ -148,20 +148,11 @@ func mergeSeriesSamples(name string, valueMap, countMap map[int64]float64) []pro
 	return sortedData
 }
 
-func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
-	if isOverTimeFunc(name) && stepMs > 0 {
+func isSampleInRouteRange(stepMs, t, start, end int64) bool {
+	if stepMs > 0 {
 		return overlapDuration(t, t+stepMs, start, end) > 0
 	}
 	return t >= start && t < end
-}
-
-func isOverTimeFunc(name string) bool {
-	switch name {
-	case MinOT, MaxOT, AvgOT, SumOT, CountOT:
-		return true
-	default:
-		return false
-	}
 }
 
 // newErrSeries 返回带 iterator 错误的 Series，用于把底层遍历错误传递给调用方。

@@ -540,7 +540,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			// 同一个 physical storage=s1 有两个不连续 route window。selectFn 为保留 range/lookback
 			// 会对两段 s1 route 都下发完整 SelectHints 范围，如果同一后端两次都返回完整样本，
 			// 非 avg merge 不能像两个独立 storage 一样直接按 timestamp 累加。
-			fn: function.Sum,
+			fn:   function.Sum,
+			step: time.Minute,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
@@ -565,7 +566,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			},
 		},
 		"count 不应重复累计同 storage 回切窗口查回的完整 SelectHints 样本": {
-			fn: function.Count,
+			fn:   function.Count,
+			step: time.Minute,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
@@ -627,6 +629,32 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			expected: []prompb.Sample{
 				sample(5, time.Unix(90, 0)),
 				sample(7, time.Unix(120, 0)),
+			},
+		},
+		"多条 route 合并时保留 route start 前的 lookback 样本": {
+			fn:   function.Sum,
+			step: time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(5, time.Unix(90, 0)),
+						sample(7, time.Unix(120, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(11, time.Unix(220, 0)),
+					},
+					start: time.Unix(200, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(5, time.Unix(90, 0)),
+				sample(7, time.Unix(120, 0)),
+				sample(11, time.Unix(220, 0)),
 			},
 		},
 		"sum_over_time bucket 跨 route 切换时按 bucket 交集保留两段部分结果": {

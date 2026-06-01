@@ -1564,7 +1564,7 @@ func TestRecordESQueryShards(t *testing.T) {
 				Successful: 1,
 				Failed:     4,
 				Failures: []*elastic.ShardOperationFailedException{
-					{Shard: 1, Index: "index-1", Reason: map[string]interface{}{"type": "illegal_argument_exception", "reason": longReason}},
+					{Shard: 1, Index: "index-1", Status: "INTERNAL_SERVER_ERROR", Reason: map[string]interface{}{"type": "illegal_argument_exception", "reason": longReason}},
 					{Shard: 2, Index: "index-2", Reason: map[string]interface{}{"reason": "second"}},
 					{Shard: 3, Index: "index-3", Reason: map[string]interface{}{"reason": "third"}},
 					{Shard: 4, Index: "index-4", Reason: map[string]interface{}{"reason": "fourth"}},
@@ -1590,6 +1590,7 @@ func TestRecordESQueryShards(t *testing.T) {
 		require.Len(t, failuresSample, esShardFailureSampleLimit)
 		assert.Equal(t, 1, failuresSample[0].Shard)
 		assert.Equal(t, "index-1", failuresSample[0].Index)
+		assert.Equal(t, "INTERNAL_SERVER_ERROR", failuresSample[0].Status)
 		assert.LessOrEqual(t, len([]rune(failuresSample[0].Reason)), esShardFailureReasonMaxLength)
 	})
 

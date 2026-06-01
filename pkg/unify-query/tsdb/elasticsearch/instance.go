@@ -408,6 +408,7 @@ const (
 type esShardFailureSample struct {
 	Shard  int    `json:"shard"`
 	Index  string `json:"index"`
+	Status string `json:"status,omitempty"`
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -475,6 +476,7 @@ func buildESShardFailureSample(failures []*elastic.ShardOperationFailedException
 		samples = append(samples, esShardFailureSample{
 			Shard:  failure.Shard,
 			Index:  failure.Index,
+			Status: failure.Status,
 			Reason: truncateString(marshalESShardFailureReason(failure.Reason), esShardFailureReasonMaxLength),
 		})
 		if len(samples) >= esShardFailureSampleLimit {

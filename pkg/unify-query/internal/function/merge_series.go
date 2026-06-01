@@ -37,18 +37,19 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			return mergeAvgSeriesSetWithTimeWeight(series, step)
 		}
 
-		return mergeSeriesSetWithFunc(name, series)
+		return mergeSeriesSetWithFunc(name, step, series)
 	}
 }
 
 // mergeSeriesSetWithFunc 按函数名合并同 label series；分段路由会先按 route 生效范围过滤样本。
-func mergeSeriesSetWithFunc(name string, series []storage.Series) storage.Series {
+func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Series) storage.Series {
 	valueMap := make(map[int64]float64)
 	countMap := make(map[int64]float64)
 	candidateValueMap := make(map[int64]float64)
 	candidateCountMap := make(map[int64]float64)
 	aggFunc := seriesAggFunc(name)
 	isRouteRangeFilterEnabled := hasAnyTimeRange(series...)
+	stepMs := step.Milliseconds()
 
 	addSample := func(values, counts map[int64]float64, t int64, v float64) {
 		if existing, ok := values[t]; ok {
@@ -74,7 +75,7 @@ func mergeSeriesSetWithFunc(name string, series []storage.Series) storage.Series
 					addSample(candidateValueMap, candidateCountMap, t, v)
 					continue
 				}
-				if t < start || t >= end {
+				if !isSampleInRouteRange(name, stepMs, t, start, end) {
 					continue
 				}
 			}
@@ -145,6 +146,22 @@ func mergeSeriesSamples(name string, valueMap, countMap map[int64]float64) []pro
 		return sortedData[i].Timestamp < sortedData[j].Timestamp
 	})
 	return sortedData
+}
+
+func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
+	if isOverTimeFunc(name) && stepMs > 0 {
+		return overlapDuration(t, t+stepMs, start, end) > 0
+	}
+	return t >= start && t < end
+}
+
+func isOverTimeFunc(name string) bool {
+	switch name {
+	case MinOT, MaxOT, AvgOT, SumOT, CountOT:
+		return true
+	default:
+		return false
+	}
 }
 
 // newErrSeries 返回带 iterator 错误的 Series，用于把底层遍历错误传递给调用方。
@@ -223,33 +240,6 @@ func (s *timeRangeSeries) TimeRange() (int64, int64) {
 	return s.start, s.end
 }
 
-func (s *timeRangeSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
-	it := s.Series.Iterator(iterator)
-	if s.start >= s.end {
-		return it
-	}
-	return &timeRangeSeriesIterator{
-		Iterator: it,
-		start:    s.start,
-		end:      s.end,
-	}
-}
-
-type timeRangeSeriesIterator struct {
-	chunkenc.Iterator
-	start int64
-	end   int64
-}
-
-func (it *timeRangeSeriesIterator) Next() chunkenc.ValueType {
-	for {
-		valueType := it.Iterator.Next()
-		if valueType == chunkenc.ValNone || it.AtT() >= it.start && it.AtT() < it.end {
-			return valueType
-		}
-	}
-}
-
 func hasAnyTimeRange(series ...storage.Series) bool {
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
@@ -280,7 +270,7 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 		if ok {
 			start, end = tr.TimeRange()
 		}
-		it := newTimeWeightIterator(s)
+		it := s.Iterator(nil)
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
 			if ok && start >= end {
@@ -341,13 +331,6 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 			}
 		},
 	}
-}
-
-func newTimeWeightIterator(s storage.Series) chunkenc.Iterator {
-	if tr, ok := s.(*timeRangeSeries); ok {
-		return tr.Series.Iterator(nil)
-	}
-	return s.Iterator(nil)
 }
 
 func overlapDuration(start, end, otherStart, otherEnd int64) int64 {

@@ -526,6 +526,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 
 	testCases := map[string]struct {
 		fn       string
+		step     time.Duration
 		routes   []routeSeries
 		expected []prompb.Sample
 	}{
@@ -611,20 +612,67 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(320, 0)),
 			},
 		},
-		"单条 route 也会过滤完整 SelectHints 中的非生效样本": {
+		"单条 route 保留完整 SelectHints 中的 lookback 样本": {
 			fn: function.Sum,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
+						sample(5, time.Unix(90, 0)),
 						sample(7, time.Unix(120, 0)),
-						sample(100, time.Unix(250, 0)),
 					},
 					start: firstS1Start,
 					end:   firstS1End,
 				},
 			},
 			expected: []prompb.Sample{
+				sample(5, time.Unix(90, 0)),
 				sample(7, time.Unix(120, 0)),
+			},
+		},
+		"sum_over_time bucket 跨 route 切换时按 bucket 交集保留两段部分结果": {
+			fn:   function.SumOT,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(5, time.Unix(0, 0)),
+			},
+		},
+		"count_over_time bucket 跨 route 切换时按 bucket 交集保留两段部分结果": {
+			fn:   function.CountOT,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(5, time.Unix(0, 0)),
 			},
 		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
@@ -677,7 +725,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sets = append(sets, routeSet)
 			}
 
-			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(tc.fn))
+			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
 			assert.Equal(t, mock.TimeSeriesList{

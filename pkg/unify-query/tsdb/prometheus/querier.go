@@ -69,19 +69,26 @@ func (q *Querier) checkCtxDone() bool {
 	}
 }
 
-func (q *Querier) getQueryList(referenceName string) []*Query {
+func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 	var (
-		ctx       = q.ctx
-		queryList []*Query
-		err       error
+		ctx           = q.ctx
+		referenceName string
+		queryList     QueryList
+		err           error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "querier-get-query-list")
 	defer span.End(&err)
 
 	queryReference := metadata.GetQueryReference(ctx)
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			referenceName = m.Value
+			break
+		}
+	}
 
-	queryList = make([]*Query, 0)
+	queryList = make(QueryList, 0)
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
@@ -102,67 +109,7 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 		})
 	})
 
-	return queryList
-}
-
-func mergeFuncName(hints *storage.SelectHints, queryList []*Query) string {
-	if hints != nil && hints.Func != "" {
-		return hints.Func
-	}
-
-	for _, query := range queryList {
-		if query == nil || query.qry == nil {
-			continue
-		}
-		if name := query.qry.Aggregates.OuterAggName(); name != "" {
-			return name
-		}
-	}
-	return ""
-}
-
-func mergeBucketDuration(name string, queryList []*Query, fallback time.Duration) time.Duration {
-	name = strings.ToLower(name)
-	for _, query := range queryList {
-		if query == nil || query.qry == nil {
-			continue
-		}
-		aggregates := query.qry.Aggregates
-		for i := len(aggregates) - 1; i >= 0; i-- {
-			agg := aggregates[i]
-			if isSameBucketFunc(name, strings.ToLower(agg.Name)) && agg.Window > 0 {
-				return agg.Window
-			}
-		}
-	}
-
-	if isAvgBucketFunc(name) {
-		return 0
-	}
-	return fallback
-}
-
-func isSameBucketFunc(a, b string) bool {
-	if a == b {
-		return true
-	}
-	return isAvgBucketFunc(a) && isAvgBucketFunc(b)
-}
-
-func isAvgBucketFunc(name string) bool {
-	switch name {
-	case function.Avg, function.AvgOT, function.Mean:
-		return true
-	default:
-		return false
-	}
-}
-
-func (q *Query) intersectTimeRange(start, end time.Time) (time.Time, time.Time, bool) {
-	if !start.Before(q.queryEnd) || !q.queryStart.Before(end) {
-		return start, end, false
-	}
-	return start, end, true
+	return referenceName, queryList
 }
 
 // selectFn 获取原始数据
@@ -191,19 +138,12 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	qp := metadata.GetQueryParams(ctx)
 
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-			break
-		}
-	}
-
 	span.Set("max-routing", q.maxRouting)
-	span.Set("reference_name", referenceName)
 
-	queryList := q.getQueryList(referenceName)
-	mergeFunc := mergeFuncName(hints, queryList)
-	bucketDuration := mergeBucketDuration(mergeFunc, queryList, qp.Step)
+	referenceName, queryList := q.getQueryList(matchers)
+	span.Set("reference_name", referenceName)
+	mergeFunc := queryList.mergeFuncName(hints)
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
 	span.Set("merge_func", mergeFunc)
 	span.Set("merge_bucket_duration", bucketDuration)
 
@@ -255,28 +195,18 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime = qp.Start
 				endTime = qp.End
 			} else {
-				// 获取因转毫秒丢失的时间精度
+				// Prometheus SelectHints.Start/End 是毫秒时间戳；UQ 的 qp.Start/End 是 time.Time，保留了纳秒精度。
+				// 这里用 hints 决定 PromQL 实际需要的取数范围，再从 qp.Start/End 补回毫秒以下的纳秒尾数。
 				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 				endTime = function.MsIntMergeNs(hints.End, qp.End)
 			}
-			weightStartTime := startTime
-			weightEndTime := endTime
-			if query.hasQueryTimeRange() {
-				// 分段路由只用 route 查询时间段判断本路是否相关，不裁剪 SelectHints 的 range/lookback 扩展。
-				var ok bool
-				startTime, endTime, ok = query.intersectTimeRange(startTime, endTime)
-				if !ok {
-					return
-				}
-			}
-			if query.hasTimeRange() {
-				// 权重使用 route 时间段而不是本次查询时间段，避免跨切换点 bucket 权重失真。
-				weightStartTime = query.start
-				weightEndTime = query.end
+			strategy, ok := query.calcSelectStrategy(startTime, endTime)
+			if !ok {
+				return
 			}
 
 			// 逐路查询：失败只记录，不立即中断其他路由；成功路由进入 merge 阶段。
-			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
+			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, strategy.queryStart, strategy.queryEnd)
 			if currentSet == nil {
 				recordQueryError(fmt.Errorf("query series set is nil"))
 				return
@@ -287,12 +217,12 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 
 			successedPaths.Add(1)
-			if query.hasTimeRange() {
-				setCh <- function.NewTimeRangeSeriesSet(currentSet, weightStartTime, weightEndTime)
-			} else if query.hasQueryTimeRange() {
-				// 迁移 overlap-only 路由只有查询扩展范围，没有真实生效范围，不能按普通无 range series 参与 avg 权重。
+			switch strategy.wrapKind {
+			case seriesSetWrapValidRouteRange:
+				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+			case seriesSetWrapZeroRouteRange:
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
-			} else {
+			default:
 				setCh <- currentSet
 			}
 		})
@@ -374,14 +304,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-values")
 	defer span.End(&err)
 
-	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	queryList := q.getQueryList(referenceName)
+	_, queryList := q.getQueryList(matchers)
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
@@ -417,14 +340,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-names")
 	defer span.End(&err)
 
-	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	queryList := q.getQueryList(referenceName)
+	_, queryList := q.getQueryList(matchers)
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelNames(ctx, query.qry, q.min, q.max)
 		if err != nil {

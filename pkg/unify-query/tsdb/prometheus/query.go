@@ -10,8 +10,12 @@
 package prometheus
 
 import (
+	"strings"
 	"time"
 
+	"github.com/prometheus/prometheus/storage"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -25,10 +29,129 @@ type Query struct {
 	queryEnd   time.Time
 }
 
-func (q *Query) hasTimeRange() bool {
-	return !q.start.IsZero() && !q.end.IsZero() && q.start.Before(q.end)
+type QueryList []*Query
+
+func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
+	outerAggName := ql.outerAggName()
+	if hints != nil && hints.Func != "" {
+		// last_over_time 只是为了扩展回看窗口，真实的存储侧 avg 仍应决定多路由合并方式。
+		if strings.EqualFold(hints.Func, "last_over_time") && isAvgBucketFunc(strings.ToLower(outerAggName)) {
+			return outerAggName
+		}
+		return hints.Func
+	}
+
+	return outerAggName
 }
 
-func (q *Query) hasQueryTimeRange() bool {
-	return !q.queryStart.IsZero() && !q.queryEnd.IsZero() && q.queryStart.Before(q.queryEnd)
+func (ql QueryList) outerAggName() string {
+	for _, query := range ql {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		if name := query.qry.Aggregates.OuterAggName(); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// mergeBucketDuration 返回多路由合并时用于计算 route 覆盖时长的 bucket 宽度。
+// 优先使用下推聚合里与当前合并函数匹配的窗口；普通 avg 没有真实时间窗口时返回 0，
+// 避免把瞬时点误当成 [t, t+step) 区间；avg_over_time 来自 Prometheus hint 时，
+// 如果缺少下推窗口，则使用查询步长作为兜底 bucket 宽度。
+func (ql QueryList) mergeBucketDuration(name string, fallback time.Duration) time.Duration {
+	name = strings.ToLower(name)
+	for _, query := range ql {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		aggregates := query.qry.Aggregates
+		for i := len(aggregates) - 1; i >= 0; i-- {
+			agg := aggregates[i]
+			if isSameBucketFunc(name, strings.ToLower(agg.Name)) && agg.Window > 0 {
+				return agg.Window
+			}
+		}
+	}
+
+	if isAvgBucketFunc(name) {
+		// avg_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用查询步长作为 bucket 宽度兜底。
+		if name == function.AvgOT {
+			return fallback
+		}
+		return 0
+	}
+	return fallback
+}
+
+func isSameBucketFunc(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return isAvgBucketFunc(a) && isAvgBucketFunc(b)
+}
+
+func isAvgBucketFunc(name string) bool {
+	switch name {
+	case function.Avg, function.AvgOT, function.Mean:
+		return true
+	default:
+		return false
+	}
+}
+
+type seriesSetWrapKind int
+
+const (
+	seriesSetWrapNone seriesSetWrapKind = iota
+	seriesSetWrapValidRouteRange
+	seriesSetWrapZeroRouteRange
+)
+
+type querySelectStrategy struct {
+	queryStart  time.Time
+	queryEnd    time.Time
+	weightStart time.Time
+	weightEnd   time.Time
+	wrapKind    seriesSetWrapKind
+}
+
+func validTimeRange(start, end time.Time) bool {
+	return !start.IsZero() && !end.IsZero() && start.Before(end)
+}
+
+// calcSelectStrategy 统一计算单条路由在 selectFn 中的查询策略：
+// queryStart/queryEnd 是实际下发给 TSDB 的查询范围；weightStart/weightEnd 只用于 avg 类多路由加权；
+// wrapKind 决定返回的 SeriesSet 是否携带合法 route 生效范围，或标记为仅用于迁移重叠查询的零权重结果。
+func (q *Query) calcSelectStrategy(start, end time.Time) (querySelectStrategy, bool) {
+	strategy := querySelectStrategy{
+		queryStart:  start,
+		queryEnd:    end,
+		weightStart: start,
+		weightEnd:   end,
+	}
+	if q == nil {
+		return strategy, false
+	}
+
+	hasRouteQueryRange := validTimeRange(q.queryStart, q.queryEnd)
+	if hasRouteQueryRange {
+		// 分段路由只用 route 查询时间段判断本路是否相关，不裁剪 SelectHints 的 range/lookback 扩展。
+		if !start.Before(q.queryEnd) || !q.queryStart.Before(end) {
+			return strategy, false
+		}
+	}
+
+	if validTimeRange(q.start, q.end) {
+		// 权重使用 route 真实生效时间段，而不是本次查询扩展范围，避免跨切换点 bucket 权重失真。
+		strategy.weightStart = q.start
+		strategy.weightEnd = q.end
+		strategy.wrapKind = seriesSetWrapValidRouteRange
+	} else if hasRouteQueryRange {
+		// 只有 route 查询扩展范围、没有真实生效范围时，说明这是迁移 overlap-only 路由。
+		strategy.wrapKind = seriesSetWrapZeroRouteRange
+	}
+
+	return strategy, true
 }

@@ -46,13 +46,13 @@ func (q *queryable) Querier(ctx context.Context, mint, maxt int64) (storage.Quer
 func TestMergeBucketDuration(t *testing.T) {
 	testCases := map[string]struct {
 		name     string
-		queries  []*Query
+		queries  QueryList
 		fallback time.Duration
 		expected time.Duration
 	}{
-		"uses aggregate window when function matches": {
+		"函数匹配时使用聚合窗口": {
 			name: "avg_over_time",
-			queries: []*Query{
+			queries: QueryList{
 				{
 					qry: &metadata.Query{
 						Aggregates: metadata.Aggregates{
@@ -65,9 +65,9 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: time.Minute,
 		},
-		"plain avg without aggregate window has no bucket duration": {
+		"普通 avg 没有聚合窗口时不使用 bucket 宽度": {
 			name: "avg",
-			queries: []*Query{
+			queries: QueryList{
 				{
 					qry: &metadata.Query{
 						Aggregates: metadata.Aggregates{
@@ -79,9 +79,19 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: 0,
 		},
-		"uses avg window when select hint uses avg alias": {
+		"hint 中的 avg_over_time 缺少聚合窗口时使用查询步长": {
+			name: "avg_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 5 * time.Minute,
+		},
+		"hint 使用 avg 别名时仍匹配 avg_over_time 窗口": {
 			name: "avg",
-			queries: []*Query{
+			queries: QueryList{
 				{
 					qry: &metadata.Query{
 						Aggregates: metadata.Aggregates{
@@ -93,9 +103,9 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: time.Minute,
 		},
-		"falls back to step when function does not match": {
+		"函数不匹配时回退到查询步长": {
 			name: "max",
-			queries: []*Query{
+			queries: QueryList{
 				{
 					qry: &metadata.Query{
 						Aggregates: metadata.Aggregates{
@@ -111,46 +121,126 @@ func TestMergeBucketDuration(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, mergeBucketDuration(tc.name, tc.queries, tc.fallback))
+			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback))
 		})
 	}
 }
 
-func TestIntersectTimeRange(t *testing.T) {
+func TestMergeFuncName(t *testing.T) {
 	testCases := map[string]struct {
-		start      time.Time
-		end        time.Time
-		queryStart time.Time
-		queryEnd   time.Time
-		expectedS  time.Time
-		expectedE  time.Time
-		expectedOK bool
+		hints    *storage.SelectHints
+		queries  QueryList
+		expected string
 	}{
-		"select range inside route query range is unchanged": {
-			start:      time.Unix(120, 0),
-			end:        time.Unix(180, 0),
-			queryStart: time.Unix(100, 0),
-			queryEnd:   time.Unix(200, 0),
-			expectedS:  time.Unix(120, 0),
-			expectedE:  time.Unix(180, 0),
+		"没有下推 avg 时使用 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: "max_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			expected: "max_over_time",
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 avg": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg"},
+						},
+					},
+				},
+			},
+			expected: "avg",
+		},
+		"hint 为空时使用下推聚合函数": {
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time"},
+						},
+					},
+				},
+			},
+			expected: "avg_over_time",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.queries.mergeFuncName(tc.hints))
+		})
+	}
+}
+
+func TestQueryCalcSelectStrategy(t *testing.T) {
+	testCases := map[string]struct {
+		start           time.Time
+		end             time.Time
+		routeStart      time.Time
+		routeEnd        time.Time
+		routeQueryStart time.Time
+		routeQueryEnd   time.Time
+		expected        querySelectStrategy
+		expectedOK      bool
+	}{
+		"查询范围命中 route 查询窗口时保留原始 SelectHints 范围": {
+			start:           time.Unix(120, 0),
+			end:             time.Unix(180, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(120, 0),
+				queryEnd:    time.Unix(180, 0),
+				weightStart: time.Unix(120, 0),
+				weightEnd:   time.Unix(180, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
 			expectedOK: true,
 		},
-		"select range outside route query range is skipped": {
-			start:      time.Unix(100, 0),
-			end:        time.Unix(200, 0),
-			queryStart: time.Unix(200, 0),
-			queryEnd:   time.Unix(300, 0),
-			expectedOK: false,
+		"查询范围未命中 route 查询窗口时跳过该路由": {
+			start:           time.Unix(100, 0),
+			end:             time.Unix(200, 0),
+			routeQueryStart: time.Unix(200, 0),
+			routeQueryEnd:   time.Unix(300, 0),
+			expectedOK:      false,
 		},
-		"select range partially outside route query range keeps full select range": {
+		"查询范围部分超出 route 查询窗口时仍保留完整 SelectHints 范围": {
 			// 对于已选中的路由，SelectHints.Start/End 是 PromQL 引擎计算表达式实际需要的取数范围。
 			// routeQueryStart/End 只用来判断这一路是否需要查询，不能把已经扩展过的 SelectHints 再裁窄。
-			start:      time.Unix(90, 0),
-			end:        time.Unix(210, 0),
-			queryStart: time.Unix(100, 0),
-			queryEnd:   time.Unix(200, 0),
-			expectedS:  time.Unix(90, 0),
-			expectedE:  time.Unix(210, 0),
+			start:           time.Unix(90, 0),
+			end:             time.Unix(210, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(90, 0),
+				queryEnd:    time.Unix(210, 0),
+				weightStart: time.Unix(90, 0),
+				weightEnd:   time.Unix(210, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
+			expectedOK: true,
+		},
+		"有真实 route 生效范围时使用生效范围计算权重": {
+			start:           time.Unix(90, 0),
+			end:             time.Unix(210, 0),
+			routeStart:      time.Unix(120, 0),
+			routeEnd:        time.Unix(180, 0),
+			routeQueryStart: time.Unix(60, 0),
+			routeQueryEnd:   time.Unix(240, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(90, 0),
+				queryEnd:    time.Unix(210, 0),
+				weightStart: time.Unix(120, 0),
+				weightEnd:   time.Unix(180, 0),
+				wrapKind:    seriesSetWrapValidRouteRange,
+			},
 			expectedOK: true,
 		},
 	}
@@ -158,16 +248,17 @@ func TestIntersectTimeRange(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			query := &Query{
-				queryStart: tc.queryStart,
-				queryEnd:   tc.queryEnd,
+				start:      tc.routeStart,
+				end:        tc.routeEnd,
+				queryStart: tc.routeQueryStart,
+				queryEnd:   tc.routeQueryEnd,
 			}
-			rangeStart, rangeEnd, ok := query.intersectTimeRange(tc.start, tc.end)
+			strategy, ok := query.calcSelectStrategy(tc.start, tc.end)
 			assert.Equal(t, tc.expectedOK, ok)
 			if !tc.expectedOK {
 				return
 			}
-			assert.Equal(t, tc.expectedS, rangeStart)
-			assert.Equal(t, tc.expectedE, rangeEnd)
+			assert.Equal(t, tc.expected, strategy)
 		})
 	}
 }
@@ -207,10 +298,10 @@ func TestIntersectTimeRangePreservesSelectHintsLongLookback(t *testing.T) {
 				queryEnd:   tc.routeQueryEnd,
 			}
 
-			rangeStart, rangeEnd, ok := query.intersectTimeRange(tc.hintStart, tc.hintEnd)
+			strategy, ok := query.calcSelectStrategy(tc.hintStart, tc.hintEnd)
 			assert.True(t, ok)
-			assert.Equal(t, tc.hintStart, rangeStart)
-			assert.Equal(t, tc.hintEnd, rangeEnd)
+			assert.Equal(t, tc.hintStart, strategy.queryStart)
+			assert.Equal(t, tc.hintEnd, strategy.queryEnd)
 		})
 	}
 }

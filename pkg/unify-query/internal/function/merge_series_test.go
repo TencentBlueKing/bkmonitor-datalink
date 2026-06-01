@@ -534,6 +534,8 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 		fn              string
 		routes          []routeSeries
 		withRange       bool
+		step            time.Duration
+		withoutStep     bool
 		expected        float64
 		expectedSamples []prompb.Sample
 	}{
@@ -605,6 +607,30 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			withRange: true,
 			expected:  21.2,
+		},
+		"avg_over_time 缺少 bucket 宽度时会退化为普通平均": {
+			// 时间轴：
+			// bucket 宽度: 0，无法计算路由与 bucket 的覆盖时长
+			// 路由 A:     [0s----------132s) value=10
+			// 路由 B:                   [132s--------------300s) value=30
+			// 权重：没有 bucket 宽度时，merge 层只能回退为同 timestamp 普通平均。
+			// 结果：(10 + 30) / 2 = 20
+			fn: function.AvgOT,
+			routes: []routeSeries{
+				{
+					value: 10,
+					start: bucketStart,
+					end:   bucketStart.Add(132 * time.Second),
+				},
+				{
+					value: 30,
+					start: bucketStart.Add(132 * time.Second),
+					end:   bucketEnd,
+				},
+			},
+			withRange:   true,
+			withoutStep: true,
+			expected:    20,
 		},
 		"路由覆盖时长相等时等同于普通平均": {
 			// 时间轴：
@@ -776,7 +802,11 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				sets = append(sets, routeSet)
 			}
 
-			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, bucketStep))
+			step := tc.step
+			if step == 0 && !tc.withoutStep {
+				step = bucketStep
+			}
+			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, step))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
 			expectedSamples := tc.expectedSamples

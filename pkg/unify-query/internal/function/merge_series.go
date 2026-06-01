@@ -10,7 +10,6 @@
 package function
 
 import (
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -32,11 +31,6 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			return nil
 		}
 
-		// 处理单个series的情况
-		if len(series) == 1 {
-			return series[0]
-		}
-
 		name = strings.ToLower(name)
 		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
 		if isAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
@@ -47,14 +41,14 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 	}
 }
 
-// mergeSeriesSetWithFunc 按函数名合并同 label series；非 avg 分段路由会先按 route 生效范围过滤样本。
+// mergeSeriesSetWithFunc 按函数名合并同 label series；分段路由会先按 route 生效范围过滤样本。
 func mergeSeriesSetWithFunc(name string, series []storage.Series) storage.Series {
 	valueMap := make(map[int64]float64)
 	countMap := make(map[int64]float64)
 	candidateValueMap := make(map[int64]float64)
 	candidateCountMap := make(map[int64]float64)
 	aggFunc := seriesAggFunc(name)
-	isRouteRangeFilterEnabled := !isAvgFunc(name) && hasAnyTimeRange(series...)
+	isRouteRangeFilterEnabled := hasAnyTimeRange(series...)
 
 	addSample := func(values, counts map[int64]float64, t int64, v float64) {
 		if existing, ok := values[t]; ok {
@@ -229,6 +223,33 @@ func (s *timeRangeSeries) TimeRange() (int64, int64) {
 	return s.start, s.end
 }
 
+func (s *timeRangeSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
+	it := s.Series.Iterator(iterator)
+	if s.start >= s.end {
+		return it
+	}
+	return &timeRangeSeriesIterator{
+		Iterator: it,
+		start:    s.start,
+		end:      s.end,
+	}
+}
+
+type timeRangeSeriesIterator struct {
+	chunkenc.Iterator
+	start int64
+	end   int64
+}
+
+func (it *timeRangeSeriesIterator) Next() chunkenc.ValueType {
+	for {
+		valueType := it.Iterator.Next()
+		if valueType == chunkenc.ValNone || it.AtT() >= it.start && it.AtT() < it.end {
+			return valueType
+		}
+	}
+}
+
 func hasAnyTimeRange(series ...storage.Series) bool {
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
@@ -251,7 +272,6 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 
 	valueMap := make(map[int64]float64)
 	weightMap := make(map[int64]float64)
-	integerValueMap := make(map[int64]bool)
 	candidateValueMap := make(map[int64]float64)
 	candidateCountMap := make(map[int64]float64)
 	for _, s := range series {
@@ -260,7 +280,7 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 		if ok {
 			start, end = tr.TimeRange()
 		}
-		it := s.Iterator(nil)
+		it := newTimeWeightIterator(s)
 		for it.Next() == chunkenc.ValFloat {
 			t, v := it.At()
 			if ok && start >= end {
@@ -280,12 +300,6 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 			// 加权平均 = sum(avg * overlap) / sum(overlap)
 			valueMap[t] += v * float64(weight)
 			weightMap[t] += float64(weight)
-			if _, ok := integerValueMap[t]; !ok {
-				integerValueMap[t] = true
-			}
-			if !isInteger(v) {
-				integerValueMap[t] = false
-			}
 		}
 		if err := it.Err(); err != nil {
 			return &storage.SeriesEntry{
@@ -311,9 +325,6 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 	for t, v := range valueMap {
 		if weight := weightMap[t]; weight > 0 {
 			v = v / weight
-			if integerValueMap[t] {
-				v = math.Round(v)
-			}
 		}
 		sortedData = append(sortedData, prompb.Sample{Timestamp: t, Value: v})
 	}
@@ -332,6 +343,13 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 	}
 }
 
+func newTimeWeightIterator(s storage.Series) chunkenc.Iterator {
+	if tr, ok := s.(*timeRangeSeries); ok {
+		return tr.Series.Iterator(nil)
+	}
+	return s.Iterator(nil)
+}
+
 func overlapDuration(start, end, otherStart, otherEnd int64) int64 {
 	if start < otherStart {
 		start = otherStart
@@ -343,10 +361,6 @@ func overlapDuration(start, end, otherStart, otherEnd int64) int64 {
 		return 0
 	}
 	return end - start
-}
-
-func isInteger(v float64) bool {
-	return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Trunc(v) == v
 }
 
 type seriesIterator struct {

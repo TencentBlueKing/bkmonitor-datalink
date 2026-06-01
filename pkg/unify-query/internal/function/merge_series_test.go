@@ -611,6 +611,47 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(320, 0)),
 			},
 		},
+		"单条 route 也会过滤完整 SelectHints 中的非生效样本": {
+			fn: function.Sum,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(7, time.Unix(120, 0)),
+						sample(100, time.Unix(250, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+			},
+			expected: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+			},
+		},
+		"plain avg fallback 也会先过滤 route 生效范围": {
+			fn: function.Avg,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(10, time.Unix(120, 0)),
+						sample(30, time.Unix(320, 0)),
+					},
+					start: firstS1Start,
+					end:   firstS1End,
+				},
+				{
+					samples: []prompb.Sample{
+						sample(10, time.Unix(120, 0)),
+						sample(30, time.Unix(320, 0)),
+					},
+					start: secondS1Start,
+					end:   secondS1End,
+				},
+			},
+			expected: []prompb.Sample{
+				sample(10, time.Unix(120, 0)),
+				sample(30, time.Unix(320, 0)),
+			},
+		},
 	}
 
 	for name, tc := range testCases {
@@ -694,7 +735,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// 权重：路由 A 覆盖 132s，路由 B 覆盖 168s。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2。Prometheus avg 结果保持 float64，不按输入是否为整数取整。
 			fn: function.Avg,
 			routes: []routeSeries{
 				{
@@ -709,7 +750,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21,
+			expected:  21.2,
 		},
 		"avg 按路由覆盖时长加权时遇到小数分段会保留浮点结果": {
 			// 时间轴：
@@ -740,7 +781,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// mean 是 avg 的别名，同样按路由覆盖时长加权。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2。mean 是 avg 的别名，同样保持 float64。
 			fn: function.Mean,
 			routes: []routeSeries{
 				{
@@ -755,7 +796,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21,
+			expected:  21.2,
 		},
 		"avg_over_time 按路由覆盖时长加权": {
 			// 时间轴：
@@ -763,7 +804,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
 			// avg_over_time 也是 avg 类函数，同样按路由覆盖时长加权。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2；参与加权的分段 avg 均为整数，最终兼容为整数 21。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2。avg_over_time 也是 Prometheus float avg 语义。
 			fn: function.AvgOT,
 			routes: []routeSeries{
 				{
@@ -778,15 +819,15 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				},
 			},
 			withRange: true,
-			expected:  21,
+			expected:  21.2,
 		},
-		"avg_over_time 缺少 bucket 宽度时会退化为普通平均": {
+		"avg_over_time 缺少 bucket 宽度时会按 timestamp 过滤后退化为普通平均": {
 			// 时间轴：
 			// bucket 宽度: 0，无法计算路由与 bucket 的覆盖时长
 			// 路由 A:     [0s----------132s) value=10
 			// 路由 B:                   [132s--------------300s) value=30
-			// 权重：没有 bucket 宽度时，merge 层只能回退为同 timestamp 普通平均。
-			// 结果：(10 + 30) / 2 = 20
+			// 权重：没有 bucket 宽度时，merge 层按样本 timestamp 过滤 route 生效范围，再退化为同 timestamp 普通平均。
+			// 结果：30@0s 不在路由 B 生效范围内，最终只保留 10@0s。
 			fn: function.AvgOT,
 			routes: []routeSeries{
 				{
@@ -802,7 +843,7 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			},
 			withRange:   true,
 			withoutStep: true,
-			expected:    20,
+			expected:    10,
 		},
 		"路由覆盖时长相等时等同于普通平均": {
 			// 时间轴：

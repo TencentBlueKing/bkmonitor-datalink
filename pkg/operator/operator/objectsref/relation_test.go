@@ -63,9 +63,9 @@ func TestWritePodRelationsWithStatefulSet(t *testing.T) {
 	defer cancel()
 
 	cases := []struct {
-		name       string
-		ownerKind  string
-		setupObjs  func() (*Objects, *Objects) // statefulSetObjs, gameStatefulSetObjs
+		name      string
+		ownerKind string
+		setupObjs func() (*Objects, *Objects) // statefulSetObjs, gameStatefulSetObjs
 	}{
 		{
 			name:      "standard StatefulSet",

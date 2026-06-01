@@ -528,12 +528,13 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	labelValuesQuery := *query
+	labelValuesQuery.SelectDistinct = []string{name}
+
+	queryFactory, err := i.InitQueryFactory(ctx, &labelValuesQuery, start, end)
 	if err != nil {
 		return nil, err
 	}
-
-	query.SelectDistinct = []string{name}
 
 	sql, err := queryFactory.SQL()
 	if err != nil {

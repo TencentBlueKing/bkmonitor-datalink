@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -2441,6 +2442,42 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueryLabelValuesConcurrentSharedQueryRace(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	instance := createTestInstance(ctx)
+
+	end := time.Unix(1740553771, 0)
+	start := time.Unix(1740551971, 0)
+
+	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `race_bklog`.doris": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int"},{"Field":"dteventtimestamp","Type":"bigint"},{"Field":"dteventtime","Type":"varchar(32)"},{"Field":"path","Type":"varchar(128)"},{"Field":"serverip","Type":"varchar(128)"}]}}`,
+		"SELECT DISTINCT `path` FROM `race_bklog`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 2":     `{"result":true,"message":"成功","code":"00","data":{"totalRecords":1,"list":[{"path":"/tmp/app.log"}]}}`,
+		"SELECT DISTINCT `serverip` FROM `race_bklog`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' LIMIT 2": `{"result":true,"message":"成功","code":"00","data":{"totalRecords":1,"list":[{"serverip":"127.0.0.1"}]}}`,
+	})
+
+	query := &metadata.Query{
+		DB:          "race_bklog",
+		Measurement: "doris",
+		Size:        2,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		for _, key := range []string{"path", "serverip"} {
+			wg.Add(1)
+			go func(key string) {
+				defer wg.Done()
+				values, err := instance.QueryLabelValues(metadata.InitHashID(context.Background()), query, key, start, end)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, values)
+			}(key)
+		}
+	}
+	wg.Wait()
+
+	assert.Empty(t, query.SelectDistinct)
 }
 
 // 创建测试用Instance

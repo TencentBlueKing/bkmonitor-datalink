@@ -436,16 +436,16 @@ func recordESQueryShards(ctx context.Context, span *trace.Span, qo *queryOption,
 
 	failuresCount := countESShardFailures(res.Shards.Failures)
 	span.Set("shards_failures_count", failuresCount)
-	if failuresSample := buildESShardFailureSample(res.Shards.Failures); len(failuresSample) > 0 {
-		if failuresSampleJson, marshalErr := json.Marshal(failuresSample); marshalErr == nil {
-			span.Set("shards_failures_sample", string(failuresSampleJson))
-		}
+	failuresSample := buildESShardFailureSample(res.Shards.Failures)
+	failuresSampleJson := marshalESShardFailureSample(failuresSample)
+	if len(failuresSample) > 0 {
+		span.Set("shards_failures_sample", failuresSampleJson)
 	}
 
 	log.Warnf(
 		ctx,
-		"es query shard abnormal index: %+v, timed_out: %v, shards_total: %d, shards_successful: %d, shards_failed: %d, shards_skipped: %d, failures: %s",
-		esQueryIndexes(qo), res.TimedOut, res.Shards.Total, res.Shards.Successful, res.Shards.Failed, res.Shards.Skipped, marshalESShardFailures(res.Shards.Failures),
+		"es query shard abnormal index: %+v, timed_out: %v, shards_total: %d, shards_successful: %d, shards_failed: %d, shards_skipped: %d, failures_count: %d, failures_sample: %s",
+		esQueryIndexes(qo), res.TimedOut, res.Shards.Total, res.Shards.Successful, res.Shards.Failed, res.Shards.Skipped, failuresCount, failuresSampleJson,
 	)
 }
 
@@ -495,10 +495,10 @@ func marshalESShardFailureReason(reason map[string]interface{}) string {
 	return string(reasonJson)
 }
 
-func marshalESShardFailures(failures []*elastic.ShardOperationFailedException) string {
-	failuresJson, err := json.Marshal(failures)
+func marshalESShardFailureSample(failuresSample []esShardFailureSample) string {
+	failuresJson, err := json.Marshal(failuresSample)
 	if err != nil {
-		return fmt.Sprintf("%+v", failures)
+		return fmt.Sprintf("%+v", failuresSample)
 	}
 	return string(failuresJson)
 }

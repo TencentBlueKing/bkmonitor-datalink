@@ -171,18 +171,18 @@ func initialProcessor(t *testing.T, dataId string, enabledMetrics bool) Processo
 	// Step2: initial storageBackend
 	mockStorage := storage.NewMockBackend(ctrl)
 	mockStorage.EXPECT().Exist(gomock.Any()).AnyTimes().Return(false, nil)
+	baseInfo := core.GetMetadataCenter().ListBaseInfos(dataId)[0]
 
 	return Processor{
-		dataId:         dataId,
-		config:         ProcessorOptions{metricReportEnabled: enabledMetrics},
-		dataIdBaseInfo: core.BaseInfo{},
-		proxy:          mockStorage,
+		dataId: dataId,
+		config: ProcessorOptions{metricReportEnabled: enabledMetrics, infoReportEnabled: true},
+		proxy:  mockStorage,
 		logger: monitorLogger.With(
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(context.Background(), dataId, false),
-		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
+		metricProcessor: newMetricProcessor(context.Background(), dataId, baseInfo, ProcessorOptions{}),
+		baseInfo:        baseInfo,
 	}
 }
 
@@ -294,17 +294,20 @@ func mockConsulData(dataId string) []byte {
 
 // NewMockMetaCenter 创建一个 mock 的 consul 元数据获取
 func NewMockMetaCenter(t *testing.T, dataId string) *core.MetadataCenter {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockStore := store.NewMockStore(ctrl)
-	mockStore.EXPECT().Get(gomock.Any()).Return(mockConsulData(dataId), nil)
-
 	centerInstance := &core.MetadataCenter{
 		Mapping: &sync.Map{},
-		Consul:  mockStore,
+		Consul:  metadataTestStore{value: mockConsulData(dataId)},
 	}
 
 	_ = centerInstance.AddDataId(dataId)
 	return centerInstance
+}
+
+type metadataTestStore struct {
+	store.Store
+	value []byte
+}
+
+func (s metadataTestStore) Get(_ string) (uint64, []byte, error) {
+	return 0, s.value, nil
 }

@@ -29,6 +29,7 @@ var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果
 // Event: cluster info model
 // gen:qs
 type ClusterInfo struct {
+	BkTenantID                string    `gorm:"column:bk_tenant_id;size:256;default:system" json:"bk_tenant_id"`
 	ClusterID                 uint      `gorm:"primary_key" json:"cluster_id"`
 	ClusterName               string    `gorm:"size:128;unique" json:"cluster_name"`
 	DisplayName               string    `gorm:"size:128" json:"display_name"`

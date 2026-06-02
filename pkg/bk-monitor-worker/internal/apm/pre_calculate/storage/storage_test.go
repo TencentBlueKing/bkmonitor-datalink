@@ -12,29 +12,41 @@ package storage
 import (
 	"context"
 	"log"
-	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/prompb"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
 func TestProxyInstance_WriteBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
+	dataId := "12345"
+	appKey := core.AppKey{BkBizId: "2", AppName: "testApp"}
+	core.InitMetadataCenter(&core.MetadataCenter{Mapping: &sync.Map{}})
+	core.GetMetadataCenter().AddDataIdAndInfo(
+		dataId,
+		dataId,
+		core.DataIdInfo{
+			BaseInfo: core.BaseInfo{BkBizId: appKey.BkBizId, AppName: appKey.AppName},
+		},
+	)
 
 	proxy, err := NewProxyInstance(
-		"", ctx,
+		dataId, ctx,
 		WorkerCount(1),
 		SaveHoldMaxCount(1),
 		SaveHoldDuration(time.Second),
 		PrometheusWriterConfig(
 			remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 			remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+		),
+		MetricsConfig(
+			MetricRelationMemDuration(10*time.Minute),
+			MetricFlowMemDuration(time.Minute),
+			MetricFlowBuckets(config.MetricsDurationBuckets),
 		),
 	)
 	if err != nil {
@@ -49,52 +61,12 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 		dataChan <- SaveRequest{
 			Target: Prometheus,
 			Data: PrometheusStorageData{
-				Value: prompb.WriteRequest{Timeseries: []prompb.TimeSeries{
-					{
-						Labels: []prompb.Label{
-							{
-								Name:  "__name__",
-								Value: "storage_test",
-							},
-							{
-								Name:  "role",
-								Value: "child",
-							},
-							{
-								Name:  "status",
-								Value: "failed",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: time.Now().UnixMilli(),
-								Value:     rand.Float64() * float64(rand.Intn(100)),
-							},
-						},
-					},
-					{
-						Labels: []prompb.Label{
-							{
-								Name:  "__name__",
-								Value: "storage_test",
-							},
-							{
-								Name:  "role",
-								Value: "admin",
-							},
-							{
-								Name:  "status",
-								Value: "failed",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: time.Now().UnixMilli(),
-								Value:     rand.Float64() * float64(rand.Intn(100)),
-							},
-						},
-					},
-				}},
+				AppKey: appKey,
+				Kind:   PromRelationMetric,
+				Value: []string{
+					"__name__=storage_test,role=child,status=failed",
+					"__name__=storage_test,role=admin,status=failed",
+				},
 			},
 		}
 	}()

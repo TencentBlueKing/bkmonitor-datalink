@@ -514,12 +514,10 @@ func HandlerLabelValues(c *gin.Context) {
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
 	defer func() {
+		span.End(&err)
 		if err != nil {
 			resp.failed(ctx, err)
-			return
 		}
-
-		span.End(&err)
 	}()
 
 	labelName := c.Param("label_name")
@@ -669,8 +667,6 @@ func HandlerFieldMap(c *gin.Context) {
 				).Error(ctx, qErr)
 				return
 			}
-
-			span.Set(fmt.Sprintf("field-map-length-%s", qry.TableUUID()), len(res))
 
 			for k, v := range res {
 				lock.Lock()

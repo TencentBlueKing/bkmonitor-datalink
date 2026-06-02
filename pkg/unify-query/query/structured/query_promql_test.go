@@ -153,6 +153,15 @@ func TestQueryPromQLExpr(t *testing.T) {
 	}
 }
 
+func TestQueryPromQLExprMissingMetricDoesNotPanic(t *testing.T) {
+	sp := NewQueryPromQLExpr(`sum(increase({namespace=~"Development",service_name=~".+"}[1m])) or vector(0)`)
+
+	query, err := sp.QueryTs()
+
+	assert.NotNil(t, query)
+	assert.ErrorIs(t, err, ErrMetricMissing)
+}
+
 // TestPromQLWithBkQueryLabelSelector PromQL __bk_query_label_selector_* 解析与单组往返。
 func TestPromQLWithBkQueryLabelSelector(t *testing.T) {
 	log.InitTestLogger()

@@ -47,6 +47,56 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "wildcard condition highlight",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Value:         []string{"*灰太狼*"},
+							Operator:      metadata.ConditionContains,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{
+				"log": {{Value: "*灰太狼*", Operator: metadata.ConditionContains, IsWildcard: true}},
+			},
+			data: map[string]any{
+				"log": "PlayerLogin |488744| 灰太狼 login",
+			},
+			highLightData: map[string]any{
+				"log": []string{`PlayerLogin |488744| <mark>灰太狼</mark> login`},
+			},
+		},
+		{
+			name: "negative wildcard condition is not highlighted",
+			query: &metadata.Query{
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "message",
+							Value:         []string{"%debug%"},
+							Operator:      metadata.ConditionNotEqual,
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "message",
+							Value:         []string{"trace"},
+							Operator:      metadata.ConditionNotContains,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]LabelMapValue{},
+			data: map[string]any{
+				"message": "debug trace info",
+			},
+			highLightData: map[string]any{},
+		},
+		{
 			name: "只有 QueryString",
 			query: &metadata.Query{
 				QueryString: "level:warning",
@@ -97,7 +147,7 @@ func TestQuery_LabelMap(t *testing.T) {
 			expected: map[string][]LabelMapValue{
 				"file": {
 					{
-						Value: "elasticsearch/query_string", Operator: metadata.ConditionContains,
+						Value: "*elasticsearch/query_string*", Operator: metadata.ConditionContains, IsWildcard: true,
 					},
 				},
 				"level": {
@@ -127,8 +177,23 @@ func TestQuery_LabelMap(t *testing.T) {
 					`<mark>warn</mark>`,
 				},
 				"trace_id": []string{
-					"my<mark>12356</mark>bro",
+					`my<mark>12356</mark>bro`,
 				},
+			},
+		},
+		{
+			name: "query string wildcard preserves pattern",
+			query: &metadata.Query{
+				QueryString: "message:foo*bar",
+			},
+			expected: map[string][]LabelMapValue{
+				"message": {{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true}},
+			},
+			data: map[string]any{
+				"message": "foo123bar foobar",
+			},
+			highLightData: map[string]any{
+				"message": []string{`<mark>foo123bar</mark> <mark>foobar</mark>`},
 			},
 		},
 		{
@@ -226,7 +291,7 @@ func TestQuery_LabelMap(t *testing.T) {
 				},
 				"region": {
 					{Value: "us-east-1", Operator: metadata.ConditionEqual},
-					{Value: "us-east-2", Operator: metadata.ConditionContains},
+					{Value: "us-east-2", Operator: metadata.ConditionContains, IsWildcard: true},
 				},
 			},
 		},
@@ -285,6 +350,165 @@ func TestQuery_LabelMap(t *testing.T) {
 				resultData := hf.Process(tc.data)
 				assert.Equal(t, tc.highLightData, resultData, "Query.HighLightFactory result should match expected")
 			}
+		})
+	}
+}
+
+func TestHighLightFactory_RegexAndWildcardActualMatches(t *testing.T) {
+	testCases := []struct {
+		name      string
+		text      string
+		keywords  []LabelMapValue
+		fieldsMap metadata.FieldsMap
+		expected  string
+	}{
+		{
+			name: "literal matches all occurrences",
+			text: "abc123abc",
+			keywords: []LabelMapValue{
+				{Value: "abc", Operator: metadata.ConditionEqual},
+			},
+			expected: "<mark>abc</mark>123<mark>abc</mark>",
+		},
+		{
+			name: "wildcard trims leading and trailing wildcards",
+			text: "XabcY",
+			keywords: []LabelMapValue{
+				{Value: "*abc*", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "X<mark>abc</mark>Y",
+		},
+		{
+			name: "wildcard prefix",
+			text: "abcdef",
+			keywords: []LabelMapValue{
+				{Value: "abc*", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>abc</mark>def",
+		},
+		{
+			name: "wildcard suffix",
+			text: "xyzabc",
+			keywords: []LabelMapValue{
+				{Value: "*abc", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "xyz<mark>abc</mark>",
+		},
+		{
+			name: "wildcard middle expansion",
+			text: "axxxxc",
+			keywords: []LabelMapValue{
+				{Value: "*a*c*", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>axxxxc</mark>",
+		},
+		{
+			name: "exact literal preserves wildcard characters",
+			text: "error? error1 a*b axxxb",
+			keywords: []LabelMapValue{
+				{Value: "error?", Operator: metadata.ConditionEqual},
+				{Value: "a*b", Operator: metadata.ConditionExact},
+			},
+			expected: "<mark>error?</mark> error1 <mark>a*b</mark> axxxb",
+		},
+		{
+			name: "wildcard honors escaped wildcard characters",
+			text: "pa*tialX paZZtialY",
+			keywords: []LabelMapValue{
+				{Value: `*pa\*tial?`, Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>pa*tialX</mark> paZZtialY",
+		},
+		{
+			name: "wildcard uses non greedy internal star",
+			text: "foo1bar ... foo2bar",
+			keywords: []LabelMapValue{
+				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "<mark>foo1bar</mark> ... <mark>foo2bar</mark>",
+		},
+		{
+			name: "wildcard does not span newline",
+			text: "foo\nbar fooXbar",
+			keywords: []LabelMapValue{
+				{Value: "foo*bar", Operator: metadata.ConditionContains, IsWildcard: true},
+			},
+			expected: "foo\nbar <mark>fooXbar</mark>",
+		},
+		{
+			name: "invalid regex is skipped",
+			text: "age12",
+			keywords: []LabelMapValue{
+				{Value: "(", Operator: metadata.ConditionRegEqual},
+				{Value: "age", Operator: metadata.ConditionEqual},
+			},
+			expected: "<mark>age</mark>12",
+		},
+		{
+			name: "overlapped matches are merged",
+			text: "0123456789",
+			keywords: []LabelMapValue{
+				{Value: "34567", Operator: metadata.ConditionEqual},
+				{Value: "56789", Operator: metadata.ConditionEqual},
+			},
+			expected: "012<mark>3456789</mark>",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
+			result := h.Process(map[string]any{"log": tc.text})
+			assert.Equal(t, map[string]any{"log": []string{tc.expected}}, result)
+		})
+	}
+}
+
+func TestHighLightFactory_RegexConditionsHighlight(t *testing.T) {
+	testCases := []struct {
+		name      string
+		text      string
+		keywords  []LabelMapValue
+		fieldsMap metadata.FieldsMap
+		expected  string
+	}{
+		{
+			name: "regex condition highlights matching span",
+			text: "axxb",
+			keywords: []LabelMapValue{
+				{Value: "a.*b", Operator: metadata.ConditionRegEqual},
+			},
+			expected: "<mark>axxb</mark>",
+		},
+		{
+			name: "case insensitive regex condition highlights matching spans",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: false},
+			},
+			expected: "<mark>ERROR</mark> <mark>error</mark>",
+		},
+		{
+			name: "case sensitive regex condition only highlights exact case",
+			text: "ERROR error",
+			keywords: []LabelMapValue{
+				{Value: "error", Operator: metadata.ConditionRegEqual},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"log": metadata.FieldOption{FieldName: "log", FieldType: "text", IsCaseSensitive: true},
+			},
+			expected: "ERROR <mark>error</mark>",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHighLightFactory(map[string][]LabelMapValue{"log": tc.keywords}, tc.fieldsMap, 0)
+			result := h.Process(map[string]any{"log": tc.text})
+			assert.Equal(t, map[string]any{"log": []string{tc.expected}}, result)
 		})
 	}
 }

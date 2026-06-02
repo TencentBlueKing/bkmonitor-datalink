@@ -11,6 +11,10 @@ package config
 
 import (
 	"fmt"
+
+	"github.com/spf13/viper"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -24,7 +28,34 @@ var (
 	ClusterMetricHostFieldName    string
 	ESClusterMetricTarget         string
 	ESClusterMetricQueueName      string
+
+	RabbitMQClusterMetricEnabled           bool
+	RabbitMQClusterMetricTarget            string
+	RabbitMQClusterMetricQueueName         string
+	RabbitMQClusterMetricReportUrl         string
+	RabbitMQClusterMetricReportDataId      int
+	RabbitMQClusterMetricReportAccessToken string
+	RabbitMQClusterMetricInstances         []RabbitMQClusterMetricInstance
 )
+
+type RabbitMQClusterMetricInstance struct {
+	Name                  string   `mapstructure:"name"`
+	Schema                string   `mapstructure:"schema"`
+	DomainName            string   `mapstructure:"domainName"`
+	HTTPPort              int      `mapstructure:"httpPort"`
+	AMQPPort              int      `mapstructure:"amqpPort"`
+	Username              string   `mapstructure:"username"`
+	Password              string   `mapstructure:"password"`
+	Vhosts                []string `mapstructure:"vhosts"`
+	QueueIncludes         []string `mapstructure:"queueIncludes"`
+	QueueExcludes         []string `mapstructure:"queueExcludes"`
+	QueueIncludeRegexes   []string `mapstructure:"queueIncludeRegexes"`
+	QueueExcludeRegexes   []string `mapstructure:"queueExcludeRegexes"`
+	BkBizID               int      `mapstructure:"bkBizId"`
+	BkTenantID            string   `mapstructure:"bkTenantId"`
+	TimeoutSeconds        int      `mapstructure:"timeoutSeconds"`
+	TLSInsecureSkipVerify bool     `mapstructure:"tlsInsecureSkipVerify"`
+}
 
 func initClusterMetricVariables() {
 	ClusterMetricStorageKeyPrefix = GetValue("taskConfig.cluster_metrics.storage_key_prefix", "bkmonitor")
@@ -39,4 +70,45 @@ func initClusterMetricVariables() {
 
 	ESClusterMetricTarget = "bk_log_search"
 	ESClusterMetricQueueName = GetValue("taskConfig.logSearch.queueName", "log-search")
+
+	RabbitMQClusterMetricEnabled = getRabbitMQBool("taskConfig.rabbitmqMetric.enabled", true)
+	RabbitMQClusterMetricTarget = getRabbitMQString("taskConfig.rabbitmqMetric.target", "bk_rabbitmq")
+	RabbitMQClusterMetricQueueName = getRabbitMQString("taskConfig.rabbitmqMetric.queueName", "default")
+	RabbitMQClusterMetricReportUrl = getRabbitMQString("taskConfig.rabbitmqMetric.reportUrl", "")
+	RabbitMQClusterMetricReportDataId = getRabbitMQInt("taskConfig.rabbitmqMetric.reportDataId", 0)
+	RabbitMQClusterMetricReportAccessToken = getRabbitMQString("taskConfig.rabbitmqMetric.reportAccessToken", "")
+	RabbitMQClusterMetricInstances = getRabbitMQInstances("taskConfig.rabbitmqMetric.instances")
+}
+
+func getRabbitMQBool(key string, def bool) bool {
+	if !viper.IsSet(key) {
+		return def
+	}
+	return viper.GetBool(key)
+}
+
+func getRabbitMQString(key string, def string) string {
+	if !viper.IsSet(key) {
+		return def
+	}
+	return viper.GetString(key)
+}
+
+func getRabbitMQInt(key string, def int) int {
+	if !viper.IsSet(key) {
+		return def
+	}
+	return viper.GetInt(key)
+}
+
+func getRabbitMQInstances(key string) []RabbitMQClusterMetricInstance {
+	var instances []RabbitMQClusterMetricInstance
+	if !viper.IsSet(key) {
+		return instances
+	}
+	if err := viper.UnmarshalKey(key, &instances); err != nil {
+		logger.Errorf("failed to unmarshal rabbitmq cluster metric instances: %v", err)
+		return []RabbitMQClusterMetricInstance{}
+	}
+	return instances
 }

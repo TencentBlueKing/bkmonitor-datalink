@@ -18,6 +18,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
+	cmRabbitMQTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/rabbitmq"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
@@ -42,6 +43,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
+	ReportRabbitMQClusterMetrics := "periodic:cluster_metrics:report_rabbitmq"
 	ClearDeprecatedRedisKey := "periodic:metadata:clear_deprecated_redis_key"
 	CleanDataIdConsulPath := "periodic:metadata:clean_data_id_consul_path"
 
@@ -79,6 +81,11 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
 			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(5 * time.Minute)},
+		},
+		ReportRabbitMQClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmRabbitMQTask.ReportRabbitMQClusterMetrics,
+			Option:  []task.Option{task.Queue(cfg.RabbitMQClusterMetricQueueName), task.Timeout(5 * time.Minute)},
 		},
 		ClearDeprecatedRedisKey: {
 			Cron:    "0 0 */14 * *",

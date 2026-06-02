@@ -34,9 +34,8 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	_, span := trace.NewSpan(ctx, "response-failed")
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
-		TraceID: span.TraceID(),
+		TraceID: trace.TraceIDFromContext(ctx),
 		Err:     err.Error(),
 	})
 }

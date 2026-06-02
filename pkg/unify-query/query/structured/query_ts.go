@@ -158,6 +158,9 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
+		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
+		query.DataSource = normalizeDataSource(query.DataSource)
+
 		// 时间复用
 		query.Timezone = q.Timezone
 		query.Start = q.Start
@@ -724,6 +727,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	// 构建 query map 使得相同的 storage 可以进行合并查询
 	queryMap := make(map[string]*metadata.Query)
+	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
@@ -815,13 +819,17 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			storageUUID := query.StorageUUID()
 			if oq, ok := queryMap[storageUUID]; ok {
-				span.Set(fmt.Sprintf("query_merge_%s", oq.TableID), query.TableID)
+				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
 				oq.DBs = append(oq.DBs, query.DB)
 			} else {
 				query.DBs = []string{query.DB}
 				queryMap[storageUUID] = query
 			}
 		}
+	}
+
+	if len(queryMergePairs) > 0 {
+		span.Set("query_merge_pairs", queryMergePairs)
 	}
 
 	span.Set("query_map_length", len(queryMap))
@@ -869,8 +877,6 @@ func (q *Query) BuildMetadataQuery(
 	if measurement != "" {
 		measurements = []string{measurement}
 	}
-	jsonString, _ := json.Marshal(tsDB)
-	span.Set("tsdb-json", jsonString)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -1032,7 +1038,7 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
-	jsonString, _ = json.Marshal(query)
+	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
 	return query

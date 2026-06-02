@@ -386,9 +386,11 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		log.Debugf(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))
 	}()
 	var (
-		err error
-		ok  bool
-		val influxdb.GenericKV
+		err      error
+		ok       bool
+		val      influxdb.GenericKV
+		recvErr  bool // genericCh 曾收到带 Err 的项（如 HScan 失败、JSON 解析失败）
+		batchErr bool // 任一批 BatchAdd 写本地 KV 失败
 	)
 	batchSize := int64(r.batchSize)
 	entities := make([]influxdb.GenericKV, 0)
@@ -403,10 +405,11 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 		case val, ok = <-genericCh:
 			if ok {
 				if val.Err != nil {
+					recvErr = true
 					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由加载异常 %v",
-						err,
+						val.Err,
 					).Warn(ctx)
 					continue
 				}
@@ -417,6 +420,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false, printBytes)
 				if err != nil {
+					batchErr = true
 					metadata.NewMessage(
 						metadata.MsgQueryRouter,
 						"空间TSDB路由 %s 添加异常 %v",
@@ -428,6 +432,15 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				entities = entities[:0]
 			}
 			if !ok {
+				// 仅 SpaceAllKey 打点，避免非法 key 造成 Prometheus 高基数
+				if influxdb.IsSpaceAllRouterKey(key) {
+					// ctx 被取消时，HScan 可能提前结束但不会显式透传 GenericKV.Err，记为 failure
+					if recvErr || batchErr || ctx.Err() != nil {
+						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
+					} else {
+						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultSuccess)
+					}
+				}
 				return nil
 			}
 		}

@@ -209,6 +209,21 @@ type Query struct {
 	IsMergeDB bool `json:"is_merge_db"`
 }
 
+// ToCheckRouteInfo 生成 Check 接口用的单条子查询路由摘要，不调用实际 TSDB 查询
+func (q *Query) ToCheckRouteInfo(referenceName, metricName string) CheckRouteInfo {
+	return CheckRouteInfo{
+		ReferenceName: referenceName,
+		MetricName:    metricName,
+		TableID:       q.TableID,
+		DB:            q.DB,
+		DataLabel:     q.DataLabel,
+		DataSource:    q.DataSource,
+		StorageType:   q.StorageType,
+		StorageID:     q.StorageID,
+		Measurement:   q.Measurement,
+	}
+}
+
 // GetMergeDBStatus 判断是否进行 db 合并处理
 func (q *Query) GetMergeDBStatus() bool {
 	// 如果 db 为空，则不需要合并
@@ -223,6 +238,22 @@ func (q *Query) GetMergeDBStatus() bool {
 
 	// es 合并逻辑有问题，因为需要获取 mapping 信息，所以一旦字段不一样，查询可能就会有问题
 	return false
+}
+
+// IsElasticsearchIndexPrefixMissing 表示 ES 查询缺少可用的索引前缀（db / dbs）。
+func (q *Query) IsElasticsearchIndexPrefixMissing() bool {
+	if q == nil || q.StorageType != ElasticsearchStorageType {
+		return false
+	}
+	if strings.TrimSpace(q.DB) != "" {
+		return false
+	}
+	for _, db := range q.DBs {
+		if strings.TrimSpace(db) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (q *Query) VMExpand() *VmExpand {
@@ -326,6 +357,46 @@ type QueryClusterMetric struct {
 
 type QueryReference map[string][]*QueryMetric
 
+// CheckRouteInfo Check 单条子查询路由摘要（与 Query 同源；不含敏感字段；不调真实 TSDB）。
+type CheckRouteInfo struct {
+	ReferenceName string `json:"reference_name"`
+	MetricName    string `json:"metric_name,omitempty"`
+	TableID       string `json:"table_id"`
+	DB            string `json:"db,omitempty"`
+	DataLabel     string `json:"data_label,omitempty"`
+	DataSource    string `json:"data_source,omitempty"`
+	StorageType   string `json:"storage_type,omitempty"`
+	StorageID     string `json:"storage_id,omitempty"`
+	Measurement   string `json:"measurement,omitempty"`
+}
+
+// CollectCheckRouteInfo 汇总子查询路由字段；reference 名排序以保证输出稳定。
+func (qRef QueryReference) CollectCheckRouteInfo() []CheckRouteInfo {
+	if len(qRef) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, len(qRef))
+	for ref := range qRef {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	rows := make([]CheckRouteInfo, 0)
+	for _, refName := range refs {
+		for _, qm := range qRef[refName] {
+			if qm == nil {
+				continue
+			}
+			for _, qry := range qm.QueryList {
+				if qry == nil {
+					continue
+				}
+				rows = append(rows, qry.ToCheckRouteInfo(refName, qm.MetricName))
+			}
+		}
+	}
+	return rows
+}
+
 type Queries struct {
 	Query QueryReference
 
@@ -394,6 +465,34 @@ func (qRef QueryReference) Count() int {
 	})
 
 	return i
+}
+
+func (qRef QueryReference) Filter(fn func(qry *Query) bool) QueryReference {
+	filtered := make(QueryReference, len(qRef))
+	for refName, references := range qRef {
+		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
+
+			queryList := make(QueryList, 0, len(reference.QueryList))
+			for _, query := range reference.QueryList {
+				if query == nil || !fn(query) {
+					continue
+				}
+				queryList = append(queryList, query)
+			}
+			if len(queryList) == 0 {
+				continue
+			}
+
+			nextReference := *reference
+			nextReference.QueryList = queryList
+			filtered[refName] = append(filtered[refName], &nextReference)
+		}
+	}
+
+	return filtered
 }
 
 // Range 遍历查询列表

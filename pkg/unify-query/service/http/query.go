@@ -41,6 +41,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
+func warnElasticsearchIndexPrefixMissing(ctx context.Context, qry *metadata.Query, msgType string) {
+	metadata.NewMessage(
+		msgType,
+		"%s ES 元数据 db(索引前缀)为空且无有效 dbs，已跳过该结果表",
+		qry.TableID,
+	).Warn(ctx)
+}
+
+func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef metadata.QueryReference, msgType string, onSkip func(*metadata.Query)) metadata.QueryReference {
+	return queryRef.Filter(func(qry *metadata.Query) bool {
+		if !qry.IsElasticsearchIndexPrefixMissing() {
+			return true
+		}
+
+		warnElasticsearchIndexPrefixMissing(ctx, qry, msgType)
+		if onSkip != nil {
+			onSkip(qry)
+		}
+		return false
+	})
+}
+
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
@@ -175,6 +197,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if err != nil {
 		return total, list, resultTableOptions, err
 	}
+	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
 
 	receiveWg.Add(1)
 	go func() {
@@ -435,6 +458,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			"查询参数配置异常",
 		).Error(ctx, err)
 	}
+	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
+		for i := 0; i < session.SliceLength(); i++ {
+			sliceQry := *qry
+			sliceQry.SliceID = cast.ToString(i)
+			slice := session.Slice(sliceQry.TableUUID())
+			slice.Status = redisUtil.StatusCompleted
+			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
+		}
+	})
 
 	receiveWg.Add(1)
 	go func() {
@@ -465,7 +497,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	// 多协程查询数据
 	var (
-		wg sync.WaitGroup
+		wg         sync.WaitGroup
+		optionLock sync.Mutex
 	)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
@@ -475,6 +508,18 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	queryRef.Range("", func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceIndex := i
+
+			newQry := &metadata.Query{}
+			if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
+				errCh <- metadata.NewMessage(
+					metadata.MsgQueryRawScroll,
+					"查询失败",
+				).Error(ctx, copyErr)
+				continue
+			}
+
+			localQry := newQry
+			localSliceIndex := sliceIndex
 			wg.Add(1)
 
 			if submitErr := p.Submit(func() {
@@ -482,38 +527,29 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					wg.Done()
 				}()
 
-				newQry := &metadata.Query{}
-				if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
-					errCh <- metadata.NewMessage(
-						metadata.MsgQueryRawScroll,
-						"查询失败",
-					).Error(ctx, copyErr)
-					return
-				}
-
 				// 使用 slice 配置查询
-				newQry.SliceID = cast.ToString(sliceIndex)
+				localQry.SliceID = cast.ToString(localSliceIndex)
 
 				// slice info
-				slice := session.Slice(newQry.TableUUID())
+				slice := session.Slice(localQry.TableUUID())
 				defer func() {
-					session.UpdateSliceStatus(newQry.TableUUID(), slice)
+					session.UpdateSliceStatus(localQry.TableUUID(), slice)
 				}()
 
 				if slice.Done() {
 					return
 				}
 
-				from := slice.Offset + sliceIndex*slice.Limit
-				newQry.Size = slice.Limit
-				newQry.ResultTableOption = &metadata.ResultTableOption{
-					SliceIndex: sliceIndex,
+				from := slice.Offset + localSliceIndex*slice.Limit
+				localQry.Size = slice.Limit
+				localQry.ResultTableOption = &metadata.ResultTableOption{
+					SliceIndex: localSliceIndex,
 					ScrollID:   slice.ScrollID,
 					SliceMax:   slice.SliceMax,
 					From:       &from,
 				}
 
-				instance := prometheus.GetTsDbInstance(ctx, newQry)
+				instance := prometheus.GetTsDbInstance(ctx, localQry)
 				if instance == nil {
 					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
@@ -522,7 +558,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				size, _, option, rawErr := instance.QueryRawData(ctx, newQry, qb.Start, qb.End, dataCh)
+				size, _, option, rawErr := instance.QueryRawData(ctx, localQry, qb.Start, qb.End, dataCh)
 				if rawErr != nil {
 					slice.FailedNum++
 					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
@@ -546,7 +582,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					slice.Status = redisUtil.StatusCompleted
 				}
 
-				resultTableOptions.SetOption(newQry.TableUUID(), option)
+				optionLock.Lock()
+				resultTableOptions.SetOption(localQry.TableUUID(), option)
+				optionLock.Unlock()
 			}); submitErr != nil {
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,

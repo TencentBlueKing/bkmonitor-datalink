@@ -17,6 +17,7 @@ type DorisStorage struct {
 	TableID            string `json:"table_id" gorm:"primary_key;size:128;comment:结果表ID"`
 	BkTenantID         string `json:"bk_tenant_id" gorm:"size:256;default:system;comment:租户ID"`
 	BkbaseTableID      string `json:"bkbase_table_id" gorm:"size:128;comment:bkbase表名"`
+	OriginTableId      string `json:"origin_table_id" gorm:"column:origin_table_id;size:128"`
 	SourceType         string `json:"source_type" gorm:"size:32;default:log;comment:数据源类型"`
 	IndexSet           string `json:"index_set" gorm:"type:text;comment:索引集"`
 	TableType          string `json:"table_type" gorm:"size:128;default:primary_table;comment:物理表类型"`

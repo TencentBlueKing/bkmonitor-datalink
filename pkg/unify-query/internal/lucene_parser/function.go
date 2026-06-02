@@ -214,7 +214,7 @@ func realValue(node Node) any {
 	return res
 }
 
-func ConditionNodeWalk(node Node, fn func(key string, operator string, values ...string)) {
+func ConditionNodeWalk(node Node, fn func(key string, operator string, isWildcard bool, values ...string)) {
 	if node == nil {
 		return
 	}
@@ -226,8 +226,9 @@ func ConditionNodeWalk(node Node, fn func(key string, operator string, values ..
 		}
 
 		var (
-			field string
-			op    string
+			field      string
+			op         string
+			isWildcard bool
 		)
 		if n.field != nil {
 			field = n.field.String()
@@ -241,17 +242,8 @@ func ConditionNodeWalk(node Node, fn func(key string, operator string, values ..
 		switch v := n.value.(type) {
 		case *WildCardNode:
 			op = metadata.ConditionContains
-			var (
-				ns       []rune
-				lastChar rune
-			)
-			for _, char := range value {
-				if char != '*' && char != '?' && char != '\\' || lastChar == '\\' {
-					ns = append(ns, char)
-				}
-				lastChar = char
-			}
-			value = string(ns)
+			isWildcard = true
+			value = normalizeWildcardConditionValue(value)
 		case *RegexpNode:
 			op = metadata.ConditionRegEqual
 		case *StringNode:
@@ -286,10 +278,31 @@ func ConditionNodeWalk(node Node, fn func(key string, operator string, values ..
 			}
 		}
 
-		fn(field, op, value)
+		fn(field, op, isWildcard, value)
 	case *LogicNode:
 		for _, ln := range n.Nodes {
 			ConditionNodeWalk(ln, fn)
 		}
 	}
+}
+
+func normalizeWildcardConditionValue(value string) string {
+	chars := []rune(value)
+	var builder strings.Builder
+	for i := 0; i < len(chars); i++ {
+		if chars[i] == '\\' && i+1 < len(chars) {
+			next := chars[i+1]
+			switch next {
+			case '*', '?', '\\':
+				builder.WriteRune('\\')
+				builder.WriteRune(next)
+			default:
+				builder.WriteRune(next)
+			}
+			i++
+			continue
+		}
+		builder.WriteRune(chars[i])
+	}
+	return builder.String()
 }

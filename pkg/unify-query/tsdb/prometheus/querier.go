@@ -143,7 +143,11 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	referenceName, queryList := q.getQueryList(matchers)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
-	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
+	var rangeSelector time.Duration
+	if hints != nil && hints.Range > 0 {
+		rangeSelector = time.Duration(hints.Range) * time.Millisecond
+	}
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step, rangeSelector)
 	span.Set("merge_func", mergeFunc)
 	span.Set("merge_bucket_duration", bucketDuration)
 

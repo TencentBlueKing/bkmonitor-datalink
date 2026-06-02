@@ -59,8 +59,8 @@ func (ql QueryList) outerAggName() string {
 // mergeBucketDuration 返回多路由合并时用于计算 route 覆盖时长的 bucket 宽度。
 // 优先使用下推聚合里与当前合并函数匹配的窗口；普通 avg 没有真实时间窗口时返回 0，
 // 避免把瞬时点误当成 [t, t+step) 区间；avg_over_time 来自 Prometheus hint 时，
-// 如果缺少下推窗口，则使用查询步长作为兜底 bucket 宽度。
-func (ql QueryList) mergeBucketDuration(name string, fallback time.Duration) time.Duration {
+// 如果缺少下推窗口，则优先使用 Prometheus range selector 宽度，再使用查询步长作为兜底 bucket 宽度。
+func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector time.Duration) time.Duration {
 	name = strings.ToLower(name)
 	for _, query := range ql {
 		if query == nil || query.qry == nil {
@@ -76,8 +76,11 @@ func (ql QueryList) mergeBucketDuration(name string, fallback time.Duration) tim
 	}
 
 	if isAvgBucketFunc(name) {
-		// avg_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用查询步长作为 bucket 宽度兜底。
+		// avg_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
 		if name == function.AvgOT {
+			if rangeSelector > 0 {
+				return rangeSelector
+			}
 			return fallback
 		}
 		return 0

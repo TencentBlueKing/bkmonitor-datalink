@@ -102,7 +102,7 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 					StorageID:  "16",
 					Start:      switchTime,
 					End:        end,
-					QueryStart: switchTime.Add(-StorageClusterRecordOverlap),
+					QueryStart: switchTime,
 					QueryEnd:   end.Add(StorageClusterRecordOverlap),
 				},
 				{
@@ -110,7 +110,7 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 					Start:      start,
 					End:        switchTime,
 					QueryStart: start.Add(-StorageClusterRecordOverlap),
-					QueryEnd:   switchTime.Add(StorageClusterRecordOverlap),
+					QueryEnd:   switchTime,
 				},
 			},
 		},
@@ -126,13 +126,30 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 					StorageID:  "16",
 					Start:      switchTime.Add(time.Minute),
 					End:        switchTime.Add(5 * time.Minute),
-					QueryStart: switchTime.Add(-59 * time.Minute),
+					QueryStart: switchTime,
 					QueryEnd:   switchTime.Add(65 * time.Minute),
 				},
 				{
 					StorageID:  "5",
 					QueryStart: switchTime.Add(-59 * time.Minute),
-					QueryEnd:   switchTime.Add(StorageClusterRecordOverlap),
+					QueryEnd:   switchTime,
+				},
+			},
+		},
+			"切换九十分钟后不再查询旧存储": {
+			db: &TsDBV2{
+				StorageID:             "16",
+				StorageClusterRecords: records,
+			},
+			start: switchTime.Add(90 * time.Minute),
+			end:   switchTime.Add(95 * time.Minute),
+			expected: []StorageIDRange{
+				{
+					StorageID:  "16",
+					Start:      switchTime.Add(90 * time.Minute),
+					End:        switchTime.Add(95 * time.Minute),
+					QueryStart: switchTime.Add(30 * time.Minute),
+					QueryEnd:   switchTime.Add(155 * time.Minute),
 				},
 			},
 		},
@@ -146,7 +163,7 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 			expected: []StorageIDRange{
 				{
 					StorageID:  "16",
-					QueryStart: switchTime.Add(-StorageClusterRecordOverlap),
+					QueryStart: switchTime,
 					QueryEnd:   switchTime.Add(59 * time.Minute),
 				},
 				{
@@ -154,7 +171,7 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 					Start:      switchTime.Add(-5 * time.Minute),
 					End:        switchTime.Add(-time.Minute),
 					QueryStart: switchTime.Add(-65 * time.Minute),
-					QueryEnd:   switchTime.Add(59 * time.Minute),
+					QueryEnd:   switchTime,
 				},
 			},
 		},

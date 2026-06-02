@@ -30,6 +30,9 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 		if len(series) == 0 {
 			return nil
 		}
+		if len(series) == 1 {
+			return series[0]
+		}
 
 		name = strings.ToLower(name)
 		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
@@ -90,7 +93,7 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 		mergeCandidateSamples(valueMap, countMap, candidateValueMap, candidateCountMap)
 	}
 
-	return newSampleSeries(series[0], mergeSeriesSamples(name, valueMap, countMap))
+	return newSampleSeries(series[0], buildSortedSeriesSamples(name, valueMap, countMap))
 }
 
 // seriesAggFunc 返回同 timestamp 多条样本的合并函数；avg 类在调用方用 countMap 做二次平均。
@@ -130,8 +133,8 @@ func mergeCandidateSamples(
 	}
 }
 
-// mergeSeriesSamples 将合并后的 timestamp map 转成有序样本，并处理缺少时间权重时的 avg 普通平均。
-func mergeSeriesSamples(name string, valueMap, countMap map[int64]float64) []prompb.Sample {
+// buildSortedSeriesSamples 将合并后的 timestamp map 转成有序样本，并处理缺少时间权重时的 avg 普通平均。
+func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64) []prompb.Sample {
 	sortedData := make([]prompb.Sample, 0, len(valueMap))
 	for t, v := range valueMap {
 		if isAvgFunc(name) {
@@ -149,9 +152,6 @@ func mergeSeriesSamples(name string, valueMap, countMap map[int64]float64) []pro
 }
 
 func isSampleInRouteRange(stepMs, t, start, end int64) bool {
-	if stepMs > 0 {
-		return overlapDuration(t, t+stepMs, start, end) > 0
-	}
 	return t >= start && t < end
 }
 
@@ -233,12 +233,7 @@ func (s *timeRangeSeries) TimeRange() (int64, int64) {
 
 func hasAnyTimeRange(series ...storage.Series) bool {
 	for _, s := range series {
-		tr, ok := s.(SeriesTimeRange)
-		if !ok {
-			continue
-		}
-		start, end := tr.TimeRange()
-		if start < end {
+		if _, ok := s.(SeriesTimeRange); ok {
 			return true
 		}
 	}

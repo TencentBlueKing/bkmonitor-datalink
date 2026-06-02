@@ -147,9 +147,10 @@ func (z *TsDBV2) GetStorageIDRanges(start, end time.Time) []StorageIDRange {
 			// 倒序列表中，上一条记录是更新的 storage 生效点，也就是当前 storage 的结束时间。
 			recordEnd = time.Unix(records[i-1].EnableTime, 0)
 		}
-		// 查询范围保留迁移前后 1h 重叠，兼容切换边界数据可能落在相邻 storage 的情况。
-		queryStart := maxTime(checkStart, recordStart.Add(-StorageClusterRecordOverlap))
-		queryEnd := minTime(checkEnd, recordEnd.Add(StorageClusterRecordOverlap))
+		// checkStart/checkEnd 已经保留迁移前后 1h 重叠；这里不能再次扩展 route 边界，
+		// 否则会把距离请求窗口 2h 内的相邻 storage 也选进来。
+		queryStart := maxTime(checkStart, recordStart)
+		queryEnd := minTime(checkEnd, recordEnd)
 		if !queryStart.Before(queryEnd) {
 			continue
 		}

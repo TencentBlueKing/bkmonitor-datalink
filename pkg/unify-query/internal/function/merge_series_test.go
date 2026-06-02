@@ -13,9 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/model/histogram"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/prometheus/prometheus/tsdb/tsdbutil"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -503,6 +507,41 @@ func TestMergeSeriesSet(t *testing.T) {
 	}
 }
 
+func TestMergeSeriesSetPreservesSingleHistogramSeries(t *testing.T) {
+	// 场景：同 label 分组里只有一路 storage 返回 native histogram。
+	// 这种情况下不需要做跨路由合并，应该直接透传原始 series；如果进入 mergeSeriesSetWithFunc，
+	// 里面只消费 ValFloat，ValHistogram/ValFloatHistogram 会被跳过，最终变成空序列。
+	h := &histogram.Histogram{
+		Count:         1,
+		Sum:           3.14,
+		ZeroThreshold: 1e-128,
+		Schema:        0,
+		PositiveSpans: []histogram.Span{
+			{Offset: 0, Length: 1},
+		},
+		PositiveBuckets: []int64{1},
+	}
+	series := storage.NewListSeries(
+		labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
+		[]tsdbutil.Sample{histSample{t: 1000, h: h}},
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{newSingleSeriesSet(series)},
+		function.NewMergeSeriesSetWithFuncAndSortByStep(function.Sum, time.Minute),
+	)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	assert.Equal(t, chunkenc.ValHistogram, it.Next())
+	ts, got := it.AtHistogram()
+	assert.Equal(t, int64(1000), ts)
+	assert.Equal(t, h, got)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+	assert.False(t, set.Next())
+	assert.NoError(t, set.Err())
+}
+
 func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	var (
 		firstS1Start  = time.Unix(100, 0)
@@ -522,6 +561,8 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 		start     time.Time
 		end       time.Time
 		zeroRange bool
+		// raw 表示普通未包装序列，不携带 route 时间范围；用于覆盖普通 series 与 zero-range route 混合的合并语义。
+		raw bool
 	}
 
 	testCases := map[string]struct {
@@ -631,11 +672,11 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(7, time.Unix(120, 0)),
 			},
 		},
-		"多条 route 合并时保留 route start 前的 lookback 样本": {
+		"多条路由合并时不暴露路由生效前的lookback样本": {
 			// 场景：route A 从 100s 生效，但 SelectHints 为 Prometheus lookback 提前查回了 90s 样本。
 			// 多 route 同 label 合并时会进入 mergeSeriesSetWithFunc 的 route 过滤逻辑。
-			// 旧逻辑只判断 timestamp：90s < route start 100s，会命中 !isSampleInRouteRange 后 continue。
-			// 当前逻辑在有 step 时按 [90s, 150s) 与 [100s, 200s) 是否相交判断，因此保留 90s 样本。
+			// 90s 样本如果按原 timestamp 暴露给 PromQL，会被 route 生效前的 evaluation 使用，
+			// 与前一路 storage 重复参与计算；因此多路合并只保留 timestamp 落在 route 生效区间内的样本。
 			fn:   function.Sum,
 			step: time.Minute,
 			routes: []routeSeries{
@@ -656,12 +697,11 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(90, 0)),
 				sample(7, time.Unix(120, 0)),
 				sample(11, time.Unix(220, 0)),
 			},
 		},
-		"sum_over_time bucket 跨 route 切换时按 bucket 交集保留两段部分结果": {
+		"sum_over_time bucket 跨 route 切换时不保留 route 前 timestamp": {
 			fn:   function.SumOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
@@ -681,10 +721,10 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(0, 0)),
+				sample(2, time.Unix(0, 0)),
 			},
 		},
-		"count_over_time bucket 跨 route 切换时按 bucket 交集保留两段部分结果": {
+		"count_over_time bucket 跨 route 切换时不保留 route 前 timestamp": {
 			fn:   function.CountOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
@@ -704,7 +744,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(0, 0)),
+				sample(2, time.Unix(0, 0)),
 			},
 		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
@@ -732,6 +772,53 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(30, time.Unix(320, 0)),
 			},
 		},
+		"零时间范围路由与普通序列混合时只作为候选样本": {
+			fn: function.Sum,
+			routes: []routeSeries{
+				{
+					raw: true,
+					samples: []prompb.Sample{
+						sample(7, time.Unix(120, 0)),
+					},
+				},
+				{
+					zeroRange: true,
+					samples: []prompb.Sample{
+						sample(100, time.Unix(120, 0)),
+						sample(11, time.Unix(320, 0)),
+					},
+				},
+			},
+			expected: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+				sample(11, time.Unix(320, 0)),
+			},
+		},
+		"range selector宽度覆盖路由开始时间时也不暴露提前取回样本": {
+			fn:   function.Sum,
+			step: 90 * time.Second,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(5, time.Unix(30, 0)),
+						sample(7, time.Unix(120, 0)),
+					},
+					start: firstS1Start, // 100s
+					end:   firstS1End,   // 200s
+				},
+				{
+					samples: []prompb.Sample{
+						sample(11, time.Unix(220, 0)),
+					},
+					start: time.Unix(200, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+				sample(11, time.Unix(220, 0)),
+			},
+		},
 	}
 
 	for name, tc := range testCases {
@@ -751,7 +838,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				})
 				if route.zeroRange {
 					routeSet = function.NewZeroTimeRangeSeriesSet(routeSet)
-				} else {
+				} else if !route.raw {
 					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
 				}
 				sets = append(sets, routeSet)
@@ -1119,4 +1206,62 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			}, ts)
 		})
 	}
+}
+
+type singleSeriesSet struct {
+	idx    int
+	series []storage.Series
+}
+
+func newSingleSeriesSet(series ...storage.Series) storage.SeriesSet {
+	return &singleSeriesSet{
+		idx:    -1,
+		series: series,
+	}
+}
+
+func (s *singleSeriesSet) Next() bool {
+	s.idx++
+	return s.idx < len(s.series)
+}
+
+func (s *singleSeriesSet) At() storage.Series {
+	return s.series[s.idx]
+}
+
+func (s *singleSeriesSet) Err() error {
+	return nil
+}
+
+func (s *singleSeriesSet) Warnings() storage.Warnings {
+	return nil
+}
+
+type histSample struct {
+	t  int64
+	h  *histogram.Histogram
+	fh *histogram.FloatHistogram
+}
+
+func (s histSample) T() int64 {
+	return s.t
+}
+
+func (s histSample) V() float64 {
+	return 0
+}
+
+func (s histSample) H() *histogram.Histogram {
+	return s.h
+}
+
+func (s histSample) FH() *histogram.FloatHistogram {
+	return s.fh
+}
+
+func (s histSample) Type() chunkenc.ValueType {
+	if s.fh != nil {
+		return chunkenc.ValFloatHistogram
+	}
+	return chunkenc.ValHistogram
 }

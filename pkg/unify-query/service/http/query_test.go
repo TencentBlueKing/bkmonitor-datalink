@@ -2409,6 +2409,36 @@ func TestQueryRawWithInstance(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("query raw does not mutate query reference size and from", func(t *testing.T) {
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    "multi_es",
+				},
+			},
+			From:  2,
+			Limit: 2,
+			Step:  start,
+			End:   end,
+			OrderBy: structured.OrderBy{
+				"-time",
+				"__result_table",
+			},
+		}
+
+		_, _, _, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		queryRef := metadata.GetQueryReference(ctx)
+		assert.Equal(t, 2, queryRef.Count())
+		queryRef.Range("", func(qry *metadata.Query) {
+			assert.Equal(t, 2, qry.From)
+			assert.Equal(t, 2, qry.Size)
+		})
+	})
 }
 
 // TestQueryExemplar comment lint rebel

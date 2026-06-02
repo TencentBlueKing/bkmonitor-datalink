@@ -100,7 +100,7 @@
 
         networkflow:
           enabled: false
-          dataid: 1100015
+          dataid: 1100025
           listeners:
             - "netflow://0.0.0.0:2055"
 

@@ -191,7 +191,7 @@ bk-collector:
       # 是否启动 NetworkFlow UDP 接收
       enabled: false
       # 直接注入导出 dataid，不经过 token
-      dataid: 1100015
+      dataid: 1100025
       # 支持 netflow/ipfix/sflow/flow
       listeners:
         - "netflow://0.0.0.0:2055"

@@ -106,7 +106,7 @@ func TestNetworkflowLifecycle(t *testing.T) {
 	runtime3 := &fakeRuntime{name: "runtime-3", events: &events, startErr: errors.New("boom")}
 	runtimes := []*fakeRuntime{runtime1, runtime2, runtime3}
 
-	receiver := New(true, 320001, []string{"netflow://127.0.0.1:2055"}, nil)
+	receiver := New(true, 320001, []string{"netflow://127.0.0.1:2055"}, 0, 0, 0, false, nil)
 	receiver.factory = func(cfg config, publish RecordPublisher) (runtimeHandle, error) {
 		runtime := runtimes[0]
 		runtimes = runtimes[1:]

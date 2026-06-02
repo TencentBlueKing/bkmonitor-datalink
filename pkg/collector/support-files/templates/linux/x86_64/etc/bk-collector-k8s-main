@@ -103,6 +103,18 @@
           dataid: 1100025
           listeners:
             - "netflow://0.0.0.0:2055"
+          # UDP 接收协程数，按 CPU 核数调整
+          # default: 1
+          workers: 1
+          # UDP 接收 socket 数
+          # default: 1
+          sockets: 1
+          # 内部 channel 缓冲区大小，0 表示同步模式
+          # default: 0
+          queue_size: 0
+          # 是否阻塞写入，false 表示 channel 满时丢包并触发回调
+          # default: false
+          blocking: false
 
       processor:
         # ApdexCalculator: 健康度状态计算器

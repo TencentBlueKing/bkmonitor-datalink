@@ -32,6 +32,10 @@ type config struct {
 	Enabled   bool
 	DataID    int32
 	Listeners []string
+	Workers   int
+	Sockets   int
+	QueueSize int
+	Blocking  bool
 }
 
 type runtimeFactory func(config, RecordPublisher) (runtimeHandle, error)
@@ -45,19 +49,29 @@ type Receiver struct {
 	started bool
 }
 
-func New(enabled bool, dataID int32, listeners []string, publish RecordPublisher) *Receiver {
+func New(enabled bool, dataID int32, listeners []string, workers int, sockets int, queueSize int, blocking bool, publish RecordPublisher) *Receiver {
 	return &Receiver{
-		config:  newConfig(enabled, dataID, listeners),
+		config:  newConfig(enabled, dataID, listeners, workers, sockets, queueSize, blocking),
 		publish: publish,
 		factory: newRuntime,
 	}
 }
 
-func newConfig(enabled bool, dataID int32, listeners []string) config {
+func newConfig(enabled bool, dataID int32, listeners []string, workers int, sockets int, queueSize int, blocking bool) config {
+	if workers <= 0 {
+		workers = 1
+	}
+	if sockets <= 0 {
+		sockets = 1
+	}
 	return config{
 		Enabled:   enabled,
 		DataID:    dataID,
 		Listeners: append([]string(nil), listeners...),
+		Workers:   workers,
+		Sockets:   sockets,
+		QueueSize: queueSize,
+		Blocking:  blocking,
 	}
 }
 

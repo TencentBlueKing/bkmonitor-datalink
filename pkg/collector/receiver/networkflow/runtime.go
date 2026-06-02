@@ -27,13 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	defaultUDPWorkers   = 1
-	defaultUDPSockets   = 1
-	defaultUDPBlocking  = false
-	defaultUDPQueueSize = 0
-)
-
 type listenerSpec struct {
 	Scheme   string
 	Hostname string
@@ -59,6 +52,16 @@ type decodeFailureLog struct {
 	ObservationDomainID string `json:"observation_domain_id,omitempty"`
 	TemplateID          string `json:"template_id,omitempty"`
 	Error               string `json:"error"`
+}
+
+type dropCallback struct {
+	dataID    int32
+	queueSize int
+}
+
+func (d *dropCallback) Dropped(msg flowutils.Message) {
+	logger.Warnf("networkflow packet dropped, dataid=%d, queue_size=%d, src=%s, dst=%s, payload_len=%d",
+		d.dataID, d.queueSize, msg.Src.String(), msg.Dst.String(), len(msg.Payload))
 }
 
 var flowErrorPattern = regexp.MustCompile(`\[version:(\d+) type:([^\s]+) obsDomainId:([^:]+): templateId:(\d+)\]`)
@@ -101,10 +104,11 @@ func (r *runtime) Start() error {
 		pipe := newFlowPipe(spec.Scheme, prod)
 
 		receiver, err := flowutils.NewUDPReceiver(&flowutils.UDPReceiverConfig{
-			Workers:   defaultUDPWorkers,
-			Sockets:   defaultUDPSockets,
-			Blocking:  defaultUDPBlocking,
-			QueueSize: defaultUDPQueueSize,
+			Workers:          r.config.Workers,
+			Sockets:          r.config.Sockets,
+			Blocking:         r.config.Blocking,
+			QueueSize:        r.config.QueueSize,
+			ReceiverCallback: &dropCallback{dataID: r.config.DataID, queueSize: r.config.QueueSize},
 		})
 		if err != nil {
 			pipe.Close()

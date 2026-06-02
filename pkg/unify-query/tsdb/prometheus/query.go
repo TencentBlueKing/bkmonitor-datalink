@@ -137,6 +137,10 @@ func validTimeRange(start, end time.Time) bool {
 // queryStart/queryEnd 是实际下发给 TSDB 的查询范围；weightStart/weightEnd 只用于 avg 类多路由加权；
 // wrapKind 决定返回的 SeriesSet 是否携带合法 route 生效范围，或标记为仅用于迁移重叠查询的零权重结果。
 func (q *Query) calcSelectStrategy(start, end time.Time) (querySelectStrategy, bool) {
+	return q.calcSelectStrategyWithMergeContext(start, end, "")
+}
+
+func (q *Query) calcSelectStrategyWithMergeContext(start, end time.Time, mergeFunc string) (querySelectStrategy, bool) {
 	strategy := querySelectStrategy{
 		queryStart:  start,
 		queryEnd:    end,
@@ -159,6 +163,13 @@ func (q *Query) calcSelectStrategy(start, end time.Time) (querySelectStrategy, b
 		// 权重使用 route 真实生效时间段，而不是本次查询扩展范围，避免跨切换点 bucket 权重失真。
 		strategy.weightStart = q.start
 		strategy.weightEnd = q.end
+		if strings.EqualFold(mergeFunc, function.AvgOT) && validTimeRange(q.queryStart, q.queryEnd) &&
+			q.queryStart.Before(q.start) {
+			// avg_over_time 的 evaluation timestamp 对应向后统计窗口 [t-range, t)。
+			// 当 routeStart 被用户查询 start 裁剪时，首个 evaluation 点的有效窗口在 routeStart 前面，
+			// 需要使用 route 查询窗口起点参与权重，避免首个 bucket 被当成零权重丢弃。
+			strategy.weightStart = q.queryStart
+		}
 		strategy.wrapKind = seriesSetWrapValidRouteRange
 	} else if hasRouteQueryRange {
 		// 只有 route 查询扩展范围、没有真实生效范围时，说明这是迁移 overlap-only 路由。

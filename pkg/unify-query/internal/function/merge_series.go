@@ -78,7 +78,7 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 					addSample(candidateValueMap, candidateCountMap, t, v)
 					continue
 				}
-				if !isSampleInRouteRange(stepMs, t, start, end) {
+				if !isSampleInRouteRange(name, stepMs, t, start, end) {
 					continue
 				}
 			}
@@ -151,8 +151,22 @@ func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64)
 	return sortedData
 }
 
-func isSampleInRouteRange(stepMs, t, start, end int64) bool {
+func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
+	if stepMs > 0 && isForwardRangeBucketFunc(name) {
+		// sum/count/min/max_over_time 的样本 timestamp 表示 bucket 起点，
+		// route 过滤应判断 bucket [t, t+window) 是否与 route 生效区间相交。
+		return t < end && t+stepMs > start
+	}
 	return t >= start && t < end
+}
+
+func isForwardRangeBucketFunc(name string) bool {
+	switch strings.ToLower(name) {
+	case SumOT, CountOT, MinOT, MaxOT:
+		return true
+	default:
+		return false
+	}
 }
 
 // newErrSeries 返回带 iterator 错误的 Series，用于把底层遍历错误传递给调用方。

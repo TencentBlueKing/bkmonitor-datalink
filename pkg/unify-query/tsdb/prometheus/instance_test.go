@@ -286,6 +286,25 @@ func TestQueryCalcSelectStrategy(t *testing.T) {
 	}
 }
 
+func TestQueryCalcSelectStrategyWithMergeContext(t *testing.T) {
+	query := &Query{
+		start:      time.Unix(300, 0),
+		end:        time.Unix(360, 0),
+		queryStart: time.Unix(0, 0),
+		queryEnd:   time.Unix(360, 0),
+	}
+
+	strategy, ok := query.calcSelectStrategyWithMergeContext(time.Unix(0, 0), time.Unix(360, 0), "avg_over_time")
+	assert.True(t, ok)
+	assert.Equal(t, querySelectStrategy{
+		queryStart:  time.Unix(0, 0),
+		queryEnd:    time.Unix(360, 0),
+		weightStart: time.Unix(0, 0),
+		weightEnd:   time.Unix(360, 0),
+		wrapKind:    seriesSetWrapValidRouteRange,
+	}, strategy)
+}
+
 func TestIntersectTimeRangePreservesSelectHintsLongLookback(t *testing.T) {
 	testCases := map[string]struct {
 		hintStart       time.Time

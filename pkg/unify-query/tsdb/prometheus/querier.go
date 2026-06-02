@@ -204,7 +204,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 				endTime = function.MsIntMergeNs(hints.End, qp.End)
 			}
-			strategy, ok := query.calcSelectStrategy(startTime, endTime)
+			strategy, ok := query.calcSelectStrategyWithMergeContext(startTime, endTime, mergeFunc)
 			if !ok {
 				return
 			}

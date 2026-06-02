@@ -701,7 +701,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(220, 0)),
 			},
 		},
-		"sum_over_time bucket 跨 route 切换时不保留 route 前 timestamp": {
+		"sum_over_time bucket 跨 route 切换时按 bucket 与 route 相交保留": {
 			fn:   function.SumOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
@@ -721,10 +721,10 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(2, time.Unix(0, 0)),
+				sample(5, time.Unix(0, 0)),
 			},
 		},
-		"count_over_time bucket 跨 route 切换时不保留 route 前 timestamp": {
+		"count_over_time bucket 跨 route 切换时按 bucket 与 route 相交保留": {
 			fn:   function.CountOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
@@ -744,7 +744,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(2, time.Unix(0, 0)),
+				sample(5, time.Unix(0, 0)),
 			},
 		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
@@ -993,6 +993,27 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expectedSamples: []prompb.Sample{
 				sample(21.2, bucketEnd),
+			},
+		},
+		"avg_over_time 首个 evaluation 点支持早于 eval timestamp 的权重窗口": {
+			// 时间轴：
+			// range:      [0s-----------------------------300s)
+			// eval:                                      300s
+			// 权重窗口:   [0s-----------------------------300s)，保留了首个 evaluation 需要的向后窗口
+			// 权重：avg_over_time 应按 [t-range, t) 与权重窗口的交集计算，避免首个 bucket 权重为 0。
+			fn: function.AvgOT,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(10, bucketEnd),
+					},
+					start: bucketStart,
+					end:   bucketEnd,
+				},
+			},
+			withRange: true,
+			expectedSamples: []prompb.Sample{
+				sample(10, bucketEnd),
 			},
 		},
 		"avg_over_time 缺少 bucket 宽度时会按 timestamp 过滤后退化为普通平均": {

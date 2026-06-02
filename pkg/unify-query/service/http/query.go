@@ -323,17 +323,18 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		qb := metadata.GetQueryParams(ctx)
 		queryRef.Range("", func(qry *metadata.Query) {
+			localQry := *qry
 			// SearchAfter 模式下，跳过已完成的 RT
 			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if qry.ResultTableOption == nil || len(qry.ResultTableOption.SearchAfter) == 0 {
+				if localQry.ResultTableOption == nil || len(localQry.ResultTableOption.SearchAfter) == 0 {
 					return
 				}
 			}
 
 			sendWg.Add(1)
 
-			labelMap := function.LabelMap(ctx, qry)
+			labelMap := function.LabelMap(ctx, &localQry)
 			// 合并 labelMap
 			lock.Lock()
 			for k, lm := range labelMap {
@@ -348,8 +349,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
 			if queryRef.Count() > 1 {
 				if !queryTs.IsMultiFrom {
-					qry.Size += qry.From
-					qry.From = 0
+					localQry.Size += localQry.From
+					localQry.From = 0
 				}
 			}
 
@@ -358,7 +359,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					sendWg.Done()
 				}()
 
-				instance := prometheus.GetTsDbInstance(ctx, qry)
+				instance := prometheus.GetTsDbInstance(ctx, &localQry)
 				if instance == nil {
 					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRaw,
@@ -369,7 +370,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
 				if queryTs.HighLight != nil && queryTs.HighLight.Enable {
-					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, qry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
+					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
 						lock.Lock()
 						for k, v := range fieldsMap {
 							if _, ok := allFieldsMap[k]; !ok {
@@ -380,7 +381,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					}
 				}
 
-				_, size, option, queryErr := instance.QueryRawData(ctx, qry, qb.Start, qb.End, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -390,7 +391,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
 				lock.Lock()
-				resultTableOptions.SetOption(qry.TableUUID(), option)
+				resultTableOptions.SetOption(localQry.TableUUID(), option)
 				lock.Unlock()
 
 				atomic.AddInt64(&total, size)

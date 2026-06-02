@@ -184,17 +184,18 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	queryReference.Range(metricName, func(qry *metadata.Query) {
 		wg.Add(1)
-		qry.Size = limit
+		labelValuesQuery := *qry
+		labelValuesQuery.Size = limit
 		_ = p.Submit(func() {
 			defer func() {
 				wg.Done()
 			}()
-			instance := GetTsDbInstance(ctx, qry)
+			instance := GetTsDbInstance(ctx, &labelValuesQuery)
 			if instance == nil {
 				return
 			}
 
-			lbl, lvErr := instance.QueryLabelValues(ctx, qry, name, start, end)
+			lbl, lvErr := instance.QueryLabelValues(ctx, &labelValuesQuery, name, start, end)
 			if lvErr == nil {
 				for _, l := range lbl {
 					res.Add(l)

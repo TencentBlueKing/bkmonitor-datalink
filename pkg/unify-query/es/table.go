@@ -22,8 +22,8 @@ var tableLock *sync.RWMutex
 
 // ReloadTableInfo
 func ReloadTableInfo(infos map[string]*TableInfo) error {
-	storageLock.Lock()
-	defer storageLock.Unlock()
+	tableLock.Lock()
+	defer tableLock.Unlock()
 
 	tableMap = infos
 	for tableID, info := range infos {

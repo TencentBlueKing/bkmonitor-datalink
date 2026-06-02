@@ -26,6 +26,42 @@ type ResultTableOption struct {
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }
 
+func (o *ResultTableOption) Clone() *ResultTableOption {
+	if o == nil {
+		return nil
+	}
+
+	clone := *o
+	if o.From != nil {
+		from := *o.From
+		clone.From = &from
+	}
+	if o.SearchAfter != nil {
+		clone.SearchAfter = make([]any, len(o.SearchAfter))
+		copy(clone.SearchAfter, o.SearchAfter)
+	}
+	if o.FieldType != nil {
+		clone.FieldType = make(map[string]string, len(o.FieldType))
+		for k, v := range o.FieldType {
+			clone.FieldType[k] = v
+		}
+	}
+	if o.ResultSchema != nil {
+		clone.ResultSchema = make([]map[string]any, len(o.ResultSchema))
+		for i, schema := range o.ResultSchema {
+			if schema == nil {
+				continue
+			}
+			clone.ResultSchema[i] = make(map[string]any, len(schema))
+			for k, v := range schema {
+				clone.ResultSchema[i][k] = v
+			}
+		}
+	}
+
+	return &clone
+}
+
 func (o ResultTableOptions) SetOption(tableUUID string, option *ResultTableOption) {
 	if option == nil {
 		return

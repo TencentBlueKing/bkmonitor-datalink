@@ -965,28 +965,35 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 			withRange: true,
 			expected:  21.2,
 		},
-		"avg_over_time 按路由覆盖时长加权": {
+		"avg_over_time 按向后 range window 加权": {
 			// 时间轴：
-			// bucket:   [0s------------------------------300s)
+			// range:    [0s------------------------------300s)
+			// eval:                                      300s
 			// 路由 A:   [0s----------132s) value=10
 			// 路由 B:                 [132s--------------300s) value=30
-			// avg_over_time 也是 avg 类函数，同样按路由覆盖时长加权。
-			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2。avg_over_time 也是 Prometheus float avg 语义。
+			// PromQL avg_over_time 的样本 timestamp 是 evaluation instant，覆盖窗口为 [t-range, t)。
+			// 结果：(10*132 + 30*168) / (132 + 168) = 21.2。
 			fn: function.AvgOT,
 			routes: []routeSeries{
 				{
-					value: 10,
+					samples: []prompb.Sample{
+						sample(10, bucketEnd),
+					},
 					start: bucketStart,
 					end:   bucketStart.Add(132 * time.Second),
 				},
 				{
-					value: 30,
+					samples: []prompb.Sample{
+						sample(30, bucketEnd),
+					},
 					start: bucketStart.Add(132 * time.Second),
 					end:   bucketEnd,
 				},
 			},
 			withRange: true,
-			expected:  21.2,
+			expectedSamples: []prompb.Sample{
+				sample(21.2, bucketEnd),
+			},
 		},
 		"avg_over_time 缺少 bucket 宽度时会按 timestamp 过滤后退化为普通平均": {
 			// 时间轴：

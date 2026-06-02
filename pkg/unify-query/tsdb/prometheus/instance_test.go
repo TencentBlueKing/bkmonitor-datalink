@@ -101,6 +101,17 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: time.Minute,
 			expected: time.Minute,
 		},
+		"hint 中的 sum_over_time 缺少聚合窗口时使用 range selector 宽度": {
+			name: "sum_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			fallback: time.Minute,
+			rangeSel: time.Hour,
+			expected: time.Hour,
+		},
 		"hint 使用 avg 别名时仍匹配 avg_over_time 窗口": {
 			name: "avg",
 			queries: QueryList{

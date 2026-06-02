@@ -37,7 +37,7 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 		name = strings.ToLower(name)
 		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
 		if isAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
-			return mergeAvgSeriesSetWithTimeWeight(series, step)
+			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
 		}
 
 		return mergeSeriesSetWithFunc(name, step, series)
@@ -240,7 +240,7 @@ func hasAnyTimeRange(series ...storage.Series) bool {
 	return false
 }
 
-func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration) storage.Series {
+func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step time.Duration) storage.Series {
 	stepMs := step.Milliseconds()
 	if stepMs <= 0 {
 		return NewMergeSeriesSetWithFuncAndSort(Avg)(series...)
@@ -277,8 +277,9 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 				candidateCountMap[t]++
 				continue
 			}
-			// 权重取 route 时间段与当前 bucket [t, t+step) 的交集时长。
-			weight := overlapDuration(t, t+stepMs, start, end)
+			bucketStart, bucketEnd := avgBucketRange(name, t, stepMs)
+			// 权重取 route 时间段与当前统计窗口的交集时长。
+			weight := overlapDuration(bucketStart, bucketEnd, start, end)
 			if weight <= 0 {
 				continue
 			}
@@ -319,6 +320,13 @@ func mergeAvgSeriesSetWithTimeWeight(series []storage.Series, step time.Duration
 			}
 		},
 	}
+}
+
+func avgBucketRange(name string, t, stepMs int64) (int64, int64) {
+	if name == AvgOT {
+		return t - stepMs, t
+	}
+	return t, t + stepMs
 }
 
 func overlapDuration(start, end, otherStart, otherEnd int64) int64 {

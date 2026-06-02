@@ -75,9 +75,9 @@ func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector tim
 		}
 	}
 
-	if isAvgBucketFunc(name) {
-		// avg_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
-		if name == function.AvgOT {
+	if isRangeBucketFunc(name) {
+		// *_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
+		if name != function.Avg && name != function.Mean {
 			if rangeSelector > 0 {
 				return rangeSelector
 			}
@@ -98,6 +98,15 @@ func isSameBucketFunc(a, b string) bool {
 func isAvgBucketFunc(name string) bool {
 	switch name {
 	case function.Avg, function.AvgOT, function.Mean:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRangeBucketFunc(name string) bool {
+	switch name {
+	case function.Avg, function.Mean, function.AvgOT, function.SumOT, function.CountOT, function.MinOT, function.MaxOT:
 		return true
 	default:
 		return false

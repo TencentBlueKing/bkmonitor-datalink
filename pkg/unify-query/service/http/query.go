@@ -324,6 +324,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		qb := metadata.GetQueryParams(ctx)
 		queryRef.Range("", func(qry *metadata.Query) {
 			localQry := *qry
+			localQry.ResultTableOption = qry.ResultTableOption.Clone()
 			// SearchAfter 模式下，跳过已完成的 RT
 			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {

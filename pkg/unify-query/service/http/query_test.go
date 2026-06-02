@@ -2439,6 +2439,52 @@ func TestQueryRawWithInstance(t *testing.T) {
 			assert.Equal(t, 2, qry.Size)
 		})
 	})
+
+	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
+		from := 0
+		originalOption := &metadata.ResultTableOption{
+			From:        &from,
+			SearchAfter: []any{"keep"},
+			FieldType: map[string]string{
+				"keep": "keyword",
+			},
+			ResultSchema: []map[string]any{
+				{
+					"field_name": "keep",
+					"field_type": "keyword",
+				},
+			},
+		}
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    influxdb.ResultTableDoris,
+					SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+				},
+			},
+			Step: start,
+			End:  end,
+			ResultTableOptions: metadata.ResultTableOptions{
+				"result_table.doris|4": originalOption,
+			},
+		}
+
+		_, _, options, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, options.GetOption("result_table.doris|4").ResultSchema)
+
+		assert.Empty(t, originalOption.SQL)
+		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)
+		assert.Equal(t, "keyword", originalOption.FieldType["keep"])
+		assert.Equal(t, []map[string]any{
+			{
+				"field_name": "keep",
+				"field_type": "keyword",
+			},
+		}, originalOption.ResultSchema)
+	})
 }
 
 // TestQueryExemplar comment lint rebel

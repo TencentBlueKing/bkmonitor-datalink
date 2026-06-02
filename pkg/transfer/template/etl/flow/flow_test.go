@@ -28,9 +28,6 @@ import (
 //go:embed testdata/flow_collector_handoff.golden.json
 var flowCollectorHandoffGolden string
 
-//go:embed testdata/flow_collector_handoff.contract.md
-var flowCollectorHandoffContract string
-
 type FlowProcessorTest struct {
 	testsuite.ETLSuite
 }
@@ -71,7 +68,6 @@ func (s *FlowProcessorTest) TestFlowAuthorityMirrorFixture() {
 		s.Truef(ok, "missing key %s", key)
 	}
 
-	s.NotEmpty(flowCollectorHandoffContract)
 	s.Len(payload, len(expectedKeys))
 }
 

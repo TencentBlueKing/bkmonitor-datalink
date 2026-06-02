@@ -864,6 +864,23 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
+		"aggregate copy preserves without with window": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Without:    true,
+					Window:     time.Hour,
+					TimeZone:   "Asia/Shanghai",
+				},
+			}.Copy(),
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
 		"aggregate 1h2m": {
 			timeField: metadata.TimeField{
 				Name: "time",

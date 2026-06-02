@@ -478,10 +478,11 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)
 
-	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1
-	query.Size = 1
+	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1。这里不能原地修改入参 query，调用方可能复用同一个 *metadata.Query。
+	labelNamesQuery := *query
+	labelNamesQuery.Size = 1
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, &labelNamesQuery, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -576,11 +577,6 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series")
 	defer span.End(&err)
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
-	if err != nil {
-		return nil, err
-	}
-
 	if len(query.Source) == 0 {
 		err = fmt.Errorf("no source specified")
 		return nil, err
@@ -609,12 +605,14 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, nil
 	}
 
-	// 设置 SelectDistinct 以获取唯一标签组合
-	query.SelectDistinct = labelNames
-	defer func() {
-		query.SelectDistinct = nil
-	}()
+	// 设置 SelectDistinct 以获取唯一标签组合。这里不能原地修改入参 query，调用方可能复用同一个 *metadata.Query。
+	seriesQuery := *query
+	seriesQuery.SelectDistinct = append([]string(nil), labelNames...)
 
+	queryFactory, err := i.InitQueryFactory(ctx, &seriesQuery, start, end)
+	if err != nil {
+		return nil, err
+	}
 	distinctSQL, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err

@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -2441,6 +2442,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 	})
 
 	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
+		dorisSQL := "SELECT * FROM `2_bklog_bkunify_query_doris`.doris " +
+			"WHERE (`dtEventTimeStamp` >= 1723595000000 AND `dtEventTimeStamp` <= 1723595000000 " +
+			"AND `dtEventTime` >= '2024-08-14 08:23:20' AND `dtEventTime` <= '2024-08-14 08:23:21' " +
+			"AND `thedate` = '20240814') " +
+			"ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 100"
+		mock.BkSQL.Set(map[string]any{
+			dorisSQL: `{"result":true,"message":"成功","code":"00","data":{"cluster":"doris-test","totalRecords":1,"source":"","list":[],"select_fields_order":[],"result_schema":[{"field_type":"string","field_name":"__c0","field_alias":"mock_field","field_index":0}],"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null}`,
+		})
+
 		from := 0
 		originalOption := &metadata.ResultTableOption{
 			From:        &from,
@@ -2472,8 +2482,10 @@ func TestQueryRawWithInstance(t *testing.T) {
 		}
 
 		_, _, options, err := queryRawWithInstance(ctx, queryTs)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, options.GetOption("result_table.doris|4").ResultSchema)
+		require.NoError(t, err)
+		option := options.GetOption("result_table.doris|4")
+		require.NotNil(t, option)
+		require.NotEmpty(t, option.ResultSchema)
 
 		assert.Empty(t, originalOption.SQL)
 		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)

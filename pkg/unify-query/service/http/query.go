@@ -97,6 +97,17 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 		totalTables = influxdb.MergeTables(tableList, false)
 	}()
 
+	tablesChClosed := false
+	closeTablesCh := func() {
+		if tablesChClosed {
+			return
+		}
+		close(tablesCh)
+		<-recvDone
+		tablesChClosed = true
+	}
+	defer closeTablesCh()
+
 	_, err = query.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
@@ -146,8 +157,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 		}
 	}
 
-	close(tablesCh)
-	<-recvDone
+	closeTablesCh()
 
 	tables := &promql.Tables{
 		Tables: make([]*promql.Table, 0, totalTables.Length()),

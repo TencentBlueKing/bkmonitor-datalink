@@ -10,9 +10,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -2482,6 +2484,43 @@ func TestQueryExemplar(t *testing.T) {
 	assert.Nil(t, err)
 	actual := string(out)
 	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}],"is_partial":false}`, actual)
+}
+
+func TestQueryExemplarDirectQueryReturnDoesNotLeakReceiver(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	mock.Init()
+	promql.MockEngine()
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				TableID:       "system.cpu_detail",
+				FieldName:     "usage",
+				ReferenceName: "a",
+			},
+		},
+		MetricMerge: "a",
+	}
+
+	before := queryExemplarReceiverGoroutines()
+	res, err := queryExemplar(ctx, qts)
+	assert.Nil(t, err)
+	assert.NotNil(t, res)
+	assert.True(t, metadata.GetQueryParams(ctx).IsDirectQuery())
+
+	assert.Eventually(t, func() bool {
+		return queryExemplarReceiverGoroutines() == before
+	}, time.Second, 10*time.Millisecond)
+}
+
+func queryExemplarReceiverGoroutines() int {
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	return strings.Count(buf.String(), "queryExemplar.func")
 }
 
 func TestVmQueryParams(t *testing.T) {

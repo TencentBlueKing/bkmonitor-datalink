@@ -402,6 +402,28 @@ func TestModel_GetPath(t *testing.T) {
 	}
 }
 
+func TestModel_GetPathsOrderIsStableForSameLengthPaths(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	orders := make(map[string]struct{})
+	for i := 0; i < 1000; i++ {
+		model, err := newModel(ctx, buildConfigData())
+		require.NoError(t, err)
+
+		paths, err := model.getPaths(ctx, "system", "statefulset", nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, paths)
+
+		orders[strings.Join(paths[0], "->")] = struct{}{}
+		if len(orders) > 1 {
+			break
+		}
+	}
+
+	require.Lenf(t, orders, 1, "same-length paths should have stable ordering, got first paths: %v", orders)
+}
+
 func TestModel_GetResourceMatcher(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())

@@ -49,19 +49,19 @@ func TestPromData_Fill_FillsStat(t *testing.T) {
 	assert.Equal(t, float64(20), stat.Last.V)
 }
 
-func TestPromData_MarshalRouteInfoWhenEnabled(t *testing.T) {
+func TestPromData_MarshalResultTableIDWhenEnabled(t *testing.T) {
 	d := NewPromData(nil)
-	d.SetRouteInfo(nil)
+	d.SetResultTableIDFromRouteInfo(nil)
 
 	out, err := json.Marshal(d)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"series":[],"is_partial":false,"route_info":[]}`, string(out))
+	assert.JSONEq(t, `{"series":[],"is_partial":false,"result_table_id":[]}`, string(out))
 
-	d.SetRouteInfo([]metadata.RouteInfo{{ReferenceName: "a", TableID: "system.cpu"}})
+	d.SetResultTableIDFromRouteInfo([]metadata.RouteInfo{{ReferenceName: "a", TableID: "system.cpu"}})
 	out, err = json.Marshal(d)
 	require.NoError(t, err)
-	assert.Contains(t, string(out), `"route_info"`)
-	assert.Contains(t, string(out), `"table_id":"system.cpu"`)
+	assert.Contains(t, string(out), `"result_table_id"`)
+	assert.Contains(t, string(out), `"system.cpu"`)
 }
 
 // Fill 已写入 Stat；Downsample 只缩减 Values，Stat 仍为降采样前点集统计。

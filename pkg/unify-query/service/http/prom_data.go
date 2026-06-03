@@ -21,13 +21,13 @@ import (
 // 返回结构化数据
 type PromData struct {
 	dimensions map[string]bool
-	// includeRouteInfo 表示本次响应需要输出 route_info；即使为空也输出 []。
-	includeRouteInfo bool
-	Tables           []*TablesItem        `json:"series"`
-	Status           *metadata.Status     `json:"status,omitempty"`
-	TraceID          string               `json:"trace_id,omitempty"`
-	IsPartial        bool                 `json:"is_partial"`
-	RouteInfo        []metadata.RouteInfo `json:"route_info,omitempty"`
+	// includeResultTableID 表示本次响应需要输出 result_table_id；即使为空也输出 []。
+	includeResultTableID bool
+	Tables               []*TablesItem    `json:"series"`
+	Status               *metadata.Status `json:"status,omitempty"`
+	TraceID              string           `json:"trace_id,omitempty"`
+	IsPartial            bool             `json:"is_partial"`
+	ResultTableID        []string         `json:"result_table_id,omitempty"`
 }
 
 // NewPromData
@@ -42,43 +42,48 @@ func NewPromData(dimensions []string) *PromData {
 	}
 }
 
-// SetRouteInfo 标记本次响应需要输出 route_info；即使没有路由也输出 []。
-func (d *PromData) SetRouteInfo(routeInfo []metadata.RouteInfo) {
-	d.RouteInfo = normalizeRouteInfo(routeInfo)
-	d.includeRouteInfo = true
+// SetResultTableID 标记本次响应需要输出 result_table_id；即使没有路由也输出 []。
+func (d *PromData) SetResultTableID(resultTableID []string) {
+	d.ResultTableID = normalizeResultTableID(resultTableID)
+	d.includeResultTableID = true
 }
 
-// MarshalJSON 在未调用 SetRouteInfo 时沿用 route_info 的 omitempty；调用后即使为空也输出 []。
+// SetResultTableIDFromRouteInfo 复用内部路由摘要，只在响应阶段投影为 RT 列表。
+func (d *PromData) SetResultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) {
+	d.SetResultTableID(resultTableIDFromRouteInfo(routeInfo))
+}
+
+// MarshalJSON 在未调用 SetResultTableID 时沿用 result_table_id 的 omitempty；调用后即使为空也输出 []。
 func (d *PromData) MarshalJSON() ([]byte, error) {
 	type promData struct {
-		Tables    []*TablesItem        `json:"series"`
-		Status    *metadata.Status     `json:"status,omitempty"`
-		TraceID   string               `json:"trace_id,omitempty"`
-		IsPartial bool                 `json:"is_partial"`
-		RouteInfo []metadata.RouteInfo `json:"route_info,omitempty"`
+		Tables        []*TablesItem    `json:"series"`
+		Status        *metadata.Status `json:"status,omitempty"`
+		TraceID       string           `json:"trace_id,omitempty"`
+		IsPartial     bool             `json:"is_partial"`
+		ResultTableID []string         `json:"result_table_id,omitempty"`
 	}
-	if d.includeRouteInfo {
-		type promDataWithRouteInfo struct {
-			Tables    []*TablesItem        `json:"series"`
-			Status    *metadata.Status     `json:"status,omitempty"`
-			TraceID   string               `json:"trace_id,omitempty"`
-			IsPartial bool                 `json:"is_partial"`
-			RouteInfo []metadata.RouteInfo `json:"route_info"`
+	if d.includeResultTableID {
+		type promDataWithResultTableID struct {
+			Tables        []*TablesItem    `json:"series"`
+			Status        *metadata.Status `json:"status,omitempty"`
+			TraceID       string           `json:"trace_id,omitempty"`
+			IsPartial     bool             `json:"is_partial"`
+			ResultTableID []string         `json:"result_table_id"`
 		}
-		return json.Marshal(promDataWithRouteInfo{
-			Tables:    d.Tables,
-			Status:    d.Status,
-			TraceID:   d.TraceID,
-			IsPartial: d.IsPartial,
-			RouteInfo: normalizeRouteInfo(d.RouteInfo),
+		return json.Marshal(promDataWithResultTableID{
+			Tables:        d.Tables,
+			Status:        d.Status,
+			TraceID:       d.TraceID,
+			IsPartial:     d.IsPartial,
+			ResultTableID: normalizeResultTableID(d.ResultTableID),
 		})
 	}
 	return json.Marshal(promData{
-		Tables:    d.Tables,
-		Status:    d.Status,
-		TraceID:   d.TraceID,
-		IsPartial: d.IsPartial,
-		RouteInfo: d.RouteInfo,
+		Tables:        d.Tables,
+		Status:        d.Status,
+		TraceID:       d.TraceID,
+		IsPartial:     d.IsPartial,
+		ResultTableID: d.ResultTableID,
 	})
 }
 

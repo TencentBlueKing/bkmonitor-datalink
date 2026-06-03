@@ -208,7 +208,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		return total, list, resultTableOptions, routeInfo, err
 	}
 	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
-	// route_info 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
+	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
 	routeInfo = normalizeRouteInfo(queryRef.CollectRouteInfo())
 
 	receiveWg.Add(1)
@@ -480,7 +480,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
 		}
 	})
-	// scroll 每次只取部分分片，route_info 仍返回完整解析范围。
+	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
 	routeInfo = normalizeRouteInfo(queryRef.CollectRouteInfo())
 
 	receiveWg.Add(1)
@@ -664,8 +664,8 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	if err != nil {
 		return nil, err
 	}
-	// reference 查询也从同一个 QueryReference 收集路由范围。
-	resp.SetRouteInfo(queryRef.CollectRouteInfo())
+	// reference 查询复用内部路由摘要，并在响应阶段投影成 RT 列表。
+	resp.SetResultTableIDFromRouteInfo(queryRef.CollectRouteInfo())
 
 	var lookBackDelta time.Duration
 	if queryTs.LookBackDelta != "" {
@@ -908,8 +908,8 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	if err != nil {
 		return nil, err
 	}
-	// 正式 QueryTs/PromQL 成功响应默认带 route_info。
-	resp.SetRouteInfo(routeInfo)
+	// QueryTs/PromQL 成功响应复用内部路由摘要，并在响应阶段投影成 RT 列表。
+	resp.SetResultTableIDFromRouteInfo(routeInfo)
 
 	span.Set("storage-type", instance.InstanceType())
 

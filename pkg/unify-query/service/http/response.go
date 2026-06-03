@@ -12,6 +12,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 
@@ -64,16 +65,45 @@ type ListData struct {
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
-	// RouteInfo 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
-	RouteInfo []metadata.RouteInfo `json:"route_info"`
+	// ResultTableID 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
+	ResultTableID []string `json:"result_table_id"`
 }
 
-// normalizeRouteInfo 保证成功响应中 route_info 为 [] 而不是 null。
+// normalizeResultTableID 保证成功响应中 result_table_id 为 [] 而不是 null。
+func normalizeResultTableID(resultTableID []string) []string {
+	if resultTableID == nil {
+		return make([]string, 0)
+	}
+	return resultTableID
+}
+
+// normalizeRouteInfo 保证内部路由摘要切片为非 nil，方便后续统一投影。
 func normalizeRouteInfo(routeInfo []metadata.RouteInfo) []metadata.RouteInfo {
 	if routeInfo == nil {
 		return make([]metadata.RouteInfo, 0)
 	}
 	return routeInfo
+}
+
+// resultTableIDFromRouteInfo 在响应出口把内部路由摘要投影成 RT 列表。
+func resultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) []string {
+	if len(routeInfo) == 0 {
+		return normalizeResultTableID(nil)
+	}
+	seen := make(map[string]struct{}, len(routeInfo))
+	resultTableID := make([]string, 0, len(routeInfo))
+	for _, info := range routeInfo {
+		if info.TableID == "" {
+			continue
+		}
+		if _, ok := seen[info.TableID]; ok {
+			continue
+		}
+		seen[info.TableID] = struct{}{}
+		resultTableID = append(resultTableID, info.TableID)
+	}
+	sort.Strings(resultTableID)
+	return normalizeResultTableID(resultTableID)
 }
 
 // DataResponse 返回数据结构体

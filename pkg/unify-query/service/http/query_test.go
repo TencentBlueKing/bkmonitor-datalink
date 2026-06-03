@@ -44,7 +44,7 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
-func assertPromDataJSONEqIgnoringRouteInfo(t *testing.T, expected, actual string) {
+func assertPromDataJSONEqIgnoringResultTableID(t *testing.T, expected, actual string) {
 	t.Helper()
 
 	actualMap := make(map[string]any)
@@ -53,12 +53,12 @@ func assertPromDataJSONEqIgnoringRouteInfo(t *testing.T, expected, actual string
 	if err != nil {
 		return
 	}
-	assert.Contains(t, actualMap, "route_info")
+	assert.Contains(t, actualMap, "result_table_id")
 
-	delete(actualMap, "route_info")
-	actualWithoutRouteInfo, err := json.Marshal(actualMap)
+	delete(actualMap, "result_table_id")
+	actualWithoutResultTableID, err := json.Marshal(actualMap)
 	assert.Nil(t, err)
-	assert.JSONEq(t, expected, string(actualWithoutRouteInfo))
+	assert.JSONEq(t, expected, string(actualWithoutResultTableID))
 }
 
 func assertPromDataJSONEqWithSortedSeries(t *testing.T, expected, actual string) {
@@ -213,17 +213,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 			expected := make(map[string]any)
 			err = json.Unmarshal([]byte(c.result), &expected)
 			assert.Nil(t, err)
-			expected["route_info"] = []metadata.RouteInfo{{
-				ReferenceName: "a",
-				MetricName:    "gseIndex",
-				TableID:       "result_table.doris",
-				DB:            "2_bklog_bkunify_query_doris",
-				DataLabel:     "bksql",
-				DataSource:    "bklog",
-				StorageType:   "bk_sql",
-				StorageID:     "4",
-				Measurement:   "doris",
-			}}
+			expected["result_table_id"] = []string{"result_table.doris"}
 			expectedBytes, err := json.Marshal(expected)
 			assert.Nil(t, err)
 			assert.JSONEq(t, string(expectedBytes), string(excepted))
@@ -1437,7 +1427,7 @@ func TestQueryTs(t *testing.T) {
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
 			actual := string(out)
-			assertPromDataJSONEqIgnoringRouteInfo(t, c.result, actual)
+			assertPromDataJSONEqIgnoringResultTableID(t, c.result, actual)
 		})
 	}
 }
@@ -5263,9 +5253,7 @@ func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
 	data, ok := res.(*PromData)
 	assert.True(t, ok)
 	assert.NotNil(t, data)
-	if assert.Len(t, data.RouteInfo, 2) {
-		assert.ElementsMatch(t, []string{"system.cpu_summary", failRT}, []string{data.RouteInfo[0].TableID, data.RouteInfo[1].TableID})
-	}
+	assert.ElementsMatch(t, []string{"system.cpu_summary", failRT}, data.ResultTableID)
 
 	st := data.Status
 	assert.NotNil(t, st)

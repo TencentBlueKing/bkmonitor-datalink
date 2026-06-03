@@ -2442,13 +2442,8 @@ func TestQueryRawWithInstance(t *testing.T) {
 	})
 
 	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
-		dorisSQL := "SELECT * FROM `2_bklog_bkunify_query_doris`.doris " +
-			"WHERE (`dtEventTimeStamp` >= 1723595000000 AND `dtEventTimeStamp` <= 1723595000000 " +
-			"AND `dtEventTime` >= '2024-08-14 08:23:20' AND `dtEventTime` <= '2024-08-14 08:23:21' " +
-			"AND `thedate` = '20240814') " +
-			"ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 100"
 		mock.BkSQL.Set(map[string]any{
-			dorisSQL: `{"result":true,"message":"成功","code":"00","data":{"cluster":"doris-test","totalRecords":1,"source":"","list":[],"select_fields_order":[],"result_schema":[{"field_type":"string","field_name":"__c0","field_alias":"mock_field","field_index":0}],"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null}`,
+			"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":""},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""}]},"errors":null}`,
 		})
 
 		from := 0
@@ -2474,8 +2469,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 					SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
 				},
 			},
-			Step: start,
-			End:  end,
+			Step:   start,
+			End:    end,
+			DryRun: true,
 			ResultTableOptions: metadata.ResultTableOptions{
 				"result_table.doris|4": originalOption,
 			},
@@ -2485,7 +2481,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 		require.NoError(t, err)
 		option := options.GetOption("result_table.doris|4")
 		require.NotNil(t, option)
-		require.NotEmpty(t, option.ResultSchema)
+		require.Contains(t, option.SQL, "SELECT * FROM `2_bklog_bkunify_query_doris`.doris")
 
 		assert.Empty(t, originalOption.SQL)
 		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)

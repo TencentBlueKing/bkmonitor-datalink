@@ -34,7 +34,12 @@ type QueryList []*Query
 func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 	outerAggName := ql.outerAggName()
 	if hints != nil && hints.Func != "" {
-		// last_over_time 只是为了扩展回看窗口，真实的存储侧 avg 仍应决定多路由合并方式。
+		// last_over_time 只是为了扩展回看窗口，真实的存储侧窗口聚合仍应决定多路由合并方式。
+		if strings.EqualFold(hints.Func, "last_over_time") {
+			if name := ql.windowedStorageAggName(); name != "" {
+				return name
+			}
+		}
 		if strings.EqualFold(hints.Func, "last_over_time") && isAvgBucketFunc(strings.ToLower(outerAggName)) {
 			return outerAggName
 		}
@@ -42,6 +47,25 @@ func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 	}
 
 	return outerAggName
+}
+
+func (ql QueryList) windowedStorageAggName() string {
+	for _, query := range ql {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		aggregates := query.qry.Aggregates
+		for i := len(aggregates) - 1; i >= 0; i-- {
+			agg := aggregates[i]
+			if agg.Window <= 0 {
+				continue
+			}
+			if name := storageBucketFuncName(strings.ToLower(agg.Name)); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (ql QueryList) outerAggName() string {
@@ -75,6 +99,9 @@ func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector tim
 		}
 	}
 
+	if isPlainBucketFunc(name) {
+		return 0
+	}
 	if isRangeBucketFunc(name) {
 		// *_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
 		if name != function.Avg && name != function.Mean {
@@ -88,11 +115,42 @@ func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector tim
 	return fallback
 }
 
+func storageBucketFuncName(name string) string {
+	switch name {
+	case function.Sum, function.Count, function.Min, function.Max, function.Avg, function.Mean:
+		return name
+	case function.SumOT:
+		return function.Sum
+	case function.CountOT:
+		return function.Count
+	case function.MinOT:
+		return function.Min
+	case function.MaxOT:
+		return function.Max
+	case function.AvgOT:
+		return function.Avg
+	default:
+		return ""
+	}
+}
+
 func isSameBucketFunc(a, b string) bool {
 	if a == b {
 		return true
 	}
+	if storageBucketFuncName(a) == storageBucketFuncName(b) && storageBucketFuncName(a) != "" {
+		return true
+	}
 	return isAvgBucketFunc(a) && isAvgBucketFunc(b)
+}
+
+func isPlainBucketFunc(name string) bool {
+	switch name {
+	case function.Sum, function.Count, function.Min, function.Max:
+		return true
+	default:
+		return false
+	}
 }
 
 func isAvgBucketFunc(name string) bool {

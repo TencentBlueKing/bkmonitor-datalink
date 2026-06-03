@@ -677,8 +677,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			// 多 route 同 label 合并时会进入 mergeSeriesSetWithFunc 的 route 过滤逻辑。
 			// 90s 样本如果按原 timestamp 暴露给 PromQL，会被 route 生效前的 evaluation 使用，
 			// 与前一路 storage 重复参与计算；因此多路合并只保留 timestamp 落在 route 生效区间内的样本。
-			fn:   function.Sum,
-			step: time.Minute,
+			fn: function.Sum,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
@@ -747,6 +746,98 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(5, time.Unix(0, 0)),
 			},
 		},
+		"windowed plain sum bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Sum,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(5, time.Unix(0, 0)),
+			},
+		},
+		"windowed plain count bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Count,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(5, time.Unix(0, 0)),
+			},
+		},
+		"windowed plain min bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Min,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(2, time.Unix(0, 0)),
+			},
+		},
+		"windowed plain max bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Max,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(2, time.Unix(0, 0)),
+					},
+					start: time.Unix(0, 0),
+					end:   time.Unix(120, 0),
+				},
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(0, 0)),
+			},
+		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
 			fn: function.Avg,
 			routes: []routeSeries{
@@ -795,8 +886,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			},
 		},
 		"range selector宽度覆盖路由开始时间时也不暴露提前取回样本": {
-			fn:   function.Sum,
-			step: 90 * time.Second,
+			fn: function.Sum,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{

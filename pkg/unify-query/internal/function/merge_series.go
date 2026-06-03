@@ -153,7 +153,7 @@ func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64)
 
 func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
 	if stepMs > 0 && isForwardRangeBucketFunc(name) {
-		// sum/count/min/max_over_time 的样本 timestamp 表示 bucket 起点，
+		// 窗口化 sum/count/min/max 的样本 timestamp 表示 bucket 起点，
 		// route 过滤应判断 bucket [t, t+window) 是否与 route 生效区间相交。
 		return t < end && t+stepMs > start
 	}
@@ -162,7 +162,7 @@ func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
 
 func isForwardRangeBucketFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case SumOT, CountOT, MinOT, MaxOT:
+	case Sum, Count, Min, Max, SumOT, CountOT, MinOT, MaxOT:
 		return true
 	default:
 		return false

@@ -23,6 +23,7 @@ import (
 	promRemote "github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -126,8 +127,36 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: time.Minute,
 		},
+		"plain count 有聚合窗口时使用该窗口": {
+			name: function.Count,
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Count, Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"plain sum 没有聚合窗口时不使用查询步长当 bucket": {
+			name: function.Sum,
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 0,
+		},
 		"函数不匹配时回退到查询步长": {
-			name: "max",
+			name: "increase",
 			queries: QueryList{
 				{
 					qry: &metadata.Query{
@@ -180,6 +209,67 @@ func TestMergeFuncName(t *testing.T) {
 				},
 			},
 			expected: "avg",
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 count": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Count, Window: time.Minute},
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			expected: function.Count,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 sum": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Sum,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 min": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Min, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Min,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 max": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Max, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Max,
 		},
 		"hint 为空时使用下推聚合函数": {
 			queries: QueryList{

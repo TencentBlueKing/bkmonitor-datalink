@@ -28,6 +28,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -380,6 +381,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}()
 
+	recordESQueryShards(ctx, span, qo, res)
 	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err
 	}
@@ -396,6 +398,122 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		ctx, queryCost, metadata.ElasticsearchStorageType, qo.conn.Address,
 	)
 	return res, err
+}
+
+const (
+	esShardFailureSampleLimit     = 3
+	esShardFailureReasonMaxLength = 512
+)
+
+type esShardFailureSample struct {
+	Shard  int    `json:"shard"`
+	Index  string `json:"index"`
+	Status string `json:"status,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+func recordESQueryShards(ctx context.Context, span *trace.Span, qo *queryOption, res *elastic.SearchResult) {
+	if res == nil {
+		return
+	}
+
+	span.Set("timed_out", res.TimedOut)
+	if res.Shards == nil {
+		if res.TimedOut {
+			span.Set("shards_failures_count", 0)
+			log.Warnf(ctx, "es query shard abnormal index: %+v, timed_out: %v, shards info is nil", esQueryIndexes(qo), res.TimedOut)
+		}
+		return
+	}
+
+	span.Set("shards_total", res.Shards.Total)
+	span.Set("shards_successful", res.Shards.Successful)
+	span.Set("shards_failed", res.Shards.Failed)
+	span.Set("shards_skipped", res.Shards.Skipped)
+
+	if res.Shards.Failed <= 0 && !res.TimedOut {
+		return
+	}
+
+	failuresCount := countESShardFailures(res.Shards.Failures)
+	span.Set("shards_failures_count", failuresCount)
+	failuresSample := buildESShardFailureSample(res.Shards.Failures)
+	failuresSampleJson := marshalESShardFailureSample(failuresSample)
+	if len(failuresSample) > 0 {
+		span.Set("shards_failures_sample", failuresSampleJson)
+	}
+
+	log.Warnf(
+		ctx,
+		"es query shard abnormal index: %+v, timed_out: %v, shards_total: %d, shards_successful: %d, shards_failed: %d, shards_skipped: %d, failures_count: %d, failures_sample: %s",
+		esQueryIndexes(qo), res.TimedOut, res.Shards.Total, res.Shards.Successful, res.Shards.Failed, res.Shards.Skipped, failuresCount, failuresSampleJson,
+	)
+}
+
+func esQueryIndexes(qo *queryOption) []string {
+	if qo == nil {
+		return nil
+	}
+	return qo.indexes
+}
+
+func countESShardFailures(failures []*elastic.ShardOperationFailedException) int {
+	count := 0
+	for _, failure := range failures {
+		if failure != nil {
+			count++
+		}
+	}
+	return count
+}
+
+func buildESShardFailureSample(failures []*elastic.ShardOperationFailedException) []esShardFailureSample {
+	samples := make([]esShardFailureSample, 0, esShardFailureSampleLimit)
+	for _, failure := range failures {
+		if failure == nil {
+			continue
+		}
+		samples = append(samples, esShardFailureSample{
+			Shard:  failure.Shard,
+			Index:  failure.Index,
+			Status: failure.Status,
+			Reason: truncateString(marshalESShardFailureReason(failure.Reason), esShardFailureReasonMaxLength),
+		})
+		if len(samples) >= esShardFailureSampleLimit {
+			break
+		}
+	}
+	return samples
+}
+
+func marshalESShardFailureReason(reason map[string]interface{}) string {
+	if len(reason) == 0 {
+		return ""
+	}
+	reasonJson, err := json.Marshal(reason)
+	if err != nil {
+		return fmt.Sprintf("%+v", reason)
+	}
+	return string(reasonJson)
+}
+
+func marshalESShardFailureSample(failuresSample []esShardFailureSample) string {
+	failuresJson, err := json.Marshal(failuresSample)
+	if err != nil {
+		return fmt.Sprintf("%+v", failuresSample)
+	}
+	return string(failuresJson)
+}
+
+func truncateString(s string, maxLength int) string {
+	if maxLength <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLength {
+		return s
+	}
+	return string(runes[:maxLength])
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory) storage.SeriesSet {

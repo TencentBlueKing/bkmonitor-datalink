@@ -10,6 +10,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -20,10 +21,13 @@ import (
 // 返回结构化数据
 type PromData struct {
 	dimensions map[string]bool
-	Tables     []*TablesItem    `json:"series"`
-	Status     *metadata.Status `json:"status,omitempty"`
-	TraceID    string           `json:"trace_id,omitempty"`
-	IsPartial  bool             `json:"is_partial"`
+	// includeRouteInfo 表示本次响应需要输出 route_info；即使为空也输出 []。
+	includeRouteInfo bool
+	Tables           []*TablesItem        `json:"series"`
+	Status           *metadata.Status     `json:"status,omitempty"`
+	TraceID          string               `json:"trace_id,omitempty"`
+	IsPartial        bool                 `json:"is_partial"`
+	RouteInfo        []metadata.RouteInfo `json:"route_info,omitempty"`
 }
 
 // NewPromData
@@ -36,6 +40,46 @@ func NewPromData(dimensions []string) *PromData {
 		dimensions: dimensionsMap,
 		Tables:     make([]*TablesItem, 0),
 	}
+}
+
+// SetRouteInfo 标记本次响应需要输出 route_info；即使没有路由也输出 []。
+func (d *PromData) SetRouteInfo(routeInfo []metadata.RouteInfo) {
+	d.RouteInfo = normalizeRouteInfo(routeInfo)
+	d.includeRouteInfo = true
+}
+
+// MarshalJSON 在未调用 SetRouteInfo 时沿用 route_info 的 omitempty；调用后即使为空也输出 []。
+func (d *PromData) MarshalJSON() ([]byte, error) {
+	type promData struct {
+		Tables    []*TablesItem        `json:"series"`
+		Status    *metadata.Status     `json:"status,omitempty"`
+		TraceID   string               `json:"trace_id,omitempty"`
+		IsPartial bool                 `json:"is_partial"`
+		RouteInfo []metadata.RouteInfo `json:"route_info,omitempty"`
+	}
+	if d.includeRouteInfo {
+		type promDataWithRouteInfo struct {
+			Tables    []*TablesItem        `json:"series"`
+			Status    *metadata.Status     `json:"status,omitempty"`
+			TraceID   string               `json:"trace_id,omitempty"`
+			IsPartial bool                 `json:"is_partial"`
+			RouteInfo []metadata.RouteInfo `json:"route_info"`
+		}
+		return json.Marshal(promDataWithRouteInfo{
+			Tables:    d.Tables,
+			Status:    d.Status,
+			TraceID:   d.TraceID,
+			IsPartial: d.IsPartial,
+			RouteInfo: normalizeRouteInfo(d.RouteInfo),
+		})
+	}
+	return json.Marshal(promData{
+		Tables:    d.Tables,
+		Status:    d.Status,
+		TraceID:   d.TraceID,
+		IsPartial: d.IsPartial,
+		RouteInfo: d.RouteInfo,
+	})
 }
 
 // Fill

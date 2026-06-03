@@ -64,6 +64,16 @@ type ListData struct {
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+	// RouteInfo 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
+	RouteInfo []metadata.RouteInfo `json:"route_info"`
+}
+
+// normalizeRouteInfo 保证成功响应中 route_info 为 [] 而不是 null。
+func normalizeRouteInfo(routeInfo []metadata.RouteInfo) []metadata.RouteInfo {
+	if routeInfo == nil {
+		return make([]metadata.RouteInfo, 0)
+	}
+	return routeInfo
 }
 
 // DataResponse 返回数据结构体

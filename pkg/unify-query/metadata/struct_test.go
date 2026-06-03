@@ -190,7 +190,7 @@ func TestReplaceVmCondition(t *testing.T) {
 	}
 }
 
-func TestQuery_ToCheckRouteInfo(t *testing.T) {
+func TestQuery_ToRouteInfo(t *testing.T) {
 	q := &Query{
 		TableID:     "rt.es",
 		DB:          "es_index",
@@ -200,8 +200,8 @@ func TestQuery_ToCheckRouteInfo(t *testing.T) {
 		StorageID:   "3",
 		Measurement: "__default__",
 	}
-	info := q.ToCheckRouteInfo("ref_a", "metric_b")
-	assert.Equal(t, CheckRouteInfo{
+	info := q.ToRouteInfo("ref_a", "metric_b")
+	assert.Equal(t, RouteInfo{
 		ReferenceName: "ref_a",
 		MetricName:    "metric_b",
 		TableID:       "rt.es",
@@ -214,14 +214,15 @@ func TestQuery_ToCheckRouteInfo(t *testing.T) {
 	}, info)
 }
 
-func TestQueryReference_CollectCheckRouteInfo_ReferenceOrderStable(t *testing.T) {
+func TestQueryReference_CollectRouteInfo_ReferenceOrderStable(t *testing.T) {
 	qr := QueryReference{
 		"z": {{QueryList: []*Query{{TableID: "tz"}}}},
-		"a": {{QueryList: []*Query{{TableID: "ta"}}}},
+		"a": {{QueryList: []*Query{{TableID: "tb"}, {TableID: "ta"}}}},
 	}
-	rows := qr.CollectCheckRouteInfo()
-	assert.Equal(t, []CheckRouteInfo{
+	rows := qr.CollectRouteInfo()
+	assert.Equal(t, []RouteInfo{
 		{ReferenceName: "a", TableID: "ta"},
+		{ReferenceName: "a", TableID: "tb"},
 		{ReferenceName: "z", TableID: "tz"},
 	}, rows)
 }

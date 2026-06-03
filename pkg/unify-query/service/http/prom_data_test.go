@@ -10,10 +10,13 @@
 package http
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -44,6 +47,21 @@ func TestPromData_Fill_FillsStat(t *testing.T) {
 	assert.Equal(t, float64(15), stat.Avg.V)
 	assert.Equal(t, int64(2000), stat.Last.T)
 	assert.Equal(t, float64(20), stat.Last.V)
+}
+
+func TestPromData_MarshalRouteInfoWhenEnabled(t *testing.T) {
+	d := NewPromData(nil)
+	d.SetRouteInfo(nil)
+
+	out, err := json.Marshal(d)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"series":[],"is_partial":false,"route_info":[]}`, string(out))
+
+	d.SetRouteInfo([]metadata.RouteInfo{{ReferenceName: "a", TableID: "system.cpu"}})
+	out, err = json.Marshal(d)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"route_info"`)
+	assert.Contains(t, string(out), `"table_id":"system.cpu"`)
 }
 
 // Fill 已写入 Stat；Downsample 只缩减 Values，Stat 仍为降采样前点集统计。

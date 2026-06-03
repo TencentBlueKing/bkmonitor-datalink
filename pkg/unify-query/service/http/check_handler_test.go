@@ -168,9 +168,9 @@ func TestEndToEndHandlerCheckQueryTs_Success_VMPreview(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data      []map[string]any          `json:"data"`
-		RouteInfo []metadata.CheckRouteInfo `json:"route_info"`
-		TraceID   string                    `json:"trace_id"`
+		Data      []map[string]any     `json:"data"`
+		RouteInfo []metadata.RouteInfo `json:"route_info"`
+		TraceID   string               `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1, "直查 VM 路径应产出一条预览")
@@ -206,9 +206,9 @@ func TestEndToEndHandlerCheckQueryTs_Success_VMPreview_Division(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data      []map[string]any          `json:"data"`
-		RouteInfo []metadata.CheckRouteInfo `json:"route_info"`
-		TraceID   string                    `json:"trace_id"`
+		Data      []map[string]any     `json:"data"`
+		RouteInfo []metadata.RouteInfo `json:"route_info"`
+		TraceID   string               `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
@@ -244,9 +244,9 @@ func TestEndToEndHandlerCheckQueryTs_Success_MetricMergeSingleRef(t *testing.T) 
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data      []map[string]any          `json:"data"`
-		RouteInfo []metadata.CheckRouteInfo `json:"route_info"`
-		TraceID   string                    `json:"trace_id"`
+		Data      []map[string]any     `json:"data"`
+		RouteInfo []metadata.RouteInfo `json:"route_info"`
+		TraceID   string               `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
@@ -512,9 +512,9 @@ func TestEndToEndHandlerCheckQueryPromQL_Success_VMPreview(t *testing.T) {
 	w := runCheckHandler(t, req, HandlerCheckQueryPromQL)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp struct {
-		Data      []map[string]any          `json:"data"`
-		RouteInfo []metadata.CheckRouteInfo `json:"route_info"`
-		TraceID   string                    `json:"trace_id"`
+		Data      []map[string]any     `json:"data"`
+		RouteInfo []metadata.RouteInfo `json:"route_info"`
+		TraceID   string               `json:"trace_id"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)

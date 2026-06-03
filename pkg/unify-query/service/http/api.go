@@ -563,7 +563,7 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
+	instance, stmt, _, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
 	}

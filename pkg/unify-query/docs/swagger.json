@@ -1377,7 +1377,7 @@
                     "description": "与 ToQueryReference 展开后的子查询对应的路由摘要（不调真实 TSDB）。",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/metadata.CheckRouteInfo"
+                        "$ref": "#/definitions/metadata.RouteInfo"
                     }
                 },
                 "trace_id": {
@@ -1592,7 +1592,7 @@
                 }
             }
         },
-        "metadata.CheckRouteInfo": {
+        "metadata.RouteInfo": {
             "type": "object",
             "properties": {
                 "reference_name": {"type": "string"},

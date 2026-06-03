@@ -1393,7 +1393,7 @@ const docTemplate = `{
                     "description": "与 ToQueryReference 展开后的子查询对应的路由摘要，用于排障（不调真实 TSDB）。",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/metadata.CheckRouteInfo"
+                        "$ref": "#/definitions/metadata.RouteInfo"
                     }
                 },
                 "trace_id": {
@@ -1608,7 +1608,7 @@ const docTemplate = `{
                 }
             }
         },
-        "metadata.CheckRouteInfo": {
+        "metadata.RouteInfo": {
             "type": "object",
             "properties": {
                 "reference_name": {"type": "string"},

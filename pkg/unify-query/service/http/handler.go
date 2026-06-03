@@ -269,7 +269,7 @@ func HandlerQueryRaw(c *gin.Context) {
 		return
 	}
 
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
+	listData.Total, listData.List, listData.ResultTableOptions, listData.RouteInfo, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -282,6 +282,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.RouteInfo = normalizeRouteInfo(listData.RouteInfo)
 
 	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
@@ -382,7 +383,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
+	listData.Total, listData.List, listData.ResultTableOptions, listData.RouteInfo, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	if err != nil {
 		return
 	}
@@ -394,6 +395,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.RouteInfo = normalizeRouteInfo(listData.RouteInfo)
 	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }

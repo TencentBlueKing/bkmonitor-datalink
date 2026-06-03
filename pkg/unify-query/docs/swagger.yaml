@@ -144,7 +144,7 @@ definitions:
       route_info:
         description: 与 ToQueryReference 展开后的子查询对应的路由摘要（不调真实 TSDB）。
         items:
-          $ref: '#/definitions/metadata.CheckRouteInfo'
+          $ref: '#/definitions/metadata.RouteInfo'
         type: array
       trace_id:
         description: TraceID 链路 ID（与 trace span 一致）。
@@ -286,7 +286,7 @@ definitions:
       field:
         type: string
     type: object
-  metadata.CheckRouteInfo:
+  metadata.RouteInfo:
     properties:
       data_label:
         type: string

@@ -38,16 +38,33 @@
 
 #### 查询接口响应格式
 
-查询接口（如 `/query/ts`、`/query/promql`）返回 `PromData` 格式：
+时序查询接口（如 `/query/ts`、`/query/promql`、`/query/reference`）返回 `PromData` 格式：
 
 ```json
 {
   "series": [...],
   "status": {...},
   "trace_id": "...",
-  "is_partial": false
+  "is_partial": false,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+原始数据查询接口（如 `/query/raw`、`/query/raw_with_scroll`）返回 `ListData` 格式：
+
+```json
+{
+  "total": 100,
+  "list": [...],
+  "done": true,
+  "status": {...},
+  "trace_id": "...",
+  "result_table_options": {...},
+  "result_table_id": ["system.cpu_summary"]
+}
+```
+
+`result_table_id` 为本次查询经 UQ 路由解析得到的 RT 范围，来自 `QueryReference` 路由结果；查询接口只返回 RT 列表，不返回完整路由摘要。无路由时返回空数组 `[]`。
 
 #### 错误响应格式
 
@@ -193,13 +210,24 @@
   ],
   "status": null,
   "trace_id": "...",
-  "is_partial": false
+  "is_partial": false,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
 
+**响应字段说明**:
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `series` | array | 查询结果序列 |
+| `status` | object | 查询状态信息 |
+| `trace_id` | string | 链路追踪 ID |
+| `is_partial` | bool | 是否为部分成功 |
+| `result_table_id` | string[] | 本次查询经 UQ 路由解析得到的 RT 范围；成功响应默认返回，无路由时为空数组 |
+
 ### 2.2 PromQL 查询
 
-**接口**: `POST /query/ts/promql`
+**接口**: `POST /query/promql`
 
 **描述**: 通过 PromQL 语句查询监控数据。
 
@@ -244,11 +272,11 @@
 | `match`                 | string | 否   | 匹配条件                         |
 | `is_verify_dimensions`  | bool   | 否   | 是否验证维度                     |
 
-**响应格式**: 同结构体查询（返回 `PromData` 格式）
+**响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.3 引用查询
 
-**接口**: `POST /query/ts/reference`
+**接口**: `POST /query/reference`
 
 **描述**: 使用查询引用进行查询。
 
@@ -256,11 +284,11 @@
 
 **请求体**: 同结构体查询
 
-**响应格式**: 同结构体查询（返回 `PromData` 格式）
+**响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.4 原始查询
 
-**接口**: `POST /query/ts/raw`
+**接口**: `POST /query/raw`
 
 **描述**: 执行原始查询，返回原始数据列表（用于特殊场景，如 Elasticsearch 查询）。
 
@@ -284,13 +312,26 @@
   "done": true,
   "trace_id": "...",
   "status": null,
-  "result_table_options": null
+  "result_table_options": null,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
 
+**响应字段说明**:
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `total` | int | 总条数 |
+| `list` | array | 原始数据列表 |
+| `done` | bool | 是否已完成全部分页或滚动查询 |
+| `trace_id` | string | 链路追踪 ID |
+| `status` | object | 查询状态信息 |
+| `result_table_options` | object | 分页、scroll、search-after 等查询状态 |
+| `result_table_id` | string[] | 本次查询经 UQ 路由解析得到的 RT 范围；不随分页、scroll、search-after 或已返回数据行变化 |
+
 ### 2.5 原始查询（带滚动）
 
-**接口**: `POST /query/ts/raw_with_scroll`
+**接口**: `POST /query/raw_with_scroll`
 
 **描述**: 执行原始查询，支持滚动查询（用于大数据量分页查询，如 Elasticsearch）。
 
@@ -308,9 +349,13 @@
   "list": [...],
   "done": false,
   "trace_id": "...",
-  "status": null
+  "status": null,
+  "result_table_options": {...},
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+**响应格式**: 同原始查询（返回 `ListData` 格式，包含 `result_table_id`）
 
 ### 2.6 集群指标查询
 
@@ -1219,7 +1264,7 @@ curl -X POST http://localhost:10205/query/ts \
 ### 10.2 使用 PromQL 查询
 
 ```bash
-curl -X POST http://localhost:10205/query/ts/promql \
+curl -X POST http://localhost:10205/query/promql \
   -H "Content-Type: application/json" \
   -H "X-Bk-Scope-Space-Uid: bkcc__2" \
   -d '{
@@ -1296,4 +1341,3 @@ curl -X POST http://localhost:10205/query/ts \
 ### B. 更多示例
 
 更多使用示例请参考项目根目录的 `README.md`。
-

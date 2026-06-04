@@ -593,6 +593,7 @@ func (a Aggregates) Copy() Aggregates {
 			Name:           agg.Name,
 			Field:          agg.Field,
 			Dimensions:     append([]string{}, agg.Dimensions...),
+			Without:        agg.Without,
 			Window:         agg.Window,
 			TimeZone:       agg.TimeZone,
 			TimeZoneOffset: agg.TimeZoneOffset,

@@ -2506,7 +2506,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 		}
 
-		_, _, _, err := queryRawWithInstance(ctx, queryTs)
+		_, _, _, _, err := queryRawWithInstance(ctx, queryTs)
 		assert.NoError(t, err)
 
 		queryRef := metadata.GetQueryReference(ctx)
@@ -2553,7 +2553,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 		}
 
-		_, _, options, err := queryRawWithInstance(ctx, queryTs)
+		_, _, options, _, err := queryRawWithInstance(ctx, queryTs)
 		require.NoError(t, err)
 		option := options.GetOption("result_table.doris|4")
 		require.NotNil(t, option)

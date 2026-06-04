@@ -208,4 +208,30 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 			},
 		}, db.GetStorageIDRangesWithOverlap(start, end, 2*time.Hour))
 	})
+
+	t.Run("avg_over_time 首个点回看旧 route 时保留旧存储权重范围", func(t *testing.T) {
+		start := switchTime.Add(30 * time.Minute)
+		end := switchTime.Add(35 * time.Minute)
+		db := &TsDBV2{
+			StorageID:             "16",
+			StorageClusterRecords: records,
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:  "16",
+				Start:      switchTime,
+				End:        end,
+				QueryStart: switchTime,
+				QueryEnd:   end.Add(2 * time.Hour),
+			},
+			{
+				StorageID:  "5",
+				Start:      switchTime.Add(-90 * time.Minute),
+				End:        switchTime,
+				QueryStart: switchTime.Add(-90 * time.Minute),
+				QueryEnd:   switchTime,
+			},
+		}, db.GetStorageIDRangesWithOverlap(start, end, 2*time.Hour))
+	})
 }

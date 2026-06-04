@@ -210,14 +210,15 @@ func (q *Query) calcSelectStrategyWithMergeContext(start, end time.Time, mergeFu
 	}
 
 	hasRouteQueryRange := validTimeRange(q.queryStart, q.queryEnd)
-	if hasRouteQueryRange {
+	hasEffectiveRouteRange := validTimeRange(q.start, q.end)
+	if hasRouteQueryRange && hasEffectiveRouteRange {
 		// 分段路由只用 route 查询时间段判断本路是否相关，不裁剪 SelectHints 的 range/lookback 扩展。
 		if !start.Before(q.queryEnd) || !q.queryStart.Before(end) {
 			return strategy, false
 		}
 	}
 
-	if validTimeRange(q.start, q.end) {
+	if hasEffectiveRouteRange {
 		// 权重使用 route 真实生效时间段，而不是本次查询扩展范围，避免跨切换点 bucket 权重失真。
 		strategy.weightStart = q.start
 		strategy.weightEnd = q.end

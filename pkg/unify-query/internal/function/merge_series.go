@@ -158,12 +158,26 @@ func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
 		// PromQL 原生 *_over_time(range-vector) 的 timestamp 是 evaluation instant，不能复用该 forward bucket 语义。
 		return t < end && t+stepMs > start
 	}
+	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
+		// PromQL *_over_time(range-vector) 的 timestamp 是 evaluation instant，
+		// 实际统计窗口为 [t-window, t)，需要按向后窗口判断与 route 生效区间是否相交。
+		return t > start && t-stepMs < end
+	}
 	return t >= start && t < end
 }
 
 func isForwardRangeBucketFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case Sum, Count, Min, Max, SumOT, CountOT, MinOT, MaxOT:
+	case Sum, Count, Min, Max:
+		return true
+	default:
+		return false
+	}
+}
+
+func isBackwardRangeBucketFunc(name string) bool {
+	switch strings.ToLower(name) {
+	case SumOT, CountOT, MinOT, MaxOT, AvgOT:
 		return true
 	default:
 		return false

@@ -317,9 +317,25 @@ func TestQueryCalcSelectStrategy(t *testing.T) {
 			},
 			expectedOK: true,
 		},
-		"查询范围未命中 route 查询窗口时跳过该路由": {
+		"overlap-only route 即使未命中 SelectHints 也保留候选查询": {
 			start:           time.Unix(100, 0),
 			end:             time.Unix(200, 0),
+			routeQueryStart: time.Unix(200, 0),
+			routeQueryEnd:   time.Unix(300, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(100, 0),
+				queryEnd:    time.Unix(200, 0),
+				weightStart: time.Unix(100, 0),
+				weightEnd:   time.Unix(200, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
+			expectedOK: true,
+		},
+		"有效 route 未命中 route 查询窗口时跳过该路由": {
+			start:           time.Unix(100, 0),
+			end:             time.Unix(200, 0),
+			routeStart:      time.Unix(200, 0),
+			routeEnd:        time.Unix(300, 0),
 			routeQueryStart: time.Unix(200, 0),
 			routeQueryEnd:   time.Unix(300, 0),
 			expectedOK:      false,

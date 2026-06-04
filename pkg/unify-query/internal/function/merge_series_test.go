@@ -700,50 +700,50 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(220, 0)),
 			},
 		},
-		"sum_over_time bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+		"sum_over_time 在 route 切换点按向后 range window 过滤": {
 			fn:   function.SumOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
-						sample(2, time.Unix(0, 0)),
+						sample(2, time.Unix(120, 0)),
 					},
 					start: time.Unix(0, 0),
 					end:   time.Unix(120, 0),
 				},
 				{
 					samples: []prompb.Sample{
-						sample(3, time.Unix(0, 0)),
+						sample(3, time.Unix(120, 0)),
 					},
 					start: time.Unix(120, 0),
 					end:   time.Unix(300, 0),
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(0, 0)),
+				sample(2, time.Unix(120, 0)),
 			},
 		},
-		"count_over_time bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+		"count_over_time 在 route 切换点按向后 range window 过滤": {
 			fn:   function.CountOT,
 			step: 5 * time.Minute,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
-						sample(2, time.Unix(0, 0)),
+						sample(2, time.Unix(120, 0)),
 					},
 					start: time.Unix(0, 0),
 					end:   time.Unix(120, 0),
 				},
 				{
 					samples: []prompb.Sample{
-						sample(3, time.Unix(0, 0)),
+						sample(3, time.Unix(120, 0)),
 					},
 					start: time.Unix(120, 0),
 					end:   time.Unix(300, 0),
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(0, 0)),
+				sample(2, time.Unix(120, 0)),
 			},
 		},
 		"windowed plain sum bucket 跨 route 切换时按 bucket 与 route 相交保留": {

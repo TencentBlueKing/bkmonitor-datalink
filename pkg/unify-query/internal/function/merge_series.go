@@ -338,6 +338,14 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 
 func avgBucketRange(name string, t, stepMs int64) (int64, int64) {
 	if name == AvgOT {
+		// PromQL range selectors select samples back from the current evaluation instant,
+		// and *_over_time(range-vector) returns one instant-vector sample at that instant.
+		// Therefore avg_over_time at timestamp t covers (t-window, t], not [t, t+window).
+		// References:
+		// https://prometheus.io/docs/prometheus/latest/querying/basics/#range-vector-selectors
+		// https://prometheus.io/docs/prometheus/latest/querying/functions/#aggregation_over_time
+		// https://github.com/prometheus/prometheus/blob/main/promql/engine.go#L978-L997
+		// https://github.com/prometheus/prometheus/blob/main/promql/engine.go#L3631-L3643
 		return t - stepMs, t
 	}
 	return t, t + stepMs

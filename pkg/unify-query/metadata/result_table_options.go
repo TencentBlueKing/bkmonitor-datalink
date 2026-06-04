@@ -37,8 +37,7 @@ func (o *ResultTableOption) Clone() *ResultTableOption {
 		clone.From = &from
 	}
 	if o.SearchAfter != nil {
-		clone.SearchAfter = make([]any, len(o.SearchAfter))
-		copy(clone.SearchAfter, o.SearchAfter)
+		clone.SearchAfter = append([]any(nil), o.SearchAfter...)
 	}
 	if o.FieldType != nil {
 		clone.FieldType = make(map[string]string, len(o.FieldType))

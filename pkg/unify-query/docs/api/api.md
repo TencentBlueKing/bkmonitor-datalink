@@ -38,7 +38,7 @@
 
 #### 查询接口响应格式
 
-时序查询接口（如 `/query/ts`、`/query/promql`、`/query/reference`）返回 `PromData` 格式：
+时序查询接口（如 `/query/ts`、`/query/ts/promql`、`/query/ts/reference`）返回 `PromData` 格式：
 
 ```json
 {
@@ -50,7 +50,7 @@
 }
 ```
 
-原始数据查询接口（如 `/query/raw`、`/query/raw_with_scroll`）返回 `ListData` 格式：
+原始数据查询接口（如 `/query/ts/raw`、`/query/ts/raw_with_scroll`）返回 `ListData` 格式：
 
 ```json
 {
@@ -227,7 +227,7 @@
 
 ### 2.2 PromQL 查询
 
-**接口**: `POST /query/promql`
+**接口**: `POST /query/ts/promql`
 
 **描述**: 通过 PromQL 语句查询监控数据。
 
@@ -276,7 +276,7 @@
 
 ### 2.3 引用查询
 
-**接口**: `POST /query/reference`
+**接口**: `POST /query/ts/reference`
 
 **描述**: 使用查询引用进行查询。
 
@@ -288,7 +288,7 @@
 
 ### 2.4 原始查询
 
-**接口**: `POST /query/raw`
+**接口**: `POST /query/ts/raw`
 
 **描述**: 执行原始查询，返回原始数据列表（用于特殊场景，如 Elasticsearch 查询）。
 
@@ -331,7 +331,7 @@
 
 ### 2.5 原始查询（带滚动）
 
-**接口**: `POST /query/raw_with_scroll`
+**接口**: `POST /query/ts/raw_with_scroll`
 
 **描述**: 执行原始查询，支持滚动查询（用于大数据量分页查询，如 Elasticsearch）。
 
@@ -746,7 +746,7 @@
 
 **请求头**: 同 PromQL 查询接口
 
-**请求体**: 与 `POST /query/promql` 相同（`promql`、`start`、`end`、`step` 等）
+**请求体**: 与 `POST /query/ts/promql` 相同（`promql`、`start`、`end`、`step` 等）
 
 **处理流程**: 先将 PromQL 反解为 `QueryTs`，再与 **5.3** 共用校验逻辑，响应格式相同。
 
@@ -1264,7 +1264,7 @@ curl -X POST http://localhost:10205/query/ts \
 ### 10.2 使用 PromQL 查询
 
 ```bash
-curl -X POST http://localhost:10205/query/promql \
+curl -X POST http://localhost:10205/query/ts/promql \
   -H "Content-Type: application/json" \
   -H "X-Bk-Scope-Space-Uid: bkcc__2" \
   -d '{

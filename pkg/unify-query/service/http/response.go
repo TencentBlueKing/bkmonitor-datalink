@@ -69,27 +69,8 @@ type ListData struct {
 	ResultTableID []string `json:"result_table_id"`
 }
 
-// normalizeResultTableID 保证成功响应中 result_table_id 为 [] 而不是 null。
-func normalizeResultTableID(resultTableID []string) []string {
-	if resultTableID == nil {
-		return make([]string, 0)
-	}
-	return resultTableID
-}
-
-// normalizeRouteInfo 保证内部路由摘要切片为非 nil，方便后续统一投影。
-func normalizeRouteInfo(routeInfo []metadata.RouteInfo) []metadata.RouteInfo {
-	if routeInfo == nil {
-		return make([]metadata.RouteInfo, 0)
-	}
-	return routeInfo
-}
-
 // resultTableIDFromRouteInfo 在响应出口把内部路由摘要投影成 RT 列表。
 func resultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) []string {
-	if len(routeInfo) == 0 {
-		return normalizeResultTableID(nil)
-	}
 	seen := make(map[string]struct{}, len(routeInfo))
 	resultTableID := make([]string, 0, len(routeInfo))
 	for _, info := range routeInfo {
@@ -103,7 +84,7 @@ func resultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) []string {
 		resultTableID = append(resultTableID, info.TableID)
 	}
 	sort.Strings(resultTableID)
-	return normalizeResultTableID(resultTableID)
+	return resultTableID
 }
 
 // DataResponse 返回数据结构体

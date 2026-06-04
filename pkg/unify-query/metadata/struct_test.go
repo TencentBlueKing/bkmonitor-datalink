@@ -226,3 +226,10 @@ func TestQueryReference_CollectRouteInfo_ReferenceOrderStable(t *testing.T) {
 		{ReferenceName: "z", TableID: "tz"},
 	}, rows)
 }
+
+func TestQueryReference_CollectRouteInfo_EmptyReturnsSlice(t *testing.T) {
+	rows := QueryReference{}.CollectRouteInfo()
+
+	assert.NotNil(t, rows)
+	assert.Empty(t, rows)
+}

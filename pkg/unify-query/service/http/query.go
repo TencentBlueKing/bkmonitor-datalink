@@ -209,7 +209,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	}
 	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
 	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
-	routeInfo = normalizeRouteInfo(queryRef.CollectRouteInfo())
+	routeInfo = queryRef.CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
@@ -481,7 +481,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		}
 	})
 	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
-	routeInfo = normalizeRouteInfo(queryRef.CollectRouteInfo())
+	routeInfo = queryRef.CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
@@ -844,7 +844,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		return instance, stmt, routeInfo, err
 	}
 	// 在生成 PromQL 前固定路由摘要，后续存储查询结果不参与推导。
-	routeInfo = normalizeRouteInfo(queryRef.CollectRouteInfo())
+	routeInfo = queryRef.CollectRouteInfo()
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查

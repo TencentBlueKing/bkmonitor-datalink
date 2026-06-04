@@ -49,6 +49,14 @@ func (d *PromData) SetResultTableID(resultTableID []string) {
 	d.includeResultTableID = true
 }
 
+// normalizeResultTableID 保证成功响应中 result_table_id 为 [] 而不是 null。
+func normalizeResultTableID(resultTableID []string) []string {
+	if resultTableID == nil {
+		return make([]string, 0)
+	}
+	return resultTableID
+}
+
 // SetResultTableIDFromRouteInfo 复用内部路由摘要，只在响应阶段投影为 RT 列表。
 func (d *PromData) SetResultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) {
 	d.SetResultTableID(resultTableIDFromRouteInfo(routeInfo))

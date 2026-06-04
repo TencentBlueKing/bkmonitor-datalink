@@ -370,17 +370,17 @@ type RouteInfo struct {
 	Measurement   string `json:"measurement,omitempty"`
 }
 
-// CollectRouteInfo 汇总子查询路由字段；最终按路由摘要排序以保证输出稳定。
+// CollectRouteInfo 汇总子查询路由字段；无路由时返回空切片，最终按路由摘要排序以保证输出稳定。
 func (qRef QueryReference) CollectRouteInfo() []RouteInfo {
+	rows := make([]RouteInfo, 0)
 	if len(qRef) == 0 {
-		return nil
+		return rows
 	}
 	refs := make([]string, 0, len(qRef))
 	for ref := range qRef {
 		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
-	rows := make([]RouteInfo, 0)
 	for _, refName := range refs {
 		for _, qm := range qRef[refName] {
 			if qm == nil {

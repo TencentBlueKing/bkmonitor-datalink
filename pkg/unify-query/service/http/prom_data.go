@@ -27,7 +27,8 @@ type PromData struct {
 	Status               *metadata.Status `json:"status,omitempty"`
 	TraceID              string           `json:"trace_id,omitempty"`
 	IsPartial            bool             `json:"is_partial"`
-	ResultTableID        []string         `json:"result_table_id,omitempty"`
+	// ResultTableID 来自 QueryReference 路由解析结果；查询响应只暴露 RT 列表，不返回完整 RouteInfo。
+	ResultTableID []string `json:"result_table_id,omitempty"`
 }
 
 // NewPromData

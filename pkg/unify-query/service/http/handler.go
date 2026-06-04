@@ -218,7 +218,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
@@ -298,7 +298,7 @@ func HandlerQueryRaw(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw_with_scroll [post]
 func HandlerQueryRawWithScroll(c *gin.Context) {

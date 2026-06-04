@@ -325,6 +325,47 @@ func TestStorageUUIDIncludesRouteRange(t *testing.T) {
 	assert.NotEqual(t, first.StorageUUID(), second.StorageUUID())
 }
 
+func TestQueryRouteLookbackDuration(t *testing.T) {
+	testCases := map[string]struct {
+		query         *Query
+		lookBackDelta time.Duration
+		expected      time.Duration
+	}{
+		"range selector and backward offset are additive": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				VectorOffset: time.Hour,
+			},
+			expected: 3 * time.Hour,
+		},
+		"explicit lookback participates before backward offset": {
+			query: &Query{
+				VectorOffset: 10 * time.Minute,
+			},
+			lookBackDelta: 5 * time.Minute,
+			expected:      15 * time.Minute,
+		},
+		"forward offset does not expand backward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				VectorOffset:  time.Hour,
+				OffsetForward: true,
+			},
+			expected: 2 * time.Hour,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.query.routeLookbackDuration(tc.lookBackDelta))
+		})
+	}
+}
+
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 	mock.Init()
 	ctx := md.InitHashID(context.Background())

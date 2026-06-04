@@ -136,7 +136,7 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 				},
 			},
 		},
-			"切换九十分钟后不再查询旧存储": {
+		"切换九十分钟后不再查询旧存储": {
 			db: &TsDBV2{
 				StorageID:             "16",
 				StorageClusterRecords: records,
@@ -182,4 +182,30 @@ func TestTsDBV2_GetStorageIDRanges(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.db.GetStorageIDRanges(tc.start, tc.end))
 		})
 	}
+
+	t.Run("额外回看窗口覆盖切换点时保留旧存储有效 route", func(t *testing.T) {
+		start := switchTime.Add(90 * time.Minute)
+		end := switchTime.Add(95 * time.Minute)
+		db := &TsDBV2{
+			StorageID:             "16",
+			StorageClusterRecords: records,
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:  "16",
+				Start:      switchTime,
+				End:        end,
+				QueryStart: switchTime,
+				QueryEnd:   end.Add(2 * time.Hour),
+			},
+			{
+				StorageID:  "5",
+				Start:      switchTime.Add(-30 * time.Minute),
+				End:        switchTime,
+				QueryStart: switchTime.Add(-30 * time.Minute),
+				QueryEnd:   switchTime,
+			},
+		}, db.GetStorageIDRangesWithOverlap(start, end, 2*time.Hour))
+	})
 }

@@ -153,8 +153,9 @@ func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64)
 
 func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
 	if stepMs > 0 && isForwardRangeBucketFunc(name) {
-		// 窗口化 sum/count/min/max 的样本 timestamp 表示 bucket 起点，
+		// 这里处理的是存储侧下推后的窗口聚合结果：样本 timestamp 表示 bucket 起点，
 		// route 过滤应判断 bucket [t, t+window) 是否与 route 生效区间相交。
+		// PromQL 原生 *_over_time(range-vector) 的 timestamp 是 evaluation instant，不能复用该 forward bucket 语义。
 		return t < end && t+stepMs > start
 	}
 	return t >= start && t < end

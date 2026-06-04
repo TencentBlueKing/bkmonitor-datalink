@@ -145,7 +145,14 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 		alianStart = function.TimeOffset(startTime, timezone, step)
 	}
 
-	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	queryParams := metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	if q.LookBackDelta != "" {
+		lookBackDelta, err := time.ParseDuration(q.LookBackDelta)
+		if err != nil {
+			return err
+		}
+		queryParams.SetLookBackDelta(lookBackDelta)
+	}
 	return nil
 }
 
@@ -482,6 +489,22 @@ func (q *Query) ToRouter() (*Route, error) {
 	return router, nil
 }
 
+func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration {
+	var duration time.Duration
+	if lookBackDelta > duration {
+		duration = lookBackDelta
+	}
+	if q.TimeAggregation.Window != "" {
+		if window, err := model.ParseDuration(string(q.TimeAggregation.Window)); err == nil && time.Duration(window) > duration {
+			duration = time.Duration(window)
+		}
+	}
+	if !q.OffsetForward {
+		duration += q.VectorOffset
+	}
+	return duration
+}
+
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if len(q.AggregateMethodList) == 0 {
 		return aggs, err
@@ -730,11 +753,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
+	routeLookback := q.routeLookbackDuration(qp.LookBackDelta)
+	routeStart := qp.Start.Add(-routeLookback)
 	for _, tsDB := range tsDBs {
-		storageRanges := tsDB.GetStorageIDRanges(qp.Start, qp.End)
+		storageRanges := tsDB.GetStorageIDRangesWithOverlap(qp.Start, qp.End, routeLookback)
 		if len(storageRanges) == 0 {
-			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，避免边界数据因为 route range 裁剪被漏查。
-			for _, storageID := range tsDB.GetStorageIDs(qp.Start, qp.End) {
+			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，并补上 PromQL range/offset 需要的额外回看窗口。
+			for _, storageID := range tsDB.GetStorageIDs(routeStart, qp.End) {
 				storageRanges = append(storageRanges, queryMod.StorageIDRange{
 					StorageID: storageID,
 				})

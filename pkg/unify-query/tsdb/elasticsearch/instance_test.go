@@ -1310,6 +1310,61 @@ func TestInstance_queryRawData(t *testing.T) {
 	}
 }
 
+func TestInstance_QueryRawDataSharedQueryDoesNotMutate(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	httpmock.RegisterResponder(
+		http.MethodPost,
+		mock.EsUrl+"/es_index/_search",
+		httpmock.NewStringResponder(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]}}`),
+	)
+
+	ins, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{
+			Address: mock.EsUrl,
+		},
+		MaxSize: 1,
+		Timeout: 3 * time.Second,
+	})
+	assert.NoError(t, err)
+
+	optionFrom := 7
+	query := &metadata.Query{
+		DB:    "es_index",
+		Field: "a",
+		From:  3,
+		Size:  10,
+		TimeField: metadata.TimeField{
+			Name: "dtEventTimeStamp",
+			Type: TimeFieldTypeTime,
+			Unit: "millisecond",
+		},
+		TableID:     "es_index",
+		StorageType: metadata.ElasticsearchStorageType,
+		Source:      []string{"a"},
+		ResultTableOption: &metadata.ResultTableOption{
+			From: &optionFrom,
+		},
+	}
+	originalOption := query.ResultTableOption.Clone()
+
+	dataCh := make(chan map[string]any)
+	size, total, resultOption, err := ins.QueryRawData(ctx, query, time.UnixMilli(1723593608000), time.UnixMilli(1723679962000), dataCh)
+	close(dataCh)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), size)
+	assert.Equal(t, int64(0), total)
+	assert.Equal(t, 10, query.Size)
+	assert.Equal(t, 3, query.From)
+	assert.Equal(t, originalOption, query.ResultTableOption)
+	assert.NotSame(t, query.ResultTableOption, resultOption)
+	assert.NotSame(t, query.ResultTableOption.From, resultOption.From)
+	assert.Equal(t, 7, *query.ResultTableOption.From)
+	assert.Equal(t, 7, *resultOption.From)
+}
+
 func TestInstance_fieldMap(t *testing.T) {
 	mock.Init()
 
@@ -1403,6 +1458,94 @@ func TestInstance_QueryLabelNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstance_QueryLabelValuesConcurrentSharedQueryDoesNotMutate(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	httpmock.RegisterResponder(
+		http.MethodPost,
+		mock.EsUrl+"/es_index/_search",
+		httpmock.NewStringResponder(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"a":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"a-value","doc_count":1,"_value":{"value":1}}]},"b":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"b-value","doc_count":1,"_value":{"value":1}}]},"level":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"INFO","doc_count":1,"_value":{"value":1}}]}}}`),
+	)
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{
+			Address: mock.EsUrl,
+		},
+		Timeout: time.Minute,
+	})
+	assert.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:    "es_index",
+		Field: "a",
+		TimeField: metadata.TimeField{
+			Name: "dtEventTimeStamp",
+			Type: TimeFieldTypeTime,
+			Unit: "millisecond",
+		},
+		TableID:     "test_table",
+		StorageType: metadata.ElasticsearchStorageType,
+		AllConditions: metadata.AllConditions{
+			{
+				{
+					DimensionName: "level",
+					Operator:      "eq",
+					Value:         []string{"INFO"},
+				},
+			},
+		},
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "a",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+	originalAllConditions := cloneAllConditions(query.AllConditions)
+	originalAggregates := make(metadata.Aggregates, len(query.Aggregates))
+	for i, aggregate := range query.Aggregates {
+		originalAggregates[i] = aggregate
+		originalAggregates[i].Dimensions = append([]string{}, aggregate.Dimensions...)
+		if aggregate.Args != nil {
+			originalAggregates[i].Args = append([]any{}, aggregate.Args...)
+		}
+	}
+
+	start := time.UnixMilli(1723593608000)
+	end := time.UnixMilli(1723679962000)
+	labelNames := []string{"a", "b", "level"}
+	errCh := make(chan error, len(labelNames)*10)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		for _, labelName := range labelNames {
+			wg.Add(1)
+			go func(labelName string) {
+				defer wg.Done()
+				values, err := inst.QueryLabelValues(ctx, query, labelName, start, end)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(values) == 0 {
+					errCh <- fmt.Errorf("empty label values for %s", labelName)
+				}
+			}(labelName)
+		}
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		assert.NoError(t, err)
+	}
+	assert.Equal(t, originalAllConditions, query.AllConditions)
+	assert.Equal(t, originalAggregates, query.Aggregates)
 }
 
 func TestInstance_QuerySeries(t *testing.T) {

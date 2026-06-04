@@ -79,38 +79,63 @@ func TestFieldAlias_AddAliasKeysWhenOriginalFieldPresent(t *testing.T) {
 	})
 }
 
-func TestResultTableOptionClone(t *testing.T) {
-	from := 1
-	option := &ResultTableOption{
-		From:        &from,
-		ScrollID:    "scroll",
-		SearchAfter: []any{"search", 1},
-		SliceIndex:  2,
-		SliceMax:    4,
-		FieldType: map[string]string{
-			"message": "text",
-		},
-		SQL: "select 1",
-		ResultSchema: []map[string]any{
-			{
-				"field_name": "message",
-				"field_type": "string",
+func TestResultTableOption_Clone(t *testing.T) {
+	t.Parallel()
+
+	from := 3
+	for name, c := range map[string]struct {
+		option *ResultTableOption
+		check  func(t *testing.T, option, clone *ResultTableOption)
+	}{
+		"nil option": {
+			option: nil,
+			check: func(t *testing.T, option, clone *ResultTableOption) {
+				assert.Nil(t, clone)
 			},
 		},
+		"copy pointer slice and maps": {
+			option: &ResultTableOption{
+				From:        &from,
+				ScrollID:    "scroll-id",
+				SearchAfter: []any{int64(1), "next"},
+				SliceIndex:  1,
+				SliceMax:    4,
+				FieldType: map[string]string{
+					"field": "keyword",
+				},
+				SQL: "select * from t",
+				ResultSchema: []map[string]any{
+					{
+						"name": "field",
+						"type": "keyword",
+					},
+					nil,
+				},
+			},
+			check: func(t *testing.T, option, clone *ResultTableOption) {
+				assert.Equal(t, option, clone)
+				assert.NotSame(t, option, clone)
+				assert.NotSame(t, option.From, clone.From)
+
+				*clone.From = 10
+				clone.SearchAfter[0] = int64(2)
+				clone.FieldType["field"] = "text"
+				clone.ResultSchema[0]["type"] = "text"
+
+				assert.Equal(t, 3, *option.From)
+				assert.Equal(t, []any{int64(1), "next"}, option.SearchAfter)
+				assert.Equal(t, map[string]string{"field": "keyword"}, option.FieldType)
+				assert.Equal(t, "keyword", option.ResultSchema[0]["type"])
+				assert.Nil(t, option.ResultSchema[1])
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clone := c.option.Clone()
+			c.check(t, c.option, clone)
+		})
 	}
-
-	cloned := option.Clone()
-	assert.Equal(t, option, cloned)
-
-	*cloned.From = 2
-	cloned.SearchAfter[0] = "changed"
-	cloned.FieldType["message"] = "keyword"
-	cloned.ResultSchema[0]["field_type"] = "text"
-
-	assert.Equal(t, 1, *option.From)
-	assert.Equal(t, []any{"search", 1}, option.SearchAfter)
-	assert.Equal(t, "text", option.FieldType["message"])
-	assert.Equal(t, "string", option.ResultSchema[0]["field_type"])
 }
 
 func cloneAnyMap(m map[string]any) map[string]any {

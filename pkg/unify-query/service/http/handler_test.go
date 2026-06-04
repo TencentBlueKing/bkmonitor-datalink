@@ -317,6 +317,8 @@ func TestAPIHandler(t *testing.T) {
 
 		infoParams *Params
 		expected   string
+
+		assertQuerySourceEmpty bool
 	}{
 		"test label values in vm 1": {
 			handler: HandlerLabelValues,
@@ -528,7 +530,8 @@ func TestAPIHandler(t *testing.T) {
 				Limit:   1,
 				Keys:    []string{"bcs_cluster_id", "namespace"},
 			},
-			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+			expected:               `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+			assertQuerySourceEmpty: true,
 		},
 		"test series in prometheus direct": {
 			handler: HandlerSeries,
@@ -553,7 +556,8 @@ func TestAPIHandler(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+			expected:               `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
+			assertQuerySourceEmpty: true,
 		},
 		"test field map in es": {
 			handler: HandlerFieldMap,
@@ -639,6 +643,13 @@ func TestAPIHandler(t *testing.T) {
 			if c.handler != nil {
 				c.handler(ginC)
 				assert.Equal(t, c.expected, w.body())
+				if c.assertQuerySourceEmpty {
+					queryRef := metadata.GetQueryReference(ctx)
+					assert.Greater(t, queryRef.Count(), 0)
+					queryRef.Range("", func(qry *metadata.Query) {
+						assert.Empty(t, qry.Source)
+					})
+				}
 			}
 		})
 	}

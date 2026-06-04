@@ -79,6 +79,40 @@ func TestFieldAlias_AddAliasKeysWhenOriginalFieldPresent(t *testing.T) {
 	})
 }
 
+func TestResultTableOptionClone(t *testing.T) {
+	from := 1
+	option := &ResultTableOption{
+		From:        &from,
+		ScrollID:    "scroll",
+		SearchAfter: []any{"search", 1},
+		SliceIndex:  2,
+		SliceMax:    4,
+		FieldType: map[string]string{
+			"message": "text",
+		},
+		SQL: "select 1",
+		ResultSchema: []map[string]any{
+			{
+				"field_name": "message",
+				"field_type": "string",
+			},
+		},
+	}
+
+	cloned := option.Clone()
+	assert.Equal(t, option, cloned)
+
+	*cloned.From = 2
+	cloned.SearchAfter[0] = "changed"
+	cloned.FieldType["message"] = "keyword"
+	cloned.ResultSchema[0]["field_type"] = "text"
+
+	assert.Equal(t, 1, *option.From)
+	assert.Equal(t, []any{"search", 1}, option.SearchAfter)
+	assert.Equal(t, "text", option.FieldType["message"])
+	assert.Equal(t, "string", option.ResultSchema[0]["field_type"])
+}
+
 func cloneAnyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil

@@ -723,7 +723,7 @@
 
 **请求头**: 同 [2.1 结构体查询](#21-结构体查询)（需 `X-Bk-Scope-Space-Uid` 等）
 
-**请求体**: 与 `POST /query/ts` 相同，为 `QueryTs` JSON（`query_list`、`metric_merge`、`start_time` / `end_time`、`step` 等）
+**请求体**: 与 `POST /query/ts` 相同，为 `QueryTs` JSON（`query_list`、`metric_merge`、`start_time` / `end_time`、`step` 等），并复用正式查询的参数约束（如 `query_list` 数量上限）。
 
 **响应示例（直查 VM 成功，示意）**:
 

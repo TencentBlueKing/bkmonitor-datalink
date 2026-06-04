@@ -220,7 +220,7 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, r
 
 // --- QueryReference（与 queryTsToInstanceAndStmt 前置对齐）
 
-// checkQueryTsToReference reuses the formal query preprocessing before ToQueryReference.
+// checkQueryTsToReference 复用查询前置处理，确保 check 与正式查询的参数约束一致。
 func checkQueryTsToReference(ctx context.Context, q *structured.QueryTs) (metadata.QueryReference, error) {
 	qr, _, err := queryTsToReference(ctx, q)
 	return qr, err

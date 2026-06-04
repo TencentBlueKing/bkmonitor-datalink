@@ -143,6 +143,41 @@ func TestCheckQueryTsData_BklogES_RouteInfoWithoutPreviewBody(t *testing.T) {
 	assert.True(t, sawEs, "应含 ES 结果表路由: %+v", routeInfo)
 }
 
+func TestCheckQueryTsToReference_EnforcesQueryListLimit(t *testing.T) {
+	ctx := e2eCheckContext(t)
+	oldLimit := DefaultQueryListLimit
+	DefaultQueryListLimit = 20
+	t.Cleanup(func() {
+		DefaultQueryListLimit = oldLimit
+	})
+
+	queryList := make([]*structured.Query, 0, DefaultQueryListLimit+1)
+	for i := 0; i <= DefaultQueryListLimit; i++ {
+		queryList = append(queryList, &structured.Query{
+			DataSource:    structured.BkMonitor,
+			TableID:       "system.cpu_summary",
+			FieldName:     "usage",
+			ReferenceName: "a",
+			Step:          "60s",
+		})
+	}
+	qts := &structured.QueryTs{
+		QueryList:   queryList,
+		MetricMerge: "a",
+		Start:       "1677081600",
+		End:         "1677085600",
+		Step:        "60s",
+	}
+
+	_, _, err := queryTsToReference(ctx, qts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the number of query lists cannot be greater than 20")
+
+	_, err = checkQueryTsToReference(ctx, qts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the number of query lists cannot be greater than 20")
+}
+
 func TestEndToEndHandlerCheckQueryTs_Success_VMPreview(t *testing.T) {
 	ctx := e2eCheckContext(t)
 	// system.cpu_detail / system.disk 在 router_mock 中走 must-vm-query，路由为 VM；IsDirectQuery 为 true，返回单条 VM 预览。

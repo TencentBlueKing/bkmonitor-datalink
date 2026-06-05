@@ -12,6 +12,7 @@ package receiver
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -92,6 +93,15 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	if err = conf.UnpackChild(define.ConfigFieldReceiver, &c); err != nil {
 		return nil, err
 	}
+
+	if c.NetworkFlow.Enabled && len(c.NetworkFlow.ListenersFile) > 0 {
+		listeners, err := loadListenersFromFiles(c.NetworkFlow.ListenersFile)
+		if err != nil {
+			logger.Warnf("failed to load networkflow listeners from files: %v, fallback to inline listeners", err)
+		} else {
+			c.NetworkFlow.Listeners = listeners
+		}
+	}
 	logger.Infof("receiver config: %+v", c)
 
 	var tlsConfig *tlscommon.TLSConfig
@@ -129,6 +139,26 @@ func New(conf *confengine.Config) (*Receiver, error) {
 			WriteTimeout: time.Minute * 5, // 写超时
 		},
 	}, nil
+}
+
+type listenersFileContent struct {
+	Listeners []string `config:"listeners"`
+}
+
+func loadListenersFromFiles(patterns []string) ([]string, error) {
+	cfgs := confengine.LoadConfigPatterns(patterns)
+	var listeners []string
+	for _, cfg := range cfgs {
+		var l listenersFileContent
+		if err := cfg.Unpack(&l); err != nil {
+			return nil, err
+		}
+		listeners = append(listeners, l.Listeners...)
+	}
+	if len(listeners) == 0 {
+		return nil, fmt.Errorf("no listeners found from patterns: %v", patterns)
+	}
+	return listeners, nil
 }
 
 func (r *Receiver) ready() {

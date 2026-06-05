@@ -192,9 +192,9 @@ bk-collector:
       enabled: false
       # 直接注入导出 dataid，不经过 token
       dataid: 1100025
-      # 支持 netflow/ipfix/sflow/flow
-      listeners:
-        - "netflow://0.0.0.0:2055"
+      # 从子配置文件加载 listeners（支持 glob 通配符），不再需要 inline listeners
+      listeners_file:
+        - "{{ plugin_path.subconfig_path }}/bk-collector-networkflow.conf"
       # UDP 接收协程数，按 CPU 核数调整
       # default: 1
       workers: 1

@@ -26,13 +26,14 @@ type Config struct {
 }
 
 type NetworkFlowConfig struct {
-	Enabled   bool     `config:"enabled"`
-	DataID    int32    `config:"dataid"`
-	Listeners []string `config:"listeners"`
-	Workers   int      `config:"workers"`
-	Sockets   int      `config:"sockets"`
-	QueueSize int      `config:"queue_size"`
-	Blocking  bool     `config:"blocking"`
+	Enabled      bool     `config:"enabled"`
+	DataID       int32    `config:"dataid"`
+	Listeners    []string `config:"listeners"`
+	ListenersFile []string `config:"listeners_file"`
+	Workers      int      `config:"workers"`
+	Sockets      int      `config:"sockets"`
+	QueueSize    int      `config:"queue_size"`
+	Blocking     bool     `config:"blocking"`
 }
 
 type HttpServerConfig struct {

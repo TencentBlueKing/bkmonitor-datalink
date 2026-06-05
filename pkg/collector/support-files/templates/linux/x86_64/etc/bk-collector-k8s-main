@@ -101,8 +101,8 @@
         networkflow:
           enabled: false
           dataid: 1100025
-          listeners:
-            - "netflow://0.0.0.0:2055"
+          listeners_file:
+            - "/data/collector/networkflow_listeners.conf"
           # UDP 接收协程数，按 CPU 核数调整
           # default: 1
           workers: 1

@@ -169,7 +169,11 @@ bk-collector:
       enabled: false
       # 直接注入导出 dataid，不经过 token
       dataid: 1100025
-      # 支持 netflow/ipfix/sflow/flow
+      # 从子配置文件加载 listeners（支持 glob 通配符）
+      # 优先级高于下方内联 listeners
+      listeners_file:
+        - "./example/networkflow_listeners.yml"
+      # 支持 netflow/ipfix/sflow/flow（listeners_file 为空时使用此配置）
       listeners:
         - "netflow://0.0.0.0:2055"
       # UDP 接收协程数，按 CPU 核数调整

@@ -277,6 +277,7 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 	}
 
 	// valueMap/weightMap 记录同 timestamp 的加权分子和分母，最终按 sum(avg*overlap)/sum(overlap) 输出。
+	// 已知限制：这里的时间覆盖加权是近似计算，不等价于按底层原始样本数加权。
 	valueMap := make(map[int64]float64)
 	weightMap := make(map[int64]float64)
 	// candidate* 记录仅来自迁移重叠查询的零权重样本；只有有效 route 没有同 timestamp 样本时才兜底补入。

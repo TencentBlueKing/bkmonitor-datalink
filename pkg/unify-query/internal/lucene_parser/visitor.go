@@ -637,22 +637,22 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				break
 			}
 
-				if value == "" && n.field != nil {
-					// field:"" 语义为字段存在，与分词无关
-					result = elastic.NewExistsQuery(field)
-				} else if fieldOption.IsAnalyzed {
-					cq := elastic.NewMatchPhraseQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
-				} else {
-					cq := elastic.NewTermQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
+			if value == "" && n.field != nil {
+				// field:"" 语义为字段存在，与分词无关
+				result = elastic.NewExistsQuery(field)
+			} else if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
 				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
 		}
 	}
 

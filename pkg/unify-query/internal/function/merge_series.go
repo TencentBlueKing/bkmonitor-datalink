@@ -36,7 +36,7 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 
 		name = strings.ToLower(name)
 		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
-		if isAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
+		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
 			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
 		}
 
@@ -137,7 +137,7 @@ func mergeCandidateSamples(
 func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64) []prompb.Sample {
 	sortedData := make([]prompb.Sample, 0, len(valueMap))
 	for t, v := range valueMap {
-		if isAvgFunc(name) {
+		if IsAvgFunc(name) {
 			// 缺少 route 时间范围或 step 时无法计算时间权重，回退为同 timestamp 普通平均。
 			if count := countMap[t]; count > 0 {
 				v = v / count
@@ -161,6 +161,7 @@ func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
 	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
 		// PromQL *_over_time(range-vector) 的 timestamp 是 evaluation instant，
 		// 实际统计窗口为 [t-window, t)，需要按向后窗口判断与 route 生效区间是否相交。
+		// t == routeStart 时窗口在 routeStart 前结束，与当前 route 无交集，因此这里必须是严格大于。
 		return t > start && t-stepMs < end
 	}
 	return t >= start && t < end

@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
@@ -70,22 +71,22 @@ func (q *Query) StorageUUID() string {
 	var l []string
 	for _, s := range []any{
 		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
-		q.RouteStart.UnixNano(), q.RouteEnd.UnixNano(), q.RouteQueryStart.UnixNano(), q.RouteQueryEnd.UnixNano(),
 	} {
 		switch ns := s.(type) {
 		case string:
 			if ns != "" {
 				l = append(l, ns)
 			}
-		case int64:
-			if ns != 0 {
-				l = append(l, fmt.Sprintf("%d", ns))
-			}
 		default:
 			nt, _ := json.Marshal(ns)
 			if len(nt) > 0 {
 				l = append(l, string(nt))
 			}
+		}
+	}
+	for _, t := range []time.Time{q.RouteStart, q.RouteEnd, q.RouteQueryStart, q.RouteQueryEnd} {
+		if !t.IsZero() {
+			l = append(l, fmt.Sprintf("%d", t.UnixNano()))
 		}
 	}
 

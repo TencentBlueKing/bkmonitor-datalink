@@ -759,6 +759,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		storageRanges := tsDB.GetStorageIDRangesWithOverlap(qp.Start, qp.End, routeLookback)
 		if len(storageRanges) == 0 {
 			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，并补上 PromQL range/offset 需要的额外回看窗口。
+			// 无迁移记录时 GetStorageIDRangesWithOverlap 会返回默认 storage_id；这里主要兜底迁移记录存在但时间窗口完全不相交的场景。
 			for _, storageID := range tsDB.GetStorageIDs(routeStart, qp.End) {
 				storageRanges = append(storageRanges, queryMod.StorageIDRange{
 					StorageID: storageID,

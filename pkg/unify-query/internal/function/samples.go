@@ -33,7 +33,8 @@ const (
 	CountOT = "count_over_time"
 )
 
-func isAvgFunc(name string) bool {
+// IsAvgFunc 判断函数是否按平均值语义合并。
+func IsAvgFunc(name string) bool {
 	switch strings.ToLower(name) {
 	case Avg, AvgOT, Mean:
 		return true
@@ -100,7 +101,7 @@ func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sampl
 		for i, timestamp := range timestamps {
 			var value float64
 			// Avg 方法需要等所有的数据合并了之后，再做计算
-			if isAvgFunc(name) {
+			if IsAvgFunc(name) {
 				if countMap[timestamp] > 0 {
 					value = sampleMap[timestamp] / countMap[timestamp]
 				} else {

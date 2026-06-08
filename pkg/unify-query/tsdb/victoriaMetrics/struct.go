@@ -145,12 +145,12 @@ type VmResponse struct {
 			IsPartial bool   `json:"isPartial,omitempty"`
 			Status    string `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []any    `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
-		Device               string   `json:"device"`
-		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any                   `json:"select_fields_order"`
-		SQL                  string                  `json:"sql"`
+		BkBizIDs             []any                    `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
+		Device               string                   `json:"device"`
+		ResultTableIds       []string                 `json:"result_table_ids"`
+		SelectFieldsOrder    []any                    `json:"select_fields_order"`
+		SQL                  string                   `json:"sql"`
 		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {
@@ -174,12 +174,12 @@ type VmLableValuesResponse struct {
 			IsPartial bool     `json:"isPartial,omitempty"`
 			Status    string   `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []string `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
-		Device               string   `json:"device"`
-		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any                   `json:"select_fields_order"`
-		SQL                  string                  `json:"sql"`
+		BkBizIDs             []string                 `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
+		Device               string                   `json:"device"`
+		ResultTableIds       []string                 `json:"result_table_ids"`
+		SelectFieldsOrder    []any                    `json:"select_fields_order"`
+		SQL                  string                   `json:"sql"`
 		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {
@@ -203,12 +203,12 @@ type VmSeriesResponse struct {
 			IsPartial bool                `json:"isPartial,omitempty"`
 			Status    string              `json:"status,omitempty"`
 		} `json:"list,omitempty"`
-		BkBizIDs             []string `json:"bk_biz_ids,omitempty"`
-		BksqlCallElapsedTime int      `json:"bksql_call_elapsed_time"`
-		Device               string   `json:"device"`
-		ResultTableIds       []string `json:"result_table_ids"`
-		SelectFieldsOrder    []any                   `json:"select_fields_order"`
-		SQL                  string                  `json:"sql"`
+		BkBizIDs             []string                 `json:"bk_biz_ids,omitempty"`
+		BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
+		Device               string                   `json:"device"`
+		ResultTableIds       []string                 `json:"result_table_ids"`
+		SelectFieldsOrder    []any                    `json:"select_fields_order"`
+		SQL                  string                   `json:"sql"`
 		VmQueryCluster       *metadata.VmQueryCluster `json:"vm_query_cluster,omitempty"`
 	} `json:"data,omitempty"`
 	Errors struct {

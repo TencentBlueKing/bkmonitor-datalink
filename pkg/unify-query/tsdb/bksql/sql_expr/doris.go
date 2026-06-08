@@ -446,11 +446,11 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 
 		key = ""
-	if len(filter) == 1 {
-		val = filter[0]
-	} else {
-		val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
-	}
+		if len(filter) == 1 {
+			val = filter[0]
+		} else {
+			val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
+		}
 	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
 		if len(c.Value) == 1 && c.Value[0] == "" {
@@ -500,11 +500,11 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 
 		key = ""
-	if len(filter) == 1 {
-		val = filter[0]
-	} else {
-		val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
-	}
+		if len(filter) == 1 {
+			val = filter[0]
+		} else {
+			val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+		}
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"

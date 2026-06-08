@@ -40,7 +40,7 @@ func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 				return name
 			}
 		}
-		if strings.EqualFold(hints.Func, "last_over_time") && isAvgBucketFunc(strings.ToLower(outerAggName)) {
+		if strings.EqualFold(hints.Func, "last_over_time") && function.IsAvgFunc(outerAggName) {
 			return outerAggName
 		}
 		return hints.Func
@@ -102,15 +102,15 @@ func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector tim
 	if isPlainBucketFunc(name) {
 		return 0
 	}
+	if name == function.Avg || name == function.Mean {
+		return 0
+	}
 	if isRangeBucketFunc(name) {
 		// *_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
-		if name != function.Avg && name != function.Mean {
-			if rangeSelector > 0 {
-				return rangeSelector
-			}
-			return fallback
+		if rangeSelector > 0 {
+			return rangeSelector
 		}
-		return 0
+		return fallback
 	}
 	return fallback
 }
@@ -141,7 +141,7 @@ func isSameBucketFunc(a, b string) bool {
 	if storageBucketFuncName(a) == storageBucketFuncName(b) && storageBucketFuncName(a) != "" {
 		return true
 	}
-	return isAvgBucketFunc(a) && isAvgBucketFunc(b)
+	return function.IsAvgFunc(a) && function.IsAvgFunc(b)
 }
 
 func isPlainBucketFunc(name string) bool {
@@ -153,18 +153,9 @@ func isPlainBucketFunc(name string) bool {
 	}
 }
 
-func isAvgBucketFunc(name string) bool {
-	switch name {
-	case function.Avg, function.AvgOT, function.Mean:
-		return true
-	default:
-		return false
-	}
-}
-
 func isRangeBucketFunc(name string) bool {
 	switch name {
-	case function.Avg, function.Mean, function.AvgOT, function.SumOT, function.CountOT, function.MinOT, function.MaxOT:
+	case function.AvgOT, function.SumOT, function.CountOT, function.MinOT, function.MaxOT:
 		return true
 	default:
 		return false
@@ -199,14 +190,20 @@ func (q *Query) calcSelectStrategy(start, end time.Time) (querySelectStrategy, b
 }
 
 func (q *Query) calcSelectStrategyWithMergeContext(start, end time.Time, mergeFunc string) (querySelectStrategy, bool) {
+	if q == nil {
+		return querySelectStrategy{
+			queryStart:  start,
+			queryEnd:    end,
+			weightStart: start,
+			weightEnd:   end,
+		}, false
+	}
+
 	strategy := querySelectStrategy{
 		queryStart:  start,
 		queryEnd:    end,
 		weightStart: start,
 		weightEnd:   end,
-	}
-	if q == nil {
-		return strategy, false
 	}
 
 	hasRouteQueryRange := validTimeRange(q.queryStart, q.queryEnd)

@@ -10,6 +10,7 @@
 package metadata
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -47,4 +48,15 @@ func TestQueryStorageUUIDKeepsSameStorageIDRollbackWindowsIndependent(t *testing
 	// StorageUUID 必须携带 RouteStart/RouteEnd/RouteQueryStart/RouteQueryEnd，
 	// 否则 is_merge_db 会把两个 s1 route window 折叠成同一路查询，导致其中一个生效窗口被覆盖或丢失。
 	assert.NotEqual(t, firstS1Window.StorageUUID(), secondS1Window.StorageUUID())
+}
+
+func TestQueryStorageUUIDSkipsZeroRouteRange(t *testing.T) {
+	q := Query{
+		StorageType:     BkSqlStorageType,
+		StorageID:       "s1",
+		StorageName:     "cluster",
+		MeasurementType: "doris",
+	}
+
+	assert.NotContains(t, q.StorageUUID(), fmt.Sprintf("%d", time.Time{}.UnixNano()))
 }

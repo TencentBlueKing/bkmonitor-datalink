@@ -12,7 +12,6 @@ package flow
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/cstockton/go-conv"
 	"github.com/pkg/errors"
@@ -21,7 +20,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
 	template "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 )
 
 const (
@@ -61,9 +59,9 @@ func newRawDimensionFields() []etl.Field {
 
 func newRawMetricFields() []etl.Field {
 	return []etl.Field{
-		etl.NewSimpleField("time_flow_start_ns", etl.ExtractByJMESPath("time_flow_start_ns"), transformNanoTimeStamp),
-		etl.NewSimpleField("time_flow_end_ns", etl.ExtractByJMESPath("time_flow_end_ns"), transformNanoTimeStamp),
-		etl.NewSimpleField("time_received_ns", etl.ExtractByJMESPath("time_received_ns"), transformNanoTimeStamp),
+		etl.NewSimpleField("time_flow_start_ms", etl.ExtractByJMESPath("time_flow_start_ns"), transformMilliTimeStamp),
+		etl.NewSimpleField("time_flow_end_ms", etl.ExtractByJMESPath("time_flow_end_ns"), transformMilliTimeStamp),
+		etl.NewSimpleField("time_received_ms", etl.ExtractByJMESPath("time_received_ns"), transformMilliTimeStamp),
 		etl.NewSimpleField("bytes", etl.ExtractByJMESPath("bytes"), etl.TransformNilInt64),
 		etl.NewSimpleField("packets", etl.ExtractByJMESPath("packets"), etl.TransformNilInt64),
 		etl.NewSimpleField("sampling_rate", etl.ExtractByJMESPath("sampling_rate"), etl.TransformNilInt64),
@@ -122,7 +120,7 @@ func deriveStatTimeFromSource(from etl.Container) (interface{}, error) {
 	if err == nil {
 		endNanos, convErr := conv.DefaultConv.Int64(endRaw)
 		if convErr == nil && endNanos > 0 {
-			return types.NewTimeStamp(time.Unix(endNanos/1e9, 0)), nil
+			return endNanos / 1e6, nil
 		}
 	}
 
@@ -134,15 +132,15 @@ func deriveStatTimeFromSource(from etl.Container) (interface{}, error) {
 	if convErr != nil {
 		return nil, convErr
 	}
-	return types.NewTimeStamp(time.Unix(receivedNanos/1e9, 0)), nil
+	return receivedNanos / 1e6, nil
 }
 
-func transformNanoTimeStamp(value interface{}) (interface{}, error) {
+func transformMilliTimeStamp(value interface{}) (interface{}, error) {
 	nanos, err := conv.DefaultConv.Int64(value)
 	if err != nil {
 		return nil, err
 	}
-	return types.NewTimeStamp(time.Unix(nanos/1e9, 0)), nil
+	return nanos / 1e6, nil
 }
 
 func deriveAmplifiedFieldFromSource(from etl.Container, name string) (interface{}, error) {

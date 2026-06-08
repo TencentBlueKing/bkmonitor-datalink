@@ -103,7 +103,7 @@ func (s *FlowProcessorTest) TestFlowNonSFlowUnifiedFieldRule() {
 	processor := flowetl.NewNetworkFlowProcessor(s.CTX, "test")
 	s.Run(flowCollectorHandoffGolden, processor, func(result map[string]interface{}) {
 		s.EqualRecord(result, map[string]interface{}{
-			"time": int64(1779421614),
+			"time": int64(1779421614773),
 			"dimensions": map[string]interface{}{
 				"dataid":          1603635.0,
 				"sampler_address": "127.0.0.1",
@@ -121,11 +121,11 @@ func (s *FlowProcessorTest) TestFlowNonSFlowUnifiedFieldRule() {
 				"bytes":              240.0,
 				"packets":            432.0,
 				"sampling_rate":      0.0,
-				"time_flow_start_ns": 1779421614.0,
-				"time_flow_end_ns":   1779421614.0,
-				"time_received_ns":   1779421615.0,
-				"stat_time":          1779421614.0,
-				"@timestamp":         1779421614.0,
+				"time_flow_start_ms": 1779421614709.0,
+				"time_flow_end_ms":   1779421614773.0,
+				"time_received_ms":   1779421615216.0,
+				"stat_time":          1779421614773.0,
+				"@timestamp":         1779421614773.0,
 				"flow_bytes":         240.0,
 				"flow_packets":       432.0,
 			},
@@ -139,7 +139,7 @@ func (s *FlowProcessorTest) TestFlowSFlowUnifiedFieldRule() {
 		processor,
 		func(result map[string]interface{}) {
 			s.EqualRecord(result, map[string]interface{}{
-				"time": int64(1779421670),
+				"time": int64(1779421670084),
 				"dimensions": map[string]interface{}{
 					"dataid":          1603635.0,
 					"sampler_address": "10.11.10.26",
@@ -157,11 +157,11 @@ func (s *FlowProcessorTest) TestFlowSFlowUnifiedFieldRule() {
 					"bytes":              70.0,
 					"packets":            1.0,
 					"sampling_rate":      10000.0,
-					"time_flow_start_ns": 1779421670.0,
-					"time_flow_end_ns":   1779421670.0,
-					"time_received_ns":   1779421670.0,
-					"stat_time":          1779421670.0,
-					"@timestamp":         1779421670.0,
+					"time_flow_start_ms": 1779421670084.0,
+					"time_flow_end_ms":   1779421670084.0,
+					"time_received_ms":   1779421670084.0,
+					"stat_time":          1779421670084.0,
+					"@timestamp":         1779421670084.0,
 					"flow_bytes":         700000.0,
 					"flow_packets":       10000.0,
 				},
@@ -202,9 +202,9 @@ func (s *FlowProcessorTest) TestFlowStatTimeRule() {
 		processor,
 		func(result map[string]interface{}) {
 			metrics := s.GetMetrics(result)
-			s.Equal(int64(1779421671), s.GetTime(result))
-			s.Equal(1779421671.0, metrics["stat_time"])
-			s.Equal(1779421671.0, metrics["@timestamp"])
+			s.Equal(int64(1779421671084), s.GetTime(result))
+			s.Equal(1779421671084.0, metrics["stat_time"])
+			s.Equal(1779421671084.0, metrics["@timestamp"])
 		},
 	)
 }
@@ -274,9 +274,9 @@ func (s *FlowFormatterSuite) SetupTest() {
 			{FieldName: "out_if", Type: define.MetaFieldTypeInt, Tag: define.MetaFieldTagDimension, IsConfigByUser: true},
 			{FieldName: "etype", Type: define.MetaFieldTypeString, Tag: define.MetaFieldTagDimension, IsConfigByUser: true},
 			{FieldName: "type", Type: define.MetaFieldTypeString, Tag: define.MetaFieldTagDimension, IsConfigByUser: true},
-			{FieldName: "time_flow_start_ns", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
-			{FieldName: "time_flow_end_ns", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
-			{FieldName: "time_received_ns", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
+			{FieldName: "time_flow_start_ms", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
+			{FieldName: "time_flow_end_ms", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
+			{FieldName: "time_received_ms", Type: define.MetaFieldTypeTimestamp, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
 			{FieldName: "bytes", Type: define.MetaFieldTypeInt, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
 			{FieldName: "packets", Type: define.MetaFieldTypeInt, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
 			{FieldName: "sampling_rate", Type: define.MetaFieldTypeInt, Tag: define.MetaFieldTagMetric, IsConfigByUser: true},
@@ -348,8 +348,8 @@ func (s *FlowFormatterSuite) TestFlowFormatterRetainsDerivedFields() {
 	s.Equal(float64(432), formatted.Metrics["packets"])
 	s.Equal(float64(240), formatted.Metrics["flow_bytes"])
 	s.Equal(float64(432), formatted.Metrics["flow_packets"])
-	s.Equal(float64(1779421614), formatted.Metrics["stat_time"])
-	s.Equal(float64(1779421614), formatted.Metrics["@timestamp"])
+	s.Equal(float64(1779421614773), formatted.Metrics["stat_time"])
+	s.Equal(float64(1779421614773), formatted.Metrics["@timestamp"])
 }
 
 func TestFlowFormatterSuite(t *testing.T) {

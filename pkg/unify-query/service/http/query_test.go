@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -2411,6 +2412,89 @@ func TestQueryRawWithInstance(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("query raw does not mutate query reference size and from", func(t *testing.T) {
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    "multi_es",
+				},
+			},
+			From:  2,
+			Limit: 2,
+			Step:  start,
+			End:   end,
+			OrderBy: structured.OrderBy{
+				"-time",
+				"__result_table",
+			},
+		}
+
+		_, _, _, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		queryRef := metadata.GetQueryReference(ctx)
+		assert.Equal(t, 2, queryRef.Count())
+		queryRef.Range("", func(qry *metadata.Query) {
+			assert.Equal(t, 2, qry.From)
+			assert.Equal(t, 2, qry.Size)
+		})
+	})
+
+	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
+		mock.BkSQL.Set(map[string]any{
+			"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":""},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""}]},"errors":null}`,
+		})
+
+		from := 0
+		originalOption := &metadata.ResultTableOption{
+			From:        &from,
+			SearchAfter: []any{"keep"},
+			FieldType: map[string]string{
+				"keep": "keyword",
+			},
+			ResultSchema: []map[string]any{
+				{
+					"field_name": "keep",
+					"field_type": "keyword",
+				},
+			},
+		}
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    influxdb.ResultTableDoris,
+					SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+				},
+			},
+			Step:   start,
+			End:    end,
+			DryRun: true,
+			ResultTableOptions: metadata.ResultTableOptions{
+				"result_table.doris|4": originalOption,
+			},
+		}
+
+		_, _, options, err := queryRawWithInstance(ctx, queryTs)
+		require.NoError(t, err)
+		option := options.GetOption("result_table.doris|4")
+		require.NotNil(t, option)
+		require.Contains(t, option.SQL, "SELECT * FROM `2_bklog_bkunify_query_doris`.doris")
+
+		assert.Empty(t, originalOption.SQL)
+		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)
+		assert.Equal(t, "keyword", originalOption.FieldType["keep"])
+		assert.Equal(t, []map[string]any{
+			{
+				"field_name": "keep",
+				"field_type": "keyword",
+			},
+		}, originalOption.ResultSchema)
+	})
 }
 
 // TestQueryExemplar comment lint rebel

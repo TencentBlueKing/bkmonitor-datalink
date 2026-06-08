@@ -42,6 +42,12 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+func TestParseLookBackDeltaPrometheusDuration(t *testing.T) {
+	duration, err := parseLookBackDelta("1d")
+	assert.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, duration)
+}
+
 func TestQueryTsWithDoris(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 

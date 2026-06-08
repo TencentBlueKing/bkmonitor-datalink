@@ -327,9 +327,10 @@ func TestStorageUUIDIncludesRouteRange(t *testing.T) {
 
 func TestQueryRouteLookbackDuration(t *testing.T) {
 	testCases := map[string]struct {
-		query         *Query
-		lookBackDelta time.Duration
-		expected      time.Duration
+		query            *Query
+		lookBackDelta    time.Duration
+		expectedBackward time.Duration
+		expectedForward  time.Duration
 	}{
 		"range selector and backward offset are additive": {
 			query: &Query{
@@ -338,16 +339,26 @@ func TestQueryRouteLookbackDuration(t *testing.T) {
 				},
 				VectorOffset: time.Hour,
 			},
-			expected: 3 * time.Hour,
+			expectedBackward: 3 * time.Hour,
 		},
 		"explicit lookback participates before backward offset": {
 			query: &Query{
 				VectorOffset: 10 * time.Minute,
 			},
-			lookBackDelta: 5 * time.Minute,
-			expected:      15 * time.Minute,
+			lookBackDelta:    5 * time.Minute,
+			expectedBackward: 15 * time.Minute,
 		},
-		"forward offset does not expand backward route coverage": {
+		"aggregate method window participates": {
+			query: &Query{
+				AggregateMethodList: AggregateMethodList{
+					{Method: "avg_over_time", Window: "2h"},
+					{Method: "max_over_time", Window: "30m"},
+				},
+			},
+			lookBackDelta:    5 * time.Minute,
+			expectedBackward: 2 * time.Hour,
+		},
+		"forward offset expands forward route coverage": {
 			query: &Query{
 				TimeAggregation: TimeAggregation{
 					Window: "2h",
@@ -355,15 +366,33 @@ func TestQueryRouteLookbackDuration(t *testing.T) {
 				VectorOffset:  time.Hour,
 				OffsetForward: true,
 			},
-			expected: 2 * time.Hour,
+			expectedBackward: 2 * time.Hour,
+			expectedForward:  time.Hour,
 		},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, tc.query.routeLookbackDuration(tc.lookBackDelta))
+			backward, forward := tc.query.routeOverlapDuration(tc.lookBackDelta)
+			assert.Equal(t, tc.expectedBackward, backward)
+			assert.Equal(t, tc.expectedBackward, tc.query.routeLookbackDuration(tc.lookBackDelta))
+			assert.Equal(t, tc.expectedForward, forward)
 		})
 	}
+}
+
+func TestQueryTsToTimeLookBackDeltaPrometheusDuration(t *testing.T) {
+	md.InitMetadata()
+	ctx := md.InitHashID(context.Background())
+	q := &QueryTs{
+		Start:         "1741056443",
+		End:           "1741060043",
+		Step:          "1m",
+		LookBackDelta: "1d",
+	}
+
+	require.NoError(t, q.ToTime(ctx))
+	assert.Equal(t, 24*time.Hour, md.GetQueryParams(ctx).LookBackDelta)
 }
 
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {

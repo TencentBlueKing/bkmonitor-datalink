@@ -20,6 +20,7 @@ import (
 	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/spf13/cast"
@@ -61,6 +62,14 @@ func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef
 		}
 		return false
 	})
+}
+
+func parseLookBackDelta(s string) (time.Duration, error) {
+	duration, err := model.ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(duration), nil
 }
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -652,7 +661,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 
 	var lookBackDelta time.Duration
 	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
+		lookBackDelta, err = parseLookBackDelta(queryTs.LookBackDelta)
 		if err != nil {
 			return nil, err
 		}
@@ -805,7 +814,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	// 判断是否指定 LookBackDelta
 	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
+		lookBackDelta, err = parseLookBackDelta(queryTs.LookBackDelta)
 		if err != nil {
 			return instance, stmt, err
 		}

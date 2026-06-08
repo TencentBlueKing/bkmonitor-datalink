@@ -147,11 +147,11 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 
 	queryParams := metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
 	if q.LookBackDelta != "" {
-		lookBackDelta, err := time.ParseDuration(q.LookBackDelta)
+		lookBackDelta, err := model.ParseDuration(q.LookBackDelta)
 		if err != nil {
 			return err
 		}
-		queryParams.SetLookBackDelta(lookBackDelta)
+		queryParams.SetLookBackDelta(time.Duration(lookBackDelta))
 	}
 	return nil
 }
@@ -489,7 +489,7 @@ func (q *Query) ToRouter() (*Route, error) {
 	return router, nil
 }
 
-func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration {
+func (q *Query) maxWindowDuration(lookBackDelta time.Duration) time.Duration {
 	var duration time.Duration
 	if lookBackDelta > duration {
 		duration = lookBackDelta
@@ -499,10 +499,30 @@ func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration
 			duration = time.Duration(window)
 		}
 	}
-	if !q.OffsetForward {
-		duration += q.VectorOffset
+	for _, aggregateMethod := range q.AggregateMethodList {
+		if aggregateMethod.Window == "" {
+			continue
+		}
+		if window, err := model.ParseDuration(string(aggregateMethod.Window)); err == nil && time.Duration(window) > duration {
+			duration = time.Duration(window)
+		}
 	}
 	return duration
+}
+
+func (q *Query) routeOverlapDuration(lookBackDelta time.Duration) (backward, forward time.Duration) {
+	backward = q.maxWindowDuration(lookBackDelta)
+	if q.OffsetForward {
+		forward = q.VectorOffset
+	} else {
+		backward += q.VectorOffset
+	}
+	return backward, forward
+}
+
+func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration {
+	backward, _ := q.routeOverlapDuration(lookBackDelta)
+	return backward
 }
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
@@ -753,14 +773,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
-	routeLookback := q.routeLookbackDuration(qp.LookBackDelta)
+	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
 	routeStart := qp.Start.Add(-routeLookback)
+	routeEnd := qp.End.Add(routeLookForward)
 	for _, tsDB := range tsDBs {
-		storageRanges := tsDB.GetStorageIDRangesWithOverlap(qp.Start, qp.End, routeLookback)
+		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(qp.Start, qp.End, routeLookback, routeLookForward)
 		if len(storageRanges) == 0 {
 			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，并补上 PromQL range/offset 需要的额外回看窗口。
 			// 无迁移记录时 GetStorageIDRangesWithOverlap 会返回默认 storage_id；这里主要兜底迁移记录存在但时间窗口完全不相交的场景。
-			for _, storageID := range tsDB.GetStorageIDs(routeStart, qp.End) {
+			for _, storageID := range tsDB.GetStorageIDs(routeStart, routeEnd) {
 				storageRanges = append(storageRanges, queryMod.StorageIDRange{
 					StorageID: storageID,
 				})

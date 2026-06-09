@@ -316,9 +316,15 @@ func (n *ConditionNode) String() string {
 				n.value.SetField(n.field)
 			}
 			sql := n.value.String()
-			sql = fmt.Sprintf("(%s)", sql)
 			if n.reverseOp {
+				// NOT ((field:"")) 的 SQL 字符串语义也要和 DSL 一样兼容为空值判断。
+				if field, ok := existsSQLField(sql); ok {
+					return fmt.Sprintf("%s IS NULL", field)
+				}
+				sql = fmt.Sprintf("(%s)", sql)
 				sql = fmt.Sprintf("NOT %s", sql)
+			} else {
+				sql = fmt.Sprintf("(%s)", sql)
 			}
 			return sql
 		}
@@ -620,15 +626,16 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *RegexpNode:
 		rewrite := esregexpcompat.Rewrite(value)
 		value = rewrite.Pattern
-		if rewrite.Negative {
-			// ES regexp 不支持负向前瞻，改写为反向正则条件承载语义。
-			n.reverseOp = !n.reverseOp
-		}
 		cq := elastic.NewRegexpQuery(field, value)
 		if cv.Boost != "" {
 			cq.Boost(cast.ToFloat64(cv.Boost))
 		}
-		result = cq
+		if rewrite.Negative {
+			// 正向负前瞻必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
+			result = negativeLookaheadQuery(field, cq)
+		} else {
+			result = cq
+		}
 	case *StringNode:
 		switch op {
 		case ">":
@@ -688,6 +695,21 @@ func nonEmptyFieldQuery(field string) elastic.Query {
 	return elastic.NewBoolQuery().
 		Must(elastic.NewExistsQuery(field)).
 		MustNot(elastic.NewTermQuery(field, ""))
+}
+
+func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
+	// ES regexp 不支持负向前瞻，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	return elastic.NewBoolQuery().
+		Must(elastic.NewExistsQuery(field)).
+		MustNot(regexp)
+}
+
+func existsSQLField(sql string) (string, bool) {
+	for strings.HasPrefix(sql, "(") && strings.HasSuffix(sql, ")") {
+		sql = strings.TrimPrefix(strings.TrimSuffix(sql, ")"), "(")
+	}
+	field, ok := strings.CutSuffix(sql, " IS NOT NULL")
+	return field, ok && field != ""
 }
 
 func existsQueryField(query elastic.Query) (string, bool) {

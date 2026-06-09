@@ -955,6 +955,13 @@ func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Que
 	return q
 }
 
+func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
+	// ES regexp 不支持负向前瞻，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	return elastic.NewBoolQuery().
+		Must(elastic.NewExistsQuery(field)).
+		MustNot(regexp)
+}
+
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
 	bootQueries := make([]elastic.Query, 0)
@@ -1007,7 +1014,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					}
 
 					queries := make([]elastic.Query, 0)
-					effectiveOperator := con.Operator
 					for _, value := range con.Value {
 						var query elastic.Query
 						if con.DimensionName != "" {
@@ -1083,16 +1089,13 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 									rewrite := esregexpcompat.Rewrite(value)
 									value = rewrite.Pattern
+									regexpQuery := elastic.NewRegexpQuery(key, value)
 									if rewrite.Negative {
-										// ES regexp 不支持负向前瞻，改写为相反的正则操作符承载语义。
-										switch con.Operator {
-										case structured.ConditionRegEqual:
-											effectiveOperator = structured.ConditionNotRegEqual
-										case structured.ConditionNotRegEqual:
-											effectiveOperator = structured.ConditionRegEqual
-										}
+										// 每个 value 独立承载负前瞻语义，避免污染同一条件下的其他正则值。
+										query = negativeLookaheadQuery(key, regexpQuery)
+									} else {
+										query = regexpQuery
 									}
-									query = elastic.NewRegexpQuery(key, value)
 								case structured.ConditionGt:
 									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
 								case structured.ConditionGte:
@@ -1119,7 +1122,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					}
 
 					// 非空才进行验证
-					switch effectiveOperator {
+					switch con.Operator {
 					case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 						q = f.getQuery(Should, queries...)
 					case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:

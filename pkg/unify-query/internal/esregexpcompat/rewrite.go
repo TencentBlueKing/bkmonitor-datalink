@@ -46,8 +46,59 @@ func Rewrite(pattern string) RewriteResult {
 	case hasSuffix:
 		return RewriteResult{Pattern: ".*" + trimSuffixAnchor(pattern)}
 	default:
-		return RewriteResult{Pattern: ".*" + pattern + ".*"}
+		return RewriteResult{Pattern: ".*" + wrapTopLevelAlternation(pattern) + ".*"}
 	}
+}
+
+func wrapTopLevelAlternation(pattern string) string {
+	if !hasTopLevelAlternation(pattern) {
+		return pattern
+	}
+	// ES regexp 是整值匹配，补齐前后 .* 时需要把顶层或表达式作为整体处理。
+	return "(" + pattern + ")"
+}
+
+func hasTopLevelAlternation(pattern string) bool {
+	// 只识别最外层未转义的 |；括号、字符类或转义后的 | 都保持原有正则语义。
+	var (
+		parenDepth   int
+		bracketDepth int
+		escaped      bool
+	)
+	for _, r := range pattern {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+
+		switch r {
+		case '[':
+			if bracketDepth == 0 {
+				bracketDepth = 1
+			}
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 && parenDepth > 0 {
+				parenDepth--
+			}
+		case '|':
+			if bracketDepth == 0 && parenDepth == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractNegativeLookahead(pattern string) (string, bool) {

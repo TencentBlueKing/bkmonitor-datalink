@@ -217,6 +217,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`status` LIKE '%Active%'",
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
 		},
+		{
+			name:  "negative lookahead regexp keeps implicit should semantics",
+			input: `name:/^(?!.*foo).*/ status:ok`,
+			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
+			dsl:   `{"bool":{"should":[{"bool":{"must":{"exists":{"field":"name"}},"must_not":{"regexp":{"name":{"value":".*foo.*"}}}}},{"term":{"status":"ok"}}]}}`,
+		},
 	}
 
 	mock.Init()
@@ -681,6 +687,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
 			sql: "`msg` REGEXP 'TypeError'",
 		},
+		"字段正则顶层或表达式按整体补齐包含匹配": {
+			q:   `msg:/foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":".*(foo|bar).*"}}}`,
+			sql: "`msg` REGEXP 'foo|bar'",
+		},
 		"字段正则前缀锚点改写为整值前缀匹配": {
 			q:   `msg:/^TypeError/`,
 			es:  `{"regexp":{"msg":{"value":"TypeError.*"}}}`,
@@ -688,7 +699,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"字段正则负向前瞻改写为反向正则": {
 			q:   `msg:/^(?!.*idip).*/`,
-			es:  `{"bool":{"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
+			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
 			sql: "`msg` REGEXP '^(?!.*idip).*'",
 		},
 		"fuzzy_and_field": {

@@ -24,6 +24,18 @@ func TestRewrite(t *testing.T) {
 			pattern:  "a.*b",
 			expected: RewriteResult{Pattern: ".*a.*b.*"},
 		},
+		"顶层或表达式按整体补齐包含匹配": {
+			pattern:  "foo|bar",
+			expected: RewriteResult{Pattern: ".*(foo|bar).*"},
+		},
+		"括号内或表达式不重复包裹": {
+			pattern:  "(foo|bar)",
+			expected: RewriteResult{Pattern: ".*(foo|bar).*"},
+		},
+		"字符类内竖线不视为顶层或表达式": {
+			pattern:  "[a|b]",
+			expected: RewriteResult{Pattern: ".*[a|b].*"},
+		},
 		"前缀锚点改写为整值前缀匹配": {
 			pattern:  "^foo",
 			expected: RewriteResult{Pattern: "foo.*"},

@@ -48,6 +48,26 @@ func TestParseLookBackDeltaPrometheusDuration(t *testing.T) {
 	assert.Equal(t, 24*time.Hour, duration)
 }
 
+func TestParseLookBackDeltaGoDurationFallback(t *testing.T) {
+	duration, err := parseLookBackDelta("1.5h")
+	assert.NoError(t, err)
+	assert.Equal(t, 90*time.Minute, duration)
+
+	duration, err = parseLookBackDelta("500.5ms")
+	assert.NoError(t, err)
+	assert.Equal(t, 500*time.Millisecond+500*time.Microsecond, duration)
+}
+
+func TestQueryLookBackDeltaFallback(t *testing.T) {
+	duration, err := queryLookBackDelta(&structured.QueryTs{}, 2*time.Hour)
+	assert.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, duration)
+
+	duration, err = queryLookBackDelta(&structured.QueryTs{LookBackDelta: "30m"}, 2*time.Hour)
+	assert.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, duration)
+}
+
 func TestQueryTsWithDoris(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 

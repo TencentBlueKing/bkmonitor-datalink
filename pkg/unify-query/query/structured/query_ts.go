@@ -127,6 +127,14 @@ func StepParse(step string) time.Duration {
 	}
 }
 
+func parseLookBackDeltaDuration(s string) (time.Duration, error) {
+	duration, err := model.ParseDuration(s)
+	if err == nil {
+		return time.Duration(duration), nil
+	}
+	return time.ParseDuration(s)
+}
+
 func (q *QueryTs) ToTime(ctx context.Context) error {
 	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
@@ -147,11 +155,11 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 
 	queryParams := metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
 	if q.LookBackDelta != "" {
-		lookBackDelta, err := model.ParseDuration(q.LookBackDelta)
+		lookBackDelta, err := parseLookBackDeltaDuration(q.LookBackDelta)
 		if err != nil {
 			return err
 		}
-		queryParams.SetLookBackDelta(time.Duration(lookBackDelta))
+		queryParams.SetLookBackDelta(lookBackDelta)
 	}
 	return nil
 }
@@ -429,6 +437,10 @@ type Query struct {
 	StartOrEnd parser.ItemType `json:"start_or_end,omitempty"`
 	// VectorOffset
 	VectorOffset time.Duration `json:"vector_offset,omitempty"`
+	// 以下字段来自 PromQL AST，仅用于让存储路由预选对齐 selector 的真实覆盖时间。
+	RouteSelectorOffset time.Duration `json:"-"`
+	RouteSubqueryOffset time.Duration `json:"-"`
+	RouteSubqueryRange  time.Duration `json:"-"`
 	// Offset 偏移量
 	Offset string `json:"offset,omitempty" example:""`
 	// OffsetForward 偏移方向，默认 false 为向前偏移
@@ -489,33 +501,88 @@ func (q *Query) ToRouter() (*Route, error) {
 	return router, nil
 }
 
-func (q *Query) maxWindowDuration(lookBackDelta time.Duration) time.Duration {
-	var duration time.Duration
-	if lookBackDelta > duration {
-		duration = lookBackDelta
+func (q *Query) windowDuration(window Window) time.Duration {
+	if window == "" {
+		return 0
 	}
-	if q.TimeAggregation.Window != "" {
-		if window, err := model.ParseDuration(string(q.TimeAggregation.Window)); err == nil && time.Duration(window) > duration {
-			duration = time.Duration(window)
+	duration, err := model.ParseDuration(string(window))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
+}
+
+func (q *Query) selectorWindowDuration() time.Duration {
+	var matrixRange time.Duration
+	var subqueryRange time.Duration
+
+	addWindow := func(window Window, isSubQuery bool) {
+		duration := q.windowDuration(window)
+		if duration <= 0 {
+			return
+		}
+		if isSubQuery {
+			subqueryRange += duration
+			return
+		}
+		if duration > matrixRange {
+			matrixRange = duration
 		}
 	}
+
+	addWindow(q.TimeAggregation.Window, q.TimeAggregation.IsSubQuery)
 	for _, aggregateMethod := range q.AggregateMethodList {
-		if aggregateMethod.Window == "" {
-			continue
+		addWindow(aggregateMethod.Window, aggregateMethod.IsSubQuery)
+	}
+	if q.RouteSubqueryRange > 0 {
+		subqueryRange = q.RouteSubqueryRange
+	}
+	if subqueryRange > 0 {
+		return subqueryRange + matrixRange
+	}
+	return matrixRange
+}
+
+func (q *Query) publicOffsetDuration() time.Duration {
+	if q.VectorOffset != 0 {
+		if q.VectorOffset < 0 {
+			return -q.VectorOffset
 		}
-		if window, err := model.ParseDuration(string(aggregateMethod.Window)); err == nil && time.Duration(window) > duration {
-			duration = time.Duration(window)
-		}
+		return q.VectorOffset
+	}
+	if q.Offset == "" {
+		return 0
+	}
+	offset, err := model.ParseDuration(q.Offset)
+	if err != nil {
+		return 0
+	}
+	duration := time.Duration(offset)
+	if duration < 0 {
+		return -duration
 	}
 	return duration
 }
 
 func (q *Query) routeOverlapDuration(lookBackDelta time.Duration) (backward, forward time.Duration) {
-	backward = q.maxWindowDuration(lookBackDelta)
-	if q.OffsetForward {
-		forward = q.VectorOffset
+	// 普通 instant selector 使用 lookback；range/subquery selector 使用真实窗口，
+	// subquery 窗口和内层 matrix range 需要相加，不能只取最大值。
+	backward = q.selectorWindowDuration()
+	if backward == 0 {
+		backward = lookBackDelta
+	}
+
+	if q.RouteSelectorOffset != 0 || q.RouteSubqueryOffset != 0 || q.RouteSubqueryRange != 0 {
+		offset := q.RouteSelectorOffset + q.RouteSubqueryOffset
+		if offset < 0 {
+			forward = -offset
+		} else {
+			backward += offset
+		}
+	} else if q.OffsetForward {
+		forward = q.publicOffsetDuration()
 	} else {
-		backward += q.VectorOffset
+		backward += q.publicOffsetDuration()
 	}
 	return backward, forward
 }
@@ -523,6 +590,25 @@ func (q *Query) routeOverlapDuration(lookBackDelta time.Duration) (backward, for
 func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration {
 	backward, _ := q.routeOverlapDuration(lookBackDelta)
 	return backward
+}
+
+func (q *Query) routeTimeRange(qp *metadata.QueryParams) (time.Time, time.Time) {
+	// `@` modifier 会覆盖外层 range query 的 eval start/end，route 预选要跟随这个锚点。
+	if qp == nil {
+		return time.Time{}, time.Time{}
+	}
+	if q.Timestamp != nil {
+		t := time.UnixMilli(*q.Timestamp)
+		return t, t
+	}
+	switch q.StartOrEnd {
+	case parser.START:
+		return qp.Start, qp.Start
+	case parser.END:
+		return qp.End, qp.End
+	default:
+		return qp.Start, qp.End
+	}
 }
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
@@ -773,11 +859,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
+	routeBaseStart, routeBaseEnd := q.routeTimeRange(qp)
 	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
-	routeStart := qp.Start.Add(-routeLookback)
-	routeEnd := qp.End.Add(routeLookForward)
+	routeStart := routeBaseStart.Add(-routeLookback)
+	routeEnd := routeBaseEnd.Add(routeLookForward)
 	for _, tsDB := range tsDBs {
-		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(qp.Start, qp.End, routeLookback, routeLookForward)
+		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(routeBaseStart, routeBaseEnd, routeLookback, routeLookForward)
 		if len(storageRanges) == 0 {
 			// 兜底保留 GetStorageIDs 的历史 1h 扩展逻辑，并补上 PromQL range/offset 需要的额外回看窗口。
 			// 无迁移记录时 GetStorageIDRangesWithOverlap 会返回默认 storage_id；这里主要兜底迁移记录存在但时间窗口完全不相交的场景。

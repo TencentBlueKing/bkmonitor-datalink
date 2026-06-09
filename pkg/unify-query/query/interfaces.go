@@ -153,13 +153,9 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 	if backwardOverlap > backwardQueryOverlap {
 		backwardQueryOverlap = backwardOverlap
 	}
-	queryForwardOverlap := backwardOverlap
-	if forwardOverlap > queryForwardOverlap {
-		queryForwardOverlap = forwardOverlap
-	}
 	forwardQueryOverlap := StorageClusterRecordOverlap
-	if queryForwardOverlap > forwardQueryOverlap {
-		forwardQueryOverlap = queryForwardOverlap
+	if forwardOverlap > forwardQueryOverlap {
+		forwardQueryOverlap = forwardOverlap
 	}
 	checkStart := start.Add(-backwardQueryOverlap)
 	checkEnd := end.Add(forwardQueryOverlap)

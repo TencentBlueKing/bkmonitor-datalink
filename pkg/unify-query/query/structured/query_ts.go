@@ -256,9 +256,6 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 	if err != nil {
 		return nil, err
 	}
-	if shouldNormalizeCommaConditionValues(ctx) {
-		allConditions = normalizeCommaConditionValues(allConditions)
-	}
 	queryConditions := allConditions.MetaDataAllConditions()
 
 	agg, err := qry.AggregateMethodList.ToQry(qry.Timezone)
@@ -701,12 +698,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		return queryMetric, nil
 	}
 
-	if shouldNormalizeCommaConditionValues(ctx) {
-		// 策略侧 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
-		// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
-		allConditions = normalizeCommaConditionValues(allConditions)
-	}
-
 	isSkipField := false
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
@@ -741,7 +732,24 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
 
 		for _, storageID := range storageIDs {
-			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			storageType := tsDB.StorageType
+			if storageType == "" {
+				stg, _ := tsdb.GetStorage(ctx, storageID)
+				if stg != nil {
+					storageType = stg.Type
+				}
+			}
+
+			queryConditions := allConditions
+			// 策略 addition 会把日志多值条件编码成单个逗号串；只在 BKLog 的 ES/Doris 日志查询里拆分，
+			// 避免影响其他数据源或存储的逗号字面值精确匹配。
+			if q.DataSource == BkLog &&
+				(storageType == metadata.ElasticsearchStorageType ||
+					(storageType == metadata.BkSqlStorageType && tsDB.Measurement == metadata.DorisStorageType)) {
+				queryConditions = normalizeCommaConditionValues(allConditions)
+			}
+
+			query := q.BuildMetadataQuery(ctx, tsDB, queryConditions)
 			if query == nil {
 				continue
 			}
@@ -753,10 +761,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			// 如果没有指定查询类型，则通过 storageID 获取
 			if query.StorageType == "" {
-				stg, _ := tsdb.GetStorage(ctx, query.StorageID)
-				if stg != nil {
-					query.StorageType = stg.Type
-				}
+				query.StorageType = storageType
 			}
 			if query.StorageType == "" {
 				return nil, fmt.Errorf("storageType is empty with %v", query.StorageID)
@@ -849,10 +854,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
-}
-
-func shouldNormalizeCommaConditionValues(ctx context.Context) bool {
-	return metadata.GetUser(ctx).Source == "strategy"
 }
 
 func (q *Query) BuildMetadataQuery(

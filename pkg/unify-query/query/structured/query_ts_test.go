@@ -226,7 +226,7 @@ func TestQueryToMetric(t *testing.T) {
 		"test comma condition value query": {
 			querySource: "strategy:unit-test",
 			query: &Query{
-				DataSource:    BkMonitor,
+				DataSource:    BkLog,
 				FieldName:     field,
 				ReferenceName: "a",
 				Conditions: Conditions{
@@ -251,7 +251,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
 					{
-						DataSource:  BkMonitor,
+						DataSource:  BkLog,
 						TableID:     "result_table.es",
 						DB:          "es_index",
 						StorageType: md.ElasticsearchStorageType,
@@ -281,6 +281,7 @@ func TestQueryToMetric(t *testing.T) {
 			},
 		},
 		"test comma literal condition value query": {
+			querySource: "strategy:unit-test",
 			query: &Query{
 				DataSource:    BkMonitor,
 				FieldName:     field,

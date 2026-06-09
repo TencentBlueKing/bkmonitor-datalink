@@ -158,6 +158,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"term":{"text":"value"}}`,
 		},
 		{
+			name:  "quoted field filter",
+			input: `"text":value`,
+			sql:   "`text` = 'value'",
+			dsl:   `{"term":{"text":"value"}}`,
+		},
+		{
 			name:  "object field",
 			input: "__ext.container_name: value",
 			sql:   "CAST(__ext['container_name'] AS STRING) = 'value'",
@@ -172,6 +178,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "start",
 			input: "a: >100",
+			sql:   "`a` > '100'",
+			dsl:   `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+		{
+			name:  "quoted field range start",
+			input: `"a":>100`,
 			sql:   "`a` > '100'",
 			dsl:   `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
 		},
@@ -1405,6 +1417,16 @@ func TestLuceneParser(t *testing.T) {
 			q:   `path:"/var/log/app.log"`,
 			es:  `{"term":{"path":"/var/log/app.log"}}`,
 			sql: "`path` = '/var/log/app.log'",
+		},
+		"field_query_with_quoted_field_name": {
+			q:   `"status":active`,
+			es:  `{"term":{"status":"active"}}`,
+			sql: "`status` = 'active'",
+		},
+		"field_range_with_quoted_field_name": {
+			q:   `"count":>1`,
+			es:  `{"range":{"count":{"from":1,"include_lower":false,"include_upper":true,"to":null}}}`,
+			sql: "`count` > '1'",
 		},
 		"field_multiple_values_or": {
 			q:   `status:200 OR status:201 OR status:204`,

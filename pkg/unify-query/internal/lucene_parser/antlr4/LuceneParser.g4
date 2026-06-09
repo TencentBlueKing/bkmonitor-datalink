@@ -108,9 +108,10 @@ groupingExpr
     : LPAREN query RPAREN (CARAT NUMBER)?
     ;
 
-// <TERM>
+// <TERM> | <QUOTED>
 fieldName
     : TERM
+    | QUOTED
     ;
 
 // (<RANGEIN_START> | <RANGEEX_START>)

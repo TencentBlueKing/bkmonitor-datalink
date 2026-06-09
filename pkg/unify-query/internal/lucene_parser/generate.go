@@ -10,5 +10,4 @@
 package lucene_parser
 
 // https://github.com/antlr/grammars-v4/tree/ed6e09ef939ee85fc7ace557461733a530452a19/antlr/antlr4/examples/grammars-v4/lucene
-//go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
-//go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
+//go:generate antlr4 -Dlanguage=Go -visitor -listener -package gen ./antlr4/*.g4 -o gen

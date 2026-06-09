@@ -193,6 +193,14 @@ func parseTerm(s string) Node {
 	}
 }
 
+func parseFieldName(s string) string {
+	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		s = strings.ReplaceAll(s, `\`, ``)
+		s = strings.Trim(s, `"`)
+	}
+	return s
+}
+
 func filterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic.Query) ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	if len(should) == 1 && len(must) == 0 && len(mustNot) == 0 {
 		must = append(must, should...)

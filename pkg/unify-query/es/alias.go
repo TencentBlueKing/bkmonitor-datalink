@@ -38,11 +38,26 @@ func AliasExist(tableID string, alias string) bool {
 
 // RefreshAllAlias 并发刷新整个别名map
 func RefreshAllAlias() {
-	// 根据table进行刷新，所以获取的是table的锁
+	type aliasRefreshTarget struct {
+		tableID   string
+		storageID int
+		indexName string
+	}
+
+	// 仅在复制当前表快照时持有读锁，避免慢 ES 请求阻塞配置重载。
 	tableLock.RLock()
-	defer tableLock.RUnlock()
-	wg := new(sync.WaitGroup)
+	targets := make([]aliasRefreshTarget, 0, len(tableMap))
 	for tableID, info := range tableMap {
+		targets = append(targets, aliasRefreshTarget{
+			tableID:   tableID,
+			storageID: info.StorageID,
+			indexName: ConvertTableIDToFuzzyIndexName(tableID),
+		})
+	}
+	tableLock.RUnlock()
+
+	wg := new(sync.WaitGroup)
+	for _, target := range targets {
 		wg.Add(1)
 		go func(tableID string, storageID int, indexName string) {
 			defer wg.Done()
@@ -51,7 +66,7 @@ func RefreshAllAlias() {
 				log.Errorf(context.TODO(), "refresh alias of tableid:%s failed,error:%v", tableID, err)
 				return
 			}
-		}(tableID, info.StorageID, ConvertTableIDToFuzzyIndexName(tableID))
+		}(target.tableID, target.storageID, target.indexName)
 
 	}
 	wg.Wait()

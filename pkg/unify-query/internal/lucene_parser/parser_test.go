@@ -1600,6 +1600,16 @@ func TestLuceneParser(t *testing.T) {
 	}
 }
 
+func TestExplicitAndChainImplicitTerms(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	node := ParseLuceneWithVisitor(ctx, `a AND b c AND d`, Option{})
+	assert.Nil(t, node.Error())
+
+	dsl := MergeQuery(node.DSL())
+	dslActual, _ := queryToJSON(dsl)
+	assert.Equal(t, `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}}`, dslActual)
+}
+
 func queryToJSON(query elastic.Query) (string, error) {
 	if query == nil {
 		return "null", nil

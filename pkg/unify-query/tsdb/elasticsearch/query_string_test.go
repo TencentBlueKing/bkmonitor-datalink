@@ -83,6 +83,10 @@ func TestQsToDsl(t *testing.T) {
 			FieldName: "__ext.io_kubernetes_workload_name",
 			FieldType: KeyWord,
 		},
+		"__ext.labels.app_kubernetes_io_instance": {
+			FieldName: "__ext.labels.app_kubernetes_io_instance",
+			FieldType: KeyWord,
+		},
 	}
 
 	ctx := metadata.InitHashID(context.Background())
@@ -110,6 +114,10 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `nested.key: test AND demo`,
 			expected: `{"bool":{"must":[{"nested":{"path":"nested","query":{"match_phrase":{"nested.key":{"query":"test"}}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo"}}]}}`,
+		},
+		{
+			q:        `__ext.labels.app_kubernetes_io_instance : bcs-cluster-manager AND log: GSE Agent 安装失败* AND log: InstallGSEAgentTask*`,
+			expected: `{"bool":{"must":[{"term":{"__ext.labels.app_kubernetes_io_instance":"bcs-cluster-manager"}},{"match_phrase":{"log":{"query":"GSE"}}},{"wildcard":{"log":{"value":"installgseagenttask*"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"Agent"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"安装失败*"}}]}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,

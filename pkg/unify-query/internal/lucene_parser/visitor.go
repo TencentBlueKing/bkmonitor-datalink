@@ -182,6 +182,17 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	allShould := make([]elastic.Query, 0)
 	allMustNot := make([]elastic.Query, 0)
 	implicitShould := make([]elastic.Query, 0)
+	hasExplicitAnd := false
+	hasExplicitOr := false
+
+	for _, logic := range n.logics {
+		switch logic {
+		case logicAnd:
+			hasExplicitAnd = true
+		case logicOR:
+			hasExplicitOr = true
+		}
+	}
 
 	for i, c := range n.Nodes {
 		q := MergeQuery(c.DSL())
@@ -206,7 +217,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 		}
 	}
 
-	if len(implicitShould) == 1 && len(allMust) > 1 {
+	if (hasExplicitAnd && !hasExplicitOr && len(allMust) > 0) || (len(implicitShould) == 1 && len(allMust) > 1) {
 		allMust = append(allMust, implicitShould...)
 	} else {
 		allShould = append(allShould, implicitShould...)
@@ -637,22 +648,22 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				break
 			}
 
-				if value == "" && n.field != nil {
-					// field:"" 语义为字段存在，与分词无关
-					result = elastic.NewExistsQuery(field)
-				} else if fieldOption.IsAnalyzed {
-					cq := elastic.NewMatchPhraseQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
-				} else {
-					cq := elastic.NewTermQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
+			if value == "" && n.field != nil {
+				// field:"" 语义为字段存在，与分词无关
+				result = elastic.NewExistsQuery(field)
+			} else if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
 				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
 		}
 	}
 

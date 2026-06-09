@@ -307,7 +307,8 @@ func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr e
 		}
 
 		// 保留查询条件
-		matcher, _, err := ql.Conditions.ToProm()
+		conditions := normalizeCommaConditions(ql.Conditions)
+		matcher, _, err := conditions.ToProm()
 		if err != nil {
 			checkErr = err
 			return promQLString, checkErr

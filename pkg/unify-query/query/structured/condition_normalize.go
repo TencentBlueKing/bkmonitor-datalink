@@ -45,6 +45,22 @@ func normalizeCommaConditionValues(conditions AllConditions) AllConditions {
 	return normalized
 }
 
+// normalizeCommaConditions 将 Conditions 中的 eq/ne 单值逗号串规范化成多值数组。
+func normalizeCommaConditions(conditions Conditions) Conditions {
+	normalized := cloneConditions(conditions)
+	for i, condition := range normalized.FieldList {
+		if condition.Operator != ConditionEqual && condition.Operator != ConditionNotEqual {
+			continue
+		}
+		values, ok := splitSingleCommaValue(condition.Value)
+		if !ok {
+			continue
+		}
+		normalized.FieldList[i].Value = values
+	}
+	return normalized
+}
+
 // splitSingleCommaValue 只负责把形如 []string{"a,b,c"} 的值拆成 []string{"a", "b", "c"}。
 // operator 是否允许拆分由调用方判断；如果拆分后不足两个有效值，则保持原值不变。
 func splitSingleCommaValue(values []string) ([]string, bool) {
@@ -82,6 +98,23 @@ func cloneAllConditions(conditions AllConditions) AllConditions {
 				clone[i][j].Value = append([]string{}, condition.Value...)
 			}
 		}
+	}
+	return clone
+}
+
+func cloneConditions(conditions Conditions) Conditions {
+	clone := Conditions{}
+	if conditions.FieldList != nil {
+		clone.FieldList = make([]ConditionField, len(conditions.FieldList))
+		for i, condition := range conditions.FieldList {
+			clone.FieldList[i] = condition
+			if condition.Value != nil {
+				clone.FieldList[i].Value = append([]string{}, condition.Value...)
+			}
+		}
+	}
+	if conditions.ConditionList != nil {
+		clone.ConditionList = append([]string{}, conditions.ConditionList...)
 	}
 	return clone
 }

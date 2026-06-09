@@ -560,6 +560,32 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 	})
 }
 
+func TestQueryTs_ToPromQL_NormalizeCommaConditionValues(t *testing.T) {
+	ts := &QueryTs{
+		QueryList: []*Query{
+			{
+				FieldName:     "metric_name",
+				ReferenceName: "a",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "result",
+							Operator:      ConditionEqual,
+							Value:         []string{"-4000,-3999"},
+						},
+					},
+				},
+			},
+		},
+		MetricMerge: "a",
+	}
+
+	result, err := ts.ToPromQL(context.TODO())
+	require.NoError(t, err)
+	assert.Contains(t, result, `result=~"^(-4000|-3999)$"`)
+	assert.NotContains(t, result, `result="-4000,-3999"`)
+}
+
 func TestQueryTs_ToQueryReference(t *testing.T) {
 	mock.Init()
 	ctx := md.InitHashID(context.Background())

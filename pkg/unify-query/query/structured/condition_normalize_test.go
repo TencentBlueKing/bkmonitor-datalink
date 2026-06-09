@@ -72,3 +72,28 @@ func TestNormalizeCommaConditionValues(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeCommaConditions(t *testing.T) {
+	conditions := Conditions{
+		FieldList: []ConditionField{
+			{
+				DimensionName: "result",
+				Operator:      ConditionEqual,
+				Value:         []string{"-4000,-3999"},
+			},
+			{
+				DimensionName: "message",
+				Operator:      ConditionContains,
+				Value:         []string{"a,b"},
+			},
+		},
+		ConditionList: []string{ConditionAnd},
+	}
+	original := cloneConditions(conditions)
+
+	normalized := normalizeCommaConditions(conditions)
+
+	assert.Equal(t, []string{"-4000", "-3999"}, normalized.FieldList[0].Value)
+	assert.Equal(t, []string{"a,b"}, normalized.FieldList[1].Value)
+	assert.Equal(t, original, conditions)
+}

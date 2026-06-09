@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -476,6 +477,14 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 			must, should, mustNot := n.value.DSL()
 			if b, ok := n.value.(*LogicNode); ok {
+				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
+					if field, ok := existsQueryField(must[0]); ok {
+						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
+						result = nonEmptyFieldQuery(field)
+						n.reverseOp = false
+						return allMust, allShould, allMustNot
+					}
+				}
 				if b.boost != "" {
 					result = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...).Boost(cast.ToFloat64(b.boost))
 				} else {
@@ -609,6 +618,12 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = cq
 		}
 	case *RegexpNode:
+		rewrite := esregexpcompat.Rewrite(value)
+		value = rewrite.Pattern
+		if rewrite.Negative {
+			// ES regexp 不支持负向前瞻，改写为反向正则条件承载语义。
+			n.reverseOp = !n.reverseOp
+		}
 		cq := elastic.NewRegexpQuery(field, value)
 		if cv.Boost != "" {
 			cq.Boost(cast.ToFloat64(cv.Boost))
@@ -637,22 +652,27 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				break
 			}
 
-				if value == "" && n.field != nil {
-					// field:"" 语义为字段存在，与分词无关
-					result = elastic.NewExistsQuery(field)
-				} else if fieldOption.IsAnalyzed {
-					cq := elastic.NewMatchPhraseQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
+			if value == "" && n.field != nil {
+				// field:"" 语义为字段存在；NOT field:"" 兼容为字段存在且不等于空串。
+				if n.reverseOp {
+					result = nonEmptyFieldQuery(field)
+					n.reverseOp = false
 				} else {
-					cq := elastic.NewTermQuery(field, value)
-					if cv.Boost != "" {
-						cq.Boost(cast.ToFloat64(cv.Boost))
-					}
-					result = cq
+					result = elastic.NewExistsQuery(field)
 				}
+			} else if fieldOption.IsAnalyzed {
+				cq := elastic.NewMatchPhraseQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			} else {
+				cq := elastic.NewTermQuery(field, value)
+				if cv.Boost != "" {
+					cq.Boost(cast.ToFloat64(cv.Boost))
+				}
+				result = cq
+			}
 		}
 	}
 
@@ -662,6 +682,31 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	return allMust, allShould, allMustNot
+}
+
+func nonEmptyFieldQuery(field string) elastic.Query {
+	return elastic.NewBoolQuery().
+		Must(elastic.NewExistsQuery(field)).
+		MustNot(elastic.NewTermQuery(field, ""))
+}
+
+func existsQueryField(query elastic.Query) (string, bool) {
+	// 分组反向场景只能拿到已生成的 query，这里从 exists DSL 中反查字段名。
+	source, err := query.Source()
+	if err != nil {
+		return "", false
+	}
+
+	body, ok := source.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	exists, ok := body["exists"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	field, ok := exists["field"].(string)
+	return field, ok && field != ""
 }
 
 func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {

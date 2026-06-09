@@ -317,7 +317,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"正则匹配": {
 			q:   `name: /joh?n(ath[oa]n)/`,
-			es:  `{"regexp":{"name":{"value":"joh?n(ath[oa]n)"}}}`,
+			es:  `{"regexp":{"name":{"value":".*joh?n(ath[oa]n).*"}}}`,
 			sql: "`name` REGEXP 'joh?n(ath[oa]n)'",
 		},
 		"范围匹配，左闭右开": {
@@ -673,8 +673,23 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"regex_field": {
 			q:   `log:/patt.*n/`,
-			es:  `{"regexp":{"log":{"value":"patt.*n"}}}`,
+			es:  `{"regexp":{"log":{"value":".*patt.*n.*"}}}`,
 			sql: "`log` REGEXP 'patt.*n'",
+		},
+		"字段正则普通文本补齐为包含匹配": {
+			q:   `msg:/TypeError/`,
+			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
+			sql: "`msg` REGEXP 'TypeError'",
+		},
+		"字段正则前缀锚点改写为整值前缀匹配": {
+			q:   `msg:/^TypeError/`,
+			es:  `{"regexp":{"msg":{"value":"TypeError.*"}}}`,
+			sql: "`msg` REGEXP '^TypeError'",
+		},
+		"字段正则负向前瞻改写为反向正则": {
+			q:   `msg:/^(?!.*idip).*/`,
+			es:  `{"bool":{"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
+			sql: "`msg` REGEXP '^(?!.*idip).*'",
 		},
 		"fuzzy_and_field": {
 			q:   `log: test~`,
@@ -1257,7 +1272,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_field_regex": {
 			q:   `field:/pattern/`,
-			es:  `{"regexp":{"field":{"value":"pattern"}}}`,
+			es:  `{"regexp":{"field":{"value":".*pattern.*"}}}`,
 			sql: "`field` REGEXP 'pattern'",
 		},
 
@@ -1274,9 +1289,14 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"exists":{"field":"log"}}`,
 			sql: "`log` IS NOT NULL",
 		},
-		"edge_empty_field_value_negated_becomes_not_exists": {
+		"取反空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT log:""`,
-			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
+			sql: "`log` IS NULL",
+		},
+		"取反分组空字符串在 ES 中改写为字段存在且非空": {
+			q:   `NOT ((log:""))`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
 			sql: "`log` IS NULL",
 		},
 		"edge_field_with_underscore": {

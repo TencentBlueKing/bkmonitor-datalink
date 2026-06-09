@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
@@ -1006,6 +1007,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					}
 
 					queries := make([]elastic.Query, 0)
+					effectiveOperator := con.Operator
 					for _, value := range con.Value {
 						var query elastic.Query
 						if con.DimensionName != "" {
@@ -1079,6 +1081,17 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										query = elastic.NewWildcardQuery(key, value)
 									}
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+									rewrite := esregexpcompat.Rewrite(value)
+									value = rewrite.Pattern
+									if rewrite.Negative {
+										// ES regexp 不支持负向前瞻，改写为相反的正则操作符承载语义。
+										switch con.Operator {
+										case structured.ConditionRegEqual:
+											effectiveOperator = structured.ConditionNotRegEqual
+										case structured.ConditionNotRegEqual:
+											effectiveOperator = structured.ConditionRegEqual
+										}
+									}
 									query = elastic.NewRegexpQuery(key, value)
 								case structured.ConditionGt:
 									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
@@ -1106,7 +1119,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					}
 
 					// 非空才进行验证
-					switch con.Operator {
+					switch effectiveOperator {
 					case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 						q = f.getQuery(Should, queries...)
 					case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
@@ -1115,7 +1128,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							innerQuery := f.getQuery(Should, queries...)
 							nestedQuery := elastic.NewNestedQuery(nestedPath, innerQuery)
 							q = f.getQuery(MustNot, nestedQuery)
-							isNestedBefore = true // Mark as already nested to avoid double wrapping
+							isNestedBefore = true // 已经包装 nested，避免后续重复包装。
 						} else {
 							// 非嵌套字段直接使用MustNot
 							q = f.getQuery(MustNot, queries...)

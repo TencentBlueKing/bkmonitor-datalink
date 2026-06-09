@@ -248,6 +248,54 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
 		},
+		"结构化正则普通文本补齐为包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
+		},
+		"结构化正则前缀锚点改写为整值前缀匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"TypeError.*"}}}}`,
+		},
+		"结构化正则负向前瞻改写为反向正则": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化反向正则负向前瞻避免双重取反": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionNotRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*idip.*"}}}}`,
+		},
 		"multiple nested fields in same condition group": {
 			conditions: metadata.AllConditions{
 				{

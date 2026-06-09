@@ -1,0 +1,69 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package esregexpcompat
+
+import "testing"
+
+func TestRewrite(t *testing.T) {
+	tests := map[string]struct {
+		pattern  string
+		expected RewriteResult
+	}{
+		"普通文本按包含匹配补齐": {
+			pattern:  "TypeError",
+			expected: RewriteResult{Pattern: ".*TypeError.*"},
+		},
+		"普通正则按包含匹配补齐": {
+			pattern:  "a.*b",
+			expected: RewriteResult{Pattern: ".*a.*b.*"},
+		},
+		"前缀锚点改写为整值前缀匹配": {
+			pattern:  "^foo",
+			expected: RewriteResult{Pattern: "foo.*"},
+		},
+		"后缀锚点改写为整值后缀匹配": {
+			pattern:  "foo$",
+			expected: RewriteResult{Pattern: ".*foo"},
+		},
+		"首尾锚点改写为整值匹配": {
+			pattern:  "^foo$",
+			expected: RewriteResult{Pattern: "foo"},
+		},
+		"已显式包含匹配时保持不变": {
+			pattern:  ".*foo.*",
+			expected: RewriteResult{Pattern: ".*foo.*"},
+		},
+		"负向前瞻改写为反向正则": {
+			pattern:  "^(?!.*idip).*",
+			expected: RewriteResult{Pattern: ".*idip.*", Negative: true},
+		},
+		"带结尾锚点的负向前瞻改写为反向正则": {
+			pattern:  "^(?!.*idip).*$",
+			expected: RewriteResult{Pattern: ".*idip.*", Negative: true},
+		},
+		"转义前缀锚点按普通包含处理": {
+			pattern:  `\^foo`,
+			expected: RewriteResult{Pattern: `.*\^foo.*`},
+		},
+		"转义后缀锚点按普通包含处理": {
+			pattern:  `foo\$`,
+			expected: RewriteResult{Pattern: `.*foo\$.*`},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := Rewrite(tt.pattern)
+			if got != tt.expected {
+				t.Fatalf("Rewrite(%q) = %+v, want %+v", tt.pattern, got, tt.expected)
+			}
+		})
+	}
+}

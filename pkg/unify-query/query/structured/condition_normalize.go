@@ -11,8 +11,8 @@ package structured
 
 import "strings"
 
-// normalizeCommaConditionValues 将结构化条件里的 eq/ne 单值逗号串规范化成多值数组。
-// 该逻辑只处理 conditions，不改变 query_string 的字面量检索语义。
+// normalizeCommaConditionValues 将结构化条件里的 eq/ne 单值逗号编码列表规范化成多值数组。
+// 只有调用方已确认输入来源使用逗号编码列表时才能调用；普通逗号字面值需要保留精确匹配语义。
 func normalizeCommaConditionValues(conditions AllConditions) AllConditions {
 	if len(conditions) == 0 {
 		return conditions

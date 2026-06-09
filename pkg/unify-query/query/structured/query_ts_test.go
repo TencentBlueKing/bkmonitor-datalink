@@ -284,6 +284,15 @@ func TestQueryToMetric(t *testing.T) {
 				TableID:       "2_table_id",
 				FieldName:     "kube_.*",
 				ReferenceName: "a",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "result",
+							Value:         []string{"a,b"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
 			},
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
@@ -293,6 +302,15 @@ func TestQueryToMetric(t *testing.T) {
 						StorageType: md.BkSqlStorageType,
 						DB:          "2_table_id",
 						Field:       "kube_.*",
+						AllConditions: md.AllConditions{
+							{
+								{
+									DimensionName: "result",
+									Value:         []string{"a,b"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
 					},
 				},
 				ReferenceName: "a",
@@ -560,7 +578,7 @@ func TestQueryTs_StructToPromQL_WithTableIDConditions(t *testing.T) {
 	})
 }
 
-func TestQueryTs_ToPromQL_NormalizeCommaConditionValues(t *testing.T) {
+func TestQueryTs_ToPromQL_PreserveCommaConditionValue(t *testing.T) {
 	ts := &QueryTs{
 		QueryList: []*Query{
 			{
@@ -582,8 +600,8 @@ func TestQueryTs_ToPromQL_NormalizeCommaConditionValues(t *testing.T) {
 
 	result, err := ts.ToPromQL(context.TODO())
 	require.NoError(t, err)
-	assert.Contains(t, result, `result=~"^(-4000|-3999)$"`)
-	assert.NotContains(t, result, `result="-4000,-3999"`)
+	assert.Contains(t, result, `result="-4000,-3999"`)
+	assert.NotContains(t, result, `result=~"^(-4000|-3999)$"`)
 }
 
 func TestQueryTs_ToQueryReference(t *testing.T) {

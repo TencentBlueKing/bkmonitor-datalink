@@ -307,8 +307,7 @@ func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr e
 		}
 
 		// 保留查询条件
-		conditions := normalizeCommaConditions(ql.Conditions)
-		matcher, _, err := conditions.ToProm()
+		matcher, _, err := ql.Conditions.ToProm()
 		if err != nil {
 			checkErr = err
 			return promQLString, checkErr
@@ -597,10 +596,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	if q.DataSource == "" {
 		q.DataSource = BkMonitor
 	}
-	// 检索 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
-	// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
-	allConditions = normalizeCommaConditionValues(allConditions)
-
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {
 		// 判断空间跟业务是否匹配
@@ -703,6 +698,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		queryMetric.QueryList = []*metadata.Query{query}
 		return queryMetric, nil
 	}
+
+	// 检索 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
+	// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
+	allConditions = normalizeCommaConditionValues(allConditions)
 
 	isSkipField := false
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {

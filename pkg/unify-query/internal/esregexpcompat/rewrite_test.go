@@ -13,68 +13,74 @@ import "testing"
 
 func TestRewrite(t *testing.T) {
 	tests := map[string]struct {
-		pattern  string
-		expected RewriteResult
+		pattern      string
+		wantPattern  string
+		wantNegative bool
 	}{
 		"普通文本按包含匹配补齐": {
-			pattern:  "TypeError",
-			expected: RewriteResult{Pattern: ".*TypeError.*"},
+			pattern:     "TypeError",
+			wantPattern: ".*TypeError.*",
 		},
 		"普通正则按包含匹配补齐": {
-			pattern:  "a.*b",
-			expected: RewriteResult{Pattern: ".*a.*b.*"},
+			pattern:     "a.*b",
+			wantPattern: ".*a.*b.*",
 		},
 		"顶层或表达式按整体补齐包含匹配": {
-			pattern:  "foo|bar",
-			expected: RewriteResult{Pattern: ".*(foo|bar).*"},
+			pattern:     "foo|bar",
+			wantPattern: ".*(foo|bar).*",
 		},
 		"括号内或表达式不重复包裹": {
-			pattern:  "(foo|bar)",
-			expected: RewriteResult{Pattern: ".*(foo|bar).*"},
+			pattern:     "(foo|bar)",
+			wantPattern: ".*(foo|bar).*",
 		},
 		"字符类内竖线不视为顶层或表达式": {
-			pattern:  "[a|b]",
-			expected: RewriteResult{Pattern: ".*[a|b].*"},
+			pattern:     "[a|b]",
+			wantPattern: ".*[a|b].*",
 		},
 		"前缀锚点改写为整值前缀匹配": {
-			pattern:  "^foo",
-			expected: RewriteResult{Pattern: "foo.*"},
+			pattern:     "^foo",
+			wantPattern: "foo.*",
 		},
 		"后缀锚点改写为整值后缀匹配": {
-			pattern:  "foo$",
-			expected: RewriteResult{Pattern: ".*foo"},
+			pattern:     "foo$",
+			wantPattern: ".*foo",
 		},
 		"首尾锚点改写为整值匹配": {
-			pattern:  "^foo$",
-			expected: RewriteResult{Pattern: "foo"},
+			pattern:     "^foo$",
+			wantPattern: "foo",
 		},
 		"已显式包含匹配时保持不变": {
-			pattern:  ".*foo.*",
-			expected: RewriteResult{Pattern: ".*foo.*"},
+			pattern:     ".*foo.*",
+			wantPattern: ".*foo.*",
 		},
 		"负向前瞻改写为反向正则": {
-			pattern:  "^(?!.*idip).*",
-			expected: RewriteResult{Pattern: ".*idip.*", Negative: true},
+			pattern:      "^(?!.*idip).*",
+			wantPattern:  ".*idip.*",
+			wantNegative: true,
 		},
 		"带结尾锚点的负向前瞻改写为反向正则": {
-			pattern:  "^(?!.*idip).*$",
-			expected: RewriteResult{Pattern: ".*idip.*", Negative: true},
+			pattern:      "^(?!.*idip).*$",
+			wantPattern:  ".*idip.*",
+			wantNegative: true,
 		},
 		"转义前缀锚点按普通包含处理": {
-			pattern:  `\^foo`,
-			expected: RewriteResult{Pattern: `.*\^foo.*`},
+			pattern:     `\^foo`,
+			wantPattern: `.*\^foo.*`,
 		},
 		"转义后缀锚点按普通包含处理": {
-			pattern:  `foo\$`,
-			expected: RewriteResult{Pattern: `.*foo\$.*`},
+			pattern:     `foo\$`,
+			wantPattern: `.*foo\$.*`,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := Rewrite(tt.pattern)
-			if got != tt.expected {
-				t.Fatalf("Rewrite(%q) = %+v, want %+v", tt.pattern, got, tt.expected)
+			if got.Pattern != tt.wantPattern {
+				t.Fatalf("Rewrite(%q).Pattern = %q, want %q", tt.pattern, got.Pattern, tt.wantPattern)
+			}
+			if got.Negative != tt.wantNegative {
+				t.Fatalf("Rewrite(%q).Negative = %v, want %v", tt.pattern, got.Negative, tt.wantNegative)
 			}
 		})
 	}

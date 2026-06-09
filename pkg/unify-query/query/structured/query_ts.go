@@ -253,11 +253,11 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 
 	// 结构定义转换
 	allConditions, err := qry.Conditions.AnalysisConditions()
-	queryConditions := allConditions.MetaDataAllConditions()
-
 	if err != nil {
 		return nil, err
 	}
+	allConditions = normalizeCommaConditionValues(allConditions)
+	queryConditions := allConditions.MetaDataAllConditions()
 
 	agg, err := qry.AggregateMethodList.ToQry(qry.Timezone)
 	if err != nil {
@@ -596,6 +596,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	if q.DataSource == "" {
 		q.DataSource = BkMonitor
 	}
+	// 检索 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
+	// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
+	allConditions = normalizeCommaConditionValues(allConditions)
 
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {

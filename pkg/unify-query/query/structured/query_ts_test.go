@@ -222,6 +222,62 @@ func TestQueryToMetric(t *testing.T) {
 				IsCount:       false,
 			},
 		},
+		"test comma condition value query": {
+			query: &Query{
+				DataSource:    BkMonitor,
+				FieldName:     field,
+				ReferenceName: "a",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "result",
+							Value:         []string{"-4000,-3999,-3888"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			tsDbs: TsDBs{
+				{
+					TableID:     "result_table.es",
+					StorageID:   storageID,
+					StorageType: md.ElasticsearchStorageType,
+					DB:          "es_index",
+					Measurement: field,
+				},
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					{
+						DataSource:  BkMonitor,
+						TableID:     "result_table.es",
+						DB:          "es_index",
+						StorageType: md.ElasticsearchStorageType,
+						StorageID:   storageID,
+						Measurement: field,
+						Measurements: []string{
+							field,
+						},
+						Field: field,
+						AllConditions: md.AllConditions{
+							{
+								{
+									DimensionName: "result",
+									Value:         []string{"-4000", "-3999", "-3888"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+						Condition:      `((result='-4000' or result='-3999') or result='-3888')`,
+						VmCondition:    `result=~"^(-4000|-3999|-3888)$", __name__="kube_pod_info_value"`,
+						VmConditionNum: 2,
+						Aggregates:     make(md.Aggregates, 0),
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    field,
+			},
+		},
 		"test bk data match table id": {
 			query: &Query{
 				DataSource:    BkData,

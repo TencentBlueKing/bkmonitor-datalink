@@ -46,7 +46,7 @@ func normalizeCommaConditionValues(conditions AllConditions) AllConditions {
 }
 
 // splitSingleCommaValue 只负责把形如 []string{"a,b,c"} 的值拆成 []string{"a", "b", "c"}。
-// operator 是否允许拆分由调用方判断；如果拆分后不足两个有效值，则保持原值不变。
+// operator 是否允许拆分由调用方判断；空候选是有效查询值，需要保留。
 func splitSingleCommaValue(values []string) ([]string, bool) {
 	if len(values) != 1 || !strings.Contains(values[0], ",") {
 		return values, false
@@ -56,15 +56,9 @@ func splitSingleCommaValue(values []string) ([]string, bool) {
 	splitValues := make([]string, 0, len(parts))
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
-		if value == "" {
-			continue
-		}
 		splitValues = append(splitValues, value)
 	}
 
-	if len(splitValues) <= 1 {
-		return values, false
-	}
 	return splitValues, true
 }
 

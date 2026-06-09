@@ -53,13 +53,13 @@ func TestNormalizeCommaConditionValues(t *testing.T) {
 			},
 			wantValue: []string{"-4000,-3999,-3888"},
 		},
-		"拆分后不足两个有效值不拆分": {
+		"保留空候选": {
 			condition: ConditionField{
 				DimensionName: "result",
 				Operator:      ConditionEqual,
 				Value:         []string{"-4000,"},
 			},
-			wantValue: []string{"-4000,"},
+			wantValue: []string{"-4000", ""},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

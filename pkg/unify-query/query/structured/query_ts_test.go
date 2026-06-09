@@ -45,10 +45,11 @@ func TestQueryToMetric(t *testing.T) {
 	end := "1741060043"
 
 	testCases := map[string]struct {
-		spaceUID string
-		query    *Query
-		metric   *md.QueryMetric
-		tsDbs    TsDBs
+		spaceUID    string
+		querySource string
+		query       *Query
+		metric      *md.QueryMetric
+		tsDbs       TsDBs
 	}{
 		"test table id query": {
 			query: &Query{
@@ -223,6 +224,7 @@ func TestQueryToMetric(t *testing.T) {
 			},
 		},
 		"test comma condition value query": {
+			querySource: "strategy:unit-test",
 			query: &Query{
 				DataSource:    BkMonitor,
 				FieldName:     field,
@@ -270,6 +272,62 @@ func TestQueryToMetric(t *testing.T) {
 						},
 						Condition:      `((result='-4000' or result='-3999') or result='-3888')`,
 						VmCondition:    `result=~"^(-4000|-3999|-3888)$", __name__="kube_pod_info_value"`,
+						VmConditionNum: 2,
+						Aggregates:     make(md.Aggregates, 0),
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    field,
+			},
+		},
+		"test comma literal condition value query": {
+			query: &Query{
+				DataSource:    BkMonitor,
+				FieldName:     field,
+				ReferenceName: "a",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "result",
+							Value:         []string{"us-east,blue"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			tsDbs: TsDBs{
+				{
+					TableID:     "result_table.es",
+					StorageID:   storageID,
+					StorageType: md.ElasticsearchStorageType,
+					DB:          "es_index",
+					Measurement: field,
+				},
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					{
+						DataSource:  BkMonitor,
+						TableID:     "result_table.es",
+						DB:          "es_index",
+						StorageType: md.ElasticsearchStorageType,
+						StorageID:   storageID,
+						Measurement: field,
+						Measurements: []string{
+							field,
+						},
+						Field: field,
+						AllConditions: md.AllConditions{
+							{
+								{
+									DimensionName: "result",
+									Value:         []string{"us-east,blue"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+						Condition:      `result='us-east,blue'`,
+						VmCondition:    `result="us-east,blue", __name__="kube_pod_info_value"`,
 						VmConditionNum: 2,
 						Aggregates:     make(md.Aggregates, 0),
 					},
@@ -349,6 +407,9 @@ func TestQueryToMetric(t *testing.T) {
 			spaceUID := c.spaceUID
 			if spaceUID == "" {
 				spaceUID = influxdb.SpaceUid
+			}
+			if c.querySource != "" {
+				md.SetUser(ctx, &md.User{Key: c.querySource})
 			}
 
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID, c.tsDbs)

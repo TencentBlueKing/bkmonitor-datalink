@@ -256,7 +256,9 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 	if err != nil {
 		return nil, err
 	}
-	allConditions = normalizeCommaConditionValues(allConditions)
+	if shouldNormalizeCommaConditionValues(ctx) {
+		allConditions = normalizeCommaConditionValues(allConditions)
+	}
 	queryConditions := allConditions.MetaDataAllConditions()
 
 	agg, err := qry.AggregateMethodList.ToQry(qry.Timezone)
@@ -699,9 +701,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		return queryMetric, nil
 	}
 
-	// 检索 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
-	// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
-	allConditions = normalizeCommaConditionValues(allConditions)
+	if shouldNormalizeCommaConditionValues(ctx) {
+		// 策略侧 addition 可能把多值 eq/ne 传成单个逗号串，进入存储分发前先规范化为多值数组。
+		// 例如 result="-4000,-3999,-3888" 会被拆成多个候选值，后续 ES/Doris 按既有多值逻辑生成 OR 条件。
+		allConditions = normalizeCommaConditionValues(allConditions)
+	}
 
 	isSkipField := false
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
@@ -845,6 +849,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
+}
+
+func shouldNormalizeCommaConditionValues(ctx context.Context) bool {
+	return metadata.GetUser(ctx).Source == "strategy"
 }
 
 func (q *Query) BuildMetadataQuery(

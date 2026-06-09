@@ -1602,12 +1602,35 @@ func TestLuceneParser(t *testing.T) {
 
 func TestExplicitAndChainImplicitTerms(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
-	node := ParseLuceneWithVisitor(ctx, `a AND b c AND d`, Option{})
-	assert.Nil(t, node.Error())
 
-	dsl := MergeQuery(node.DSL())
-	dslActual, _ := queryToJSON(dsl)
-	assert.Equal(t, `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}}]}}`, dslActual)
+	testCases := map[string]struct {
+		q  string
+		es string
+	}{
+		"explicit_and_chain_with_multiple_implicit_terms": {
+			q:  `a AND b c d AND e`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"e"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}`,
+		},
+		"implicit_terms_before_and_are_required": {
+			q:  `quick brown AND fox`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}}]}}`,
+		},
+		"implicit_terms_around_and_are_required": {
+			q:  `a b AND c d`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			node := ParseLuceneWithVisitor(ctx, c.q, Option{})
+			assert.Nil(t, node.Error())
+
+			dsl := MergeQuery(node.DSL())
+			dslActual, _ := queryToJSON(dsl)
+			assert.Equal(t, c.es, dslActual)
+		})
+	}
 }
 
 func queryToJSON(query elastic.Query) (string, error) {

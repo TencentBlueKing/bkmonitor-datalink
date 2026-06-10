@@ -956,7 +956,7 @@ func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Que
 }
 
 func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
-	// ES regexp 不支持负向前瞻，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	// ES regexp 不支持不包含前缀形式，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
 	return elastic.NewBoolQuery().
 		Must(elastic.NewExistsQuery(field)).
 		MustNot(regexp)
@@ -1091,7 +1091,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									value = rewrite.Pattern
 									regexpQuery := elastic.NewRegexpQuery(key, value)
 									if rewrite.Negative {
-										// 每个 value 独立承载负前瞻语义，避免污染同一条件下的其他正则值。
+										// 每个 value 独立承载不包含前缀语义，避免污染同一条件下的其他正则值。
 										query = negativeLookaheadQuery(key, regexpQuery)
 									} else {
 										query = regexpQuery

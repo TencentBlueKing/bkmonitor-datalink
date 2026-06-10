@@ -224,7 +224,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
 		},
 		{
-			name:  "negative lookahead regexp keeps implicit should semantics",
+			name:  "negative prefix regexp keeps implicit should semantics",
 			input: `name:/^(?!.*foo).*/ status:ok`,
 			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
 			dsl:   `{"bool":{"should":[{"bool":{"must":{"exists":{"field":"name"}},"must_not":{"regexp":{"name":{"value":".*foo.*"}}}}},{"term":{"status":"ok"}}]}}`,
@@ -725,7 +725,7 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":"TypeError.*"}}}`,
 			sql: "`msg` REGEXP '^TypeError'",
 		},
-		"字段正则负向前瞻改写为反向正则": {
+		"字段正则不包含前缀形式改写为反向正则": {
 			q:   `msg:/^(?!.*idip).*/`,
 			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
 			sql: "`msg` REGEXP '^(?!.*idip).*'",

@@ -640,7 +640,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			cq.Boost(cast.ToFloat64(cv.Boost))
 		}
 		if rewrite.Negative {
-			// 正向负前瞻必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
+			// 正向不包含前缀形式必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
 			result = negativeLookaheadQuery(field, cq)
 		} else {
 			result = cq
@@ -748,7 +748,7 @@ func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, b
 }
 
 func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
-	// ES regexp 不支持负向前瞻，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	// ES regexp 不支持不包含前缀形式，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
 	return elastic.NewBoolQuery().
 		Must(elastic.NewExistsQuery(field)).
 		MustNot(regexp)

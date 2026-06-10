@@ -14,7 +14,7 @@ import "strings"
 const (
 	// negativeLookaheadPrefix/negativeLookaheadSuffix 只识别用于表达“字段值不包含某段内容”的
 	// 固定前缀/后缀形式，例如 ^(?!.*foo).* 或 ^(?!.*foo).*$。
-	// ES regexp 不支持 lookahead，命中该形态后会改写为字段存在且不匹配 .*foo.*。
+	// ES regexp 不支持该不包含前缀形式，命中该形态后会改写为字段存在且不匹配 .*foo.*。
 	negativeLookaheadPrefix = `^(?!.*`
 	negativeLookaheadSuffix = `).*`
 )

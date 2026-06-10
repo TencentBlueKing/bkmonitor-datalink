@@ -296,7 +296,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":"TypeError.*"}}}}`,
 		},
-		"结构化正则负向前瞻改写为反向正则": {
+		"结构化正则不包含前缀形式改写为反向正则": {
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -308,7 +308,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
 		},
-		"结构化正则负向前瞻只作用于当前 value": {
+		"结构化正则不包含前缀形式只作用于当前 value": {
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -320,7 +320,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*foo.*"}}}}},{"regexp":{"keyword":{"value":".*bar.*"}}}]}}}`,
 		},
-		"结构化反向正则负向前瞻避免双重取反": {
+		"结构化反向正则不包含前缀形式避免双重取反": {
 			conditions: metadata.AllConditions{
 				{
 					{

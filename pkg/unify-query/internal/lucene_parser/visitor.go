@@ -460,6 +460,7 @@ func (n *ConditionNode) String() string {
 }
 
 func nonEmptyFieldSQL(field string) string {
+	// NOT field:"" 在 ES DSL 中表示字段存在且不等于空串，SQL/Doris 渲染需保持同义。
 	return fmt.Sprintf("%s IS NOT NULL AND %s != ''", field, field)
 }
 

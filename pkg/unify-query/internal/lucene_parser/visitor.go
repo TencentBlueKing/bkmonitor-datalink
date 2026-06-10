@@ -472,15 +472,15 @@ func nonEmptyFieldSQL(field string) string {
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
 	var (
-		result          elastic.Query
-		notEqual        bool
-		inlineReverseOp bool
+		result       elastic.Query
+		notEqual     bool
+		outerMustNot = n.reverseOp
 	)
 	defer func() {
 		if result == nil {
 			return
 		}
-		if (n.reverseOp && !inlineReverseOp) || notEqual {
+		if outerMustNot || notEqual {
 			allMustNot = append(allMustNot, result)
 		} else {
 			allMust = append(allMust, result)
@@ -500,7 +500,8 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
 						// 重建后的非空 bool query 仍要保持原字段的 nested scope；普通字段会原样返回。
 						result = wrapNestedFieldQuery(field, n.Option.FieldsMap, nonEmptyFieldQuery(field, n.Option.FieldsMap))
-						inlineReverseOp = true
+						// 取反已经表达为“字段存在且非空”，收尾阶段不再追加外层 must_not。
+						outerMustNot = false
 						return allMust, allShould, allMustNot
 					}
 				}
@@ -676,7 +677,8 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				// field:"" 语义为字段存在；NOT field:"" 兼容为字段存在且不等于空串。
 				if n.reverseOp {
 					result = nonEmptyFieldQuery(field, n.Option.FieldsMap)
-					inlineReverseOp = true
+					// 取反已经表达为“字段存在且非空”，收尾阶段不再追加外层 must_not。
+					outerMustNot = false
 				} else {
 					result = elastic.NewExistsQuery(field)
 				}

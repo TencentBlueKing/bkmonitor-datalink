@@ -226,7 +226,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "negated empty string stays required with explicit must",
 			input: `+status:ok NOT log:""`,
-			sql:   "`log` IS NULL AND `status` = 'ok'",
+			sql:   "`status` = 'ok' AND `log` IS NOT NULL AND `log` != ''",
 			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}]}}`,
 		},
 		{
@@ -1320,12 +1320,12 @@ func TestLuceneParser(t *testing.T) {
 		"取反空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT log:""`,
 			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
-			sql: "`log` IS NULL",
+			sql: "`log` IS NOT NULL AND `log` != ''",
 		},
 		"取反分组空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT ((log:""))`,
 			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
-			sql: "`log` IS NULL",
+			sql: "`log` IS NOT NULL AND `log` != ''",
 		},
 		"取反复合分组空字符串不误改写 SQL": {
 			q:   `NOT ((status:ok) OR (log:""))`,

@@ -319,7 +319,7 @@ func (n *ConditionNode) String() string {
 			if n.reverseOp {
 				// NOT ((field:"")) 的 SQL 字符串语义也要和 DSL 一样兼容为空值判断。
 				if field, ok := existsSQLField(sql); ok {
-					return fmt.Sprintf("%s IS NULL", field)
+					return nonEmptyFieldSQL(field)
 				}
 				sql = fmt.Sprintf("(%s)", sql)
 				sql = fmt.Sprintf("NOT %s", sql)
@@ -430,7 +430,7 @@ func (n *ConditionNode) String() string {
 		if value == "" && n.field != nil {
 			// field:"" 语义为字段存在，与分词无关
 			if n.reverseOp {
-				return fmt.Sprintf("%s IS NULL", field)
+				return nonEmptyFieldSQL(field)
 			}
 			return fmt.Sprintf("%s IS NOT NULL", field)
 		}
@@ -457,6 +457,10 @@ func (n *ConditionNode) String() string {
 	}
 
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func nonEmptyFieldSQL(field string) string {
+	return fmt.Sprintf("%s IS NOT NULL AND %s != ''", field, field)
 }
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {

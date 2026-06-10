@@ -211,6 +211,42 @@ func TestQuery_LabelMap(t *testing.T) {
 			highLightData: map[string]any{},
 		},
 		{
+			name: "query string must modifier extracts positive leaf from mixed expression",
+			query: &metadata.Query{
+				QueryString: `+level:"warn" status:"error"`,
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {
+					{Value: "warn", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"level":  "warn",
+				"status": "error",
+			},
+			highLightData: map[string]any{
+				"level": []string{`<mark>warn</mark>`},
+			},
+		},
+		{
+			name: "query string must modifier extracts positive leaf with implicit not clause",
+			query: &metadata.Query{
+				QueryString: `+level:"warn" NOT status:"error"`,
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {
+					{Value: "warn", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"level":  "warn",
+				"status": "error",
+			},
+			highLightData: map[string]any{
+				"level": []string{`<mark>warn</mark>`},
+			},
+		},
+		{
 			name: "query string nested not group is not highlighted",
 			query: &metadata.Query{
 				QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,

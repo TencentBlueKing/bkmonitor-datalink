@@ -273,6 +273,17 @@ func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, ope
 		for _, label := range labels {
 			fn(label.field, label.operator, label.isWildcard, label.values...)
 		}
+		return
+	}
+
+	conditionNodeWalkMustClauses(n, reversed, fn)
+}
+
+func conditionNodeWalkMustClauses(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	for _, node := range n.Nodes {
+		if node.mustOp {
+			conditionNodeWalk(node, reversed, fn)
+		}
 	}
 }
 

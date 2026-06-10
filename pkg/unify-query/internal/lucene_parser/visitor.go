@@ -747,6 +747,8 @@ func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, b
 	// 如果 mapping 暴露了 keyword/raw 子字段，则用子字段做精确空串判断；否则 ES 侧只能保留 exists，
 	// 无法完全等价过滤掉原始值为空字符串的文档。
 	for _, candidate := range []string{field + ".keyword", field + ".raw"} {
+		// 这里不主动假设子字段存在，只使用 FieldsMap 中已经解析或注入的精确子字段。
+		// 如果没有命中，避免向 ES 下发可能不存在的 field.keyword/field.raw 查询。
 		option := fieldsMap.Field(candidate)
 		if option.Existed() && !option.IsAnalyzed {
 			return candidate, true

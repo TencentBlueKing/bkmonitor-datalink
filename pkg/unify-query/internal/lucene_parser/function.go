@@ -276,15 +276,30 @@ func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, ope
 		return
 	}
 
-	conditionNodeWalkMustClauses(n, reversed, fn)
+	conditionNodeWalkRequiredClauses(n, reversed, fn)
 }
 
-func conditionNodeWalkMustClauses(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
-	for _, node := range n.Nodes {
-		if node.mustOp {
+func conditionNodeWalkRequiredClauses(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	for i, node := range n.Nodes {
+		if logicNodeConditionIsMust(n, i, node) {
 			conditionNodeWalk(node, reversed, fn)
 		}
 	}
+}
+
+func logicNodeConditionIsMust(n *LogicNode, index int, node *ConditionNode) bool {
+	logic := logicNodeConditionOperator(n, index)
+	return logic == logicAnd || (logic == "" && (node.reverseOp || node.mustOp))
+}
+
+func logicNodeConditionOperator(n *LogicNode, index int) string {
+	if index == 0 {
+		if len(n.logics) > 0 {
+			return n.logics[index]
+		}
+		return ""
+	}
+	return logicNodeOperator(n, index)
 }
 
 type conditionWalkLabel struct {

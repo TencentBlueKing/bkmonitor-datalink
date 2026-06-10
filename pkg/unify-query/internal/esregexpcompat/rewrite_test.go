@@ -25,9 +25,21 @@ func TestRewrite(t *testing.T) {
 			pattern:     "a.*b",
 			wantPattern: ".*a.*b.*",
 		},
-		"顶层或表达式按整体补齐包含匹配": {
+		"顶层或表达式按分支补齐包含匹配": {
 			pattern:     "foo|bar",
-			wantPattern: ".*(foo|bar).*",
+			wantPattern: "(.*foo.*|.*bar.*)",
+		},
+		"顶层或表达式按分支保留锚点语义": {
+			pattern:     "^foo|bar",
+			wantPattern: "(foo.*|.*bar.*)",
+		},
+		"顶层或表达式按分支处理后缀锚点": {
+			pattern:     "foo|bar$",
+			wantPattern: "(.*foo.*|.*bar)",
+		},
+		"顶层或表达式按分支处理显式包含": {
+			pattern:     ".*foo|bar.*",
+			wantPattern: "(.*foo.*|.*bar.*)",
 		},
 		"括号内或表达式不重复包裹": {
 			pattern:     "(foo|bar)",
@@ -52,6 +64,18 @@ func TestRewrite(t *testing.T) {
 		"已显式包含匹配时保持不变": {
 			pattern:     ".*foo.*",
 			wantPattern: ".*foo.*",
+		},
+		"已有单侧前缀包含时只补齐后缀": {
+			pattern:     ".*foo",
+			wantPattern: ".*foo.*",
+		},
+		"已有单侧后缀包含时只补齐前缀": {
+			pattern:     "foo.*",
+			wantPattern: ".*foo.*",
+		},
+		"前缀锚点后已有后缀包含时不重复补齐": {
+			pattern:     "^foo.*",
+			wantPattern: "foo.*",
 		},
 		"负向前瞻改写为反向正则": {
 			pattern:      "^(?!.*idip).*",

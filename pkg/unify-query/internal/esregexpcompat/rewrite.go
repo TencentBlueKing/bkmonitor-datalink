@@ -31,8 +31,20 @@ func Rewrite(pattern string) RewriteResult {
 		}
 	}
 
+	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
+		rewritten := make([]string, 0, len(alternatives))
+		for _, alternative := range alternatives {
+			rewritten = append(rewritten, rewriteSinglePattern(alternative))
+		}
+		return RewriteResult{Pattern: "(" + strings.Join(rewritten, "|") + ")"}
+	}
+
+	return RewriteResult{Pattern: rewriteSinglePattern(pattern)}
+}
+
+func rewriteSinglePattern(pattern string) string {
 	if isExplicitContains(pattern) {
-		return RewriteResult{Pattern: pattern}
+		return pattern
 	}
 
 	hasPrefix := hasUnescapedPrefixAnchor(pattern)
@@ -40,32 +52,26 @@ func Rewrite(pattern string) RewriteResult {
 
 	switch {
 	case hasPrefix && hasSuffix:
-		return RewriteResult{Pattern: trimSuffixAnchor(trimPrefixAnchor(pattern))}
+		return trimSuffixAnchor(trimPrefixAnchor(pattern))
 	case hasPrefix:
-		return RewriteResult{Pattern: trimPrefixAnchor(pattern) + ".*"}
+		return addContainsSuffix(trimPrefixAnchor(pattern))
 	case hasSuffix:
-		return RewriteResult{Pattern: ".*" + trimSuffixAnchor(pattern)}
+		return addContainsPrefix(trimSuffixAnchor(pattern))
 	default:
-		return RewriteResult{Pattern: ".*" + wrapTopLevelAlternation(pattern) + ".*"}
+		return addContainsSuffix(addContainsPrefix(pattern))
 	}
 }
 
-func wrapTopLevelAlternation(pattern string) string {
-	if !hasTopLevelAlternation(pattern) {
-		return pattern
-	}
-	// ES regexp 是整值匹配，补齐前后 .* 时需要把顶层或表达式作为整体处理。
-	return "(" + pattern + ")"
-}
-
-func hasTopLevelAlternation(pattern string) bool {
+func splitTopLevelAlternation(pattern string) ([]string, bool) {
 	// 只识别最外层未转义的 |；括号、字符类或转义后的 | 都保持原有正则语义。
 	var (
+		alternatives []string
+		start        int
 		parenDepth   int
 		bracketDepth int
 		escaped      bool
 	)
-	for _, r := range pattern {
+	for i, r := range pattern {
 		if escaped {
 			escaped = false
 			continue
@@ -94,11 +100,16 @@ func hasTopLevelAlternation(pattern string) bool {
 			}
 		case '|':
 			if bracketDepth == 0 && parenDepth == 0 {
-				return true
+				alternatives = append(alternatives, pattern[start:i])
+				start = i + len(string(r))
 			}
 		}
 	}
-	return false
+	if len(alternatives) == 0 {
+		return nil, false
+	}
+	alternatives = append(alternatives, pattern[start:])
+	return alternatives, true
 }
 
 func extractNegativeLookahead(pattern string) (string, bool) {
@@ -142,6 +153,20 @@ func hasUnescapedSuffixAnchor(pattern string) bool {
 
 func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
+}
+
+func addContainsPrefix(pattern string) string {
+	if hasUnescapedPrefixLiteral(pattern, ".*") {
+		return pattern
+	}
+	return ".*" + pattern
+}
+
+func addContainsSuffix(pattern string) string {
+	if hasUnescapedSuffixLiteral(pattern, ".*") {
+		return pattern
+	}
+	return pattern + ".*"
 }
 
 func hasUnescapedPrefixLiteral(pattern string, literal string) bool {

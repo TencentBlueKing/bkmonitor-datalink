@@ -260,7 +260,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
 		},
-		"结构化正则顶层或表达式按整体补齐包含匹配": {
+		"结构化正则顶层或表达式按分支补齐包含匹配": {
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -270,7 +270,19 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"regexp":{"keyword":{"value":".*(foo|bar).*"}}}}`,
+			expected: `{"query":{"regexp":{"keyword":{"value":"(.*foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则顶层或表达式保留分支锚点语义": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(foo.*|.*bar.*)"}}}}`,
 		},
 		"结构化正则前缀锚点改写为整值前缀匹配": {
 			conditions: metadata.AllConditions{

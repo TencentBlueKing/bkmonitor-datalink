@@ -223,6 +223,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
 			dsl:   `{"bool":{"should":[{"bool":{"must":{"exists":{"field":"name"}},"must_not":{"regexp":{"name":{"value":".*foo.*"}}}}},{"term":{"status":"ok"}}]}}`,
 		},
+		{
+			name:  "negated empty string stays required with explicit must",
+			input: `+status:ok NOT log:""`,
+			sql:   "`log` IS NULL AND `status` = 'ok'",
+			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}]}}`,
+		},
+		{
+			name:  "composite negated group does not collapse sql empty check",
+			input: `NOT ((status:ok) OR (log:""))`,
+			sql:   "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
+			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
+		},
 	}
 
 	mock.Init()
@@ -687,10 +699,15 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
 			sql: "`msg` REGEXP 'TypeError'",
 		},
-		"字段正则顶层或表达式按整体补齐包含匹配": {
+		"字段正则顶层或表达式按分支补齐包含匹配": {
 			q:   `msg:/foo|bar/`,
-			es:  `{"regexp":{"msg":{"value":".*(foo|bar).*"}}}`,
+			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,
 			sql: "`msg` REGEXP 'foo|bar'",
+		},
+		"字段正则顶层或表达式保留分支锚点语义": {
+			q:   `msg:/^foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":"(foo.*|.*bar.*)"}}}`,
+			sql: "`msg` REGEXP '^foo|bar'",
 		},
 		"字段正则前缀锚点改写为整值前缀匹配": {
 			q:   `msg:/^TypeError/`,
@@ -1309,6 +1326,11 @@ func TestLuceneParser(t *testing.T) {
 			q:   `NOT ((log:""))`,
 			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
 			sql: "`log` IS NULL",
+		},
+		"取反复合分组空字符串不误改写 SQL": {
+			q:   `NOT ((status:ok) OR (log:""))`,
+			es:  `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
+			sql: "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
 		},
 		"edge_field_with_underscore": {
 			q:   `_field:value`,

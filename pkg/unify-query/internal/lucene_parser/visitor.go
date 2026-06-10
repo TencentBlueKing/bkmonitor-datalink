@@ -461,14 +461,15 @@ func (n *ConditionNode) String() string {
 
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
 	var (
-		result   elastic.Query
-		notEqual bool
+		result          elastic.Query
+		notEqual        bool
+		inlineReverseOp bool
 	)
 	defer func() {
 		if result == nil {
 			return
 		}
-		if n.reverseOp || notEqual {
+		if (n.reverseOp && !inlineReverseOp) || notEqual {
 			allMustNot = append(allMustNot, result)
 		} else {
 			allMust = append(allMust, result)
@@ -487,7 +488,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 					if field, ok := existsQueryField(must[0]); ok {
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
 						result = nonEmptyFieldQuery(field)
-						n.reverseOp = false
+						inlineReverseOp = true
 						return allMust, allShould, allMustNot
 					}
 				}
@@ -663,7 +664,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				// field:"" 语义为字段存在；NOT field:"" 兼容为字段存在且不等于空串。
 				if n.reverseOp {
 					result = nonEmptyFieldQuery(field)
-					n.reverseOp = false
+					inlineReverseOp = true
 				} else {
 					result = elastic.NewExistsQuery(field)
 				}
@@ -705,11 +706,55 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 }
 
 func existsSQLField(sql string) (string, bool) {
-	for strings.HasPrefix(sql, "(") && strings.HasSuffix(sql, ")") {
-		sql = strings.TrimPrefix(strings.TrimSuffix(sql, ")"), "(")
+	for isWrappedExpression(sql) {
+		sql = strings.TrimSpace(sql[1 : len(sql)-1])
 	}
 	field, ok := strings.CutSuffix(sql, " IS NOT NULL")
-	return field, ok && field != ""
+	if !ok || field == "" {
+		return "", false
+	}
+	upperField := strings.ToUpper(field)
+	if strings.Contains(upperField, " OR ") || strings.Contains(upperField, " AND ") {
+		return "", false
+	}
+	return field, balancedParentheses(field)
+}
+
+func isWrappedExpression(sql string) bool {
+	sql = strings.TrimSpace(sql)
+	if len(sql) < 2 || sql[0] != '(' || sql[len(sql)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	for i, r := range sql {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(sql)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+func balancedParentheses(sql string) bool {
+	depth := 0
+	for _, r := range sql {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }
 
 func existsQueryField(query elastic.Query) (string, bool) {

@@ -604,6 +604,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
 			sql: "`author` IS NULL",
 		},
+		"field_query_exists_group_not": {
+			q:   `NOT ((_exists_:author))`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
 		"field_query_exists_or": {
 			q:   `_exists_: Dsa OR _exists_: Allocate`,
 			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
@@ -1326,6 +1331,11 @@ func TestLuceneParser(t *testing.T) {
 			q:   `NOT ((log:""))`,
 			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
 			sql: "`log` IS NOT NULL AND `log` != ''",
+		},
+		"取反分组 exists 不改写为空字符串非空语义": {
+			q:   `NOT ((_exists_:log))`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NULL",
 		},
 		"取反复合分组空字符串不误改写 SQL": {
 			q:   `NOT ((status:ok) OR (log:""))`,

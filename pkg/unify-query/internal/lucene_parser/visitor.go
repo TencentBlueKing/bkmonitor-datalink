@@ -318,8 +318,11 @@ func (n *ConditionNode) String() string {
 			sql := n.value.String()
 			if n.reverseOp {
 				// NOT ((field:"")) 的 SQL 字符串语义也要和 DSL 一样兼容为空值判断。
-				if field, ok := existsSQLField(sql); ok {
+				if field, ok := n.emptyStringExistsGroupSQLField(sql); ok {
 					return nonEmptyFieldSQL(field)
+				}
+				if field, ok := n.explicitExistsGroupSQLField(sql); ok {
+					return fmt.Sprintf("%s IS NULL", field)
 				}
 				sql = fmt.Sprintf("(%s)", sql)
 				sql = fmt.Sprintf("NOT %s", sql)
@@ -490,7 +493,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			must, should, mustNot := n.value.DSL()
 			if b, ok := n.value.(*LogicNode); ok {
 				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
-					if field, ok := existsQueryField(must[0]); ok {
+					if field, ok := n.emptyStringExistsGroupQueryField(must[0]); ok {
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
 						result = nonEmptyFieldQuery(field)
 						inlineReverseOp = true
@@ -723,6 +726,101 @@ func existsSQLField(sql string) (string, bool) {
 		return "", false
 	}
 	return field, balancedParentheses(field)
+}
+
+func (n *ConditionNode) emptyStringExistsGroupSQLField(sql string) (string, bool) {
+	// field:"" 与 _exists_:field 都会先渲染成 field IS NOT NULL。
+	// 分组取反时必须回看 AST 来源，只允许 field:"" 走“字段存在且非空”的兼容语义。
+	if !n.isEmptyStringExistsGroupCondition() {
+		return "", false
+	}
+	return existsSQLField(sql)
+}
+
+func (n *ConditionNode) emptyStringExistsGroupQueryField(query elastic.Query) (string, bool) {
+	// DSL 路径同样会把 field:"" 与 _exists_:field 都生成为 exists query。
+	// 这里先确认分组源自 field:""，再从 query 中取经过别名转换后的真实字段名。
+	if !n.isEmptyStringExistsGroupCondition() {
+		return "", false
+	}
+	return existsQueryField(query)
+}
+
+func (n *ConditionNode) explicitExistsGroupSQLField(sql string) (string, bool) {
+	// 显式 _exists_ 分组取反应保持存在性取反，避免被上面的空字符串兼容逻辑误改成非空字符串检查。
+	if !n.isExplicitExistsGroupCondition() {
+		return "", false
+	}
+	return existsSQLField(sql)
+}
+
+func (n *ConditionNode) isEmptyStringExistsGroupCondition() bool {
+	if !n.isGroup {
+		return false
+	}
+	child, ok := n.singleGroupChild()
+	if !ok {
+		return false
+	}
+	return child.isEmptyStringExistsCondition()
+}
+
+func (n *ConditionNode) isEmptyStringExistsCondition() bool {
+	if n == nil || n.reverseOp {
+		return false
+	}
+	if n.isGroup {
+		child, ok := n.singleGroupChild()
+		return ok && child.isEmptyStringExistsCondition()
+	}
+	field, ok := conditionFieldName(n)
+	if !ok || field == "_exists_" {
+		return false
+	}
+	value, ok := n.value.(*StringNode)
+	return ok && strings.Trim(value.Value, `"`) == ""
+}
+
+func (n *ConditionNode) isExplicitExistsGroupCondition() bool {
+	if !n.isGroup {
+		return false
+	}
+	child, ok := n.singleGroupChild()
+	if !ok {
+		return false
+	}
+	return child.isExplicitExistsCondition()
+}
+
+func (n *ConditionNode) isExplicitExistsCondition() bool {
+	if n == nil || n.reverseOp {
+		return false
+	}
+	if n.isGroup {
+		child, ok := n.singleGroupChild()
+		return ok && child.isExplicitExistsCondition()
+	}
+	field, ok := conditionFieldName(n)
+	return ok && field == "_exists_"
+}
+
+func (n *ConditionNode) singleGroupChild() (*ConditionNode, bool) {
+	logic, ok := n.value.(*LogicNode)
+	if !ok || len(logic.Nodes) != 1 {
+		return nil, false
+	}
+	return logic.Nodes[0], logic.Nodes[0] != nil
+}
+
+func conditionFieldName(n *ConditionNode) (string, bool) {
+	if n == nil || n.field == nil {
+		return "", false
+	}
+	field, ok := n.field.(*StringNode)
+	if !ok || field.Value == "" {
+		return "", false
+	}
+	return field.Value, true
 }
 
 func isWrappedExpression(sql string) bool {

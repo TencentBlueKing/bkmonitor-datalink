@@ -495,7 +495,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
 					if field, ok := n.emptyStringExistsGroupQueryField(must[0]); ok {
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
-						result = nonEmptyFieldQuery(field)
+						result = nonEmptyFieldQuery(field, n.Option.FieldsMap)
 						inlineReverseOp = true
 						return allMust, allShould, allMustNot
 					}
@@ -671,7 +671,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			if value == "" && n.field != nil {
 				// field:"" 语义为字段存在；NOT field:"" 兼容为字段存在且不等于空串。
 				if n.reverseOp {
-					result = nonEmptyFieldQuery(field)
+					result = nonEmptyFieldQuery(field, n.Option.FieldsMap)
 					inlineReverseOp = true
 				} else {
 					result = elastic.NewExistsQuery(field)
@@ -700,10 +700,34 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	return allMust, allShould, allMustNot
 }
 
-func nonEmptyFieldQuery(field string) elastic.Query {
-	return elastic.NewBoolQuery().
-		Must(elastic.NewExistsQuery(field)).
-		MustNot(elastic.NewTermQuery(field, ""))
+func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Query {
+	q := elastic.NewBoolQuery().Must(elastic.NewExistsQuery(field))
+	if exactField, ok := exactEmptyValueField(field, fieldsMap); ok {
+		q.MustNot(elastic.NewTermQuery(exactField, ""))
+	}
+	return q
+}
+
+func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, bool) {
+	if fieldsMap == nil {
+		return field, true
+	}
+
+	fieldOption := fieldsMap.Field(field)
+	if !fieldOption.IsAnalyzed {
+		return field, true
+	}
+
+	// text/analyzed 字段会经过 analysis，term "" 不会分析查询词，不能稳定表达“值不等于空串”。
+	// 如果 mapping 暴露了 keyword/raw 子字段，则用子字段做精确空串判断；否则 ES 侧只能保留 exists，
+	// 无法完全等价过滤掉原始值为空字符串的文档。
+	for _, candidate := range []string{field + ".keyword", field + ".raw"} {
+		option := fieldsMap.Field(candidate)
+		if option.Existed() && !option.IsAnalyzed {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {

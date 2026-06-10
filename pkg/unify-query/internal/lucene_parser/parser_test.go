@@ -227,7 +227,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "negated empty string stays required with explicit must",
 			input: `+status:ok NOT log:""`,
 			sql:   "`status` = 'ok' AND `log` IS NOT NULL AND `log` != ''",
-			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}]}}`,
+			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}}}}]}}`,
 		},
 		{
 			name:  "composite negated group does not collapse sql empty check",
@@ -1324,12 +1324,12 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"取反空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT log:""`,
-			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
 			sql: "`log` IS NOT NULL AND `log` != ''",
 		},
 		"取反分组空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT ((log:""))`,
-			es:  `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log":""}}}}`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
 			sql: "`log` IS NOT NULL AND `log` != ''",
 		},
 		"取反分组 exists 不改写为空字符串非空语义": {
@@ -1676,6 +1676,45 @@ func queryToJSON(query elastic.Query) (string, error) {
 		return "", err
 	}
 	return string(jsonBytes), nil
+}
+
+func TestNonEmptyFieldQuery(t *testing.T) {
+	tests := map[string]struct {
+		field     string
+		fieldsMap metadata.FieldsMap
+		want      string
+	}{
+		"keyword 字段直接排除空串": {
+			field: "level",
+			fieldsMap: metadata.FieldsMap{
+				"level": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"level"}},"must_not":{"term":{"level":""}}}}`,
+		},
+		"text 字段有 keyword 子字段时用子字段排除空串": {
+			field: "log",
+			fieldsMap: metadata.FieldsMap{
+				"log":         {FieldType: "text", IsAnalyzed: true},
+				"log.keyword": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log.keyword":""}}}}`,
+		},
+		"text 字段没有精确子字段时只保留 exists": {
+			field: "message",
+			fieldsMap: metadata.FieldsMap{
+				"message": {FieldType: "text", IsAnalyzed: true},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"message"}}}}`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := queryToJSON(nonEmptyFieldQuery(tt.field, tt.fieldsMap))
+			assert.Nil(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestConvertSingleQuotes(t *testing.T) {

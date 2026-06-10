@@ -1316,6 +1316,112 @@ func TestBuildQuery(t *testing.T) {
 	}
 }
 
+func TestFormatFactory_AggIncludeValuesSkipsNegatedQueryStringValues(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"result", "game_ret"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"game_ret": {
+				"aggregations": {
+					"result": {
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "_index"
+								}
+							}
+						},
+						"terms": {
+							"field": "result",
+							"include": ["-3888", "-3999", "-4000"],
+							"missing": " ",
+							"size": 10000
+						}
+					}
+				},
+				"terms": {
+					"field": "game_ret",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+		}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsOptionalPositiveLeafFromNegatedMixedGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(foo:"x" AND NOT status:"error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"status"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"status": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "status",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
 func TestFactory_Agg(t *testing.T) {
 	testCases := map[string]struct {
 		aggInfoList []any

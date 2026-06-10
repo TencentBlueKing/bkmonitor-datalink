@@ -215,74 +215,211 @@ func realValue(node Node) any {
 }
 
 func ConditionNodeWalk(node Node, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	conditionNodeWalk(node, false, fn)
+}
+
+func conditionNodeWalk(node Node, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
 	if node == nil {
 		return
 	}
 
 	switch n := node.(type) {
 	case *ConditionNode:
-		if n.value == nil {
-			return
-		}
-
-		var (
-			field      string
-			op         string
-			isWildcard bool
-		)
-		if n.field != nil {
-			field = n.field.String()
-		}
-		if n.op != nil {
-			op = n.op.String()
-		}
-
-		value := n.value.String()
-
-		switch v := n.value.(type) {
-		case *WildCardNode:
-			op = metadata.ConditionContains
-			isWildcard = true
-			value = normalizeWildcardConditionValue(value)
-		case *RegexpNode:
-			op = metadata.ConditionRegEqual
-		case *StringNode:
-			op = metadata.ConditionEqual
-			// 转义
-			value = strings.ReplaceAll(value, `\`, ``)
-			if n.isQuoted {
-				value = strings.Trim(value, `"`)
-			}
-		case *LogicNode:
-			v.SetField(n.field)
-			ConditionNodeWalk(n.value, fn)
-			return
-		default:
-			return
-		}
-
-		if n.reverseOp {
-			switch op {
-			case metadata.ConditionEqual:
-				op = metadata.ConditionNotEqual
-			case metadata.ConditionNotEqual:
-				op = metadata.ConditionEqual
-			case metadata.ConditionContains:
-				op = metadata.ConditionNotContains
-			case metadata.ConditionNotContains:
-				op = metadata.ConditionContains
-			case metadata.ConditionRegEqual:
-				op = metadata.ConditionNotRegEqual
-			case metadata.ConditionNotRegEqual:
-				op = metadata.ConditionRegEqual
-			}
-		}
-
-		fn(field, op, isWildcard, value)
+		conditionNodeWalkCondition(n, reversed, fn)
 	case *LogicNode:
-		for _, ln := range n.Nodes {
-			ConditionNodeWalk(ln, fn)
+		conditionNodeWalkLogic(n, reversed, fn)
+	}
+}
+
+func conditionNodeWalkCondition(n *ConditionNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	if n.value == nil {
+		return
+	}
+
+	reversed = toggleReverse(reversed, n.reverseOp)
+	if v, ok := n.value.(*LogicNode); ok {
+		v.SetField(n.field)
+		conditionNodeWalkLogic(v, reversed, fn)
+		return
+	}
+
+	label, ok := conditionNodeLabel(n, reversed)
+	if !ok {
+		return
+	}
+	fn(label.field, label.operator, label.isWildcard, label.values...)
+}
+
+func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	reversed = toggleReverse(reversed, n.reverseOp)
+	if reversed {
+		// NOT over a composite expression may turn inner positive leaves into optional
+		// matches, for example NOT(a AND NOT b) => NOT a OR b.
+		// Only a single child can be safely reduced by propagating the NOT.
+		if len(n.Nodes) == 1 {
+			conditionNodeWalk(n.Nodes[0], reversed, fn)
 		}
+		return
+	}
+
+	if logicNodeIsConjunction(n) {
+		for _, ln := range n.Nodes {
+			conditionNodeWalk(ln, reversed, fn)
+		}
+		return
+	}
+
+	if labels, ok := sameFieldDisjunctionLabels(n); ok {
+		for _, label := range labels {
+			fn(label.field, label.operator, label.isWildcard, label.values...)
+		}
+	}
+}
+
+type conditionWalkLabel struct {
+	field      string
+	operator   string
+	isWildcard bool
+	values     []string
+}
+
+func logicNodeIsConjunction(n *LogicNode) bool {
+	for i := 1; i < len(n.Nodes); i++ {
+		if logicNodeOperator(n, i) != logicAnd {
+			return false
+		}
+	}
+	return true
+}
+
+func logicNodeIsDisjunction(n *LogicNode) bool {
+	if len(n.Nodes) <= 1 {
+		return false
+	}
+
+	for i := 1; i < len(n.Nodes); i++ {
+		if logicNodeOperator(n, i) != logicOR {
+			return false
+		}
+	}
+	return true
+}
+
+func logicNodeOperator(n *LogicNode, index int) string {
+	if index <= 0 || index-1 >= len(n.logics) {
+		return ""
+	}
+	return n.logics[index-1]
+}
+
+func sameFieldDisjunctionLabels(n *LogicNode) ([]conditionWalkLabel, bool) {
+	if !logicNodeIsDisjunction(n) {
+		return nil, false
+	}
+
+	labels := make([]conditionWalkLabel, 0, len(n.Nodes))
+	var (
+		field    string
+		hasField bool
+	)
+	for _, node := range n.Nodes {
+		label, ok := positiveLeafLabel(node)
+		if !ok {
+			return nil, false
+		}
+		if !hasField {
+			field = label.field
+			hasField = true
+		} else if field != label.field {
+			return nil, false
+		}
+		labels = append(labels, label)
+	}
+
+	return labels, true
+}
+
+func positiveLeafLabel(n *ConditionNode) (conditionWalkLabel, bool) {
+	if n.value == nil || n.reverseOp {
+		return conditionWalkLabel{}, false
+	}
+
+	if v, ok := n.value.(*LogicNode); ok {
+		v.SetField(n.field)
+		if len(v.Nodes) != 1 || v.reverseOp {
+			return conditionWalkLabel{}, false
+		}
+		return positiveLeafLabel(v.Nodes[0])
+	}
+
+	return conditionNodeLabel(n, false)
+}
+
+func conditionNodeLabel(n *ConditionNode, reversed bool) (conditionWalkLabel, bool) {
+	var (
+		field      string
+		op         string
+		isWildcard bool
+	)
+	if n.field != nil {
+		field = n.field.String()
+	}
+	if n.op != nil {
+		op = n.op.String()
+	}
+
+	value := n.value.String()
+
+	switch n.value.(type) {
+	case *WildCardNode:
+		op = metadata.ConditionContains
+		isWildcard = true
+		value = normalizeWildcardConditionValue(value)
+	case *RegexpNode:
+		op = metadata.ConditionRegEqual
+	case *StringNode:
+		op = metadata.ConditionEqual
+		// 转义
+		value = strings.ReplaceAll(value, `\`, ``)
+		if n.isQuoted {
+			value = strings.Trim(value, `"`)
+		}
+	default:
+		return conditionWalkLabel{}, false
+	}
+
+	if reversed {
+		op = reverseConditionOperator(op)
+	}
+
+	return conditionWalkLabel{
+		field:      field,
+		operator:   op,
+		isWildcard: isWildcard,
+		values:     []string{value},
+	}, true
+}
+
+func toggleReverse(reversed, current bool) bool {
+	return reversed != current
+}
+
+func reverseConditionOperator(op string) string {
+	switch op {
+	case metadata.ConditionEqual:
+		return metadata.ConditionNotEqual
+	case metadata.ConditionNotEqual:
+		return metadata.ConditionEqual
+	case metadata.ConditionContains:
+		return metadata.ConditionNotContains
+	case metadata.ConditionNotContains:
+		return metadata.ConditionContains
+	case metadata.ConditionRegEqual:
+		return metadata.ConditionNotRegEqual
+	case metadata.ConditionNotRegEqual:
+		return metadata.ConditionRegEqual
+	default:
+		return op
 	}
 }
 

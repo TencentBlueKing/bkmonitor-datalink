@@ -182,6 +182,64 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "query string nested not group is not highlighted",
+			query: &metadata.Query{
+				QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,
+			},
+			expected: map[string][]LabelMapValue{
+				"result": {
+					{Value: "-3888", Operator: metadata.ConditionEqual},
+					{Value: "-3999", Operator: metadata.ConditionEqual},
+					{Value: "-4000", Operator: metadata.ConditionEqual},
+				},
+			},
+		},
+		{
+			name: "query string nested not or group is not highlighted",
+			query: &metadata.Query{
+				QueryString: `log:"good" AND NOT(log:"bad" OR log:"worse")`,
+			},
+			expected: map[string][]LabelMapValue{
+				"log": {
+					{Value: "good", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"log": "good bad worse",
+			},
+			highLightData: map[string]any{
+				"log": []string{`<mark>good</mark> bad worse`},
+			},
+		},
+		{
+			name: "query string double not group is highlighted",
+			query: &metadata.Query{
+				QueryString: `NOT(NOT(status:"error"))`,
+			},
+			expected: map[string][]LabelMapValue{
+				"status": {
+					{Value: "error", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"status": "error",
+			},
+			highLightData: map[string]any{
+				"status": []string{`<mark>error</mark>`},
+			},
+		},
+		{
+			name: "query string positive leaf under negated mixed group is not highlighted",
+			query: &metadata.Query{
+				QueryString: `NOT(foo:"x" AND NOT status:"error")`,
+			},
+			expected: map[string][]LabelMapValue{},
+			data: map[string]any{
+				"status": "error",
+			},
+			highLightData: map[string]any{},
+		},
+		{
 			name: "query string wildcard preserves pattern",
 			query: &metadata.Query{
 				QueryString: "message:foo*bar",

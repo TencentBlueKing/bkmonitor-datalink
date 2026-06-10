@@ -182,6 +182,35 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 		},
 		{
+			name: "query string implicit or same field group is highlighted",
+			query: &metadata.Query{
+				QueryString: `level:("warn" "error")`,
+			},
+			expected: map[string][]LabelMapValue{
+				"level": {
+					{Value: "warn", Operator: metadata.ConditionEqual},
+					{Value: "error", Operator: metadata.ConditionEqual},
+				},
+			},
+			data: map[string]any{
+				"level": "warn",
+			},
+			highLightData: map[string]any{
+				"level": []string{`<mark>warn</mark>`},
+			},
+		},
+		{
+			name: "query string implicit modifier keeps optional positive leaf unhighlighted",
+			query: &metadata.Query{
+				QueryString: `log:"good" NOT log:"bad"`,
+			},
+			expected: map[string][]LabelMapValue{},
+			data: map[string]any{
+				"log": "good bad",
+			},
+			highLightData: map[string]any{},
+		},
+		{
 			name: "query string nested not group is not highlighted",
 			query: &metadata.Query{
 				QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,

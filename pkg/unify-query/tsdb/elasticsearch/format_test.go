@@ -1374,6 +1374,55 @@ func TestFormatFactory_AggIncludeValuesSkipsNegatedQueryStringValues(t *testing.
 		}`, string(bodyJSON))
 }
 
+func TestFormatFactory_AggIncludeValuesKeepsImplicitOrSameFieldGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `level:("warn" "error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"level": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "level",
+					"include": ["warn", "error"],
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
 func TestFormatFactory_AggIncludeValuesSkipsOptionalPositiveLeafFromNegatedMixedGroup(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	query := &metadata.Query{

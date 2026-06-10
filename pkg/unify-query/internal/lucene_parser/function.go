@@ -297,12 +297,27 @@ func logicNodeIsDisjunction(n *LogicNode) bool {
 		return false
 	}
 
-	for i := 1; i < len(n.Nodes); i++ {
-		if logicNodeOperator(n, i) != logicOR {
+	for i, node := range n.Nodes {
+		if node.mustOp || node.reverseOp {
+			return false
+		}
+		if i == 0 {
+			continue
+		}
+		if !logicNodeOperatorIsDisjunction(n, i) {
 			return false
 		}
 	}
 	return true
+}
+
+func logicNodeOperatorIsDisjunction(n *LogicNode, index int) bool {
+	switch logicNodeOperator(n, index) {
+	case logicOR, "":
+		return true
+	default:
+		return false
+	}
 }
 
 func logicNodeOperator(n *LogicNode, index int) string {

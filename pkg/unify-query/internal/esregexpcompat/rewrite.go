@@ -16,9 +16,13 @@ const (
 	negativeLookaheadSuffix = `).*`
 )
 
-// RewriteResult 表示 ES regexp 兼容改写后的表达式，以及是否需要改成反向正则条件。
+// RewriteResult 表示 ES regexp 兼容改写结果。
 type RewriteResult struct {
-	Pattern  string
+	// Pattern 是可以下发给 ES regexp query 的表达式。
+	Pattern string
+	// Negative 表示 Pattern 需要作为反向 regexp 条件使用。
+	// 例如 ^(?!.*foo).* 会被改写成 Pattern=.*foo.* 且 Negative=true；
+	// 调用方应表达为“字段存在且不匹配 Pattern”，以保留原正则“字段值不包含 foo”的语义。
 	Negative bool
 }
 
@@ -42,6 +46,8 @@ func Rewrite(pattern string) RewriteResult {
 	return RewriteResult{Pattern: rewriteSinglePattern(pattern)}
 }
 
+// rewriteSinglePattern 改写不含顶层 | 的单个正则分支。
+// 未显式锚定的分支会补齐 .* 以模拟历史包含匹配；^/$ 锚点会被转换成 ES 整值匹配下的前缀/后缀约束。
 func rewriteSinglePattern(pattern string) string {
 	if isExplicitContains(pattern) {
 		return pattern
@@ -62,8 +68,9 @@ func rewriteSinglePattern(pattern string) string {
 	}
 }
 
+// splitTopLevelAlternation 按最外层未转义的 | 拆分正则。
+// 括号、字符类和转义后的 | 不拆分，避免破坏原有正则结构。
 func splitTopLevelAlternation(pattern string) ([]string, bool) {
-	// 只识别最外层未转义的 |；括号、字符类或转义后的 | 都保持原有正则语义。
 	var (
 		alternatives []string
 		start        int
@@ -112,6 +119,9 @@ func splitTopLevelAlternation(pattern string) ([]string, bool) {
 	return alternatives, true
 }
 
+// extractNegativeLookahead 提取历史策略中出现的基础负向前瞻形式。
+// 返回的 inner 是被排除的内容，例如 ^(?!.*foo).* 返回 foo；
+// 更复杂的负向前瞻不在当前兼容范围内，会返回 ok=false 并走普通正则改写。
 func extractNegativeLookahead(pattern string) (string, bool) {
 	if !strings.HasPrefix(pattern, negativeLookaheadPrefix) {
 		return "", false
@@ -134,10 +144,12 @@ func extractNegativeLookahead(pattern string) (string, bool) {
 	return body, true
 }
 
+// hasUnescapedPrefixAnchor 判断正则是否以未转义的 ^ 锚定开头。
 func hasUnescapedPrefixAnchor(pattern string) bool {
 	return strings.HasPrefix(pattern, "^")
 }
 
+// hasUnescapedSuffixAnchor 判断正则是否以未转义的 $ 锚定结尾。
 func hasUnescapedSuffixAnchor(pattern string) bool {
 	if !strings.HasSuffix(pattern, "$") {
 		return false
@@ -151,10 +163,12 @@ func hasUnescapedSuffixAnchor(pattern string) bool {
 	return backslashes%2 == 0
 }
 
+// isExplicitContains 判断表达式是否已经显式写成 .*foo.* 这类包含匹配。
 func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
 }
 
+// addContainsPrefix 在缺少前置 .* 时补齐包含匹配前缀。
 func addContainsPrefix(pattern string) string {
 	if hasUnescapedPrefixLiteral(pattern, ".*") {
 		return pattern
@@ -162,6 +176,7 @@ func addContainsPrefix(pattern string) string {
 	return ".*" + pattern
 }
 
+// addContainsSuffix 在缺少后置 .* 时补齐包含匹配后缀。
 func addContainsSuffix(pattern string) string {
 	if hasUnescapedSuffixLiteral(pattern, ".*") {
 		return pattern
@@ -169,10 +184,12 @@ func addContainsSuffix(pattern string) string {
 	return pattern + ".*"
 }
 
+// hasUnescapedPrefixLiteral 判断 pattern 是否以指定 literal 开头。
 func hasUnescapedPrefixLiteral(pattern string, literal string) bool {
 	return strings.HasPrefix(pattern, literal)
 }
 
+// hasUnescapedSuffixLiteral 判断 pattern 是否以未转义的指定 literal 结尾。
 func hasUnescapedSuffixLiteral(pattern string, literal string) bool {
 	if !strings.HasSuffix(pattern, literal) {
 		return false
@@ -190,10 +207,12 @@ func hasUnescapedSuffixLiteral(pattern string, literal string) bool {
 	return backslashes%2 == 0
 }
 
+// trimPrefixAnchor 去掉开头的 ^ 锚点。
 func trimPrefixAnchor(pattern string) string {
 	return strings.TrimPrefix(pattern, "^")
 }
 
+// trimSuffixAnchor 去掉未转义的结尾 $ 锚点。
 func trimSuffixAnchor(pattern string) string {
 	if hasUnescapedSuffixAnchor(pattern) {
 		return pattern[:len(pattern)-1]

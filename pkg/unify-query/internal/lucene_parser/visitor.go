@@ -464,9 +464,9 @@ func (n *ConditionNode) String() string {
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
 }
 
-// nonEmptyFieldSQL 渲染“字段存在且不为空字符串”的 SQL 条件，用于 NOT field:"" 兼容语义。
+// nonEmptyFieldSQL 渲染 SQL/Doris 路径的“字段存在且不为空字符串”条件，用于 NOT field:"" 兼容语义。
 func nonEmptyFieldSQL(field string) string {
-	// NOT field:"" 在 ES DSL 中表示字段存在且不等于空串，SQL/Doris 渲染需保持同义。
+	// Doris SQL 路径直接使用原字段比较空串：field IS NOT NULL AND field != ''。
 	return fmt.Sprintf("%s IS NOT NULL AND %s != ''", field, field)
 }
 
@@ -498,6 +498,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
 					if field, ok := n.emptyStringExistsGroupQueryField(must[0]); ok {
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
+						// 重建后的非空 bool query 仍要保持原字段的 nested scope；普通字段会原样返回。
 						result = wrapNestedFieldQuery(field, n.Option.FieldsMap, nonEmptyFieldQuery(field, n.Option.FieldsMap))
 						inlineReverseOp = true
 						return allMust, allShould, allMustNot
@@ -706,7 +707,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 // nonEmptyFieldQuery 构造“字段存在且不为空字符串”的 ES 查询；text 字段优先用 keyword/raw 子字段判断空串。
 func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Query {
 	q := elastic.NewBoolQuery().Must(elastic.NewExistsQuery(field))
-	if exactField, ok := exactEmptyValueField(field, fieldsMap); ok {
+	if exactField, ok := exactSubfieldForEmptyValue(field, fieldsMap); ok {
 		q.MustNot(elastic.NewTermQuery(exactField, ""))
 	}
 	return q
@@ -732,8 +733,8 @@ func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elas
 	return elastic.NewNestedQuery(nestedPath, query)
 }
 
-// exactEmptyValueField 返回可用于精确判断空字符串的字段；analyzed text 字段需改用 keyword/raw 子字段。
-func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, bool) {
+// exactSubfieldForEmptyValue 返回 ES DSL 路径可用于精确判断空字符串的字段或精确值子字段。
+func exactSubfieldForEmptyValue(field string, fieldsMap metadata.FieldsMap) (string, bool) {
 	if fieldsMap == nil {
 		return field, true
 	}
@@ -743,11 +744,11 @@ func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, b
 		return field, true
 	}
 
-	// text/analyzed 字段会经过 analysis，term "" 不会分析查询词，不能稳定表达“值不等于空串”。
-	// 如果 mapping 暴露了 keyword/raw 子字段，则用子字段做精确空串判断；否则 ES 侧只能保留 exists，
-	// 无法完全等价过滤掉原始值为空字符串的文档。
+	// ES text/analyzed 字段会经过 analysis，term "" 不会分析查询词，不能稳定表达“值不等于空串”。
+	// ES DSL 路径优先选择 mapping 中的 keyword/raw multi-fields 子字段做精确空串判断；没有精确子字段时只保留 exists。
 	for _, candidate := range []string{field + ".keyword", field + ".raw"} {
-		// field.keyword/field.raw 是 ES multi-field 中常见的精确值子字段命名。
+		// field.keyword/field.raw 是 ES multi-fields 中常见的精确值子字段命名。
+		// 参考：https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/multi-fields
 		// 这里按 FieldsMap 中已知字段选择可用于 term 查询的非 analyzed 子字段。
 		option := fieldsMap.Field(candidate)
 		if option.Existed() && !option.IsAnalyzed {

@@ -269,6 +269,7 @@ type ConditionNode struct {
 	value Node
 }
 
+// likeValue 将 Lucene 通配符转换为 SQL LIKE 通配符，并保留转义后的字面量。
 func (n *ConditionNode) likeValue(s string) string {
 	if s == "" {
 		return ""
@@ -302,6 +303,7 @@ func (n *ConditionNode) likeValue(s string) string {
 	return string(ns)
 }
 
+// SetField 把分组外层字段下推给内部条件，例如 log:(a OR b)。
 func (n *ConditionNode) SetField(field Node) {
 	if field != nil {
 		n.field = field
@@ -462,6 +464,7 @@ func (n *ConditionNode) String() string {
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
 }
 
+// nonEmptyFieldSQL 渲染“字段存在且不为空字符串”的 SQL 条件，用于 NOT field:"" 兼容语义。
 func nonEmptyFieldSQL(field string) string {
 	// NOT field:"" 在 ES DSL 中表示字段存在且不等于空串，SQL/Doris 渲染需保持同义。
 	return fmt.Sprintf("%s IS NOT NULL AND %s != ''", field, field)
@@ -700,6 +703,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	return allMust, allShould, allMustNot
 }
 
+// nonEmptyFieldQuery 构造“字段存在且不为空字符串”的 ES 查询；text 字段优先用 keyword/raw 子字段判断空串。
 func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Query {
 	q := elastic.NewBoolQuery().Must(elastic.NewExistsQuery(field))
 	if exactField, ok := exactEmptyValueField(field, fieldsMap); ok {
@@ -708,6 +712,7 @@ func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Quer
 	return q
 }
 
+// wrapNestedFieldQuery 在字段属于 nested mapping 时，用正确 path 包装已有字段查询。
 func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elastic.Query) elastic.Query {
 	if fieldsMap == nil {
 		return query
@@ -725,6 +730,7 @@ func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elas
 	return elastic.NewNestedQuery(nestedPath, query)
 }
 
+// exactEmptyValueField 返回可用于精确判断空字符串的字段；analyzed text 字段需改用 keyword/raw 子字段。
 func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, bool) {
 	if fieldsMap == nil {
 		return field, true
@@ -747,6 +753,7 @@ func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, b
 	return "", false
 }
 
+// negativeLookaheadQuery 用 exists + must_not regexp 表达固定“不包含前缀形式”的兼容语义。
 func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 	// ES regexp 不支持不包含前缀形式，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
 	return elastic.NewBoolQuery().
@@ -754,6 +761,7 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 		MustNot(regexp)
 }
 
+// existsSQLField 从简单的 SQL exists 表达式中取出字段名，并拒绝包含 AND/OR 的复合表达式。
 func existsSQLField(sql string) (string, bool) {
 	for isWrappedExpression(sql) {
 		sql = strings.TrimSpace(sql[1 : len(sql)-1])
@@ -769,6 +777,7 @@ func existsSQLField(sql string) (string, bool) {
 	return field, balancedParentheses(field)
 }
 
+// emptyStringExistsGroupSQLField 判断当前分组是否源自 field:""，并从 SQL 表达式中取真实字段名。
 func (n *ConditionNode) emptyStringExistsGroupSQLField(sql string) (string, bool) {
 	// field:"" 与 _exists_:field 都会先渲染成 field IS NOT NULL。
 	// 分组取反时必须回看 AST 来源，只允许 field:"" 走“字段存在且非空”的兼容语义。
@@ -778,6 +787,7 @@ func (n *ConditionNode) emptyStringExistsGroupSQLField(sql string) (string, bool
 	return existsSQLField(sql)
 }
 
+// emptyStringExistsGroupQueryField 判断当前分组是否源自 field:""，并从已生成 DSL 中取真实字段名。
 func (n *ConditionNode) emptyStringExistsGroupQueryField(query elastic.Query) (string, bool) {
 	// DSL 路径同样会把 field:"" 与 _exists_:field 都生成为 exists query。
 	// 这里先确认分组源自 field:""，再从 query 中取经过别名转换后的真实字段名。
@@ -787,6 +797,7 @@ func (n *ConditionNode) emptyStringExistsGroupQueryField(query elastic.Query) (s
 	return existsQueryField(query)
 }
 
+// explicitExistsGroupSQLField 判断当前分组是否源自 _exists_:field，并从 SQL 表达式中取真实字段名。
 func (n *ConditionNode) explicitExistsGroupSQLField(sql string) (string, bool) {
 	// 显式 _exists_ 分组取反应保持存在性取反，避免被上面的空字符串兼容逻辑误改成非空字符串检查。
 	if !n.isExplicitExistsGroupCondition() {
@@ -795,6 +806,7 @@ func (n *ConditionNode) explicitExistsGroupSQLField(sql string) (string, bool) {
 	return existsSQLField(sql)
 }
 
+// isEmptyStringExistsGroupCondition 判断分组是否只包含一个 field:"" 条件。
 func (n *ConditionNode) isEmptyStringExistsGroupCondition() bool {
 	if !n.isGroup {
 		return false
@@ -806,6 +818,7 @@ func (n *ConditionNode) isEmptyStringExistsGroupCondition() bool {
 	return child.isEmptyStringExistsCondition()
 }
 
+// isEmptyStringExistsCondition 判断节点是否为正向 field:"" 条件；该条件在当前语义中表示字段存在。
 func (n *ConditionNode) isEmptyStringExistsCondition() bool {
 	if n == nil || n.reverseOp {
 		return false
@@ -822,6 +835,7 @@ func (n *ConditionNode) isEmptyStringExistsCondition() bool {
 	return ok && strings.Trim(value.Value, `"`) == ""
 }
 
+// isExplicitExistsGroupCondition 判断分组是否只包含一个显式 _exists_:field 条件。
 func (n *ConditionNode) isExplicitExistsGroupCondition() bool {
 	if !n.isGroup {
 		return false
@@ -833,6 +847,7 @@ func (n *ConditionNode) isExplicitExistsGroupCondition() bool {
 	return child.isExplicitExistsCondition()
 }
 
+// isExplicitExistsCondition 判断节点是否为正向 _exists_:field 条件。
 func (n *ConditionNode) isExplicitExistsCondition() bool {
 	if n == nil || n.reverseOp {
 		return false
@@ -845,6 +860,7 @@ func (n *ConditionNode) isExplicitExistsCondition() bool {
 	return ok && field == "_exists_"
 }
 
+// singleGroupChild 返回单条件分组的唯一子节点；多条件分组不能套用 field:"" 或 _exists_ 的特殊取反语义。
 func (n *ConditionNode) singleGroupChild() (*ConditionNode, bool) {
 	logic, ok := n.value.(*LogicNode)
 	if !ok || len(logic.Nodes) != 1 {
@@ -853,6 +869,7 @@ func (n *ConditionNode) singleGroupChild() (*ConditionNode, bool) {
 	return logic.Nodes[0], logic.Nodes[0] != nil
 }
 
+// conditionFieldName 读取条件节点的原始字段名；这里只接受普通字符串字段。
 func conditionFieldName(n *ConditionNode) (string, bool) {
 	if n == nil || n.field == nil {
 		return "", false
@@ -864,6 +881,7 @@ func conditionFieldName(n *ConditionNode) (string, bool) {
 	return field.Value, true
 }
 
+// isWrappedExpression 判断 SQL 表达式是否被一对覆盖全表达式的括号包裹。
 func isWrappedExpression(sql string) bool {
 	sql = strings.TrimSpace(sql)
 	if len(sql) < 2 || sql[0] != '(' || sql[len(sql)-1] != ')' {
@@ -885,6 +903,7 @@ func isWrappedExpression(sql string) bool {
 	return depth == 0
 }
 
+// balancedParentheses 判断 SQL 片段括号是否平衡，用于避免从异常表达式中误提字段名。
 func balancedParentheses(sql string) bool {
 	depth := 0
 	for _, r := range sql {
@@ -901,6 +920,7 @@ func balancedParentheses(sql string) bool {
 	return depth == 0
 }
 
+// existsQueryField 从 exists 或 nested exists DSL 中反查字段名。
 func existsQueryField(query elastic.Query) (string, bool) {
 	// 分组反向场景只能拿到已生成的 query，这里从 exists/nested exists DSL 中反查字段名。
 	source, err := query.Source()
@@ -918,6 +938,7 @@ func existsQueryField(query elastic.Query) (string, bool) {
 	return existsQueryFieldFromSource(body)
 }
 
+// existsQueryFieldFromSource 从 olivere/elastic 生成的 exists query source 中读取 field。
 func existsQueryFieldFromSource(source any) (string, bool) {
 	body, ok := source.(map[string]any)
 	if !ok {

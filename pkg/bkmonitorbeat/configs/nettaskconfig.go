@@ -115,7 +115,7 @@ func (t *NetTaskParam) GetPeriod() time.Duration {
 
 // GetBizID :
 func (t *NetTaskParam) GetBizID() int32 {
-	return t.BizID
+	return t.BaseTaskParam.GetBizID()
 }
 
 // GetTaskID :

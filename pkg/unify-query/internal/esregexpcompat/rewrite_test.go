@@ -87,6 +87,11 @@ func TestRewrite(t *testing.T) {
 			wantPattern:  ".*idip.*",
 			wantNegative: true,
 		},
+		"不包含语义固定前缀内的顶层或表达式按分支补齐包含匹配": {
+			pattern:      "^(?!.*foo|.*bar).*",
+			wantPattern:  "(.*foo.*|.*bar.*)",
+			wantNegative: true,
+		},
 		"转义前缀锚点按普通包含处理": {
 			pattern:     `\^foo`,
 			wantPattern: `.*\^foo.*`,

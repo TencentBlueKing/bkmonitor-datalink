@@ -33,20 +33,25 @@ type RewriteResult struct {
 func Rewrite(pattern string) RewriteResult {
 	if inner, ok := extractNegativeLookahead(pattern); ok {
 		return RewriteResult{
-			Pattern:  ".*" + inner + ".*",
+			Pattern:  rewritePositivePattern(inner),
 			Negative: true,
 		}
 	}
 
+	return RewriteResult{Pattern: rewritePositivePattern(pattern)}
+}
+
+// rewritePositivePattern 将正向 regexp 改写为 ES 整值匹配下的等价 pattern。
+func rewritePositivePattern(pattern string) string {
 	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
 		rewritten := make([]string, 0, len(alternatives))
 		for _, alternative := range alternatives {
 			rewritten = append(rewritten, rewriteSinglePattern(alternative))
 		}
-		return RewriteResult{Pattern: "(" + strings.Join(rewritten, "|") + ")"}
+		return "(" + strings.Join(rewritten, "|") + ")"
 	}
 
-	return RewriteResult{Pattern: rewriteSinglePattern(pattern)}
+	return rewriteSinglePattern(pattern)
 }
 
 // rewriteSinglePattern 改写不含顶层 | 的单个正则分支。

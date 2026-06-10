@@ -188,6 +188,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"nested":{"path":"event","query":{"term":{"event.name":"test"}}}}`,
 		},
 		{
+			name:  "grouped negated nested empty string keeps nested non-empty semantics",
+			input: `NOT ((event.name:""))`,
+			sql:   "CAST(event['name'] AS STRING) IS NOT NULL AND CAST(event['name'] AS STRING) != ''",
+			dsl:   `{"nested":{"path":"event","query":{"bool":{"must":{"exists":{"field":"event.name"}},"must_not":{"term":{"event.name":""}}}}}}`,
+		},
+		{
 			name:  "test-1",
 			input: `__ext.io_kubernetes_pod_namespace: "gfp-online-livepy-b" AND is_data_valid: "1" AND born_dist_to_recipient: <400 AND recipient_exists: "1" AND bot_dead_reason: (*killed_by_unknown* OR *bot_without_injury*) AND approach_succ: "0" AND approach_curr_recipient_frame: >200 AND in_fight_aggressive_ratio: "0"`,
 			sql:   "CAST(__ext['io_kubernetes_pod_namespace'] AS STRING) = 'gfp-online-livepy-b' AND `is_data_valid` = '1' AND `born_dist_to_recipient` < '400' AND `recipient_exists` = '1' AND (`bot_dead_reason` LIKE '%killed_by_unknown%' OR `bot_dead_reason` LIKE '%bot_without_injury%') AND `approach_succ` = '0' AND `approach_curr_recipient_frame` > '200' AND `in_fight_aggressive_ratio` = '0'",

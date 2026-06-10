@@ -495,7 +495,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
 					if field, ok := n.emptyStringExistsGroupQueryField(must[0]); ok {
 						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
-						result = nonEmptyFieldQuery(field, n.Option.FieldsMap)
+						result = wrapNestedFieldQuery(field, n.Option.FieldsMap, nonEmptyFieldQuery(field, n.Option.FieldsMap))
 						inlineReverseOp = true
 						return allMust, allShould, allMustNot
 					}
@@ -694,7 +694,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 	originField := n.Option.FieldsMap.Field(strings.Split(field, ".")[0])
 	if strings.ToUpper(originField.FieldType) == "NESTED" {
-		result = elastic.NewNestedQuery(fieldOption.OriginField, result)
+		result = wrapNestedFieldQuery(field, n.Option.FieldsMap, result)
 	}
 
 	return allMust, allShould, allMustNot
@@ -706,6 +706,23 @@ func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Quer
 		q.MustNot(elastic.NewTermQuery(exactField, ""))
 	}
 	return q
+}
+
+func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elastic.Query) elastic.Query {
+	if fieldsMap == nil {
+		return query
+	}
+	originField := fieldsMap.Field(strings.Split(field, ".")[0])
+	if strings.ToUpper(originField.FieldType) != "NESTED" {
+		return query
+	}
+
+	fieldOption := fieldsMap.Field(field)
+	nestedPath := fieldOption.OriginField
+	if nestedPath == "" {
+		nestedPath = strings.Split(field, ".")[0]
+	}
+	return elastic.NewNestedQuery(nestedPath, query)
 }
 
 func exactEmptyValueField(field string, fieldsMap metadata.FieldsMap) (string, bool) {
@@ -885,12 +902,23 @@ func balancedParentheses(sql string) bool {
 }
 
 func existsQueryField(query elastic.Query) (string, bool) {
-	// 分组反向场景只能拿到已生成的 query，这里从 exists DSL 中反查字段名。
+	// 分组反向场景只能拿到已生成的 query，这里从 exists/nested exists DSL 中反查字段名。
 	source, err := query.Source()
 	if err != nil {
 		return "", false
 	}
 
+	body, ok := source.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if nested, ok := body["nested"].(map[string]any); ok {
+		return existsQueryFieldFromSource(nested["query"])
+	}
+	return existsQueryFieldFromSource(body)
+}
+
+func existsQueryFieldFromSource(source any) (string, bool) {
 	body, ok := source.(map[string]any)
 	if !ok {
 		return "", false

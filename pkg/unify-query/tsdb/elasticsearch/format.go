@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
@@ -954,6 +955,13 @@ func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Que
 	return q
 }
 
+func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
+	// ES regexp 不支持不包含前缀形式，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	return elastic.NewBoolQuery().
+		Must(elastic.NewExistsQuery(field)).
+		MustNot(regexp)
+}
+
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
 	bootQueries := make([]elastic.Query, 0)
@@ -1079,7 +1087,15 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										query = elastic.NewWildcardQuery(key, value)
 									}
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
-									query = elastic.NewRegexpQuery(key, value)
+									rewrite := esregexpcompat.Rewrite(value)
+									value = rewrite.Pattern
+									regexpQuery := elastic.NewRegexpQuery(key, value)
+									if rewrite.Negative {
+										// 每个 value 独立承载不包含前缀语义，避免污染同一条件下的其他正则值。
+										query = negativeLookaheadQuery(key, regexpQuery)
+									} else {
+										query = regexpQuery
+									}
 								case structured.ConditionGt:
 									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
 								case structured.ConditionGte:
@@ -1115,7 +1131,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							innerQuery := f.getQuery(Should, queries...)
 							nestedQuery := elastic.NewNestedQuery(nestedPath, innerQuery)
 							q = f.getQuery(MustNot, nestedQuery)
-							isNestedBefore = true // Mark as already nested to avoid double wrapping
+							isNestedBefore = true // 已经包装 nested，避免后续重复包装。
 						} else {
 							// 非嵌套字段直接使用MustNot
 							q = f.getQuery(MustNot, queries...)

@@ -725,6 +725,8 @@ func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elas
 	fieldOption := fieldsMap.Field(field)
 	nestedPath := fieldOption.OriginField
 	if nestedPath == "" {
+		// 部分 mapping 只有顶层 nested 字段声明，没有在叶子字段上回填 OriginField。
+		// 这类字段仍按 dotted path 的首段作为 nested path，例如 nested.key -> nested。
 		nestedPath = strings.Split(field, ".")[0]
 	}
 	return elastic.NewNestedQuery(nestedPath, query)

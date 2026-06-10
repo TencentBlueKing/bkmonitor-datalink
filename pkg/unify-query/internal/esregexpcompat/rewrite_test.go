@@ -77,12 +77,12 @@ func TestRewrite(t *testing.T) {
 			pattern:     "^foo.*",
 			wantPattern: "foo.*",
 		},
-		"负向前瞻改写为反向正则": {
+		"不包含语义固定前缀形式改写为反向正则": {
 			pattern:      "^(?!.*idip).*",
 			wantPattern:  ".*idip.*",
 			wantNegative: true,
 		},
-		"带结尾锚点的负向前瞻改写为反向正则": {
+		"不包含语义固定前缀和结尾锚点形式改写为反向正则": {
 			pattern:      "^(?!.*idip).*$",
 			wantPattern:  ".*idip.*",
 			wantNegative: true,

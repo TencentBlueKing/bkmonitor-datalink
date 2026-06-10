@@ -12,6 +12,9 @@ package esregexpcompat
 import "strings"
 
 const (
+	// negativeLookaheadPrefix/negativeLookaheadSuffix 只识别用于表达“字段值不包含某段内容”的
+	// 固定前缀/后缀形式，例如 ^(?!.*foo).* 或 ^(?!.*foo).*$。
+	// ES regexp 不支持 lookahead，命中该形态后会改写为字段存在且不匹配 .*foo.*。
 	negativeLookaheadPrefix = `^(?!.*`
 	negativeLookaheadSuffix = `).*`
 )
@@ -119,15 +122,15 @@ func splitTopLevelAlternation(pattern string) ([]string, bool) {
 	return alternatives, true
 }
 
-// extractNegativeLookahead 提取历史策略中出现的基础负向前瞻形式。
-// 返回的 inner 是被排除的内容，例如 ^(?!.*foo).* 返回 foo；
-// 更复杂的负向前瞻不在当前兼容范围内，会返回 ok=false 并走普通正则改写。
+// extractNegativeLookahead 提取“字段值不包含某段内容”的固定前缀/后缀形式。
+// 例如 ^(?!.*foo).* 返回 foo；其他不满足固定形态的表达式返回 ok=false，
+// 继续走普通正则改写，避免把更复杂的正则误改成反向匹配。
 func extractNegativeLookahead(pattern string) (string, bool) {
 	if !strings.HasPrefix(pattern, negativeLookaheadPrefix) {
 		return "", false
 	}
 
-	// 当前只兼容历史策略中出现的基础形式：^(?!.*foo).* 或 ^(?!.*foo).*$。
+	// 只处理 ^(?!.*foo).* 或 ^(?!.*foo).*$ 这两种固定形态。
 	body := strings.TrimPrefix(pattern, negativeLookaheadPrefix)
 	switch {
 	case strings.HasSuffix(body, negativeLookaheadSuffix+"$"):

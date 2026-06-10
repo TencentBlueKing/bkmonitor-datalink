@@ -10,9 +10,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -2435,6 +2438,89 @@ func TestQueryRawWithInstance(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("query raw does not mutate query reference size and from", func(t *testing.T) {
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    "multi_es",
+				},
+			},
+			From:  2,
+			Limit: 2,
+			Step:  start,
+			End:   end,
+			OrderBy: structured.OrderBy{
+				"-time",
+				"__result_table",
+			},
+		}
+
+		_, _, _, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		queryRef := metadata.GetQueryReference(ctx)
+		assert.Equal(t, 2, queryRef.Count())
+		queryRef.Range("", func(qry *metadata.Query) {
+			assert.Equal(t, 2, qry.From)
+			assert.Equal(t, 2, qry.Size)
+		})
+	})
+
+	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
+		mock.BkSQL.Set(map[string]any{
+			"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":""},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""}]},"errors":null}`,
+		})
+
+		from := 0
+		originalOption := &metadata.ResultTableOption{
+			From:        &from,
+			SearchAfter: []any{"keep"},
+			FieldType: map[string]string{
+				"keep": "keyword",
+			},
+			ResultSchema: []map[string]any{
+				{
+					"field_name": "keep",
+					"field_type": "keyword",
+				},
+			},
+		}
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    influxdb.ResultTableDoris,
+					SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+				},
+			},
+			Step:   start,
+			End:    end,
+			DryRun: true,
+			ResultTableOptions: metadata.ResultTableOptions{
+				"result_table.doris|4": originalOption,
+			},
+		}
+
+		_, _, options, err := queryRawWithInstance(ctx, queryTs)
+		require.NoError(t, err)
+		option := options.GetOption("result_table.doris|4")
+		require.NotNil(t, option)
+		require.Contains(t, option.SQL, "SELECT * FROM `2_bklog_bkunify_query_doris`.doris")
+
+		assert.Empty(t, originalOption.SQL)
+		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)
+		assert.Equal(t, "keyword", originalOption.FieldType["keep"])
+		assert.Equal(t, []map[string]any{
+			{
+				"field_name": "keep",
+				"field_type": "keyword",
+			},
+		}, originalOption.ResultSchema)
+	})
 }
 
 // TestQueryExemplar comment lint rebel
@@ -2508,6 +2594,43 @@ func TestQueryExemplar(t *testing.T) {
 	assert.Nil(t, err)
 	actual := string(out)
 	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}],"is_partial":false}`, actual)
+}
+
+func TestQueryExemplarDirectQueryReturnDoesNotLeakReceiver(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	mock.Init()
+	promql.MockEngine()
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				TableID:       "system.cpu_detail",
+				FieldName:     "usage",
+				ReferenceName: "a",
+			},
+		},
+		MetricMerge: "a",
+	}
+
+	before := queryExemplarReceiverGoroutines()
+	res, err := queryExemplar(ctx, qts)
+	assert.Nil(t, err)
+	assert.NotNil(t, res)
+	assert.True(t, metadata.GetQueryParams(ctx).IsDirectQuery())
+
+	assert.Eventually(t, func() bool {
+		return queryExemplarReceiverGoroutines() == before
+	}, time.Second, 10*time.Millisecond)
+}
+
+func queryExemplarReceiverGoroutines() int {
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	return strings.Count(buf.String(), "queryExemplar.func")
 }
 
 func TestVmQueryParams(t *testing.T) {

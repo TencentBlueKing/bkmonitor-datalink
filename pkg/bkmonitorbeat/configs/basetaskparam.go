@@ -11,7 +11,9 @@
 package configs
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -33,6 +35,39 @@ type BaseTaskParam struct {
 
 	labels []map[string]string
 	Sorted define.Tags
+}
+
+const labelBizID = "bk_biz_id"
+
+func (t *BaseTaskParam) resolveLabelBizID() (int32, bool, error) {
+	var (
+		resolved int32
+		found    bool
+	)
+
+	for _, labelItem := range t.Labels {
+		value, ok := labelItem[labelBizID]
+		if !ok {
+			continue
+		}
+
+		parsed, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return 0, false, fmt.Errorf("invalid %s in labels: %q", labelBizID, value)
+		}
+
+		if !found {
+			resolved = int32(parsed)
+			found = true
+			continue
+		}
+
+		if resolved != int32(parsed) {
+			return 0, false, fmt.Errorf("conflicting %s in labels", labelBizID)
+		}
+	}
+
+	return resolved, found, nil
 }
 
 func (t *BaseTaskParam) convertLabels() {
@@ -100,6 +135,10 @@ func (t *BaseTaskParam) CleanParams() error {
 		t.Period = define.DefaultPeriod
 	}
 
+	if _, _, err := t.resolveLabelBizID(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -136,6 +175,9 @@ func (t *BaseTaskParam) GetPeriod() time.Duration {
 
 // GetBizID 获取业务ID
 func (t *BaseTaskParam) GetBizID() int32 {
+	if bizID, found, err := t.resolveLabelBizID(); err == nil && found {
+		return bizID
+	}
 	return t.BizID
 }
 

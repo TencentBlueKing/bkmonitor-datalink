@@ -354,21 +354,22 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
 
-	// 对值进行转义处理
+	// 对值进行转义处理。不要改写 c.Value，它可能与上游 Query 被多个并发路由共享。
+	values := make([]string, len(c.Value))
 	for i, v := range c.Value {
-		c.Value[i] = d.valueTransform(v)
+		values[i] = d.valueTransform(v)
 	}
 
 	// doris 里面 array<int> 类型需要特殊处理
 	checkArrayIntByOp := func(o string) (string, string, error) {
-		if len(c.Value) != 1 {
+		if len(values) != 1 {
 			return "", "", fmt.Errorf("operator %s only support 1 value", o)
 		}
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", o, c.Value[0], key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", o, values[0], key)
 			key = ""
 		} else {
-			val = c.Value[0]
+			val = values[0]
 		}
 		return key, val, nil
 	}
@@ -376,10 +377,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// doris 里面 array<string> 类型需要特殊处理
 	checkArrayStringByOp := func(op string) (string, string) {
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(values, "|"), key)
 			key = ""
 		} else {
-			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+			val = fmt.Sprintf("'%s'", strings.Join(values, "|")) // 多个值用|连接
 		}
 		return key, val
 	}
@@ -392,19 +393,19 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		op = "IS NULL"
 	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
-		if len(c.Value) == 1 && c.Value[0] == "" {
+		if len(values) == 1 && values[0] == "" {
 			op = "IS NULL"
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionContains {
+		if len(values) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionContains {
 			op = "IN"
-			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
+			val = fmt.Sprintf("('%s')", strings.Join(values, "', '"))
 			break
 		}
 
 		if d.isArray(c.DimensionName) {
-			for _, v := range c.Value {
+			for _, v := range values {
 				var value string
 				if c.IsWildcard {
 					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%s', %s)", d.likeValue(v), key)
@@ -430,7 +431,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				op = "="
 			}
 
-			for _, v := range c.Value {
+			for _, v := range values {
 				if c.IsWildcard {
 					v = d.likeValue(v)
 				} else if key == metadata.Null {
@@ -453,19 +454,19 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
-		if len(c.Value) == 1 && c.Value[0] == "" {
+		if len(values) == 1 && values[0] == "" {
 			op = "IS NOT NULL"
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionNotContains {
+		if len(values) > 1 && !c.IsWildcard && !d.isAnalyzed(c.DimensionName) && !d.isArray(c.DimensionName) && c.Operator != metadata.ConditionNotContains {
 			op = "NOT IN"
-			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
+			val = fmt.Sprintf("('%s')", strings.Join(values, "', '"))
 			break
 		}
 
 		if d.isArray(c.DimensionName) {
-			for _, v := range c.Value {
+			for _, v := range values {
 				var value string
 				if c.IsWildcard {
 					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x NOT LIKE '%%%s%%', %s)", v, key)
@@ -491,7 +492,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				op = "!="
 			}
 
-			for _, v := range c.Value {
+			for _, v := range values {
 				if c.IsWildcard {
 					v = d.likeValue(v)
 				}

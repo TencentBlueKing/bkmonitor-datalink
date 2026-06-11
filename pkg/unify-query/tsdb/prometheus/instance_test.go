@@ -23,6 +23,7 @@ import (
 	promRemote "github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -41,6 +42,416 @@ var _ storage.Queryable = (*queryable)(nil)
 
 func (q *queryable) Querier(ctx context.Context, mint, maxt int64) (storage.Querier, error) {
 	return &querier{}, nil
+}
+
+func TestMergeBucketDuration(t *testing.T) {
+	testCases := map[string]struct {
+		name     string
+		queries  QueryList
+		fallback time.Duration
+		rangeSel time.Duration
+		expected time.Duration
+	}{
+		"函数匹配时使用聚合窗口": {
+			name: "avg_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "sum"},
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"普通 avg 没有聚合窗口时不使用 bucket 宽度": {
+			name: "avg",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg"},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 0,
+		},
+		"hint 中的 avg_over_time 缺少聚合窗口时使用 range selector 宽度": {
+			name: "avg_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			fallback: time.Minute,
+			rangeSel: 5 * time.Minute,
+			expected: 5 * time.Minute,
+		},
+		"hint 中的 avg_over_time 缺少 range selector 时使用查询步长": {
+			name: "avg_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			fallback: time.Minute,
+			expected: time.Minute,
+		},
+		"hint 中的 sum_over_time 缺少聚合窗口时使用 range selector 宽度": {
+			name: "sum_over_time",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			fallback: time.Minute,
+			rangeSel: time.Hour,
+			expected: time.Hour,
+		},
+		"hint 使用 avg 别名时仍匹配 avg_over_time 窗口": {
+			name: "avg",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"plain count 有聚合窗口时使用该窗口": {
+			name: function.Count,
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Count, Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: time.Minute,
+		},
+		"plain sum 没有聚合窗口时不使用查询步长当 bucket": {
+			name: function.Sum,
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 0,
+		},
+		"函数不匹配时回退到查询步长": {
+			name: "increase",
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time", Window: time.Minute},
+						},
+					},
+				},
+			},
+			fallback: 5 * time.Minute,
+			expected: 5 * time.Minute,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback, tc.rangeSel))
+		})
+	}
+}
+
+func TestMergeFuncName(t *testing.T) {
+	testCases := map[string]struct {
+		hints    *storage.SelectHints
+		queries  QueryList
+		expected string
+	}{
+		"没有下推 avg 时使用 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: "max_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{},
+				},
+			},
+			expected: "max_over_time",
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 avg": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg"},
+						},
+					},
+				},
+			},
+			expected: "avg",
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 count": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Count, Window: time.Minute},
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			expected: function.Count,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 sum": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Sum,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 min": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Min, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Min,
+		},
+		"last_over_time 仅用于回看窗口时优先使用下推 max": {
+			hints: &storage.SelectHints{
+				Func: "last_over_time",
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Max, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Max,
+		},
+		"hint 为空时使用下推聚合函数": {
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: "avg_over_time"},
+						},
+					},
+				},
+			},
+			expected: "avg_over_time",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.queries.mergeFuncName(tc.hints))
+		})
+	}
+}
+
+func TestQueryCalcSelectStrategy(t *testing.T) {
+	testCases := map[string]struct {
+		start           time.Time
+		end             time.Time
+		routeStart      time.Time
+		routeEnd        time.Time
+		routeQueryStart time.Time
+		routeQueryEnd   time.Time
+		expected        querySelectStrategy
+		expectedOK      bool
+	}{
+		"查询范围命中 route 查询窗口时保留原始 SelectHints 范围": {
+			start:           time.Unix(120, 0),
+			end:             time.Unix(180, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(120, 0),
+				queryEnd:    time.Unix(180, 0),
+				weightStart: time.Unix(120, 0),
+				weightEnd:   time.Unix(180, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
+			expectedOK: true,
+		},
+		"overlap-only route 即使未命中 SelectHints 也保留候选查询": {
+			start:           time.Unix(100, 0),
+			end:             time.Unix(200, 0),
+			routeQueryStart: time.Unix(200, 0),
+			routeQueryEnd:   time.Unix(300, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(100, 0),
+				queryEnd:    time.Unix(200, 0),
+				weightStart: time.Unix(100, 0),
+				weightEnd:   time.Unix(200, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
+			expectedOK: true,
+		},
+		"有效 route 未命中 route 查询窗口时跳过该路由": {
+			start:           time.Unix(100, 0),
+			end:             time.Unix(200, 0),
+			routeStart:      time.Unix(200, 0),
+			routeEnd:        time.Unix(300, 0),
+			routeQueryStart: time.Unix(200, 0),
+			routeQueryEnd:   time.Unix(300, 0),
+			expectedOK:      false,
+		},
+		"查询范围部分超出 route 查询窗口时仍保留完整 SelectHints 范围": {
+			// 对于已选中的路由，SelectHints.Start/End 是 PromQL 引擎计算表达式实际需要的取数范围。
+			// routeQueryStart/End 只用来判断这一路是否需要查询，不能把已经扩展过的 SelectHints 再裁窄。
+			start:           time.Unix(90, 0),
+			end:             time.Unix(210, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(90, 0),
+				queryEnd:    time.Unix(210, 0),
+				weightStart: time.Unix(90, 0),
+				weightEnd:   time.Unix(210, 0),
+				wrapKind:    seriesSetWrapZeroRouteRange,
+			},
+			expectedOK: true,
+		},
+		"有真实 route 生效范围时使用生效范围计算权重": {
+			start:           time.Unix(90, 0),
+			end:             time.Unix(210, 0),
+			routeStart:      time.Unix(120, 0),
+			routeEnd:        time.Unix(180, 0),
+			routeQueryStart: time.Unix(60, 0),
+			routeQueryEnd:   time.Unix(240, 0),
+			expected: querySelectStrategy{
+				queryStart:  time.Unix(90, 0),
+				queryEnd:    time.Unix(210, 0),
+				weightStart: time.Unix(120, 0),
+				weightEnd:   time.Unix(180, 0),
+				wrapKind:    seriesSetWrapValidRouteRange,
+			},
+			expectedOK: true,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			query := &Query{
+				start:      tc.routeStart,
+				end:        tc.routeEnd,
+				queryStart: tc.routeQueryStart,
+				queryEnd:   tc.routeQueryEnd,
+			}
+			strategy, ok := query.calcSelectStrategy(tc.start, tc.end)
+			assert.Equal(t, tc.expectedOK, ok)
+			if !tc.expectedOK {
+				return
+			}
+			assert.Equal(t, tc.expected, strategy)
+		})
+	}
+}
+
+func TestQueryCalcSelectStrategyWithMergeContext(t *testing.T) {
+	query := &Query{
+		start:      time.Unix(300, 0),
+		end:        time.Unix(360, 0),
+		queryStart: time.Unix(0, 0),
+		queryEnd:   time.Unix(360, 0),
+	}
+
+	strategy, ok := query.calcSelectStrategyWithMergeContext(time.Unix(0, 0), time.Unix(360, 0), "avg_over_time")
+	assert.True(t, ok)
+	assert.Equal(t, querySelectStrategy{
+		queryStart:  time.Unix(0, 0),
+		queryEnd:    time.Unix(360, 0),
+		weightStart: time.Unix(0, 0),
+		weightEnd:   time.Unix(360, 0),
+		wrapKind:    seriesSetWrapValidRouteRange,
+	}, strategy)
+}
+
+func TestIntersectTimeRangePreservesSelectHintsLongLookback(t *testing.T) {
+	testCases := map[string]struct {
+		hintStart       time.Time
+		hintEnd         time.Time
+		routeQueryStart time.Time
+		routeQueryEnd   time.Time
+	}{
+		"long lookback extends before route query start": {
+			// 这里的问题是 SelectHints.Start/End 表示 PromQL 引擎计算表达式实际需要的取数范围。
+			// 对 avg_over_time(metric[2h]) 这类 range selector，第一个计算点需要查询开始时间之前的 2h 样本，
+			// 因此 SelectHints.Start 会早于用户查询开始时间，也可能早于迁移路由的 1h overlap 查询窗口。
+			// routeQueryStart/End 只是迁移路由为了多查相邻 storage 设置的 overlap 判断范围，
+			// 它不能反过来把 SelectHints 已经扩展出来的长 lookback 范围裁掉。
+			hintStart:       time.Unix(0, 0),
+			hintEnd:         time.Unix(200, 0),
+			routeQueryStart: time.Unix(100, 0),
+			routeQueryEnd:   time.Unix(260, 0),
+		},
+		"select hint end can also extend beyond route query end": {
+			// 右边界同样保持 SelectHints 原值：如果上层已经决定这个 storage route 需要查询，
+			// 这里不应该再把实际取数范围裁回 routeQueryEnd，否则可能破坏 range/lookback 所需样本。
+			hintStart:       time.Unix(100, 0),
+			hintEnd:         time.Unix(300, 0),
+			routeQueryStart: time.Unix(40, 0),
+			routeQueryEnd:   time.Unix(200, 0),
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			query := &Query{
+				queryStart: tc.routeQueryStart,
+				queryEnd:   tc.routeQueryEnd,
+			}
+
+			strategy, ok := query.calcSelectStrategy(tc.hintStart, tc.hintEnd)
+			assert.True(t, ok)
+			assert.Equal(t, tc.hintStart, strategy.queryStart)
+			assert.Equal(t, tc.hintEnd, strategy.queryEnd)
+		})
+	}
 }
 
 type querier struct{}

@@ -20,6 +20,7 @@ import (
 	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/spf13/cast"
@@ -61,6 +62,21 @@ func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef
 		}
 		return false
 	})
+}
+
+func parseLookBackDelta(s string) (time.Duration, error) {
+	duration, err := model.ParseDuration(s)
+	if err == nil {
+		return time.Duration(duration), nil
+	}
+	return time.ParseDuration(s)
+}
+
+func queryLookBackDelta(queryTs *structured.QueryTs, fallback time.Duration) (time.Duration, error) {
+	if queryTs.LookBackDelta == "" {
+		return fallback, nil
+	}
+	return parseLookBackDelta(queryTs.LookBackDelta)
 }
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -655,22 +671,18 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		}
 	}
 
+	// reference 接口背后都使用了存储引擎计算，未指定时使用 1s 补点逻辑，防止出的数据异常。
+	lookBackDelta, err := queryLookBackDelta(queryTs, time.Second)
+	if err != nil {
+		return nil, err
+	}
+	metadata.GetQueryParams(ctx).SetLookBackDelta(lookBackDelta)
+
 	// 开启时间 Reference 模式
 	queryTs.Reference = true
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	var lookBackDelta time.Duration
-	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// reference 接口背后都使用了存储引擎计算，所以在不特殊指定的情况下，使用 1s 补点逻辑，防止出的数据异常
-		lookBackDelta = time.Second
 	}
 
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
@@ -815,13 +827,11 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		}
 	}
 
-	// 判断是否指定 LookBackDelta
-	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
-		if err != nil {
-			return instance, stmt, err
-		}
+	lookBackDelta, err = queryLookBackDelta(queryTs, promql.GetDefaultLookbackDelta())
+	if err != nil {
+		return instance, stmt, err
 	}
+	metadata.GetQueryParams(ctx).SetLookBackDelta(lookBackDelta)
 
 	// 如果 step 为空，则补充默认 step
 	if queryTs.Step == "" {

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -289,6 +290,207 @@ func TestQueryToMetric(t *testing.T) {
 			assert.Equal(t, string(a), string(b))
 		})
 	}
+}
+
+func TestStorageUUIDIncludesRouteRange(t *testing.T) {
+	base := &md.Query{
+		StorageType: md.BkSqlStorageType,
+		StorageID:   "0",
+		Measurement: "doris",
+		DB:          "db_a",
+	}
+	first := *base
+	first.RouteStart = time.Unix(100, 0)
+	first.RouteEnd = time.Unix(200, 0)
+	first.RouteQueryStart = time.Unix(40, 0)
+	first.RouteQueryEnd = time.Unix(260, 0)
+
+	second := *base
+	second.RouteStart = time.Unix(300, 0)
+	second.RouteEnd = time.Unix(400, 0)
+	second.RouteQueryStart = time.Unix(240, 0)
+	second.RouteQueryEnd = time.Unix(460, 0)
+
+	firstWithoutRange := first
+	secondWithoutRange := second
+	firstWithoutRange.RouteStart = time.Time{}
+	firstWithoutRange.RouteEnd = time.Time{}
+	firstWithoutRange.RouteQueryStart = time.Time{}
+	firstWithoutRange.RouteQueryEnd = time.Time{}
+	secondWithoutRange.RouteStart = time.Time{}
+	secondWithoutRange.RouteEnd = time.Time{}
+	secondWithoutRange.RouteQueryStart = time.Time{}
+	secondWithoutRange.RouteQueryEnd = time.Time{}
+
+	assert.Equal(t, firstWithoutRange.StorageUUID(), secondWithoutRange.StorageUUID())
+	assert.NotEqual(t, first.StorageUUID(), second.StorageUUID())
+}
+
+func TestQueryRouteLookbackDuration(t *testing.T) {
+	testCases := map[string]struct {
+		query            *Query
+		lookBackDelta    time.Duration
+		expectedBackward time.Duration
+		expectedForward  time.Duration
+	}{
+		"range selector and backward offset are additive": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				VectorOffset: time.Hour,
+			},
+			expectedBackward: 3 * time.Hour,
+		},
+		"explicit lookback participates before backward offset": {
+			query: &Query{
+				VectorOffset: 10 * time.Minute,
+			},
+			lookBackDelta:    5 * time.Minute,
+			expectedBackward: 15 * time.Minute,
+		},
+		"aggregate method window participates": {
+			query: &Query{
+				AggregateMethodList: AggregateMethodList{
+					{Method: "avg_over_time", Window: "2h"},
+					{Method: "max_over_time", Window: "30m"},
+				},
+			},
+			lookBackDelta:    5 * time.Minute,
+			expectedBackward: 2 * time.Hour,
+		},
+		"forward offset expands forward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				VectorOffset:  time.Hour,
+				OffsetForward: true,
+			},
+			expectedBackward: 2 * time.Hour,
+			expectedForward:  time.Hour,
+		},
+		"signed negative offset expands forward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				Offset: "-1h",
+			},
+			expectedBackward: 2 * time.Hour,
+			expectedForward:  time.Hour,
+		},
+		"signed negative offset with offset_forward expands backward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				Offset:        "-1h",
+				OffsetForward: true,
+			},
+			expectedBackward: 3 * time.Hour,
+		},
+		"subquery range and inner matrix range are additive": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "5m",
+				},
+				AggregateMethodList: AggregateMethodList{
+					{Method: "avg_over_time", Window: "1h", IsSubQuery: true},
+				},
+			},
+			lookBackDelta:    5 * time.Minute,
+			expectedBackward: time.Hour + 5*time.Minute,
+		},
+		"promql ast route offsets keep direction": {
+			query: &Query{
+				RouteSelectorOffset: -2 * time.Hour,
+				RouteSubqueryOffset: 10 * time.Minute,
+				RouteSubqueryRange:  time.Hour,
+			},
+			expectedBackward: time.Hour,
+			expectedForward:  110 * time.Minute,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			backward, forward := tc.query.routeOverlapDuration(tc.lookBackDelta)
+			assert.Equal(t, tc.expectedBackward, backward)
+			assert.Equal(t, tc.expectedBackward, tc.query.routeLookbackDuration(tc.lookBackDelta))
+			assert.Equal(t, tc.expectedForward, forward)
+		})
+	}
+}
+
+func TestQueryRouteTimeRange(t *testing.T) {
+	start := time.Unix(1000, 0)
+	end := time.Unix(2000, 0)
+	qp := (&md.QueryParams{}).SetTime(start, start, end, time.Minute, "s", "Asia/Shanghai")
+
+	at := time.Unix(100, 0).UnixMilli()
+	testCases := map[string]struct {
+		query *Query
+		start time.Time
+		end   time.Time
+	}{
+		"no at modifier uses query range": {
+			query: &Query{},
+			start: start,
+			end:   end,
+		},
+		"fixed at modifier uses fixed timestamp": {
+			query: &Query{Timestamp: &at},
+			start: time.Unix(100, 0),
+			end:   time.Unix(100, 0),
+		},
+		"at start uses query start": {
+			query: &Query{StartOrEnd: parser.START},
+			start: start,
+			end:   start,
+		},
+		"at end uses query end": {
+			query: &Query{StartOrEnd: parser.END},
+			start: end,
+			end:   end,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			gotStart, gotEnd := tc.query.routeTimeRange(qp)
+			assert.Equal(t, tc.start, gotStart)
+			assert.Equal(t, tc.end, gotEnd)
+		})
+	}
+}
+
+func TestQueryTsToTimeLookBackDeltaPrometheusDuration(t *testing.T) {
+	md.InitMetadata()
+	ctx := md.InitHashID(context.Background())
+	q := &QueryTs{
+		Start:         "1741056443",
+		End:           "1741060043",
+		Step:          "1m",
+		LookBackDelta: "1d",
+	}
+
+	require.NoError(t, q.ToTime(ctx))
+	assert.Equal(t, 24*time.Hour, md.GetQueryParams(ctx).LookBackDelta)
+}
+
+func TestQueryTsToTimeLookBackDeltaGoDurationFallback(t *testing.T) {
+	md.InitMetadata()
+	ctx := md.InitHashID(context.Background())
+	q := &QueryTs{
+		Start:         "1741056443",
+		End:           "1741060043",
+		Step:          "1m",
+		LookBackDelta: "1.5h",
+	}
+
+	require.NoError(t, q.ToTime(ctx))
+	assert.Equal(t, 90*time.Minute, md.GetQueryParams(ctx).LookBackDelta)
 }
 
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {

@@ -543,9 +543,9 @@ func (q *Query) selectorWindowDuration() time.Duration {
 	return matrixRange
 }
 
-func (q *Query) publicOffsetDuration() time.Duration {
+func (q *Query) publicSignedOffsetDuration() time.Duration {
 	if q.VectorOffset != 0 {
-		if q.VectorOffset < 0 {
+		if q.OffsetForward {
 			return -q.VectorOffset
 		}
 		return q.VectorOffset
@@ -553,12 +553,18 @@ func (q *Query) publicOffsetDuration() time.Duration {
 	if q.Offset == "" {
 		return 0
 	}
-	offset, err := model.ParseDuration(q.Offset)
+	offsetText := q.Offset
+	sign := time.Duration(1)
+	if strings.HasPrefix(offsetText, "-") {
+		sign = -1
+		offsetText = strings.TrimPrefix(offsetText, "-")
+	}
+	offset, err := model.ParseDuration(offsetText)
 	if err != nil {
 		return 0
 	}
-	duration := time.Duration(offset)
-	if duration < 0 {
+	duration := sign * time.Duration(offset)
+	if q.OffsetForward {
 		return -duration
 	}
 	return duration
@@ -579,10 +585,13 @@ func (q *Query) routeOverlapDuration(lookBackDelta time.Duration) (backward, for
 		} else {
 			backward += offset
 		}
-	} else if q.OffsetForward {
-		forward = q.publicOffsetDuration()
 	} else {
-		backward += q.publicOffsetDuration()
+		offset := q.publicSignedOffsetDuration()
+		if offset < 0 {
+			forward = -offset
+		} else {
+			backward += offset
+		}
 	}
 	return backward, forward
 }

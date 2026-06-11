@@ -370,6 +370,26 @@ func TestQueryRouteLookbackDuration(t *testing.T) {
 			expectedBackward: 2 * time.Hour,
 			expectedForward:  time.Hour,
 		},
+		"signed negative offset expands forward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				Offset: "-1h",
+			},
+			expectedBackward: 2 * time.Hour,
+			expectedForward:  time.Hour,
+		},
+		"signed negative offset with offset_forward expands backward route coverage": {
+			query: &Query{
+				TimeAggregation: TimeAggregation{
+					Window: "2h",
+				},
+				Offset:        "-1h",
+				OffsetForward: true,
+			},
+			expectedBackward: 3 * time.Hour,
+		},
 		"subquery range and inner matrix range are additive": {
 			query: &Query{
 				TimeAggregation: TimeAggregation{

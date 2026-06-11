@@ -30,14 +30,13 @@ var defaultLookbackDelta = 5 * time.Minute
 
 // NewEngine
 func NewEngine(params *Params) {
-	if params != nil && params.LookbackDelta > 0 {
-		defaultLookbackDelta = params.LookbackDelta
-	}
-
 	// engine的内容里有指标注册操作，所以无法重复注册，所以其参数不能改变
 	// 且engine内部成员全为私有，也无法进行修改
 	if GlobalEngine != nil {
 		return
+	}
+	if params != nil && params.LookbackDelta > 0 {
+		defaultLookbackDelta = params.LookbackDelta
 	}
 	GlobalEngine = prom.NewEngine(prom.EngineOpts{
 		Reg:                  prometheus.DefaultRegisterer,

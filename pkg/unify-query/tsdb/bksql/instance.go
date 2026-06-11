@@ -158,6 +158,10 @@ func queryClusterName(query *metadata.Query) string {
 	if query == nil {
 		return ""
 	}
+	// 分段路由会把命中的 Doris 集群放在 ClusterName，StorageName 仅作为旧字段兼容。
+	if query.ClusterName != "" {
+		return query.ClusterName
+	}
 	return query.StorageName
 }
 

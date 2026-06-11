@@ -295,4 +295,45 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 			},
 		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 0, 0))
 	})
+
+	t.Run("跨存储分段路由字段不完整时跳过该路由", func(t *testing.T) {
+		start := time.Unix(1500, 0)
+		end := time.Unix(2500, 0)
+		db := &TsDBV2{
+			StorageID:   "1",
+			StorageType: "elasticsearch",
+			StorageName: "es_default",
+			ClusterName: "es_default",
+			DB:          "es_index",
+			Measurement: "__default__",
+			StorageClusterRecords: []Record{
+				{
+					StorageID:   "3",
+					StorageType: "bk_sql",
+					ClusterName: "doris_default",
+					Measurement: "doris",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "2",
+					EnableTime: 1000,
+				},
+			},
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:   "2",
+				StorageType: "elasticsearch",
+				StorageName: "es_default",
+				ClusterName: "es_default",
+				DB:          "es_index",
+				Measurement: "__default__",
+				Start:       start,
+				End:         time.Unix(2000, 0),
+				QueryStart:  time.Unix(1000, 0),
+				QueryEnd:    time.Unix(2000, 0),
+			},
+		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 0, 0))
+	})
 }

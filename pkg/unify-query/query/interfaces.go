@@ -108,26 +108,40 @@ func (z *TsDBV2) String() string {
 	)
 }
 
-func (z *TsDBV2) storageRouteFromRecord(record Record) Record {
-	// 兼容旧 Redis 数据：record 缺少字段时，继续使用外层 result_table_detail 的配置。
+// validateStorageRouteRecord 校验 storage_cluster_records 记录，并转换为查询侧可消费的完整路由。
+// 第二个返回值表示该记录是否满足路由完整性要求；跨存储记录缺关键字段时返回 false。
+func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool) {
 	storageType := record.StorageType
 	if storageType == "" {
 		storageType = z.StorageType
 	}
+	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType && z.StorageType != metadata.BkSqlStorageType
+	// ES -> Doris 分段路由会把 record.StorageType 标记为 bk_sql。
+	// 这类 record 不能从外层 ES RT 逐字段 fallback，必须自带 BKSQL 查询目标字段。
+	if requiresBkSQLRouteFields && (record.DB == "" || record.Measurement == "" || record.ClusterName == "") {
+		return Record{}, false
+	}
+
+	// 同存储类型允许旧 Redis 缓存只下发 storage_id/enable_time，继续从外层 RT detail 补齐查询目标。
 	storageName := record.StorageName
 	if storageName == "" {
-		storageName = z.StorageName
+		if requiresBkSQLRouteFields {
+			// BKSQL 路由的 storage_name 旧字段和 cluster_name 都表示 BKBase 集群名；record 已校验 cluster_name 非空，可安全回填。
+			storageName = record.ClusterName
+		} else {
+			storageName = z.StorageName
+		}
 	}
 	clusterName := record.ClusterName
-	if clusterName == "" {
+	if clusterName == "" && !requiresBkSQLRouteFields {
 		clusterName = z.ClusterName
 	}
 	db := record.DB
-	if db == "" {
+	if db == "" && !requiresBkSQLRouteFields {
 		db = z.DB
 	}
 	measurement := record.Measurement
-	if measurement == "" {
+	if measurement == "" && !requiresBkSQLRouteFields {
 		measurement = z.Measurement
 	}
 	return Record{
@@ -138,7 +152,7 @@ func (z *TsDBV2) storageRouteFromRecord(record Record) Record {
 		DB:          db,
 		Measurement: measurement,
 		EnableTime:  record.EnableTime,
-	}
+	}, true
 }
 
 // GetStorageIDRangesWithDirectionalOverlap 通过查询时间和前后方向的额外窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
@@ -183,7 +197,11 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 	}
 	// 遍历 storageClusterRecords 记录，按照开启时间倒序
 	for i, record := range records {
-		route := z.storageRouteFromRecord(record)
+		// 切换到 BKSQL 的分段路由必须携带目标存储的完整查询字段；缺字段时跳过该 record，避免 ES->Doris 场景混用外层 ES 配置。
+		route, ok := z.validateStorageRouteRecord(record)
+		if !ok {
+			continue
+		}
 		recordStart := time.Unix(record.EnableTime, 0)
 		recordEnd := checkEnd
 		if i > 0 {

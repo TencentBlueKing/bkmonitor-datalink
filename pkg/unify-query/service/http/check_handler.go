@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -245,7 +244,7 @@ func checkQueryTsToReference(ctx context.Context, q *structured.QueryTs) (metada
 		}
 	}
 	if q.LookBackDelta != "" {
-		if _, e := time.ParseDuration(q.LookBackDelta); e != nil {
+		if _, e := parseLookBackDelta(q.LookBackDelta); e != nil {
 			return nil, e
 		}
 	}

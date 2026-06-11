@@ -180,6 +180,11 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
+	RouteStart      time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd        time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteQueryStart time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`
 	IsPrefix    bool   `json:"is_prefix,omitempty"`
@@ -544,8 +549,17 @@ func (vs VmCondition) ToMatch() string {
 	return fmt.Sprintf("{%s}", vs)
 }
 
-// LastAggName 获取最新的聚合函数
-func (a Aggregates) LastAggName() string {
+// InnerAggName 获取最内层聚合函数；Aggregates 按内到外排序。
+func (a Aggregates) InnerAggName() string {
+	if len(a) == 0 {
+		return ""
+	}
+
+	return a[0].Name
+}
+
+// OuterAggName 获取最外层聚合函数；Aggregates 按内到外排序。
+func (a Aggregates) OuterAggName() string {
 	if len(a) == 0 {
 		return ""
 	}

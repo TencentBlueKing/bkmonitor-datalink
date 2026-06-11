@@ -214,6 +214,8 @@ func realValue(node Node) any {
 	return res
 }
 
+// ConditionNodeWalk 用于提取 LabelMap 候选条件。
+// 这里必须只输出“全局必然正向约束”，否则后续 ES 聚合 terms.include 会被错误收窄。
 func ConditionNodeWalk(node Node, fn func(key string, operator string, isWildcard bool, values ...string)) {
 	conditionNodeWalk(node, false, fn)
 }
@@ -253,9 +255,9 @@ func conditionNodeWalkCondition(n *ConditionNode, reversed bool, fn func(key str
 func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
 	reversed = toggleReverse(reversed, n.reverseOp)
 	if reversed {
-		// NOT over a composite expression may turn inner positive leaves into optional
-		// matches, for example NOT(a AND NOT b) => NOT a OR b.
-		// Only a single child can be safely reduced by propagating the NOT.
+		// NOT 作用到复合表达式时，内部反转后的正向叶子可能只是可选分支。
+		// 例如 NOT(a AND NOT b) 等价于 NOT a OR b，b 不能作为全局 include。
+		// 只有单子节点可以安全继续向下传递 NOT 语义。
 		if len(n.Nodes) == 1 {
 			conditionNodeWalk(n.Nodes[0], reversed, fn)
 		}
@@ -269,6 +271,8 @@ func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, ope
 		return
 	}
 
+	// 同字段 OR/隐式 OR 枚举可以安全作为该字段的 include 白名单。
+	// 例如 level:("warn" "error") 说明所有命中文档的 level 都在这组值内。
 	if labels, ok := sameFieldDisjunctionLabels(n); ok {
 		for _, label := range labels {
 			fn(label.field, label.operator, label.isWildcard, label.values...)
@@ -276,6 +280,8 @@ func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, ope
 		return
 	}
 
+	// 混合表达式中只提取实际会进入 must 的子句，保持与 LogicNode.DSL() 的执行语义一致。
+	// 例如 +level:warn status:error 可以提取 level，但 +level:warn OR status:error 不能提取。
 	conditionNodeWalkRequiredClauses(n, reversed, fn)
 }
 
@@ -292,6 +298,7 @@ func logicNodeConditionIsMust(n *LogicNode, index int, node *ConditionNode) bool
 	return logic == logicAnd || (logic == "" && (node.reverseOp || node.mustOp))
 }
 
+// logicNodeConditionOperator 对齐 LogicNode.DSL() 对第一个子句 operator 的特殊处理。
 func logicNodeConditionOperator(n *LogicNode, index int) string {
 	if index == 0 {
 		if len(n.logics) > 0 {

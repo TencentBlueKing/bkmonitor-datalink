@@ -519,6 +519,10 @@ func TestQueryToMetricStorageClusterRecordStorageType(t *testing.T) {
 				{
 					StorageID:   "2",
 					StorageType: md.BkSqlStorageType,
+					StorageName: "doris_default",
+					ClusterName: "doris_default",
+					DB:          "bkbase_table",
+					Measurement: "doris",
 					EnableTime:  2000,
 				},
 				{
@@ -560,6 +564,10 @@ func TestQueryToMetricStorageClusterRecordStorageTypeFromResultTableDetail(t *te
 			{
 				StorageID:   2,
 				StorageType: md.BkSqlStorageType,
+				StorageName: "doris_default",
+				ClusterName: "doris_default",
+				DB:          "bkbase_table",
+				Measurement: "doris",
 				EnableTime:  2000,
 			},
 			{

@@ -115,10 +115,11 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool) {
 	if storageType == "" {
 		storageType = z.StorageType
 	}
-	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType && z.StorageType != metadata.BkSqlStorageType
-	// ES -> Doris 分段路由会把 record.StorageType 标记为 bk_sql。
-	// 这类 record 不能从外层 ES RT 逐字段 fallback，必须自带 BKSQL 查询目标字段。
-	if requiresBkSQLRouteFields && (record.DB == "" || record.Measurement == "" || record.ClusterName == "") {
+	isCrossStorageRoute := record.StorageType != "" && z.StorageType != "" && record.StorageType != z.StorageType
+	requiresBkSQLRouteFields := isCrossStorageRoute && record.StorageType == metadata.BkSqlStorageType
+	// 跨存储分段 route 不能从外层 RT 逐字段 fallback，否则会生成 storage_type 和 db/measurement 不匹配的查询。
+	// 切到 BKSQL 时还必须携带 cluster_name，用于 BKBase query_sync 的 properties.cluster_name。
+	if isCrossStorageRoute && (record.DB == "" || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
 		return Record{}, false
 	}
 

@@ -182,3 +182,7 @@ func (tc *TierConfig) Get(token, serviceID, instanceID string) any {
 
 	return nil
 }
+
+func (tc *TierConfig) GetExact(token, typ, id string) (any, bool) {
+	return tc.m.Load(tierKey{Token: token, Type: typ, ID: id})
+}

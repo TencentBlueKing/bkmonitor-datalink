@@ -77,6 +77,49 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
+func TestLicenseCheckerReloadNewDefaultSubConfigs(t *testing.T) {
+	content := `
+processor:
+    - name: "license_checker/common"
+      config:
+        enabled: true
+        expire_time: 4084531651
+        tolerable_expire: 24h
+        number_nodes: 200
+        tolerable_num_ratio: 1.5
+`
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	obj, err := NewFactory(mainConf, nil)
+	assert.NoError(t, err)
+	factory := obj.(*licenseChecker)
+	defer factory.Clean()
+
+	customized := []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Name:   define.ProcessorLicenseChecker,
+				Config: mainConf,
+			},
+		},
+		{
+			Token: "token2",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Name:   define.ProcessorLicenseChecker,
+				Config: mainConf,
+			},
+		},
+	}
+
+	assert.NotPanics(t, func() {
+		factory.Reload(mainConf, customized)
+	})
+	assert.Equal(t, customized, factory.SubConfigs())
+}
+
 func TestLicenseCheckerProcess(t *testing.T) {
 	content := `
 processor:

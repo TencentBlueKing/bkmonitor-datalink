@@ -1594,6 +1594,48 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	assert.Equal(t, map[string]any{"pod_id": "__ext.pod_id", "pod_name": "__ext.pod_name"}, detail["field_alias"])
 }
 
+func TestSpacePusher_PushDorisTableIdDetailReturnsClusterRecordError(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	tableID := "bklog.doris_cluster_record_error"
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+	db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
+	db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ?", tableID)
+
+	rt := resulttable.ResultTable{
+		TableId:    tableID,
+		IsDeleted:  false,
+		IsEnable:   true,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+	dorisStorage := storage.DorisStorage{
+		TableID:          tableID,
+		BkbaseTableID:    "bklog_doris_cluster_record_error",
+		StorageClusterID: 1,
+		SourceType:       "log",
+	}
+	assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+
+	expectedErr := errors.New("storage cluster records failed")
+	patches := gomonkey.ApplyFunc(storage.ComposeTableIDStorageClusterRecords, func(_ *gorm.DB, _ string, _ ...string) ([]map[string]any, error) {
+		return nil, expectedErr
+	})
+	defer patches.Reset()
+
+	err := NewSpacePusher().PushDorisTableIdDetail([]string{tableID}, false)
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), expectedErr.Error())
+		assert.Contains(t, err.Error(), "failed to get storage cluster records")
+	}
+	assert.Empty(t, redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID))
+}
+
 func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	setupStorageRedisForTest(t)

@@ -955,6 +955,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 	wg := &sync.WaitGroup{}
 	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
+	errCh := make(chan error, len(dorisStorageList))
 	wg.Add(len(dorisStorageList))
 	for _, doris := range dorisStorageList {
 		ch <- struct{}{}
@@ -981,12 +982,14 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 			clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:failed to get storage cluster records, table_id: %s, real_table_id: %s, error: %s", tableId, realTableId, err)
+				errCh <- errors.Wrapf(err, "failed to get storage cluster records, table_id: %s, real_table_id: %s", tableId, realTableId)
 				return
 			}
 
 			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, clusterRecords, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				errCh <- errors.Wrapf(err, "compose doris table id detail error, table_id: %s", tableId)
 				return
 			}
 			// 推送数据
@@ -995,12 +998,17 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				errCh <- errors.Wrapf(err, "push and publish doris table id detail error, table_id: %s", tableId)
 				return
 			}
 			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
 		}(doris, wg, ch)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		return err
+	}
 	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
 	return nil
 }

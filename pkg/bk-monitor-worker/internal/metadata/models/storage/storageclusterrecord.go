@@ -61,17 +61,20 @@ func (ClusterRecord) TableName() string {
 	return "metadata_storageclusterrecord"
 }
 
-// ComposeTableIDStorageClusterRecords 组装指定 table_id 的历史存储集群记录
+// ComposeTableIDStorageClusterRecords 组装指定 table_id 的历史存储集群分段路由。
+// 这里是 BMW 下发 storage_cluster_records 的字段补齐点：当历史分段切到 ES 或 Doris 时，
+// 需要把目标存储实际查询所需的 db/measurement/cluster_name 一并写入 route，避免 UQ 消费时混用外层 RT 配置。
 func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTableID ...string) ([]map[string]any, error) {
 	logger.Infof("compose_table_id_storage_cluster_records: try to get storage cluster records for table_id->[%s]", tableID)
 	routeTableID := tableID
 	if len(currentTableID) > 0 && currentTableID[0] != "" {
+		// 虚拟 RT / Doris 迁移 RT 的历史记录按真实 tableID 查，但查询目标字段优先按当前下发的 RT 补齐。
 		routeTableID = currentTableID[0]
 	}
 
 	var records []ClusterRecord
-	// 查询数据库：过滤 table_id 和 is_deleted，按 create_time 升序排列
-
+	// metadata_storageclusterrecord 只记录某个时间点切到了哪个 cluster，不包含具体查询目标。
+	// 后续需要结合 cluster 类型和对应 storage 表补齐 db / measurement / cluster_name。
 	err := NewClusterRecordQuerySet(db).
 		TableIDEq(tableID).      // 过滤 table_id
 		IsDeletedEq(false).      // 过滤 is_deleted = false
@@ -83,6 +86,8 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		return nil, err
 	}
 
+	// 历史记录中的 cluster_id 决定每个分段最终应该查 ES 还是 Doris。
+	// 查询 cluster_info 后可得到 cluster_type 和 cluster_name，其中 cluster_name 是 Doris/BKSQL 的路由属性。
 	clusterIDList := lo.Uniq(lo.FilterMap(records, func(record ClusterRecord, _ int) (uint, bool) {
 		if record.ClusterID > 0 {
 			return uint(record.ClusterID), true
@@ -114,9 +119,11 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 	}
 
 	// Doris 分段路由需要携带 BKBase 表名和 doris measurement，用于 UQ 生成该时间段的 BKSQL 查询目标。
+	// 如果这里没有补齐，UQ 会拒绝消费 ES -> Doris 的 bk_sql 分段 route，防止 fallback 到外层 ES db/measurement。
 	dorisRoute := map[string]any{}
 	if hasDorisRoute && db.HasTable(DorisStorage{}) {
 		var dorisStorage DorisStorage
+		// 优先按当前下发 RT 查 Doris storage；虚拟 RT 或迁移场景查不到时，再回退到历史记录所属的真实 RT。
 		if err = NewDorisStorageQuerySet(db).
 			Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.OriginTableId, DorisStorageDBSchema.StorageClusterID).
 			TableIDEq(routeTableID).
@@ -134,6 +141,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			}
 		}
 		if dorisStorage.BkbaseTableID == "" && dorisStorage.OriginTableId != "" {
+			// 当前 Doris 记录可能只保留 origin_table_id，继续按 origin RT 查真实的 BKBase 表名。
 			var originDorisStorage DorisStorage
 			if err = NewDorisStorageQuerySet(db).
 				Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.StorageClusterID).
@@ -156,9 +164,11 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 	}
 
 	// ES 路由同样补齐 index_set 和默认 measurement，支持外层是 Doris 时按时间段回查 ES。
+	// 这里补齐的是 ES 查询目标，不能和 Doris 的 bkbase_table_id / doris measurement 混用。
 	esRoute := map[string]any{}
 	if hasESRoute && db.HasTable(ESStorage{}) {
 		var esStorage ESStorage
+		// 优先按当前下发 RT 查 ES storage；查不到 index_set 时再回退到历史记录所属的真实 RT。
 		if err = NewESStorageQuerySet(db).
 			Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId).
 			TableIDEq(routeTableID).
@@ -176,6 +186,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			}
 		}
 		if esStorage.IndexSet == "" && esStorage.OriginTableId != "" {
+			// ES 迁移记录可能通过 origin_table_id 指向真实索引配置。
 			var originESStorage ESStorage
 			if err = NewESStorageQuerySet(db).
 				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet).
@@ -197,7 +208,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 	// 组装结果集
 	result := make([]map[string]any, 0)
 	for _, record := range records {
-		// 判断 enable_time 是否为 nil，转换为 Unix 时间戳
+		// enable_time 为该分段开始生效时间，UQ 会基于它计算查询窗口和 merge 权重。
 		var enableTimestamp int64
 		if record.EnableTime != nil {
 			enableTimestamp = record.EnableTime.Unix()
@@ -212,6 +223,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			if storageType == models.StorageTypeDoris {
 				// metadata_clusterinfo 中 Doris 的 cluster_type 是 doris，UQ 查询侧使用 bk_sql。
 				storageType = models.StorageTypeBkSql
+				// Doris 分段必须使用 Doris 查询目标字段，不能沿用外层 RT 的 ES index_set。
 				for k, v := range dorisRoute {
 					route[k] = v
 				}
@@ -219,6 +231,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 				route["storage_name"] = clusterInfo.ClusterName
 				route["cluster_name"] = clusterInfo.ClusterName
 			} else if storageType == models.StorageTypeES {
+				// ES 分段必须使用 ES index_set 和默认 measurement，支持 Doris 外层 RT 回查历史 ES 数据。
 				for k, v := range esRoute {
 					route[k] = v
 				}

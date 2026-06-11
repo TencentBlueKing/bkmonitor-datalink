@@ -23,9 +23,13 @@ const (
 )
 
 type Params struct {
-	SQL           string `json:"sql"`
-	PreferStorage string `json:"prefer_storage"`
-	Properties    any    `json:"properties,omitempty"`
+	SQL                        string `json:"sql"`
+	PreferStorage              string `json:"prefer_storage,omitempty"`
+	Properties                 any    `json:"properties,omitempty"`
+	BkAppCode                  string `json:"bk_app_code,omitempty"`
+	BkUsername                 string `json:"bk_username,omitempty"`
+	BkdataAuthenticationMethod string `json:"bkdata_authentication_method,omitempty"`
+	BkdataDataToken            string `json:"bkdata_data_token,omitempty"`
 }
 
 type QuerySyncRequest struct {

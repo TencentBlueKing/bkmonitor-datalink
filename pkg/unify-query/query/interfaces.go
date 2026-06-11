@@ -10,10 +10,13 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
@@ -110,7 +113,8 @@ func (z *TsDBV2) String() string {
 
 // validateStorageRouteRecord 校验 storage_cluster_records 记录，并转换为查询侧可消费的完整路由。
 // 第二个返回值表示该记录是否满足路由完整性要求；跨存储记录缺关键字段时返回 false。
-func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool) {
+// 第三个返回值仅在校验失败时标记实际缺失字段，用于日志排障。
+func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string) {
 	storageType := record.StorageType
 	if storageType == "" {
 		storageType = z.StorageType
@@ -120,7 +124,17 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool) {
 	// 跨存储分段 route 不能从外层 RT 逐字段 fallback，否则会生成 storage_type 和 db/measurement 不匹配的查询。
 	// 切到 BKSQL 时还必须携带 cluster_name，用于 BKBase query_sync 的 properties.cluster_name。
 	if isCrossStorageRoute && (record.DB == "" || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
-		return Record{}, false
+		missingFields := make([]string, 0, 3)
+		if record.DB == "" {
+			missingFields = append(missingFields, "db")
+		}
+		if record.Measurement == "" {
+			missingFields = append(missingFields, "measurement")
+		}
+		if requiresBkSQLRouteFields && record.ClusterName == "" {
+			missingFields = append(missingFields, "cluster_name")
+		}
+		return Record{}, false, strings.Join(missingFields, ",")
 	}
 
 	// 同存储类型允许旧 Redis 缓存只下发 storage_id/enable_time，继续从外层 RT detail 补齐查询目标。
@@ -153,7 +167,7 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool) {
 		DB:          db,
 		Measurement: measurement,
 		EnableTime:  record.EnableTime,
-	}, true
+	}, true, ""
 }
 
 // GetStorageIDRangesWithDirectionalOverlap 通过查询时间和前后方向的额外窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
@@ -199,8 +213,13 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 	// 遍历 storageClusterRecords 记录，按照开启时间倒序
 	for i, record := range records {
 		// 切换到 BKSQL 的分段路由必须携带目标存储的完整查询字段；缺字段时跳过该 record，避免 ES->Doris 场景混用外层 ES 配置。
-		route, ok := z.validateStorageRouteRecord(record)
+		route, ok, missingFields := z.validateStorageRouteRecord(record)
 		if !ok {
+			log.Warnf(
+				context.TODO(),
+				"skip invalid storage_cluster_record route, table_id:%s, storage_id:%s, storage_type:%s, missing_fields:%s, db:%s, measurement:%s, cluster_name:%s",
+				z.TableID, record.StorageID, record.StorageType, missingFields, record.DB, record.Measurement, record.ClusterName,
+			)
 			continue
 		}
 		recordStart := time.Unix(record.EnableTime, 0)

@@ -52,17 +52,18 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	if method == "" {
 		method = curl.Post
 	}
-	params := make(map[string]any)
-	params["sql"] = req.SQL
+	auth := bkapi.GetBkDataAPI().GetDataAuth()
+	params := Params{
+		SQL:                        req.SQL,
+		BkAppCode:                  auth[bkapi.BkAppCodeKey],
+		BkUsername:                 auth[bkapi.BkUserNameKey],
+		BkdataAuthenticationMethod: auth[bkapi.BkDataAuthenticationMethodKey],
+		BkdataDataToken:            auth[bkapi.BkDataDataTokenKey],
+	}
 	if req.ClusterName != "" {
-		params["properties"] = QuerySyncProperties{
+		params.Properties = QuerySyncProperties{
 			ClusterName: req.ClusterName,
 		}
-	}
-
-	// body 增加 bkdata auth 信息
-	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
-		params[k] = v
 	}
 
 	body, err := json.Marshal(params)

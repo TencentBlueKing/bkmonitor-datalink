@@ -248,6 +248,90 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
 		},
+		"结构化正则普通文本补齐为包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
+		},
+		"结构化正则顶层或表达式按分支补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(.*foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则顶层或表达式保留分支锚点语义": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则前缀锚点改写为整值前缀匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"TypeError.*"}}}}`,
+		},
+		"结构化正则不包含前缀形式改写为反向正则": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化正则不包含前缀形式只作用于当前 value": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*foo).*", "bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*foo.*"}}}}},{"regexp":{"keyword":{"value":".*bar.*"}}}]}}}`,
+		},
+		"结构化反向正则不包含前缀形式避免双重取反": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionNotRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}}}`,
+		},
 		"multiple nested fields in same condition group": {
 			conditions: metadata.AllConditions{
 				{

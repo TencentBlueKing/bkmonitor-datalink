@@ -20,12 +20,13 @@ import (
 type QueryParams struct {
 	ctx context.Context
 
-	AlignStart time.Time
-	Start      time.Time
-	End        time.Time
-	Step       time.Duration
-	TimeUnit   string
-	Timezone   string
+	AlignStart    time.Time
+	Start         time.Time
+	End           time.Time
+	Step          time.Duration
+	TimeUnit      string
+	Timezone      string
+	LookBackDelta time.Duration
 
 	StorageType *set.Set[string]
 
@@ -59,6 +60,11 @@ func (q *QueryParams) SetTime(alignStart, start, end time.Time, step time.Durati
 	q.Step = step
 	q.TimeUnit = unit
 	q.Timezone = timezone
+	return q
+}
+
+func (q *QueryParams) SetLookBackDelta(lookBackDelta time.Duration) *QueryParams {
+	q.LookBackDelta = lookBackDelta
 	return q
 }
 

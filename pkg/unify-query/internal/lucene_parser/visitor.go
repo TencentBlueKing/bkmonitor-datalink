@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -279,6 +280,7 @@ type ConditionNode struct {
 	value Node
 }
 
+// likeValue 将 Lucene 通配符转换为 SQL LIKE 通配符，并保留转义后的字面量。
 func (n *ConditionNode) likeValue(s string) string {
 	if s == "" {
 		return ""
@@ -312,6 +314,7 @@ func (n *ConditionNode) likeValue(s string) string {
 	return string(ns)
 }
 
+// SetField 把分组外层字段下推给内部条件，例如 log:(a OR b)。
 func (n *ConditionNode) SetField(field Node) {
 	if field != nil {
 		n.field = field
@@ -326,9 +329,18 @@ func (n *ConditionNode) String() string {
 				n.value.SetField(n.field)
 			}
 			sql := n.value.String()
-			sql = fmt.Sprintf("(%s)", sql)
 			if n.reverseOp {
+				// NOT ((field:"")) 的 SQL 字符串语义也要和 DSL 一样兼容为空值判断。
+				if field, ok := n.emptyStringExistsGroupSQLField(sql); ok {
+					return nonEmptyFieldSQL(field)
+				}
+				if field, ok := n.explicitExistsGroupSQLField(sql); ok {
+					return fmt.Sprintf("%s IS NULL", field)
+				}
+				sql = fmt.Sprintf("(%s)", sql)
 				sql = fmt.Sprintf("NOT %s", sql)
+			} else {
+				sql = fmt.Sprintf("(%s)", sql)
 			}
 			return sql
 		}
@@ -434,7 +446,7 @@ func (n *ConditionNode) String() string {
 		if value == "" && n.field != nil {
 			// field:"" 语义为字段存在，与分词无关
 			if n.reverseOp {
-				return fmt.Sprintf("%s IS NULL", field)
+				return nonEmptyFieldSQL(field)
 			}
 			return fmt.Sprintf("%s IS NOT NULL", field)
 		}
@@ -463,16 +475,23 @@ func (n *ConditionNode) String() string {
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
 }
 
+// nonEmptyFieldSQL 渲染 SQL/Doris 路径的“字段存在且不为空字符串”条件，用于 NOT field:"" 兼容语义。
+func nonEmptyFieldSQL(field string) string {
+	// Doris SQL 路径直接使用原字段比较空串：field IS NOT NULL AND field != ''。
+	return fmt.Sprintf("%s IS NOT NULL AND %s != ''", field, field)
+}
+
 func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Query, allMustNot []elastic.Query) {
 	var (
-		result   elastic.Query
-		notEqual bool
+		result       elastic.Query
+		notEqual     bool
+		outerMustNot = n.reverseOp
 	)
 	defer func() {
 		if result == nil {
 			return
 		}
-		if n.reverseOp || notEqual {
+		if outerMustNot || notEqual {
 			allMustNot = append(allMustNot, result)
 		} else {
 			allMust = append(allMust, result)
@@ -487,6 +506,16 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 			must, should, mustNot := n.value.DSL()
 			if b, ok := n.value.(*LogicNode); ok {
+				if n.reverseOp && len(must) == 1 && len(should) == 0 && len(mustNot) == 0 {
+					if field, ok := n.emptyStringExistsGroupQueryField(must[0]); ok {
+						// NOT ((field:"")) 的 NOT 作用在分组上，需要在这里兼容为空串取反语义。
+						// 重建后的非空 bool query 仍要保持原字段的 nested scope；普通字段会原样返回。
+						result = wrapNestedFieldQuery(field, n.Option.FieldsMap, nonEmptyFieldQuery(field, n.Option.FieldsMap))
+						// 取反已经表达为“字段存在且非空”，收尾阶段不再追加外层 must_not。
+						outerMustNot = false
+						return allMust, allShould, allMustNot
+					}
+				}
 				if b.boost != "" {
 					result = elastic.NewBoolQuery().Must(must...).Should(should...).MustNot(mustNot...).Boost(cast.ToFloat64(b.boost))
 				} else {
@@ -620,11 +649,18 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = cq
 		}
 	case *RegexpNode:
+		rewrite := esregexpcompat.Rewrite(value)
+		value = rewrite.Pattern
 		cq := elastic.NewRegexpQuery(field, value)
 		if cv.Boost != "" {
 			cq.Boost(cast.ToFloat64(cv.Boost))
 		}
-		result = cq
+		if rewrite.Negative {
+			// 正向不包含前缀形式必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
+			result = negativeLookaheadQuery(field, cq)
+		} else {
+			result = cq
+		}
 	case *StringNode:
 		switch op {
 		case ">":
@@ -649,8 +685,14 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			}
 
 			if value == "" && n.field != nil {
-				// field:"" 语义为字段存在，与分词无关
-				result = elastic.NewExistsQuery(field)
+				// field:"" 语义为字段存在；NOT field:"" 兼容为字段存在且不等于空串。
+				if n.reverseOp {
+					result = nonEmptyFieldQuery(field, n.Option.FieldsMap)
+					// 取反已经表达为“字段存在且非空”，收尾阶段不再追加外层 must_not。
+					outerMustNot = false
+				} else {
+					result = elastic.NewExistsQuery(field)
+				}
 			} else if fieldOption.IsAnalyzed {
 				cq := elastic.NewMatchPhraseQuery(field, value)
 				if cv.Boost != "" {
@@ -669,10 +711,263 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 
 	originField := n.Option.FieldsMap.Field(strings.Split(field, ".")[0])
 	if strings.ToUpper(originField.FieldType) == "NESTED" {
-		result = elastic.NewNestedQuery(fieldOption.OriginField, result)
+		result = wrapNestedFieldQuery(field, n.Option.FieldsMap, result)
 	}
 
 	return allMust, allShould, allMustNot
+}
+
+// nonEmptyFieldQuery 构造“字段存在且不为空字符串”的 ES 查询；text 字段优先用 keyword/raw 子字段判断空串。
+func nonEmptyFieldQuery(field string, fieldsMap metadata.FieldsMap) elastic.Query {
+	q := elastic.NewBoolQuery().Must(elastic.NewExistsQuery(field))
+	if exactField, ok := exactSubfieldForEmptyValue(field, fieldsMap); ok {
+		q.MustNot(elastic.NewTermQuery(exactField, ""))
+	}
+	return q
+}
+
+// wrapNestedFieldQuery 在字段属于 nested mapping 时，用正确 path 包装已有字段查询。
+func wrapNestedFieldQuery(field string, fieldsMap metadata.FieldsMap, query elastic.Query) elastic.Query {
+	if fieldsMap == nil {
+		return query
+	}
+	originField := fieldsMap.Field(strings.Split(field, ".")[0])
+	if strings.ToUpper(originField.FieldType) != "NESTED" {
+		return query
+	}
+
+	fieldOption := fieldsMap.Field(field)
+	nestedPath := fieldOption.OriginField
+	if nestedPath == "" {
+		// 部分 mapping 只有顶层 nested 字段声明，没有在叶子字段上回填 OriginField。
+		// 这类字段仍按 dotted path 的首段作为 nested path，例如 nested.key -> nested。
+		nestedPath = strings.Split(field, ".")[0]
+	}
+	return elastic.NewNestedQuery(nestedPath, query)
+}
+
+// exactSubfieldForEmptyValue 返回 ES DSL 路径可用于精确判断空字符串的字段或精确值子字段。
+func exactSubfieldForEmptyValue(field string, fieldsMap metadata.FieldsMap) (string, bool) {
+	if fieldsMap == nil {
+		return field, true
+	}
+
+	fieldOption := fieldsMap.Field(field)
+	if !fieldOption.IsAnalyzed {
+		return field, true
+	}
+
+	// ES text/analyzed 字段会经过 analysis，term "" 不会分析查询词，不能稳定表达“值不等于空串”。
+	// ES DSL 路径优先选择 mapping 中的 keyword/raw multi-fields 子字段做精确空串判断；没有精确子字段时只保留 exists。
+	for _, candidate := range []string{field + ".keyword", field + ".raw"} {
+		// field.keyword/field.raw 是 ES multi-fields 中常见的精确值子字段命名。
+		// 参考：https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/multi-fields
+		// 这里按 FieldsMap 中已知字段选择可用于 term 查询的非 analyzed 子字段。
+		option := fieldsMap.Field(candidate)
+		if option.Existed() && !option.IsAnalyzed {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+// negativeLookaheadQuery 用 exists + must_not regexp 表达固定“不包含前缀形式”的兼容语义。
+func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
+	// ES regexp 不支持不包含前缀形式，用字段存在 + 反向 regexp 保留“字段值不包含”的语义。
+	return elastic.NewBoolQuery().
+		Must(elastic.NewExistsQuery(field)).
+		MustNot(regexp)
+}
+
+// existsSQLField 从简单的 SQL exists 表达式中取出字段名，并拒绝包含 AND/OR 的复合表达式。
+func existsSQLField(sql string) (string, bool) {
+	for isWrappedExpression(sql) {
+		sql = strings.TrimSpace(sql[1 : len(sql)-1])
+	}
+	field, ok := strings.CutSuffix(sql, " IS NOT NULL")
+	if !ok || field == "" {
+		return "", false
+	}
+	upperField := strings.ToUpper(field)
+	if strings.Contains(upperField, " OR ") || strings.Contains(upperField, " AND ") {
+		return "", false
+	}
+	return field, balancedParentheses(field)
+}
+
+// emptyStringExistsGroupSQLField 判断当前分组是否源自 field:""，并从 SQL 表达式中取真实字段名。
+func (n *ConditionNode) emptyStringExistsGroupSQLField(sql string) (string, bool) {
+	// field:"" 与 _exists_:field 都会先渲染成 field IS NOT NULL。
+	// 分组取反时必须回看 AST 来源，只允许 field:"" 走“字段存在且非空”的兼容语义。
+	if !n.isEmptyStringExistsGroupCondition() {
+		return "", false
+	}
+	return existsSQLField(sql)
+}
+
+// emptyStringExistsGroupQueryField 判断当前分组是否源自 field:""，并从已生成 DSL 中取真实字段名。
+func (n *ConditionNode) emptyStringExistsGroupQueryField(query elastic.Query) (string, bool) {
+	// DSL 路径同样会把 field:"" 与 _exists_:field 都生成为 exists query。
+	// 这里先确认分组源自 field:""，再从 query 中取经过别名转换后的真实字段名。
+	if !n.isEmptyStringExistsGroupCondition() {
+		return "", false
+	}
+	return existsQueryField(query)
+}
+
+// explicitExistsGroupSQLField 判断当前分组是否源自 _exists_:field，并从 SQL 表达式中取真实字段名。
+func (n *ConditionNode) explicitExistsGroupSQLField(sql string) (string, bool) {
+	// 显式 _exists_ 分组取反应保持存在性取反，避免被上面的空字符串兼容逻辑误改成非空字符串检查。
+	if !n.isExplicitExistsGroupCondition() {
+		return "", false
+	}
+	return existsSQLField(sql)
+}
+
+// isEmptyStringExistsGroupCondition 判断分组是否只包含一个 field:"" 条件。
+func (n *ConditionNode) isEmptyStringExistsGroupCondition() bool {
+	if !n.isGroup {
+		return false
+	}
+	child, ok := n.singleGroupChild()
+	if !ok {
+		return false
+	}
+	return child.isEmptyStringExistsCondition()
+}
+
+// isEmptyStringExistsCondition 判断节点是否为正向 field:"" 条件；该条件在当前语义中表示字段存在。
+func (n *ConditionNode) isEmptyStringExistsCondition() bool {
+	if n == nil || n.reverseOp {
+		return false
+	}
+	if n.isGroup {
+		child, ok := n.singleGroupChild()
+		return ok && child.isEmptyStringExistsCondition()
+	}
+	field, ok := conditionFieldName(n)
+	if !ok || field == "_exists_" {
+		return false
+	}
+	value, ok := n.value.(*StringNode)
+	return ok && strings.Trim(value.Value, `"`) == ""
+}
+
+// isExplicitExistsGroupCondition 判断分组是否只包含一个显式 _exists_:field 条件。
+func (n *ConditionNode) isExplicitExistsGroupCondition() bool {
+	if !n.isGroup {
+		return false
+	}
+	child, ok := n.singleGroupChild()
+	if !ok {
+		return false
+	}
+	return child.isExplicitExistsCondition()
+}
+
+// isExplicitExistsCondition 判断节点是否为正向 _exists_:field 条件。
+func (n *ConditionNode) isExplicitExistsCondition() bool {
+	if n == nil || n.reverseOp {
+		return false
+	}
+	if n.isGroup {
+		child, ok := n.singleGroupChild()
+		return ok && child.isExplicitExistsCondition()
+	}
+	field, ok := conditionFieldName(n)
+	return ok && field == "_exists_"
+}
+
+// singleGroupChild 返回单条件分组的唯一子节点；多条件分组不能套用 field:"" 或 _exists_ 的特殊取反语义。
+func (n *ConditionNode) singleGroupChild() (*ConditionNode, bool) {
+	logic, ok := n.value.(*LogicNode)
+	if !ok || len(logic.Nodes) != 1 {
+		return nil, false
+	}
+	return logic.Nodes[0], logic.Nodes[0] != nil
+}
+
+// conditionFieldName 读取条件节点的原始字段名；这里只接受普通字符串字段。
+func conditionFieldName(n *ConditionNode) (string, bool) {
+	if n == nil || n.field == nil {
+		return "", false
+	}
+	field, ok := n.field.(*StringNode)
+	if !ok || field.Value == "" {
+		return "", false
+	}
+	return field.Value, true
+}
+
+// isWrappedExpression 判断 SQL 表达式是否被一对覆盖全表达式的括号包裹。
+func isWrappedExpression(sql string) bool {
+	sql = strings.TrimSpace(sql)
+	if len(sql) < 2 || sql[0] != '(' || sql[len(sql)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	for i, r := range sql {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(sql)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+// balancedParentheses 判断 SQL 片段括号是否平衡，用于避免从异常表达式中误提字段名。
+func balancedParentheses(sql string) bool {
+	depth := 0
+	for _, r := range sql {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+// existsQueryField 从 exists 或 nested exists DSL 中反查字段名。
+func existsQueryField(query elastic.Query) (string, bool) {
+	// 分组反向场景只能拿到已生成的 query，这里从 exists/nested exists DSL 中反查字段名。
+	source, err := query.Source()
+	if err != nil {
+		return "", false
+	}
+
+	body, ok := source.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if nested, ok := body["nested"].(map[string]any); ok {
+		return existsQueryFieldFromSource(nested["query"])
+	}
+	return existsQueryFieldFromSource(body)
+}
+
+// existsQueryFieldFromSource 从 olivere/elastic 生成的 exists query source 中读取 field。
+func existsQueryFieldFromSource(source any) (string, bool) {
+	body, ok := source.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	exists, ok := body["exists"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	field, ok := exists["field"].(string)
+	return field, ok && field != ""
 }
 
 func (n *ConditionNode) VisitTerminal(ctx antlr.TerminalNode) any {

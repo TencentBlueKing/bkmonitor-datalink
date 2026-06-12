@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	prom "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/assert"
 )
@@ -31,4 +32,25 @@ func TestNewEngineKeepsDefaultLookbackForExistingEngine(t *testing.T) {
 	NewEngine(&Params{LookbackDelta: 2 * time.Hour})
 
 	assert.Equal(t, 10*time.Minute, GetDefaultLookbackDelta())
+}
+
+func TestNewEngineHandlesNilParams(t *testing.T) {
+	oldEngine := GlobalEngine
+	oldLookback := defaultLookbackDelta
+	oldRegisterer := prometheus.DefaultRegisterer
+	t.Cleanup(func() {
+		GlobalEngine = oldEngine
+		defaultLookbackDelta = oldLookback
+		prometheus.DefaultRegisterer = oldRegisterer
+	})
+
+	GlobalEngine = nil
+	defaultLookbackDelta = 5 * time.Minute
+	prometheus.DefaultRegisterer = prometheus.NewRegistry()
+
+	assert.NotPanics(t, func() {
+		NewEngine(nil)
+	})
+	assert.NotNil(t, GlobalEngine)
+	assert.Equal(t, 5*time.Minute, GetDefaultLookbackDelta())
 }

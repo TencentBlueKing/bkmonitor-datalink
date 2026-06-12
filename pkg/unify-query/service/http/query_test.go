@@ -45,6 +45,74 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+func assertPromDataJSONEqIgnoringResultTableID(t *testing.T, expected, actual string) {
+	t.Helper()
+
+	actualMap := make(map[string]any)
+	err := json.Unmarshal([]byte(actual), &actualMap)
+	assert.Nil(t, err)
+	if err != nil {
+		return
+	}
+	assert.Contains(t, actualMap, "result_table_id")
+
+	delete(actualMap, "result_table_id")
+	actualWithoutResultTableID, err := json.Marshal(actualMap)
+	assert.Nil(t, err)
+	assert.JSONEq(t, expected, string(actualWithoutResultTableID))
+}
+
+func assertPromDataJSONEqWithSortedSeries(t *testing.T, expected, actual string) {
+	t.Helper()
+
+	expected = normalizePromDataSeriesForCompare(t, expected)
+	actual = normalizePromDataSeriesForCompare(t, actual)
+	assert.JSONEq(t, expected, actual)
+}
+
+func normalizePromDataSeriesForCompare(t *testing.T, raw string) string {
+	t.Helper()
+
+	data := make(map[string]any)
+	err := json.Unmarshal([]byte(raw), &data)
+	assert.Nil(t, err)
+	if err != nil {
+		return raw
+	}
+
+	series, ok := data["series"].([]any)
+	if ok {
+		sort.SliceStable(series, func(i, j int) bool {
+			return promDataSeriesSortKey(series[i]) < promDataSeriesSortKey(series[j])
+		})
+		for i, item := range series {
+			if table, ok := item.(map[string]any); ok {
+				table["name"] = fmt.Sprintf("_result%d", i)
+			}
+		}
+	}
+
+	out, err := json.Marshal(data)
+	assert.Nil(t, err)
+	return string(out)
+}
+
+func promDataSeriesSortKey(item any) string {
+	table, ok := item.(map[string]any)
+	if !ok {
+		return ""
+	}
+	values, ok := table["group_values"].([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, fmt.Sprint(value))
+	}
+	return strings.Join(parts, "\xff")
+}
+
 func TestParseLookBackDeltaPrometheusDuration(t *testing.T) {
 	duration, err := parseLookBackDelta("1d")
 	assert.NoError(t, err)
@@ -169,7 +237,13 @@ func TestQueryTsWithDoris(t *testing.T) {
 			assert.Nil(t, err)
 			excepted, err := json.Marshal(res)
 			assert.Nil(t, err)
-			assert.JSONEq(t, c.result, string(excepted))
+			expected := make(map[string]any)
+			err = json.Unmarshal([]byte(c.result), &expected)
+			assert.Nil(t, err)
+			expected["result_table_id"] = []string{"result_table.doris"}
+			expectedBytes, err := json.Marshal(expected)
+			assert.Nil(t, err)
+			assert.JSONEq(t, string(expectedBytes), string(excepted))
 		})
 	}
 }
@@ -1380,7 +1454,7 @@ func TestQueryTs(t *testing.T) {
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
 			actual := string(out)
-			assert.JSONEq(t, c.result, actual)
+			assertPromDataJSONEqIgnoringResultTableID(t, c.result, actual)
 		})
 	}
 }
@@ -2411,7 +2485,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
-			total, list, options, err := queryRawWithInstance(ctx, c.queryTs)
+			total, list, options, _, err := queryRawWithInstance(ctx, c.queryTs)
 
 			if c.expectError {
 				assert.NotNil(t, err, "Expected an error but got nil")
@@ -2458,7 +2532,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 		}
 
-		_, _, _, err := queryRawWithInstance(ctx, queryTs)
+		_, _, _, _, err := queryRawWithInstance(ctx, queryTs)
 		assert.NoError(t, err)
 
 		queryRef := metadata.GetQueryReference(ctx)
@@ -2505,7 +2579,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 		}
 
-		_, _, options, err := queryRawWithInstance(ctx, queryTs)
+		_, _, options, _, err := queryRawWithInstance(ctx, queryTs)
 		require.NoError(t, err)
 		option := options.GetOption("result_table.doris|4")
 		require.NotNil(t, option)
@@ -4541,8 +4615,11 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 				sort.SliceStable(d.Tables, func(i, j int) bool {
 					a := d.Tables[i]
 					b := d.Tables[j]
-					return a.Name < b.Name
+					return strings.Join(a.GroupValues, "\xff") < strings.Join(b.GroupValues, "\xff")
 				})
+				for i, table := range d.Tables {
+					table.Name = fmt.Sprintf("_result%d", i)
+				}
 			}
 
 			t.Logf("QueryTsClusterMetrics error: %+v", err)
@@ -4550,7 +4627,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			out, err := json.Marshal(res)
 			actual := string(out)
 			assert.Nil(t, err)
-			assert.JSONEq(t, c.result, actual)
+			assertPromDataJSONEqWithSortedSeries(t, c.result, actual)
 		})
 	}
 }
@@ -4625,12 +4702,16 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 			}
 			c.query.SpaceUid = spaceUid
 
-			instance, stmt, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
+			instance, stmt, routeInfo, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
 			if err != nil {
 				panic(err)
 			}
 
 			assert.Equal(t, c.stmt, stmt)
+			assert.NotNil(t, routeInfo)
+			if len(routeInfo) > 0 {
+				assert.NotEmpty(t, routeInfo[0].TableID)
+			}
 			if instance != nil {
 				assert.Equal(t, c.instanceType, instance.InstanceType())
 			}
@@ -4767,7 +4848,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 		Limit: 50,
 	}
 
-	_, list, _, err := queryRawWithInstance(ctx, queryTs)
+	_, list, _, _, err := queryRawWithInstance(ctx, queryTs)
 	assert.Nil(t, err)
 
 	for i, item := range list {
@@ -4942,7 +5023,7 @@ func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
 		Limit: 50,
 	}
 
-	total, list, _, qerr := queryRawWithInstance(ctx, queryTs)
+	total, list, _, _, qerr := queryRawWithInstance(ctx, queryTs)
 	assert.NoError(t, qerr)
 	assert.Greater(t, total, int64(0))
 	assert.NotEmpty(t, list)
@@ -4993,7 +5074,7 @@ func TestQueryRaw_ES_empty_db_skipped(t *testing.T) {
 		},
 	}
 
-	total, list, _, err := queryRawWithInstance(ctx, qts)
+	total, list, _, _, err := queryRawWithInstance(ctx, qts)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), total)
 	assert.Empty(t, list)
@@ -5066,7 +5147,7 @@ func TestQueryRaw_ES_mixed_empty_db_and_ok(t *testing.T) {
 		Limit: 50,
 	}
 
-	total, list, _, qerr := queryRawWithInstance(ctx, queryTs)
+	total, list, _, _, qerr := queryRawWithInstance(ctx, queryTs)
 	assert.NoError(t, qerr)
 	assert.Greater(t, total, int64(0))
 	assert.NotEmpty(t, list)
@@ -5128,7 +5209,7 @@ func TestQueryRawWithScroll_ES_empty_db_skipped(t *testing.T) {
 	}
 	defer func() { _ = session.Clear(ctx) }()
 
-	_, list, _, done, err := queryRawWithScroll(ctx, qts, session)
+	_, list, _, _, done, err := queryRawWithScroll(ctx, qts, session)
 	assert.NoError(t, err)
 	assert.Empty(t, list)
 	assert.True(t, done, "skipped bad table should mark slice completed so session Done")
@@ -5174,12 +5255,14 @@ func TestQueryRawWithScroll_CollectsResultTableOptions(t *testing.T) {
 	}
 	defer func() { _ = session.Clear(ctx) }()
 
-	total, list, options, done, err := queryRawWithScroll(ctx, qts, session)
+	total, list, options, routeInfo, done, err := queryRawWithScroll(ctx, qts, session)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(12), total)
 	assert.Len(t, list, 12)
 	assert.False(t, done)
 	assert.Len(t, options, 6)
+	assert.Len(t, routeInfo, 2)
+	assert.Equal(t, []string{"result_table.es", "result_table.es_with_time_filed"}, []string{routeInfo[0].TableID, routeInfo[1].TableID})
 
 	for _, tc := range []struct {
 		key        string
@@ -5280,6 +5363,7 @@ func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
 	data, ok := res.(*PromData)
 	assert.True(t, ok)
 	assert.NotNil(t, data)
+	assert.ElementsMatch(t, []string{"system.cpu_summary", failRT}, data.ResultTableID)
 
 	st := data.Status
 	assert.NotNil(t, st)
@@ -5490,7 +5574,7 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 					break
 				}
 
-				total, list, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, _, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -5639,7 +5723,7 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 					break
 				}
 
-				total, list, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, _, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {

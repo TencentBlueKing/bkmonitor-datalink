@@ -218,7 +218,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
@@ -269,7 +269,8 @@ func HandlerQueryRaw(c *gin.Context) {
 		return
 	}
 
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
+	var routeInfo []metadata.RouteInfo
+	listData.Total, listData.List, listData.ResultTableOptions, routeInfo, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -282,6 +283,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.ResultTableID = resultTableIDFromRouteInfo(routeInfo)
 
 	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
@@ -296,7 +298,7 @@ func HandlerQueryRaw(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw_with_scroll [post]
 func HandlerQueryRawWithScroll(c *gin.Context) {
@@ -382,7 +384,8 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
+	var routeInfo []metadata.RouteInfo
+	listData.Total, listData.List, listData.ResultTableOptions, routeInfo, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	if err != nil {
 		return
 	}
@@ -394,6 +397,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.ResultTableID = resultTableIDFromRouteInfo(routeInfo)
 	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }

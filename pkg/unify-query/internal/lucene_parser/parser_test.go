@@ -188,6 +188,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"nested":{"path":"event","query":{"term":{"event.name":"test"}}}}`,
 		},
 		{
+			name:  "grouped negated nested empty string keeps nested non-empty semantics",
+			input: `NOT ((event.name:""))`,
+			sql:   "CAST(event['name'] AS STRING) IS NOT NULL AND CAST(event['name'] AS STRING) != ''",
+			dsl:   `{"nested":{"path":"event","query":{"bool":{"must":{"exists":{"field":"event.name"}},"must_not":{"term":{"event.name":""}}}}}}`,
+		},
+		{
 			name:  "test-1",
 			input: `__ext.io_kubernetes_pod_namespace: "gfp-online-livepy-b" AND is_data_valid: "1" AND born_dist_to_recipient: <400 AND recipient_exists: "1" AND bot_dead_reason: (*killed_by_unknown* OR *bot_without_injury*) AND approach_succ: "0" AND approach_curr_recipient_frame: >200 AND in_fight_aggressive_ratio: "0"`,
 			sql:   "CAST(__ext['io_kubernetes_pod_namespace'] AS STRING) = 'gfp-online-livepy-b' AND `is_data_valid` = '1' AND `born_dist_to_recipient` < '400' AND `recipient_exists` = '1' AND (`bot_dead_reason` LIKE '%killed_by_unknown%' OR `bot_dead_reason` LIKE '%bot_without_injury%') AND `approach_succ` = '0' AND `approach_curr_recipient_frame` > '200' AND `in_fight_aggressive_ratio` = '0'",
@@ -216,6 +222,24 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
+		},
+		{
+			name:  "negative prefix regexp keeps implicit should semantics",
+			input: `name:/^(?!.*foo).*/ status:ok`,
+			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
+			dsl:   `{"bool":{"should":[{"bool":{"must":{"exists":{"field":"name"}},"must_not":{"regexp":{"name":{"value":".*foo.*"}}}}},{"term":{"status":"ok"}}]}}`,
+		},
+		{
+			name:  "negated empty string stays required with explicit must",
+			input: `+status:ok NOT log:""`,
+			sql:   "`status` = 'ok' AND `log` IS NOT NULL AND `log` != ''",
+			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}}}}]}}`,
+		},
+		{
+			name:  "composite negated group does not collapse sql empty check",
+			input: `NOT ((status:ok) OR (log:""))`,
+			sql:   "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
+			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
 		},
 	}
 
@@ -317,7 +341,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"正则匹配": {
 			q:   `name: /joh?n(ath[oa]n)/`,
-			es:  `{"regexp":{"name":{"value":"joh?n(ath[oa]n)"}}}`,
+			es:  `{"regexp":{"name":{"value":".*joh?n(ath[oa]n).*"}}}`,
 			sql: "`name` REGEXP 'joh?n(ath[oa]n)'",
 		},
 		"范围匹配，左闭右开": {
@@ -586,6 +610,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
 			sql: "`author` IS NULL",
 		},
+		"field_query_exists_group_not": {
+			q:   `NOT ((_exists_:author))`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
 		"field_query_exists_or": {
 			q:   `_exists_: Dsa OR _exists_: Allocate`,
 			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
@@ -673,8 +702,33 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"regex_field": {
 			q:   `log:/patt.*n/`,
-			es:  `{"regexp":{"log":{"value":"patt.*n"}}}`,
+			es:  `{"regexp":{"log":{"value":".*patt.*n.*"}}}`,
 			sql: "`log` REGEXP 'patt.*n'",
+		},
+		"字段正则普通文本补齐为包含匹配": {
+			q:   `msg:/TypeError/`,
+			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
+			sql: "`msg` REGEXP 'TypeError'",
+		},
+		"字段正则顶层或表达式按分支补齐包含匹配": {
+			q:   `msg:/foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,
+			sql: "`msg` REGEXP 'foo|bar'",
+		},
+		"字段正则顶层或表达式保留分支锚点语义": {
+			q:   `msg:/^foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":"(foo.*|.*bar.*)"}}}`,
+			sql: "`msg` REGEXP '^foo|bar'",
+		},
+		"字段正则前缀锚点改写为整值前缀匹配": {
+			q:   `msg:/^TypeError/`,
+			es:  `{"regexp":{"msg":{"value":"TypeError.*"}}}`,
+			sql: "`msg` REGEXP '^TypeError'",
+		},
+		"字段正则不包含前缀形式改写为反向正则": {
+			q:   `msg:/^(?!.*idip).*/`,
+			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
+			sql: "`msg` REGEXP '^(?!.*idip).*'",
 		},
 		"fuzzy_and_field": {
 			q:   `log: test~`,
@@ -1257,7 +1311,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_field_regex": {
 			q:   `field:/pattern/`,
-			es:  `{"regexp":{"field":{"value":"pattern"}}}`,
+			es:  `{"regexp":{"field":{"value":".*pattern.*"}}}`,
 			sql: "`field` REGEXP 'pattern'",
 		},
 
@@ -1274,10 +1328,25 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"exists":{"field":"log"}}`,
 			sql: "`log` IS NOT NULL",
 		},
-		"edge_empty_field_value_negated_becomes_not_exists": {
+		"取反空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT log:""`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NOT NULL AND `log` != ''",
+		},
+		"取反分组空字符串在 ES 中改写为字段存在且非空": {
+			q:   `NOT ((log:""))`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NOT NULL AND `log` != ''",
+		},
+		"取反分组 exists 不改写为空字符串非空语义": {
+			q:   `NOT ((_exists_:log))`,
 			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
 			sql: "`log` IS NULL",
+		},
+		"取反复合分组空字符串不误改写 SQL": {
+			q:   `NOT ((status:ok) OR (log:""))`,
+			es:  `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
+			sql: "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
 		},
 		"edge_field_with_underscore": {
 			q:   `_field:value`,
@@ -1613,6 +1682,45 @@ func queryToJSON(query elastic.Query) (string, error) {
 		return "", err
 	}
 	return string(jsonBytes), nil
+}
+
+func TestNonEmptyFieldQuery(t *testing.T) {
+	tests := map[string]struct {
+		field     string
+		fieldsMap metadata.FieldsMap
+		want      string
+	}{
+		"keyword 字段直接排除空串": {
+			field: "level",
+			fieldsMap: metadata.FieldsMap{
+				"level": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"level"}},"must_not":{"term":{"level":""}}}}`,
+		},
+		"text 字段有 keyword 子字段时用子字段排除空串": {
+			field: "log",
+			fieldsMap: metadata.FieldsMap{
+				"log":         {FieldType: "text", IsAnalyzed: true},
+				"log.keyword": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log.keyword":""}}}}`,
+		},
+		"text 字段没有精确子字段时只保留 exists": {
+			field: "message",
+			fieldsMap: metadata.FieldsMap{
+				"message": {FieldType: "text", IsAnalyzed: true},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"message"}}}}`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := queryToJSON(nonEmptyFieldQuery(tt.field, tt.fieldsMap))
+			assert.Nil(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestConvertSingleQuotes(t *testing.T) {

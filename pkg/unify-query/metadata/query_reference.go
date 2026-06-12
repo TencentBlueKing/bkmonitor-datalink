@@ -11,7 +11,9 @@ package metadata
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
@@ -80,6 +82,11 @@ func (q *Query) StorageUUID() string {
 			if len(nt) > 0 {
 				l = append(l, string(nt))
 			}
+		}
+	}
+	for _, t := range []time.Time{q.RouteStart, q.RouteEnd, q.RouteQueryStart, q.RouteQueryEnd} {
+		if !t.IsZero() {
+			l = append(l, fmt.Sprintf("%d", t.UnixNano()))
 		}
 	}
 

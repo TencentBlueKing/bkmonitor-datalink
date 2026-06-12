@@ -183,6 +183,17 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 	allShould := make([]elastic.Query, 0)
 	allMustNot := make([]elastic.Query, 0)
 	implicitShould := make([]elastic.Query, 0)
+	hasExplicitAnd := false
+	hasExplicitOr := false
+
+	for _, logic := range n.logics {
+		switch logic {
+		case logicAnd:
+			hasExplicitAnd = true
+		case logicOR:
+			hasExplicitOr = true
+		}
+	}
 
 	for i, c := range n.Nodes {
 		q := MergeQuery(c.DSL())
@@ -207,7 +218,7 @@ func (n *LogicNode) DSL() ([]elastic.Query, []elastic.Query, []elastic.Query) {
 		}
 	}
 
-	if len(implicitShould) == 1 && len(allMust) > 1 {
+	if (hasExplicitAnd && !hasExplicitOr && len(allMust) > 0) || (len(implicitShould) == 1 && len(allMust) > 1) {
 		allMust = append(allMust, implicitShould...)
 	} else {
 		allShould = append(allShould, implicitShould...)

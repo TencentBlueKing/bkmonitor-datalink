@@ -131,13 +131,14 @@ func ComputeStatFromPoints(points []promql.Point) *StatItem {
 	if len(points) == 0 {
 		return nil
 	}
-	var sum, avgOnline float64
+	var sum, runningAvg float64
 	minV, maxV := math.MaxFloat64, -math.MaxFloat64
 	minIdx, maxIdx := 0, 0
 	for i, p := range points {
 		sum += p.V
 		n := float64(i + 1)
-		avgOnline += p.V/n - avgOnline/n
+		// runningAvg 用于 sum 溢出时的 avg 回退。
+		runningAvg += p.V/n - runningAvg/n
 		if p.V < minV {
 			minV = p.V
 			minIdx = i
@@ -150,7 +151,7 @@ func ComputeStatFromPoints(points []promql.Point) *StatItem {
 	n := float64(len(points))
 	avg := sum / n
 	if math.IsInf(avg, 0) || math.IsNaN(avg) {
-		avg = avgOnline
+		avg = runningAvg
 	}
 	last := points[len(points)-1]
 	return &StatItem{

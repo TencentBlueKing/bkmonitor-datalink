@@ -11,6 +11,7 @@ package http
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/prometheus/prometheus/promql"
@@ -60,6 +61,32 @@ func TestComputeStatFromPoints_MinMaxIndices(t *testing.T) {
 	assert.Equal(t, float64(90), got.Last.V)
 }
 
+func TestComputeStatFromPoints_OverflowStatMarshal(t *testing.T) {
+	points := []promql.Point{
+		{T: 1000, V: math.MaxFloat64},
+		{T: 2000, V: math.MaxFloat64},
+	}
+
+	got := ComputeStatFromPoints(points)
+	assert.NotNil(t, got)
+	assert.True(t, math.IsInf(got.Sum.V, 1))
+	assert.False(t, math.IsInf(got.Avg.V, 0))
+	assert.False(t, math.IsNaN(got.Avg.V))
+	assert.Equal(t, math.MaxFloat64, got.Avg.V)
+	assert.Equal(t, math.MaxFloat64, got.Min.V)
+	assert.Equal(t, int64(1000), got.Min.T)
+	assert.Equal(t, math.MaxFloat64, got.Max.V)
+	assert.Equal(t, int64(1000), got.Max.T)
+	assert.Equal(t, math.MaxFloat64, got.Last.V)
+	assert.Equal(t, int64(2000), got.Last.T)
+	assert.Equal(t, float64(2), got.Count.V)
+
+	b, err := json.Marshal(got)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), `"sum":[0,null]`)
+	assert.Contains(t, string(b), `"avg":[0,1.7976931348623157e+308]`)
+}
+
 func requireStat(t *testing.T, s *StatItem, count int, sum, minV, maxV, avg float64, minT, maxT, lastT int64, lastV float64) {
 	t.Helper()
 	assert.NotNil(t, s)
@@ -78,10 +105,40 @@ func requireStat(t *testing.T, s *StatItem, count int, sum, minV, maxV, avg floa
 }
 
 func TestStatPoint_MarshalJSON(t *testing.T) {
-	p := StatPoint{T: 1773308220000, V: 10}
-	b, err := json.Marshal(p)
-	assert.NoError(t, err)
-	assert.Equal(t, `[1773308220000,10]`, string(b))
+	tests := []struct {
+		name string
+		p    StatPoint
+		want string
+	}{
+		{
+			name: "finite",
+			p:    StatPoint{T: 1773308220000, V: 10},
+			want: `[1773308220000,10]`,
+		},
+		{
+			name: "positive inf",
+			p:    StatPoint{T: 1773308220000, V: math.Inf(1)},
+			want: `[1773308220000,null]`,
+		},
+		{
+			name: "negative inf",
+			p:    StatPoint{T: 1773308220000, V: math.Inf(-1)},
+			want: `[1773308220000,null]`,
+		},
+		{
+			name: "nan",
+			p:    StatPoint{T: 1773308220000, V: math.NaN()},
+			want: `[1773308220000,null]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := json.Marshal(tt.p)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, string(b))
+		})
+	}
 }
 
 func TestTablesItem_GetPromPoints_And_Stat(t *testing.T) {

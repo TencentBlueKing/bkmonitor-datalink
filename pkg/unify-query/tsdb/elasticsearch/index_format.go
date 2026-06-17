@@ -59,6 +59,13 @@ func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
 }
 
 func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
+	if f.wildcardCaseInsensitive != nil {
+		for k, v := range f.fieldsMap {
+			// 多索引解析时低版本索引可能后出现，需要在返回前统一回填最终能力值。
+			v.WildcardCaseInsensitive = *f.wildcardCaseInsensitive
+			f.fieldsMap[k] = v
+		}
+	}
 	return f.fieldsMap
 }
 
@@ -140,13 +147,15 @@ func (f *IndexOptionFormat) mapMappings(prefix string, data map[string]any) {
 	}
 
 	if prefix != "" {
-		if _, ok := f.fieldsMap[prefix]; ok {
-			return
-		}
-
 		fm := f.esToFieldMap(prefix, data)
 		// 忽略为空的类型和 alias 类型，因为别名已经在 unifyquery 实现过了
 		if !fm.Existed() || fm.FieldType == "alias" {
+			return
+		}
+
+		if existing, ok := f.fieldsMap[prefix]; ok {
+			// 同一字段可能来自多个索引；不能只保留首个索引的大小写语义。
+			f.fieldsMap[prefix] = mergeFieldOption(existing, fm)
 			return
 		}
 
@@ -180,6 +189,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	ks := strings.Split(k, ESStep)
 	fieldMap.OriginField = ks[0]
 	fieldMap.IsAnalyzed = false
+	fieldMap.IsCaseSensitive = true
 
 	// 如果 mapping 中显式设置了 doc_values，以显式设置为准
 	if v, ok := data["doc_values"].(bool); ok {
@@ -225,6 +235,16 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	return fieldMap
 }
 
+func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption {
+	merged := existing
+	// 任一索引侧会 lowercase 时，查询也需要按大小写不敏感处理。
+	merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+	if len(merged.TokenizeOnChars) == 0 && len(next.TokenizeOnChars) > 0 {
+		merged.TokenizeOnChars = next.TokenizeOnChars
+	}
+	return merged
+}
+
 func (f *IndexOptionFormat) updateWildcardCaseInsensitive(settings map[string]any) {
 	support := settingsSupportsWildcardCaseInsensitive(settings)
 	if f.wildcardCaseInsensitive == nil {
@@ -258,6 +278,13 @@ func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
 		return false
 	}
 	analyzerType := cast.ToString(analyzer[AnalyzerKeyType])
+	if strings.EqualFold(analyzerType, "pattern") {
+		// pattern analyzer 有 lowercase 开关，显式 false 时必须保留大小写。
+		if lowercase, ok := analyzer["lowercase"]; ok {
+			return cast.ToBool(lowercase)
+		}
+		return true
+	}
 	if analyzerType != "" && analyzerType != "custom" {
 		// 自定义名称可包装内置 analyzer，例如 {"type":"standard"}，需按 type 判定。
 		return builtinAnalyzerLowercases(analyzerType)

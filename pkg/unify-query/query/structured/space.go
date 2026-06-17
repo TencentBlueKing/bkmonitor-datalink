@@ -105,7 +105,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions AllConditions,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback bool, tableIDConditions AllConditions,
 ) ([]*query.TsDBV2, error) {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
@@ -198,6 +198,11 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 	// 如果字段都不匹配到目标字段，则非目标结果表
 	if len(metricNames) == 0 {
+		// 显式 table_id/data_label 场景下，Fields 只作为辅助展开索引；未命中时兜底返回原 RT。
+		if isFieldMissingFallback {
+			defaultTsDB.ExpandMetricNames = []string{fieldName}
+			tsDBs = append(tsDBs, &defaultTsDB)
+		}
 		return tsDBs, nil
 	}
 
@@ -356,7 +361,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, tableIDCondsForFilter)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", tableIDCondsForFilter)
 		if err != nil {
 			return nil, err
 		}

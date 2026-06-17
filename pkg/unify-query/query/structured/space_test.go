@@ -98,6 +98,89 @@ func toJson(q []*query.TsDBV2) string {
 	return string(s)
 }
 
+func findTsDBByTableID(tsdb []*query.TsDBV2, tableID string) *query.TsDBV2 {
+	for _, d := range tsdb {
+		if d.TableID == tableID {
+			return d
+		}
+	}
+	return nil
+}
+
+func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	ctx = metadata.InitHashID(ctx)
+	influxdb.MockSpaceRouter(ctx)
+
+	sf, err := NewSpaceFilter(ctx, &TsDBOption{SpaceUid: influxdb.SpaceUid})
+	require.NoError(t, err)
+
+	t.Run("full_table_id_field_missing_fallbacks_to_original_rt", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   "not_exists_metric",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, "system.cpu_summary", tsdb[0].TableID)
+		assert.Equal(t, []string{"not_exists_metric"}, tsdb[0].ExpandMetricNames)
+	})
+
+	t.Run("data_label_field_missing_fallbacks_to_all_related_rts", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "not_exists_metric",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 2)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{"not_exists_metric"}, influxdbTsDB.ExpandMetricNames)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{"not_exists_metric"}, vmTsDB.ExpandMetricNames)
+	})
+
+	t.Run("explicit_route_regex_match_keeps_field_expansion", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "kubelet_.+",
+			IsRegexp:    true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{"kubelet_cluster_request_total"}, influxdbTsDB.ExpandMetricNames)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{"kubelet_info"}, vmTsDB.ExpandMetricNames)
+	})
+
+	t.Run("full_space_field_missing_still_returns_empty", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "",
+			FieldName:   "not_exists_metric",
+			IsSkipK8s:   true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
+	})
+}
+
 // TestSpaceFilter_DataList_WithTableIDConditions 表标签条件过滤：nil 时行为不变；有 expr 且 RT 无匹配 Labels 时被过滤
 func TestSpaceFilter_DataList_WithTableIDConditions(t *testing.T) {
 	metadata.InitMetadata()

@@ -203,6 +203,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		if isFieldMissingFallback && fieldName != "" && fieldNameExp == nil {
 			defaultTsDB.ExpandMetricNames = []string{fieldName}
 			tsDBs = append(tsDBs, &defaultTsDB)
+
+			// 字段在 RT Fields 中缺失但已按显式路由边界兜底返回：单独上报区分性指标与日志，
+			// 避免 fallback 静默掩盖底层字段元数据同步延迟/缺失，便于监控兜底命中频率与排查。
+			// metric label 固定为空，避免把用户输入的 fieldName 作为标签导致 Prometheus 高基数；具体缺失字段见下方日志。
+			metric.SpaceRouterNotExistInc(s.ctx, s.spaceUid, tableID, "", metadata.SpaceTableIDFieldMissingFallback)
+			metadata.NewMessage(
+				metadata.MsgQueryRouter,
+				"field [%s] missing in result_table [%s] fields, fallback to explicit route rt (metadata maybe stale)",
+				fieldName, tableID,
+			).Info(s.ctx)
 		}
 		return tsDBs, nil
 	}

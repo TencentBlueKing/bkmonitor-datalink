@@ -14,6 +14,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -109,6 +110,44 @@ func findTsDBByTableID(tsdb []*query.TsDBV2, tableID string) *query.TsDBV2 {
 	return nil
 }
 
+// spaceRouterSeriesByReason 读取 unify_query_space_router_total 指定 reason 维度下，按 metric label 聚合的累计值，
+// 用于断言兜底埋点是否上报，以及验证 metric label 未携带高基数的用户输入字段名。
+func spaceRouterSeriesByReason(reason string) map[string]float64 {
+	out := make(map[string]float64)
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return out
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "unify_query_space_router_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var gotReason, metricLabel string
+			for _, l := range m.GetLabel() {
+				switch l.GetName() {
+				case "reason":
+					gotReason = l.GetValue()
+				case "metric":
+					metricLabel = l.GetValue()
+				}
+			}
+			if gotReason == reason {
+				out[metricLabel] += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return out
+}
+
+func sumFloat(m map[string]float64) float64 {
+	var s float64
+	for _, v := range m {
+		s += v
+	}
+	return s
+}
+
 func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
@@ -130,6 +169,31 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		require.Len(t, tsdb, 1)
 		assert.Equal(t, "system.cpu_summary", tsdb[0].TableID)
 		assert.Equal(t, []string{"not_exists_metric"}, tsdb[0].ExpandMetricNames)
+	})
+
+	t.Run("field_missing_fallback_reports_distinct_low_cardinality_metric", func(t *testing.T) {
+		// 兜底命中应上报区分性 reason 指标，避免 fallback 静默掩盖元数据缺失问题；
+		// 同时 metric label 必须固定为空，避免用户输入的 fieldName 造成 Prometheus 高基数。
+		const probeField = "fallback_metric_for_observability"
+		beforeFallback := sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldMissingFallback))
+		beforeNotExist := sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldIsNotExists))
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   probeField,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+
+		afterSeries := spaceRouterSeriesByReason(metadata.SpaceTableIDFieldMissingFallback)
+		// 兜底命中：区分性指标总量 +1，而"完全找不到"指标不应增加。
+		assert.Equal(t, beforeFallback+1, sumFloat(afterSeries))
+		assert.Equal(t, beforeNotExist, sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldIsNotExists)))
+		// 高基数防护：兜底指标的 metric label 固定为空，绝不能以用户输入的 fieldName 建时序。
+		assert.Contains(t, afterSeries, "")
+		assert.NotContains(t, afterSeries, probeField)
 	})
 
 	t.Run("data_label_field_missing_fallbacks_to_all_related_rts", func(t *testing.T) {

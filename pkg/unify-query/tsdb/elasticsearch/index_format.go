@@ -218,15 +218,23 @@ func (f *IndexOptionFormat) normalizerLowercases(name string) bool {
 	if name == "" {
 		return false
 	}
+	if filterLowercasesByType(name) {
+		return true
+	}
 
 	return f.filtersLowercase(cast.ToStringSlice(f.normalizer[name][AnalyzerKeyFilter]))
 }
 
 // analyzerLowercases 判断 text 的索引 analyzer 是否会把 token 转成小写。
 func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
-	// 先覆盖常见内置 analyzer：standard/simple/stop 会 lowercase，whitespace/keyword 不会。
-	switch name {
-	case "standard", "simple", "stop":
+	switch strings.ToLower(name) {
+	case "standard", "simple", "stop", "pattern", "fingerprint",
+		"arabic", "armenian", "basque", "bengali", "brazilian", "bulgarian",
+		"catalan", "cjk", "czech", "danish", "dutch", "english", "estonian",
+		"finnish", "french", "galician", "german", "greek", "hindi",
+		"hungarian", "indonesian", "irish", "italian", "latvian",
+		"lithuanian", "norwegian", "persian", "portuguese", "romanian",
+		"russian", "sorani", "spanish", "swedish", "turkish", "thai":
 		return true
 	case "whitespace", "keyword":
 		return false
@@ -253,8 +261,7 @@ func (f *IndexOptionFormat) filtersLowercase(filters []string) bool {
 
 // filterLowercases 同时支持内置 filter 名称和自定义 filter 名称；自定义 filter 需继续查看 analysis.filter[name].type。
 func (f *IndexOptionFormat) filterLowercases(name string) bool {
-	switch name {
-	case AnalyzerFilterLowercase, AnalyzerFilterICUFolding:
+	if filterLowercasesByType(name) {
 		return true
 	}
 
@@ -264,6 +271,15 @@ func (f *IndexOptionFormat) filterLowercases(name string) bool {
 	}
 
 	switch cast.ToString(filter[AnalyzerKeyType]) {
+	case AnalyzerFilterLowercase, AnalyzerFilterICUFolding:
+		return true
+	default:
+		return false
+	}
+}
+
+func filterLowercasesByType(name string) bool {
+	switch strings.ToLower(name) {
 	case AnalyzerFilterLowercase, AnalyzerFilterICUFolding:
 		return true
 	default:

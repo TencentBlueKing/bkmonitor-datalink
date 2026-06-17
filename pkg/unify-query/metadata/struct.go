@@ -71,14 +71,16 @@ func (f FieldsMap) Field(k string) FieldOption {
 }
 
 type FieldOption struct {
-	AliasName       string   `json:"alias_name"`
-	FieldName       string   `json:"field_name"`
-	FieldType       string   `json:"field_type"`
-	OriginField     string   `json:"origin_field"`
-	IsAgg           bool     `json:"is_agg"`
-	IsAnalyzed      bool     `json:"is_analyzed"`
-	IsCaseSensitive bool     `json:"is_case_sensitive"`
-	TokenizeOnChars []string `json:"tokenize_on_chars"`
+	AliasName       string `json:"alias_name"`
+	FieldName       string `json:"field_name"`
+	FieldType       string `json:"field_type"`
+	OriginField     string `json:"origin_field"`
+	IsAgg           bool   `json:"is_agg"`
+	IsAnalyzed      bool   `json:"is_analyzed"`
+	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// WildcardCaseInsensitive 表示目标 ES 版本是否支持 wildcard.case_insensitive 参数。
+	WildcardCaseInsensitive bool     `json:"wildcard_case_insensitive,omitempty"`
+	TokenizeOnChars         []string `json:"tokenize_on_chars"`
 }
 
 func (f FieldOption) Existed() bool {

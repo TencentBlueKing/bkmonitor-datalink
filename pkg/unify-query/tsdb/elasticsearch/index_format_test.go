@@ -139,6 +139,9 @@ func TestIndexFormatFieldMap(t *testing.T) {
 						},
 					},
 					"analyzer": map[string]any{
+						"my_standard": map[string]any{
+							"type": "standard",
+						},
 						"index_lowercase": map[string]any{
 							"type":      "custom",
 							"tokenizer": "standard",
@@ -174,6 +177,10 @@ func TestIndexFormatFieldMap(t *testing.T) {
 						"type":     "text",
 						"analyzer": "english",
 					},
+					"standard_type_text": map[string]any{
+						"type":     "text",
+						"analyzer": "my_standard",
+					},
 					"mixed_text": map[string]any{
 						"type":            "text",
 						"analyzer":        "index_lowercase",
@@ -191,7 +198,47 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"builtin_normalized_keyword":{"alias_name":"","field_name":"builtin_normalized_keyword","field_type":"keyword","origin_field":"builtin_normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"english_text":{"alias_name":"","field_name":"english_text","field_type":"text","origin_field":"english_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"lowercase_text":{"alias_name":"","field_name":"lowercase_text","field_type":"text","origin_field":"lowercase_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"mixed_text":{"alias_name":"","field_name":"mixed_text","field_type":"text","origin_field":"mixed_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"normalized_keyword":{"alias_name":"","field_name":"normalized_keyword","field_type":"keyword","origin_field":"normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"quote_sensitive_text":{"alias_name":"","field_name":"quote_sensitive_text","field_type":"text","origin_field":"quote_sensitive_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"raw_keyword":{"alias_name":"","field_name":"raw_keyword","field_type":"keyword","origin_field":"raw_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},"unknown_analyzer_text":{"alias_name":"","field_name":"unknown_analyzer_text","field_type":"text","origin_field":"unknown_analyzer_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"builtin_normalized_keyword":{"alias_name":"","field_name":"builtin_normalized_keyword","field_type":"keyword","origin_field":"builtin_normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"english_text":{"alias_name":"","field_name":"english_text","field_type":"text","origin_field":"english_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"lowercase_text":{"alias_name":"","field_name":"lowercase_text","field_type":"text","origin_field":"lowercase_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"mixed_text":{"alias_name":"","field_name":"mixed_text","field_type":"text","origin_field":"mixed_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"normalized_keyword":{"alias_name":"","field_name":"normalized_keyword","field_type":"keyword","origin_field":"normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"quote_sensitive_text":{"alias_name":"","field_name":"quote_sensitive_text","field_type":"text","origin_field":"quote_sensitive_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"raw_keyword":{"alias_name":"","field_name":"raw_keyword","field_type":"keyword","origin_field":"raw_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},"standard_type_text":{"alias_name":"","field_name":"standard_type_text","field_type":"text","origin_field":"standard_type_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"unknown_analyzer_text":{"alias_name":"","field_name":"unknown_analyzer_text","field_type":"text","origin_field":"unknown_analyzer_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
+		},
+		{
+			name: "case_sensitivity_from_default_analyzer",
+			settings: map[string]any{
+				"analysis": map[string]any{
+					"analyzer": map[string]any{
+						"default": map[string]any{
+							"type":      "custom",
+							"tokenizer": "whitespace",
+							"filter":    []string{},
+						},
+					},
+				},
+			},
+			mappings: map[string]any{
+				"properties": map[string]any{
+					"default_text": map[string]any{
+						"type": "text",
+					},
+				},
+			},
+			fieldMap: `{"default_text":{"alias_name":"","field_name":"default_text","field_type":"text","origin_field":"default_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
+		},
+		{
+			name: "wildcard_case_insensitive_support_from_index_version",
+			settings: map[string]any{
+				"index": map[string]any{
+					"version": map[string]any{
+						"created": "7140299",
+					},
+				},
+			},
+			mappings: map[string]any{
+				"properties": map[string]any{
+					"log": map[string]any{
+						"type": "text",
+					},
+				},
+			},
+			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"wildcard_case_insensitive":true,"tokenize_on_chars":[]}}`,
 		},
 	}
 

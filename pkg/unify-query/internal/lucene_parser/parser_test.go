@@ -224,6 +224,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}}`,
 		},
 		{
+			name:  "wildcard on legacy case-insensitive field lowercases",
+			input: "legacy_case_insensitive_log: *ERROR*",
+			sql:   "`legacy_case_insensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"legacy_case_insensitive_log":{"value":"*error*"}}}`,
+		},
+		{
 			name:  "wildcard on non-analyzed field keeps case",
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
@@ -276,6 +282,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			FieldType:  "text",
 		},
 		"case_insensitive_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			WildcardCaseInsensitive: true,
+			FieldType:               "text",
+		},
+		"legacy_case_insensitive_log": {
 			IsAnalyzed:      true,
 			IsCaseSensitive: false,
 			FieldType:       "text",
@@ -286,8 +298,9 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			FieldType:       "text",
 		},
 		"normalized_keyword": {
-			IsCaseSensitive: false,
-			FieldType:       "keyword",
+			IsCaseSensitive:         false,
+			WildcardCaseInsensitive: true,
+			FieldType:               "keyword",
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",

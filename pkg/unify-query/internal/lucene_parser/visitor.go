@@ -638,8 +638,18 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				result = cq
 			}
 		} else {
-			cq := elastic.NewWildcardQuery(field, value)
+			caseInsensitive := false
 			if fieldOption.Existed() && !fieldOption.IsCaseSensitive {
+				if fieldOption.WildcardCaseInsensitive {
+					// ES >= 7.10 支持 wildcard.case_insensitive，可保留用户输入的原始 pattern。
+					caseInsensitive = true
+				} else {
+					// 旧 ES 不识别 case_insensitive 参数，只能回退到小写 pattern 保持兼容。
+					value = strings.ToLower(value)
+				}
+			}
+			cq := elastic.NewWildcardQuery(field, value)
+			if caseInsensitive {
 				cq.CaseInsensitive(true)
 			}
 			if cv.Boost != "" {

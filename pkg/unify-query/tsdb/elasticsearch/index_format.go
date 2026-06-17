@@ -44,7 +44,8 @@ type IndexOptionFormat struct {
 	normalizer map[string]map[string]any
 	fieldsMap  metadata.FieldsMap
 
-	fieldAlias metadata.FieldAlias
+	fieldAlias              metadata.FieldAlias
+	wildcardCaseInsensitive *bool
 }
 
 func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
@@ -62,6 +63,8 @@ func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
 }
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
+	f.updateWildcardCaseInsensitive(settings)
+
 	// 解析 settings 里面的 analysis
 	// 支持两种结构：直接 settings["analysis"] 或 settings["index"]["analysis"]
 	var analysis map[string]any
@@ -197,7 +200,13 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	case Text:
 		indexAnalyzer := cast.ToString(data[FormatPropertiesAnalyzer])
 		if indexAnalyzer == "" {
-			indexAnalyzer = "standard"
+			if _, ok := f.analyzer["default"]; ok {
+				// 字段未显式配置 analyzer 时，ES 会优先使用索引级 analysis.analyzer.default。
+				indexAnalyzer = "default"
+			} else {
+				// 索引也没有 default analyzer 时才回退到 ES 内置 standard analyzer。
+				indexAnalyzer = "standard"
+			}
 		}
 
 		if analyzer := f.analyzer[indexAnalyzer]; analyzer != nil {
@@ -209,8 +218,21 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 
 		fieldMap.IsCaseSensitive = !f.analyzerLowercases(indexAnalyzer)
 	}
+	if f.wildcardCaseInsensitive != nil {
+		fieldMap.WildcardCaseInsensitive = *f.wildcardCaseInsensitive
+	}
 
 	return fieldMap
+}
+
+func (f *IndexOptionFormat) updateWildcardCaseInsensitive(settings map[string]any) {
+	support := settingsSupportsWildcardCaseInsensitive(settings)
+	if f.wildcardCaseInsensitive == nil {
+		f.wildcardCaseInsensitive = &support
+		return
+	}
+	// 一个查询可能覆盖多个索引；只有所有索引都支持时才可下发 case_insensitive。
+	*f.wildcardCaseInsensitive = *f.wildcardCaseInsensitive && support
 }
 
 // normalizerLowercases 判断 keyword 的 normalizer 是否会把索引值归一化为小写。
@@ -227,6 +249,24 @@ func (f *IndexOptionFormat) normalizerLowercases(name string) bool {
 
 // analyzerLowercases 判断 text 的索引 analyzer 是否会把 token 转成小写。
 func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
+	if builtinAnalyzerLowercases(name) {
+		return true
+	}
+
+	analyzer := f.analyzer[name]
+	if analyzer == nil {
+		return false
+	}
+	analyzerType := cast.ToString(analyzer[AnalyzerKeyType])
+	if analyzerType != "" && analyzerType != "custom" {
+		// 自定义名称可包装内置 analyzer，例如 {"type":"standard"}，需按 type 判定。
+		return builtinAnalyzerLowercases(analyzerType)
+	}
+
+	return f.filtersLowercase(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]))
+}
+
+func builtinAnalyzerLowercases(name string) bool {
 	switch strings.ToLower(name) {
 	case "standard", "simple", "stop", "pattern", "fingerprint",
 		"arabic", "armenian", "basque", "bengali", "brazilian", "bulgarian",
@@ -236,16 +276,9 @@ func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
 		"lithuanian", "norwegian", "persian", "portuguese", "romanian",
 		"russian", "sorani", "spanish", "swedish", "turkish", "thai":
 		return true
-	case "whitespace", "keyword":
+	default:
 		return false
 	}
-
-	analyzer := f.analyzer[name]
-	if analyzer == nil {
-		return false
-	}
-
-	return f.filtersLowercase(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]))
 }
 
 // filtersLowercase 只要过滤链中存在 lowercase/casefold 类 filter，就认为该链路会统一大小写。
@@ -285,4 +318,28 @@ func filterLowercasesByType(name string) bool {
 	default:
 		return false
 	}
+}
+
+func settingsSupportsWildcardCaseInsensitive(settings map[string]any) bool {
+	versionCreated := indexVersionCreated(settings)
+	// wildcard.case_insensitive 是 ES 7.10 引入的参数，旧版本会直接拒绝查询。
+	return versionCreated >= 7100000
+}
+
+func indexVersionCreated(settings map[string]any) int {
+	if settings == nil {
+		return 0
+	}
+	if version := cast.ToInt(settings["index.version.created"]); version > 0 {
+		return version
+	}
+	index, _ := settings["index"].(map[string]any)
+	if index == nil {
+		return 0
+	}
+	if version := cast.ToInt(index["version.created"]); version > 0 {
+		return version
+	}
+	versionMap, _ := index["version"].(map[string]any)
+	return cast.ToInt(versionMap["created"])
 }

@@ -22,6 +22,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestSpaceFilter_NewTsDBs(t *testing.T) {
@@ -149,6 +151,49 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		assert.Equal(t, []string{"not_exists_metric"}, vmTsDB.ExpandMetricNames)
 	})
 
+	t.Run("full_table_id_empty_field_does_not_fallback", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   "",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
+	})
+
+	t.Run("split_measurement_field_missing_fallback_keeps_separate_metric_rt", func(t *testing.T) {
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		metricName := "not_in_fields_but_sep_rt"
+		err = router.Add(ctx, ir.ResultTableDetailKey, "result_table."+metricName, &ir.ResultTableDetail{
+			StorageId:       2,
+			TableId:         "result_table." + metricName,
+			Fields:          []string{metricName},
+			DB:              "other",
+			Measurement:     metricName,
+			VmRt:            "2_bcs_prom_computation_result_table",
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageType:     metadata.VictoriaMetricsStorageType,
+			DataLabel:       metricName,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     influxdb.ResultTableInfluxDB,
+			FieldName:   metricName,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, []string{metricName}, tsdb[0].ExpandMetricNames)
+		assert.Equal(t, metricName, tsdb[0].Measurement)
+		assert.Equal(t, metricName, tsdb[0].DataLabel)
+		assert.Equal(t, metadata.VictoriaMetricsStorageType, tsdb[0].StorageType)
+	})
+
 	t.Run("explicit_route_regex_match_keeps_field_expansion", func(t *testing.T) {
 		tsdb, err := sf.DataList(&TsDBOption{
 			SpaceUid:    influxdb.SpaceUid,
@@ -166,6 +211,18 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
 		require.NotNil(t, vmTsDB)
 		assert.Equal(t, []string{"kubelet_info"}, vmTsDB.ExpandMetricNames)
+	})
+
+	t.Run("explicit_route_regex_missing_does_not_fallback_as_literal_metric", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "not_exists_.+",
+			IsRegexp:    true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
 	})
 
 	t.Run("full_space_field_missing_still_returns_empty", func(t *testing.T) {

@@ -105,7 +105,8 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback bool, tableIDConditions AllConditions,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback, isFullTableID bool,
+	tableIDConditions AllConditions,
 ) ([]*query.TsDBV2, error) {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
@@ -198,10 +199,22 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 	// 如果字段都不匹配到目标字段，则非目标结果表
 	if len(metricNames) == 0 {
-		// 显式 table_id/data_label 场景下，Fields 只作为辅助展开索引；未命中时兜底返回原 RT。
-		if isFieldMissingFallback {
+		// 显式 table_id/data_label 场景下，Fields 只作为辅助展开索引；未命中时按候选 RT 兜底。
+		// 但正则未命中时不能把正则串当字面 metric/measurement 下推。
+		if isFieldMissingFallback && fieldName != "" && fieldNameExp == nil {
 			defaultTsDB.ExpandMetricNames = []string{fieldName}
-			tsDBs = append(tsDBs, &defaultTsDB)
+			// 完整 table_id 场景下仍复用单指标单表的独立 RT 路由；data_label 多候选保持候选 RT 兜底，避免重复拼到同一个独立 RT。
+			if defaultTsDB.IsSplit() && isFullTableID {
+				sepRt := s.GetMetricSepRT(tableID, fieldName)
+				if sepRt != nil {
+					sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
+					tsDBs = append(tsDBs, &sepTsDB)
+				} else {
+					tsDBs = append(tsDBs, &defaultTsDB)
+				}
+			} else {
+				tsDBs = append(tsDBs, &defaultTsDB)
+			}
 		}
 		return tsDBs, nil
 	}
@@ -361,7 +374,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", tableIDCondsForFilter)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", measurement != "", tableIDCondsForFilter)
 		if err != nil {
 			return nil, err
 		}

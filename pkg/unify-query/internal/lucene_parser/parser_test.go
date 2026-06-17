@@ -212,10 +212,10 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
 		},
 		{
-			name:  "wildcard on case-insensitive analyzed field should lowercase",
+			name:  "wildcard on case-insensitive analyzed field uses case insensitive query",
 			input: "case_insensitive_log: *TSpiderCreateTableException*",
 			sql:   "`case_insensitive_log` LIKE '%TSpiderCreateTableException%'",
-			dsl:   `{"wildcard":{"case_insensitive_log":{"value":"*tspidercreatetableexception*"}}}`,
+			dsl:   `{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*TSpiderCreateTableException*"}}}`,
 		},
 		{
 			name:  "wildcard on case-sensitive analyzed field keeps case",
@@ -228,6 +228,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
+		},
+		{
+			name:  "wildcard on normalized keyword uses case insensitive query",
+			input: "normalized_keyword: *Active*",
+			sql:   "`normalized_keyword` LIKE '%Active%'",
+			dsl:   `{"wildcard":{"normalized_keyword":{"case_insensitive":true,"value":"*Active*"}}}`,
 		},
 		{
 			name:  "negative prefix regexp keeps implicit should semantics",
@@ -248,10 +254,10 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
 		},
 		{
-			name:  "case-insensitive wildcard or lowercases",
+			name:  "case-insensitive wildcard or uses case insensitive query",
 			input: `case_insensitive_log: (*ERROR* OR *Traceback*)`,
 			sql:   "(`case_insensitive_log` LIKE '%ERROR%' OR `case_insensitive_log` LIKE '%Traceback%')",
-			dsl:   `{"bool":{"should":[{"wildcard":{"case_insensitive_log":{"value":"*error*"}}},{"wildcard":{"case_insensitive_log":{"value":"*traceback*"}}}]}}`,
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*ERROR*"}}},{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*Traceback*"}}}]}}`,
 		},
 		{
 			name:  "case-sensitive wildcard or keeps case",
@@ -278,6 +284,10 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			IsAnalyzed:      true,
 			IsCaseSensitive: true,
 			FieldType:       "text",
+		},
+		"normalized_keyword": {
+			IsCaseSensitive: false,
+			FieldType:       "keyword",
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",

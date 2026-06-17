@@ -26,18 +26,23 @@ const (
 	FormatPropertiesType       = "type"
 	FormatPropertiesDocValue   = "doc_values"
 	FormatPropertiesNormalizer = "normalizer"
+	FormatPropertiesAnalyzer   = "analyzer"
 
 	// Analyzer configuration keys
 	AnalyzerKeyTokenizeOnChars = "tokenize_on_chars"
 	AnalyzerKeyFilter          = "filter"
+	AnalyzerKeyType            = "type"
 
 	// Analyzer filter constants
-	AnalyzerFilterLowercase = "lowercase"
+	AnalyzerFilterLowercase  = "lowercase"
+	AnalyzerFilterICUFolding = "icu_folding"
 )
 
 type IndexOptionFormat struct {
-	analyzer  map[string]map[string]any
-	fieldsMap metadata.FieldsMap
+	analyzer   map[string]map[string]any
+	filter     map[string]map[string]any
+	normalizer map[string]map[string]any
+	fieldsMap  metadata.FieldsMap
 
 	fieldAlias metadata.FieldAlias
 }
@@ -45,6 +50,8 @@ type IndexOptionFormat struct {
 func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
 	return &IndexOptionFormat{
 		analyzer:   make(map[string]map[string]any),
+		filter:     make(map[string]map[string]any),
+		normalizer: make(map[string]map[string]any),
 		fieldsMap:  make(metadata.FieldsMap),
 		fieldAlias: fieldAlias,
 	}
@@ -67,6 +74,20 @@ func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 	if analysis != nil {
 		tokenizer, _ := analysis["tokenizer"].(map[string]any)
 		analyzer, _ := analysis["analyzer"].(map[string]any)
+		filter, _ := analysis["filter"].(map[string]any)
+		normalizer, _ := analysis["normalizer"].(map[string]any)
+
+		for k, v := range filter {
+			if nv, ok := v.(map[string]any); ok {
+				f.filter[k] = nv
+			}
+		}
+
+		for k, v := range normalizer {
+			if nv, ok := v.(map[string]any); ok {
+				f.normalizer[k] = nv
+			}
+		}
 
 		for k, v := range analyzer {
 			if nv, ok := v.(map[string]any); ok {
@@ -164,29 +185,88 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 
 	fieldMap.IsAnalyzed = fieldMap.FieldType == Text
 
-	// 大小写敏感性判断：
-	// 1. keyword 类型默认大小写敏感
-	// 2. text 类型默认大小写不敏感，根据 analyzer 的 filter 判断
-	if fieldMap.FieldType == KeyWord {
-		fieldMap.IsCaseSensitive = true
-	} else {
-		fieldMap.IsCaseSensitive = false
-		// 根据分析器中的 filter 判断大小写敏感性
-		// 如果 filter 中不包含 "lowercase"，则为大小写敏感
-		if name, ok := data["analyzer"].(string); ok {
-			analyzer := f.analyzer[name]
-			if analyzer != nil {
-				toc := cast.ToStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
-				if len(toc) > 0 {
-					fieldMap.TokenizeOnChars = toc
-				}
+	// IsCaseSensitive 表示字段索引侧是否保留大小写差异。后续 wildcard 查询会用它判断是否需要手动 lower 用户输入：
+	// - keyword 看 normalizer；没有 normalizer 时原值入索引，默认大小写敏感。
+	// - text 看索引 analyzer 是否具备 lowercase/casefold 能力；wildcard 不经搜索 analyzer。
+	//   参考 ES 文档：analyzer 影响索引分析链路。
+	//   https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/analyzer
+	// - 未知 analyzer/normalizer 按大小写敏感处理，避免错误 lower 导致查不到保留大小写的索引 term。
+	switch fieldMap.FieldType {
+	case KeyWord:
+		fieldMap.IsCaseSensitive = !f.normalizerLowercases(cast.ToString(data[FormatPropertiesNormalizer]))
+	case Text:
+		indexAnalyzer := cast.ToString(data[FormatPropertiesAnalyzer])
+		if indexAnalyzer == "" {
+			indexAnalyzer = "standard"
+		}
 
-				if !lo.Contains(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]), AnalyzerFilterLowercase) {
-					fieldMap.IsCaseSensitive = true
-				}
+		if analyzer := f.analyzer[indexAnalyzer]; analyzer != nil {
+			toc := cast.ToStringSlice(analyzer[AnalyzerKeyTokenizeOnChars])
+			if len(toc) > 0 {
+				fieldMap.TokenizeOnChars = toc
 			}
 		}
+
+		fieldMap.IsCaseSensitive = !f.analyzerLowercases(indexAnalyzer)
 	}
 
 	return fieldMap
+}
+
+// normalizerLowercases 判断 keyword 的 normalizer 是否会把索引值归一化为小写。
+func (f *IndexOptionFormat) normalizerLowercases(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	return f.filtersLowercase(cast.ToStringSlice(f.normalizer[name][AnalyzerKeyFilter]))
+}
+
+// analyzerLowercases 判断 text 的索引 analyzer 是否会把 token 转成小写。
+func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
+	// 先覆盖常见内置 analyzer：standard/simple/stop 会 lowercase，whitespace/keyword 不会。
+	switch name {
+	case "standard", "simple", "stop":
+		return true
+	case "whitespace", "keyword":
+		return false
+	}
+
+	analyzer := f.analyzer[name]
+	if analyzer == nil {
+		return false
+	}
+
+	return f.filtersLowercase(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]))
+}
+
+// filtersLowercase 只要过滤链中存在 lowercase/casefold 类 filter，就认为该链路会统一大小写。
+func (f *IndexOptionFormat) filtersLowercase(filters []string) bool {
+	for _, name := range filters {
+		if f.filterLowercases(name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// filterLowercases 同时支持内置 filter 名称和自定义 filter 名称；自定义 filter 需继续查看 analysis.filter[name].type。
+func (f *IndexOptionFormat) filterLowercases(name string) bool {
+	switch name {
+	case AnalyzerFilterLowercase, AnalyzerFilterICUFolding:
+		return true
+	}
+
+	filter := f.filter[name]
+	if filter == nil {
+		return false
+	}
+
+	switch cast.ToString(filter[AnalyzerKeyType]) {
+	case AnalyzerFilterLowercase, AnalyzerFilterICUFolding:
+		return true
+	default:
+		return false
+	}
 }

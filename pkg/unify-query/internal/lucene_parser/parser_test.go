@@ -212,10 +212,16 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
 		},
 		{
-			name:  "wildcard on analyzed field should lowercase",
-			input: "log: *TSpiderCreateTableException*",
-			sql:   "`log` LIKE '%TSpiderCreateTableException%'",
-			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
+			name:  "wildcard on case-insensitive analyzed field should lowercase",
+			input: "case_insensitive_log: *TSpiderCreateTableException*",
+			sql:   "`case_insensitive_log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"case_insensitive_log":{"value":"*tspidercreatetableexception*"}}}`,
+		},
+		{
+			name:  "wildcard on case-sensitive analyzed field keeps case",
+			input: "case_sensitive_log: *ERROR*",
+			sql:   "`case_sensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}}`,
 		},
 		{
 			name:  "wildcard on non-analyzed field keeps case",
@@ -241,6 +247,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
 			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
 		},
+		{
+			name:  "case-insensitive wildcard or lowercases",
+			input: `case_insensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_insensitive_log` LIKE '%ERROR%' OR `case_insensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_insensitive_log":{"value":"*error*"}}},{"wildcard":{"case_insensitive_log":{"value":"*traceback*"}}}]}}`,
+		},
+		{
+			name:  "case-sensitive wildcard or keeps case",
+			input: `case_sensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_sensitive_log` LIKE '%ERROR%' OR `case_sensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}},{"wildcard":{"case_sensitive_log":{"value":"*Traceback*"}}}]}}`,
+		},
 	}
 
 	mock.Init()
@@ -250,6 +268,16 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		"log": {
 			IsAnalyzed: true,
 			FieldType:  "text",
+		},
+		"case_insensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: false,
+			FieldType:       "text",
+		},
+		"case_sensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: true,
+			FieldType:       "text",
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",

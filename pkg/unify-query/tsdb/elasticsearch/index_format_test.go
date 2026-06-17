@@ -123,6 +123,68 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			},
 			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["@","&","(",")","=","'","\"",",",";",":","<",">","[","]","{","}","/"," ","\n","\t","\r","\\"]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
+		{
+			name: "case_sensitivity_from_index_normalizer_and_analyzer",
+			settings: map[string]any{
+				"analysis": map[string]any{
+					"filter": map[string]any{
+						"my_lowercase": map[string]any{
+							"type": "lowercase",
+						},
+					},
+					"normalizer": map[string]any{
+						"keyword_lowercase": map[string]any{
+							"type":   "custom",
+							"filter": []string{"my_lowercase"},
+						},
+					},
+					"analyzer": map[string]any{
+						"index_lowercase": map[string]any{
+							"type":      "custom",
+							"tokenizer": "standard",
+							"filter":    []string{"my_lowercase"},
+						},
+						"search_raw": map[string]any{
+							"type":      "custom",
+							"tokenizer": "standard",
+							"filter":    []string{},
+						},
+					},
+				},
+			},
+			mappings: map[string]any{
+				"properties": map[string]any{
+					"raw_keyword": map[string]any{
+						"type": "keyword",
+					},
+					"normalized_keyword": map[string]any{
+						"type":       "keyword",
+						"normalizer": "keyword_lowercase",
+					},
+					"lowercase_text": map[string]any{
+						"type":            "text",
+						"analyzer":        "index_lowercase",
+						"search_analyzer": "index_lowercase",
+					},
+					"mixed_text": map[string]any{
+						"type":            "text",
+						"analyzer":        "index_lowercase",
+						"search_analyzer": "search_raw",
+					},
+					"quote_sensitive_text": map[string]any{
+						"type":                  "text",
+						"analyzer":              "index_lowercase",
+						"search_analyzer":       "index_lowercase",
+						"search_quote_analyzer": "search_raw",
+					},
+					"unknown_analyzer_text": map[string]any{
+						"type":     "text",
+						"analyzer": "plugin_analyzer",
+					},
+				},
+			},
+			fieldMap: `{"lowercase_text":{"alias_name":"","field_name":"lowercase_text","field_type":"text","origin_field":"lowercase_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"mixed_text":{"alias_name":"","field_name":"mixed_text","field_type":"text","origin_field":"mixed_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"normalized_keyword":{"alias_name":"","field_name":"normalized_keyword","field_type":"keyword","origin_field":"normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"quote_sensitive_text":{"alias_name":"","field_name":"quote_sensitive_text","field_type":"text","origin_field":"quote_sensitive_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"raw_keyword":{"alias_name":"","field_name":"raw_keyword","field_type":"keyword","origin_field":"raw_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},"unknown_analyzer_text":{"alias_name":"","field_name":"unknown_analyzer_text","field_type":"text","origin_field":"unknown_analyzer_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
+		},
 	}
 
 	for _, c := range testCases {

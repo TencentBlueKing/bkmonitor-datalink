@@ -162,7 +162,7 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		assert.Empty(t, tsdb)
 	})
 
-	t.Run("split_measurement_field_missing_fallback_keeps_separate_metric_rt", func(t *testing.T) {
+	t.Run("split_measurement_field_missing_fallback_keeps_current_rt_even_when_separate_metric_rt_exists", func(t *testing.T) {
 		router, err := influxdb.GetSpaceTsDbRouter()
 		require.NoError(t, err)
 
@@ -189,9 +189,54 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, tsdb, 1)
 		assert.Equal(t, []string{metricName}, tsdb[0].ExpandMetricNames)
-		assert.Equal(t, metricName, tsdb[0].Measurement)
-		assert.Equal(t, metricName, tsdb[0].DataLabel)
-		assert.Equal(t, metadata.VictoriaMetricsStorageType, tsdb[0].StorageType)
+		assert.Equal(t, influxdb.ResultTableInfluxDB, tsdb[0].TableID)
+		assert.Equal(t, "influxdb", tsdb[0].Measurement)
+		assert.Equal(t, "influxdb", tsdb[0].DataLabel)
+		assert.Equal(t, metadata.InfluxDBStorageType, tsdb[0].StorageType)
+	})
+
+	t.Run("dotted_data_label_field_missing_fallback_keeps_data_label_rt_boundary", func(t *testing.T) {
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		dataLabel := "influx.db"
+		metricName := "dotted_label_missing_metric"
+		err = router.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &ir.ResultTableList{
+			influxdb.ResultTableInfluxDB,
+			influxdb.ResultTableVM,
+		})
+		require.NoError(t, err)
+		err = router.Add(ctx, ir.ResultTableDetailKey, "result_table."+metricName, &ir.ResultTableDetail{
+			StorageId:       2,
+			TableId:         "result_table." + metricName,
+			Fields:          []string{metricName},
+			DB:              "other",
+			Measurement:     metricName,
+			VmRt:            "2_bcs_prom_computation_result_table",
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageType:     metadata.VictoriaMetricsStorageType,
+			DataLabel:       metricName,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     TableID(dataLabel),
+			FieldName:   metricName,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 2)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{metricName}, influxdbTsDB.ExpandMetricNames)
+		assert.Equal(t, "influxdb", influxdbTsDB.DataLabel)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{metricName}, vmTsDB.ExpandMetricNames)
+		assert.Equal(t, "vm", vmTsDB.DataLabel)
 	})
 
 	t.Run("explicit_route_regex_match_keeps_field_expansion", func(t *testing.T) {

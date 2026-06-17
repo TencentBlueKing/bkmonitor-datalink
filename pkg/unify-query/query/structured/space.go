@@ -105,8 +105,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback, isFullTableID bool,
-	tableIDConditions AllConditions,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback bool, tableIDConditions AllConditions,
 ) ([]*query.TsDBV2, error) {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
@@ -203,18 +202,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		// 但正则未命中时不能把正则串当字面 metric/measurement 下推。
 		if isFieldMissingFallback && fieldName != "" && fieldNameExp == nil {
 			defaultTsDB.ExpandMetricNames = []string{fieldName}
-			// 完整 table_id 场景下仍复用单指标单表的独立 RT 路由；data_label 多候选保持候选 RT 兜底，避免重复拼到同一个独立 RT。
-			if defaultTsDB.IsSplit() && isFullTableID {
-				sepRt := s.GetMetricSepRT(tableID, fieldName)
-				if sepRt != nil {
-					sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
-					tsDBs = append(tsDBs, &sepTsDB)
-				} else {
-					tsDBs = append(tsDBs, &defaultTsDB)
-				}
-			} else {
-				tsDBs = append(tsDBs, &defaultTsDB)
-			}
+			tsDBs = append(tsDBs, &defaultTsDB)
 		}
 		return tsDBs, nil
 	}
@@ -374,7 +362,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", measurement != "", tableIDCondsForFilter)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", tableIDCondsForFilter)
 		if err != nil {
 			return nil, err
 		}

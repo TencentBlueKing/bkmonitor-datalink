@@ -30,6 +30,10 @@ func Throttle(_ string) grpc.ServerOption {
 	// InTapHandle 是 gRPC 最省 CPU 的拒绝点，unary 与 streaming 都在首帧拦下。
 	// 每个 server 只允许一个 tap，重复注册会 panic；它和既有 maxbytes（限消息大小）各管各的。
 	return grpc.InTapHandle(func(ctx context.Context, info *tap.Info) (context.Context, error) {
+		if !throttle.Enabled() {
+			return ctx, nil
+		}
+
 		// 未注册的方法不限流。
 		recordType := throttle.ClassifyGRPC(info.FullMethodName)
 		if recordType == define.RecordUndefined {
@@ -37,12 +41,12 @@ func Throttle(_ string) grpc.ServerOption {
 		}
 
 		action := throttle.GlobalManager().Decide(recordType)
+		throttle.IncRequest(define.RequestGrpc, recordType, action)
 		if action == throttle.ActionAdmit {
 			return ctx, nil
 		}
 
 		// 反序列化之前就拒，省掉为废请求白付的解码开销。
-		throttle.IncDropped(define.RequestGrpc, recordType, action)
 		return nil, status.Error(codes.ResourceExhausted, "collector overloaded")
 	})
 }

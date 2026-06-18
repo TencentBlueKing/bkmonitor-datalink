@@ -17,7 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// Action 是单次请求的裁决结果。
 type Action uint8
 
 const (
@@ -47,6 +46,7 @@ const (
 )
 
 type WaterLevel struct {
+	CPU      float64
 	CPUSlow  float64
 	CPUFast  float64
 	Mem      float64
@@ -78,16 +78,17 @@ func Init(config Config) error {
 	if err := validateConfig(config); err != nil {
 		return err
 	}
+	if !config.Enabled {
+		Stop()
+		return nil
+	}
 
 	manager := newManager(config)
-	var sampler *ResourceSampler
-	if config.Enabled {
-		sampler = NewResourceSampler(NewCgroupReader(), config, manager)
-		// 冷启动启动时采样。
-		sampler.tick()
-		sampler.Start()
-		logger.Infof("throttle enabled, sample_interval=%s", config.SampleInterval)
-	}
+	sampler := NewResourceSampler(NewCgroupReader(), config, manager)
+	// 冷启动启动时采样。
+	sampler.tick()
+	sampler.Start()
+	logger.Infof("throttle enabled, sample_interval=%s", config.SampleInterval)
 
 	// 先让新单例就位（新 sampler 已绑新 manager 在发布），最后才停旧 sampler，确保平滑过度。
 	oldSampler := globalSampler.Swap(sampler)
@@ -100,10 +101,15 @@ func Init(config Config) error {
 
 func Stop() {
 	oldSampler := globalSampler.Swap(nil)
-	globalManager.Store(newDisabledManager())
+	globalManager.Store(nil)
 	if oldSampler != nil {
 		oldSampler.Stop()
 	}
+}
+
+func Enabled() bool {
+	manager := globalManager.Load()
+	return manager != nil && manager.enabled
 }
 
 func GlobalManager() *Manager {
@@ -141,7 +147,7 @@ func (m *Manager) Publish(level WaterLevel) {
 	// 保存快照。
 	m.level.Store(&current)
 	// 记录指标。
-	observeWaterLevel(current)
+	observeWaterLevel(current, m.config.Thresholds)
 	// 推进状态机。
 	m.updateStates(&current)
 }

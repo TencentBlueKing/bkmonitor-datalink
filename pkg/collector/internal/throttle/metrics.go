@@ -10,6 +10,8 @@
 package throttle
 
 import (
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -17,49 +19,75 @@ import (
 )
 
 var (
-	droppedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "throttle_dropped_total",
-			Help:      "Throttle dropped requests total",
-		},
-		[]string{"protocol", "record_type", "action"},
-	)
-
-	waterLevel = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "throttle_water_level",
-			Help:      "Throttle resource water level",
-		},
-		[]string{"resource"},
-	)
-
-	throttleState = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "throttle_state",
-			Help:      "Throttle state by record type",
-		},
-		[]string{"record_type"},
-	)
+	metricsOnce   sync.Once
+	requestsTotal *prometheus.CounterVec
+	waterLevel    *prometheus.GaugeVec
+	throttleState *prometheus.GaugeVec
 )
 
-func IncDropped(protocol define.RequestType, recordType define.RecordType, action Action) {
-	if action != ActionShed && action != ActionOpen {
-		return
-	}
-	droppedTotal.WithLabelValues(protocol.S(), recordType.S(), action.S()).Inc()
+func initMetrics() {
+	metricsOnce.Do(func() {
+		requestsTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: define.MonitoringNamespace,
+				Name:      "throttle_requests_total",
+				Help:      "Throttle requests total",
+			},
+			[]string{"protocol", "record_type", "decision"},
+		)
+
+		waterLevel = promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: define.MonitoringNamespace,
+				Name:      "throttle_water_level",
+				Help:      "Throttle resource water level",
+			},
+			[]string{"kind"},
+		)
+
+		throttleState = promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: define.MonitoringNamespace,
+				Name:      "throttle_state",
+				Help:      "Throttle state by record type",
+			},
+			[]string{"record_type"},
+		)
+	})
 }
 
-func observeWaterLevel(level WaterLevel) {
+const (
+	decisionAllowed = "allowed"
+	decisionDenied  = "denied"
+)
+
+func IncRequest(protocol define.RequestType, recordType define.RecordType, action Action) {
+	initMetrics()
+
+	decision := decisionAllowed
+	if action != ActionAdmit {
+		decision = decisionDenied
+	}
+	requestsTotal.WithLabelValues(protocol.S(), recordType.S(), decision).Inc()
+}
+
+func observeWaterLevel(level WaterLevel, thresholds ThresholdConfig) {
+	initMetrics()
+
+	waterLevel.WithLabelValues("cpu").Set(level.CPU)
 	waterLevel.WithLabelValues("cpu_slow").Set(level.CPUSlow)
 	waterLevel.WithLabelValues("cpu_fast").Set(level.CPUFast)
 	if level.MemValid {
 		waterLevel.WithLabelValues("mem").Set(level.Mem)
 	}
+	waterLevel.WithLabelValues("cpu_exit").Set(thresholds.CPUExit)
+	waterLevel.WithLabelValues("cpu_enter").Set(thresholds.CPUEnter)
+	waterLevel.WithLabelValues("cpu_hard").Set(thresholds.CPUHard)
+	waterLevel.WithLabelValues("mem_hard").Set(thresholds.MemHard)
 }
 
 func observeState(recordType define.RecordType, state State) {
+	initMetrics()
+
 	throttleState.WithLabelValues(recordType.S()).Set(float64(state))
 }

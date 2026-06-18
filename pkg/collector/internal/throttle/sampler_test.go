@@ -75,6 +75,7 @@ func TestResourceSampler(t *testing.T) {
 
 	level := manager.Level()
 	require.NotNil(t, level)
+	assert.InDelta(t, 2.0, level.CPU, 0.001)
 	assert.InDelta(t, 2.0, level.CPUSlow, 0.001)
 	assert.InDelta(t, 2.0, level.CPUFast, 0.001)
 	assert.True(t, level.MemValid)
@@ -83,6 +84,7 @@ func TestResourceSampler(t *testing.T) {
 	sampler.tickAt(now.Add(2 * time.Second))
 	level = manager.Level()
 	require.NotNil(t, level)
+	assert.InDelta(t, 0.0, level.CPU, 0.001)
 	assert.InDelta(t, 1.9, level.CPUSlow, 0.001)
 	assert.InDelta(t, 1.4, level.CPUFast, 0.001)
 	assert.Greater(t, level.CPUSlow, level.CPUFast)

@@ -82,6 +82,33 @@ func TestManagerDropProbability(t *testing.T) {
 	assert.InDelta(t, 0.8, manager.dropProbability(define.RecordTraces), 0.001)
 }
 
+func TestInitDisabledClearsGlobalState(t *testing.T) {
+	Stop()
+	defer Stop()
+	assert.False(t, Enabled())
+
+	assert.NoError(t, Init(testConfig()))
+	assert.True(t, Enabled())
+	assert.NotNil(t, globalManager.Load())
+	assert.NotNil(t, globalSampler.Load())
+
+	assert.NoError(t, Init(Config{Enabled: false}))
+	assert.False(t, Enabled())
+	assert.Nil(t, globalManager.Load())
+	assert.Nil(t, globalSampler.Load())
+}
+
+func TestGlobalManagerDisabledAdmitsWithoutSampler(t *testing.T) {
+	Stop()
+	defer Stop()
+
+	manager := GlobalManager()
+	assert.Equal(t, ActionAdmit, manager.Decide(define.RecordTraces))
+	assert.Equal(t, StateNormal, manager.State(define.RecordTraces))
+	assert.Nil(t, globalManager.Load())
+	assert.Nil(t, globalSampler.Load())
+}
+
 func testConfig() Config {
 	return normalizeConfig(Config{
 		Enabled: true,

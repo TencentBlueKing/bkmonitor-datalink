@@ -21,6 +21,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
@@ -33,6 +34,10 @@ func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
 		Ready()
 	})
+}
+
+func TestThrottleClassifyRoutes(t *testing.T) {
+	assert.Equal(t, define.RecordMetrics, throttle.ClassifyHTTP(routeRemoteWrite))
 }
 
 func readContent() []byte {

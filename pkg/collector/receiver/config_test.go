@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -91,4 +92,39 @@ receiver:
 	assert.False(t, *receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
 	assert.NotNil(t, receiverConfig.Throttle.Rules["default"].DropMin)
 	assert.Equal(t, 0.1, *receiverConfig.Throttle.Rules["default"].DropMin)
+}
+
+func TestNewWithThrottleDisabledKeepsMiddlewareAndClearsGlobalThrottle(t *testing.T) {
+	throttle.Stop()
+	defer throttle.Stop()
+	assert.NoError(t, throttle.Init(throttle.Config{Enabled: true}))
+	enabledManager := throttle.GlobalManager()
+
+	content := `
+receiver:
+  http_server:
+    middlewares:
+      - "logging"
+      - "throttle"
+      - "maxconns;maxConnectionsRatio=2"
+  admin_server:
+    middlewares:
+      - "throttle"
+  grpc_server:
+    middlewares:
+      - "throttle"
+      - "maxbytes;maxRequestBytes=1024"
+  throttle:
+    enabled: false
+`
+	config, err := confengine.LoadConfigContent(content)
+	assert.NoError(t, err)
+
+	r, err := New(config)
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{"logging", "throttle", "maxconns;maxConnectionsRatio=2"}, r.config.RecvServer.Middlewares)
+	assert.Equal(t, []string{"throttle"}, r.config.AdminServer.Middlewares)
+	assert.Equal(t, []string{"throttle", "maxbytes;maxRequestBytes=1024"}, r.config.GrpcServer.Middlewares)
+	assert.NotSame(t, enabledManager, throttle.GlobalManager())
 }

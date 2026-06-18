@@ -18,19 +18,34 @@ import (
 )
 
 func TestClassifyHTTP(t *testing.T) {
-	assert.Equal(t, define.RecordTraces, ClassifyHTTP("/v1/traces"))
-	assert.Equal(t, define.RecordTraces, ClassifyHTTP("/v1/trace"))
-	assert.Equal(t, define.RecordMetrics, ClassifyHTTP("/v1/metrics"))
-	assert.Equal(t, define.RecordMetrics, ClassifyHTTP("/prometheus/write"))
-	assert.Equal(t, define.RecordLogs, ClassifyHTTP("/v1/logs"))
-	assert.Equal(t, define.RecordProfiles, ClassifyHTTP("/pyroscope/ingest"))
-	assert.Equal(t, define.RecordProfiles, ClassifyHTTP("/push.v1.PusherService/Push"))
+	RegisterHTTPRecordType("/test/throttle/traces", define.RecordTraces)
+	RegisterHTTPRecordType("/test/throttle/metrics", define.RecordMetrics)
+	RegisterHTTPRecordType("/test/throttle/logs", define.RecordLogs)
+	RegisterHTTPRecordType("/test/throttle/profiles", define.RecordProfiles)
+
+	assert.Equal(t, define.RecordTraces, ClassifyHTTP("/test/throttle/traces"))
+	assert.Equal(t, define.RecordMetrics, ClassifyHTTP("/test/throttle/metrics"))
+	assert.Equal(t, define.RecordLogs, ClassifyHTTP("/test/throttle/logs"))
+	assert.Equal(t, define.RecordProfiles, ClassifyHTTP("/test/throttle/profiles"))
 	assert.Equal(t, define.RecordUndefined, ClassifyHTTP("/debug/metrics"))
 }
 
 func TestClassifyGRPC(t *testing.T) {
-	assert.Equal(t, define.RecordTraces, ClassifyGRPC(grpcTraceExport))
-	assert.Equal(t, define.RecordMetrics, ClassifyGRPC(grpcMetricsExport))
-	assert.Equal(t, define.RecordLogs, ClassifyGRPC(grpcLogsExport))
+	RegisterGRPCRecordType("/test.ThrottleTraceService/Export", define.RecordTraces)
+	RegisterGRPCRecordType("/test.ThrottleMetricsService/Export", define.RecordMetrics)
+	RegisterGRPCRecordType("/test.ThrottleLogsService/Export", define.RecordLogs)
+
+	assert.Equal(t, define.RecordTraces, ClassifyGRPC("/test.ThrottleTraceService/Export"))
+	assert.Equal(t, define.RecordMetrics, ClassifyGRPC("/test.ThrottleMetricsService/Export"))
+	assert.Equal(t, define.RecordLogs, ClassifyGRPC("/test.ThrottleLogsService/Export"))
 	assert.Equal(t, define.RecordUndefined, ClassifyGRPC("/custom.Service/Call"))
+}
+
+func TestRegisterRecordTypeConflict(t *testing.T) {
+	RegisterHTTPRecordType("/test/throttle/conflict", define.RecordTraces)
+	RegisterHTTPRecordType("/test/throttle/conflict", define.RecordTraces)
+
+	assert.Panics(t, func() {
+		RegisterHTTPRecordType("/test/throttle/conflict", define.RecordMetrics)
+	})
 }

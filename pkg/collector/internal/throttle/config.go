@@ -36,31 +36,31 @@ var throttleRecordTypes = []define.RecordType{
 }
 
 type Config struct {
-	Enabled        bool                  `config:"enabled" mapstructure:"enabled"`
-	SampleInterval time.Duration         `config:"sample_interval" mapstructure:"sample_interval"`
-	Signal         SignalConfig          `config:"signal" mapstructure:"signal"`
-	Thresholds     ThresholdConfig       `config:"thresholds" mapstructure:"thresholds"`
-	Rules          map[string]RuleConfig `config:"rules" mapstructure:"rules"`
+	Enabled        bool                  `config:"enabled" mapstructure:"enabled"`                 // 总开关；关闭时 middleware 直接放行，不初始化采样回路。
+	SampleInterval time.Duration         `config:"sample_interval" mapstructure:"sample_interval"` // 采样周期；缺省 250ms。
+	Signal         SignalConfig          `config:"signal" mapstructure:"signal"`                   // CPU 信号采样参数。
+	Thresholds     ThresholdConfig       `config:"thresholds" mapstructure:"thresholds"`           // 全局阈值，所有数据类型共用。
+	Rules          map[string]RuleConfig `config:"rules" mapstructure:"rules"`                     // 按数据类型调丢弃强度，支持 default/traces/metrics/logs/profiles。
 }
 
 type SignalConfig struct {
-	CPUSlowBeta   float64 `config:"cpu_slow_beta" mapstructure:"cpu_slow_beta"`
-	CPUFastBeta   float64 `config:"cpu_fast_beta" mapstructure:"cpu_fast_beta"`
-	FallbackCores float64 `config:"fallback_cores" mapstructure:"fallback_cores"`
+	CPUSlowBeta   float64 `config:"cpu_slow_beta" mapstructure:"cpu_slow_beta"`   // 慢信号 EWMA 历史权重，驱动分级丢弃；缺省 0.95。
+	CPUFastBeta   float64 `config:"cpu_fast_beta" mapstructure:"cpu_fast_beta"`   // 快信号 EWMA 历史权重，驱动硬熔断；缺省 0.7。
+	FallbackCores float64 `config:"fallback_cores" mapstructure:"fallback_cores"` // 读不到 CPU 配额时的有效核数；0 表示取 define.CoreNum()。
 }
 
 type ThresholdConfig struct {
-	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"`
-	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`
-	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`
-	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`
-	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`
+	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"` // 慢信号越线进入分级丢弃；缺省 0.80。
+	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`   // 慢信号回落退出分级丢弃，与 cpu_enter 形成滞回带；缺省 0.70。
+	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`   // 快信号硬熔断线，连续 breach_n 次越线则全拒；缺省 0.90。
+	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`   // 内存工作集硬熔断线；缺省 0.92。
+	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`   // 连续越界次数门控；缺省 2。
 }
 
 type RuleConfig struct {
-	Enabled *bool    `config:"enabled" mapstructure:"enabled"`
-	DropMin *float64 `config:"drop_min" mapstructure:"drop_min"`
-	DropMax *float64 `config:"drop_max" mapstructure:"drop_max"`
+	Enabled *bool    `config:"enabled" mapstructure:"enabled"`   // 缺省 true；false 表示该数据类型完全不限流、恒放行。
+	DropMin *float64 `config:"drop_min" mapstructure:"drop_min"` // 丢弃概率下界，cpu_slow <= cpu_enter 时取此值；缺省 0。
+	DropMax *float64 `config:"drop_max" mapstructure:"drop_max"` // 丢弃概率上界，cpu_slow >= cpu_hard 时取此值；缺省 1。
 }
 
 type Rule struct {

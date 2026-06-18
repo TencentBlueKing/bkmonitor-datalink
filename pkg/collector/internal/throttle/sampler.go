@@ -116,7 +116,7 @@ func (s *ResourceSampler) tickAt(now time.Time) { // now 抽成入参，方便�
 		}
 	}
 
-	level := WaterLevel{CPUSlow: s.slow, CPUFast: s.fast}
+	level := WaterLevel{CPU: cpuRaw, CPUSlow: s.slow, CPUFast: s.fast}
 
 	// 读取内存使用率（不含 Cache）。
 	if workingSet, ok := s.reader.MemWorkingSet(); ok {

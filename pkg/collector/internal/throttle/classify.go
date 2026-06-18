@@ -9,33 +9,31 @@
 
 package throttle
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+import (
+	"fmt"
+	"sync/atomic"
 
-const (
-	grpcTraceExport   = "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
-	grpcMetricsExport = "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export"
-	grpcLogsExport    = "/opentelemetry.proto.collector.logs.v1.LogsService/Export"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-// HTTP 路径 → 数据类型。路径取自各 receiver 的入站常量，与 receiver 自身落 RecordType 解耦。
-var httpRecordTypes = map[string]define.RecordType{
-	"/v1/traces":        define.RecordTraces,
-	"/v1/trace":         define.RecordTraces,
-	"/v1/metrics":       define.RecordMetrics,
-	"/v1/logs":          define.RecordLogs,
-	"/prometheus/write": define.RecordMetrics,
-	"/pyroscope/ingest": define.RecordProfiles,
+var (
+	httpRecordTypes atomic.Value // stores map[string]define.RecordType
+	grpcRecordTypes atomic.Value // stores map[string]define.RecordType
+)
+
+// RegisterHTTPRecordType 注册参与限流的 HTTP 入站路径。receiver 应在 init 中用自己的路由常量登记。
+func RegisterHTTPRecordType(path string, recordType define.RecordType) {
+	registerRecordType(&httpRecordTypes, "http", path, recordType)
 }
 
-var grpcRecordTypes = map[string]define.RecordType{
-	grpcTraceExport:   define.RecordTraces,
-	grpcMetricsExport: define.RecordMetrics,
-	grpcLogsExport:    define.RecordLogs,
+// RegisterGRPCRecordType 注册参与限流的 gRPC 全方法名。receiver 应在 init 中靠近服务注册处登记。
+func RegisterGRPCRecordType(method string, recordType define.RecordType) {
+	registerRecordType(&grpcRecordTypes, "grpc", method, recordType)
 }
 
 // ClassifyHTTP 按请求路径归类。表外的端点返回 RecordUndefined，由中间件放行、不限流。
 func ClassifyHTTP(path string) define.RecordType {
-	if rt, ok := httpRecordTypes[path]; ok {
+	if rt, ok := loadRecordTypes(&httpRecordTypes)[path]; ok {
 		return rt
 	}
 	return define.RecordUndefined
@@ -43,8 +41,37 @@ func ClassifyHTTP(path string) define.RecordType {
 
 // ClassifyGRPC 按 gRPC 全方法名归类，未注册同样返回 RecordUndefined。
 func ClassifyGRPC(method string) define.RecordType {
-	if rt, ok := grpcRecordTypes[method]; ok {
+	if rt, ok := loadRecordTypes(&grpcRecordTypes)[method]; ok {
 		return rt
 	}
 	return define.RecordUndefined
+}
+
+func registerRecordType(table *atomic.Value, protocol string, key string, recordType define.RecordType) {
+	if key == "" {
+		panic(fmt.Sprintf("throttle %s record type key is empty", protocol))
+	}
+
+	current := loadRecordTypes(table)
+	if existing, ok := current[key]; ok {
+		if existing == recordType {
+			return
+		}
+		panic(fmt.Sprintf("throttle %s record type conflict: %s => %s/%s", protocol, key, existing.S(), recordType.S()))
+	}
+
+	next := make(map[string]define.RecordType, len(current)+1)
+	for k, v := range current {
+		next[k] = v
+	}
+	next[key] = recordType
+	table.Store(next)
+}
+
+func loadRecordTypes(table *atomic.Value) map[string]define.RecordType {
+	value := table.Load()
+	if value == nil {
+		return nil
+	}
+	return value.(map[string]define.RecordType)
 }

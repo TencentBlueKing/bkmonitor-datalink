@@ -118,6 +118,9 @@ func (f *IndexOptionFormat) parseAnalysis(settings map[string]any) {
 					if cv, ok := tokenizer[ck]; ok {
 						if ncv, ok := cv.(map[string]any); ok {
 							for tk, tv := range ncv {
+								if tk == AnalyzerKeyType {
+									continue
+								}
 								f.analyzer[k][tk] = tv
 							}
 						}
@@ -262,6 +265,7 @@ func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption 
 	// 任一索引侧会 lowercase 时，查询也需要覆盖 lowercase term；
 	// 同时记录混合语义，供 fallback 生成原 pattern + lower pattern。
 	merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+	merged.IsAnalyzed = existing.IsAnalyzed || next.IsAnalyzed
 	merged.IsCaseInsensitive = existing.IsCaseInsensitive || next.IsCaseInsensitive
 	merged.IsMixedCaseSensitivity = existing.IsMixedCaseSensitivity || next.IsMixedCaseSensitivity ||
 		existing.IsCaseSensitive != next.IsCaseSensitive

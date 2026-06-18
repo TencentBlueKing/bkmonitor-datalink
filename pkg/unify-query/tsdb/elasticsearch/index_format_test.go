@@ -124,7 +124,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":["@","&","(",")","=","'","\"",",",";",":","<",">","[","]","{","}","/"," ","\n","\t","\r","\\"]},"path":{"alias_name":"","field_name":"path","field_type":"keyword","origin_field":"path","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name: "case_sensitivity_from_index_normalizer_and_analyzer",
+			name: "根据 normalizer 和 analyzer 判断字段大小写语义",
 			settings: map[string]any{
 				"analysis": map[string]any{
 					"filter": map[string]any{
@@ -231,7 +231,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"builtin_normalized_keyword":{"alias_name":"","field_name":"builtin_normalized_keyword","field_type":"keyword","origin_field":"builtin_normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"is_case_insensitive":true,"tokenize_on_chars":[]},"case_sensitive_pattern_text":{"alias_name":"","field_name":"case_sensitive_pattern_text","field_type":"text","origin_field":"case_sensitive_pattern_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]},"custom_pattern_tokenizer_text":{"alias_name":"","field_name":"custom_pattern_tokenizer_text","field_type":"text","origin_field":"custom_pattern_tokenizer_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]},"english_text":{"alias_name":"","field_name":"english_text","field_type":"text","origin_field":"english_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"lowercase_text":{"alias_name":"","field_name":"lowercase_text","field_type":"text","origin_field":"lowercase_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"mixed_text":{"alias_name":"","field_name":"mixed_text","field_type":"text","origin_field":"mixed_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"normalized_keyword":{"alias_name":"","field_name":"normalized_keyword","field_type":"keyword","origin_field":"normalized_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"is_case_insensitive":true,"tokenize_on_chars":[]},"quote_sensitive_text":{"alias_name":"","field_name":"quote_sensitive_text","field_type":"text","origin_field":"quote_sensitive_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"raw_keyword":{"alias_name":"","field_name":"raw_keyword","field_type":"keyword","origin_field":"raw_keyword","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]},"serbian_text":{"alias_name":"","field_name":"serbian_text","field_type":"text","origin_field":"serbian_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"standard_type_text":{"alias_name":"","field_name":"standard_type_text","field_type":"text","origin_field":"standard_type_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"unknown_analyzer_text":{"alias_name":"","field_name":"unknown_analyzer_text","field_type":"text","origin_field":"unknown_analyzer_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]},"wildcard_field":{"alias_name":"","field_name":"wildcard_field","field_type":"wildcard","origin_field":"wildcard_field","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name: "case_sensitivity_from_default_analyzer",
+			name: "字段未配置 analyzer 时使用当前索引的 default analyzer",
 			settings: map[string]any{
 				"analysis": map[string]any{
 					"analyzer": map[string]any{
@@ -253,7 +253,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"default_text":{"alias_name":"","field_name":"default_text","field_type":"text","origin_field":"default_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name:     "case_sensitivity_without_analyzer_settings_preserves_lowercase_fallback",
+			name:     "缺少 analyzer settings 时保留旧版 lower fallback",
 			settings: map[string]any{},
 			mappings: map[string]any{
 				"properties": map[string]any{
@@ -266,7 +266,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name: "wildcard_case_insensitive_support_from_index_version",
+			name: "根据索引版本判断是否支持 wildcard case_insensitive",
 			settings: map[string]any{
 				"index": map[string]any{
 					"version": map[string]any{
@@ -361,7 +361,7 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 }
 
 func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {
-	t.Run("text_then_long_keeps_text_case_semantics", func(t *testing.T) {
+	t.Run("text 与 long 同名时 long 不参与 wildcard 大小写合并", func(t *testing.T) {
 		iof := NewIndexOptionFormat(nil)
 		iof.Parse(map[string]any{
 			"analysis": map[string]any{

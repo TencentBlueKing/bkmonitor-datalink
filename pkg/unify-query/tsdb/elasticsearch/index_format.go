@@ -119,6 +119,7 @@ func (f *IndexOptionFormat) parseAnalysis(settings map[string]any) {
 						if ncv, ok := cv.(map[string]any); ok {
 							for tk, tv := range ncv {
 								if tk == AnalyzerKeyType {
+									// tokenizer.type 描述的是切词器类型，不代表 analyzer 是否会 lowercase。
 									continue
 								}
 								f.analyzer[k][tk] = tv
@@ -265,6 +266,7 @@ func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption 
 	// 任一索引侧会 lowercase 时，查询也需要覆盖 lowercase term；
 	// 同时记录混合语义，供 fallback 生成原 pattern + lower pattern。
 	merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+	// 保留任一 text mapping 的 analyzed 状态，否则 keyword 先出现时会丢掉后续 text 索引的 lower 覆盖。
 	merged.IsAnalyzed = existing.IsAnalyzed || next.IsAnalyzed
 	merged.IsCaseInsensitive = existing.IsCaseInsensitive || next.IsCaseInsensitive
 	merged.IsMixedCaseSensitivity = existing.IsMixedCaseSensitivity || next.IsMixedCaseSensitivity ||

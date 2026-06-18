@@ -71,7 +71,16 @@ func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 	f.updateWildcardCaseInsensitive(settings)
+	// analyzer/filter/normalizer 都是 index 级 settings，不能跨 Parse 调用复用；
+	// 否则上一个 index 的 analysis.analyzer.default 会污染下一个 index。
+	f.analyzer = make(map[string]map[string]any)
+	f.filter = make(map[string]map[string]any)
+	f.normalizer = make(map[string]map[string]any)
+	f.parseAnalysis(settings)
+	f.parseMappings(mappings)
+}
 
+func (f *IndexOptionFormat) parseAnalysis(settings map[string]any) {
 	// 解析 settings 里面的 analysis
 	// 支持两种结构：直接 settings["analysis"] 或 settings["index"]["analysis"]
 	var analysis map[string]any
@@ -114,7 +123,9 @@ func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 			}
 		}
 	}
+}
 
+func (f *IndexOptionFormat) parseMappings(mappings map[string]any) {
 	if _, ok := mappings[FormatProperties]; ok {
 		f.mapMappings("", mappings)
 	} else {
@@ -122,7 +133,7 @@ func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 		for _, m := range mappings {
 			switch nm := m.(type) {
 			case map[string]any:
-				f.Parse(settings, nm)
+				f.parseMappings(nm)
 			}
 		}
 	}
@@ -189,7 +200,6 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	ks := strings.Split(k, ESStep)
 	fieldMap.OriginField = ks[0]
 	fieldMap.IsAnalyzed = false
-	fieldMap.IsCaseSensitive = true
 
 	// 如果 mapping 中显式设置了 doc_values，以显式设置为准
 	if v, ok := data["doc_values"].(bool); ok {
@@ -207,6 +217,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	switch fieldMap.FieldType {
 	case KeyWord:
 		fieldMap.IsCaseSensitive = !f.normalizerLowercases(cast.ToString(data[FormatPropertiesNormalizer]))
+		fieldMap.IsCaseInsensitive = !fieldMap.IsCaseSensitive
 	case Text:
 		indexAnalyzer := cast.ToString(data[FormatPropertiesAnalyzer])
 		if indexAnalyzer == "" {
@@ -227,6 +238,8 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 		}
 
 		fieldMap.IsCaseSensitive = !f.analyzerLowercases(indexAnalyzer)
+	case "wildcard":
+		fieldMap.IsCaseSensitive = true
 	}
 	if f.wildcardCaseInsensitive != nil {
 		fieldMap.WildcardCaseInsensitive = *f.wildcardCaseInsensitive
@@ -237,12 +250,22 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 
 func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption {
 	merged := existing
-	// 任一索引侧会 lowercase 时，查询也需要按大小写不敏感处理。
-	merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+	if fieldCaseSensitivityAffectsWildcard(existing) || fieldCaseSensitivityAffectsWildcard(next) {
+		// 任一索引侧会 lowercase 时，查询也需要覆盖 lowercase term；
+		// 同时记录混合语义，供旧 ES fallback 生成原 pattern + lower pattern。
+		merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+		merged.IsCaseInsensitive = existing.IsCaseInsensitive || next.IsCaseInsensitive
+		merged.IsMixedCaseSensitivity = existing.IsMixedCaseSensitivity || next.IsMixedCaseSensitivity ||
+			existing.IsCaseSensitive != next.IsCaseSensitive
+	}
 	if len(merged.TokenizeOnChars) == 0 && len(next.TokenizeOnChars) > 0 {
 		merged.TokenizeOnChars = next.TokenizeOnChars
 	}
 	return merged
+}
+
+func fieldCaseSensitivityAffectsWildcard(field metadata.FieldOption) bool {
+	return field.IsAnalyzed || field.FieldType == KeyWord || field.FieldType == "wildcard"
 }
 
 func (f *IndexOptionFormat) updateWildcardCaseInsensitive(settings map[string]any) {
@@ -287,7 +310,9 @@ func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
 	}
 	if analyzerType != "" && analyzerType != "custom" {
 		// 自定义名称可包装内置 analyzer，例如 {"type":"standard"}，需按 type 判定。
-		return builtinAnalyzerLowercases(analyzerType)
+		if builtinAnalyzerLowercases(analyzerType) {
+			return true
+		}
 	}
 
 	return f.filtersLowercase(cast.ToStringSlice(analyzer[AnalyzerKeyFilter]))
@@ -301,7 +326,7 @@ func builtinAnalyzerLowercases(name string) bool {
 		"finnish", "french", "galician", "german", "greek", "hindi",
 		"hungarian", "indonesian", "irish", "italian", "latvian",
 		"lithuanian", "norwegian", "persian", "portuguese", "romanian",
-		"russian", "sorani", "spanish", "swedish", "turkish", "thai":
+		"russian", "serbian", "sorani", "spanish", "swedish", "turkish", "thai":
 		return true
 	default:
 		return false

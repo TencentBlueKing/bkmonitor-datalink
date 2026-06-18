@@ -115,17 +115,18 @@ func (p *licenseChecker) Reload(config map[string]any, customized []processor.Su
 
 	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
 	for _, obj := range diffRet.Keep {
-		f.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
+		cleanExactCacheMgr(f.cacheMgrs, obj)
 	}
 
 	for _, obj := range diffRet.Updated {
-		p.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
-		newCacheMgr := f.cacheMgrs.Get(obj.Token, obj.Type, obj.ID)
-		p.cacheMgrs.Set(obj.Token, obj.Type, obj.ID, newCacheMgr)
+		cleanExactCacheMgr(p.cacheMgrs, obj)
+		if newCacheMgr, ok := f.cacheMgrs.GetExact(obj.Token, obj.Type, obj.ID); ok {
+			p.cacheMgrs.Set(obj.Token, obj.Type, obj.ID, newCacheMgr)
+		}
 	}
 
 	for _, obj := range diffRet.Deleted {
-		p.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
+		cleanExactCacheMgr(p.cacheMgrs, obj)
 		p.cacheMgrs.Del(obj.Token, obj.Type, obj.ID)
 	}
 
@@ -136,6 +137,12 @@ func (p *licenseChecker) Reload(config map[string]any, customized []processor.Su
 func (p *licenseChecker) Clean() {
 	for _, obj := range p.cacheMgrs.All() {
 		obj.(*licensecache.Manager).Clean()
+	}
+}
+
+func cleanExactCacheMgr(cacheMgrs *confengine.TierConfig, obj processor.SubConfigProcessor) {
+	if mgr, ok := cacheMgrs.GetExact(obj.Token, obj.Type, obj.ID); ok {
+		mgr.(*licensecache.Manager).Clean()
 	}
 }
 

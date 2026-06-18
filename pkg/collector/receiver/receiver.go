@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/grpcmiddleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/httpmiddleware"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -102,6 +103,10 @@ func New(conf *confengine.Config) (*Receiver, error) {
 
 	// 全局状态记录
 	globalSkywalkingConfig = LoadConfigFrom(conf)
+	// 启动期一次性装配限流单例并拉起采样回路。New 早于 Start，中间件取用前单例已就绪。
+	if err = throttle.Init(c.Throttle); err != nil {
+		return nil, err
+	}
 
 	return &Receiver{
 		config:  c,
@@ -370,6 +375,8 @@ func (r *Receiver) shutdownGrpcServer() {
 }
 
 func (r *Receiver) Stop() error {
+	defer throttle.Stop() // 收尾：停采样回路、把限流单例切回恒放行，清理全局状态
+
 	if err := r.shutdownRecvServer(); err != nil {
 		return err
 	}

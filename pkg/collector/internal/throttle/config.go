@@ -1,0 +1,198 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package throttle
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+)
+
+// 各项缺省值；用户未显式配置（或填了 0、非法区间）的字段回退到这里。
+const (
+	defaultSampleInterval = 250 * time.Millisecond
+	defaultCPUSlowBeta    = 0.95 // 慢信号偏平滑，驱动分级
+	defaultCPUFastBeta    = 0.7  // 快信号偏灵敏，驱动熔断
+	defaultCPUEnter       = 0.80
+	defaultCPUExit        = 0.70
+	defaultCPUHard        = 0.90
+	defaultMemHard        = 0.92
+	defaultBreachN        = 2
+)
+
+var throttleRecordTypes = []define.RecordType{
+	define.RecordTraces,
+	define.RecordMetrics,
+	define.RecordLogs,
+	define.RecordProfiles,
+}
+
+type Config struct {
+	Enabled        bool                  `config:"enabled" mapstructure:"enabled"`
+	SampleInterval time.Duration         `config:"sample_interval" mapstructure:"sample_interval"`
+	Signal         SignalConfig          `config:"signal" mapstructure:"signal"`
+	Thresholds     ThresholdConfig       `config:"thresholds" mapstructure:"thresholds"`
+	Rules          map[string]RuleConfig `config:"rules" mapstructure:"rules"`
+}
+
+type SignalConfig struct {
+	CPUSlowBeta   float64 `config:"cpu_slow_beta" mapstructure:"cpu_slow_beta"`
+	CPUFastBeta   float64 `config:"cpu_fast_beta" mapstructure:"cpu_fast_beta"`
+	FallbackCores float64 `config:"fallback_cores" mapstructure:"fallback_cores"`
+}
+
+type ThresholdConfig struct {
+	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"`
+	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`
+	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`
+	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`
+	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`
+}
+
+type RuleConfig struct {
+	Enabled *bool    `config:"enabled" mapstructure:"enabled"`
+	DropMin *float64 `config:"drop_min" mapstructure:"drop_min"`
+	DropMax *float64 `config:"drop_max" mapstructure:"drop_max"`
+}
+
+type Rule struct {
+	Enabled bool
+	DropMin float64
+	DropMax float64
+}
+
+func normalizeConfig(c Config) Config {
+	if c.SampleInterval <= 0 {
+		c.SampleInterval = defaultSampleInterval
+	}
+	if c.Signal.CPUSlowBeta == 0 {
+		c.Signal.CPUSlowBeta = defaultCPUSlowBeta
+	}
+	if c.Signal.CPUFastBeta == 0 {
+		c.Signal.CPUFastBeta = defaultCPUFastBeta
+	}
+	if c.Thresholds.CPUEnter == 0 {
+		c.Thresholds.CPUEnter = defaultCPUEnter
+	}
+	if c.Thresholds.CPUExit == 0 {
+		c.Thresholds.CPUExit = defaultCPUExit
+	}
+	if c.Thresholds.CPUHard == 0 {
+		c.Thresholds.CPUHard = defaultCPUHard
+	}
+	if c.Thresholds.MemHard == 0 {
+		c.Thresholds.MemHard = defaultMemHard
+	}
+	if c.Thresholds.BreachN <= 0 {
+		c.Thresholds.BreachN = defaultBreachN
+	}
+	return c
+}
+
+func validateConfig(c Config) error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.SampleInterval <= 0 {
+		return fmt.Errorf("sample_interval must be greater than 0")
+	}
+	if c.Signal.CPUSlowBeta < 0 || c.Signal.CPUSlowBeta >= 1 {
+		return fmt.Errorf("signal.cpu_slow_beta must be in [0, 1)")
+	}
+	if c.Signal.CPUFastBeta < 0 || c.Signal.CPUFastBeta >= 1 {
+		return fmt.Errorf("signal.cpu_fast_beta must be in [0, 1)")
+	}
+	if c.Signal.FallbackCores < 0 {
+		return fmt.Errorf("signal.fallback_cores must be greater than or equal to 0")
+	}
+	if c.Thresholds.CPUExit < 0 {
+		return fmt.Errorf("thresholds.cpu_exit must be greater than or equal to 0")
+	}
+	if c.Thresholds.CPUEnter <= c.Thresholds.CPUExit {
+		return fmt.Errorf("thresholds.cpu_enter must be greater than thresholds.cpu_exit")
+	}
+	if c.Thresholds.CPUHard <= c.Thresholds.CPUEnter {
+		return fmt.Errorf("thresholds.cpu_hard must be greater than thresholds.cpu_enter")
+	}
+	if c.Thresholds.MemHard <= 0 {
+		return fmt.Errorf("thresholds.mem_hard must be greater than 0")
+	}
+	if c.Thresholds.BreachN <= 0 {
+		return fmt.Errorf("thresholds.breach_n must be greater than 0")
+	}
+	for name, rc := range c.Rules {
+		if !validRuleName(name) {
+			return fmt.Errorf("rules.%s is not supported", name)
+		}
+		if rc.DropMin != nil && (*rc.DropMin < 0 || *rc.DropMin > 1) {
+			return fmt.Errorf("rules.%s.drop_min must be in [0, 1]", name)
+		}
+		if rc.DropMax != nil && (*rc.DropMax < 0 || *rc.DropMax > 1) {
+			return fmt.Errorf("rules.%s.drop_max must be in [0, 1]", name)
+		}
+	}
+	for recordType, rule := range buildRules(c.Rules) {
+		if !rule.Enabled {
+			continue
+		}
+		if rule.DropMin > rule.DropMax {
+			return fmt.Errorf("rules.%s.drop_min must be less than or equal to drop_max after merging default rule", recordType.S())
+		}
+	}
+	return nil
+}
+
+func validRuleName(name string) bool {
+	switch name {
+	case "default", define.RecordTraces.S(), define.RecordMetrics.S(), define.RecordLogs.S(), define.RecordProfiles.S():
+		return true
+	default:
+		return false
+	}
+}
+
+// buildRules 把每类数据的规则与 default 合并成最终 Rule，没单独配置的类型直接用 default。
+func buildRules(configs map[string]RuleConfig) map[define.RecordType]Rule {
+	defaultRule := Rule{Enabled: true, DropMin: 0, DropMax: 1}
+	if rc, ok := configs["default"]; ok {
+		defaultRule = mergeRule(defaultRule, rc)
+	}
+
+	rules := make(map[define.RecordType]Rule, len(throttleRecordTypes))
+	for _, rt := range throttleRecordTypes {
+		rule := defaultRule
+		if rc, ok := configs[rt.S()]; ok {
+			rule = mergeRule(rule, rc)
+		}
+		rules[rt] = rule
+	}
+	return rules
+}
+
+func mergeRule(base Rule, config RuleConfig) Rule {
+	if config.Enabled != nil {
+		base.Enabled = *config.Enabled
+	}
+	if config.DropMin != nil {
+		base.DropMin = *config.DropMin
+	}
+	if config.DropMax != nil {
+		base.DropMax = *config.DropMax
+	}
+	return base
+}
+
+func fallbackCores(c Config) float64 {
+	if c.Signal.FallbackCores > 0 {
+		return c.Signal.FallbackCores
+	}
+	return float64(define.CoreNum())
+}

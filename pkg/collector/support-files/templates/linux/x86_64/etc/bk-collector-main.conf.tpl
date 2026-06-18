@@ -188,25 +188,9 @@ bk-collector:
 
     # NetworkFlow Receiver Config
     networkflow:
-      # 是否启动 NetworkFlow UDP 接收
-      enabled: false
-      # 直接注入导出 dataid，不经过 token
-      dataid: 1100025
-      # 从子配置文件加载 listeners（支持 glob 通配符），不再需要 inline listeners
+      # 子配置文件包含 networkflow 全部配置（enabled/dataid/listeners/workers 等）
       listeners_file:
         - "{{ plugin_path.subconfig_path }}/bk-collector-networkflow.conf"
-      # UDP 接收协程数，按 CPU 核数调整
-      # default: 1
-      workers: 1
-      # UDP 接收 socket 数
-      # default: 1
-      sockets: 1
-      # 内部 channel 缓冲区大小，0 表示同步模式
-      # default: 0
-      queue_size: 0
-      # 是否阻塞写入，false 表示 channel 满时丢包并触发回调
-      # default: false
-      blocking: false
 
   processor:
     # ApdexCalculator: 健康度状态计算器

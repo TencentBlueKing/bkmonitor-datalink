@@ -94,13 +94,12 @@ func New(conf *confengine.Config) (*Receiver, error) {
 		return nil, err
 	}
 
-	if c.NetworkFlow.Enabled && len(c.NetworkFlow.ListenersFile) > 0 {
-		listeners, err := loadListenersFromFiles(c.NetworkFlow.ListenersFile)
+	if len(c.NetworkFlow.ListenersFile) > 0 {
+		nf, err := loadNetworkFlowConfig(c.NetworkFlow.ListenersFile)
 		if err != nil {
-			logger.Warnf("failed to load networkflow listeners from files: %v, fallback to inline listeners", err)
-		} else {
-			c.NetworkFlow.Listeners = listeners
+			return nil, fmt.Errorf("load networkflow sub-config failed: %w", err)
 		}
+		c.NetworkFlow = *nf
 	}
 	logger.Infof("receiver config: %+v", c)
 
@@ -141,24 +140,16 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	}, nil
 }
 
-type listenersFileContent struct {
-	Listeners []string `config:"listeners"`
-}
-
-func loadListenersFromFiles(patterns []string) ([]string, error) {
+func loadNetworkFlowConfig(patterns []string) (*NetworkFlowConfig, error) {
 	cfgs := confengine.LoadConfigPatterns(patterns)
-	var listeners []string
 	for _, cfg := range cfgs {
-		var l listenersFileContent
-		if err := cfg.Unpack(&l); err != nil {
+		var nf NetworkFlowConfig
+		if err := cfg.Unpack(&nf); err != nil {
 			return nil, err
 		}
-		listeners = append(listeners, l.Listeners...)
+		return &nf, nil
 	}
-	if len(listeners) == 0 {
-		return nil, fmt.Errorf("no listeners found from patterns: %v", patterns)
-	}
-	return listeners, nil
+	return nil, fmt.Errorf("no networkflow config found from patterns: %v", patterns)
 }
 
 func (r *Receiver) ready() {

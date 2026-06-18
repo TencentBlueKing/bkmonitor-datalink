@@ -164,30 +164,10 @@ bk-collector:
       endpoint: ":4319"
 
     # NetworkFlow Receiver Config
+    # 全部配置在子文件中定义（enabled/dataid/listeners/workers 等）
     networkflow:
-      # 是否启动 NetworkFlow UDP 接收
-      enabled: false
-      # 直接注入导出 dataid，不经过 token
-      dataid: 1100025
-      # 从子配置文件加载 listeners（支持 glob 通配符）
-      # 优先级高于下方内联 listeners
       listeners_file:
-        - "./example/networkflow_listeners.yml"
-      # 支持 netflow/ipfix/sflow/flow（listeners_file 为空时使用此配置）
-      listeners:
-        - "netflow://0.0.0.0:2055"
-      # UDP 接收协程数，按 CPU 核数调整
-      # default: 1
-      workers: 1
-      # UDP 接收 socket 数，每个 worker 一个
-      # default: 1
-      sockets: 1
-      # 内部 channel 缓冲区大小，0 表示同步模式
-      # default: 0
-      queue_size: 0
-      # 是否阻塞写入，false 表示 channel 满时丢包并触发回调
-      # default: false
-      blocking: false
+        - "./example/networkflow.yml"
 
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项

@@ -212,16 +212,64 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
 		},
 		{
-			name:  "wildcard on analyzed field should lowercase",
-			input: "log: *TSpiderCreateTableException*",
-			sql:   "`log` LIKE '%TSpiderCreateTableException%'",
-			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
+			name:  "大小写不敏感的 analyzed 字段使用 case_insensitive wildcard 查询",
+			input: "case_insensitive_log: *TSpiderCreateTableException*",
+			sql:   "`case_insensitive_log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*tspidercreatetableexception*"}}}`,
+		},
+		{
+			name:  "大小写不敏感的 analyzed 字段会先在 Go 侧 lower unicode",
+			input: "case_insensitive_log: *Ä*",
+			sql:   "`case_insensitive_log` LIKE '%Ä%'",
+			dsl:   `{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*ä*"}}}`,
+		},
+		{
+			name:  "大小写敏感的 analyzed 字段保持原始 wildcard 大小写",
+			input: "case_sensitive_log: *ERROR*",
+			sql:   "`case_sensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}}`,
+		},
+		{
+			name:  "旧版大小写不敏感字段仅使用 lower 后的 wildcard",
+			input: "legacy_case_insensitive_log: *ERROR*",
+			sql:   "`legacy_case_insensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"legacy_case_insensitive_log":{"value":"*error*"}}}`,
 		},
 		{
 			name:  "wildcard on non-analyzed field keeps case",
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
+		},
+		{
+			name:  "带 lowercase normalizer 的 keyword 使用 case_insensitive wildcard 查询",
+			input: "normalized_keyword: *Active*",
+			sql:   "`normalized_keyword` LIKE '%Active%'",
+			dsl:   `{"wildcard":{"normalized_keyword":{"case_insensitive":true,"value":"*active*"}}}`,
+		},
+		{
+			name:  "默认 keyword 保持原始 wildcard 大小写",
+			input: "level: *ERROR*",
+			sql:   "`level` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"level":{"value":"*ERROR*"}}}`,
+		},
+		{
+			name:  "旧版混合大小写语义字段同时保留原始和 lower wildcard",
+			input: "mixed_legacy_log: *ERROR*",
+			sql:   "`mixed_legacy_log` LIKE '%ERROR%'",
+			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_legacy_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_legacy_log":{"value":"*error*"}}}]}}`,
+		},
+		{
+			name:  "支持 case_insensitive 的混合字段仍使用显式双 wildcard",
+			input: "mixed_log: *ERROR*",
+			sql:   "`mixed_log` LIKE '%ERROR%'",
+			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_log":{"value":"*error*"}}}]}}`,
+		},
+		{
+			name:  "混合字段的小写 wildcard 不扩大匹配大小写敏感索引",
+			input: "mixed_log: *error*",
+			sql:   "`mixed_log` LIKE '%error%'",
+			dsl:   `{"wildcard":{"mixed_log":{"value":"*error*"}}}`,
 		},
 		{
 			name:  "negative prefix regexp keeps implicit should semantics",
@@ -241,6 +289,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
 			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
 		},
+		{
+			name:  "大小写不敏感字段的 OR wildcard 使用 case_insensitive 查询",
+			input: `case_insensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_insensitive_log` LIKE '%ERROR%' OR `case_insensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*error*"}}},{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*traceback*"}}}]}}`,
+		},
+		{
+			name:  "大小写敏感字段的 OR wildcard 保持原始大小写",
+			input: `case_sensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_sensitive_log` LIKE '%ERROR%' OR `case_sensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}},{"wildcard":{"case_sensitive_log":{"value":"*Traceback*"}}}]}}`,
+		},
 	}
 
 	mock.Init()
@@ -250,6 +310,45 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		"log": {
 			IsAnalyzed: true,
 			FieldType:  "text",
+		},
+		"case_insensitive_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			WildcardCaseInsensitive: true,
+			FieldType:               "text",
+		},
+		"legacy_case_insensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: false,
+			FieldType:       "text",
+		},
+		"case_sensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: true,
+			FieldType:       "text",
+		},
+		"normalized_keyword": {
+			IsCaseSensitive:         false,
+			IsCaseInsensitive:       true,
+			WildcardCaseInsensitive: true,
+			FieldType:               "keyword",
+		},
+		"level": {
+			FieldType: "keyword",
+		},
+		"mixed_legacy_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			IsMixedCaseSensitivity:  true,
+			WildcardCaseInsensitive: false,
+			FieldType:               "text",
+		},
+		"mixed_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			IsMixedCaseSensitivity:  true,
+			WildcardCaseInsensitive: true,
+			FieldType:               "text",
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",

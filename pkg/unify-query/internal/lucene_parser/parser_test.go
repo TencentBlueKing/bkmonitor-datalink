@@ -218,6 +218,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
 		},
 		{
+			name:  "wildcard on case-sensitive analyzed field keeps case",
+			input: "case_sensitive_log: *TSpiderCreateTableException*",
+			sql:   "`case_sensitive_log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"case_sensitive_log":{"value":"*TSpiderCreateTableException*"}}}`,
+		},
+		{
 			name:  "wildcard on non-analyzed field keeps case",
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
@@ -248,8 +254,14 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	fieldsMap := metadata.FieldsMap{
 		"log": {
-			IsAnalyzed: true,
-			FieldType:  "text",
+			IsAnalyzed:      true,
+			FieldType:       "text",
+			IsCaseSensitive: false,
+		},
+		"case_sensitive_log": {
+			IsAnalyzed:      true,
+			FieldType:       "text",
+			IsCaseSensitive: true,
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",

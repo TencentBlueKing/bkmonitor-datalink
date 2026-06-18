@@ -638,8 +638,8 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				result = cq
 			}
 		} else {
-			// text 字段倒排索引为小写，wildcard 不经分词器，需手动小写化 pattern
-			if fieldOption.IsAnalyzed {
+			// wildcard 不经分词器，大小写归一化需跟随 mapping/analyzer 配置
+			if fieldOption.IsAnalyzed && !fieldOption.IsCaseSensitive {
 				value = strings.ToLower(value)
 			}
 			cq := elastic.NewWildcardQuery(field, value)

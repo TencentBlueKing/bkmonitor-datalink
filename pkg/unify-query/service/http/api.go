@@ -420,21 +420,22 @@ func HandlerSeries(c *gin.Context) {
 		_ = p.Submit(func() {
 			defer wg.Done()
 
+			seriesQuery := *qry
 			if params.Limit > 0 && len(data.Series) > params.Limit {
 				return
 			}
 
 			// 将用户指定的 keys 传递给 query.Source，让底层存储只查询指定字段
 			if len(params.Keys) > 0 {
-				qry.Source = params.Keys
+				seriesQuery.Source = params.Keys
 			}
 
-			instance := prometheus.GetTsDbInstance(ctx, qry)
+			instance := prometheus.GetTsDbInstance(ctx, &seriesQuery)
 			if instance == nil {
 				return
 			}
 
-			res, err := instance.QuerySeries(ctx, qry, qb.Start, qb.End)
+			res, err := instance.QuerySeries(ctx, &seriesQuery, qb.Start, qb.End)
 			if err != nil {
 				return
 			}

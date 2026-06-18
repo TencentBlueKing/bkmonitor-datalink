@@ -59,10 +59,17 @@ func (innerLogger) Error(format string, args ...interface{}) {
 }
 
 func NewClient(opt Option) (*Client, error) {
-	cli, err := agentmessage.New(
+	socketOpts, err := agentMessageSocketOptions(opt.IPC)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := []agentmessage.OptionFn{
 		agentmessage.WithPluginName("bkmonitorbeat"),
 		agentmessage.WithPluginVersion(opt.Version),
-		agentmessage.WithDomainSocketPath(opt.IPC),
+	}
+	opts = append(opts, socketOpts...)
+	opts = append(opts,
 		agentmessage.WithRecvCallback(func(msgID string, content []byte) {
 			type R struct {
 				Data []FetchHostDataIDData `json:"data"`
@@ -91,6 +98,7 @@ func NewClient(opt Option) (*Client, error) {
 		}),
 		agentmessage.WithLogger(innerLogger{}),
 	)
+	cli, err := agentmessage.New(opts...)
 	if err != nil {
 		return nil, err
 	}

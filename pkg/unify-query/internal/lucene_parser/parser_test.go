@@ -260,6 +260,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_legacy_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_legacy_log":{"value":"*error*"}}}]}}`,
 		},
 		{
+			name:  "wildcard on mixed field with es support keeps explicit patterns",
+			input: "mixed_log: *ERROR*",
+			sql:   "`mixed_log` LIKE '%ERROR%'",
+			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_log":{"value":"*error*"}}}]}}`,
+		},
+		{
+			name:  "lowercase wildcard on mixed field with es support stays case sensitive",
+			input: "mixed_log: *error*",
+			sql:   "`mixed_log` LIKE '%error%'",
+			dsl:   `{"wildcard":{"mixed_log":{"value":"*error*"}}}`,
+		},
+		{
 			name:  "negative prefix regexp keeps implicit should semantics",
 			input: `name:/^(?!.*foo).*/ status:ok`,
 			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
@@ -329,6 +341,13 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			IsCaseSensitive:         false,
 			IsMixedCaseSensitivity:  true,
 			WildcardCaseInsensitive: false,
+			FieldType:               "text",
+		},
+		"mixed_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			IsMixedCaseSensitivity:  true,
+			WildcardCaseInsensitive: true,
 			FieldType:               "text",
 		},
 		"__ext.container_name": {

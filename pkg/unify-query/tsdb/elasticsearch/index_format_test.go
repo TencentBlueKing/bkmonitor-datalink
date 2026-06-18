@@ -238,6 +238,19 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"default_text":{"alias_name":"","field_name":"default_text","field_type":"text","origin_field":"default_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
+			name:     "case_sensitivity_without_analyzer_settings_preserves_lowercase_fallback",
+			settings: map[string]any{},
+			mappings: map[string]any{
+				"properties": map[string]any{
+					"custom_text": map[string]any{
+						"type":     "text",
+						"analyzer": "custom_lowercase_analyzer",
+					},
+				},
+			},
+			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+		},
+		{
 			name: "wildcard_case_insensitive_support_from_index_version",
 			settings: map[string]any{
 				"index": map[string]any{
@@ -330,4 +343,35 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 	assert.False(t, field.IsCaseSensitive)
 	assert.True(t, field.IsMixedCaseSensitivity)
 	assert.False(t, field.WildcardCaseInsensitive)
+}
+
+func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {
+	t.Run("text_then_long_keeps_text_case_semantics", func(t *testing.T) {
+		iof := NewIndexOptionFormat(nil)
+		iof.Parse(map[string]any{
+			"analysis": map[string]any{
+				"analyzer": map[string]any{
+					"case_sensitive": map[string]any{
+						"type":      "custom",
+						"tokenizer": "whitespace",
+						"filter":    []string{},
+					},
+				},
+			},
+		}, map[string]any{
+			"properties": map[string]any{
+				"log": map[string]any{"type": "text", "analyzer": "case_sensitive"},
+			},
+		})
+		iof.Parse(map[string]any{}, map[string]any{
+			"properties": map[string]any{
+				"log": map[string]any{"type": "long"},
+			},
+		})
+
+		field := iof.FieldsMap()["log"]
+		assert.Equal(t, Text, field.FieldType)
+		assert.True(t, field.IsCaseSensitive)
+		assert.False(t, field.IsMixedCaseSensitivity)
+	})
 }

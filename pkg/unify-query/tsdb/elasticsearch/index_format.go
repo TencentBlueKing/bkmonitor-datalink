@@ -46,6 +46,7 @@ type IndexOptionFormat struct {
 
 	fieldAlias              metadata.FieldAlias
 	wildcardCaseInsensitive *bool
+	hasAnalysisSettings     bool
 }
 
 func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
@@ -76,6 +77,7 @@ func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 	f.analyzer = make(map[string]map[string]any)
 	f.filter = make(map[string]map[string]any)
 	f.normalizer = make(map[string]map[string]any)
+	f.hasAnalysisSettings = false
 	f.parseAnalysis(settings)
 	f.parseMappings(mappings)
 }
@@ -91,6 +93,7 @@ func (f *IndexOptionFormat) parseAnalysis(settings map[string]any) {
 	}
 
 	if analysis != nil {
+		f.hasAnalysisSettings = true
 		tokenizer, _ := analysis["tokenizer"].(map[string]any)
 		analyzer, _ := analysis["analyzer"].(map[string]any)
 		filter, _ := analysis["filter"].(map[string]any)
@@ -249,15 +252,19 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 }
 
 func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption {
-	merged := existing
-	if fieldCaseSensitivityAffectsWildcard(existing) || fieldCaseSensitivityAffectsWildcard(next) {
-		// 任一索引侧会 lowercase 时，查询也需要覆盖 lowercase term；
-		// 同时记录混合语义，供旧 ES fallback 生成原 pattern + lower pattern。
-		merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
-		merged.IsCaseInsensitive = existing.IsCaseInsensitive || next.IsCaseInsensitive
-		merged.IsMixedCaseSensitivity = existing.IsMixedCaseSensitivity || next.IsMixedCaseSensitivity ||
-			existing.IsCaseSensitive != next.IsCaseSensitive
+	existingAffectsWildcard := fieldCaseSensitivityAffectsWildcard(existing)
+	nextAffectsWildcard := fieldCaseSensitivityAffectsWildcard(next)
+	if !existingAffectsWildcard || !nextAffectsWildcard {
+		return existing
 	}
+
+	merged := existing
+	// 任一索引侧会 lowercase 时，查询也需要覆盖 lowercase term；
+	// 同时记录混合语义，供 fallback 生成原 pattern + lower pattern。
+	merged.IsCaseSensitive = existing.IsCaseSensitive && next.IsCaseSensitive
+	merged.IsCaseInsensitive = existing.IsCaseInsensitive || next.IsCaseInsensitive
+	merged.IsMixedCaseSensitivity = existing.IsMixedCaseSensitivity || next.IsMixedCaseSensitivity ||
+		existing.IsCaseSensitive != next.IsCaseSensitive
 	if len(merged.TokenizeOnChars) == 0 && len(next.TokenizeOnChars) > 0 {
 		merged.TokenizeOnChars = next.TokenizeOnChars
 	}
@@ -298,7 +305,7 @@ func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
 
 	analyzer := f.analyzer[name]
 	if analyzer == nil {
-		return false
+		return !f.hasAnalysisSettings
 	}
 	analyzerType := cast.ToString(analyzer[AnalyzerKeyType])
 	if strings.EqualFold(analyzerType, "pattern") {

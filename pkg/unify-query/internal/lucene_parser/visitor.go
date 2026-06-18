@@ -717,17 +717,19 @@ func wildcardQueryForField(field, value string, fieldOption metadata.FieldOption
 	// 即使 ES 支持 wildcard.case_insensitive，也先做 Go 侧 lower：
 	// ES 的 case_insensitive 只覆盖 ASCII，而 standard/lowercase analyzer 会处理 Unicode 大小写。
 	lowerValue := strings.ToLower(value)
-	caseInsensitive := fieldOption.WildcardCaseInsensitive
-	if fieldOption.IsMixedCaseSensitivity && lowerValue != value {
+	if fieldOption.IsMixedCaseSensitivity {
 		// 同名字段跨索引大小写语义不一致时，旧 ES 不能靠 case_insensitive 覆盖两边；
 		// 双 pattern 同时匹配保留大小写的索引和已 lowercase 的索引。
+		if lowerValue == value {
+			return boostedWildcardQuery(field, value, false, boost)
+		}
 		return elastic.NewBoolQuery().Should(
-			boostedWildcardQuery(field, value, caseInsensitive, boost),
-			boostedWildcardQuery(field, lowerValue, caseInsensitive, boost),
+			boostedWildcardQuery(field, value, false, boost),
+			boostedWildcardQuery(field, lowerValue, false, boost),
 		)
 	}
 
-	return boostedWildcardQuery(field, lowerValue, caseInsensitive, boost)
+	return boostedWildcardQuery(field, lowerValue, fieldOption.WildcardCaseInsensitive, boost)
 }
 
 func wildcardShouldIgnoreCase(fieldOption metadata.FieldOption) bool {

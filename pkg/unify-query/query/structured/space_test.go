@@ -14,6 +14,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -22,6 +23,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestSpaceFilter_NewTsDBs(t *testing.T) {
@@ -96,6 +99,278 @@ func toJson(q []*query.TsDBV2) string {
 
 	s, _ := json.Marshal(q)
 	return string(s)
+}
+
+func findTsDBByTableID(tsdb []*query.TsDBV2, tableID string) *query.TsDBV2 {
+	for _, d := range tsdb {
+		if d.TableID == tableID {
+			return d
+		}
+	}
+	return nil
+}
+
+// spaceRouterSeriesByReason 读取 unify_query_space_router_total 指定 reason 维度下，按 metric label 聚合的累计值，
+// 用于断言兜底埋点是否上报，以及验证 metric label 未携带高基数的用户输入字段名。
+func spaceRouterSeriesByReason(reason string) map[string]float64 {
+	out := make(map[string]float64)
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return out
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "unify_query_space_router_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var gotReason, metricLabel string
+			for _, l := range m.GetLabel() {
+				switch l.GetName() {
+				case "reason":
+					gotReason = l.GetValue()
+				case "metric":
+					metricLabel = l.GetValue()
+				}
+			}
+			if gotReason == reason {
+				out[metricLabel] += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return out
+}
+
+func sumFloat(m map[string]float64) float64 {
+	var s float64
+	for _, v := range m {
+		s += v
+	}
+	return s
+}
+
+func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	ctx = metadata.InitHashID(ctx)
+	influxdb.MockSpaceRouter(ctx)
+
+	sf, err := NewSpaceFilter(ctx, &TsDBOption{SpaceUid: influxdb.SpaceUid})
+	require.NoError(t, err)
+
+	t.Run("full_table_id_field_missing_fallbacks_to_original_rt", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   "not_exists_metric",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, "system.cpu_summary", tsdb[0].TableID)
+		assert.Equal(t, []string{"not_exists_metric"}, tsdb[0].ExpandMetricNames)
+	})
+
+	t.Run("field_missing_fallback_reports_distinct_low_cardinality_metric", func(t *testing.T) {
+		// 兜底命中应上报区分性 reason 指标，避免 fallback 静默掩盖元数据缺失问题；
+		// 同时 metric label 必须固定为空，避免用户输入的 fieldName 造成 Prometheus 高基数。
+		const probeField = "fallback_metric_for_observability"
+		beforeFallback := sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldMissingFallback))
+		beforeNotExist := sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldIsNotExists))
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   probeField,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+
+		afterSeries := spaceRouterSeriesByReason(metadata.SpaceTableIDFieldMissingFallback)
+		// 兜底命中：区分性指标总量 +1，而"完全找不到"指标不应增加。
+		assert.Equal(t, beforeFallback+1, sumFloat(afterSeries))
+		assert.Equal(t, beforeNotExist, sumFloat(spaceRouterSeriesByReason(metadata.SpaceTableIDFieldIsNotExists)))
+		// 高基数防护：兜底指标的 metric label 固定为空，绝不能以用户输入的 fieldName 建时序。
+		assert.Contains(t, afterSeries, "")
+		assert.NotContains(t, afterSeries, probeField)
+	})
+
+	t.Run("data_label_field_missing_fallbacks_to_all_related_rts", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "not_exists_metric",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 2)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{"not_exists_metric"}, influxdbTsDB.ExpandMetricNames)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{"not_exists_metric"}, vmTsDB.ExpandMetricNames)
+	})
+
+	t.Run("full_table_id_empty_field_does_not_fallback", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.cpu_summary",
+			FieldName:   "",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
+	})
+
+	t.Run("split_measurement_field_missing_fallback_keeps_current_rt_even_when_separate_metric_rt_exists", func(t *testing.T) {
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		metricName := "not_in_fields_but_sep_rt"
+		err = router.Add(ctx, ir.ResultTableDetailKey, "result_table."+metricName, &ir.ResultTableDetail{
+			StorageId:       2,
+			TableId:         "result_table." + metricName,
+			Fields:          []string{metricName},
+			DB:              "other",
+			Measurement:     metricName,
+			VmRt:            "2_bcs_prom_computation_result_table",
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageType:     metadata.VictoriaMetricsStorageType,
+			DataLabel:       metricName,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     influxdb.ResultTableInfluxDB,
+			FieldName:   metricName,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, []string{metricName}, tsdb[0].ExpandMetricNames)
+		assert.Equal(t, influxdb.ResultTableInfluxDB, tsdb[0].TableID)
+		assert.Equal(t, "influxdb", tsdb[0].Measurement)
+		assert.Equal(t, "influxdb", tsdb[0].DataLabel)
+		assert.Equal(t, metadata.InfluxDBStorageType, tsdb[0].StorageType)
+	})
+
+	t.Run("dotted_data_label_field_missing_fallback_keeps_data_label_rt_boundary", func(t *testing.T) {
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		dataLabel := "influx.db"
+		metricName := "dotted_label_missing_metric"
+		err = router.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &ir.ResultTableList{
+			influxdb.ResultTableInfluxDB,
+			influxdb.ResultTableVM,
+		})
+		require.NoError(t, err)
+		err = router.Add(ctx, ir.ResultTableDetailKey, "result_table."+metricName, &ir.ResultTableDetail{
+			StorageId:       2,
+			TableId:         "result_table." + metricName,
+			Fields:          []string{metricName},
+			DB:              "other",
+			Measurement:     metricName,
+			VmRt:            "2_bcs_prom_computation_result_table",
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageType:     metadata.VictoriaMetricsStorageType,
+			DataLabel:       metricName,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     TableID(dataLabel),
+			FieldName:   metricName,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		require.Len(t, tsdb, 2)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{metricName}, influxdbTsDB.ExpandMetricNames)
+		assert.Equal(t, "influxdb", influxdbTsDB.DataLabel)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{metricName}, vmTsDB.ExpandMetricNames)
+		assert.Equal(t, "vm", vmTsDB.DataLabel)
+	})
+
+	t.Run("dotted_data_label_with_mapping_does_not_fallback_unrelated_same_named_table_id", func(t *testing.T) {
+		// 回归 Codex 评论 3：dotted data_label 命中映射时，兼容分支合成的同名 table_id
+		// （system.disk 是 space 中真实存在、但不属于该 data_label 映射的 RT，dataLabel=disk）
+		// 不应越过 data_label 边界被字段缺失兜底返回。
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		// data_label "system.disk" 仅映射到 influxdb，与 space 中真实的 system.disk RT 无关。
+		err = router.Add(ctx, ir.DataLabelToResultTableKey, "system.disk", &ir.ResultTableList{
+			influxdb.ResultTableInfluxDB,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.disk",
+			FieldName:   "missing_field_not_in_any_rt",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		// 只返回 data_label 映射内的 influxdb；同名真实 RT system.disk 不应被越界兜底。
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, influxdb.ResultTableInfluxDB, tsdb[0].TableID)
+		assert.Nil(t, findTsDBByTableID(tsdb, "system.disk"))
+	})
+
+	t.Run("explicit_route_regex_match_keeps_field_expansion", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "kubelet_.+",
+			IsRegexp:    true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+
+		influxdbTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableInfluxDB)
+		require.NotNil(t, influxdbTsDB)
+		assert.Equal(t, []string{"kubelet_cluster_request_total"}, influxdbTsDB.ExpandMetricNames)
+
+		vmTsDB := findTsDBByTableID(tsdb, influxdb.ResultTableVM)
+		require.NotNil(t, vmTsDB)
+		assert.Equal(t, []string{"kubelet_info"}, vmTsDB.ExpandMetricNames)
+	})
+
+	t.Run("explicit_route_regex_missing_does_not_fallback_as_literal_metric", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "influxdb",
+			FieldName:   "not_exists_.+",
+			IsRegexp:    true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
+	})
+
+	t.Run("full_space_field_missing_still_returns_empty", func(t *testing.T) {
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "",
+			FieldName:   "not_exists_metric",
+			IsSkipK8s:   true,
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, tsdb)
+	})
 }
 
 // TestSpaceFilter_DataList_WithTableIDConditions 表标签条件过滤：nil 时行为不变；有 expr 且 RT 无匹配 Labels 时被过滤

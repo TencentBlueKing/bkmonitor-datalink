@@ -326,16 +326,29 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	// tableID 去重，防止重复获取
 	tableIDs := set.New[string]()
+	// fallbackEnabled 标记每个候选 RT 是否允许"字段缺失兜底"：
+	// 仅显式 data_label/table_id 边界内的候选可兜底，避免越过 data_label 边界误带同名 RT。
+	fallbackEnabled := make(map[string]bool)
 	isK8s := false
 
 	if db != "" {
 		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
 		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
+		// data_label 映射内的候选属于显式 data_label 边界，允许字段缺失兜底
+		for _, tID := range tIDs {
+			fallbackEnabled[tID] = true
+		}
 
 		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
 		if measurement != "" {
-			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
+			fullTableID := fmt.Sprintf("%s.%s", db, measurement)
+			tableIDs.Add(fullTableID)
+			// 合成的完整 table_id 仅在不存在 data_label 映射（纯 table_id 查询）时才允许兜底；
+			// 若已存在 data_label 映射，则它只是与 data_label 同名的兼容项，不应越过 data_label 边界兜底。
+			if len(tIDs) == 0 {
+				fallbackEnabled[fullTableID] = true
+			}
 		}
 
 		if tableIDs.Size() == 0 {
@@ -372,7 +385,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, db != "", tableIDCondsForFilter)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, fallbackEnabled[tID], tableIDCondsForFilter)
 		if err != nil {
 			return nil, err
 		}

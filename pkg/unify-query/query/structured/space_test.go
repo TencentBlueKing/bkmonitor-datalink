@@ -303,6 +303,32 @@ func TestSpaceFilter_DataList_ExplicitRouteFieldFallback(t *testing.T) {
 		assert.Equal(t, "vm", vmTsDB.DataLabel)
 	})
 
+	t.Run("dotted_data_label_with_mapping_does_not_fallback_unrelated_same_named_table_id", func(t *testing.T) {
+		// 回归 Codex 评论 3：dotted data_label 命中映射时，兼容分支合成的同名 table_id
+		// （system.disk 是 space 中真实存在、但不属于该 data_label 映射的 RT，dataLabel=disk）
+		// 不应越过 data_label 边界被字段缺失兜底返回。
+		router, err := influxdb.GetSpaceTsDbRouter()
+		require.NoError(t, err)
+
+		// data_label "system.disk" 仅映射到 influxdb，与 space 中真实的 system.disk RT 无关。
+		err = router.Add(ctx, ir.DataLabelToResultTableKey, "system.disk", &ir.ResultTableList{
+			influxdb.ResultTableInfluxDB,
+		})
+		require.NoError(t, err)
+
+		tsdb, err := sf.DataList(&TsDBOption{
+			SpaceUid:    influxdb.SpaceUid,
+			TableID:     "system.disk",
+			FieldName:   "missing_field_not_in_any_rt",
+			IsSkipField: false,
+		})
+		require.NoError(t, err)
+		// 只返回 data_label 映射内的 influxdb；同名真实 RT system.disk 不应被越界兜底。
+		require.Len(t, tsdb, 1)
+		assert.Equal(t, influxdb.ResultTableInfluxDB, tsdb[0].TableID)
+		assert.Nil(t, findTsDBByTableID(tsdb, "system.disk"))
+	})
+
 	t.Run("explicit_route_regex_match_keeps_field_expansion", func(t *testing.T) {
 		tsdb, err := sf.DataList(&TsDBOption{
 			SpaceUid:    influxdb.SpaceUid,

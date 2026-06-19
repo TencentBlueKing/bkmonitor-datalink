@@ -15,6 +15,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,16 +26,90 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
+const (
+	// OTLP span kind / status code 枚举值，取自 opentelemetry.proto.trace.v1。
+	spanKindServer = 2
+	spanKindClient = 3
+
+	statusCodeOK    = 1
+	statusCodeError = 2
+
+	serviceName       = "collector-loadgen"
+	syntheticErrorMsg = "loadgen synthetic error"
+
+	// 单条 span 耗时在 [spanDurationMin, spanDurationMax] 区间均匀随机。
+	spanDurationMin = 200 * time.Millisecond
+	spanDurationMax = 500 * time.Millisecond
+
+	// 每条 span 独立掷骰，命中 1/errorOneIn 注入 ERROR（≈ 5%）。
+	errorOneIn = 20
+)
+
+// spanNames 是 SpanName 池，每条 span 均匀随机抽取一个，模拟服务实际接口分布。
+var spanNames = []string{
+	"/benchmark_one",
+	"/benchmark_two",
+	"/benchmark_three",
+	"/benchmark_four",
+	"/benchmark_five",
+}
+
+// 以下结构体字段名对齐 opentelemetry.proto 的 ExportTraceServiceRequest / Span，
+// 用结构体 + json.Marshal 取代手拼字符串，便于扩展、阅读。
+// startTimeUnixNano / endTimeUnixNano 在 OTLP/JSON 中按 proto3 fixed64 规范序列化为字符串。
+
+type traceRequest struct {
+	ResourceSpans []resourceSpans `json:"resourceSpans"`
+}
+
+type resourceSpans struct {
+	Resource   resource     `json:"resource"`
+	ScopeSpans []scopeSpans `json:"scopeSpans"`
+}
+
+type resource struct {
+	Attributes []attribute `json:"attributes"`
+}
+
+type scopeSpans struct {
+	Spans []span `json:"spans"`
+}
+
+type span struct {
+	TraceID           string      `json:"traceId"`
+	SpanID            string      `json:"spanId"`
+	Name              string      `json:"name"`
+	Kind              int         `json:"kind"`
+	StartTimeUnixNano int64       `json:"startTimeUnixNano,string"`
+	EndTimeUnixNano   int64       `json:"endTimeUnixNano,string"`
+	Attributes        []attribute `json:"attributes"`
+	Status            status      `json:"status"`
+}
+
+type attribute struct {
+	Key   string         `json:"key"`
+	Value attributeValue `json:"value"`
+}
+
+type attributeValue struct {
+	StringValue string `json:"stringValue"`
+}
+
+type status struct {
+	Code    int    `json:"code"`
+	Message string `json:"message,omitempty"`
+}
+
 // phase 是一个压测阶段的参数。
 type phase struct {
-	name        string
-	concurrency int
-	payloadSize int
-	duration    time.Duration
+	name            string
+	concurrency     int
+	spansPerRequest int
+	payloadSize     int
+	duration        time.Duration
 }
 
 // stats 汇总一个阶段的结果：各状态码计数、成功请求的延迟样本与阶段起止时间。
@@ -52,11 +129,13 @@ func main() {
 	flag.Parse()
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	// 三阶段串行：warmup 低并发小包建基线，burst 高并发压 CPU，bigpayload 并发不变、单包放大到 64 倍（128→8192）抬高单请求成本。
+	// 三阶段串行：warmup 低并发 32 span/请求 + 128 B 填充建基线，
+	// burst 高并发 128 span/请求 + 1024 B 填充压 CPU，
+	// bigpayload 并发不变、512 span/请求 + 4096 B 填充，抬高单请求总成本。
 	phases := []phase{
-		{name: "warmup", concurrency: max(1, *concurrency/5), payloadSize: 128, duration: *duration},
-		{name: "burst", concurrency: *concurrency, payloadSize: 128, duration: *duration},
-		{name: "bigpayload", concurrency: *concurrency, payloadSize: 8192, duration: *duration},
+		{name: "warmup", concurrency: max(1, *concurrency/5), spansPerRequest: 32, payloadSize: 128, duration: *duration},
+		{name: "burst", concurrency: *concurrency, spansPerRequest: 128, payloadSize: 1024, duration: *duration},
+		{name: "bigpayload", concurrency: *concurrency, spansPerRequest: 512, payloadSize: 4096, duration: *duration},
 	}
 
 	overallStart := time.Now()
@@ -75,20 +154,20 @@ func main() {
 }
 
 // runPhase 用固定并发的 worker 在 duration 内持续打流，直到上下文超时。
+// payload 串按 payloadSize 仅分配一次跨请求复用，避免热点循环里反复 strings.Repeat。
 func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 	ctx, cancel := context.WithTimeout(context.Background(), p.duration)
 	defer cancel()
 
+	payload := strings.Repeat("x", p.payloadSize)
 	result := &stats{status: make(map[int]int), startedAt: time.Now()}
-	var seq uint64
 	var wg sync.WaitGroup
 	for i := 0; i < p.concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for ctx.Err() == nil {
-				id := atomic.AddUint64(&seq, 1)
-				body := traceBody(id, p.payloadSize)
+				body := traceBody(p.spansPerRequest, payload)
 				start := time.Now()
 				code := post(ctx, client, targetURL, token, body)
 				result.add(code, time.Since(start))
@@ -101,8 +180,8 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 }
 
 // post 发一条 trace，丢弃响应体只取状态码；网络错误记为 0。
-func post(ctx context.Context, client *http.Client, targetURL, token, body string) int {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader([]byte(body)))
+func post(ctx context.Context, client *http.Client, targetURL, token string, body []byte) int {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return 0
 	}
@@ -133,8 +212,8 @@ func printPhase(p phase, s *stats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fmt.Printf("phase=%s concurrency=%d duration=%s start=%s end=%s\n",
-		p.name, p.concurrency, p.duration,
+	fmt.Printf("phase=%s concurrency=%d spans=%d duration=%s start=%s end=%s\n",
+		p.name, p.concurrency, p.spansPerRequest, p.duration,
 		s.startedAt.Format(time.RFC3339),
 		s.endedAt.Format(time.RFC3339),
 	)
@@ -150,7 +229,8 @@ func printPhase(p phase, s *stats) {
 func otherStatusCount(status map[int]int) int {
 	total := 0
 	for code, n := range status {
-		if code == http.StatusOK || code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable {
+		switch code {
+		case http.StatusOK, http.StatusTooManyRequests, http.StatusServiceUnavailable:
 			continue
 		}
 		total += n
@@ -169,35 +249,85 @@ func p99(latencies []time.Duration) time.Duration {
 	return items[idx]
 }
 
-// traceBody 拼一条最小 OTLP JSON trace。
-// 偶数 id 生成 SERVER（被调）span，奇数生成 CLIENT（主调）span，还原真实 RPC 链路两端都有的形态；
-// 每 20 条注入 1 条 ERROR 状态（≈ 5% 错误率），其余 OK；
-// span 耗时在 [200ms, 500ms] 区间均匀随机，以「刚刚完成」对齐 endTime 到当前时刻，避免落在未来；
-// payloadSize 控制填充串字节数以放大单包成本。
-func traceBody(id uint64, payloadSize int) string {
-	payload := strings.Repeat("x", payloadSize)
-	endTime := time.Now().UnixNano()
-	dur := time.Duration(200+rand.IntN(301)) * time.Millisecond
-	startTime := endTime - int64(dur)
-
-	kind := 2 // SPAN_KIND_SERVER
-	if id%2 == 1 {
-		kind = 3 // SPAN_KIND_CLIENT
+// traceBody 构造一次 OTLP HTTP/JSON 请求体，单请求内含 spansPerRequest 条独立 span。
+// 所有 span 共享同一个 service.name resource，但各自独立随机
+// traceId / spanId / name / kind / duration / status。
+func traceBody(spansPerRequest int, payload string) []byte {
+	spans := make([]span, spansPerRequest)
+	for i := range spans {
+		spans[i] = newSpan(i, payload)
 	}
-
-	status := `"status":{"code":1}`
-	if id%20 == 0 {
-		status = `"status":{"code":2,"message":"loadgen synthetic error"}`
-	}
-
-	return fmt.Sprintf(`{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"collector-loadgen"}}]},"scopeSpans":[{"spans":[{"traceId":"%032x","spanId":"%016x","name":"loadgen","kind":%d,"startTimeUnixNano":"%d","endTimeUnixNano":"%d","attributes":[{"key":"payload","value":{"stringValue":"%s"}}],%s}]}]}]}`,
-		id, id, kind, startTime, endTime, payload, status,
-	)
+	body, _ := json.Marshal(traceRequest{
+		ResourceSpans: []resourceSpans{{
+			Resource: resource{
+				Attributes: []attribute{
+					{Key: "service.name", Value: attributeValue{StringValue: serviceName}},
+				},
+			},
+			ScopeSpans: []scopeSpans{{Spans: spans}},
+		}},
+	})
+	return body
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// newSpan 生成一条 span：
+//   - 偶数索引 → SERVER（被调），奇数 → CLIENT（主调），固定 50:50；
+//   - 命中 1/errorOneIn 注入 ERROR，否则 OK；
+//   - 耗时在 [spanDurationMin, spanDurationMax] 均匀随机，endTime 对齐到生成时刻；
+//   - SpanName 从 spanNames 池均匀随机抽取。
+func newSpan(index int, payload string) span {
+	traceID := newTraceID()
+	spanID := newSpanID()
+
+	kind := spanKindServer
+	if index%2 == 1 {
+		kind = spanKindClient
 	}
-	return b
+
+	st := status{Code: statusCodeOK}
+	if rand.IntN(errorOneIn) == 0 {
+		st = status{Code: statusCodeError, Message: syntheticErrorMsg}
+	}
+
+	dur := spanDurationMin + time.Duration(rand.Int64N(int64(spanDurationMax-spanDurationMin)+1))
+	end := time.Now()
+	start := end.Add(-dur)
+
+	return span{
+		TraceID:           hex.EncodeToString(traceID[:]),
+		SpanID:            hex.EncodeToString(spanID[:]),
+		Name:              spanNames[rand.IntN(len(spanNames))],
+		Kind:              kind,
+		StartTimeUnixNano: start.UnixNano(),
+		EndTimeUnixNano:   end.UnixNano(),
+		Attributes: []attribute{
+			{Key: "payload", Value: attributeValue{StringValue: payload}},
+		},
+		Status: st,
+	}
+}
+
+// newTraceID 生成 128 bit 随机 traceId，对齐 OpenTelemetry SDK randomIDGenerator 的 NewIDs。
+// W3C Trace Context 规定全 0 是无效 traceId，命中后重试（概率 2^-128，几乎不会发生）。
+func newTraceID() [16]byte {
+	var id [16]byte
+	for {
+		binary.BigEndian.PutUint64(id[0:8], rand.Uint64())
+		binary.BigEndian.PutUint64(id[8:16], rand.Uint64())
+		if id != ([16]byte{}) {
+			return id
+		}
+	}
+}
+
+// newSpanID 生成 64 bit 随机 spanId，对齐 OpenTelemetry SDK randomIDGenerator 的 NewSpanID。
+// W3C Trace Context 规定全 0 是无效 spanId，命中后重试（概率 2^-64）。
+func newSpanID() [8]byte {
+	var id [8]byte
+	for {
+		binary.BigEndian.PutUint64(id[:], rand.Uint64())
+		if id != ([8]byte{}) {
+			return id
+		}
+	}
 }

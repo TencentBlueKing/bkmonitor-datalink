@@ -170,6 +170,10 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 				body := traceBody(p.spansPerRequest, payload)
 				start := time.Now()
 				code := post(ctx, client, targetURL, token, body)
+				// 阶段窗口已关闭、且本次请求是网络错误：是 ctx 主动取消而非 collector 异常，跳过统计避免污染 other 桶。
+				if code == 0 && ctx.Err() != nil {
+					return
+				}
 				result.add(code, time.Since(start))
 			}
 		}()

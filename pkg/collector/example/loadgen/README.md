@@ -86,7 +86,7 @@ loadgen end: 2026-06-19T11:03:00+08:00 elapsed=3m0s
 | `200` | collector 成功接收。 |
 | `429` | 自适应限流拒绝，预期会出现。 |
 | `503` | 旁路异常，需要查 collector 日志。 |
-| `other` | 其他状态码与网络错误（按 `0` 计入）。 |
+| `other` | 其他状态码与网络错误（按 `0` 计入），阶段尾部被自身 ctx 截断的 in-flight 请求不计入。 |
 | `success_p99` | 成功请求的 p99 延迟，只统计 `2xx`。 |
 
 开限流后的健康标准：`burst` / `bigpayload` 出现 `429`，collector 不 OOM 也不重启。

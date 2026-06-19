@@ -34,11 +34,13 @@ type phase struct {
 	duration    time.Duration
 }
 
-// stats 汇总一个阶段的结果：各状态码计数与成功请求的延迟样本。
+// stats 汇总一个阶段的结果：各状态码计数、成功请求的延迟样本与阶段起止时间。
 type stats struct {
 	mu        sync.Mutex
 	status    map[int]int
 	latencies []time.Duration
+	startedAt time.Time
+	endedAt   time.Time
 }
 
 func main() {
@@ -56,10 +58,19 @@ func main() {
 		{name: "bigpayload", concurrency: *concurrency, payloadSize: 8192, duration: *duration},
 	}
 
+	overallStart := time.Now()
+	fmt.Printf("loadgen start: %s\n", overallStart.Format(time.RFC3339))
+
 	for _, p := range phases {
 		result := runPhase(client, *targetURL, *token, p)
 		printPhase(p, result)
 	}
+
+	overallEnd := time.Now()
+	fmt.Printf("loadgen end: %s elapsed=%s\n",
+		overallEnd.Format(time.RFC3339),
+		overallEnd.Sub(overallStart).Round(time.Second),
+	)
 }
 
 // runPhase 用固定并发的 worker 在 duration 内持续打流，直到上下文超时。
@@ -67,7 +78,7 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 	ctx, cancel := context.WithTimeout(context.Background(), p.duration)
 	defer cancel()
 
-	result := &stats{status: make(map[int]int)}
+	result := &stats{status: make(map[int]int), startedAt: time.Now()}
 	var seq uint64
 	var wg sync.WaitGroup
 	for i := 0; i < p.concurrency; i++ {
@@ -84,6 +95,7 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 		}()
 	}
 	wg.Wait()
+	result.endedAt = time.Now()
 	return result
 }
 
@@ -120,7 +132,11 @@ func printPhase(p phase, s *stats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fmt.Printf("phase=%s concurrency=%d duration=%s\n", p.name, p.concurrency, p.duration)
+	fmt.Printf("phase=%s concurrency=%d duration=%s start=%s end=%s\n",
+		p.name, p.concurrency, p.duration,
+		s.startedAt.Format(time.RFC3339),
+		s.endedAt.Format(time.RFC3339),
+	)
 	fmt.Printf("  200=%d 429=%d 503=%d other=%d success_p99=%s\n",
 		s.status[http.StatusOK],
 		s.status[http.StatusTooManyRequests],

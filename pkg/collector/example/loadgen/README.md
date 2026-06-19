@@ -33,6 +33,9 @@ go build -o loadgen ./example/loadgen && ./loadgen -h
 | `-token` | 空 | `X-BK-TOKEN` 请求头，空值不带 token。 |
 | `-c` | `50` | `burst` / `bigpayload` 并发数，`warmup` 取 `max(1, c/5)`。 |
 | `-d` | `30s` | 每个阶段持续时间，总运行约 `3 × d`。 |
+| `-warmup-spans` | `32` | `warmup` 阶段单请求 span 数。 |
+| `-burst-spans` | `128` | `burst` 阶段单请求 span 数。 |
+| `-bigpayload-spans` | `512` | `bigpayload` 阶段单请求 span 数，抬高 collector 单批处理工作量时主要调这一项。 |
 
 ## 0x03 三阶段负载
 
@@ -61,6 +64,10 @@ go build -o loadgen ./example/loadgen && ./loadgen -h
 ```
 
 把 `loadgen` 跑在 collector 之外的机器或容器，避免抢同一份 CPU。
+
+`-c` 加到一定档位后 collector CPU 仍未到 limit，多半是单请求处理慢、客户端在请求响应上同步阻塞。
+
+打破方法：加大 `-bigpayload-spans`（`1024` / `2048`）让单批工作量更密集，或多机并行起多个 `loadgen`。
 
 对照验证流程：先关限流跑出高 CPU 与高延迟，再开限流确认 `429` 出现且 collector 不崩。
 

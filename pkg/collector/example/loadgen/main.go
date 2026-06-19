@@ -126,16 +126,20 @@ func main() {
 	token := flag.String("token", "", "X-BK-TOKEN header value")
 	concurrency := flag.Int("c", 50, "burst and bigpayload concurrency")
 	duration := flag.Duration("d", 30*time.Second, "duration per phase")
+	warmupSpans := flag.Int("warmup-spans", 32, "warmup phase spans per request")
+	burstSpans := flag.Int("burst-spans", 128, "burst phase spans per request")
+	bigpayloadSpans := flag.Int("bigpayload-spans", 512, "bigpayload phase spans per request")
 	flag.Parse()
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	// 三阶段串行：warmup 低并发 32 span/请求 + 128 B 填充建基线，
-	// burst 高并发 128 span/请求 + 1024 B 填充压 CPU，
-	// bigpayload 并发不变、512 span/请求 + 4096 B 填充，抬高单请求总成本。
+	// 三阶段串行：warmup 低并发小 batch + 128 B 填充建基线，
+	// burst 高并发中 batch + 1024 B 填充压 CPU，
+	// bigpayload 并发不变、大 batch + 4096 B 填充，抬高单请求总成本。
+	// 每阶段 spans 数量可通过 -warmup-spans / -burst-spans / -bigpayload-spans 覆盖默认值。
 	phases := []phase{
-		{name: "warmup", concurrency: max(1, *concurrency/5), spansPerRequest: 32, payloadSize: 128, duration: *duration},
-		{name: "burst", concurrency: *concurrency, spansPerRequest: 128, payloadSize: 1024, duration: *duration},
-		{name: "bigpayload", concurrency: *concurrency, spansPerRequest: 512, payloadSize: 4096, duration: *duration},
+		{name: "warmup", concurrency: max(1, *concurrency/5), spansPerRequest: *warmupSpans, payloadSize: 128, duration: *duration},
+		{name: "burst", concurrency: *concurrency, spansPerRequest: *burstSpans, payloadSize: 1024, duration: *duration},
+		{name: "bigpayload", concurrency: *concurrency, spansPerRequest: *bigpayloadSpans, payloadSize: 4096, duration: *duration},
 	}
 
 	overallStart := time.Now()

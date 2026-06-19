@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -168,12 +169,29 @@ func p99(latencies []time.Duration) time.Duration {
 	return items[idx]
 }
 
-// traceBody 拼一条最小 OTLP JSON trace，用 payloadSize 个字节的填充串放大单包成本。
+// traceBody 拼一条最小 OTLP JSON trace。
+// 偶数 id 生成 SERVER（被调）span，奇数生成 CLIENT（主调）span，还原真实 RPC 链路两端都有的形态；
+// 每 20 条注入 1 条 ERROR 状态（≈ 5% 错误率），其余 OK；
+// span 耗时在 [200ms, 500ms] 区间均匀随机，以「刚刚完成」对齐 endTime 到当前时刻，避免落在未来；
+// payloadSize 控制填充串字节数以放大单包成本。
 func traceBody(id uint64, payloadSize int) string {
 	payload := strings.Repeat("x", payloadSize)
-	now := time.Now().UnixNano()
-	return fmt.Sprintf(`{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"collector-loadgen"}}]},"scopeSpans":[{"spans":[{"traceId":"%032x","spanId":"%016x","name":"loadgen","startTimeUnixNano":"%d","endTimeUnixNano":"%d","attributes":[{"key":"payload","value":{"stringValue":"%s"}}]}]}]}]}`,
-		id, id, now, now+int64(time.Millisecond), payload,
+	endTime := time.Now().UnixNano()
+	dur := time.Duration(200+rand.IntN(301)) * time.Millisecond
+	startTime := endTime - int64(dur)
+
+	kind := 2 // SPAN_KIND_SERVER
+	if id%2 == 1 {
+		kind = 3 // SPAN_KIND_CLIENT
+	}
+
+	status := `"status":{"code":1}`
+	if id%20 == 0 {
+		status = `"status":{"code":2,"message":"loadgen synthetic error"}`
+	}
+
+	return fmt.Sprintf(`{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"collector-loadgen"}}]},"scopeSpans":[{"spans":[{"traceId":"%032x","spanId":"%016x","name":"loadgen","kind":%d,"startTimeUnixNano":"%d","endTimeUnixNano":"%d","attributes":[{"key":"payload","value":{"stringValue":"%s"}}],%s}]}]}]}`,
+		id, id, kind, startTime, endTime, payload, status,
 	)
 }
 

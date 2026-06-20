@@ -18,14 +18,17 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -116,9 +119,15 @@ type phase struct {
 type stats struct {
 	mu        sync.Mutex
 	status    map[int]int
+	other     map[string]int
 	latencies []time.Duration
 	startedAt time.Time
 	endedAt   time.Time
+}
+
+type requestResult struct {
+	code  int
+	other string
 }
 
 func main() {
@@ -164,7 +173,7 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 	defer cancel()
 
 	payload := strings.Repeat("x", p.payloadSize)
-	result := &stats{status: make(map[int]int), startedAt: time.Now()}
+	result := &stats{status: make(map[int]int), other: make(map[string]int), startedAt: time.Now()}
 	var wg sync.WaitGroup
 	for i := 0; i < p.concurrency; i++ {
 		wg.Add(1)
@@ -173,12 +182,12 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 			for ctx.Err() == nil {
 				body := traceBody(p.spansPerRequest, payload)
 				start := time.Now()
-				code := post(ctx, client, targetURL, token, body)
+				res := post(ctx, client, targetURL, token, body)
 				// 阶段窗口已关闭、且本次请求是网络错误：是 ctx 主动取消而非 collector 异常，跳过统计避免污染 other 桶。
-				if code == 0 && ctx.Err() != nil {
+				if res.code == 0 && ctx.Err() != nil {
 					return
 				}
-				result.add(code, time.Since(start))
+				result.add(res, time.Since(start))
 			}
 		}()
 	}
@@ -187,11 +196,11 @@ func runPhase(client *http.Client, targetURL, token string, p phase) *stats {
 	return result
 }
 
-// post 发一条 trace，丢弃响应体只取状态码；网络错误记为 0。
-func post(ctx context.Context, client *http.Client, targetURL, token string, body []byte) int {
+// post 发一条 trace，丢弃响应体只取状态码；网络错误归类后计入 other 明细。
+func post(ctx context.Context, client *http.Client, targetURL, token string, body []byte) requestResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
-		return 0
+		return requestResult{other: "request_build_error"}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -200,18 +209,26 @@ func post(ctx context.Context, client *http.Client, targetURL, token string, bod
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0
+		return requestResult{other: classifyError(err)}
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	return requestResult{code: resp.StatusCode}
 }
 
-func (s *stats) add(code int, latency time.Duration) {
+func (s *stats) add(res requestResult, latency time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.status[code]++
-	if code >= 200 && code < 300 {
+	if res.code == 0 {
+		if res.other == "" {
+			res.other = "network_error"
+		}
+		s.other[res.other]++
+		return
+	}
+
+	s.status[res.code]++
+	if res.code >= 200 && res.code < 300 {
 		s.latencies = append(s.latencies, latency)
 	}
 }
@@ -229,12 +246,15 @@ func printPhase(p phase, s *stats) {
 		s.status[http.StatusOK],
 		s.status[http.StatusTooManyRequests],
 		s.status[http.StatusServiceUnavailable],
-		otherStatusCount(s.status),
+		otherCount(s.status, s.other),
 		p99(s.latencies),
 	)
+	if detail := otherDetail(s.status, s.other); detail != "" {
+		fmt.Printf("  other_detail=%s\n", detail)
+	}
 }
 
-func otherStatusCount(status map[int]int) int {
+func otherCount(status map[int]int, other map[string]int) int {
 	total := 0
 	for code, n := range status {
 		switch code {
@@ -243,7 +263,67 @@ func otherStatusCount(status map[int]int) int {
 		}
 		total += n
 	}
+	for _, n := range other {
+		total += n
+	}
 	return total
+}
+
+func otherDetail(status map[int]int, other map[string]int) string {
+	var items []string
+	for code, n := range status {
+		switch code {
+		case http.StatusOK, http.StatusTooManyRequests, http.StatusServiceUnavailable:
+			continue
+		}
+		items = append(items, fmt.Sprintf("status_%d=%d", code, n))
+	}
+	for name, n := range other {
+		items = append(items, fmt.Sprintf("%s=%d", name, n))
+	}
+	sort.Strings(items)
+	return strings.Join(items, ",")
+}
+
+func classifyError(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "context_canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns_error"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+
+	switch {
+	case errors.Is(err, io.EOF):
+		return "eof"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection_reset"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection_refused"
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "connection reset"):
+		return "connection_reset"
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(msg, "broken pipe"):
+		return "broken_pipe"
+	case strings.Contains(msg, "eof"):
+		return "eof"
+	case strings.Contains(msg, "timeout"):
+		return "timeout"
+	}
+	return "network_error"
 }
 
 // p99 取成功延迟的 99 分位。样本已是单阶段数据，排序后直接取下标。

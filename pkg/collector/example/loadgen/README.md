@@ -81,6 +81,7 @@ phase=burst concurrency=100 spans=128 duration=60s start=2026-06-19T11:01:00+08:
   200=12345 429=678 503=0 other=0 success_p99=12.3ms
 phase=bigpayload concurrency=100 spans=512 duration=60s start=2026-06-19T11:02:00+08:00 end=2026-06-19T11:03:00+08:00
   200=8901 429=2340 503=0 other=12 success_p99=45.6ms
+  other_detail=timeout=8,connection_reset=4
 loadgen end: 2026-06-19T11:03:00+08:00 elapsed=3m0s
 ```
 
@@ -94,6 +95,7 @@ loadgen end: 2026-06-19T11:03:00+08:00 elapsed=3m0s
 | `429` | 自适应限流拒绝，预期会出现。 |
 | `503` | 旁路异常，需要查 collector 日志。 |
 | `other` | 其他状态码与网络错误（按 `0` 计入），阶段尾部被自身 ctx 截断的 in-flight 请求不计入。 |
+| `other_detail` | 仅在 `other > 0` 时输出，拆分 `timeout`、`eof`、`connection_reset`、`connection_refused`、`status_<code>` 等明细。 |
 | `success_p99` | 成功请求的 p99 延迟，只统计 `2xx`。 |
 
 开限流后的健康标准：`burst` / `bigpayload` 出现 `429`，collector 不 OOM 也不重启。

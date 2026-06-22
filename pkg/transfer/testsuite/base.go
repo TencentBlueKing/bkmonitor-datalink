@@ -28,6 +28,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/basereport"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/exporter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/flat"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/flow"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/formatter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/log"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/procperf"

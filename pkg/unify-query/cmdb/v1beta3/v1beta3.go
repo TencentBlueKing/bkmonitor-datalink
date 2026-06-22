@@ -26,19 +26,17 @@ var (
 )
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
+	modelMutex.Lock()
+	defer modelMutex.Unlock()
 	if defaultModel == nil {
-		modelMutex.Lock()
-		defer modelMutex.Unlock()
-		if defaultModel == nil {
-			client := NewBKBaseSurrealDBClient()
-			model, err := NewModel(ctx, client)
-			if err != nil {
-				return nil, err
-			}
-			// 为默认 Model 注入 binding 解析器
-			model.SetResolver(GetBindingResolver())
-			defaultModel = model
+		client := NewBKBaseSurrealDBClient()
+		model, err := NewModel(ctx, client)
+		if err != nil {
+			return nil, err
 		}
+		// 为默认 Model 注入 binding 解析器
+		model.SetResolver(GetBindingResolver())
+		defaultModel = model
 	}
 	return defaultModel, nil
 }
@@ -129,14 +127,16 @@ func (m *Model) QueryResourceMatcher(
 	}
 
 	req := &QueryRequest{
-		SpaceUID:      spaceUid,
-		Timestamp:     timestamp,
-		SourceType:    FromCMDBResource(source),
-		SourceInfo:    matcherToMap(indexMatcher),
-		TargetType:    FromCMDBResource(target),
-		PathResource:  toResourceTypes(pathResource),
-		MaxHops:       computeMaxHops(pathResource),
-		LookBackDelta: lbd,
+		SpaceUID:         spaceUid,
+		Timestamp:        timestamp,
+		SourceType:       FromCMDBResource(source),
+		SourceInfo:       matcherToMap(indexMatcher),
+		SourceExpandInfo: matcherToMap(expandMatcher),
+		TargetType:       FromCMDBResource(target),
+		TargetInfoShow:   expandShow,
+		PathResource:     toResourceTypes(pathResource),
+		MaxHops:          computeMaxHops(pathResource),
+		LookBackDelta:    lbd,
 	}
 	req.Normalize()
 
@@ -185,14 +185,16 @@ func (m *Model) QueryDynamicPaths(
 	}
 
 	req := &QueryRequest{
-		SpaceUID:      spaceUid,
-		Timestamp:     timestamp,
-		SourceType:    FromCMDBResource(source),
-		SourceInfo:    matcherToMap(indexMatcher),
-		TargetType:    FromCMDBResource(target),
-		PathResource:  toResourceTypes(pathResource),
-		MaxHops:       computeMaxHops(pathResource),
-		LookBackDelta: lbd,
+		SpaceUID:         spaceUid,
+		Timestamp:        timestamp,
+		SourceType:       FromCMDBResource(source),
+		SourceInfo:       matcherToMap(indexMatcher),
+		SourceExpandInfo: matcherToMap(expandMatcher),
+		TargetType:       FromCMDBResource(target),
+		TargetInfoShow:   expandShow,
+		PathResource:     toResourceTypes(pathResource),
+		MaxHops:          computeMaxHops(pathResource),
+		LookBackDelta:    lbd,
 	}
 	req.Normalize()
 
@@ -251,14 +253,16 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 
 	req := &QueryRequest{
-		SpaceUID:      spaceUid,
-		Timestamp:     end,
-		SourceType:    FromCMDBResource(source),
-		SourceInfo:    matcherToMap(indexMatcher),
-		TargetType:    FromCMDBResource(target),
-		PathResource:  toResourceTypes(pathResource),
-		MaxHops:       computeMaxHops(pathResource),
-		LookBackDelta: lbd,
+		SpaceUID:         spaceUid,
+		Timestamp:        end,
+		SourceType:       FromCMDBResource(source),
+		SourceInfo:       matcherToMap(indexMatcher),
+		SourceExpandInfo: matcherToMap(expandMatcher),
+		TargetType:       FromCMDBResource(target),
+		TargetInfoShow:   expandShow,
+		PathResource:     toResourceTypes(pathResource),
+		MaxHops:          computeMaxHops(pathResource),
+		LookBackDelta:    lbd,
 	}
 	req.Normalize()
 
@@ -267,7 +271,7 @@ func (m *Model) QueryResourceMatcherRange(
 		return "", nil, nil, "", nil, err
 	}
 
-	result = buildTargetMatchersTimeSeries(graphs, req.TargetType, start, end, stepMs)
+	result = buildTargetMatchersTimeSeries(graphs, req.TargetType, req.PathResource, start, end, stepMs)
 
 	paths := convertPathsV2ToStrings(pathsV2)
 
@@ -321,14 +325,16 @@ func (m *Model) QueryDynamicPathsRange(
 	}
 
 	req := &QueryRequest{
-		SpaceUID:      spaceUid,
-		Timestamp:     end,
-		SourceType:    FromCMDBResource(source),
-		SourceInfo:    matcherToMap(indexMatcher),
-		TargetType:    FromCMDBResource(target),
-		PathResource:  toResourceTypes(pathResource),
-		MaxHops:       computeMaxHops(pathResource),
-		LookBackDelta: lbd,
+		SpaceUID:         spaceUid,
+		Timestamp:        end,
+		SourceType:       FromCMDBResource(source),
+		SourceInfo:       matcherToMap(indexMatcher),
+		SourceExpandInfo: matcherToMap(expandMatcher),
+		TargetType:       FromCMDBResource(target),
+		TargetInfoShow:   expandShow,
+		PathResource:     toResourceTypes(pathResource),
+		MaxHops:          computeMaxHops(pathResource),
+		LookBackDelta:    lbd,
 	}
 	req.Normalize()
 
@@ -337,7 +343,7 @@ func (m *Model) QueryDynamicPathsRange(
 		return "", nil, nil, "", nil, err
 	}
 
-	result = buildTargetMatchersTimeSeries(graphs, req.TargetType, start, end, stepMs)
+	result = buildTargetMatchersTimeSeries(graphs, req.TargetType, req.PathResource, start, end, stepMs)
 
 	span.Set("paths-count", len(paths))
 	span.Set("result-count", len(result))
@@ -360,6 +366,8 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	span.Set("source-type", req.SourceType)
 	span.Set("target-type", req.TargetType)
 	span.Set("source-info", req.SourceInfo)
+	span.Set("source-expand-info", req.SourceExpandInfo)
+	span.Set("target-info-show", req.TargetInfoShow)
 	span.Set("max-hops", req.MaxHops)
 	span.Set("look-back-delta", req.LookBackDelta)
 	span.Set("space-uid", req.SpaceUID)
@@ -399,7 +407,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 		}
 	}
 
-	matchers = extractMatchersFromGraphs(graphs, req.TargetType)
+	matchers = extractMatchersFromGraphs(graphs, req.TargetType, req.PathResource)
 
 	span.Set("graphs-count", len(graphs))
 	span.Set("paths-count", len(paths))
@@ -524,7 +532,7 @@ func computeMaxHops(pathResource []cmdb.Resource) int {
 	return len(pathResource) + 1
 }
 
-func extractMatchersFromGraphs(graphs []*LivenessGraph, targetType ResourceType) cmdb.Matchers {
+func extractMatchersFromGraphs(graphs []*LivenessGraph, targetType ResourceType, pathResource []ResourceType) cmdb.Matchers {
 	if len(graphs) == 0 {
 		return nil
 	}
@@ -533,7 +541,7 @@ func extractMatchersFromGraphs(graphs []*LivenessGraph, targetType ResourceType)
 	var result cmdb.Matchers
 
 	for _, g := range graphs {
-		for resourceID, matcher := range g.ExtractTargetMatchersWithID(targetType) {
+		for resourceID, matcher := range g.ExtractTargetMatchersWithID(targetType, pathResource) {
 			if !seen[resourceID] {
 				seen[resourceID] = true
 				result = append(result, matcher)
@@ -544,12 +552,13 @@ func extractMatchersFromGraphs(graphs []*LivenessGraph, targetType ResourceType)
 	return result
 }
 
-type targetNodeInfo struct {
-	Labels     map[string]string
-	RawPeriods []*VisiblePeriod
+type targetPathInfo struct {
+	Labels      map[string]string
+	NodePeriods []*VisiblePeriod
+	EdgePeriods [][]*VisiblePeriod
 }
 
-func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceType, start, end, stepMs int64) []cmdb.MatchersWithTimestamp {
+func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceType, pathResource []ResourceType, start, end, stepMs int64) []cmdb.MatchersWithTimestamp {
 	if len(graphs) == 0 {
 		return nil
 	}
@@ -557,22 +566,14 @@ func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceT
 		return nil
 	}
 
-	targetNodes := make(map[string]*targetNodeInfo)
+	targetNodes := make(map[string][]*targetPathInfo)
 	for _, g := range graphs {
-		for _, node := range g.Nodes {
-			if node.ResourceType == targetType {
-				if _, exists := targetNodes[node.ResourceID]; !exists {
-					targetNodes[node.ResourceID] = &targetNodeInfo{
-						Labels:     node.Labels,
-						RawPeriods: node.RawPeriods,
-					}
-				} else {
-					targetNodes[node.ResourceID].RawPeriods = append(
-						targetNodes[node.ResourceID].RawPeriods,
-						node.RawPeriods...,
-					)
-				}
-			}
+		for _, path := range g.TargetPaths(targetType, pathResource) {
+			targetNodes[path.Target.ResourceID] = append(targetNodes[path.Target.ResourceID], &targetPathInfo{
+				Labels:      path.Target.Labels,
+				NodePeriods: path.Target.RawPeriods,
+				EdgePeriods: path.EdgePeriods,
+			})
 		}
 	}
 
@@ -585,8 +586,12 @@ func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceT
 	for ts := start; ts <= end; ts += stepMs {
 		var activeMatchers cmdb.Matchers
 
-		for _, info := range targetNodes {
-			if isActiveAt(info.RawPeriods, ts) {
+		for _, paths := range targetNodes {
+			if len(paths) == 0 {
+				continue
+			}
+			if isAnyTargetPathActiveAt(paths, ts) {
+				info := paths[0]
 				matcher := make(cmdb.Matcher, len(info.Labels))
 				for k, v := range info.Labels {
 					matcher[k] = v
@@ -604,6 +609,25 @@ func buildTargetMatchersTimeSeries(graphs []*LivenessGraph, targetType ResourceT
 	}
 
 	return result
+}
+
+func isAnyTargetPathActiveAt(paths []*targetPathInfo, ts int64) bool {
+	for _, path := range paths {
+		if !isActiveAt(path.NodePeriods, ts) {
+			continue
+		}
+		active := true
+		for _, periods := range path.EdgePeriods {
+			if !isActiveAt(periods, ts) {
+				active = false
+				break
+			}
+		}
+		if active {
+			return true
+		}
+	}
+	return false
 }
 
 func isActiveAt(periods []*VisiblePeriod, ts int64) bool {

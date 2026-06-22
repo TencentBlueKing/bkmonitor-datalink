@@ -33,6 +33,7 @@ const (
 	tplLivenessSelectRef = "(SELECT * FROM %s WHERE %s = $parent.%s AND period_end >= $start AND period_start <= $end)"
 	tplRelLivenessSelect = "(SELECT * FROM %s WHERE relation_id = $parent.id AND period_end >= $start AND period_start <= $end)"
 	tplLivenessFilter    = "(SELECT count() FROM only %s WHERE %s = $parent.id AND $end >= period_start AND $start <= period_end GROUP ALL) > 0"
+	tplLivenessFilterRef = "(SELECT count() FROM only %s WHERE %s = $parent.%s AND $end >= period_start AND $start <= period_end GROUP ALL) > 0"
 	tplRelLivenessFilter = "(SELECT count() FROM only %s WHERE relation_id = $parent.id AND $end >= period_start AND $start <= period_end GROUP ALL) > 0"
 )
 
@@ -249,12 +250,16 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 
 	return fmt.Sprintf(sqlIndent2+`%s: (SELECT {%s
         } FROM %s WHERE %s = $parent.id
-          AND `+tplRelLivenessFilter+`)`,
+          AND `+tplRelLivenessFilter+`
+          AND `+tplLivenessFilterRef+`)`,
 		keyName,
 		fieldsBuilder.String(),
 		relationTable,
 		rel.WhereField,
-		relationLivenessTable)
+		relationLivenessTable,
+		targetLivenessTable,
+		targetLivenessIDField,
+		rel.SelectField)
 }
 
 // buildNestedHopSelect 构建嵌套在 target 内的下一跳查询
@@ -334,13 +339,17 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 
 	return fmt.Sprintf(sqlIndent5+`%s: (SELECT {%s
                     } FROM %s WHERE %s = $parent.%s
-                      AND `+tplRelLivenessFilter+`)`,
+                      AND `+tplRelLivenessFilter+`
+                      AND `+tplLivenessFilterRef+`)`,
 		keyName,
 		fieldsBuilder.String(),
 		relationTable,
 		rel.WhereField,
 		parentField,
-		relationLivenessTable)
+		relationLivenessTable,
+		targetLivenessTable,
+		targetLivenessIDField,
+		rel.SelectField)
 }
 
 // buildDeeperNestedHopSelect 构建更深层嵌套的 hop（hop3+）
@@ -424,11 +433,13 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 
 	return fmt.Sprintf(`%s%s: (SELECT {%s
 %s} FROM %s WHERE %s = $parent.%s
-%s  AND `+tplRelLivenessFilter+`)`,
+%s  AND `+tplRelLivenessFilter+`
+%s  AND `+tplLivenessFilterRef+`)`,
 		indent, keyName,
 		fieldsBuilder.String(),
 		indent, relationTable, rel.WhereField, parentField,
-		indent, relationLivenessTable)
+		indent, relationLivenessTable,
+		indent, targetLivenessTable, targetLivenessIDField, rel.SelectField)
 }
 
 // buildWhereClause 构建 WHERE 子句
@@ -457,6 +468,22 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		}
 	}
 
+	if len(b.request.SourceExpandInfo) > 0 {
+		keys := make([]string, 0, len(b.request.SourceExpandInfo))
+		for k := range b.request.SourceExpandInfo {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			if !isSafeSurrealField(k) {
+				continue
+			}
+			v := b.request.SourceExpandInfo[k]
+			conditions = append(conditions, fmt.Sprintf("%s = '%s'", k, escapeSurrealString(v)))
+		}
+	}
+
 	livenessTable := GetLivenessRecordTableName(b.request.SourceType)
 	livenessIDField := GetLivenessIDField(b.request.SourceType)
 	conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
@@ -469,4 +496,17 @@ func escapeSurrealString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `\'`)
 	return s
+}
+
+func isSafeSurrealField(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, r := range field {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }

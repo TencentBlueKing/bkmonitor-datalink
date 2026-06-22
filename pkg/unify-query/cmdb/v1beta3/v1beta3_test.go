@@ -11,12 +11,14 @@ package v1beta3
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -36,6 +38,20 @@ func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start,
 		g.QueryEnd = end
 	}
 	return m.graphs, nil
+}
+
+type mockBKBaseCurl struct {
+	response BKBaseResponse
+}
+
+func (m *mockBKBaseCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error)) {
+}
+
+func (m *mockBKBaseCurl) Request(ctx context.Context, method string, opt curl.Options, res any) (int, error) {
+	if response, ok := res.(*BKBaseResponse); ok {
+		*response = m.response
+	}
+	return 0, nil
 }
 
 type CMDBHandlerTestCase struct {
@@ -939,6 +955,109 @@ func matchersEqual(a, b cmdb.Matcher) bool {
 	return true
 }
 
+func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcher(
+		context.Background(),
+		"10m",
+		"test-space",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		cmdb.Matcher{"namespace": "default", "unsafe.field": "ignored"},
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, executor.sql, "namespace = 'default'")
+	assert.Contains(t, executor.sql, "pod_liveness_record WHERE pod_id = $parent.target_id")
+	assert.NotContains(t, executor.sql, "unsafe.field")
+}
+
+func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{ResourceID: "node:1", ResourceType: ResourceTypeNode, Labels: map[string]string{"node": "node-1"}}
+	system := &NodeLiveness{ResourceID: "system:1", ResourceType: ResourceTypeSystem, Labels: map[string]string{"system": "system-1"}}
+	podViaSystem := &NodeLiveness{
+		ResourceID:   "pod:via-system",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "via-system"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	podDirect := &NodeLiveness{
+		ResourceID:   "pod:direct",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "direct"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(system)
+	graph.AddNode(podViaSystem)
+	graph.AddNode(podDirect)
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: root.ResourceID, ToID: system.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-pod", FromID: system.ResourceID, ToID: podViaSystem.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: podDirect.ResourceID})
+
+	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, []ResourceType{ResourceTypeSystem})
+
+	assert.Equal(t, cmdb.Matchers{{"pod": "via-system"}}, matchers)
+}
+
+func TestBuildTargetMatchersTimeSeriesRequiresEdgeLiveness(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{ResourceID: "node:1", ResourceType: ResourceTypeNode, Labels: map[string]string{"node": "node-1"}}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "nginx-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(pod)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID: "node-pod",
+		FromID:     root.ResourceID,
+		ToID:       pod.ResourceID,
+		RawPeriods: []*VisiblePeriod{{Start: 100, End: 100}},
+	})
+
+	result := buildTargetMatchersTimeSeries([]*LivenessGraph{graph}, ResourceTypePod, nil, 0, 200, 100)
+
+	assert.Equal(t, []cmdb.MatchersWithTimestamp{
+		{Timestamp: 100, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+	}, result)
+}
+
+func TestBKBaseSurrealDBClientConvertsListForParser(t *testing.T) {
+	client := &BKBaseSurrealDBClient{
+		curl: &mockBKBaseCurl{response: BKBaseResponse{
+			Result: true,
+			Data: &BKBaseData{List: []map[string]any{
+				{
+					ResponseFieldResult: map[string]any{
+						ResponseFieldRoot: map[string]any{
+							ResponseFieldEntityType: string(ResourceTypeNode),
+							ResponseFieldEntityID:   "node:1",
+							ResponseFieldEntityData: map[string]any{"node": "node-1"},
+							ResponseFieldLiveness:   []any{},
+						},
+					},
+				},
+			}},
+		}},
+	}
+
+	graphs, err := client.Execute(context.Background(), "SELECT * FROM node", 0, 100)
+
+	require.NoError(t, err)
+	require.Len(t, graphs, 1)
+	assert.Equal(t, "node:1", graphs[0].GetNode("node:1").ResourceID)
+}
+
 func TestBuildTargetMatchersTimeSeries(t *testing.T) {
 	testCases := []struct {
 		Name       string
@@ -1321,7 +1440,7 @@ func TestBuildTargetMatchersTimeSeries(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			result := buildTargetMatchersTimeSeries(tc.Graphs, tc.TargetType, tc.Start, tc.End, tc.StepMs)
+			result := buildTargetMatchersTimeSeries(tc.Graphs, tc.TargetType, nil, tc.Start, tc.End, tc.StepMs)
 
 			if tc.Expected == nil {
 				assert.Nil(t, result, "expected nil result")

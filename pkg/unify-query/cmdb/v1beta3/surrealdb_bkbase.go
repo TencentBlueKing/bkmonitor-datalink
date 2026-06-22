@@ -184,9 +184,12 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	// 转换响应格式为标准 SurrealDB 响应格式
 	// BKBase 返回格式: {"data": {"list": [...]}}
 	// 标准格式: [{"result": [...]}]
-	var list []map[string]any
+	var list []any
 	if resp.Data != nil {
-		list = resp.Data.List
+		list = make([]any, 0, len(resp.Data.List))
+		for _, item := range resp.Data.List {
+			list = append(list, item)
+		}
 	}
 	rawResponse := []map[string]any{
 		{

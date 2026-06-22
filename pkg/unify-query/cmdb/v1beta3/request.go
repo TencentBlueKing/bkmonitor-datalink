@@ -17,7 +17,9 @@ type QueryRequest struct {
 	Timestamp                int64              `json:"timestamp"`                            // 查询时间点（毫秒时间戳）
 	SourceType               ResourceType       `json:"source_type"`                          // 源资源类型
 	SourceInfo               map[string]string  `json:"source_info"`                          // 源资源过滤条件
+	SourceExpandInfo         map[string]string  `json:"source_expand_info,omitempty"`         // 源资源扩展过滤条件
 	TargetType               ResourceType       `json:"target_type,omitempty"`                // 目标资源类型（可选，用于定向查询）
+	TargetInfoShow           bool               `json:"target_info_show,omitempty"`           // 是否展示目标资源扩展信息
 	PathResource             []ResourceType     `json:"path_resource,omitempty"`              // 路径约束资源类型
 	MaxHops                  int                `json:"max_hops,omitempty"`                   // 最大跳数（默认2，范围1-5）
 	AllowedRelationTypes     []RelationCategory `json:"allowed_relation_types,omitempty"`     // 允许的关系类别

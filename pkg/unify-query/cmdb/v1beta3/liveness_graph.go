@@ -39,6 +39,11 @@ type EdgeLiveness struct {
 	RawPeriods   []*VisiblePeriod   `json:"raw_periods"`
 }
 
+type TargetPath struct {
+	Target      *NodeLiveness
+	EdgePeriods [][]*VisiblePeriod
+}
+
 func NewLivenessGraph(queryStart, queryEnd int64) *LivenessGraph {
 	return &LivenessGraph{
 		QueryStart: queryStart,
@@ -95,23 +100,122 @@ func (g *LivenessGraph) GetOutEdges(resourceID string) []*EdgeLiveness {
 	return edges
 }
 
-func (g *LivenessGraph) ExtractTargetMatchersWithID(targetType ResourceType) map[string]cmdb.Matcher {
+func (g *LivenessGraph) ExtractTargetMatchersWithID(targetType ResourceType, pathResource []ResourceType) map[string]cmdb.Matcher {
 	result := make(map[string]cmdb.Matcher)
 	if g == nil || len(g.Nodes) == 0 {
 		return result
 	}
 
-	for _, node := range g.Nodes {
-		if node.ResourceType == targetType {
-			if _, exists := result[node.ResourceID]; !exists {
-				matcher := make(cmdb.Matcher, len(node.Labels))
-				for k, v := range node.Labels {
-					matcher[k] = v
-				}
-				result[node.ResourceID] = matcher
+	for _, path := range g.TargetPaths(targetType, pathResource) {
+		node := path.Target
+		if _, exists := result[node.ResourceID]; !exists {
+			matcher := make(cmdb.Matcher, len(node.Labels))
+			for k, v := range node.Labels {
+				matcher[k] = v
 			}
+			result[node.ResourceID] = matcher
 		}
 	}
 
 	return result
+}
+
+func (g *LivenessGraph) TargetPaths(targetType ResourceType, pathResource []ResourceType) []*TargetPath {
+	if g == nil || len(g.Nodes) == 0 {
+		return nil
+	}
+
+	var result []*TargetPath
+	for _, rootID := range g.rootNodeIDs() {
+		visited := map[string]bool{rootID: true}
+		g.collectTargetPaths(rootID, targetType, pathResource, 0, nil, visited, &result)
+	}
+	return result
+}
+
+func (g *LivenessGraph) collectTargetPaths(
+	nodeID string,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	pathIdx int,
+	edgePeriods [][]*VisiblePeriod,
+	visited map[string]bool,
+	result *[]*TargetPath,
+) {
+	node := g.Nodes[nodeID]
+	if node == nil {
+		return
+	}
+
+	nextPathIdx := pathIdx
+	if len(pathResource) > 0 && pathIdx < len(pathResource) && node.ResourceType == pathResource[pathIdx] {
+		nextPathIdx++
+	}
+
+	if node.ResourceType == targetType && nextPathIdx >= len(pathResource) && g.nodeOverlapsQuery(node) {
+		*result = append(*result, &TargetPath{Target: node, EdgePeriods: edgePeriods})
+	}
+
+	for _, edge := range g.outEdgesFromMap(nodeID) {
+		if visited[edge.ToID] {
+			continue
+		}
+		target := g.Nodes[edge.ToID]
+		if target == nil {
+			continue
+		}
+		if len(pathResource) > 0 && nextPathIdx < len(pathResource) &&
+			target.ResourceType != pathResource[nextPathIdx] && target.ResourceType != targetType {
+			continue
+		}
+		visited[edge.ToID] = true
+		nextEdgePeriods := append(append([][]*VisiblePeriod{}, edgePeriods...), edge.RawPeriods)
+		g.collectTargetPaths(edge.ToID, targetType, pathResource, nextPathIdx, nextEdgePeriods, visited, result)
+		visited[edge.ToID] = false
+	}
+}
+
+func (g *LivenessGraph) rootNodeIDs() []string {
+	incoming := make(map[string]bool, len(g.Edges))
+	for _, edge := range g.Edges {
+		incoming[edge.ToID] = true
+	}
+	roots := make([]string, 0, len(g.Nodes))
+	for id := range g.Nodes {
+		if !incoming[id] {
+			roots = append(roots, id)
+		}
+	}
+	if len(roots) > 0 {
+		return roots
+	}
+	for id := range g.Nodes {
+		roots = append(roots, id)
+	}
+	return roots
+}
+
+func (g *LivenessGraph) outEdgesFromMap(resourceID string) []*EdgeLiveness {
+	edges := make([]*EdgeLiveness, 0, len(g.Edges))
+	for _, edge := range g.Edges {
+		if edge.FromID == resourceID {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
+}
+
+func (g *LivenessGraph) nodeOverlapsQuery(node *NodeLiveness) bool {
+	if node == nil || len(node.RawPeriods) == 0 {
+		return true
+	}
+	if g.QueryStart == 0 && g.QueryEnd == 0 {
+		return true
+	}
+	for _, period := range node.RawPeriods {
+		if period != nil && period.End >= g.QueryStart && period.Start <= g.QueryEnd {
+			return true
+		}
+	}
+	return false
 }

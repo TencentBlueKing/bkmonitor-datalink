@@ -81,6 +81,43 @@ func TestDynamicRelationFlowMetric(t *testing.T) {
 	t.Fatalf("dynamic relation metric request not found")
 }
 
+func TestDynamicRelationPodToPodDoesNotEmitSystemEdges(t *testing.T) {
+	processor := &MetricProcessor{baseInfo: core.BaseInfo{AppName: "app"}}
+	labels := make([]string, 0)
+	metricCount := make(map[string]int)
+	pairs := [2]Node{
+		{
+			StandardSpan: StandardSpan{Collections: map[string]string{
+				core.K8sNamespace.DisplayKey(): "default",
+			}},
+		},
+		{
+			StandardSpan: StandardSpan{Collections: map[string]string{
+				core.K8sNamespace.DisplayKey(): "default",
+			}},
+		},
+	}
+
+	processor.addDynamicRelationFlowMetrics(
+		&labels,
+		metricCount,
+		pairs,
+		"caller",
+		"callee",
+		"BCS-K8S-00001",
+		"BCS-K8S-00001",
+		"caller-pod",
+		"callee-pod",
+		"10.0.0.1",
+		"10.0.0.2",
+	)
+
+	assert.Contains(t, labels, "__name__=pod_to_pod_flow,from_bcs_cluster_id=BCS-K8S-00001,from_namespace=default,from_pod=caller-pod,to_bcs_cluster_id=BCS-K8S-00001,to_namespace=default,to_pod=callee-pod")
+	assert.NotContains(t, metricCount, storage.PodToSystemFlow)
+	assert.NotContains(t, metricCount, storage.SystemToPodFlow)
+	assert.NotContains(t, metricCount, storage.SystemFlow)
+}
+
 func runMetricCase(p Processor, traceFileName string) []storage.SaveRequest {
 	event := fileTracesToEvent(traceFileName)
 	resultChan := make(chan storage.SaveRequest, 1000)

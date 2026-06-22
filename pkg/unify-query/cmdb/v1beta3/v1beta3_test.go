@@ -44,6 +44,14 @@ func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start,
 	return m.graphs, nil
 }
 
+type mockBindingGraphQueryExecutor struct {
+	mockGraphQueryExecutor
+}
+
+func (m *mockBindingGraphQueryExecutor) ExecuteWithBinding(ctx context.Context, spaceUID string, binding BindingInfo, dsl string, start, end int64) ([]*LivenessGraph, error) {
+	return m.Execute(ctx, dsl, start, end)
+}
+
 type mockBKBaseCurl struct {
 	response BKBaseResponse
 }
@@ -828,6 +836,52 @@ func TestQueryLivenessGraphUsesSpaceUIDSchemaNamespace(t *testing.T) {
 	assert.Contains(t, executor.sql, "entity_data: { biz_pod: biz_pod }")
 	assert.Contains(t, executor.sql, "entity_data: { global_node: target_id.global_node }")
 	assert.NotContains(t, executor.sql, "global_pod_node")
+}
+
+func TestInferSourceTypePrefersMostSpecificPrimaryKeys(t *testing.T) {
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"pod":       resourceDefinition("pod", "bcs_cluster_id", "namespace", "pod"),
+				"container": resourceDefinition("container", "bcs_cluster_id", "namespace", "pod", "container"),
+			},
+		},
+		relations: map[string][]*relation.RelationDefinition{
+			relation.NamespaceAll: {
+				{Name: "container_pod", FromResource: "container", ToResource: "pod", Category: "static"},
+			},
+		},
+	})
+
+	sourceType, err := inferSourceTypeFromInfo(&QueryRequest{
+		SourceInfo: map[string]string{
+			"bcs_cluster_id": "BCS-K8S-00001",
+			"namespace":      "default",
+			"pod":            "nginx-1",
+			"container":      "main",
+		},
+	}, provider)
+
+	require.NoError(t, err)
+	assert.Equal(t, ResourceType("container"), sourceType)
+}
+
+func TestComputeMaxHopsKeepsRoomForPartialPathResource(t *testing.T) {
+	assert.Equal(t, DefaultMaxHops, computeMaxHops(nil))
+	assert.Equal(t, DefaultMaxHops+1, computeMaxHops([]cmdb.Resource{"pod"}))
+	assert.Equal(t, MaxAllowedHops, computeMaxHops([]cmdb.Resource{"a", "b", "c", "d", "e"}))
+}
+
+func TestExecuteGraphQueryRequiresSpaceUIDForBindingExecutor(t *testing.T) {
+	model := &Model{
+		executor: &mockBindingGraphQueryExecutor{},
+		resolver: &BindingResolver{},
+	}
+
+	_, err := model.executeGraphQuery(context.Background(), &QueryRequest{}, "RETURN []", 0, 0)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "space_uid is required")
 }
 
 func resourceDefinition(name string, primaryKeys ...string) *relation.ResourceDefinition {

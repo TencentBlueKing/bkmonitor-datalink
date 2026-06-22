@@ -551,7 +551,9 @@ func (m *MetricProcessor) addDynamicRelationFlowMetrics(
 
 	cNamespace := pairs[0].GetFieldValue(core.K8sNamespace)
 	sNamespace := pairs[1].GetFieldValue(core.K8sNamespace)
-	if cBcsClusterId != "" && cNamespace != "" && cPodName != "" && sBcsClusterId != "" && sNamespace != "" && sPodName != "" {
+	callerIsPod := cBcsClusterId != "" && cNamespace != "" && cPodName != ""
+	calleeIsPod := sBcsClusterId != "" && sNamespace != "" && sPodName != ""
+	if callerIsPod && calleeIsPod {
 		addRelationMetric(
 			relationLabels,
 			metricCount,
@@ -565,7 +567,7 @@ func (m *MetricProcessor) addDynamicRelationFlowMetrics(
 		)
 	}
 
-	if cBcsClusterId != "" && cNamespace != "" && cPodName != "" && childIp != "" {
+	if callerIsPod && !calleeIsPod && childIp != "" {
 		addRelationMetric(
 			relationLabels,
 			metricCount,
@@ -577,7 +579,7 @@ func (m *MetricProcessor) addDynamicRelationFlowMetrics(
 		)
 	}
 
-	if parentIp != "" && sBcsClusterId != "" && sNamespace != "" && sPodName != "" {
+	if !callerIsPod && parentIp != "" && calleeIsPod {
 		addRelationMetric(
 			relationLabels,
 			metricCount,
@@ -589,7 +591,7 @@ func (m *MetricProcessor) addDynamicRelationFlowMetrics(
 		)
 	}
 
-	if parentIp != "" && childIp != "" {
+	if !callerIsPod && !calleeIsPod && parentIp != "" && childIp != "" {
 		addRelationMetric(
 			relationLabels,
 			metricCount,

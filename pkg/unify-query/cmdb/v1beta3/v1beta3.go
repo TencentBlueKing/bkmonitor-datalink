@@ -465,8 +465,11 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 //     再走 ExecuteWithBinding，DSL 前会加 "USE NS ... DB ...;" 前缀。
 //  2. 否则退化到原始 Execute（全局 result_table_id，单测 / 旧路径）。
 func (m *Model) executeGraphQuery(ctx context.Context, req *QueryRequest, sql string, start, end int64) ([]*LivenessGraph, error) {
-	if m.resolver != nil && req.SpaceUID != "" {
+	if m.resolver != nil {
 		if ex, ok := m.executor.(GraphQueryExecutorWithBinding); ok {
+			if req.SpaceUID == "" {
+				return nil, fmt.Errorf("space_uid is required for binding graph query")
+			}
 			binding, err := m.resolver.Resolve(ctx, req.SpaceUID)
 			if err != nil {
 				return nil, err
@@ -560,7 +563,11 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 		known[schema.ToType] = struct{}{}
 	}
 
-	var candidates []ResourceType
+	type sourceTypeCandidate struct {
+		resourceType ResourceType
+		keyCount     int
+	}
+	var candidates []sourceTypeCandidate
 	for resourceType := range known {
 		primaryKeys := provider.GetResourcePrimaryKeys(req.SchemaNamespace(), resourceType)
 		if len(primaryKeys) == 0 {
@@ -574,15 +581,27 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 			}
 		}
 		if matched {
-			candidates = append(candidates, resourceType)
+			candidates = append(candidates, sourceTypeCandidate{resourceType: resourceType, keyCount: len(primaryKeys)})
 		}
 	}
 
-	if len(candidates) == 1 {
-		return candidates[0], nil
-	}
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("source type cannot be inferred from source_info %v", req.SourceInfo)
+	}
+	best := candidates[0]
+	ambiguous := false
+	for _, candidate := range candidates[1:] {
+		if candidate.keyCount > best.keyCount {
+			best = candidate
+			ambiguous = false
+			continue
+		}
+		if candidate.keyCount == best.keyCount {
+			ambiguous = true
+		}
+	}
+	if !ambiguous {
+		return best.resourceType, nil
 	}
 	return "", fmt.Errorf("source type is ambiguous for source_info %v", req.SourceInfo)
 }
@@ -630,7 +649,11 @@ func computeMaxHops(pathResource []cmdb.Resource) int {
 	if len(pathResource) == 0 {
 		return DefaultMaxHops
 	}
-	return len(pathResource) + 1
+	maxHops := DefaultMaxHops + len(pathResource)
+	if maxHops > MaxAllowedHops {
+		return MaxAllowedHops
+	}
+	return maxHops
 }
 
 func extractMatchersFromGraphs(

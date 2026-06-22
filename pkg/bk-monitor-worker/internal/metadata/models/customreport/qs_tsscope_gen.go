@@ -717,7 +717,7 @@ var TimeSeriesScopeDBSchema = struct {
 // Update updates TimeSeriesScope fields by primary key
 // nolint: dupl
 func (o *TimeSeriesScope) Update(db *gorm.DB, fields ...TimeSeriesScopeDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":               o.ID,
 		"group_id":         o.GroupID,
 		"scope_name":       o.ScopeName,
@@ -726,7 +726,7 @@ func (o *TimeSeriesScope) Update(db *gorm.DB, fields ...TimeSeriesScopeDBSchemaF
 		"create_from":      o.CreateFrom,
 		"last_modify_time": o.LastModifyTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -745,7 +745,7 @@ func (o *TimeSeriesScope) Update(db *gorm.DB, fields ...TimeSeriesScopeDBSchemaF
 
 // TimeSeriesScopeUpdater is an TimeSeriesScope updates manager
 type TimeSeriesScopeUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -753,7 +753,7 @@ type TimeSeriesScopeUpdater struct {
 // nolint: dupl
 func NewTimeSeriesScopeUpdater(db *gorm.DB) TimeSeriesScopeUpdater {
 	return TimeSeriesScopeUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&TimeSeriesScope{}),
 	}
 }

@@ -10,9 +10,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -41,6 +44,100 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
+
+func assertPromDataJSONEqIgnoringResultTableID(t *testing.T, expected, actual string) {
+	t.Helper()
+
+	actualMap := make(map[string]any)
+	err := json.Unmarshal([]byte(actual), &actualMap)
+	assert.Nil(t, err)
+	if err != nil {
+		return
+	}
+	assert.Contains(t, actualMap, "result_table_id")
+
+	delete(actualMap, "result_table_id")
+	actualWithoutResultTableID, err := json.Marshal(actualMap)
+	assert.Nil(t, err)
+	assert.JSONEq(t, expected, string(actualWithoutResultTableID))
+}
+
+func assertPromDataJSONEqWithSortedSeries(t *testing.T, expected, actual string) {
+	t.Helper()
+
+	expected = normalizePromDataSeriesForCompare(t, expected)
+	actual = normalizePromDataSeriesForCompare(t, actual)
+	assert.JSONEq(t, expected, actual)
+}
+
+func normalizePromDataSeriesForCompare(t *testing.T, raw string) string {
+	t.Helper()
+
+	data := make(map[string]any)
+	err := json.Unmarshal([]byte(raw), &data)
+	assert.Nil(t, err)
+	if err != nil {
+		return raw
+	}
+
+	series, ok := data["series"].([]any)
+	if ok {
+		sort.SliceStable(series, func(i, j int) bool {
+			return promDataSeriesSortKey(series[i]) < promDataSeriesSortKey(series[j])
+		})
+		for i, item := range series {
+			if table, ok := item.(map[string]any); ok {
+				table["name"] = fmt.Sprintf("_result%d", i)
+			}
+		}
+	}
+
+	out, err := json.Marshal(data)
+	assert.Nil(t, err)
+	return string(out)
+}
+
+func promDataSeriesSortKey(item any) string {
+	table, ok := item.(map[string]any)
+	if !ok {
+		return ""
+	}
+	values, ok := table["group_values"].([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, fmt.Sprint(value))
+	}
+	return strings.Join(parts, "\xff")
+}
+
+func TestParseLookBackDeltaPrometheusDuration(t *testing.T) {
+	duration, err := parseLookBackDelta("1d")
+	assert.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, duration)
+}
+
+func TestParseLookBackDeltaGoDurationFallback(t *testing.T) {
+	duration, err := parseLookBackDelta("1.5h")
+	assert.NoError(t, err)
+	assert.Equal(t, 90*time.Minute, duration)
+
+	duration, err = parseLookBackDelta("500.5ms")
+	assert.NoError(t, err)
+	assert.Equal(t, 500*time.Millisecond+500*time.Microsecond, duration)
+}
+
+func TestQueryLookBackDeltaFallback(t *testing.T) {
+	duration, err := queryLookBackDelta(&structured.QueryTs{}, 2*time.Hour)
+	assert.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, duration)
+
+	duration, err = queryLookBackDelta(&structured.QueryTs{LookBackDelta: "30m"}, 2*time.Hour)
+	assert.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, duration)
+}
 
 func TestQueryTsWithDoris(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
@@ -140,7 +237,13 @@ func TestQueryTsWithDoris(t *testing.T) {
 			assert.Nil(t, err)
 			excepted, err := json.Marshal(res)
 			assert.Nil(t, err)
-			assert.JSONEq(t, c.result, string(excepted))
+			expected := make(map[string]any)
+			err = json.Unmarshal([]byte(c.result), &expected)
+			assert.Nil(t, err)
+			expected["result_table_id"] = []string{"result_table.doris"}
+			expectedBytes, err := json.Marshal(expected)
+			assert.Nil(t, err)
+			assert.JSONEq(t, string(expectedBytes), string(excepted))
 		})
 	}
 }
@@ -1351,7 +1454,7 @@ func TestQueryTs(t *testing.T) {
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
 			actual := string(out)
-			assert.JSONEq(t, c.result, actual)
+			assertPromDataJSONEqIgnoringResultTableID(t, c.result, actual)
 		})
 	}
 }
@@ -1481,7 +1584,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			expectError: true,
-			errorMsg:    "查询原始数据报错: query error: 原始数据查询异常: es 查询失败: Elasticsearch error from http://127.0.0.1:93002: [illegal_argument_exception] Failed to parse field [dtEventTimeStamp] (indices: v2_2_bklog_test_20240814_0) ",
+			errorMsg:    "查询原始数据报错: query error: 原始数据查询异常: es 查询失败: Elasticsearch error from http://127.0.0.1:93002: [illegal_argument_exception] Failed to parse field [dtEventTimeStamp] (indices: v2_2_bklog_test_20240814_0)",
 		},
 		"query collections.attributes.db.statement": {
 			queryTs: &structured.QueryTs{
@@ -2382,7 +2485,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
-			total, list, options, err := queryRawWithInstance(ctx, c.queryTs)
+			total, list, options, _, err := queryRawWithInstance(ctx, c.queryTs)
 
 			if c.expectError {
 				assert.NotNil(t, err, "Expected an error but got nil")
@@ -2409,6 +2512,89 @@ func TestQueryRawWithInstance(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("query raw does not mutate query reference size and from", func(t *testing.T) {
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    "multi_es",
+				},
+			},
+			From:  2,
+			Limit: 2,
+			Step:  start,
+			End:   end,
+			OrderBy: structured.OrderBy{
+				"-time",
+				"__result_table",
+			},
+		}
+
+		_, _, _, _, err := queryRawWithInstance(ctx, queryTs)
+		assert.NoError(t, err)
+
+		queryRef := metadata.GetQueryReference(ctx)
+		assert.Equal(t, 2, queryRef.Count())
+		queryRef.Range("", func(qry *metadata.Query) {
+			assert.Equal(t, 2, qry.From)
+			assert.Equal(t, 2, qry.Size)
+		})
+	})
+
+	t.Run("query raw does not mutate query reference result table option", func(t *testing.T) {
+		mock.BkSQL.Set(map[string]any{
+			"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":""},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":""}]},"errors":null}`,
+		})
+
+		from := 0
+		originalOption := &metadata.ResultTableOption{
+			From:        &from,
+			SearchAfter: []any{"keep"},
+			FieldType: map[string]string{
+				"keep": "keyword",
+			},
+			ResultSchema: []map[string]any{
+				{
+					"field_name": "keep",
+					"field_type": "keyword",
+				},
+			},
+		}
+		queryTs := &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					DataSource: structured.BkLog,
+					TableID:    influxdb.ResultTableDoris,
+					SQL:        "SELECT * ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100",
+				},
+			},
+			Step:   start,
+			End:    end,
+			DryRun: true,
+			ResultTableOptions: metadata.ResultTableOptions{
+				"result_table.doris|4": originalOption,
+			},
+		}
+
+		_, _, options, _, err := queryRawWithInstance(ctx, queryTs)
+		require.NoError(t, err)
+		option := options.GetOption("result_table.doris|4")
+		require.NotNil(t, option)
+		require.Contains(t, option.SQL, "SELECT * FROM `2_bklog_bkunify_query_doris`.doris")
+
+		assert.Empty(t, originalOption.SQL)
+		assert.Equal(t, []any{"keep"}, originalOption.SearchAfter)
+		assert.Equal(t, "keyword", originalOption.FieldType["keep"])
+		assert.Equal(t, []map[string]any{
+			{
+				"field_name": "keep",
+				"field_type": "keyword",
+			},
+		}, originalOption.ResultSchema)
+	})
 }
 
 // TestQueryExemplar comment lint rebel
@@ -2482,6 +2668,43 @@ func TestQueryExemplar(t *testing.T) {
 	assert.Nil(t, err)
 	actual := string(out)
 	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}],"is_partial":false}`, actual)
+}
+
+func TestQueryExemplarDirectQueryReturnDoesNotLeakReceiver(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	mock.Init()
+	promql.MockEngine()
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				TableID:       "system.cpu_detail",
+				FieldName:     "usage",
+				ReferenceName: "a",
+			},
+		},
+		MetricMerge: "a",
+	}
+
+	before := queryExemplarReceiverGoroutines()
+	res, err := queryExemplar(ctx, qts)
+	assert.Nil(t, err)
+	assert.NotNil(t, res)
+	assert.True(t, metadata.GetQueryParams(ctx).IsDirectQuery())
+
+	assert.Eventually(t, func() bool {
+		return queryExemplarReceiverGoroutines() == before
+	}, time.Second, 10*time.Millisecond)
+}
+
+func queryExemplarReceiverGoroutines() int {
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	return strings.Count(buf.String(), "queryExemplar.func")
 }
 
 func TestVmQueryParams(t *testing.T) {
@@ -4392,8 +4615,11 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 				sort.SliceStable(d.Tables, func(i, j int) bool {
 					a := d.Tables[i]
 					b := d.Tables[j]
-					return a.Name < b.Name
+					return strings.Join(a.GroupValues, "\xff") < strings.Join(b.GroupValues, "\xff")
 				})
+				for i, table := range d.Tables {
+					table.Name = fmt.Sprintf("_result%d", i)
+				}
 			}
 
 			t.Logf("QueryTsClusterMetrics error: %+v", err)
@@ -4401,7 +4627,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			out, err := json.Marshal(res)
 			actual := string(out)
 			assert.Nil(t, err)
-			assert.JSONEq(t, c.result, actual)
+			assertPromDataJSONEqWithSortedSeries(t, c.result, actual)
 		})
 	}
 }
@@ -4476,12 +4702,16 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 			}
 			c.query.SpaceUid = spaceUid
 
-			instance, stmt, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
+			instance, stmt, routeInfo, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
 			if err != nil {
 				panic(err)
 			}
 
 			assert.Equal(t, c.stmt, stmt)
+			assert.NotNil(t, routeInfo)
+			if len(routeInfo) > 0 {
+				assert.NotEmpty(t, routeInfo[0].TableID)
+			}
 			if instance != nil {
 				assert.Equal(t, c.instanceType, instance.InstanceType())
 			}
@@ -4618,7 +4848,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 		Limit: 50,
 	}
 
-	_, list, _, err := queryRawWithInstance(ctx, queryTs)
+	_, list, _, _, err := queryRawWithInstance(ctx, queryTs)
 	assert.Nil(t, err)
 
 	for i, item := range list {
@@ -4718,6 +4948,428 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 			t.Errorf("number %d mismatch: expected %v, got %v", i+1, expected, actual)
 		}
 	}
+}
+
+// TestQueryRawPartialSuccessMultiRoute 一路 ES 成功、一路失败时：err 为 nil，错误收敛到 status.message，仍可返回成功路数据。
+func TestQueryRawPartialSuccessMultiRoute(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__2"})
+
+	influxdb.MockSpaceRouter(ctx)
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_multi_merge"
+	const okRT = "pr_ok_rt"
+	const failRT = "pr_fail_rt"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, failRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, okRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     okRT,
+		DB:          "pr_ok_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_ok",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, failRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     failRT,
+		DB:          "pr_fail_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_fail",
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[okRT] = &ir.SpaceResultTable{TableId: okRT}
+	space[failRT] = &ir.SpaceResultTable{TableId: failRT}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	const esURL = "http://127.0.0.1:93002"
+	mapBody := `{"pr_ok_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_ok_idx", httpmock.NewStringResponder(http.StatusOK, mapBody))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_ok_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, mapBody))
+
+	failMap := `{"pr_fail_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_fail_idx", httpmock.NewStringResponder(http.StatusOK, failMap))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_fail_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, failMap))
+
+	okSearch := `{"took":1,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"pr_ok_idx","_id":"x1","_source":{"dtEventTimeStamp":"1752141800000","log":"partial-ok"}}]}}`
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_ok_idx/_search", httpmock.NewStringResponder(http.StatusOK, okSearch))
+
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_fail_idx/_search", httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":"mock failure"}`))
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				TableID:   mergeTable,
+				FieldList: []string{"dtEventTimeStamp", "log"},
+			},
+		},
+		Start: "1752141400000",
+		End:   "1752141900000",
+		Limit: 50,
+	}
+
+	total, list, _, _, qerr := queryRawWithInstance(ctx, queryTs)
+	assert.NoError(t, qerr)
+	assert.Greater(t, total, int64(0))
+	assert.NotEmpty(t, list)
+
+	st := metadata.GetStatus(ctx)
+	assert.NotNil(t, st)
+	assert.Equal(t, metadata.QueryRawPartial, st.Code)
+	assert.Contains(t, st.Message, "查询原始数据部分失败:")
+	assert.Contains(t, st.Message, "query error:")
+}
+
+// TestQueryRaw_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该结果表，raw 请求不失败、无数据。
+func TestQueryRaw_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+				Limit:         10,
+			},
+		},
+		Start: "1723594000",
+		End:   "1723595000",
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "millisecond",
+					},
+				},
+			},
+		},
+	}
+
+	total, list, _, _, err := queryRawWithInstance(ctx, qts)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, list)
+}
+
+// TestQueryRaw_ES_mixed_empty_db_and_ok 多结果表一路 ES 的 db 为空（跳过）、一路正常：应返回正常路数据且不应标记 Raw 部分失败。
+func TestQueryRaw_ES_mixed_empty_db_and_ok(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__2"})
+
+	influxdb.MockSpaceRouter(ctx)
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_empty_db_mixed_merge"
+	const okRT = "pr_empty_db_ok_rt"
+	const badRT = "pr_empty_db_bad_rt"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, badRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, okRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     okRT,
+		DB:          "pr_mixed_ok_idx",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_mixed_ok",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, badRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     badRT,
+		DB:          "",
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_mixed_bad",
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[okRT] = &ir.SpaceResultTable{TableId: okRT}
+	space[badRT] = &ir.SpaceResultTable{TableId: badRT}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	const esURL = "http://127.0.0.1:93002"
+	mapBody := `{"pr_mixed_ok_idx":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_mixed_ok_idx", httpmock.NewStringResponder(http.StatusOK, mapBody))
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/pr_mixed_ok_idx/_mapping/", httpmock.NewStringResponder(http.StatusOK, mapBody))
+
+	okSearch := `{"took":1,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"pr_mixed_ok_idx","_id":"x1","_source":{"dtEventTimeStamp":"1752141800000","log":"mixed-ok"}}]}}`
+	httpmock.RegisterResponder(http.MethodPost, esURL+"/pr_mixed_ok_idx/_search", httpmock.NewStringResponder(http.StatusOK, okSearch))
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				TableID:   mergeTable,
+				FieldList: []string{"dtEventTimeStamp", "log"},
+			},
+		},
+		Start: "1752141400000",
+		End:   "1752141900000",
+		Limit: 50,
+	}
+
+	total, list, _, _, qerr := queryRawWithInstance(ctx, queryTs)
+	assert.NoError(t, qerr)
+	assert.Greater(t, total, int64(0))
+	assert.NotEmpty(t, list)
+	assert.Equal(t, "mixed-ok", list[0]["log"])
+
+	st := metadata.GetStatus(ctx)
+	if st != nil {
+		assert.NotEqual(t, metadata.QueryRawPartial, st.Code, "跳过缺索引前缀的 ES 子任务不应记为 Raw 部分失败")
+	}
+}
+
+// TestQueryRawWithScroll_ES_empty_db_skipped ES 元数据 db/dbs 全空时跳过该表：单次 scroll 不报错且会话可 Done。
+func TestQueryRawWithScroll_ES_empty_db_skipped(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	const badTable = "2_bklog.repro_scroll_empty_db_es"
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				ReferenceName: "ref",
+				TableID:       structured.TableID(badTable),
+				KeepColumns:   []string{"level"},
+			},
+		},
+		Start:    "1757051309",
+		End:      "1757054909",
+		Step:     "1m",
+		Limit:    10,
+		Scroll:   "1m",
+		SliceMax: 1,
+		TsDBMap: map[string]structured.TsDBs{
+			"ref": []*queryPkg.TsDBV2{
+				{
+					TableID:     badTable,
+					DataLabel:   "es",
+					DB:          "",
+					StorageType: metadata.ElasticsearchStorageType,
+					StorageID:   "3",
+					TimeField: metadata.TimeField{
+						Name: "dtEventTimeStamp",
+						Type: "long",
+						Unit: "second",
+					},
+				},
+			},
+		},
+	}
+
+	queryByte, _ := json.Marshal(qts)
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, string(queryByte), ScrollWindowTimeout, ScrollSessionLockTimeout, qts.SliceMax, qts.Limit)
+	if err != nil {
+		t.Skipf("Redis: %v", err)
+		return
+	}
+	defer func() { _ = session.Clear(ctx) }()
+
+	_, list, _, _, done, err := queryRawWithScroll(ctx, qts, session)
+	assert.NoError(t, err)
+	assert.Empty(t, list)
+	assert.True(t, done, "skipped bad table should mark slice completed so session Done")
+}
+
+// TestQueryRawWithScroll_CollectsResultTableOptions 覆盖多 slice 并发写 resultTableOptions 的场景。
+func TestQueryRawWithScroll_CollectsResultTableOptions(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	mock.Es.Set(map[string]any{
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"00","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":11,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"01","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":12,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"02","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":13,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"10","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":100,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"11","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":200,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+		`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`:                     `{"_scroll_id":"12","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+	})
+
+	qts := &structured.QueryTs{
+		SpaceUid: influxdb.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				TableID:     "multi_es",
+				KeepColumns: []string{"level"},
+			},
+		},
+		MetricMerge: "a",
+		Start:       "1757051309",
+		End:         "1757054909",
+		Step:        "1m",
+		Limit:       2,
+		Scroll:      "1m",
+		SliceMax:    3,
+	}
+
+	queryByte, _ := json.Marshal(qts)
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, string(queryByte), ScrollWindowTimeout, ScrollSessionLockTimeout, qts.SliceMax, qts.Limit)
+	if err != nil {
+		t.Skipf("Redis: %v", err)
+		return
+	}
+	defer func() { _ = session.Clear(ctx) }()
+
+	total, list, options, routeInfo, done, err := queryRawWithScroll(ctx, qts, session)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(12), total)
+	assert.Len(t, list, 12)
+	assert.False(t, done)
+	assert.Len(t, options, 6)
+	assert.Len(t, routeInfo, 2)
+	assert.Equal(t, []string{"result_table.es", "result_table.es_with_time_filed"}, []string{routeInfo[0].TableID, routeInfo[1].TableID})
+
+	for _, tc := range []struct {
+		key        string
+		scrollID   string
+		sliceIndex int
+		from       int
+	}{
+		{key: "result_table.es|3|0", scrollID: "00", sliceIndex: 0, from: 0},
+		{key: "result_table.es|3|1", scrollID: "01", sliceIndex: 1, from: 2},
+		{key: "result_table.es|3|2", scrollID: "02", sliceIndex: 2, from: 4},
+		{key: "result_table.es_with_time_filed|3|0", scrollID: "10", sliceIndex: 0, from: 0},
+		{key: "result_table.es_with_time_filed|3|1", scrollID: "11", sliceIndex: 1, from: 2},
+		{key: "result_table.es_with_time_filed|3|2", scrollID: "12", sliceIndex: 2, from: 4},
+	} {
+		option := options.GetOption(tc.key)
+		if assert.NotNil(t, option, tc.key) {
+			assert.Equal(t, tc.scrollID, option.ScrollID)
+			assert.Equal(t, tc.sliceIndex, option.SliceIndex)
+			assert.Equal(t, 3, option.SliceMax)
+			if assert.NotNil(t, option.From) {
+				assert.Equal(t, tc.from, *option.From)
+			}
+		}
+	}
+}
+
+// TestQueryTsPartialSuccessMultiRoute query/ts 多路查询时，至少一路成功应返回成功并标记 QueryTsPartial。
+func TestQueryTsPartialSuccessMultiRoute(t *testing.T) {
+	mock.Init()
+	promql.MockEngine()
+
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{Key: "username:test", SpaceUID: "bkcc__2", SkipSpace: "true"})
+
+	influxdb.MockSpaceRouter(ctx)
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	const mergeTable = "pr_ts_partial_merge"
+	const failRT = "pr_ts_partial_fail_rt"
+	const okRT = "system.cpu_summary"
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, mergeTable, &ir.ResultTableList{okRT, failRT})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, failRT, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     failRT,
+		StorageType: "elasticsearch",
+		DataLabel:   "pr_ts_fail",
+		Fields:      []string{"usage"},
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space[mergeTable] = &ir.SpaceResultTable{TableId: mergeTable}
+	space[failRT] = &ir.SpaceResultTable{TableId: failRT}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	start := time.UnixMilli(1717027200000)
+	end := time.UnixMilli(1717027500000)
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				DataSource:    "",
+				TableID:       structured.TableID(mergeTable),
+				FieldName:     "usage",
+				ReferenceName: "a",
+				Limit:         1,
+				TimeAggregation: structured.TimeAggregation{
+					Function: "count_over_time",
+					Window:   "60s",
+				},
+				AggregateMethodList: structured.AggregateMethodList{
+					{
+						Method: "count",
+					},
+				},
+			},
+		},
+		MetricMerge: "a",
+		Start:       strconv.FormatInt(start.Unix(), 10),
+		End:         strconv.FormatInt(end.Unix(), 10),
+		Step:        "60s",
+		Instant:     false,
+	}
+
+	res, qErr := queryTsWithPromEngine(ctx, queryTs)
+	if !assert.NoError(t, qErr) {
+		return
+	}
+
+	data, ok := res.(*PromData)
+	assert.True(t, ok)
+	assert.NotNil(t, data)
+	assert.ElementsMatch(t, []string{"system.cpu_summary", failRT}, data.ResultTableID)
+
+	st := data.Status
+	assert.NotNil(t, st)
+	assert.Equal(t, metadata.QueryTsPartial, st.Code)
+	assert.Contains(t, st.Message, "查询时序数据部分失败:")
+	assert.Contains(t, st.Message, "query error:")
 }
 
 func getIntValue(value any) int64 {
@@ -4922,7 +5574,7 @@ func TestQueryRawWithScroll_ES(t *testing.T) {
 					break
 				}
 
-				total, list, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, _, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {
@@ -5071,7 +5723,7 @@ func TestQueryRawWithScroll_Doris(t *testing.T) {
 					break
 				}
 
-				total, list, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
+				total, list, _, _, done, err := queryRawWithScroll(ctx, c.queryTs, session)
 				assert.Nil(t, err)
 
 				sort.SliceStable(list, func(i, j int) bool {

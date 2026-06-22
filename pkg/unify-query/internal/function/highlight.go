@@ -11,7 +11,6 @@ package function
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +18,6 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -32,11 +30,13 @@ type HighLightFactory struct {
 	fieldsMap         metadata.FieldsMap
 	maxAnalyzedOffset int
 	isCaseSensitive   bool
+	regexCache        map[highlightPatternKey]*regexp.Regexp
 }
 
 type LabelMapValue struct {
-	Value    string `json:"value"`
-	Operator string `json:"operator"`
+	Value      string `json:"value"`
+	Operator   string `json:"operator"`
+	IsWildcard bool   `json:"is_wildcard,omitempty"`
 }
 
 type LabelMapOption struct {
@@ -54,7 +54,7 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 	labelMap := make(map[string][]LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabels := func(key string, operator string, values ...string) {
+	addLabels := func(key string, operator string, isWildcard bool, values ...string) {
 		if len(values) == 0 {
 			return
 		}
@@ -63,12 +63,13 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 		switch operator {
 		case metadata.ConditionEqual, metadata.ConditionContains, metadata.ConditionRegEqual, metadata.ConditionExact:
 			for _, value := range values {
-				checkKey := key + ":" + value + ":" + operator
+				checkKey := key + ":" + value + ":" + operator + ":" + cast.ToString(isWildcard)
 				if _, ok := labelCheck[checkKey]; !ok {
 					labelCheck[checkKey] = struct{}{}
 					labelMap[key] = append(labelMap[key], LabelMapValue{
-						Value:    value,
-						Operator: operator,
+						Value:      value,
+						Operator:   operator,
+						IsWildcard: isWildcard,
 					})
 				}
 			}
@@ -77,21 +78,31 @@ func LabelMap(ctx context.Context, qry *metadata.Query) map[string][]LabelMapVal
 
 	for _, condition := range qry.AllConditions {
 		for _, cond := range condition {
-			op := cond.Operator
-			if cond.IsWildcard && op == metadata.ConditionEqual {
-				op = metadata.ConditionContains
-			}
-
-			addLabels(cond.DimensionName, op, cond.Value...)
+			addLabels(cond.DimensionName, highlightOperator(cond.Operator, cond.IsWildcard), cond.IsWildcard, cond.Value...)
 		}
 	}
 
 	if qry.QueryString != "" {
 		node := lucene_parser.ParseLuceneWithVisitor(ctx, qry.QueryString, lucene_parser.Option{})
-		lucene_parser.ConditionNodeWalk(node, addLabels)
+		lucene_parser.ConditionNodeWalk(node, func(key string, operator string, isWildcard bool, values ...string) {
+			addLabels(key, operator, isWildcard, values...)
+		})
 	}
 
 	return labelMap
+}
+
+func highlightOperator(operator string, isWildcard bool) string {
+	if !isWildcard {
+		return operator
+	}
+
+	switch operator {
+	case metadata.ConditionEqual, metadata.ConditionContains:
+		return metadata.ConditionContains
+	default:
+		return operator
+	}
 }
 
 func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata.FieldsMap, maxAnalyzedOffset int) *HighLightFactory {
@@ -99,6 +110,7 @@ func NewHighLightFactory(labelMap map[string][]LabelMapValue, fieldsMap metadata
 		labelMap:          labelMap,
 		fieldsMap:         fieldsMap,
 		maxAnalyzedOffset: maxAnalyzedOffset,
+		regexCache:        make(map[highlightPatternKey]*regexp.Regexp),
 	}
 }
 
@@ -151,73 +163,64 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 
 	analyzablePart, remainingPart := h.splitTextForAnalysis(text)
 
-	// 移除 keywords 中存在叠加的数据，例如: ["a", "abc"]，则只保留 ["abc"]
-	// 排序后，长的关键词在前面
-	sort.SliceStable(keywords, func(i, j int) bool {
-		return len(keywords[i].Value) > len(keywords[j].Value)
-	})
-	var newKeywords []LabelMapValue
+	intervals := make([]highlightInterval, 0)
 	for _, kw := range keywords {
 		switch kw.Operator {
-		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains:
-			value := kw.Value
-			// 如果大小写不敏感，则统一转换为小写进行去重
-			if !h.isCaseSensitive {
-				value = strings.ToLower(value)
-			}
-			if value == "" {
+		case metadata.ConditionEqual, metadata.ConditionRegEqual, metadata.ConditionContains, metadata.ConditionExact:
+			re := h.highlightRegexp(kw)
+			if re == nil {
 				continue
 			}
-
-			check := func() bool {
-				// 检查是否已经叠加
-				for _, newKeyword := range newKeywords {
-					newKeywordValue := newKeyword.Value
-					if !h.isCaseSensitive {
-						newKeywordValue = strings.ToLower(newKeywordValue)
-					}
-					if strings.Contains(newKeywordValue, value) {
-						return true
-					}
+			for _, match := range re.FindAllStringIndex(analyzablePart, -1) {
+				if len(match) != 2 || match[0] == match[1] {
+					continue
 				}
-				return false
-			}()
-
-			if !check {
-				kw.Value = value
-				// 如果为空的情况下不要进行判定
-				newKeywords = append(newKeywords, kw)
+				intervals = append(intervals, highlightInterval{start: match[0], end: match[1]})
 			}
 		}
 	}
 
-	for _, kw := range newKeywords {
-		var re *regexp.Regexp
-		if kw.Operator == metadata.ConditionRegEqual {
-			if h.isCaseSensitive {
-				re = regexp.MustCompile(kw.Value)
-			} else {
-				re = regexp.MustCompile(`(?i)` + kw.Value)
-			}
-		} else {
-			if h.isCaseSensitive {
-				// 大小写敏感：精确匹配
-				re = regexp.MustCompile(regexp.QuoteMeta(kw.Value))
-			} else {
-				// 大小写不敏感：忽略大小写匹配
-				re = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(kw.Value))
-			}
-		}
-		matchs := re.FindAllString(analyzablePart, -1)
-
-		mset := set.New[string](matchs...)
-
-		for _, m := range mset.ToArray() {
-			analyzablePart = strings.ReplaceAll(analyzablePart, m, fmt.Sprintf("<mark>%s</mark>", m))
-		}
+	if len(intervals) == 0 {
+		return text
 	}
 
-	return analyzablePart + remainingPart
+	return renderHighlight(analyzablePart, mergeHighlightIntervals(intervals)) + remainingPart
+}
+
+type highlightPatternKey struct {
+	value         string
+	operator      string
+	isWildcard    bool
+	caseSensitive bool
+}
+
+func (h *HighLightFactory) highlightRegexp(kw LabelMapValue) *regexp.Regexp {
+	if h.regexCache == nil {
+		h.regexCache = make(map[highlightPatternKey]*regexp.Regexp)
+	}
+
+	key := highlightPatternKey{
+		value:         kw.Value,
+		operator:      kw.Operator,
+		isWildcard:    kw.IsWildcard,
+		caseSensitive: h.isCaseSensitive,
+	}
+	if re, ok := h.regexCache[key]; ok {
+		return re
+	}
+
+	pattern, err := buildHighlightPattern(kw.Value, kw.Operator == metadata.ConditionRegEqual, kw.IsWildcard, h.isCaseSensitive)
+	if err != nil || pattern == "" {
+		h.regexCache[key] = nil
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		h.regexCache[key] = nil
+		return nil
+	}
+	h.regexCache[key] = re
+	return re
 }
 
 func (h *HighLightFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {
@@ -225,4 +228,116 @@ func (h *HighLightFactory) splitTextForAnalysis(text string) (analyzable, remain
 		return text[:h.maxAnalyzedOffset], text[h.maxAnalyzedOffset:]
 	}
 	return text, ""
+}
+
+type highlightInterval struct {
+	start int
+	end   int
+}
+
+func buildHighlightPattern(kw string, isRegex bool, isWildcard bool, caseSensitive bool) (string, error) {
+	if kw == "" {
+		return "", nil
+	}
+
+	pattern := kw
+	if !isRegex && isWildcard {
+		pattern = buildWildcardHighlightPattern(kw)
+	} else if !isRegex {
+		pattern = regexp.QuoteMeta(kw)
+	}
+	if !caseSensitive {
+		pattern = "(?i:" + pattern + ")"
+	}
+
+	if _, err := regexp.Compile(pattern); err != nil {
+		return "", err
+	}
+	return pattern, nil
+}
+
+func buildWildcardHighlightPattern(kw string) string {
+	chars := []rune(kw)
+	start, end := 0, len(chars)
+	for start < end && chars[start] == '*' {
+		start++
+	}
+	for end > start && chars[end-1] == '*' && !isEscapedHighlightChar(chars, end-1) {
+		end--
+	}
+	if start >= end {
+		return ""
+	}
+
+	var builder strings.Builder
+	for i := start; i < end; i++ {
+		r := chars[i]
+		if r == '\\' && i+1 < end && (isHighlightWildcard(chars[i+1]) || chars[i+1] == '\\') {
+			builder.WriteString(regexp.QuoteMeta(string(chars[i+1])))
+			i++
+			continue
+		}
+
+		switch r {
+		case '*':
+			builder.WriteString("[^\r\n]*?")
+		case '?':
+			builder.WriteString("[^\r\n]")
+		default:
+			builder.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	return builder.String()
+}
+
+func isHighlightWildcard(c rune) bool {
+	return c == '*' || c == '?'
+}
+
+func isEscapedHighlightChar(chars []rune, pos int) bool {
+	backslashes := 0
+	for i := pos - 1; i >= 0 && chars[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
+}
+
+func mergeHighlightIntervals(intervals []highlightInterval) []highlightInterval {
+	if len(intervals) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(intervals, func(i, j int) bool {
+		if intervals[i].start == intervals[j].start {
+			return intervals[i].end < intervals[j].end
+		}
+		return intervals[i].start < intervals[j].start
+	})
+
+	merged := []highlightInterval{intervals[0]}
+	for _, interval := range intervals[1:] {
+		last := &merged[len(merged)-1]
+		if interval.start <= last.end {
+			if interval.end > last.end {
+				last.end = interval.end
+			}
+			continue
+		}
+		merged = append(merged, interval)
+	}
+	return merged
+}
+
+func renderHighlight(text string, intervals []highlightInterval) string {
+	var builder strings.Builder
+	cursor := 0
+	for _, interval := range intervals {
+		builder.WriteString(text[cursor:interval.start])
+		builder.WriteString("<mark>")
+		builder.WriteString(text[interval.start:interval.end])
+		builder.WriteString("</mark>")
+		cursor = interval.end
+	}
+	builder.WriteString(text[cursor:])
+	return builder.String()
 }

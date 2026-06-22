@@ -36,6 +36,17 @@ const (
 )
 
 const (
+	ResultHit  = "hit"
+	ResultMiss = "miss"
+)
+
+// RedisRouterLoadResult 为 unify_query_redis_router_load_total 的 result 标签取值（固定 success|failure，基数可控）。
+const (
+	RedisRouterLoadResultSuccess = "success"
+	RedisRouterLoadResultFailure = "failure"
+)
+
+const (
 	_ = 1 << (10 * iota)
 	KB
 	MB
@@ -124,6 +135,34 @@ var (
 		},
 		[]string{"space_uid", "table_id", "is_match", "is_ff"},
 	)
+
+	tsDBGetStorageTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_get_storage_total",
+			Help:      "unify-query tsdb get storage result",
+		},
+		[]string{"result", "version", "commit_id"},
+	)
+
+	tsDBGetStorageMissIDTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_get_storage_miss_id_total",
+			Help:      "unify-query tsdb get storage missing storage id",
+		},
+		[]string{"storage_id", "version", "commit_id"},
+	)
+
+	// redis_router_load_total：space_tsdb LoadRouter 每次结束记 1 次，result 为 success 或 failure（route_key 仅 SpaceAllKey）
+	redisRouterLoadTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "redis_router_load_total",
+			Help:      "unify-query space_tsdb: full LoadRouter from Redis (HScan) outcomes by route_key and result (success|failure)",
+		},
+		[]string{"route_key", "result", "version", "commit_id"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -169,6 +208,33 @@ func JWTRequestInc(ctx context.Context, api, jwtAppCode, jwtAppUserName, spaceUI
 
 func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {
 	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch, isFF)
+	counterInc(ctx, metric)
+}
+
+// TSDBGetStorageTotalInc 统计 GetStorage 调用结果总量。
+// result 目前使用 hit/miss，可用于计算 miss 比例并观察整体命中率变化。
+// version、commit_id 与 api_request_total 一致，由构建 -ldflags 注入 config，便于按发版排查
+func TSDBGetStorageTotalInc(ctx context.Context, result string) {
+	params := append([]string{}, result, config.Version, config.CommitHash)
+	metric, _ := tsDBGetStorageTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+// TSDBGetStorageMissIDTotalInc 记录缺失 storageID 的次数，便于直接定位异常 ID
+// eg. unify_query_tsdb_get_storage_miss_id_total{storage_id="2",version="...",commit_id="..."} = 3
+func TSDBGetStorageMissIDTotalInc(ctx context.Context, storageID string) {
+	params := append([]string{}, storageID, config.Version, config.CommitHash)
+	metric, _ := tsDBGetStorageMissIDTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+// RedisRouterLoadResultInc 记录一次 LoadRouter 结束：success 表示 Redis 扫描与 BatchAdd 均无错误；failure 表示出现过 channel 错误或 BatchAdd 失败。route_key 须为 SpaceAllKey。
+func RedisRouterLoadResultInc(ctx context.Context, routeKey, result string) {
+	if result != RedisRouterLoadResultSuccess && result != RedisRouterLoadResultFailure {
+		return
+	}
+	params := append([]string{}, routeKey, result, config.Version, config.CommitHash)
+	metric, _ := redisRouterLoadTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 

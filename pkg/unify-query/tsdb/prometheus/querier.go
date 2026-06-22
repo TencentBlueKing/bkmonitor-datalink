@@ -11,9 +11,12 @@ package prometheus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
@@ -66,19 +69,26 @@ func (q *Querier) checkCtxDone() bool {
 	}
 }
 
-func (q *Querier) getQueryList(referenceName string) []*Query {
+func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 	var (
-		ctx       = q.ctx
-		queryList []*Query
-		err       error
+		ctx           = q.ctx
+		referenceName string
+		queryList     QueryList
+		err           error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "querier-get-query-list")
 	defer span.End(&err)
 
 	queryReference := metadata.GetQueryReference(ctx)
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			referenceName = m.Value
+			break
+		}
+	}
 
-	queryList = make([]*Query, 0)
+	queryList = make(QueryList, 0)
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
 		if instance == nil {
@@ -90,12 +100,16 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 		}
 
 		queryList = append(queryList, &Query{
-			instance: instance,
-			qry:      qry,
+			instance:   instance,
+			qry:        qry,
+			start:      qry.RouteStart,
+			end:        qry.RouteEnd,
+			queryStart: qry.RouteQueryStart,
+			queryEnd:   qry.RouteQueryEnd,
 		})
 	})
 
-	return queryList
+	return referenceName, queryList
 }
 
 // selectFn 获取原始数据
@@ -107,8 +121,13 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 		set storage.SeriesSet
 
+		successedPaths atomic.Uint32
+
 		setCh    = make(chan storage.SeriesSet, 1)
 		recvDone = make(chan struct{})
+
+		errorMessage strings.Builder
+		lock         sync.Mutex
 
 		wg  sync.WaitGroup
 		err error
@@ -118,6 +137,19 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	defer span.End(&err)
 
 	qp := metadata.GetQueryParams(ctx)
+
+	span.Set("max-routing", q.maxRouting)
+
+	referenceName, queryList := q.getQueryList(matchers)
+	span.Set("reference_name", referenceName)
+	mergeFunc := queryList.mergeFuncName(hints)
+	var rangeSelector time.Duration
+	if hints != nil && hints.Range > 0 {
+		rangeSelector = time.Duration(hints.Range) * time.Millisecond
+	}
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step, rangeSelector)
+	span.Set("merge_func", mergeFunc)
+	span.Set("merge_bucket_duration", bucketDuration)
 
 	go func() {
 		defer func() {
@@ -130,23 +162,22 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 		}
 
-		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(hints.Func))
+		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
+		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
-
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-			break
-		}
-	}
-
-	span.Set("max-routing", q.maxRouting)
-	span.Set("reference_name", referenceName)
-
-	queryList := q.getQueryList(referenceName)
 
 	p, _ := ants.NewPool(q.maxRouting)
 	defer p.Release()
+
+	// 统一收敛子路由错误，最终用于 partial status 或全失败报错。
+	recordQueryError := func(queryErr error) {
+		if queryErr == nil {
+			return
+		}
+		lock.Lock()
+		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		lock.Unlock()
+	}
 
 	for i, query := range queryList {
 		wg.Add(1)
@@ -168,15 +199,39 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime = qp.Start
 				endTime = qp.End
 			} else {
-				// 获取因转毫秒丢失的时间精度
+				// Prometheus SelectHints.Start/End 是毫秒时间戳；UQ 的 qp.Start/End 是 time.Time，保留了纳秒精度。
+				// 这里用 hints 决定 PromQL 实际需要的取数范围，再从 qp.Start/End 补回毫秒以下的纳秒尾数。
 				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 				endTime = function.MsIntMergeNs(hints.End, qp.End)
 			}
+			strategy, ok := query.calcSelectStrategyWithMergeContext(startTime, endTime, mergeFunc)
+			if !ok {
+				return
+			}
 
-			setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
+			// 逐路查询：失败只记录，不立即中断其他路由；成功路由进入 merge 阶段。
+			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, strategy.queryStart, strategy.queryEnd)
+			if currentSet == nil {
+				recordQueryError(fmt.Errorf("query series set is nil"))
+				return
+			}
+			if setErr := currentSet.Err(); setErr != nil {
+				recordQueryError(setErr)
+				return
+			}
+
+			successedPaths.Add(1)
+			switch strategy.wrapKind {
+			case seriesSetWrapValidRouteRange:
+				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+			case seriesSetWrapZeroRouteRange:
+				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
+			default:
+				setCh <- currentSet
+			}
 		})
 		if err != nil {
-			setCh <- storage.ErrSeriesSet(err)
+			recordQueryError(err)
 			wg.Done()
 		}
 	}
@@ -184,6 +239,27 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	close(setCh)
 	<-recvDone
+
+	// 多路并发后的兜底语义：
+	// 1) 至少一路成功：返回成功数据，并通过 status 标记部分失败；
+	// 2) 全部失败：保持历史行为，整体返回错误。
+	if errorMessage.Len() > 0 {
+		partialDetail := strings.TrimSpace(errorMessage.String())
+		if successedPaths.Load() > 0 {
+			span.Set("partial_errors", partialDetail)
+			const warnPrefix = "查询时序数据部分失败: "
+			fullMsg := warnPrefix + partialDetail
+			if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+				fullMsg = existing.Message + "; " + fullMsg
+			}
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, fullMsg)
+		} else {
+			return storage.ErrSeriesSet(metadata.NewMessage(
+				metadata.MsgQueryTs,
+				"查询异常",
+			).Error(ctx, errors.New(partialDetail)))
+		}
+	}
 
 	return set
 }
@@ -232,14 +308,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-values")
 	defer span.End(&err)
 
-	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	queryList := q.getQueryList(referenceName)
+	_, queryList := q.getQueryList(matchers)
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
@@ -275,14 +344,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-names")
 	defer span.End(&err)
 
-	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	queryList := q.getQueryList(referenceName)
+	_, queryList := q.getQueryList(matchers)
 	for _, query := range queryList {
 		lbl, err := query.instance.QueryLabelNames(ctx, query.qry, q.min, q.max)
 		if err != nil {

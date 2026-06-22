@@ -7,30 +7,92 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package configs_test
+package configs
 
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-// TestParamClean 测试清洗后的结果是否符合预期
 func TestParamClean(t *testing.T) {
-	param := configs.NewBaseTaskParam()
-	assert.Nil(t, param.CleanParams())
-	assert.Equal(t, define.DefaultTimeout, param.Timeout)
-	assert.Equal(t, define.DefaultTimeout, param.AvailableDuration)
-	assert.Equal(t, define.DefaultPeriod, param.Period)
+	param := NewBaseTaskParam()
+	require.NoError(t, param.CleanParams())
+	require.Equal(t, define.DefaultTimeout, param.Timeout)
+	require.Equal(t, define.DefaultTimeout, param.AvailableDuration)
+	require.Equal(t, define.DefaultPeriod, param.Period)
 }
 
-// TestMetaParamClean 测试清洗后的结果是否符合预期
 func TestMetaParamClean(t *testing.T) {
-	param := configs.NewBaseTaskMetaParam()
-	assert.Nil(t, param.CleanParams())
-	assert.Equal(t, define.DefaultTimeout, param.MaxTimeout)
-	assert.Equal(t, define.DefaultPeriod, param.MinPeriod)
+	param := NewBaseTaskMetaParam()
+	require.NoError(t, param.CleanParams())
+	require.Equal(t, define.DefaultTimeout, param.MaxTimeout)
+	require.Equal(t, define.DefaultPeriod, param.MinPeriod)
+}
+
+func TestBaseTaskParamGetBizID(t *testing.T) {
+	t.Run("fallback to config biz id", func(t *testing.T) {
+		param := BaseTaskParam{BizID: 2}
+		require.NoError(t, param.CleanParams())
+		require.Equal(t, int32(2), param.GetBizID())
+	})
+
+	t.Run("use label biz id override", func(t *testing.T) {
+		param := BaseTaskParam{
+			BizID: 2,
+			Labels: []map[string]string{{
+				labelBizID: "5",
+			}},
+		}
+		require.NoError(t, param.CleanParams())
+		require.Equal(t, int32(5), param.GetBizID())
+	})
+
+	t.Run("allow same biz id across label groups", func(t *testing.T) {
+		param := BaseTaskParam{
+			BizID: 2,
+			Labels: []map[string]string{
+				{labelBizID: "5"},
+				{labelBizID: "5", "bk_target_ip": "10.0.0.1"},
+			},
+		}
+		require.NoError(t, param.CleanParams())
+		require.Equal(t, int32(5), param.GetBizID())
+	})
+
+	t.Run("reject invalid label biz id", func(t *testing.T) {
+		param := BaseTaskParam{
+			BizID: 2,
+			Labels: []map[string]string{{
+				labelBizID: "invalid",
+			}},
+		}
+		require.Error(t, param.CleanParams())
+	})
+
+	t.Run("reject conflicting label biz id", func(t *testing.T) {
+		param := BaseTaskParam{
+			BizID: 2,
+			Labels: []map[string]string{
+				{labelBizID: "5"},
+				{labelBizID: "8"},
+			},
+		}
+		require.Error(t, param.CleanParams())
+	})
+
+	t.Run("net task delegates biz id resolution", func(t *testing.T) {
+		param := NetTaskParam{
+			BaseTaskParam: BaseTaskParam{
+				BizID: 2,
+				Labels: []map[string]string{{
+					labelBizID: "5",
+				}},
+			},
+		}
+		require.NoError(t, param.CleanParams())
+		require.Equal(t, int32(5), param.GetBizID())
+	})
 }

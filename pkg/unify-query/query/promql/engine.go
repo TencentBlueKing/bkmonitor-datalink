@@ -27,12 +27,20 @@ type Params struct {
 
 var GlobalEngine *prom.Engine
 
+var defaultLookbackDelta = 5 * time.Minute
+
 // NewEngine
 func NewEngine(params *Params) {
 	// engine的内容里有指标注册操作，所以无法重复注册，所以其参数不能改变
 	// 且engine内部成员全为私有，也无法进行修改
 	if GlobalEngine != nil {
 		return
+	}
+	if params == nil {
+		params = &Params{}
+	}
+	if params.LookbackDelta > 0 {
+		defaultLookbackDelta = params.LookbackDelta
 	}
 	GlobalEngine = prom.NewEngine(prom.EngineOpts{
 		Reg:                  prometheus.DefaultRegisterer,
@@ -61,4 +69,12 @@ func GetDefaultStep() time.Duration {
 		return time.Minute
 	}
 	return defaultStep
+}
+
+// GetDefaultLookbackDelta 返回请求未显式指定 look_back_delta 时 Prometheus 引擎使用的默认值。
+func GetDefaultLookbackDelta() time.Duration {
+	if defaultLookbackDelta == 0 {
+		return 5 * time.Minute
+	}
+	return defaultLookbackDelta
 }

@@ -36,7 +36,10 @@ type Params struct {
 	IsRegexp bool `json:"is_regexp" example:"false"`
 
 	Conditions structured.Conditions `json:"conditions"`
-	Keys       []string              `json:"keys"`
+	// TableIDConditions 表标签条件；与 /query/ts 的 body.table_id_conditions 一致，
+	// 仅在未指定 table_id / data_label 的全空间扫表场景下按结果表 Labels 收窄候选 RT。
+	TableIDConditions structured.AllConditions `json:"table_id_conditions,omitempty"`
+	Keys              []string                 `json:"keys"`
 
 	Limit  int `json:"limit"`
 	Slimit int `json:"slimit"`

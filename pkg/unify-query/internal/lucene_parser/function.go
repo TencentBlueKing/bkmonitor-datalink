@@ -214,82 +214,280 @@ func realValue(node Node) any {
 	return res
 }
 
-func ConditionNodeWalk(node Node, fn func(key string, operator string, values ...string)) {
+// ConditionNodeWalk 用于提取 LabelMap 候选条件。
+// 这里必须只输出“全局必然正向约束”，否则后续 ES 聚合 terms.include 会被错误收窄。
+func ConditionNodeWalk(node Node, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	conditionNodeWalk(node, false, fn)
+}
+
+func conditionNodeWalk(node Node, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
 	if node == nil {
 		return
 	}
 
 	switch n := node.(type) {
 	case *ConditionNode:
-		if n.value == nil {
-			return
-		}
-
-		var (
-			field string
-			op    string
-		)
-		if n.field != nil {
-			field = n.field.String()
-		}
-		if n.op != nil {
-			op = n.op.String()
-		}
-
-		value := n.value.String()
-
-		switch v := n.value.(type) {
-		case *WildCardNode:
-			op = metadata.ConditionContains
-			var (
-				ns       []rune
-				lastChar rune
-			)
-			for _, char := range value {
-				if char != '*' && char != '?' && char != '\\' || lastChar == '\\' {
-					ns = append(ns, char)
-				}
-				lastChar = char
-			}
-			value = string(ns)
-		case *RegexpNode:
-			op = metadata.ConditionRegEqual
-		case *StringNode:
-			op = metadata.ConditionEqual
-			// 转义
-			value = strings.ReplaceAll(value, `\`, ``)
-			if n.isQuoted {
-				value = strings.Trim(value, `"`)
-			}
-		case *LogicNode:
-			v.SetField(n.field)
-			ConditionNodeWalk(n.value, fn)
-			return
-		default:
-			return
-		}
-
-		if n.reverseOp {
-			switch op {
-			case metadata.ConditionEqual:
-				op = metadata.ConditionNotEqual
-			case metadata.ConditionNotEqual:
-				op = metadata.ConditionEqual
-			case metadata.ConditionContains:
-				op = metadata.ConditionNotContains
-			case metadata.ConditionNotContains:
-				op = metadata.ConditionContains
-			case metadata.ConditionRegEqual:
-				op = metadata.ConditionNotRegEqual
-			case metadata.ConditionNotRegEqual:
-				op = metadata.ConditionRegEqual
-			}
-		}
-
-		fn(field, op, value)
+		conditionNodeWalkCondition(n, reversed, fn)
 	case *LogicNode:
+		conditionNodeWalkLogic(n, reversed, fn)
+	}
+}
+
+func conditionNodeWalkCondition(n *ConditionNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	if n.value == nil {
+		return
+	}
+
+	reversed = toggleReverse(reversed, n.reverseOp)
+	if v, ok := n.value.(*LogicNode); ok {
+		v.SetField(n.field)
+		conditionNodeWalkLogic(v, reversed, fn)
+		return
+	}
+
+	label, ok := conditionNodeLabel(n, reversed)
+	if !ok {
+		return
+	}
+	fn(label.field, label.operator, label.isWildcard, label.values...)
+}
+
+func conditionNodeWalkLogic(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	reversed = toggleReverse(reversed, n.reverseOp)
+	if reversed {
+		// NOT 作用到复合表达式时，内部反转后的正向叶子可能只是可选分支。
+		// 例如 NOT(a AND NOT b) 等价于 NOT a OR b，b 不能作为全局 include。
+		// 只有单子节点可以安全继续向下传递 NOT 语义。
+		if len(n.Nodes) == 1 {
+			conditionNodeWalk(n.Nodes[0], reversed, fn)
+		}
+		return
+	}
+
+	if logicNodeIsConjunction(n) {
 		for _, ln := range n.Nodes {
-			ConditionNodeWalk(ln, fn)
+			conditionNodeWalk(ln, reversed, fn)
+		}
+		return
+	}
+
+	// 同字段 OR/隐式 OR 枚举可以安全作为该字段的 include 白名单。
+	// 例如 level:("warn" "error") 说明所有命中文档的 level 都在这组值内。
+	if labels, ok := sameFieldDisjunctionLabels(n); ok {
+		for _, label := range labels {
+			fn(label.field, label.operator, label.isWildcard, label.values...)
+		}
+		return
+	}
+
+	// 混合表达式中只提取实际会进入 must 的子句，保持与 LogicNode.DSL() 的执行语义一致。
+	// 例如 +level:warn status:error 可以提取 level，但 +level:warn OR status:error 不能提取。
+	conditionNodeWalkRequiredClauses(n, reversed, fn)
+}
+
+func conditionNodeWalkRequiredClauses(n *LogicNode, reversed bool, fn func(key string, operator string, isWildcard bool, values ...string)) {
+	for i, node := range n.Nodes {
+		if logicNodeConditionIsMust(n, i, node) {
+			conditionNodeWalk(node, reversed, fn)
 		}
 	}
+}
+
+func logicNodeConditionIsMust(n *LogicNode, index int, node *ConditionNode) bool {
+	logic := logicNodeConditionOperator(n, index)
+	return logic == logicAnd || (logic == "" && (node.reverseOp || node.mustOp))
+}
+
+// logicNodeConditionOperator 对齐 LogicNode.DSL() 对第一个子句 operator 的特殊处理。
+func logicNodeConditionOperator(n *LogicNode, index int) string {
+	if index == 0 {
+		if len(n.logics) > 0 {
+			return n.logics[index]
+		}
+		return ""
+	}
+	return logicNodeOperator(n, index)
+}
+
+type conditionWalkLabel struct {
+	field      string
+	operator   string
+	isWildcard bool
+	values     []string
+}
+
+func logicNodeIsConjunction(n *LogicNode) bool {
+	for i := 1; i < len(n.Nodes); i++ {
+		if logicNodeOperator(n, i) != logicAnd {
+			return false
+		}
+	}
+	return true
+}
+
+func logicNodeIsDisjunction(n *LogicNode) bool {
+	if len(n.Nodes) <= 1 {
+		return false
+	}
+
+	for i, node := range n.Nodes {
+		if node.mustOp || node.reverseOp {
+			return false
+		}
+		if i == 0 {
+			continue
+		}
+		if !logicNodeOperatorIsDisjunction(n, i) {
+			return false
+		}
+	}
+	return true
+}
+
+func logicNodeOperatorIsDisjunction(n *LogicNode, index int) bool {
+	switch logicNodeOperator(n, index) {
+	case logicOR, "":
+		return true
+	default:
+		return false
+	}
+}
+
+func logicNodeOperator(n *LogicNode, index int) string {
+	if index <= 0 || index-1 >= len(n.logics) {
+		return ""
+	}
+	return n.logics[index-1]
+}
+
+func sameFieldDisjunctionLabels(n *LogicNode) ([]conditionWalkLabel, bool) {
+	if !logicNodeIsDisjunction(n) {
+		return nil, false
+	}
+
+	labels := make([]conditionWalkLabel, 0, len(n.Nodes))
+	var (
+		field    string
+		hasField bool
+	)
+	for _, node := range n.Nodes {
+		label, ok := positiveLeafLabel(node)
+		if !ok {
+			return nil, false
+		}
+		if !hasField {
+			field = label.field
+			hasField = true
+		} else if field != label.field {
+			return nil, false
+		}
+		labels = append(labels, label)
+	}
+
+	return labels, true
+}
+
+func positiveLeafLabel(n *ConditionNode) (conditionWalkLabel, bool) {
+	if n.value == nil || n.reverseOp {
+		return conditionWalkLabel{}, false
+	}
+
+	if v, ok := n.value.(*LogicNode); ok {
+		v.SetField(n.field)
+		if len(v.Nodes) != 1 || v.reverseOp {
+			return conditionWalkLabel{}, false
+		}
+		return positiveLeafLabel(v.Nodes[0])
+	}
+
+	return conditionNodeLabel(n, false)
+}
+
+func conditionNodeLabel(n *ConditionNode, reversed bool) (conditionWalkLabel, bool) {
+	var (
+		field      string
+		op         string
+		isWildcard bool
+	)
+	if n.field != nil {
+		field = n.field.String()
+	}
+	if n.op != nil {
+		op = n.op.String()
+	}
+
+	value := n.value.String()
+
+	switch n.value.(type) {
+	case *WildCardNode:
+		op = metadata.ConditionContains
+		isWildcard = true
+		value = normalizeWildcardConditionValue(value)
+	case *RegexpNode:
+		op = metadata.ConditionRegEqual
+	case *StringNode:
+		op = metadata.ConditionEqual
+		// 转义
+		value = strings.ReplaceAll(value, `\`, ``)
+		if n.isQuoted {
+			value = strings.Trim(value, `"`)
+		}
+	default:
+		return conditionWalkLabel{}, false
+	}
+
+	if reversed {
+		op = reverseConditionOperator(op)
+	}
+
+	return conditionWalkLabel{
+		field:      field,
+		operator:   op,
+		isWildcard: isWildcard,
+		values:     []string{value},
+	}, true
+}
+
+func toggleReverse(reversed, current bool) bool {
+	return reversed != current
+}
+
+func reverseConditionOperator(op string) string {
+	switch op {
+	case metadata.ConditionEqual:
+		return metadata.ConditionNotEqual
+	case metadata.ConditionNotEqual:
+		return metadata.ConditionEqual
+	case metadata.ConditionContains:
+		return metadata.ConditionNotContains
+	case metadata.ConditionNotContains:
+		return metadata.ConditionContains
+	case metadata.ConditionRegEqual:
+		return metadata.ConditionNotRegEqual
+	case metadata.ConditionNotRegEqual:
+		return metadata.ConditionRegEqual
+	default:
+		return op
+	}
+}
+
+func normalizeWildcardConditionValue(value string) string {
+	chars := []rune(value)
+	var builder strings.Builder
+	for i := 0; i < len(chars); i++ {
+		if chars[i] == '\\' && i+1 < len(chars) {
+			next := chars[i+1]
+			switch next {
+			case '*', '?', '\\':
+				builder.WriteRune('\\')
+				builder.WriteRune(next)
+			default:
+				builder.WriteRune(next)
+			}
+			i++
+			continue
+		}
+		builder.WriteRune(chars[i])
+	}
+	return builder.String()
 }

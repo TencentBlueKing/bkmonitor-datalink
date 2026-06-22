@@ -52,7 +52,7 @@ func RegisterTaskOutput(taskID string, config common.ConfigNamespace) error {
 	}
 	taskRegistry[taskID] = configHash
 
-	_, ok := taskRegistry[configHash]
+	_, ok := outputRegistry[configHash]
 
 	if ok {
 		return nil
@@ -75,6 +75,31 @@ func RegisterTaskOutput(taskID string, config common.ConfigNamespace) error {
 	}
 
 	return nil
+}
+
+// DeregisterTaskOutput 按任务ID反注册发送配置，当没有任务引用该配置时关闭对应的客户端连接
+func DeregisterTaskOutput(taskID string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	configHash, ok := taskRegistry[taskID]
+	if !ok {
+		return
+	}
+	delete(taskRegistry, taskID)
+
+	for _, hash := range taskRegistry {
+		if hash == configHash {
+			return
+		}
+	}
+
+	if out, ok := outputRegistry[configHash]; ok {
+		if out.client != nil {
+			_ = out.client.Close()
+		}
+		delete(outputRegistry, configHash)
+	}
 }
 
 // LoadOutputClient 根据任务发送配置的哈希值，获取发送客户端对象
@@ -114,9 +139,23 @@ func LoadOutputClient(
 		networkClient, ok := outClient.(outputs.NetworkClient)
 
 		if ok {
-			// 如果 output 实现了 NetworkClient 则需要调用其 Connect 接口
-			if err = networkClient.Connect(); err != nil {
-				return nil, fmt.Errorf("failed to connect to %s: %v", out.config.Name(), err)
+			connectDone := make(chan error, 1)
+			go func() {
+				connectDone <- networkClient.Connect()
+			}()
+
+			select {
+			case err = <-connectDone:
+				if err != nil {
+					_ = outClient.Close()
+					return nil, fmt.Errorf("failed to connect to %s: %v", out.config.Name(), err)
+				}
+			case <-time.After(30 * time.Second):
+				go func() {
+					<-connectDone
+					_ = outClient.Close()
+				}()
+				return nil, fmt.Errorf("connect to %s timed out after 30s", out.config.Name())
 			}
 		}
 		out.client = outClient
@@ -177,8 +216,8 @@ func GroupEventsByOutput(events []beat.Event) map[string][]beat.Event {
 // CloseOutputClients 关闭所有已初始化的 Output 客户端连接
 func CloseOutputClients() {
 
-	mutex.RLock()
-	defer mutex.RUnlock()
+	mutex.Lock()
+	defer mutex.Unlock()
 
 	for _, out := range outputRegistry {
 		if out.client == nil {

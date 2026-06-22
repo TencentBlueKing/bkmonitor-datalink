@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -246,6 +247,90 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
+		},
+		"结构化正则普通文本补齐为包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
+		},
+		"结构化正则顶层或表达式按分支补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(.*foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则顶层或表达式保留分支锚点语义": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则前缀锚点改写为整值前缀匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"TypeError.*"}}}}`,
+		},
+		"结构化正则不包含前缀形式改写为反向正则": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化正则不包含前缀形式只作用于当前 value": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*foo).*", "bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*foo.*"}}}}},{"regexp":{"keyword":{"value":".*bar.*"}}}]}}}`,
+		},
+		"结构化反向正则不包含前缀形式避免双重取反": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionNotRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}}}`,
 		},
 		"multiple nested fields in same condition group": {
 			conditions: metadata.AllConditions{
@@ -863,6 +948,23 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
+		"aggregate copy preserves without with window": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Without:    true,
+					Window:     time.Hour,
+					TimeZone:   "Asia/Shanghai",
+				},
+			}.Copy(),
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
 		"aggregate 1h2m": {
 			timeField: metadata.TimeField{
 				Name: "time",
@@ -1298,6 +1400,267 @@ func TestBuildQuery(t *testing.T) {
 	}
 }
 
+func TestFormatFactory_AggIncludeValuesSkipsNegatedQueryStringValues(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"result", "game_ret"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"game_ret": {
+				"aggregations": {
+					"result": {
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "_index"
+								}
+							}
+						},
+						"terms": {
+							"field": "result",
+							"include": ["-3888", "-3999", "-4000"],
+							"missing": " ",
+							"size": 10000
+						}
+					}
+				},
+				"terms": {
+					"field": "game_ret",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+		}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesKeepsImplicitOrSameFieldGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `level:("warn" "error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"level": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "level",
+					"include": ["warn", "error"],
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesKeepsMustModifierInMixedExpression(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `+level:"warn" status:"error"`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level", "status"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"status": {
+				"aggregations": {
+					"level": {
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "_index"
+								}
+							}
+						},
+						"terms": {
+							"field": "level",
+							"include": ["warn"],
+							"missing": " ",
+							"size": 10000
+						}
+					}
+				},
+				"terms": {
+					"field": "status",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsMustModifierUnderExplicitOr(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `+level:"warn" OR status:"error"`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"level": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "level",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsOptionalPositiveLeafFromNegatedMixedGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(foo:"x" AND NOT status:"error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"status"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"status": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "status",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
 func TestFactory_Agg(t *testing.T) {
 	testCases := map[string]struct {
 		aggInfoList []any
@@ -1672,9 +2035,9 @@ func TestFormatFactory_Orders(t *testing.T) {
 	}
 
 	for name, c := range map[string]struct {
-		timeField    metadata.TimeField
-		orders       metadata.Orders
-		expected     metadata.Orders
+		timeField metadata.TimeField
+		orders    metadata.Orders
+		expected  metadata.Orders
 	}{
 		"time field uses timeField.Type as unmapped_type": {
 			timeField: metadata.TimeField{
@@ -1746,5 +2109,211 @@ func TestFormatFactory_Orders(t *testing.T) {
 			got := fact.Orders()
 			assert.Equal(t, c.expected, got)
 		})
+	}
+}
+
+func TestFormatFactory_SetData(t *testing.T) {
+	ctx := context.Background()
+
+	for name, c := range map[string]struct {
+		source       map[string]any
+		expectedData map[string]any
+	}{
+		// 还原场景：直查 ES 的 _source 含嵌套 body，叶子为 {}；
+		// SetData 经 mapData 拍平后应保留带点路径，否则前端经 uq 看不到 body。
+		"preserves body with empty object leaves": {
+			source: map[string]any{
+				"source": "skill_rating",
+				"meta": map[string]any{
+					"Reason":    "MatchmakingDataChanged",
+					"game_mode": "mode10v10",
+				},
+				"body": map[string]any{
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+						"98456436-466c600000d": map[string]any{},
+					},
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+				},
+			},
+			expectedData: map[string]any{
+				"source":         "skill_rating",
+				"meta.Reason":    "MatchmakingDataChanged",
+				"meta.game_mode": "mode10v10",
+				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
+				"body.old_matchmaking_data.98456436-466c600000d": map[string]any{},
+				"body.new_matchmaking_data.76346346-466c600000e": map[string]any{},
+			},
+		},
+		"preserves completely empty nested object": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{},
+				},
+			},
+			expectedData: map[string]any{
+				"x.y": map[string]any{},
+			},
+		},
+		"flattens partial empty nested object with scalar": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{},
+					"z": 1,
+				},
+			},
+			expectedData: map[string]any{
+				"x.y": map[string]any{},
+				"x.z": 1,
+			},
+		},
+		"keeps flattened leaf when scalar exists": {
+			source: map[string]any{
+				"body": map[string]any{
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{
+							"score": 99,
+						},
+					},
+				},
+			},
+			expectedData: map[string]any{
+				"body.new_matchmaking_data.76346346-466c600000e.score": 99,
+			},
+		},
+		"mixed nested fallback and flatten": {
+			source: map[string]any{
+				"body": map[string]any{
+					"region": "ap-sh",
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+					"new_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{
+							"score": 100,
+						},
+					},
+				},
+			},
+			expectedData: map[string]any{
+				"body.region": "ap-sh",
+				"body.old_matchmaking_data.76346346-466c600000e":       map[string]any{},
+				"body.new_matchmaking_data.76346346-466c600000e.score": 100,
+			},
+		},
+		"flattens deeply mixed levels": {
+			source: map[string]any{
+				"x": map[string]any{
+					"y": map[string]any{
+						"empty": map[string]any{},
+						"z": map[string]any{
+							"name": "leaf",
+							"n":    stdjson.Number("42"),
+						},
+					},
+					"enabled": true,
+				},
+			},
+			expectedData: map[string]any{
+				"x.y.empty":  map[string]any{},
+				"x.y.z.name": "leaf",
+				"x.y.z.n":    42,
+				"x.enabled":  true,
+			},
+		},
+		"keeps null empty array nested array and scalar values": {
+			source: map[string]any{
+				"nil_value": nil,
+				"empty_arr": []any{},
+				"arr": []any{
+					map[string]any{
+						"k":     stdjson.Number("7"),
+						"empty": map[string]any{},
+					},
+					"text",
+				},
+				"obj": map[string]any{
+					"number": stdjson.Number("3.14"),
+					"flag":   false,
+					"empty":  map[string]any{},
+				},
+			},
+			expectedData: map[string]any{
+				"nil_value": nil,
+				"empty_arr": []any{},
+				"arr": []any{
+					map[string]any{
+						"k":     7,
+						"empty": map[string]any{},
+					},
+					"text",
+				},
+				"obj.number": 3.14,
+				"obj.flag":   false,
+				"obj.empty":  map[string]any{},
+			},
+		},
+		// 精度回归：空对象分支与 json.Number 同时存在时，
+		// 大整数仍应经 precision.ProcessValue 处理为 uint，避免精度丢失。
+		"preserves big number alongside empty object": {
+			source: map[string]any{
+				"body": map[string]any{
+					"stats": map[string]any{
+						// 9223372036854775808 = math.MaxInt64 + 1，超出 int64 范围
+						"trace_id": stdjson.Number("9223372036854775808"),
+					},
+					"old_matchmaking_data": map[string]any{
+						"76346346-466c600000e": map[string]any{},
+					},
+				},
+			},
+			expectedData: map[string]any{
+				"body.stats.trace_id":                            uint(9223372036854775808),
+				"body.old_matchmaking_data.76346346-466c600000e": map[string]any{},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fact := NewFormatFactory(ctx)
+			fact.SetData(c.source)
+
+			assert.Equal(t, c.expectedData, fact.data)
+		})
+	}
+}
+
+func BenchmarkFormatFactory_SetData_LargeNestedObject(b *testing.B) {
+	ctx := context.Background()
+	source := map[string]any{
+		"source": "benchmark",
+		"body":   make(map[string]any, 1024),
+	}
+
+	body := source["body"].(map[string]any)
+	for i := 0; i < 1024; i++ {
+		body[fmt.Sprintf("entity_%04d", i)] = map[string]any{
+			"score":  stdjson.Number(fmt.Sprintf("%d", i)),
+			"active": i%2 == 0,
+			"empty":  map[string]any{},
+			"tags": []any{
+				stdjson.Number(fmt.Sprintf("%d", i)),
+				map[string]any{"nested_empty": map[string]any{}},
+			},
+			"deep": map[string]any{
+				"level_1": map[string]any{
+					"level_2": map[string]any{
+						"value": stdjson.Number(fmt.Sprintf("%d.5", i)),
+					},
+				},
+			},
+		}
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		fact := NewFormatFactory(ctx)
+		fact.SetData(source)
 	}
 }

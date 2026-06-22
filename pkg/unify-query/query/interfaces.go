@@ -11,12 +11,15 @@ package query
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
+
+const StorageClusterRecordOverlap = time.Hour
 
 type Filter map[string]string
 
@@ -26,6 +29,22 @@ type Record struct {
 }
 
 type StorageClusterRecords []Record
+
+type StorageIDRange struct {
+	StorageID  string
+	Start      time.Time
+	End        time.Time
+	QueryStart time.Time
+	QueryEnd   time.Time
+}
+
+func (r StorageIDRange) IsZero() bool {
+	return r.Start.IsZero() || r.End.IsZero() || !r.Start.Before(r.End)
+}
+
+func (r StorageIDRange) QueryIsZero() bool {
+	return r.QueryStart.IsZero() || r.QueryEnd.IsZero() || !r.QueryStart.Before(r.QueryEnd)
+}
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
@@ -99,4 +118,102 @@ func (z *TsDBV2) GetStorageIDs(start, end time.Time) []string {
 	}
 
 	return storageIDSet.ToArray()
+}
+
+// GetStorageIDRanges 通过查询时间获取存储 ID 以及该存储在本次查询中的有效时间段。
+func (z *TsDBV2) GetStorageIDRanges(start, end time.Time) []StorageIDRange {
+	return z.GetStorageIDRangesWithOverlap(start, end, 0)
+}
+
+// GetStorageIDRangesWithOverlap 通过查询时间和额外回看窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
+func (z *TsDBV2) GetStorageIDRangesWithOverlap(start, end time.Time, extraOverlap time.Duration) []StorageIDRange {
+	return z.GetStorageIDRangesWithDirectionalOverlap(start, end, extraOverlap, 0)
+}
+
+// GetStorageIDRangesWithDirectionalOverlap 通过查询时间和前后方向的额外窗口获取存储 ID 以及该存储在本次查询中的有效时间段。
+func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, backwardOverlap, forwardOverlap time.Duration) []StorageIDRange {
+	// 没有迁移记录时只返回 storage_id，不填时间范围，避免普通单路由查询覆盖原有 step hints。
+	if len(z.StorageClusterRecords) == 0 {
+		return []StorageIDRange{
+			{
+				StorageID: z.StorageID,
+			},
+		}
+	}
+
+	records := append(StorageClusterRecords{}, z.StorageClusterRecords...)
+	sort.SliceStable(records, func(i, j int) bool {
+		return records[i].EnableTime > records[j].EnableTime
+	})
+
+	ranges := make([]StorageIDRange, 0, len(records))
+	// query overlap 用于决定需要查询哪些 storage：默认保留迁移前后 1h 重叠，
+	// 当 PromQL range selector / offset 需要更大窗口时，按方向扩展，避免旧/新 storage 在 route 选择阶段被漏掉。
+	backwardQueryOverlap := StorageClusterRecordOverlap
+	if backwardOverlap > backwardQueryOverlap {
+		backwardQueryOverlap = backwardOverlap
+	}
+	forwardQueryOverlap := StorageClusterRecordOverlap
+	if forwardOverlap > forwardQueryOverlap {
+		forwardQueryOverlap = forwardOverlap
+	}
+	checkStart := start.Add(-backwardQueryOverlap)
+	checkEnd := end.Add(forwardQueryOverlap)
+
+	// routeCheckStart 用于计算 route 生效权重范围：固定 1h 迁移重叠只负责多查数据，
+	// 不参与权重；只有 PromQL 额外窗口真实覆盖到的 route 才需要参与后续 merge 权重。
+	routeCheckStart := start
+	if backwardOverlap > 0 {
+		routeCheckStart = start.Add(-backwardOverlap)
+	}
+	routeCheckEnd := end
+	if forwardOverlap > 0 {
+		routeCheckEnd = end.Add(forwardOverlap)
+	}
+	// 遍历 storageClusterRecords 记录，按照开启时间倒序
+	for i, record := range records {
+		recordStart := time.Unix(record.EnableTime, 0)
+		recordEnd := checkEnd
+		if i > 0 {
+			// 倒序列表中，上一条记录是更新的 storage 生效点，也就是当前 storage 的结束时间。
+			recordEnd = time.Unix(records[i-1].EnableTime, 0)
+		}
+		// checkStart/checkEnd 已经保留迁移前后 1h 重叠，以及 PromQL range/lookback 需要的额外回看窗口；
+		// 这里不能再次扩展 route 边界，否则会把更远的相邻 storage 也选进来。
+		queryStart := maxTime(checkStart, recordStart)
+		queryEnd := minTime(checkEnd, recordEnd)
+		if !queryStart.Before(queryEnd) {
+			continue
+		}
+
+		// 权重范围只纳入用户查询窗口和 PromQL 额外回看窗口真实命中的 route 区间，避免固定 1h 迁移查询重叠影响权重。
+		routeStart := maxTime(routeCheckStart, recordStart)
+		routeEnd := minTime(routeCheckEnd, recordEnd)
+		storageRange := StorageIDRange{
+			StorageID:  record.StorageID,
+			QueryStart: queryStart,
+			QueryEnd:   queryEnd,
+		}
+		if routeStart.Before(routeEnd) {
+			storageRange.Start = routeStart
+			storageRange.End = routeEnd
+		}
+		ranges = append(ranges, storageRange)
+	}
+
+	return ranges
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

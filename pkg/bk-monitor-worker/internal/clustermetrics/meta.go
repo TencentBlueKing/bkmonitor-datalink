@@ -34,7 +34,7 @@ type MetaClusterMetrics struct {
 	Metrics []ClusterMetric `yaml:"metrics"`
 }
 
-type EsMetric struct {
+type MetricData struct {
 	Metrics   map[string]float64 `json:"metrics"`
 	Target    string             `json:"target"`
 	Dimension map[string]any     `json:"dimension"`
@@ -42,9 +42,9 @@ type EsMetric struct {
 }
 
 type CustomReportData struct {
-	DataId      int         `json:"data_id"`
-	AccessToken string      `json:"access_token"`
-	Data        []*EsMetric `json:"data"`
+	DataId      int           `json:"data_id"`
+	AccessToken string        `json:"access_token"`
+	Data        []*MetricData `json:"data"`
 }
 
 func (cm *ClusterMetric) GetBkmTags() []string {

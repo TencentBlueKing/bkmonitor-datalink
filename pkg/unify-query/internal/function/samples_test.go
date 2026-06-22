@@ -107,7 +107,13 @@ func TestMergeSamples(t *testing.T) {
 		},
 	}, t6)
 
-	t8 := MergeSamplesWithUnionAndSort(t1, t2)
+	t7 := MergeSamplesWithFuncAndSort(Mean)(t1, t2)
+	assert.Equal(t, t6, t7)
+
+	t8 := MergeSamplesWithFuncAndSort(AvgOT)(t1, t2)
+	assert.Equal(t, t6, t8)
+
+	t9 := MergeSamplesWithUnionAndSort(t1, t2)
 	assert.Equal(t, []prompb.Sample{
 		{
 			Timestamp: 1734462719000,
@@ -129,5 +135,5 @@ func TestMergeSamples(t *testing.T) {
 			Timestamp: 1734462839000,
 			Value:     5,
 		},
-	}, t8)
+	}, t9)
 }

@@ -420,21 +420,22 @@ func HandlerSeries(c *gin.Context) {
 		_ = p.Submit(func() {
 			defer wg.Done()
 
+			seriesQuery := *qry
 			if params.Limit > 0 && len(data.Series) > params.Limit {
 				return
 			}
 
 			// 将用户指定的 keys 传递给 query.Source，让底层存储只查询指定字段
 			if len(params.Keys) > 0 {
-				qry.Source = params.Keys
+				seriesQuery.Source = params.Keys
 			}
 
-			instance := prometheus.GetTsDbInstance(ctx, qry)
+			instance := prometheus.GetTsDbInstance(ctx, &seriesQuery)
 			if instance == nil {
 				return
 			}
 
-			res, err := instance.QuerySeries(ctx, qry, qb.Start, qb.End)
+			res, err := instance.QuerySeries(ctx, &seriesQuery, qb.Start, qb.End)
 			if err != nil {
 				return
 			}
@@ -514,12 +515,10 @@ func HandlerLabelValues(c *gin.Context) {
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
 	defer func() {
+		span.End(&err)
 		if err != nil {
 			resp.failed(ctx, err)
-			return
 		}
-
-		span.End(&err)
 	}()
 
 	labelName := c.Param("label_name")
@@ -565,7 +564,7 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
+	instance, stmt, _, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
 	}
@@ -670,8 +669,6 @@ func HandlerFieldMap(c *gin.Context) {
 				return
 			}
 
-			span.Set(fmt.Sprintf("field-map-length-%s", qry.TableUUID()), len(res))
-
 			for k, v := range res {
 				lock.Lock()
 				if _, ok := dataMap[k]; !ok {
@@ -712,13 +709,14 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 		SpaceUid: user.SpaceUID,
 		QueryList: []*structured.Query{
 			{
-				DataSource:    params.DataSource,
-				TableID:       params.TableID,
-				FieldName:     params.Metric,
-				IsRegexp:      params.IsRegexp,
-				Conditions:    params.Conditions,
-				Limit:         params.Limit,
-				ReferenceName: metadata.DefaultReferenceName,
+				DataSource:        params.DataSource,
+				TableID:           params.TableID,
+				FieldName:         params.Metric,
+				IsRegexp:          params.IsRegexp,
+				Conditions:        params.Conditions,
+				TableIDConditions: params.TableIDConditions,
+				Limit:             params.Limit,
+				ReferenceName:     metadata.DefaultReferenceName,
 			},
 		},
 		MetricMerge: metadata.DefaultReferenceName,

@@ -207,6 +207,16 @@ processor:
               - "resource.resource_key3"
               - "resource.resource_key4"
 `
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsStringKeyVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+	}
+	prepareAttrs := func(attrs pcommon.Map) {
+		attrs.UpsertString(resourceKey1, "key1")
+		attrs.UpsertString(resourceKey2, "key2")
+		attrs.UpsertString(resourceKey3, "key3")
+		attrs.UpsertString(resourceKey4, "key4")
+	}
+
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		record := define.Record{
@@ -215,8 +225,31 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		attrs := testkits.FirstSpanAttrs(record.Data)
-		testkits.AssertAttrsStringKeyVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
+	})
+
+	t.Run("metrics", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       makeMetricsRecord(1, "string"),
+		}
+
+		prepareAttrs(testkits.FirstMetricAttrs(record.Data))
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       makeLogsRecord(10, 10, "string"),
+		}
+
+		prepareAttrs(testkits.FirstLogRecordAttrs(record.Data))
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -924,6 +957,8 @@ processor:
 		// 修改原始值以包含前缀和后缀
 		attrs := testkits.FirstSpanAttrs(record.Data)
 		attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+		attrs.UpsertString("service.namespace", "Dev")
+		attrs.UpsertString("net.host.ip", "127.0.0.1")
 
 		testkits.MustProcess(t, factory, record)
 

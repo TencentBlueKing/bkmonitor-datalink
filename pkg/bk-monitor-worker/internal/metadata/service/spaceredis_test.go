@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	gomonkey "github.com/agiledragon/gomonkey/v2"
 	miniredis "github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/jinzhu/gorm"
@@ -1145,7 +1147,7 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 	assert.NoError(t, dsRtObj1.Create(db))
 
 	spaceType, spaceId := "bksaas", "demo"
-	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId, nil)
+	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(data))
 }
@@ -1519,17 +1521,19 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	// 初始化数据库
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
 	db := mysql.GetDBSession().DB
 	// 准备测试数据
 	tableID := "bklog.test_rt"
 	storageClusterID := uint(1)
 	dataLabel := "test_label"
+	labels := json.RawMessage(`{"scene":"entity"}`)
 
-	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel}
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel, Labels: labels}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
 	assert.NoError(t, rtObj1.Create(db))
-
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
 	// 创建DorisStorage记录
 	dorisStorages := []storage.DorisStorage{
@@ -1542,7 +1546,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 		},
 	}
 	for _, dorisStorage := range dorisStorages {
-		db.Delete(&storage.ESStorage{}, "table_id = ?", dorisStorage.TableID)
+		db.Delete(&storage.DorisStorage{}, "table_id = ?", dorisStorage.TableID)
 		err := db.Create(&dorisStorage).Error
 		assert.NoError(t, err, "Failed to insert DorisStorage")
 	}
@@ -1578,7 +1582,268 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	// 执行测试方法
 	pusher := NewSpacePusher()
 	err := pusher.PushDorisTableIdDetail([]string{tableID}, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	detailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID)
+	var detail map[string]any
+	err = json.Unmarshal([]byte(detailStr), &detail)
+	assert.NoError(t, err, "doris detail should be valid JSON")
+	assert.Equal(t, "bklog_test_rt_bkbase", detail["db"])
+	assert.Equal(t, "test_label", detail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "entity"}, detail["labels"])
+	assert.Equal(t, map[string]any{"pod_id": "__ext.pod_id", "pod_name": "__ext.pod_name"}, detail["field_alias"])
+}
+
+func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	virtualTableID := "bklog.virtual_doris"
+	currentTableID := "bklog.current_doris"
+	originTableID := "bklog.real_doris"
+	missingOriginTableID := "bklog.missing_origin_doris"
+	virtualDataLabel := "current_virtual_label"
+	currentDataLabel := "current_table_label"
+	originDataLabel := "origin_label"
+
+	for _, tableID := range []string{virtualTableID, currentTableID, originTableID, missingOriginTableID} {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+		db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
+		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ?", tableID)
+	}
+
+	resultTables := []resulttable.ResultTable{
+		{TableId: virtualTableID, IsDeleted: false, IsEnable: true, DataLabel: &virtualDataLabel, Labels: json.RawMessage(`{"scene":"virtual"}`)},
+		{TableId: currentTableID, IsDeleted: false, IsEnable: true, DataLabel: &currentDataLabel, Labels: json.RawMessage(`{"scene":"current"}`)},
+		{TableId: originTableID, IsDeleted: false, IsEnable: true, DataLabel: &originDataLabel, Labels: json.RawMessage(`{"scene":"origin"}`)},
+		{TableId: missingOriginTableID, IsDeleted: false, IsEnable: true, Labels: json.RawMessage(`{"scene":"missing"}`)},
+	}
+	for _, rt := range resultTables {
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	dorisStorages := []storage.DorisStorage{
+		{TableID: virtualTableID, BkbaseTableID: "", OriginTableId: originTableID, SourceType: "log"},
+		{TableID: currentTableID, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID, SourceType: "log"},
+		{TableID: originTableID, BkbaseTableID: "bklog_real_doris", SourceType: "log"},
+		{TableID: missingOriginTableID, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist", SourceType: "log"},
+	}
+	for _, dorisStorage := range dorisStorages {
+		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+	}
+
+	fieldAlias := resulttable.ESFieldQueryAliasOption{
+		TableID:    virtualTableID,
+		FieldPath:  "__ext.pod_name",
+		PathType:   "keyword",
+		QueryAlias: "pod_name",
+		IsDeleted:  false,
+	}
+	assert.NoError(t, db.Create(&fieldAlias).Error, "Failed to insert ESFieldQueryAliasOption")
+
+	err := NewSpacePusher().PushDorisTableIdDetail([]string{virtualTableID, currentTableID, missingOriginTableID}, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	virtualDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, virtualTableID)
+	var virtualDetail map[string]any
+	err = json.Unmarshal([]byte(virtualDetailStr), &virtualDetail)
+	assert.NoError(t, err, "virtual doris detail should be valid JSON")
+	assert.Equal(t, "bklog_real_doris", virtualDetail["db"])
+	assert.Equal(t, "current_virtual_label", virtualDetail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "virtual"}, virtualDetail["labels"])
+	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, virtualDetail["field_alias"])
+
+	currentDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, currentTableID)
+	var currentDetail map[string]any
+	err = json.Unmarshal([]byte(currentDetailStr), &currentDetail)
+	assert.NoError(t, err, "current doris detail should be valid JSON")
+	assert.Equal(t, "bklog_current_doris", currentDetail["db"])
+	assert.Equal(t, "current_table_label", currentDetail["data_label"])
+	assert.Equal(t, map[string]any{"scene": "current"}, currentDetail["labels"])
+
+	missingOriginDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, missingOriginTableID)
+	var missingOriginDetail map[string]any
+	err = json.Unmarshal([]byte(missingOriginDetailStr), &missingOriginDetail)
+	assert.NoError(t, err, "missing origin doris detail should be valid JSON")
+	assert.Equal(t, "bklog_missing_origin_fallback", missingOriginDetail["db"])
+	assert.Equal(t, map[string]any{"scene": "missing"}, missingOriginDetail["labels"])
+}
+
+func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ESFieldQueryAliasOption{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_alias_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		record := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&record).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	aliasMap, err := NewSpacePusher().getFieldAliasMap(tableIDs)
+	assert.NoError(t, err, "getFieldAliasMap should not return an error")
+	assert.Len(t, aliasMap, tableCount, "field alias map should include records from all chunks")
+	assert.Equal(t, "__ext.field_000", aliasMap[tableIDs[0]]["alias_000"])
+	lastFieldPath := fmt.Sprintf("__ext.field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, aliasMap[tableIDs[tableCount-1]][lastQueryAlias])
+}
+
+func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.ESStorage{}, &resulttable.ESFieldQueryAliasOption{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_es_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ESStorage{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTableOption{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ClusterRecord{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		rt := resulttable.ResultTable{
+			TableId:    tableID,
+			IsDeleted:  false,
+			IsEnable:   true,
+			BkTenantId: tenant.DefaultTenantId,
+		}
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+		esStorage := storage.ESStorage{
+			TableID:          tableID,
+			StorageClusterID: uint(i + 1),
+			SourceType:       "log",
+			IndexSet:         fmt.Sprintf("index_%03d", i),
+			NeedCreateIndex:  true,
+		}
+		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
+
+		aliasRecord := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.es_field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("es_alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	err := NewSpacePusher().PushEsTableIdDetail(tableIDs, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+
+	details := client.HGetAll(cfg.ResultTableDetailKey)
+	assert.Len(t, details, tableCount, "result_table_detail should include ES records from all chunks")
+
+	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
+	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
+	assert.NotEmpty(t, firstDetailStr, "first chunk ES table detail should be written")
+	assert.NotEmpty(t, lastDetailStr, "last chunk ES table detail should be written")
+
+	var lastDetail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last ES detail should be valid JSON")
+	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
+	assert.True(t, ok, "last ES detail should include field_alias")
+	lastFieldPath := fmt.Sprintf("__ext.es_field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("es_alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
+}
+
+func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	tableCount := cfg.DefaultDBFilterSize + 1
+	tableIDs := make([]string, 0, tableCount)
+	prefix := "pagination_doris_rt_"
+
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.DorisStorage{})
+	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
+
+	for i := 0; i < tableCount; i++ {
+		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
+		tableIDs = append(tableIDs, tableID)
+
+		rt := resulttable.ResultTable{
+			TableId:    tableID,
+			IsDeleted:  false,
+			IsEnable:   true,
+			BkTenantId: tenant.DefaultTenantId,
+		}
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+
+		dorisStorage := storage.DorisStorage{
+			TableID:          tableID,
+			BkbaseTableID:    fmt.Sprintf("bkbase_%03d", i),
+			SourceType:       "log",
+			IndexSet:         fmt.Sprintf("index_%03d", i),
+			TableType:        "primary_table",
+			StorageClusterID: uint(i + 1),
+		}
+		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+
+		aliasRecord := resulttable.ESFieldQueryAliasOption{
+			TableID:    tableID,
+			FieldPath:  fmt.Sprintf("__ext.doris_field_%03d", i),
+			PathType:   "keyword",
+			QueryAlias: fmt.Sprintf("doris_alias_%03d", i),
+			IsDeleted:  false,
+		}
+		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
+
+	err := NewSpacePusher().PushDorisTableIdDetail(tableIDs, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	details := client.HGetAll(cfg.ResultTableDetailKey)
+	assert.Len(t, details, tableCount, "result_table_detail should include Doris records from all chunks")
+
+	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
+	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
+	assert.NotEmpty(t, firstDetailStr, "first chunk Doris table detail should be written")
+	assert.NotEmpty(t, lastDetailStr, "last chunk Doris table detail should be written")
+
+	var lastDetail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last Doris detail should be valid JSON")
+	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
+	assert.True(t, ok, "last Doris detail should include field_alias")
+	lastFieldPath := fmt.Sprintf("__ext.doris_field_%03d", tableCount-1)
+	lastQueryAlias := fmt.Sprintf("doris_alias_%03d", tableCount-1)
+	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
 }
 
 func TestSpacePusher_ComposeData(t *testing.T) {
@@ -1928,48 +2193,87 @@ func TestNormalizeResultTableLabels(t *testing.T) {
 }
 
 func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{})
-
 	tableID1 := "bklog.test_rt_doris_labels"
 	tableID2 := "bklog.test_rt_doris_invalid_labels"
+	tableID3 := "bklog.virtual_doris"
+	tableID4 := "bklog.missing_origin_doris"
+	originTableID := "bklog.real_doris"
 	dataLabel := "test_label"
 	labels1 := json.RawMessage(`{"env":"prod"}`)
 	labels2 := json.RawMessage(`["unexpected"]`)
 
-	resultTables := []resulttable.ResultTable{
-		{
-			TableId:   tableID1,
-			DataLabel: &dataLabel,
-			Labels:    labels1,
-		},
-		{
-			TableId: tableID2,
-			Labels:  labels2,
-		},
-	}
-	for _, rt := range resultTables {
-		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-	}
-
 	spacePusher := SpacePusher{}
 
-	_, detailStr, err := spacePusher.composeDorisTableIdDetail(tableID1, "bklog_test_rt_bkbase", nil)
+	composedTableID, detailStr, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID1, BkbaseTableID: "bklog_test_rt_bkbase"},
+		resultTableDetailMeta{DataLabel: dataLabel, Labels: normalizeResultTableLabels(tableID1, labels1)},
+		nil,
+		nil,
+	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	assert.Equal(t, tableID1, composedTableID, "entity doris detail key should be current table_id")
 	var actualDetail map[string]any
 	err = json.Unmarshal([]byte(detailStr), &actualDetail)
 	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_test_rt_bkbase", actualDetail["db"], "entity doris db should use current bkbase_table_id")
 	assert.Equal(t, map[string]any{"env": "prod"}, actualDetail["labels"], "labels should be object")
 	assert.Equal(t, "test_label", actualDetail["data_label"], "data_label should be preserved")
 
-	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(tableID2, "bklog_test_rt_bkbase", nil)
+	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID2, BkbaseTableID: "bklog_test_rt_bkbase"},
+		resultTableDetailMeta{Labels: normalizeResultTableLabels(tableID2, labels2)},
+		nil,
+		nil,
+	)
 	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
 	var actualDetail2 map[string]any
 	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 	assert.Equal(t, map[string]any{}, actualDetail2["labels"], "non-object labels should fallback to empty map")
+
+	composedTableID3, detailStr3, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "", OriginTableId: originTableID},
+		resultTableDetailMeta{DataLabel: "current_label", Labels: map[string]any{"scene": "virtual"}},
+		map[string]storage.DorisStorage{
+			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
+		},
+		map[string]string{"pod_name": "__ext.pod_name"},
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	assert.Equal(t, tableID3, composedTableID3, "virtual doris detail key should be current table_id")
+	var actualDetail3 map[string]any
+	err = json.Unmarshal([]byte(detailStr3), &actualDetail3)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_real_doris", actualDetail3["db"], "virtual doris db should use origin bkbase_table_id")
+	assert.Equal(t, "current_label", actualDetail3["data_label"], "data_label should come from current result table")
+	assert.Equal(t, map[string]any{"scene": "virtual"}, actualDetail3["labels"], "labels should come from current result table")
+	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, actualDetail3["field_alias"], "field alias should come from current table_id")
+
+	_, detailStr4, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID},
+		resultTableDetailMeta{},
+		map[string]storage.DorisStorage{
+			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
+		},
+		nil,
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail4 map[string]any
+	err = json.Unmarshal([]byte(detailStr4), &actualDetail4)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_current_doris", actualDetail4["db"], "current bkbase_table_id should be preferred when present")
+
+	_, detailStr5, err := spacePusher.composeDorisTableIdDetail(
+		storage.DorisStorage{TableID: tableID4, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist"},
+		resultTableDetailMeta{},
+		map[string]storage.DorisStorage{},
+		nil,
+	)
+	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
+	var actualDetail5 map[string]any
+	err = json.Unmarshal([]byte(detailStr5), &actualDetail5)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, "bklog_missing_origin_fallback", actualDetail5["db"], "missing origin should fallback to current bkbase_table_id")
 }
 
 func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
@@ -2130,6 +2434,126 @@ func TestSpacePusher_PushTableIdDetailWithRecordRuleOverride(t *testing.T) {
 	assert.Equal(t, []any{"metric_from_rule", "metric_from_rule_2"}, detail["fields"], "record rule metrics should override rt fields")
 }
 
+func TestSpacePusher_ComposeRecordRuleTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRule{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleTableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"record_rule_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
+func TestSpacePusher_ComposeRecordRuleV4TableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	recordRuleList := []recordrule.RecordRuleV4{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "record_rule_v4_rt",
+		},
+	}
+
+	data := pusher.ComposeRecordRuleV4TableIdValuesBySpace(recordRuleList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"record_rule_v4_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+	}, data)
+}
+
+func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	shortLinkRecords := []space.VMShortLinkRecord{
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkcc",
+			SpaceId:    "1001",
+			TableId:    "vm_short_link_rt",
+		},
+		{
+			BkTenantId: "system",
+			SpaceType:  "bkci",
+			SpaceId:    "project_a",
+			TableId:    "global_vm_short_link_rt",
+			IsGlobal:   true,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "configured_global_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"space_type":"all","filter_key":"project_id","filter_value":"space_id"}`,
+		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "partial_config_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"filter_key":"custom_biz"}`,
+		},
+	}
+	spaceList := []space.Space{
+		{Id: 100, BkTenantId: "system", SpaceTypeId: "bkcc", SpaceId: "1001"},
+		{Id: 101, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_a"},
+		{Id: 102, BkTenantId: "system", SpaceTypeId: "bkci", SpaceId: "project_b"},
+		{Id: 103, BkTenantId: "other", SpaceTypeId: "bkci", SpaceId: "project_c"},
+	}
+
+	data := pusher.ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords, spaceList)
+
+	assert.Equal(t, SpaceTableIdValuesBySpace{
+		SpaceRouteKeyWithTenant("system", "bkcc", "1001"): {
+			"vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "1001"}},
+			},
+		},
+		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+		},
+		SpaceRouteKeyWithTenant("system", "bkci", "project_b"): {
+			"global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"bk_biz_id": "-102"}},
+			},
+			"configured_global_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"project_id": "project_b"}},
+			},
+			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"custom_biz": "-102"}},
+			},
+		},
+	}, data)
+}
+
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 	db := mysql.GetDBSession().DB
@@ -2259,7 +2683,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", nil)
+	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2289,7 +2713,7 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project")
+	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
@@ -2328,11 +2752,131 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", nil)
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", SpaceTableIdValues{})
 	if err != nil {
 		return
 	}
 	println(isPublish)
+}
+
+func TestSpacePusher_pushSpaceTableIdsReturnOnComposeError(t *testing.T) {
+	setupStorageRedisForTest(t)
+
+	tests := []struct {
+		name      string
+		spaceType string
+		spaceId   string
+		push      func(*SpacePusher, string, string, string) (bool, error)
+		patch     func(*gomonkey.Patches, *SpacePusher, error)
+	}{
+		{
+			name:      "bkcc compose es error",
+			spaceType: models.SpaceTypeBKCC,
+			spaceId:   "fail_fast_bkcc",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeData", func(_ *SpacePusher, bkTenantId string, spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]any, options *optionx.Options) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"metric.rt": {}}, nil
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeRelatedBkciTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+		{
+			name:      "bkci compose cluster error",
+			spaceType: models.SpaceTypeBKCI,
+			spaceId:   "fail_fast_bkci",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeBcsSpaceBizTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"biz.rt": {}}, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBcsSpaceClusterTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciLevelTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciOtherTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBkciCrossTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeAllTypeTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+		{
+			name:      "bksaas compose other error",
+			spaceType: models.SpaceTypeBKSAAS,
+			spaceId:   "fail_fast_bksaas",
+			push: func(pusher *SpacePusher, bkTenantId, spaceType, spaceId string) (bool, error) {
+				return pusher.pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId, SpaceTableIdValues{"prefetched.rt": {}})
+			},
+			patch: func(patches *gomonkey.Patches, target *SpacePusher, expectedErr error) {
+				patches.ApplyPrivateMethod(target, "composeBksaasSpaceClusterTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return map[string]map[string]any{"cluster.rt": {}}, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeBksaasOtherTableIds", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, expectedErr
+				})
+				patches.ApplyMethod(target, "ComposeEsTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyMethod(target, "ComposeDorisTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+				patches.ApplyPrivateMethod(target, "composeAllTypeTableIds", func(_ *SpacePusher, spaceType, spaceId string) (map[string]map[string]any, error) {
+					return nil, nil
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := redis.GetStorageRedisInstance()
+			assert.NoError(t, client.Delete(cfg.SpaceToResultTableKey))
+
+			expectedErr := errors.New("compose failed")
+			patches := gomonkey.NewPatches()
+			var target *SpacePusher
+			tt.patch(patches, target, expectedErr)
+			defer patches.Reset()
+
+			isPublish, err := tt.push(NewSpacePusher(), tenant.DefaultTenantId, tt.spaceType, tt.spaceId)
+
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), expectedErr.Error())
+			}
+			assert.False(t, isPublish)
+
+			redisKey := fmt.Sprintf("%s__%s", tt.spaceType, tt.spaceId)
+			if cfg.EnableMultiTenantMode {
+				redisKey = fmt.Sprintf("%s|%s", redisKey, tenant.DefaultTenantId)
+			}
+			assert.Empty(t, client.HGet(cfg.SpaceToResultTableKey, redisKey))
+		})
+	}
 }
 
 func TestBuildFiltersByUsage(t *testing.T) {
@@ -2458,58 +3002,129 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 	cleanTestData()       // 测试开始前清理数据
 	defer cleanTestData() // 测试结束后清理数据
 
-	// 准备测试用数据
-
 	// 准备 Space 测试数据
+	otherTenantID := "tenant_b"
 	spaceObjs := []space.Space{
 		{
-			SpaceTypeId: "bkci",
+			SpaceTypeId: models.SpaceTypeBKCI,
 			SpaceId:     "test_bkci_space",
 			SpaceName:   "testSpace6",
 			Id:          1050,
+			BkTenantId:  tenant.DefaultTenantId,
 		},
 		{
-			SpaceTypeId: "bksaas",
+			SpaceTypeId: models.SpaceTypeBKSAAS,
 			SpaceId:     "test_bksaas_space",
 			SpaceName:   "testSpace7",
 			Id:          1051,
+			BkTenantId:  tenant.DefaultTenantId,
+		},
+		{
+			SpaceTypeId: models.SpaceTypeBKCC,
+			SpaceId:     "1001",
+			SpaceName:   "testSpace8",
+			Id:          1052,
+			BkTenantId:  tenant.DefaultTenantId,
+		},
+		{
+			SpaceTypeId: models.SpaceTypeBKSAAS,
+			SpaceId:     "test_bksaas_other_tenant",
+			SpaceName:   "testSpace9",
+			Id:          2051,
+			BkTenantId:  otherTenantID,
 		},
 	}
 	insertTestData(t, db, spaceObjs)
 
 	// 准备 ResultTable 测试数据
-	resultTable := resulttable.ResultTable{
-		TableId:        "apm_global.precalculate_storage_1",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:        "apm_global.precalculate_storage_1",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.precalculate_storage_2",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.shared_trace_0002",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_other.shared_trace_0002",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     tenant.DefaultTenantId,
+		},
+		{
+			TableId:        "apm_global.other_tenant_storage",
+			BkBizId:        0,
+			DefaultStorage: models.StorageTypeES,
+			IsDeleted:      false,
+			IsEnable:       true,
+			BkBizIdAlias:   "biz_id",
+			BkTenantId:     otherTenantID,
+		},
 	}
-	err := resultTable.Create(db)
-	assert.NoError(t, err)
+	insertTestData(t, db, resultTables)
 
-	resultTable2 := resulttable.ResultTable{
-		TableId:        "apm_global.precalculate_storage_2",
-		BkBizId:        0,
-		DefaultStorage: models.StorageTypeES,
-		IsDeleted:      false,
-		IsEnable:       true,
-		BkBizIdAlias:   "biz_id",
+	// 测试 ComposeApmAllTypeTableIdValuesBySpace
+	apmDataBySpace := NewSpacePusher().ComposeApmAllTypeTableIdValuesBySpace(resultTables, spaceObjs)
+	bkciData := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKCI, "test_bkci_space")]
+	expected := map[string]map[string]any{
+		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}},
+		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}},
+		"apm_global.shared_trace_0002":      {"filters": []map[string]any{{"biz_id": "-1050"}}},
 	}
-	err = resultTable2.Create(db)
-	assert.NoError(t, err)
 
-	// 测试 composeApmAllTypeTableIds
-	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
-	expected := map[string]map[string]any(map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1050"}}}})
+	assert.Equal(t, expected, bkciData, "Expected apm_global.* table IDs for bkci space")
+	_, ok := bkciData["apm_global.shared_trace_0002"]
+	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
+	_, ok = bkciData["apm_other.shared_trace_0002"]
+	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
 
-	assert.NoError(t, err)
-	assert.Equal(t, expected, bkciData, "Expected 2 table IDs for bkci space")
+	_, ok = bkciData["apm_global.other_tenant_storage"]
+	assert.False(t, ok, "Expected other tenant table IDs to be excluded")
 
-	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
-	expected = map[string]map[string]any{"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}}}
-	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
+	bksaasData := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKSAAS, "test_bksaas_space")]
+	expected = map[string]map[string]any{
+		"apm_global.precalculate_storage_1": {"filters": []map[string]any{{"biz_id": "-1051"}}},
+		"apm_global.precalculate_storage_2": {"filters": []map[string]any{{"biz_id": "-1051"}}},
+		"apm_global.shared_trace_0002":      {"filters": []map[string]any{{"biz_id": "-1051"}}},
+	}
+	assert.Equal(t, expected, bksaasData, "Expected apm_global.* table IDs for bksaas space")
+	_, ok = bksaasData["apm_global.shared_trace_0002"]
+	assert.True(t, ok, "Expected apm_global.shared_trace_0002 to match the apm_global. prefix")
+	_, ok = bksaasData["apm_other.shared_trace_0002"]
+	assert.False(t, ok, "Expected non apm_global. prefix table IDs to be excluded")
+
+	bkccData, ok := apmDataBySpace[SpaceRouteKeyWithTenant(tenant.DefaultTenantId, models.SpaceTypeBKCC, "1001")]
+	assert.False(t, ok, "Expected bkcc space to be excluded")
+	assert.Nil(t, bkccData)
+
+	otherTenantData := apmDataBySpace[SpaceRouteKeyWithTenant(otherTenantID, models.SpaceTypeBKSAAS, "test_bksaas_other_tenant")]
+	expected = map[string]map[string]any{
+		"apm_global.other_tenant_storage": {"filters": []map[string]any{{"biz_id": "-2051"}}},
+	}
+	assert.Equal(t, expected, otherTenantData, "Expected tenant-scoped apm_global table IDs for bksaas space")
 }
 
 func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {

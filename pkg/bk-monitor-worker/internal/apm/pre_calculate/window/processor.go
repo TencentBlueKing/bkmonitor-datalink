@@ -70,7 +70,6 @@ type Processor struct {
 	dataId string
 	config ProcessorOptions
 
-	dataIdBaseInfo      core.BaseInfo
 	proxy               storage.Backend
 	traceEsQueryLimiter *rate.Limiter
 
@@ -126,7 +125,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 
 	if p.config.enabledInfoCache {
 		// list span data from the cache
-		infoKey := storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId)
+		infoKey := storage.CacheTraceInfoKey.Format(p.baseInfo.BkBizId, p.baseInfo.AppName, event.TraceId)
 		data, err := p.proxy.Query(storage.QueryRequest{Target: storage.Cache, Data: infoKey})
 		if err == nil && data != nil {
 			parseErr := jsonx.Unmarshal(data.([]byte), &spans)
@@ -410,7 +409,7 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Target: storage.Cache,
 			Data: storage.CacheStorageData{
 				DataId: p.dataId,
-				Key:    storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId),
+				Key:    storage.CacheTraceInfoKey.Format(p.baseInfo.BkBizId, p.baseInfo.AppName, event.TraceId),
 				Value:  spanBytes,
 				Ttl:    storage.CacheTraceInfoKey.Ttl,
 			},
@@ -603,7 +602,7 @@ func PodSystemErrorFlowReportEnabled(e bool) ProcessorOption {
 	}
 }
 
-func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
+func NewProcessor(ctx context.Context, dataId string, baseInfo core.BaseInfo, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
 		setter(&opts)
@@ -614,22 +613,24 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 		"[NewProcessor] es query limiter, dataId: %s rate: %d metricReport: %t",
 		dataId, opts.traceEsQueryRate, opts.metricReportEnabled,
 	)
+	traceEsConfig := core.GetMetadataCenter().GetTraceEsConfig(dataId)
 
 	return Processor{
 		ctx:                 ctx,
 		dataId:              dataId,
 		config:              opts,
-		dataIdBaseInfo:      core.GetMetadataCenter().GetBaseInfo(dataId),
 		proxy:               storageProxy,
 		traceEsQueryLimiter: limiter,
 		logger: monitorLogger.With(
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
+			zap.String("bkBizId", baseInfo.BkBizId),
+			zap.String("appName", baseInfo.AppName),
 		),
-		metricProcessor:        newMetricProcessor(ctx, dataId, opts),
-		baseInfo:               core.GetMetadataCenter().GetBaseInfo(dataId),
+		metricProcessor:        newMetricProcessor(ctx, dataId, baseInfo, opts),
+		baseInfo:               baseInfo,
 		indexNameLastUpdate:    time.Now().Add(-24 * time.Hour),
-		traceEsOriginIndexName: core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName,
-		traceEsIndexName:       fmt.Sprintf("%s*", core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName),
+		traceEsOriginIndexName: traceEsConfig.IndexName,
+		traceEsIndexName:       fmt.Sprintf("%s*", traceEsConfig.IndexName),
 	}
 }

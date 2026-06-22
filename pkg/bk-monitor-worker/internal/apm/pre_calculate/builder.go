@@ -348,11 +348,18 @@ type RunInstance struct {
 	config           PrecalculateOption
 	errorReceiveChan chan<- error
 
-	notifier      notifier.Notifier
-	windowHandler window.Operation
-	proxy         *storage.Proxy
+	notifier   notifier.Notifier
+	appBundles []*appBundle
+	proxy      *storage.Proxy
 
 	profileCollector ProfileCollector
+}
+
+type appBundle struct {
+	appKey    core.AppKey
+	spanChan  <-chan []window.StandardSpan
+	operation window.Operation
+	processor window.Processor
 }
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
@@ -389,20 +396,43 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 }
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
-	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
+	baseInfos := core.GetMetadataCenter().ListBaseInfos(p.startInfo.DataId)
+	isShared := core.GetMetadataCenter().IsShared(p.startInfo.DataId)
+	bundles := make([]*appBundle, 0, len(baseInfos))
+	dispatchRoutes := make(map[core.AppKey]chan []window.StandardSpan, len(baseInfos))
+	for _, baseInfo := range baseInfos {
+		var spanChan <-chan []window.StandardSpan
+		if isShared {
+			dispatchChan := make(chan []window.StandardSpan, config.NotifierChanBufferSize)
+			spanChan = dispatchChan
+			dispatchRoutes[baseInfo.AppKey()] = dispatchChan
+		} else {
+			spanChan = messageChan
+		}
 
-	operation := window.Operation{
-		Operator: window.NewDistributiveWindow(
-			p.startInfo.DataId,
-			p.ctx,
-			processor,
-			saveReqChan,
-			p.config.distributiveWindowConfig...,
-		),
+		processor := window.NewProcessor(p.ctx, p.startInfo.DataId, baseInfo, p.proxy, p.config.processorConfig...)
+		operation := window.Operation{
+			Operator: window.NewDistributiveWindow(
+				p.startInfo.DataId,
+				p.ctx,
+				processor,
+				saveReqChan,
+				p.config.distributiveWindowConfig...,
+			),
+		}
+		operation.Run(spanChan, p.errorReceiveChan, p.config.runtimeConfig...)
+		bundles = append(bundles, &appBundle{
+			appKey:    baseInfo.AppKey(),
+			spanChan:  spanChan,
+			operation: operation,
+			processor: processor,
+		})
 	}
-	operation.Run(messageChan, p.errorReceiveChan, p.config.runtimeConfig...)
 
-	p.windowHandler = operation
+	p.appBundles = bundles
+	if isShared {
+		go newDispatcher(p.ctx, p.startInfo.DataId, dispatchRoutes, p.errorReceiveChan).Run(messageChan)
+	}
 }
 
 func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) {
@@ -468,16 +498,30 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 		case <-ticker.C:
 			metrics.RecordApmPreCalcSemaphoreTotal(p.startInfo.DataId, metrics.TaskProcessChan, len(p.notifier.Spans()))
 			metrics.RecordApmPreCalcSemaphoreTotal(
-				p.startInfo.DataId, metrics.WindowProcessEventChan, p.windowHandler.Operator.GetWindowsLength(),
+				p.startInfo.DataId, metrics.WindowProcessEventChan, p.getWindowsLength(),
 			)
 			metrics.RecordApmPreCalcSemaphoreTotal(p.startInfo.DataId, metrics.SaveRequestChan, len(p.proxy.SaveRequest()))
-			p.windowHandler.Operator.RecordTraceAndSpanCountMetric()
+			p.recordTraceAndSpanCountMetric()
 
 		case <-p.ctx.Done():
 			apmLogger.Infof("[RecordSemaphoreAcquired] receive context done, stopped")
 			ticker.Stop()
 			return
 		}
+	}
+}
+
+func (p *RunInstance) getWindowsLength() int {
+	res := 0
+	for _, bundle := range p.appBundles {
+		res += bundle.operation.Operator.GetWindowsLength()
+	}
+	return res
+}
+
+func (p *RunInstance) recordTraceAndSpanCountMetric() {
+	for _, bundle := range p.appBundles {
+		bundle.operation.Operator.RecordTraceAndSpanCountMetric()
 	}
 }
 

@@ -39,39 +39,45 @@ var statMicMsgHead = statf.StatMicMsgHead{
 }
 
 var rpcClientMetricDims = map[string]string{
-	resourceTagScopeName:   "client_metrics",
-	resourceTagRPCSystem:   "tars",
-	resourceTagServiceName: "TestApp.HelloGo",
-	resourceTagInstance:    "127.0.0.1",
-	resourceTagVersion:     "1.1",
-	metricTagCallerServer:  "TestApp.HelloGo",
-	metricTagCallerService: "TestApp.HelloGo",
-	metricTagCallerIp:      "127.0.0.1",
-	metricTagCalleeServer:  "OtherTestApp.HiGo",
-	metricTagCalleeService: "OtherTestApp.HiGo",
-	metricTagCalleeIp:      "0.0.0.0",
-	metricTagCalleeMethod:  "Add",
-	metricTagCodeType:      metricTagCodeSuccess,
-	metricTagCode:          "0",
-	define.TokenAppName:    "app1",
+	resourceTagScopeName:    "client_metrics",
+	resourceTagRPCSystem:    "tars",
+	resourceTagServiceName:  "TestApp.HelloGo",
+	resourceTagInstance:     "127.0.0.1",
+	resourceTagVersion:      "1.1",
+	resourceTagRegion:       "",
+	metricTagCallerServer:   "TestApp.HelloGo",
+	metricTagCallerService:  "TestApp.HelloGo",
+	metricTagCallerIp:       "127.0.0.1",
+	metricTagCallerConSetid: "",
+	metricTagCalleeServer:   "OtherTestApp.HiGo",
+	metricTagCalleeService:  "OtherTestApp.HiGo",
+	metricTagCalleeIp:       "0.0.0.0",
+	metricTagCalleeConSetid: "",
+	metricTagCalleeMethod:   "Add",
+	metricTagCodeType:       metricTagCodeSuccess,
+	metricTagCode:           "0",
+	define.TokenAppName:     "app1",
 }
 
 var rpcServerMetricDims = map[string]string{
-	resourceTagScopeName:   "server_metrics",
-	resourceTagRPCSystem:   "tars",
-	resourceTagServiceName: "OtherTestApp.HiGo",
-	resourceTagInstance:    "0.0.0.0",
-	resourceTagVersion:     "1.1",
-	metricTagCallerServer:  "TestApp.HelloGo",
-	metricTagCallerService: "TestApp.HelloGo",
-	metricTagCallerIp:      "127.0.0.1",
-	metricTagCalleeServer:  "OtherTestApp.HiGo",
-	metricTagCalleeService: "OtherTestApp.HiGo",
-	metricTagCalleeIp:      "0.0.0.0",
-	metricTagCalleeMethod:  "Add",
-	metricTagCodeType:      metricTagCodeSuccess,
-	metricTagCode:          "0",
-	define.TokenAppName:    "app1",
+	resourceTagScopeName:    "server_metrics",
+	resourceTagRPCSystem:    "tars",
+	resourceTagServiceName:  "OtherTestApp.HiGo",
+	resourceTagInstance:     "0.0.0.0",
+	resourceTagVersion:      "1.1",
+	resourceTagRegion:       "",
+	metricTagCallerServer:   "TestApp.HelloGo",
+	metricTagCallerService:  "TestApp.HelloGo",
+	metricTagCallerIp:       "127.0.0.1",
+	metricTagCallerConSetid: "",
+	metricTagCalleeServer:   "OtherTestApp.HiGo",
+	metricTagCalleeService:  "OtherTestApp.HiGo",
+	metricTagCalleeIp:       "0.0.0.0",
+	metricTagCalleeConSetid: "",
+	metricTagCalleeMethod:   "Add",
+	metricTagCodeType:       metricTagCodeSuccess,
+	metricTagCode:           "0",
+	define.TokenAppName:     "app1",
 }
 
 func TestSplitAtLastOnce(t *testing.T) {
@@ -93,6 +99,32 @@ func TestSplitAtLastOnce(t *testing.T) {
 			actualLeft, actualRight := splitAtLastOnce(tt.input, tt.separator)
 			assert.Equal(t, tt.expectLeft, actualLeft)
 			assert.Equal(t, tt.expectRight, actualRight)
+		})
+	}
+}
+
+func TestParseTafServiceName(t *testing.T) {
+	tests := []struct {
+		input             string
+		expectServiceName string
+		expectSetId       string
+		expectVersion     string
+	}{
+		{input: "Hello.World", expectServiceName: "Hello.World", expectSetId: "", expectVersion: ""},
+		{input: "Hello.World@1.1", expectServiceName: "Hello.World", expectSetId: "", expectVersion: "1.1"},
+		{input: "Hello.World.devsh*", expectServiceName: "Hello.World", expectSetId: "devsh*", expectVersion: ""},
+		{input: "Hello.World.devsh*@1.1", expectServiceName: "Hello.World", expectSetId: "devsh*", expectVersion: "1.1"},
+		{input: "stat_from_server", expectServiceName: "stat_from_server", expectSetId: "", expectVersion: ""},
+		{input: "stat_from_server@2.0", expectServiceName: "stat_from_server", expectSetId: "", expectVersion: "2.0"},
+		{input: "", expectServiceName: "", expectSetId: "", expectVersion: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			serviceName, setId, version := parseTafServiceName(tt.input)
+			assert.Equal(t, tt.expectServiceName, serviceName)
+			assert.Equal(t, tt.expectSetId, setId)
+			assert.Equal(t, tt.expectVersion, version)
 		})
 	}
 }
@@ -175,6 +207,7 @@ func TestTarsProperty(t *testing.T) {
 			resourceTagRPCSystem:     "tars",
 			resourceTagServiceName:   "TestApp.HelloGo",
 			resourceTagInstance:      "127.0.0.1",
+			resourceTagRegion:        "",
 			resourceTagContainerName: "container1",
 			propertyTagIPropertyVer:  "2",
 			propertyTagPropertyName:  "TestApp.HelloGo.TestPropertyName",
@@ -274,7 +307,7 @@ func TestTarsStat(t *testing.T) {
 		Data:          data,
 	}
 
-	conv := newTarsConverter(&TarsConfig{DisableAggregate: true})
+	conv := newTarsConverter(&TarsConfig{DisableAggregate: true, IsDeriveServerView: true})
 	conv.Convert(record, func(events ...define.Event) {
 		expects := []common.MapStr{
 			{
@@ -382,6 +415,85 @@ func TestTarsStat(t *testing.T) {
 	})
 }
 
+func TestTarsStatWithSet(t *testing.T) {
+	head := statf.StatMicMsgHead{
+		MasterName:    "TestApp.HelloGo.devsh*@1.1",
+		SlaveName:     "OtherTestApp.HiGo.testarea1",
+		InterfaceName: "Add",
+		MasterIp:      "",
+		SlaveIp:       "0.0.0.0",
+		ReturnValue:   0,
+		SlaveSetName:  "test",
+		SlaveSetArea:  "area",
+		SlaveSetID:    "1",
+		TarsVersion:   "1.4.5",
+	}
+
+	clientDims := statHeadToDims(&head, statTagRoleClient, "127.0.0.1", "app1")
+	assert.Equal(t, "TestApp.HelloGo", clientDims[resourceTagServiceName])
+	assert.Equal(t, "devsh*", clientDims[resourceTagRegion])
+	assert.Equal(t, "devsh*", clientDims[metricTagCallerConSetid])
+	assert.Equal(t, "testarea1", clientDims[metricTagCalleeConSetid])
+	assert.Equal(t, "TestApp.HelloGo", clientDims[metricTagCallerServer])
+	assert.Equal(t, "OtherTestApp.HiGo", clientDims[metricTagCalleeServer])
+	assert.Equal(t, "1.1", clientDims[resourceTagVersion])
+
+	serverDims := statHeadToDims(&head, statTagRoleServer, "127.0.0.1", "app1")
+	assert.Equal(t, "OtherTestApp.HiGo", serverDims[resourceTagServiceName])
+	assert.Equal(t, "testarea1", serverDims[resourceTagRegion])
+	assert.Equal(t, "devsh*", serverDims[metricTagCallerConSetid])
+	assert.Equal(t, "testarea1", serverDims[metricTagCalleeConSetid])
+}
+
+func TestTarsStatServerViewDeriveDisabled(t *testing.T) {
+	data := &define.TarsData{
+		Type:      define.TarsStatType,
+		Timestamp: 1719417736,
+		Data: &define.TarsStatData{
+			FromClient: true,
+			Stats: map[statf.StatMicMsgHead]statf.StatMicMsgBody{
+				statMicMsgHead: {
+					Count:         6,
+					TimeoutCount:  0,
+					ExecCount:     0,
+					IntervalCount: map[int32]int32{100: 0, 200: 2, 500: 4, 1000: 0},
+					TotalRspTime:  1343,
+				},
+			},
+		},
+	}
+	record := &define.Record{
+		RecordType:    define.RecordTars,
+		RequestType:   define.RequestTars,
+		RequestClient: define.RequestClient{IP: "127.0.0.1"},
+		Token:         define.Token{AppName: "app1", Original: "xxx", MetricsDataId: 123},
+		Data:          data,
+	}
+
+	conv := newTarsConverter(&TarsConfig{DisableAggregate: true})
+	conv.Convert(record, func(events ...define.Event) {
+		assert.Len(t, events, 8)
+		for _, event := range events {
+			dim := event.Data()["dimension"].(map[string]string)
+			assert.Equal(t, "client_metrics", dim[resourceTagScopeName])
+		}
+	})
+}
+
+func TestPropHeadToDimsWithSet(t *testing.T) {
+	head := &propertyf.StatPropMsgHead{
+		ModuleName:   "TestApp.HelloGo.devsh*",
+		Ip:           "127.0.0.1",
+		PropertyName: "TestProp",
+		SContainer:   "container1",
+		IPropertyVer: 1,
+	}
+
+	dims := propHeadToDims(head, "127.0.0.1", "app1")
+	assert.Equal(t, "TestApp.HelloGo", dims[resourceTagServiceName])
+	assert.Equal(t, "devsh*", dims[resourceTagRegion])
+}
+
 func getTarsStatRecord() *define.Record {
 	data := &define.TarsData{
 		Type:      define.TarsStatType,
@@ -431,7 +543,7 @@ func TestTarsStatAggregate(t *testing.T) {
 		totalEvents = append(totalEvents, events...)
 	}
 
-	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true})
+	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, IsDeriveServerView: true})
 	defer conv.Clean()
 
 	for i := 0; i < 100000; i++ {
@@ -460,7 +572,7 @@ func TestTarsStatAggregateDropServices(t *testing.T) {
 		totalEvents = append(totalEvents, events...)
 	}
 
-	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, DropOriginalServices: []string{"TestApp.HelloGo"}})
+	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, IsDeriveServerView: true, DropOriginalServices: []string{"TestApp.HelloGo"}})
 	defer conv.Clean()
 
 	conv.Convert(getTarsStatRecord(), gatherFunc)

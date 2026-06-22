@@ -12,6 +12,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 
@@ -34,9 +35,8 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	_, span := trace.NewSpan(ctx, "response-failed")
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
-		TraceID: span.TraceID(),
+		TraceID: trace.TraceIDFromContext(ctx),
 		Err:     err.Error(),
 	})
 }
@@ -65,6 +65,26 @@ type ListData struct {
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+	// ResultTableID 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
+	ResultTableID []string `json:"result_table_id"`
+}
+
+// resultTableIDFromRouteInfo 在响应出口把内部路由摘要投影成 RT 列表。
+func resultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) []string {
+	seen := make(map[string]struct{}, len(routeInfo))
+	resultTableID := make([]string, 0, len(routeInfo))
+	for _, info := range routeInfo {
+		if info.TableID == "" {
+			continue
+		}
+		if _, ok := seen[info.TableID]; ok {
+			continue
+		}
+		seen[info.TableID] = struct{}{}
+		resultTableID = append(resultTableID, info.TableID)
+	}
+	sort.Strings(resultTableID)
+	return resultTableID
 }
 
 // DataResponse 返回数据结构体

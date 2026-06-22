@@ -12,25 +12,41 @@ package tsdb
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
-	storageMap  = make(map[string]*Storage)
-	storageLock = new(sync.RWMutex)
+	storageMap     = make(map[string]*Storage)
+	storageMapHash string
+	storageLock    = new(sync.RWMutex)
 )
 
+// StorageMapHash 返回最近一次 ReloadTsDBStorage 写入的配置哈希（与 Consul 侧 hash 比对用于短路 reload）
+func StorageMapHash() string {
+	storageLock.RLock()
+	defer storageLock.RUnlock()
+	return storageMapHash
+}
+
 // ReloadTsDBStorage 重新加载存储实例到内存里面
-func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt *Options) error {
+func ReloadTsDBStorage(ctx context.Context, hash string, tsDBs map[string]*consul.Storage, opt *Options) error {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "reload-tsdb-storage")
+	defer span.End(&err)
+
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
+	oldHash := storageMapHash
 
 	for storageID, tsDB := range tsDBs {
-		var storage *Storage
-
-		storage = &Storage{
+		storage := &Storage{
 			Type:     tsDB.Type,
 			Address:  tsDB.Address,
 			Username: tsDB.Username,
@@ -57,12 +73,36 @@ func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt 
 			storage.AcceptEncoding = opt.InfluxDB.AcceptEncoding
 		}
 		newStorageMap[storageID] = storage
-
 	}
+
+	newKeys := make([]string, 0, len(newStorageMap))
+	for k := range newStorageMap {
+		newKeys = append(newKeys, k)
+	}
+	// 按 storage ID 数值升序，便于日志对照。
+	sortStorageIDKeysAsc(newKeys)
+
+	span.Set("old_hash", oldHash)
+	span.Set("new_hash", hash)
+	span.Set("storage_count", len(newStorageMap))
+	span.Set("storage_keys", fmt.Sprintf("%v", newKeys))
+
 	storageLock.Lock()
 	defer storageLock.Unlock()
 
 	storageMap = newStorageMap
+	storageMapHash = hash
+
+	// oldHash 为空表示进程内首次写入，会打初始化日志；否则视为配置变更后的重载。
+	if oldHash == "" {
+		log.Infof(ctx, "tsdb storage map initialized: hash=%s count=%d keys=%v", hash, len(newStorageMap), newKeys)
+		metadata.NewMessage("tsdb_storage", "init storage map: hash=%s count=%d keys=%v",
+			hash, len(newStorageMap), newKeys).Info(ctx)
+	} else {
+		metadata.NewMessage("tsdb_storage", "reload storage: old_hash=%s new_hash=%s count=%d keys=%v",
+			oldHash, hash, len(newStorageMap), newKeys).Info(ctx)
+	}
+
 	return nil
 }
 
@@ -76,14 +116,28 @@ func Print() string {
 	return str
 }
 
-// GetStorage 初始化全局 tsdb 标准实例
-func GetStorage(storageID string) (*Storage, error) {
-	storageLock.Lock()
-	defer storageLock.Unlock()
+// GetStorage 从内存 map 按 storageID 取 Storage。
+func GetStorage(ctx context.Context, storageID string) (*Storage, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "get-tsdb-storage")
+	defer span.End(&err)
+
+	storageLock.RLock()
+	defer storageLock.RUnlock()
+
 	storage, ok := storageMap[storageID]
 	if !ok {
-		return nil, fmt.Errorf("%s: storageID: %s", ErrStorageNotFound, storageID)
+		// miss 场景每次记录缺失 storageID，并上报缺失 ID 指标用于排障
+		metric.TSDBGetStorageTotalInc(ctx, metric.ResultMiss)
+		metric.TSDBGetStorageMissIDTotalInc(ctx, storageID)
+		metadata.NewMessage("tsdb_storage", "get storage miss: id=%s hash=%s",
+			storageID, storageMapHash).Info(ctx)
+		err = fmt.Errorf("%s: storageID: %s", ErrStorageNotFound, storageID)
+		return nil, err
 	}
+
+	metric.TSDBGetStorageTotalInc(ctx, metric.ResultHit)
+
 	return storage, nil
 }
 
@@ -93,4 +147,17 @@ func SetStorage(storageID string, storage *Storage) {
 	defer storageLock.Unlock()
 
 	storageMap[storageID] = storage
+}
+
+// sortStorageIDKeysAsc 按 storage ID 的数值升序排列（ID 为十进制整数字符串时）。
+// 任一方无法解析为整数时，对二者使用字符串字典序比较，保证顺序稳定可复现。
+func sortStorageIDKeysAsc(keys []string) {
+	sort.Slice(keys, func(i, j int) bool {
+		ai, errI := strconv.Atoi(keys[i])
+		aj, errJ := strconv.Atoi(keys[j])
+		if errI == nil && errJ == nil {
+			return ai < aj
+		}
+		return keys[i] < keys[j]
+	})
 }

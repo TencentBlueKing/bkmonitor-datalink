@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -389,12 +390,25 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 	return false, nil
 }
 
+// resultTableLabelValueMatchesAny 判断标签值 val 是否命中条件值列表中任一项：精确相等，或两侧均可解析为时间戳且表示同一时刻（见 function.EquivalentTimestampStrings）。
+func resultTableLabelValueMatchesAny(values []string, val string) bool {
+	if val == "" || len(values) == 0 {
+		return false
+	}
+	for _, v := range values {
+		if v == val || function.EquivalentTimestampStrings(v, val) {
+			return true
+		}
+	}
+	return false
+}
+
 // matchResultTableLabelField 单条表标签 AND 条件。stillAnd 为 true 表示本条已满足，可继续同组下一 field；false 表示本 OR 组失败。err 为正则编译等错误。
 func matchResultTableLabelField(field ConditionField, labels map[string]string) (stillAnd bool, err error) {
 	val, ok := labels[field.DimensionName]
 	switch field.Operator {
 	case ConditionEqual: // eq：缺 label 与 PromQL = 一致，不满足
-		if !ok || !containElement(field.Value, val) {
+		if !ok || !resultTableLabelValueMatchesAny(field.Value, val) {
 			return false, nil
 		}
 		return true, nil
@@ -402,7 +416,7 @@ func matchResultTableLabelField(field ConditionField, labels map[string]string) 
 		if !ok {
 			return true, nil
 		}
-		if containElement(field.Value, val) {
+		if resultTableLabelValueMatchesAny(field.Value, val) {
 			return false, nil
 		}
 		return true, nil

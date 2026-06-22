@@ -199,17 +199,28 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (metadata.Field
 	return fieldsMap, nil
 }
 
+// needFieldMap 判断是否需要执行 QueryFieldMap 并注入 FieldsMap。
+func needFieldMap(query *metadata.Query) bool {
+	if query == nil {
+		return false
+	}
+	switch query.Measurement {
+	case sql_expr.Doris, sql_expr.HDFS:
+		return true
+	case "":
+		return query.StorageType == metadata.BkSqlStorageType && query.SQL != ""
+	default:
+		return false
+	}
+}
+
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
-	var err error
-
-	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
-	defer span.End(&err)
-
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// Doris / HDFS 均需获取字段表结构
-	if query.Measurement == sql_expr.Doris || query.Measurement == sql_expr.HDFS {
+	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
+	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
+	if needFieldMap(query) {
 		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
 			return nil, err
@@ -222,10 +233,6 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 				keepColumns = append(keepColumns, k)
 			}
 		}
-		out, _ := json.Marshal(fieldsMap)
-		span.Set("table_fields_map", string(out))
-
-		span.Set("keep-columns", keepColumns)
 		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
 	}
 
@@ -402,15 +409,16 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
-	// series 计算需要按照时间排序
-	query.Orders = append(metadata.Orders{
+	// series 计算需要按照时间排序。这里不能原地修改入参 query，调用方可能在多路查询中复用同一个 *metadata.Query。
+	seriesQuery := *query
+	seriesQuery.Orders = append(metadata.Orders{
 		{
 			Name: sql_expr.FieldTime,
 			Ast:  true,
 		},
-	}, query.Orders...)
+	}, append(metadata.Orders(nil), query.Orders...)...)
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, &seriesQuery, start, end)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -470,10 +478,11 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)
 
-	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1
-	query.Size = 1
+	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1。这里不能原地修改入参 query，调用方可能复用同一个 *metadata.Query。
+	labelNamesQuery := *query
+	labelNamesQuery.Size = 1
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, &labelNamesQuery, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -520,12 +529,13 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	labelValuesQuery := *query
+	labelValuesQuery.SelectDistinct = []string{name}
+
+	queryFactory, err := i.InitQueryFactory(ctx, &labelValuesQuery, start, end)
 	if err != nil {
 		return nil, err
 	}
-
-	query.SelectDistinct = []string{name}
 
 	sql, err := queryFactory.SQL()
 	if err != nil {
@@ -567,11 +577,6 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series")
 	defer span.End(&err)
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
-	if err != nil {
-		return nil, err
-	}
-
 	if len(query.Source) == 0 {
 		err = fmt.Errorf("no source specified")
 		return nil, err
@@ -600,12 +605,14 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		return nil, nil
 	}
 
-	// 设置 SelectDistinct 以获取唯一标签组合
-	query.SelectDistinct = labelNames
-	defer func() {
-		query.SelectDistinct = nil
-	}()
+	// 设置 SelectDistinct 以获取唯一标签组合。这里不能原地修改入参 query，调用方可能复用同一个 *metadata.Query。
+	seriesQuery := *query
+	seriesQuery.SelectDistinct = append([]string(nil), labelNames...)
 
+	queryFactory, err := i.InitQueryFactory(ctx, &seriesQuery, start, end)
+	if err != nil {
+		return nil, err
+	}
 	distinctSQL, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err

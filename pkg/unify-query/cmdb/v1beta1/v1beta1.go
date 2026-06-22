@@ -319,7 +319,10 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 	}
 	// 从最短路径开始验证
 	sort.SliceStable(allGraphPaths, func(i, j int) bool {
-		return len(allGraphPaths[i]) < len(allGraphPaths[j])
+		if len(allGraphPaths[i]) != len(allGraphPaths[j]) {
+			return len(allGraphPaths[i]) < len(allGraphPaths[j])
+		}
+		return fmt.Sprint(allGraphPaths[i]) < fmt.Sprint(allGraphPaths[j])
 	})
 
 	// 兼容原来的节点屏蔽功能，因为没有指定路径，原路径 pod -> node -> system, 最短路径可能会命中：pod -> apm_service_instance -> system，所以需要多路径查询匹配

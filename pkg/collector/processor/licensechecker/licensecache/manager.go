@@ -18,6 +18,7 @@ type Manager struct {
 	mut        sync.RWMutex
 	caches     map[string]*Cache
 	stop       chan struct{}
+	cleanOnce  sync.Once
 	gcInterval time.Duration
 }
 
@@ -31,7 +32,9 @@ func NewManager() *Manager {
 }
 
 func (mgr *Manager) Clean() {
-	close(mgr.stop)
+	mgr.cleanOnce.Do(func() {
+		close(mgr.stop)
+	})
 }
 
 func (mgr *Manager) Get(k string) *Cache {

@@ -11,14 +11,22 @@ package elasticsearch
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jarcoal/httpmock"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -26,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	uqtrace "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func TestInstance_getAlias(t *testing.T) {
@@ -1301,6 +1310,61 @@ func TestInstance_queryRawData(t *testing.T) {
 	}
 }
 
+func TestInstance_QueryRawDataSharedQueryDoesNotMutate(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	httpmock.RegisterResponder(
+		http.MethodPost,
+		mock.EsUrl+"/es_index/_search",
+		httpmock.NewStringResponder(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]}}`),
+	)
+
+	ins, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{
+			Address: mock.EsUrl,
+		},
+		MaxSize: 1,
+		Timeout: 3 * time.Second,
+	})
+	assert.NoError(t, err)
+
+	optionFrom := 7
+	query := &metadata.Query{
+		DB:    "es_index",
+		Field: "a",
+		From:  3,
+		Size:  10,
+		TimeField: metadata.TimeField{
+			Name: "dtEventTimeStamp",
+			Type: TimeFieldTypeTime,
+			Unit: "millisecond",
+		},
+		TableID:     "es_index",
+		StorageType: metadata.ElasticsearchStorageType,
+		Source:      []string{"a"},
+		ResultTableOption: &metadata.ResultTableOption{
+			From: &optionFrom,
+		},
+	}
+	originalOption := query.ResultTableOption.Clone()
+
+	dataCh := make(chan map[string]any)
+	size, total, resultOption, err := ins.QueryRawData(ctx, query, time.UnixMilli(1723593608000), time.UnixMilli(1723679962000), dataCh)
+	close(dataCh)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), size)
+	assert.Equal(t, int64(0), total)
+	assert.Equal(t, 10, query.Size)
+	assert.Equal(t, 3, query.From)
+	assert.Equal(t, originalOption, query.ResultTableOption)
+	assert.NotSame(t, query.ResultTableOption, resultOption)
+	assert.NotSame(t, query.ResultTableOption.From, resultOption.From)
+	assert.Equal(t, 7, *query.ResultTableOption.From)
+	assert.Equal(t, 7, *resultOption.From)
+}
+
 func TestInstance_fieldMap(t *testing.T) {
 	mock.Init()
 
@@ -1394,6 +1458,94 @@ func TestInstance_QueryLabelNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstance_QueryLabelValuesConcurrentSharedQueryDoesNotMutate(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	httpmock.RegisterResponder(
+		http.MethodPost,
+		mock.EsUrl+"/es_index/_search",
+		httpmock.NewStringResponder(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"a":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"a-value","doc_count":1,"_value":{"value":1}}]},"b":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"b-value","doc_count":1,"_value":{"value":1}}]},"level":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"INFO","doc_count":1,"_value":{"value":1}}]}}}`),
+	)
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{
+			Address: mock.EsUrl,
+		},
+		Timeout: time.Minute,
+	})
+	assert.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:    "es_index",
+		Field: "a",
+		TimeField: metadata.TimeField{
+			Name: "dtEventTimeStamp",
+			Type: TimeFieldTypeTime,
+			Unit: "millisecond",
+		},
+		TableID:     "test_table",
+		StorageType: metadata.ElasticsearchStorageType,
+		AllConditions: metadata.AllConditions{
+			{
+				{
+					DimensionName: "level",
+					Operator:      "eq",
+					Value:         []string{"INFO"},
+				},
+			},
+		},
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "a",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+	originalAllConditions := cloneAllConditions(query.AllConditions)
+	originalAggregates := make(metadata.Aggregates, len(query.Aggregates))
+	for i, aggregate := range query.Aggregates {
+		originalAggregates[i] = aggregate
+		originalAggregates[i].Dimensions = append([]string{}, aggregate.Dimensions...)
+		if aggregate.Args != nil {
+			originalAggregates[i].Args = append([]any{}, aggregate.Args...)
+		}
+	}
+
+	start := time.UnixMilli(1723593608000)
+	end := time.UnixMilli(1723679962000)
+	labelNames := []string{"a", "b", "level"}
+	errCh := make(chan error, len(labelNames)*10)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		for _, labelName := range labelNames {
+			wg.Add(1)
+			go func(labelName string) {
+				defer wg.Done()
+				values, err := inst.QueryLabelValues(ctx, query, labelName, start, end)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(values) == 0 {
+					errCh <- fmt.Errorf("empty label values for %s", labelName)
+				}
+			}(labelName)
+		}
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		assert.NoError(t, err)
+	}
+	assert.Equal(t, originalAllConditions, query.AllConditions)
+	assert.Equal(t, originalAggregates, query.Aggregates)
 }
 
 func TestInstance_QuerySeries(t *testing.T) {
@@ -1507,4 +1659,179 @@ func TestInstance_QuerySeries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecordESQueryShards(t *testing.T) {
+	log.InitTestLogger()
+
+	t.Run("records shard counters on healthy response", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-1"}}, &elastic.SearchResult{
+			TimedOut: false,
+			Shards: &elastic.ShardsInfo{
+				Total:      4,
+				Successful: 4,
+				Failed:     0,
+				Skipped:    1,
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.False(t, timedOut)
+		shardsTotal, ok := esSpanAttrInt(attrs, "shards_total")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), shardsTotal)
+		shardsSkipped, ok := esSpanAttrInt(attrs, "shards_skipped")
+		require.True(t, ok)
+		assert.Equal(t, int64(1), shardsSkipped)
+		_, ok = esSpanAttrInt(attrs, "shards_failures_count")
+		assert.False(t, ok)
+		_, ok = esSpanAttrString(attrs, "shards_failures_sample")
+		assert.False(t, ok)
+	})
+
+	t.Run("records bounded failure sample", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		longReason := strings.Repeat("x", esShardFailureReasonMaxLength+64)
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-*"}}, &elastic.SearchResult{
+			Shards: &elastic.ShardsInfo{
+				Total:      5,
+				Successful: 1,
+				Failed:     4,
+				Failures: []*elastic.ShardOperationFailedException{
+					{Shard: 1, Index: "index-1", Status: "INTERNAL_SERVER_ERROR", Reason: map[string]interface{}{"type": "illegal_argument_exception", "reason": longReason}},
+					{Shard: 2, Index: "index-2", Reason: map[string]interface{}{"reason": "second"}},
+					{Shard: 3, Index: "index-3", Reason: map[string]interface{}{"reason": "third"}},
+					{Shard: 4, Index: "index-4", Reason: map[string]interface{}{"reason": "fourth"}},
+				},
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		shardsFailed, ok := esSpanAttrInt(attrs, "shards_failed")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), shardsFailed)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(4), failuresCount)
+		failuresSampleJson, ok := esSpanAttrString(attrs, "shards_failures_sample")
+		require.True(t, ok)
+		assert.NotContains(t, failuresSampleJson, "index-4")
+
+		var failuresSample []esShardFailureSample
+		require.NoError(t, stdjson.Unmarshal([]byte(failuresSampleJson), &failuresSample))
+		require.Len(t, failuresSample, esShardFailureSampleLimit)
+		assert.Equal(t, 1, failuresSample[0].Shard)
+		assert.Equal(t, "index-1", failuresSample[0].Index)
+		assert.Equal(t, "INTERNAL_SERVER_ERROR", failuresSample[0].Status)
+		assert.LessOrEqual(t, len([]rune(failuresSample[0].Reason)), esShardFailureReasonMaxLength)
+	})
+
+	t.Run("records timeout without failures", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+
+		recordESQueryShards(context.Background(), span, &queryOption{indexes: []string{"index-1"}}, &elastic.SearchResult{
+			TimedOut: true,
+			Shards: &elastic.ShardsInfo{
+				Total:      2,
+				Successful: 2,
+			},
+		})
+		var err error
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.True(t, timedOut)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(0), failuresCount)
+		_, ok = esSpanAttrString(attrs, "shards_failures_sample")
+		assert.False(t, ok)
+	})
+
+	t.Run("handles nil result and nil shards", func(t *testing.T) {
+		rec := setupESTraceRecorder(t)
+		_, span := uqtrace.NewSpan(context.Background(), "test-span")
+		assert.NotPanics(t, func() {
+			recordESQueryShards(context.Background(), span, nil, nil)
+		})
+		var err error
+		span.End(&err)
+		assert.Empty(t, endedSpanAttrs(t, rec))
+
+		rec = setupESTraceRecorder(t)
+		_, span = uqtrace.NewSpan(context.Background(), "test-span")
+		assert.NotPanics(t, func() {
+			recordESQueryShards(context.Background(), span, nil, &elastic.SearchResult{TimedOut: true})
+		})
+		span.End(&err)
+
+		attrs := endedSpanAttrs(t, rec)
+		timedOut, ok := esSpanAttrBool(attrs, "timed_out")
+		require.True(t, ok)
+		assert.True(t, timedOut)
+		failuresCount, ok := esSpanAttrInt(attrs, "shards_failures_count")
+		require.True(t, ok)
+		assert.Equal(t, int64(0), failuresCount)
+	})
+}
+
+func setupESTraceRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+	})
+	return rec
+}
+
+func endedSpanAttrs(t *testing.T, rec *tracetest.SpanRecorder) []attribute.KeyValue {
+	t.Helper()
+	ended := rec.Ended()
+	require.Len(t, ended, 1)
+	return ended[0].Attributes()
+}
+
+func esSpanAttrBool(attrs []attribute.KeyValue, key string) (bool, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsBool(), true
+		}
+	}
+	return false, false
+}
+
+func esSpanAttrInt(attrs []attribute.KeyValue, key string) (int64, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsInt64(), true
+		}
+	}
+	return 0, false
+}
+
+func esSpanAttrString(attrs []attribute.KeyValue, key string) (string, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
 }

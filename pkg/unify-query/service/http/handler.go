@@ -188,6 +188,14 @@ func HandlerQueryExemplar(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryExemplar,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
 		resp.failed(ctx, metadata.NewMessage(
@@ -210,7 +218,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
@@ -253,7 +261,16 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	listData.TraceID = span.TraceID()
 
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
+	if err = validateQueryTsDataSource(queryTs); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
+	var routeInfo []metadata.RouteInfo
+	listData.Total, listData.List, listData.ResultTableOptions, routeInfo, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -266,7 +283,9 @@ func HandlerQueryRaw(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.ResultTableID = resultTableIDFromRouteInfo(routeInfo)
 
+	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }
 
@@ -279,7 +298,7 @@ func HandlerQueryRaw(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  ListData
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/raw_with_scroll [post]
 func HandlerQueryRawWithScroll(c *gin.Context) {
@@ -322,6 +341,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		queryTs.SpaceUid = user.SpaceUID
 	}
 
+	if err = validateQueryTsDataSource(queryTs); err != nil {
+		return
+	}
+
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindowTimeout
 	}
@@ -361,7 +384,8 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
+	var routeInfo []metadata.RouteInfo
+	listData.Total, listData.List, listData.ResultTableOptions, routeInfo, listData.Done, err = queryRawWithScroll(ctx, queryTs, session)
 	if err != nil {
 		return
 	}
@@ -373,6 +397,8 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.ResultTableOptions == nil {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
+	listData.ResultTableID = resultTableIDFromRouteInfo(routeInfo)
+	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
 }
 
@@ -434,6 +460,14 @@ func HandlerQueryTs(c *gin.Context) {
 		"%s, header: %+v, data: %+v",
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
+
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
 
 	res, err := queryTsWithPromEngine(ctx, query)
 	if err != nil {
@@ -584,6 +618,14 @@ func HandlerQueryReference(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	if err = validateQueryTsDataSource(query); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryReference,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	res, err := queryReferenceWithPromEngine(ctx, query)
 	if err != nil {
 		resp.failed(ctx, metadata.NewMessage(
@@ -649,4 +691,43 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		return
 	}
 	resp.success(ctx, res)
+}
+
+// validateQueryTsDataSource 针对 bklog / bkapm 数据源做基础校验：
+// 当 data_source 为 bklog 或 bkapm 时，TableID 为空则必须提供有效的 TableIDConditions，其他 data_source 不做处理，保持原流程。
+// "有效" 的判定：AllConditions 中至少存在一个 DimensionName 非空的 ConditionField；
+// 涵盖 nil、`[]`、`[[]]`、`[[{}]]` 以及所有字段全零值等"空壳"形态，避免此类请求退化为全空间盲扫。
+func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
+	if queryTs == nil {
+		return nil
+	}
+	for _, q := range queryTs.QueryList {
+		if q == nil {
+			continue
+		}
+		ds := q.DataSource
+		if ds != structured.BkLog && ds != structured.BkApm {
+			continue
+		}
+		if string(q.TableID) == "" && !hasEffectiveTableIDConditions(q.TableIDConditions) {
+			return fmt.Errorf(
+				"data_source 为 %q 时，table_id 与 table_id_conditions 不能同时为空（reference_name=%s）",
+				ds, q.ReferenceName,
+			)
+		}
+	}
+	return nil
+}
+
+// hasEffectiveTableIDConditions 判断 table_id_conditions 是否存在可用于匹配结果表 Labels 的条件：
+// 只要 AllConditions 中存在一个 DimensionName 非空的 ConditionField，即视为有效（与 MatchResultTableLabels 的匹配前提一致）。
+func hasEffectiveTableIDConditions(conds structured.AllConditions) bool {
+	for _, group := range conds {
+		for _, c := range group {
+			if c.DimensionName != "" {
+				return true
+			}
+		}
+	}
+	return false
 }

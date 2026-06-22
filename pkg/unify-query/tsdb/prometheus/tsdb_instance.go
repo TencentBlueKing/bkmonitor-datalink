@@ -104,9 +104,10 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
-			stg, _ := tsdb.GetStorage(qry.StorageID)
+			stg, stgErr := tsdb.GetStorage(ctx, qry.StorageID)
 			if stg == nil {
-				err = fmt.Errorf("%s storage list is empty in %s", metadata.ElasticsearchStorageType, qry.StorageID)
+				span.Set("es-storage-config-missing", true)
+				err = fmt.Errorf("%s storage list is empty in %s: %w", metadata.ElasticsearchStorageType, qry.StorageID, stgErr)
 				return instance
 			}
 

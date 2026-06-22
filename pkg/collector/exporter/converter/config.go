@@ -25,6 +25,7 @@ type TarsConfig struct {
 	DropOriginalServices []string      `config:"drop_original_services" mapstructure:"drop_original_services"`
 	AggregateInterval    time.Duration `config:"aggregate_interval" mapstructure:"aggregate_interval"`
 	TagIgnores           []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
+	IsDeriveServerView   bool          `config:"is_derive_server_view" mapstructure:"is_derive_server_view"`
 
 	// 来自 配置文件的 DropOriginalServices 转为 map，提高查询效率。
 	dropOriginalServiceMap map[string]bool

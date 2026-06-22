@@ -259,6 +259,12 @@ default:
               {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
               - '{{ drop_key }}'
               {%- endfor %}
+          replace:
+            {%- for replace_config in resource_filter_config.replace %}
+            - source: '{{ replace_config.source }}'
+              destination: '{{ replace_config.destination }}'
+              extract_pattern: '{{ replace_config.extract_pattern }}'
+            {%- endfor %}
 {%- endif %}
 
 {% if resource_filter_config_logs is defined %}
@@ -278,6 +284,12 @@ default:
               {%- for drop_key in resource_filter_config_logs.get("drop", {}).get("keys", []) %}
               - '{{ drop_key }}'
               {%- endfor %}
+          replace:
+            {%- for replace_config in resource_filter_config_logs.replace %}
+            - source: '{{ replace_config.source }}'
+              destination: '{{ replace_config.destination }}'
+              extract_pattern: '{{ replace_config.extract_pattern }}'
+            {%- endfor %}
 {%- endif %}
 
 {% if resource_filter_config_metrics is defined %}
@@ -301,6 +313,12 @@ default:
               - '{{ drop_key }}'
               {%- endfor %}
           {%- endif %}
+          replace:
+            {%- for replace_config in resource_filter_config_metrics.replace %}
+            - source: '{{ replace_config.source }}'
+              destination: '{{ replace_config.destination }}'
+              extract_pattern: '{{ replace_config.extract_pattern }}'
+            {%- endfor %}
           {%- if resource_filter_config_metrics.get("from_token") %}
           from_token:
             keys:

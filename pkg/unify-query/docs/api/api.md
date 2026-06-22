@@ -38,16 +38,33 @@
 
 #### 查询接口响应格式
 
-查询接口（如 `/query/ts`、`/query/promql`）返回 `PromData` 格式：
+时序查询接口（如 `/query/ts`、`/query/ts/promql`、`/query/ts/reference`）返回 `PromData` 格式：
 
 ```json
 {
   "series": [...],
   "status": {...},
   "trace_id": "...",
-  "is_partial": false
+  "is_partial": false,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+原始数据查询接口（如 `/query/ts/raw`、`/query/ts/raw_with_scroll`）返回 `ListData` 格式：
+
+```json
+{
+  "total": 100,
+  "list": [...],
+  "done": true,
+  "status": {...},
+  "trace_id": "...",
+  "result_table_options": {...},
+  "result_table_id": ["system.cpu_summary"]
+}
+```
+
+`result_table_id` 表示本次请求实际检索的结果表 ID 列表。该列表由 UQ 根据请求参数、空间、数据源和路由规则解析得到，不依赖最终返回的数据行；因此在无数据、分页、scroll、search-after 或聚合查询场景下也能反映完整检索范围。无可检索结果表时返回空数组 `[]`。
 
 #### 错误响应格式
 
@@ -193,9 +210,20 @@
   ],
   "status": null,
   "trace_id": "...",
-  "is_partial": false
+  "is_partial": false,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+**响应字段说明**:
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `series` | array | 查询结果序列 |
+| `status` | object | 查询状态信息 |
+| `trace_id` | string | 链路追踪 ID |
+| `is_partial` | bool | 是否为部分成功 |
+| `result_table_id` | string[] | 本次请求实际检索的结果表 ID 列表；成功响应默认返回，无可检索结果表时为空数组 |
 
 ### 2.2 PromQL 查询
 
@@ -244,7 +272,7 @@
 | `match`                 | string | 否   | 匹配条件                         |
 | `is_verify_dimensions`  | bool   | 否   | 是否验证维度                     |
 
-**响应格式**: 同结构体查询（返回 `PromData` 格式）
+**响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.3 引用查询
 
@@ -256,7 +284,7 @@
 
 **请求体**: 同结构体查询
 
-**响应格式**: 同结构体查询（返回 `PromData` 格式）
+**响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.4 原始查询
 
@@ -284,9 +312,22 @@
   "done": true,
   "trace_id": "...",
   "status": null,
-  "result_table_options": null
+  "result_table_options": null,
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+**响应字段说明**:
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `total` | int | 总条数 |
+| `list` | array | 原始数据列表 |
+| `done` | bool | 是否已完成全部分页或滚动查询 |
+| `trace_id` | string | 链路追踪 ID |
+| `status` | object | 查询状态信息 |
+| `result_table_options` | object | 分页、scroll、search-after 等查询状态 |
+| `result_table_id` | string[] | 本次请求实际检索的结果表 ID 列表；不随分页、scroll、search-after 或已返回数据行变化 |
 
 ### 2.5 原始查询（带滚动）
 
@@ -308,9 +349,13 @@
   "list": [...],
   "done": false,
   "trace_id": "...",
-  "status": null
+  "status": null,
+  "result_table_options": {...},
+  "result_table_id": ["system.cpu_summary"]
 }
 ```
+
+**响应格式**: 同原始查询（返回 `ListData` 格式，包含 `result_table_id`）
 
 ### 2.6 集群指标查询
 
@@ -648,28 +693,29 @@
 
 ## 5. 校验接口（Check）
 
-**说明**：接口返回 **JSON**（`Content-Type: application/json`），**不下发**真实 TSDB/VM 查询。直查 VictoriaMetrics 时，在内存中生成 MetricQL 预览；直查路径在 `ToQueryReference` 之后会 **`ToVmExpand` + `metadata.SetExpand`**，与正式 `queryTsToInstanceAndStmt` 一致，便于与 `DirectQuery` 使用的 `GetExpand` 同源。预览字符串在 `vmCheckMetricql` 之后由 **`metadata.SetCheckPreviewMetricQL`** 写入当前请求的 metadata，`victoriaMetrics.Instance.GetRequestBody(ctx)` 再通过 **`metadata.GetCheckPreviewMetricQL`** 与 **`metadata.GetExpand`** 拼装响应中的 `VmQueryCheckBody`。
+**说明**：接口返回 **JSON**（`Content-Type: application/json`），**不下发**真实 TSDB/VM 查询。直查 VictoriaMetrics 时返回 MetricQL 预览；非直查存储若支持预览体，则返回对应预览请求体。即使没有可预览请求体，只要 UQ 已解析出路由范围，也会返回 `route_info` 便于预检和排障。
 
 **成功（HTTP 200）**：`CheckQueryTsDataResponse`
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data` | array | 每项为某子查询存储 **`tsdb.Instance.GetRequestBody(ctx)`** 的 JSON；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody` |
+| `data` | array | 每项为某子查询的预览请求体；直查 VM 时常为 **单元素**，形态见下表 `VmQueryCheckBody`。**可为空数组**：当各存储未实现预览体时，若 `route_info` 非空仍返回 **HTTP 200**（仅路由预览，不调 TSDB） |
+| `route_info` | array | UQ 根据请求参数、空间、数据源和路由规则解析出的路由摘要（`table_id`、`db`、`data_label`、`storage_type` 等），用于预检和排障。与 `data` 是否为空无关 |
 | `trace_id` | string | 链路追踪 ID |
 
-**失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。
+**失败（HTTP 400）**：`ErrResponse`，含 `error`（及可选 `trace_id`）。当 **`route_info` 与 `data` 皆为空**（无任何子查询路由）时仍为 400。
 
 ### 5.1 直查 VM 时 `data[]` 元素形态（`VmQueryCheckBody`）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `storage_type` | string | 如 `victoria_metrics` |
-| `metricql` | string | **内存预览**：`QueryTs.ToPromExpr`（**空** `PromExprOption`）得到与直查 **`stmt` 相同骨架**（仍含引用名 `a`、`b`），再按 **`ToVmExpand.MetricFilterCondition`** 将引用名整词替换为 `{...}`。**不是** `ToPromQL` 全文，也**不是** BKSQL 网关返回的 `data.sql` |
-| `result_table_id` | string[] | 与 **`ToVmExpand.ResultTableList`** 一致（VmRt 汇总） |
+| `metricql` | string | 直查 VM 的 MetricQL 预览，便于调用方在执行前确认实际检索条件。该字段不是 BKSQL 网关返回的 `data.sql` |
+| `result_table_id` | string[] | 该 VM 预览涉及的结果表 ID 列表 |
 
 ### 5.2 非直查
 
-当前实现：遍历子查询 `GetTsDbInstance`，再调用 **`GetRequestBody(ctx)`**；**`DefaultInstance`** 等无预览体时返回 **(nil, nil)**，该子查询**不产生** `data` 元素（内部打日志跳过）。若遍历结束后 **`data` 仍为空** 则 **400**（「未解析到可路由的查询」），而非 200 空数组。
+非直查存储若支持预览体，则在 `data` 中返回对应预览请求体；不支持预览体的存储不会产生 `data` 元素。若最终 `data` 为空但 UQ 已解析出路由范围，则 `route_info` 非空，接口仍返回 **200** 且 `data` 为空数组，便于路由排障；仅当 **`route_info` 与 `data` 皆空** 时返回 **400**（「未解析到可路由的查询」）。
 
 ### 5.3 校验结构体查询
 
@@ -677,7 +723,7 @@
 
 **请求头**: 同 [2.1 结构体查询](#21-结构体查询)（需 `X-Bk-Scope-Space-Uid` 等）
 
-**请求体**: 与 `POST /query/ts` 相同，为 `QueryTs` JSON（`query_list`、`metric_merge`、`start_time` / `end_time`、`step` 等）
+**请求体**: 与 `POST /query/ts` 相同，为 `QueryTs` JSON（`query_list`、`metric_merge`、`start_time` / `end_time`、`step` 等），并复用正式查询的参数约束（如 `query_list` 数量上限）。
 
 **响应示例（直查 VM 成功，示意）**:
 
@@ -700,7 +746,7 @@
 
 **请求头**: 同 PromQL 查询接口
 
-**请求体**: 与 `POST /query/promql` 相同（`promql`、`start`、`end`、`step` 等）
+**请求体**: 与 `POST /query/ts/promql` 相同（`promql`、`start`、`end`、`step` 等）
 
 **处理流程**: 先将 PromQL 反解为 `QueryTs`，再与 **5.3** 共用校验逻辑，响应格式相同。
 
@@ -1295,4 +1341,3 @@ curl -X POST http://localhost:10205/query/ts \
 ### B. 更多示例
 
 更多使用示例请参考项目根目录的 `README.md`。
-

@@ -147,6 +147,22 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 				handle(rs, action)
 			}
 		})
+
+	case define.RecordMetrics:
+		pdMetrics := record.Data.(pmetric.Metrics)
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
+			for _, action := range config.Assemble {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
+			for _, action := range config.Assemble {
+				handle(rs, action)
+			}
+		})
 	}
 }
 
@@ -237,12 +253,16 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 			return
 		}
 
+		// 复制原始值，防止下面的 Remove 操作导致原始值被删除
+		copyValue := pcommon.NewValueEmpty()
+		v.CopyTo(copyValue)
+
 		rs.Attributes().Remove(action.Source)
 		if action.ExtractPattern != "" {
-			extractedValue := p.extractByRegex(v.AsString(), action)
+			extractedValue := p.extractByRegex(copyValue.AsString(), action)
 			rs.Attributes().UpsertString(action.Destination, extractedValue)
 		} else {
-			rs.Attributes().Upsert(action.Destination, v)
+			rs.Attributes().Upsert(action.Destination, copyValue)
 		}
 	}
 

@@ -80,9 +80,11 @@ func observeWaterLevel(level WaterLevel, thresholds ThresholdConfig) {
 	if level.MemValid {
 		waterLevel.WithLabelValues("mem").Set(level.Mem)
 	}
-	waterLevel.WithLabelValues("cpu_exit").Set(thresholds.CPUExit)
 	waterLevel.WithLabelValues("cpu_enter").Set(thresholds.CPUEnter)
+	waterLevel.WithLabelValues("cpu_exit").Set(thresholds.CPUExit)
 	waterLevel.WithLabelValues("cpu_hard").Set(thresholds.CPUHard)
+	waterLevel.WithLabelValues("mem_enter").Set(thresholds.MemEnter)
+	waterLevel.WithLabelValues("mem_exit").Set(thresholds.MemExit)
 	waterLevel.WithLabelValues("mem_hard").Set(thresholds.MemHard)
 }
 

@@ -10,6 +10,7 @@
 package throttle
 
 import (
+	"math"
 	"math/rand"
 	"sync/atomic"
 
@@ -61,11 +62,15 @@ type Manager struct {
 	level   atomic.Pointer[WaterLevel]
 }
 
+// stateSlot 保存单类数据的状态机以及各信号的连续命中计数。
 type stateSlot struct {
-	state      atomic.Uint32
-	enterCount int // 慢信号连续越进入线的次数
-	exitCount  int // 慢信号连续跌破退出线的次数
-	hardCount  int // 快信号连续越熔断线的次数
+	state         atomic.Uint32
+	cpuEnterHits  int // cpuSlow > cpu_enter（进入降级）
+	cpuExitHits   int // cpuSlow < cpu_exit（恢复正常）
+	cpuHardHits   int // cpuFast >= cpu_hard（进入熔断）
+	memEnterHits  int // mem > mem_enter（进入降级，内存采样无效时忽略）
+	memExitHits   int // mem < mem_exit（恢复正常，内存采样无效时视为正常）
+	hardClearHits int // cpuFast < cpu_hard 且 mem < mem_hard（退出熔断）
 }
 
 var (
@@ -213,14 +218,18 @@ func (m *Manager) dropProbability(rt define.RecordType) float64 {
 	if level == nil {
 		return 0
 	}
-	rule := m.rules[rt]
-	thresholds := m.config.Thresholds
+
 	// 将当前 CPU 慢信号转换成一个 0 ~ 1 的「过载程度」，计算水位在「进入线 -> 熔断线」范围的哪个百分比位置（0 ～ 1）。
-	// 假设 CPUEnter = 0.80，CPUHard  = 0.95
-	// CPUSlow = 0.80  => t = 0 ｜ CPUSlow = 0.875 => t = 0.5 ｜ CPUSlow = 0.95  => t = 1
-	t := clamp((level.CPUSlow-thresholds.CPUEnter)/(thresholds.CPUHard-thresholds.CPUEnter), 0, 1)
-	// 根据 t 决策丢弃概率，越接近 CPUHard，丢弃概率越高，假设 DropMin = 0.5，DropMax = 1：
-	// CPUSlow = 0.875 => t = 0.5 => 0.25，即 25 % 的丢弃概率。
+	// 假设 CPUEnter = 0.80，CPUHard  = 0.95，CPUSlow = 0.80  => t = 0 ｜ CPUSlow = 0.875 => t = 0.5 ｜ CPUSlow = 0.95  => t = 1
+	// 根据 t 决策丢弃概率，越接近 CPUHard，丢弃概率越高，假设 DropMin = 0.5，DropMax = 1：CPUSlow = 0.875 => t = 0.5 => 0.25，即 25 % 的丢弃概率。
+	th := m.config.Thresholds
+	tMem := 0.0
+	if level.MemValid {
+		tMem = overloadRatio(level.Mem, th.MemEnter, th.MemHard)
+	}
+	t := math.Max(tMem, overloadRatio(level.CPUSlow, th.CPUEnter, th.CPUHard))
+
+	rule := m.rules[rt]
 	return rule.DropMin + (rule.DropMax-rule.DropMin)*t
 }
 
@@ -242,21 +251,25 @@ func (m *Manager) updateStates(level *WaterLevel) {
 }
 
 func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
-	thresholds := m.config.Thresholds
-	// 快信号连续触发熔断线判断，一次没有越过即清空计数。
-	if level.CPUFast >= thresholds.CPUHard {
-		slot.hardCount++
-	} else {
-		slot.hardCount = 0
-	}
+	th := m.config.Thresholds
+	n := th.BreachN
 
-	// CPU：连续 BreachN 越线｜内存：由于 OOM 会导致重启（不可逆），一次越线即短路。
-	hardOpen := slot.hardCount >= thresholds.BreachN
-	memOpen := level.MemValid && level.Mem >= thresholds.MemHard
-	if hardOpen || memOpen {
-		// 进入熔断后清空计数器。
-		slot.enterCount = 0
-		slot.exitCount = 0
+	// 推进所有信号的连续命中计数：每帧只统计、不转移。
+	// 内存无效（无配额或读不到）按「安全」处理，只看 CPU 型号。
+	memSafe := !level.MemValid || level.Mem < th.MemHard
+	tickHits(&slot.cpuHardHits, level.CPUFast >= th.CPUHard)
+	tickHits(&slot.hardClearHits, level.CPUFast < th.CPUHard && memSafe)
+	tickHits(&slot.cpuEnterHits, level.CPUSlow > th.CPUEnter)
+	tickHits(&slot.cpuExitHits, level.CPUSlow < th.CPUExit)
+	tickHits(&slot.memEnterHits, level.MemValid && level.Mem > th.MemEnter)
+	tickHits(&slot.memExitHits, !level.MemValid || level.Mem < th.MemExit)
+
+	// -> 熔断：CPU 快信号连续越线，或内存单次越线（OOM 不可逆，等不起连续）。
+	cpuOpen := slot.cpuHardHits >= n
+	memOpen := level.MemValid && level.Mem >= th.MemHard
+	if cpuOpen || memOpen {
+		slot.resetEnterHits()
+		slot.resetExitHits()
 		slot.store(StateOpen)
 		return
 	}
@@ -264,46 +277,77 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	state := State(slot.state.Load())
 	if state == StateOpen {
 		// 走到该分支说明当前负载低于熔断线，根据慢信号当前的水位转移至下一个状态。
-		if level.CPUSlow > thresholds.CPUExit {
+		if slot.hardClearHits < n {
+			return
+		}
+
+		if softAboveExit(level, th) {
+			// 熔断 -> 降级：还没恢复到正常。
 			slot.store(StateShedding)
 		} else {
+			// 熔断 -> 正常。
 			slot.store(StateNormal)
 		}
 		return
 	}
 
-	// 分级用慢信号（平滑），进入线高于退出线形成滞回带（如 enter=0.8 / exit=0.7），升过 0.8 才开始丢数据、跌回 0.7 恢复正常。
-	// 滞回带的作用是防抖，避免短期抖动导致负载未到达，便开始丢弃数据。
-	// 进入线、退出线各自累计「连续命中次数」，任一帧不满足就清零。
-	if level.CPUSlow > thresholds.CPUEnter {
-		slot.enterCount++
-	} else {
-		slot.enterCount = 0
-	}
-	if level.CPUSlow < thresholds.CPUExit {
-		slot.exitCount++
-	} else {
-		slot.exitCount = 0
-	}
+	enterMet := slot.cpuEnterHits >= n || slot.memEnterHits >= n
+	exitMet := slot.cpuExitHits >= n && slot.memExitHits >= n
 
 	switch state {
-	case StateShedding:
-		// exitCount 连续达标才从 Shedding 回 Normal。
-		if slot.exitCount >= thresholds.BreachN {
-			slot.enterCount = 0
-			slot.store(StateNormal)
-		}
-	default:
-		// 走到该分支说明此时状态是 Normal，判断是否需要向 Shedding 转移。
-		if slot.enterCount >= thresholds.BreachN {
-			slot.exitCount = 0
+	case StateNormal:
+		if enterMet {
+			// 正常 -> 降级：CPU、内存任一连续 BreachN 次越 enter（降级线）。
+			slot.resetExitHits()
 			slot.store(StateShedding)
+		}
+	case StateShedding:
+		if exitMet {
+			// 降级 -> 正常：CPU、内存「同时」连续 BreachN 次低于 exit（正常线）。
+			slot.resetEnterHits()
+			slot.store(StateNormal)
 		}
 	}
 }
 
+// softAboveExit 判定 Open 退出后是否仍有软线高于 exit 线。内存只在有效时纳入。
+func softAboveExit(level *WaterLevel, th ThresholdConfig) bool {
+	if level.CPUSlow > th.CPUExit {
+		return true
+	}
+	return level.MemValid && level.Mem > th.MemExit
+}
+
+func (s *stateSlot) resetEnterHits() {
+	s.cpuEnterHits = 0
+	s.memEnterHits = 0
+}
+
+func (s *stateSlot) resetExitHits() {
+	s.cpuEnterHits = 0
+	s.memEnterHits = 0
+}
+
 func (s *stateSlot) store(state State) {
 	s.state.Store(uint32(state))
+}
+
+// tickHits 推进一个连续命中计数：满足条件则 +1，否则归零。
+func tickHits(c *int, hit bool) {
+	if hit {
+		*c++
+		return
+	}
+	*c = 0
+}
+
+// overloadRatio 把当前水位归一化到 [0, 1]。
+func overloadRatio(value, enter, hard float64) float64 {
+	span := hard - enter
+	if span <= 0 {
+		return 0
+	}
+	return clamp((value-enter)/span, 0, 1)
 }
 
 func clamp(v, min, max float64) float64 {

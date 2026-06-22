@@ -57,3 +57,53 @@ func TestValidateConfig(t *testing.T) {
 	}
 	assert.Error(t, validateConfig(config))
 }
+
+func TestValidateConfigMemThresholds(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*ThresholdConfig)
+		expected bool // true 表示应通过
+	}{
+		{
+			name:     "default mem thresholds pass",
+			mutate:   func(*ThresholdConfig) {},
+			expected: true,
+		},
+		{
+			name:     "mem_enter <= mem_exit rejected",
+			mutate:   func(t *ThresholdConfig) { t.MemEnter, t.MemExit = 0.78, 0.85 },
+			expected: false,
+		},
+		{
+			name:     "mem_hard <= mem_enter rejected",
+			mutate:   func(t *ThresholdConfig) { t.MemEnter, t.MemHard = 0.92, 0.85 },
+			expected: false,
+		},
+		{
+			name:     "negative mem_exit rejected",
+			mutate:   func(t *ThresholdConfig) { t.MemExit = -0.1 },
+			expected: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config := normalizeConfig(Config{Enabled: true})
+			tc.mutate(&config.Thresholds)
+			err := validateConfig(config)
+			if tc.expected {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestNormalizeConfigMemDefaults(t *testing.T) {
+	config := normalizeConfig(Config{Enabled: true})
+	assert.Equal(t, defaultMemEnter, config.Thresholds.MemEnter)
+	assert.Equal(t, defaultMemExit, config.Thresholds.MemExit)
+	assert.Equal(t, defaultMemHard, config.Thresholds.MemHard)
+	assert.Less(t, config.Thresholds.MemExit, config.Thresholds.MemEnter)
+	assert.Less(t, config.Thresholds.MemEnter, config.Thresholds.MemHard)
+}

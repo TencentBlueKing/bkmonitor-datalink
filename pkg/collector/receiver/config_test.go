@@ -72,6 +72,8 @@ receiver:
       cpu_enter: 0.8
       cpu_exit: 0.7
       cpu_hard: 0.9
+      mem_enter: 0.85
+      mem_exit: 0.78
       mem_hard: 0.92
       breach_n: 2
     rules:
@@ -87,6 +89,8 @@ receiver:
 	assert.Equal(t, 250*time.Millisecond, receiverConfig.Throttle.SampleInterval)
 	assert.Equal(t, 0.95, receiverConfig.Throttle.Signal.CPUSlowBeta)
 	assert.Equal(t, 1.5, receiverConfig.Throttle.Signal.FallbackCores)
+	assert.Equal(t, 0.85, receiverConfig.Throttle.Thresholds.MemEnter)
+	assert.Equal(t, 0.78, receiverConfig.Throttle.Thresholds.MemExit)
 	assert.Equal(t, 2, receiverConfig.Throttle.Thresholds.BreachN)
 	assert.NotNil(t, receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
 	assert.False(t, *receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)

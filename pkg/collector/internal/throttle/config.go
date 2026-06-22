@@ -16,16 +16,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-// 各项缺省值；用户未显式配置（或填了 0、非法区间）的字段回退到这里。
 const (
 	defaultSampleInterval = 250 * time.Millisecond
-	defaultCPUSlowBeta    = 0.95 // 慢信号偏平滑，驱动分级
-	defaultCPUFastBeta    = 0.7  // 快信号偏灵敏，驱动熔断
-	defaultCPUEnter       = 0.80
-	defaultCPUExit        = 0.70
-	defaultCPUHard        = 0.90
-	defaultMemHard        = 0.92
-	defaultBreachN        = 2
+	defaultCPUSlowBeta    = 0.95
+	defaultCPUFastBeta    = 0.7
+	defaultCPUEnter       = 0.95
+	defaultCPUExit        = 0.85
+	defaultCPUHard        = 1.2
+	defaultMemEnter       = 0.75
+	defaultMemExit        = 0.7
+	defaultMemHard        = 0.85
+	defaultBreachN        = 3
 )
 
 var throttleRecordTypes = []define.RecordType{
@@ -44,23 +45,26 @@ type Config struct {
 }
 
 type SignalConfig struct {
-	CPUSlowBeta   float64 `config:"cpu_slow_beta" mapstructure:"cpu_slow_beta"`   // 慢信号 EWMA 历史权重，驱动分级丢弃；缺省 0.95。
-	CPUFastBeta   float64 `config:"cpu_fast_beta" mapstructure:"cpu_fast_beta"`   // 快信号 EWMA 历史权重，驱动硬熔断；缺省 0.7。
-	FallbackCores float64 `config:"fallback_cores" mapstructure:"fallback_cores"` // 读不到 CPU 配额时的有效核数；0 表示取 define.CoreNum()。
+	// 权重用于平滑信号，参考：https://datatracker.ietf.org/doc/html/rfc6298
+	CPUSlowBeta   float64 `config:"cpu_slow_beta" mapstructure:"cpu_slow_beta"`   // 慢信号 EWMA 历史权重。
+	CPUFastBeta   float64 `config:"cpu_fast_beta" mapstructure:"cpu_fast_beta"`   // 快信号 EWMA 历史权重。
+	FallbackCores float64 `config:"fallback_cores" mapstructure:"fallback_cores"` // 读不到 CPU 配额时的有效核数，0 表示取 define.CoreNum()。
 }
 
 type ThresholdConfig struct {
-	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"` // 慢信号越线进入分级丢弃；缺省 0.80。
-	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`   // 慢信号回落退出分级丢弃，与 cpu_enter 形成滞回带；缺省 0.70。
-	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`   // 快信号硬熔断线，连续 breach_n 次越线则全拒；缺省 0.90。
-	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`   // 内存工作集硬熔断线；缺省 0.92。
-	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`   // 连续越界次数门控；缺省 2。
+	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"` // CPU 慢信号进入线，连续 breach_n 次越线进入「降级」。
+	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`   // CPU 慢信号退出线，低于该线可退出「降级」「熔断」。
+	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`   // CPU 快信号熔断线，连续 breach_n 次越线进入「熔断」。
+	MemEnter float64 `config:"mem_enter" mapstructure:"mem_enter"` // 内存进入线，连续 breach_n 次越线进入「降级」。
+	MemExit  float64 `config:"mem_exit" mapstructure:"mem_exit"`   // 内存退出线，低于该线可退出「降级」「熔断」。
+	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`   // 内存熔断线，单次越线即熔断。
+	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`   // 连续越界次数门控。
 }
 
 type RuleConfig struct {
-	Enabled *bool    `config:"enabled" mapstructure:"enabled"`   // 缺省 true；false 表示该数据类型完全不限流、恒放行。
-	DropMin *float64 `config:"drop_min" mapstructure:"drop_min"` // 丢弃概率下界，cpu_slow <= cpu_enter 时取此值；缺省 0。
-	DropMax *float64 `config:"drop_max" mapstructure:"drop_max"` // 丢弃概率上界，cpu_slow >= cpu_hard 时取此值；缺省 1。
+	Enabled *bool    `config:"enabled" mapstructure:"enabled"`   // false 表示该数据类型不做限流。
+	DropMin *float64 `config:"drop_min" mapstructure:"drop_min"` // 丢弃概率下界。
+	DropMax *float64 `config:"drop_max" mapstructure:"drop_max"` // 丢弃概率上界。
 }
 
 type Rule struct {
@@ -87,6 +91,12 @@ func normalizeConfig(c Config) Config {
 	}
 	if c.Thresholds.CPUHard == 0 {
 		c.Thresholds.CPUHard = defaultCPUHard
+	}
+	if c.Thresholds.MemEnter == 0 {
+		c.Thresholds.MemEnter = defaultMemEnter
+	}
+	if c.Thresholds.MemExit == 0 {
+		c.Thresholds.MemExit = defaultMemExit
 	}
 	if c.Thresholds.MemHard == 0 {
 		c.Thresholds.MemHard = defaultMemHard
@@ -122,8 +132,14 @@ func validateConfig(c Config) error {
 	if c.Thresholds.CPUHard <= c.Thresholds.CPUEnter {
 		return fmt.Errorf("thresholds.cpu_hard must be greater than thresholds.cpu_enter")
 	}
-	if c.Thresholds.MemHard <= 0 {
-		return fmt.Errorf("thresholds.mem_hard must be greater than 0")
+	if c.Thresholds.MemExit < 0 {
+		return fmt.Errorf("thresholds.mem_exit must be greater than or equal to 0")
+	}
+	if c.Thresholds.MemEnter <= c.Thresholds.MemExit {
+		return fmt.Errorf("thresholds.mem_enter must be greater than thresholds.mem_exit")
+	}
+	if c.Thresholds.MemHard <= c.Thresholds.MemEnter {
+		return fmt.Errorf("thresholds.mem_hard must be greater than thresholds.mem_enter")
 	}
 	if c.Thresholds.BreachN <= 0 {
 		return fmt.Errorf("thresholds.breach_n must be greater than 0")

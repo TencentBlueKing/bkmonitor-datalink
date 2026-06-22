@@ -17,6 +17,7 @@ import (
 // TimeStamp :
 type TimeStamp struct {
 	time.Time
+	unit string // 支持 s/ms/µs/ns（默认为 s）
 }
 
 // NewTimeStamp :
@@ -28,15 +29,31 @@ func NewTimeStamp(t time.Time) TimeStamp {
 
 // String :
 func (t TimeStamp) String() string {
-	return strconv.FormatInt(t.Unix(), 10)
+	return strconv.FormatInt(t.Int64(), 10)
 }
 
 // Int64 :
 func (t TimeStamp) Int64() int64 {
-	return t.Unix()
+	var n int64
+	switch t.unit {
+	case "ms":
+		n = t.UnixMilli()
+	case "µs":
+		n = t.UnixMicro()
+	case "ns":
+		n = t.UnixNano()
+	default:
+		n = t.Unix()
+	}
+	return n
 }
 
 // MarshalJSON :
 func (t TimeStamp) MarshalJSON() ([]byte, error) {
 	return []byte(t.String()), nil
+}
+
+// SetUnit :
+func (t *TimeStamp) SetUnit(u string) {
+	t.unit = u
 }

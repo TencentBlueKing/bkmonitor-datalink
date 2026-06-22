@@ -191,6 +191,8 @@ const (
 	MetaFieldOptTimeZone = "time_zone"
 	// MetaFieldOptTimeFormat : 时间格式（string)
 	MetaFieldOptTimeFormat = "time_format"
+	// MetaFieldOptTimestampUnit : 时间戳单位(string)
+	MetaFieldOptTimestampUnit = "timestamp_unit"
 	// MetaFieldOptRealPath : "提取的真实路径"
 	MetaFieldOptRealPath = "real_path"
 

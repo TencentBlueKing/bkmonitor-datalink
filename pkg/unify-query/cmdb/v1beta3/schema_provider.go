@@ -141,11 +141,12 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	result := make([]RelationSchema, len(schemas))
 	for i, schema := range schemas {
 		result[i] = RelationSchema{
-			RelationType: normalizeRelationName(schema.RelationName),
-			Category:     RelationCategory(schema.Category),
-			FromType:     ResourceType(schema.FromType),
-			ToType:       ResourceType(schema.ToType),
-			IsBelongsTo:  schema.IsBelongsTo,
+			RelationType:  normalizeRelationName(schema.RelationName),
+			Category:      RelationCategory(schema.Category),
+			FromType:      ResourceType(schema.FromType),
+			ToType:        ResourceType(schema.ToType),
+			IsDirectional: schema.IsDirectional,
+			IsBelongsTo:   schema.IsBelongsTo,
 		}
 	}
 	sort.SliceStable(result, func(i, j int) bool {
@@ -170,11 +171,12 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		return nil, err
 	}
 	return &RelationSchema{
-		RelationType: normalizeRelationName(schema.RelationName),
-		Category:     RelationCategory(schema.Category),
-		FromType:     ResourceType(schema.FromType),
-		ToType:       ResourceType(schema.ToType),
-		IsBelongsTo:  schema.IsBelongsTo,
+		RelationType:  normalizeRelationName(schema.RelationName),
+		Category:      RelationCategory(schema.Category),
+		FromType:      ResourceType(schema.FromType),
+		ToType:        ResourceType(schema.ToType),
+		IsDirectional: schema.IsDirectional,
+		IsBelongsTo:   schema.IsBelongsTo,
 	}, nil
 }
 

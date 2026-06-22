@@ -26,10 +26,14 @@ type mockGraphQueryExecutor struct {
 	graphs []*LivenessGraph
 	err    error
 	sql    string
+	start  int64
+	end    int64
 }
 
 func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
 	m.sql = sql
+	m.start = start
+	m.end = end
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -215,6 +219,7 @@ func TestQueryResourceMatcher(t *testing.T) {
 								"namespace":      "default",
 								"pod":            "nginx-1",
 							},
+							RawPeriods: []*VisiblePeriod{{Start: 0, End: 1000000}},
 						},
 						"node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩": {
 							ResourceID:   "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
@@ -223,6 +228,7 @@ func TestQueryResourceMatcher(t *testing.T) {
 								"bcs_cluster_id": "BCS-K8S-00001",
 								"node":           "node-1",
 							},
+							RawPeriods: []*VisiblePeriod{{Start: 0, End: 1000000}},
 						},
 					},
 				},
@@ -978,6 +984,78 @@ func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
 	assert.NotContains(t, executor.sql, "unsafe.field")
 }
 
+func TestQueryResourceMatcherNormalizesSourceMatcherAliases(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	source, matcher, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(),
+		"10m",
+		"test-space",
+		"600",
+		"system",
+		"pod",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod_name": "nginx-1"},
+		nil,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Resource("pod"), source)
+	assert.Equal(t, cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx-1"}, matcher)
+	assert.Contains(t, executor.sql, "pod = 'nginx-1'")
+	assert.NotContains(t, executor.sql, "pod_name")
+}
+
+func TestQueryResourceMatcherInfersOmittedSourceType(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	source, matcher, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(),
+		"10m",
+		"test-space",
+		"600",
+		"pod",
+		"",
+		cmdb.Matcher{"bk_data_id": "1001"},
+		nil,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Resource("datasource"), source)
+	assert.Equal(t, cmdb.Matcher{"bk_data_id": "1001"}, matcher)
+	assert.Contains(t, executor.sql, "FROM datasource")
+	assert.Contains(t, executor.sql, "bk_data_id = '1001'")
+}
+
+func TestQueryResourceMatcherRangeUsesFullRangeLookback(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcherRange(
+		context.Background(),
+		"10m",
+		"test-space",
+		"1m",
+		"0",
+		"3600",
+		"pod",
+		"datasource",
+		cmdb.Matcher{"bk_data_id": "1001"},
+		nil,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), executor.start)
+	assert.Equal(t, int64(3600000), executor.end)
+}
+
 func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
 	graph := NewLivenessGraph(0, 200)
 	root := &NodeLiveness{ResourceID: "node:1", ResourceType: ResourceTypeNode, Labels: map[string]string{"node": "node-1"}}
@@ -1005,6 +1083,101 @@ func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, []ResourceType{ResourceTypeSystem})
 
 	assert.Equal(t, cmdb.Matchers{{"pod": "via-system"}}, matchers)
+}
+
+func TestExtractMatchersFiltersInactiveInstantTargets(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	inactivePod := &NodeLiveness{
+		ResourceID:   "pod:inactive",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "inactive"},
+	}
+	graph.AddNode(root)
+	graph.AddNode(inactivePod)
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: inactivePod.ResourceID})
+
+	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, nil)
+
+	assert.Nil(t, matchers)
+}
+
+func TestExtractMatchersSkipsRootForExplicitSelfTarget(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	graph.AddNode(&NodeLiveness{
+		ResourceID:   "system:1",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "127.0.0.1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	})
+
+	implicitTarget := extractMatchersFromGraphsWithOptions(
+		[]*LivenessGraph{graph},
+		ResourceTypeSystem,
+		nil,
+		GetSchemaProvider(),
+		"",
+		false,
+		true,
+	)
+	explicitSelfTarget := extractMatchersFromGraphsWithOptions(
+		[]*LivenessGraph{graph},
+		ResourceTypeSystem,
+		nil,
+		GetSchemaProvider(),
+		"",
+		false,
+		false,
+	)
+
+	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "127.0.0.1"}}, implicitTarget)
+	assert.Nil(t, explicitSelfTarget)
+}
+
+func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx-1", "version": "v1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(pod)
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: pod.ResourceID})
+
+	withoutInfo := extractMatchersFromGraphsWithOptions(
+		[]*LivenessGraph{graph},
+		ResourceTypePod,
+		nil,
+		GetSchemaProvider(),
+		"",
+		false,
+		true,
+	)
+	withInfo := extractMatchersFromGraphsWithOptions(
+		[]*LivenessGraph{graph},
+		ResourceTypePod,
+		nil,
+		GetSchemaProvider(),
+		"",
+		true,
+		true,
+	)
+
+	assert.Equal(t, cmdb.Matchers{{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx-1"}}, withoutInfo)
+	assert.Equal(t, cmdb.Matchers{{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx-1", "version": "v1"}}, withInfo)
 }
 
 func TestBuildTargetMatchersTimeSeriesRequiresEdgeLiveness(t *testing.T) {

@@ -10,9 +10,10 @@
 package v1beta3
 
 type RelationSchema struct {
-	RelationType RelationType
-	Category     RelationCategory
-	FromType     ResourceType
-	ToType       ResourceType
-	IsBelongsTo  bool
+	RelationType  RelationType
+	Category      RelationCategory
+	FromType      ResourceType
+	ToType        ResourceType
+	IsDirectional bool
+	IsBelongsTo   bool
 }

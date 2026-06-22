@@ -279,11 +279,12 @@ func DefaultStaticProviderConfig() StaticProviderConfig {
 	relationSchemas := make([]RelationSchema, 0, len(defaultRelationDefinitions))
 	for _, rd := range defaultRelationDefinitions {
 		relationSchemas = append(relationSchemas, RelationSchema{
-			RelationName: RelationName(rd.Name),
-			Category:     ToRelationCategory(rd.Category),
-			FromType:     ResourceType(rd.FromResource),
-			ToType:       ResourceType(rd.ToResource),
-			IsBelongsTo:  rd.IsBelongsTo,
+			RelationName:  RelationName(rd.Name),
+			Category:      ToRelationCategory(rd.Category),
+			FromType:      ResourceType(rd.FromResource),
+			ToType:        ResourceType(rd.ToResource),
+			IsDirectional: rd.IsDirectional,
+			IsBelongsTo:   rd.IsBelongsTo,
 		})
 	}
 

@@ -256,3 +256,20 @@ func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T)
 		},
 	}}}, paths)
 }
+
+func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing.T) {
+	config := relation.DefaultStaticProviderConfig()
+
+	var found bool
+	for _, schema := range config.RelationSchemas {
+		if schema.RelationName != "pod_to_system" {
+			continue
+		}
+		found = true
+		assert.True(t, schema.IsDirectional)
+		assert.Equal(t, relation.ResourceType("pod"), schema.FromType)
+		assert.Equal(t, relation.ResourceType("system"), schema.ToType)
+	}
+
+	assert.True(t, found)
+}

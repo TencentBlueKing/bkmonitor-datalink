@@ -134,11 +134,12 @@ const (
 )
 
 type RelationSchema struct {
-	RelationName RelationName
-	Category     RelationCategory
-	FromType     ResourceType
-	ToType       ResourceType
-	IsBelongsTo  bool
+	RelationName  RelationName
+	Category      RelationCategory
+	FromType      ResourceType
+	ToType        ResourceType
+	IsDirectional bool
+	IsBelongsTo   bool
 }
 
 func ToResourceType(rd *ResourceDefinition) ResourceType {
@@ -161,10 +162,11 @@ func ToRelationCategory(category string) RelationCategory {
 
 func ToRelationSchema(rd *RelationDefinition) RelationSchema {
 	return RelationSchema{
-		RelationName: ToRelationName(rd),
-		Category:     ToRelationCategory(rd.Category),
-		FromType:     ResourceType(rd.FromResource),
-		ToType:       ResourceType(rd.ToResource),
-		IsBelongsTo:  rd.IsBelongsTo,
+		RelationName:  ToRelationName(rd),
+		Category:      ToRelationCategory(rd.Category),
+		FromType:      ResourceType(rd.FromResource),
+		ToType:        ResourceType(rd.ToResource),
+		IsDirectional: rd.IsDirectional,
+		IsBelongsTo:   rd.IsBelongsTo,
 	}
 }

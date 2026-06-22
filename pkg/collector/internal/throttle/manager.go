@@ -70,7 +70,7 @@ type stateSlot struct {
 	cpuHardHits   int // cpuFast >= cpu_hard（进入熔断）
 	memEnterHits  int // mem > mem_enter（进入降级，内存采样无效时忽略）
 	memExitHits   int // mem < mem_exit（恢复正常，内存采样无效时视为正常）
-	hardClearHits int // cpuFast < cpu_hard 且 mem < mem_hard（退出熔断）
+	openClearHits int // cpuFast < cpu_hard 且 mem < mem_hard（退出熔断）
 }
 
 var (
@@ -255,10 +255,9 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	n := th.BreachN
 
 	// 推进所有信号的连续命中计数：每帧只统计、不转移。
-	// 内存无效（无配额或读不到）按「安全」处理，只看 CPU 型号。
 	memSafe := !level.MemValid || level.Mem < th.MemHard
 	tickHits(&slot.cpuHardHits, level.CPUFast >= th.CPUHard)
-	tickHits(&slot.hardClearHits, level.CPUFast < th.CPUHard && memSafe)
+	tickHits(&slot.openClearHits, level.CPUFast < th.CPUHard && memSafe)
 	tickHits(&slot.cpuEnterHits, level.CPUSlow > th.CPUEnter)
 	tickHits(&slot.cpuExitHits, level.CPUSlow < th.CPUExit)
 	tickHits(&slot.memEnterHits, level.MemValid && level.Mem > th.MemEnter)
@@ -277,7 +276,7 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	state := State(slot.state.Load())
 	if state == StateOpen {
 		// 走到该分支说明当前负载低于熔断线，根据慢信号当前的水位转移至下一个状态。
-		if slot.hardClearHits < n {
+		if slot.openClearHits < n {
 			return
 		}
 
@@ -304,17 +303,17 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	case StateShedding:
 		if exitMet {
 			// 降级 -> 正常：CPU、内存「同时」连续 BreachN 次低于 exit（正常线）。
-			slot.resetEnterHits()
 			slot.store(StateNormal)
 		}
 	}
 }
 
-// softAboveExit 判定 Open 退出后是否仍有软线高于 exit 线。内存只在有效时纳入。
+// softAboveExit 判定熔断退出后是否仍高于 exit 线。
 func softAboveExit(level *WaterLevel, th ThresholdConfig) bool {
 	if level.CPUSlow > th.CPUExit {
 		return true
 	}
+	// 内存只在有效时纳入，invalid 视为安全（与 dropProbability、tickHits 一致）。
 	return level.MemValid && level.Mem > th.MemExit
 }
 
@@ -324,8 +323,8 @@ func (s *stateSlot) resetEnterHits() {
 }
 
 func (s *stateSlot) resetExitHits() {
-	s.cpuEnterHits = 0
-	s.memEnterHits = 0
+	s.cpuExitHits = 0
+	s.memExitHits = 0
 }
 
 func (s *stateSlot) store(state State) {

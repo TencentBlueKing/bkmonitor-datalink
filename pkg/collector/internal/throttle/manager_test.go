@@ -18,40 +18,57 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
+const (
+	testCPUEnter = 0.8
+	testCPUExit  = 0.7
+	testCPUHard  = 0.9
+	testMemEnter = 0.85
+	testMemExit  = 0.78
+	testMemHard  = 0.92
+	testBreachN  = 2
+)
+
+// cpuAtRatio / memAtRatio 把「过载比例 r」转成对应水位，方便 dropProbability 用例。
+// r=0 → enter 线，r=1 → hard 线，r=0.5 → 中点。
+func cpuAtRatio(r float64) float64 { return testCPUEnter + (testCPUHard-testCPUEnter)*r }
+
+func memAtRatio(r float64) float64 { return testMemEnter + (testMemHard-testMemEnter)*r }
+
 func TestManagerStateHysteresis(t *testing.T) {
 	manager := newManager(testConfig())
-	manager.Publish(WaterLevel{CPUSlow: 0.81, CPUFast: 0.5})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, CPUFast: 0.5})
 	assert.Equal(t, StateNormal, manager.State(define.RecordTraces))
 
-	manager.Publish(WaterLevel{CPUSlow: 0.82, CPUFast: 0.5})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02, CPUFast: 0.5})
 	assert.Equal(t, StateShedding, manager.State(define.RecordTraces))
 	assert.Equal(t, ActionShed, manager.decide(define.RecordTraces, func() float64 { return 0 }))
 
-	manager.Publish(WaterLevel{CPUSlow: 0.75, CPUFast: 0.5})
-	manager.Publish(WaterLevel{CPUSlow: 0.75, CPUFast: 0.5})
+	// 滞回带（exit < x < enter）保持 Shedding
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit + 0.05, CPUFast: 0.5})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit + 0.05, CPUFast: 0.5})
 	assert.Equal(t, StateShedding, manager.State(define.RecordTraces))
 
-	manager.Publish(WaterLevel{CPUSlow: 0.69, CPUFast: 0.5})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.01, CPUFast: 0.5})
 	assert.Equal(t, StateShedding, manager.State(define.RecordTraces))
-	manager.Publish(WaterLevel{CPUSlow: 0.68, CPUFast: 0.5})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.02, CPUFast: 0.5})
 	assert.Equal(t, StateNormal, manager.State(define.RecordTraces))
 }
 
 func TestManagerHardOpen(t *testing.T) {
 	manager := newManager(testConfig())
-	manager.Publish(WaterLevel{CPUSlow: 0.5, CPUFast: 0.95})
+	manager.Publish(WaterLevel{CPUSlow: 0.5, CPUFast: testCPUHard + 0.05})
 	assert.Equal(t, StateNormal, manager.State(define.RecordTraces))
 
-	manager.Publish(WaterLevel{CPUSlow: 0.5, CPUFast: 0.96})
+	manager.Publish(WaterLevel{CPUSlow: 0.5, CPUFast: testCPUHard + 0.06})
 	assert.Equal(t, StateOpen, manager.State(define.RecordTraces))
 	assert.Equal(t, ActionOpen, manager.Decide(define.RecordTraces))
 
-	// 第 1 次硬线回落计入 hardClearHits，但 breach_n=2 未满 → 仍 Open，避免硬线边沿抖动。
-	manager.Publish(WaterLevel{CPUSlow: 0.75, CPUFast: 0.5})
+	// 第 1 次硬线回落计入 openClearHits，但 breach_n 未满 → 仍 Open，避免硬线边沿抖动。
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit + 0.05, CPUFast: 0.5})
 	assert.Equal(t, StateOpen, manager.State(define.RecordTraces))
 
-	// 第 2 次硬线回落 → 退出 Open；CPUSlow=0.75 > cpu_exit=0.7，按软线水位走 Shedding。
-	manager.Publish(WaterLevel{CPUSlow: 0.75, CPUFast: 0.5})
+	// 第 2 次硬线回落 → 退出 Open；CPUSlow 仍在 cpu_exit 之上，按瞬时水位走 Shedding。
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit + 0.05, CPUFast: 0.5})
 	assert.Equal(t, StateShedding, manager.State(define.RecordTraces))
 }
 
@@ -63,7 +80,7 @@ func TestManagerMemOpenAndRuleDisabled(t *testing.T) {
 	}
 	manager := newManager(config)
 
-	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: 0.99, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: testMemHard + 0.05, MemValid: true})
 	assert.Equal(t, StateOpen, manager.State(define.RecordTraces))
 	assert.Equal(t, StateNormal, manager.State(define.RecordMetrics))
 	assert.Equal(t, ActionAdmit, manager.Decide(define.RecordMetrics))
@@ -73,25 +90,25 @@ func TestManagerMemSoftHysteresis(t *testing.T) {
 	manager := newManager(testConfig())
 	traces := define.RecordTraces
 
-	// 第 1 次越 mem_enter（0.85），breach_n=2 未满 → 仍 Normal
-	manager.Publish(WaterLevel{Mem: 0.86, MemValid: true})
+	// 第 1 次越 mem_enter，breach_n 未满 → 仍 Normal
+	manager.Publish(WaterLevel{Mem: testMemEnter + 0.01, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 
 	// 第 2 次越 mem_enter → 进入 Shedding
-	manager.Publish(WaterLevel{Mem: 0.87, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemEnter + 0.02, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 
-	// 滞回带内（mem_exit=0.78 < 0.82 < 0.85）保持 Shedding
-	manager.Publish(WaterLevel{Mem: 0.82, MemValid: true})
-	manager.Publish(WaterLevel{Mem: 0.82, MemValid: true})
+	// 滞回带（exit < x < enter）保持 Shedding
+	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 
 	// 第 1 次跌破 mem_exit，breach_n 未满 → 仍 Shedding
-	manager.Publish(WaterLevel{Mem: 0.77, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit - 0.01, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 
 	// 第 2 次跌破 mem_exit → 回到 Normal
-	manager.Publish(WaterLevel{Mem: 0.76, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit - 0.02, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
@@ -100,14 +117,14 @@ func TestManagerSoftEntryByEitherSignal(t *testing.T) {
 
 	// 仅 CPU 高（mem 不报）也能进 Shedding
 	cpu := newManager(testConfig())
-	cpu.Publish(WaterLevel{CPUSlow: 0.81})
-	cpu.Publish(WaterLevel{CPUSlow: 0.82})
+	cpu.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01})
+	cpu.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02})
 	assert.Equal(t, StateShedding, cpu.State(traces))
 
 	// 仅 mem 高（CPU 静默）也能独立进 Shedding
 	mem := newManager(testConfig())
-	mem.Publish(WaterLevel{Mem: 0.86, MemValid: true})
-	mem.Publish(WaterLevel{Mem: 0.87, MemValid: true})
+	mem.Publish(WaterLevel{Mem: testMemEnter + 0.01, MemValid: true})
+	mem.Publish(WaterLevel{Mem: testMemEnter + 0.02, MemValid: true})
 	assert.Equal(t, StateShedding, mem.State(traces))
 }
 
@@ -116,18 +133,18 @@ func TestManagerExitRequiresBothCPUAndMem(t *testing.T) {
 	traces := define.RecordTraces
 
 	// CPU 与 mem 同时越线 → Shedding
-	manager.Publish(WaterLevel{CPUSlow: 0.81, Mem: 0.86, MemValid: true})
-	manager.Publish(WaterLevel{CPUSlow: 0.81, Mem: 0.86, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, Mem: testMemEnter + 0.01, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, Mem: testMemEnter + 0.01, MemValid: true})
 	require.Equal(t, StateShedding, manager.State(traces))
 
 	// 仅 CPU 跌回 exit 线下，mem 仍在 mem_exit 线上 → 不能退出 Shedding
-	manager.Publish(WaterLevel{CPUSlow: 0.65, Mem: 0.86, MemValid: true})
-	manager.Publish(WaterLevel{CPUSlow: 0.65, Mem: 0.86, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemEnter + 0.01, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemEnter + 0.01, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 
 	// mem 也跌回 exit 线下，连续 breach_n 次 → Normal
-	manager.Publish(WaterLevel{CPUSlow: 0.65, Mem: 0.77, MemValid: true})
-	manager.Publish(WaterLevel{CPUSlow: 0.65, Mem: 0.77, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.01, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.01, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
@@ -136,15 +153,15 @@ func TestManagerOpenExitRequiresBreachN(t *testing.T) {
 	traces := define.RecordTraces
 
 	// mem 单次越线即触发 Open
-	manager.Publish(WaterLevel{Mem: 0.95, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
 	// 第 1 次硬线回落不足以退出 Open
-	manager.Publish(WaterLevel{Mem: 0.5, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit - 0.20, MemValid: true})
 	assert.Equal(t, StateOpen, manager.State(traces))
 
 	// 第 2 次硬线回落 → 退出 Open；软线均低于 exit → Normal
-	manager.Publish(WaterLevel{Mem: 0.5, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit - 0.20, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
@@ -162,15 +179,15 @@ func TestManagerOpenExitToSheddingByMem(t *testing.T) {
 	traces := define.RecordTraces
 
 	// mem 单次越硬线 → Open
-	manager.Publish(WaterLevel{Mem: 0.95, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
 	// 第 1 次硬线回落，breach_n 未满 → 仍 Open
-	manager.Publish(WaterLevel{Mem: 0.82, MemValid: true})
+	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
 	assert.Equal(t, StateOpen, manager.State(traces))
 
-	// 第 2 次硬线回落 → 退出 Open；mem=0.82 仍 > mem_exit=0.78 → Shedding（按本帧瞬时水位决定）
-	manager.Publish(WaterLevel{Mem: 0.82, MemValid: true})
+	// 第 2 次硬线回落 → 退出 Open；mem 仍 > mem_exit → Shedding（按本帧瞬时水位决定）
+	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 }
 
@@ -178,14 +195,64 @@ func TestManagerMemInvalidAllowsSoftExit(t *testing.T) {
 	manager := newManager(testConfig())
 	traces := define.RecordTraces
 
-	manager.Publish(WaterLevel{CPUSlow: 0.81})
-	manager.Publish(WaterLevel{CPUSlow: 0.82})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02})
 	require.Equal(t, StateShedding, manager.State(traces))
 
 	// CPU 跌回 exit 线下、内存读不到（MemValid=false 视为安全），仍能退出 Shedding。
-	manager.Publish(WaterLevel{CPUSlow: 0.65})
-	manager.Publish(WaterLevel{CPUSlow: 0.65})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05})
 	assert.Equal(t, StateNormal, manager.State(traces))
+}
+
+// 回归 1：Normal 期间 mem 长期低位让 memExitHits 累积，CPU 触发 enter 把状态机推到 Shedding 后，
+// CPU 立刻跌回 exit 线下两帧也不能马上退回 Normal——必须重新等 mem 凑齐 BreachN。
+// 这条用来防 resetExitHits 没清 mem/cpu exit 计数的回归（曾经写错为清 enter 计数）。
+func TestManagerEnterClearsExitHits(t *testing.T) {
+	manager := newManager(testConfig())
+	traces := define.RecordTraces
+	slot := manager.states[traces]
+
+	// Normal 期 mem 长期低位 → memExitHits 累积超过 BreachN
+	for i := 0; i < testBreachN+2; i++ {
+		manager.Publish(WaterLevel{Mem: testMemExit - 0.05, MemValid: true})
+	}
+	require.Equal(t, StateNormal, manager.State(traces))
+	require.GreaterOrEqual(t, slot.memExitHits, testBreachN)
+
+	// CPU 单维触发 enter → Shedding
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, Mem: testMemExit - 0.05, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02, Mem: testMemExit - 0.05, MemValid: true})
+	require.Equal(t, StateShedding, manager.State(traces))
+	// resetExitHits 必须清掉 mem 维残留计数，否则下一刻 CPU 一回落就会立即退 Normal。
+	require.Equal(t, 0, slot.memExitHits)
+
+	// CPU 立刻跌回 exit 线下两帧——不应立即退 Normal，因为 memExitHits 刚被清零，需要重数。
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.05, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.05, MemValid: true})
+	assert.Equal(t, StateNormal, manager.State(traces)) // 两帧后 mem 也凑齐 BreachN，正常退出
+}
+
+// 回归 2：CPUFast 跨硬线、CPUSlow 同帧仍低于 cpu_exit（快慢分离）。
+// 进 Open 时 cpuExitHits 当帧刚被 tickHits ++，必须由 resetExitHits 清掉，
+// 否则 Open 退出后 cpuExitHits 带「虚高」计数，提前满足 exitMet。
+func TestManagerOpenEntryClearsExitHits(t *testing.T) {
+	manager := newManager(testConfig())
+	traces := define.RecordTraces
+	slot := manager.states[traces]
+
+	// 先让 CPU 处于 cpu_exit 之下、cpu_fast 也低，预热 cpuExitHits 累积
+	for i := 0; i < testBreachN+2; i++ {
+		manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: 0.1})
+	}
+	require.GreaterOrEqual(t, slot.cpuExitHits, testBreachN)
+
+	// 快慢分离：CPUFast 连续越 hard 触发 Open，CPUSlow 仍低于 exit
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: testCPUHard + 0.05})
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: testCPUHard + 0.05})
+	require.Equal(t, StateOpen, manager.State(traces))
+	// 进 Open 时 cpuExitHits 必须被清零，避免 Open 退出后带票退 Normal。
+	assert.Equal(t, 0, slot.cpuExitHits)
 }
 
 func TestManagerDropProbability(t *testing.T) {
@@ -200,13 +267,13 @@ func TestManagerDropProbability(t *testing.T) {
 	}
 	manager := newManager(config)
 
-	// CPU=0.85，t_cpu=(0.85-0.8)/(0.9-0.8)=0.5，mem 不报 → t=0.5，p=0.2+0.6*0.5=0.5
-	manager.Publish(WaterLevel{CPUSlow: 0.85, CPUFast: 0.5})
-	assert.InDelta(t, 0.5, manager.dropProbability(define.RecordTraces), 0.001)
+	// CPU 在 enter 与 hard 中点（r=0.5）→ p = drop_min + (drop_max-drop_min)*0.5
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(0.5), CPUFast: 0.5})
+	assert.InDelta(t, dropMin+(dropMax-dropMin)*0.5, manager.dropProbability(define.RecordTraces), 0.001)
 
-	// CPU=0.95 已顶到 cpu_hard，t=1，p=drop_max
-	manager.Publish(WaterLevel{CPUSlow: 0.95, CPUFast: 0.5})
-	assert.InDelta(t, 0.8, manager.dropProbability(define.RecordTraces), 0.001)
+	// CPU 顶到 cpu_hard（r=1）→ p = drop_max
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(1.0), CPUFast: 0.5})
+	assert.InDelta(t, dropMax, manager.dropProbability(define.RecordTraces), 0.001)
 }
 
 func TestManagerDropProbabilityWithMem(t *testing.T) {
@@ -219,20 +286,24 @@ func TestManagerDropProbabilityWithMem(t *testing.T) {
 	manager := newManager(config)
 	traces := define.RecordTraces
 
-	// 单 CPU 高（cpu_enter=0.8、cpu_hard=0.9）：t_cpu=0.5、t_mem=0 → p=0.5
-	manager.Publish(WaterLevel{CPUSlow: 0.85})
+	// 单 CPU 高（r=0.5）：t_cpu=0.5、t_mem=0 → p=0.5
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(0.5)})
 	assert.InDelta(t, 0.5, manager.dropProbability(traces), 0.001)
 
-	// 单 mem 高（mem_enter=0.85、mem_hard=0.92）：t_mem=0.5、t_cpu=0 → p=0.5
-	manager.Publish(WaterLevel{Mem: 0.885, MemValid: true})
+	// 单 mem 高（r=0.5）：t_mem=0.5、t_cpu=0 → p=0.5
+	manager.Publish(WaterLevel{Mem: memAtRatio(0.5), MemValid: true})
 	assert.InDelta(t, 0.5, manager.dropProbability(traces), 0.001)
 
-	// 双高时取 max：t_cpu=0.5、t_mem≈0.7 → p≈0.7（mem 主导）
-	manager.Publish(WaterLevel{CPUSlow: 0.85, Mem: 0.899, MemValid: true})
-	assert.InDelta(t, 0.7, manager.dropProbability(traces), 0.01)
+	// 双高时取 max：t_cpu=0.5、t_mem=0.7 → p=0.7（mem 主导）
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(0.5), Mem: memAtRatio(0.7), MemValid: true})
+	assert.InDelta(t, 0.7, manager.dropProbability(traces), 0.001)
 
-	// MemValid=false 时 mem 不参与计算
+	// MemValid=false 时 mem 不参与计算，即使 Mem 数值很高
 	manager.Publish(WaterLevel{Mem: 0.99, MemValid: false})
+	assert.InDelta(t, 0.0, manager.dropProbability(traces), 0.001)
+
+	// MemValid=true 但 Mem < MemEnter，tMem 被 clamp 到 0
+	manager.Publish(WaterLevel{Mem: testMemEnter - 0.05, MemValid: true})
 	assert.InDelta(t, 0.0, manager.dropProbability(traces), 0.001)
 }
 
@@ -267,11 +338,13 @@ func testConfig() Config {
 	return normalizeConfig(Config{
 		Enabled: true,
 		Thresholds: ThresholdConfig{
-			CPUEnter: 0.8,
-			CPUExit:  0.7,
-			CPUHard:  0.9,
-			MemHard:  0.92,
-			BreachN:  2,
+			CPUEnter: testCPUEnter,
+			CPUExit:  testCPUExit,
+			CPUHard:  testCPUHard,
+			MemEnter: testMemEnter,
+			MemExit:  testMemExit,
+			MemHard:  testMemHard,
+			BreachN:  testBreachN,
 		},
 	})
 }

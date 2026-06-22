@@ -127,8 +127,10 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 		return nil, &BindingLookupError{SpaceUID: spaceUID, Reason: err.Error()}
 	}
 	span.Set("bk-biz-id", bizID)
+	tenantID := metadata.GetUser(ctx).TenantID
+	cacheKey := bindingCacheKey(tenantID, bizID)
 
-	if info := r.lookupCache(bizID); info != nil {
+	if info := r.lookupCache(cacheKey); info != nil {
 		ObserveBindingLookup(spaceUID, "hit_cache")
 		span.Set("cache", "hit")
 		return info, nil
@@ -145,7 +147,7 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 		return nil, &BindingLookupError{SpaceUID: spaceUID, Reason: fmt.Sprintf("no usable SurrealDBBinding found for bk_biz_id=%s", bizID)}
 	}
 
-	r.storeCache(bizID, info)
+	r.storeCache(cacheKey, info)
 	ObserveBindingCacheSize(r.cacheSize())
 	ObserveBindingLookup(spaceUID, "miss_cache")
 	span.Set("binding-name", info.Name)
@@ -158,13 +160,17 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 func (r *BindingResolver) Invalidate(bizID string) {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	delete(r.cache, bizID)
+	for key := range r.cache {
+		if key == bizID || strings.HasSuffix(key, ":"+bizID) {
+			delete(r.cache, key)
+		}
+	}
 }
 
-func (r *BindingResolver) lookupCache(bizID string) *BindingInfo {
+func (r *BindingResolver) lookupCache(cacheKey string) *BindingInfo {
 	r.cacheMu.RLock()
 	defer r.cacheMu.RUnlock()
-	entry, ok := r.cache[bizID]
+	entry, ok := r.cache[cacheKey]
 	if !ok {
 		return nil
 	}
@@ -174,17 +180,21 @@ func (r *BindingResolver) lookupCache(bizID string) *BindingInfo {
 	return entry.info
 }
 
-func (r *BindingResolver) storeCache(bizID string, info *BindingInfo) {
+func (r *BindingResolver) storeCache(cacheKey string, info *BindingInfo) {
 	ttl := BindingCacheTTL
 	if ttl <= 0 {
 		ttl = DefaultBindingCacheTTL
 	}
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	r.cache[bizID] = &bindingCacheEntry{
+	r.cache[cacheKey] = &bindingCacheEntry{
 		info:   info,
 		expiry: time.Now().Add(ttl),
 	}
+}
+
+func bindingCacheKey(tenantID, bizID string) string {
+	return fmt.Sprintf("%s:%s", tenantID, bizID)
 }
 
 func (r *BindingResolver) cacheSize() int {

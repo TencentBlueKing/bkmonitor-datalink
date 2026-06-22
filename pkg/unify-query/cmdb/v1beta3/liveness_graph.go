@@ -41,6 +41,7 @@ type EdgeLiveness struct {
 
 type TargetPath struct {
 	Target      *NodeLiveness
+	NodePeriods [][]*VisiblePeriod
 	EdgePeriods [][]*VisiblePeriod
 }
 
@@ -141,7 +142,7 @@ func (g *LivenessGraph) TargetPaths(
 	var result []*TargetPath
 	for _, rootID := range g.rootNodeIDs() {
 		visited := map[string]bool{rootID: true}
-		g.collectTargetPaths(rootID, targetType, pathResource, 0, nil, visited, includeRootTarget, &result)
+		g.collectTargetPaths(rootID, targetType, pathResource, 0, nil, nil, visited, includeRootTarget, &result)
 	}
 	return result
 }
@@ -151,6 +152,7 @@ func (g *LivenessGraph) collectTargetPaths(
 	targetType ResourceType,
 	pathResource []ResourceType,
 	pathIdx int,
+	nodePeriods [][]*VisiblePeriod,
 	edgePeriods [][]*VisiblePeriod,
 	visited map[string]bool,
 	includeRootTarget bool,
@@ -160,6 +162,7 @@ func (g *LivenessGraph) collectTargetPaths(
 	if node == nil {
 		return
 	}
+	currentNodePeriods := append(append([][]*VisiblePeriod{}, nodePeriods...), node.RawPeriods)
 
 	nextPathIdx := pathIdx
 	if len(pathResource) > 0 && pathIdx < len(pathResource) && node.ResourceType == pathResource[pathIdx] {
@@ -170,7 +173,7 @@ func (g *LivenessGraph) collectTargetPaths(
 		nextPathIdx >= len(pathResource) &&
 		(includeRootTarget || len(edgePeriods) > 0) &&
 		g.nodeOverlapsQuery(node) {
-		*result = append(*result, &TargetPath{Target: node, EdgePeriods: edgePeriods})
+		*result = append(*result, &TargetPath{Target: node, NodePeriods: currentNodePeriods, EdgePeriods: edgePeriods})
 	}
 
 	for _, edge := range g.outEdgesFromMap(nodeID) {
@@ -192,6 +195,7 @@ func (g *LivenessGraph) collectTargetPaths(
 			targetType,
 			pathResource,
 			nextPathIdx,
+			currentNodePeriods,
 			nextEdgePeriods,
 			visited,
 			includeRootTarget,

@@ -393,6 +393,11 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 		req.SourceType = sourceType
 	}
 	req.Normalize()
+	implicitSelfTarget := !req.TargetTypeExplicit && req.SourceType == req.TargetType
+	if implicitSelfTarget {
+		req.MaxHops = 0
+		req.PathResource = nil
+	}
 
 	if err := validateQueryResources(req, provider); err != nil {
 		return nil, nil, nil, err
@@ -408,6 +413,9 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	span.Set("space-uid", req.SpaceUID)
 
 	builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
+	if implicitSelfTarget {
+		req.MaxHops = 0
+	}
 	sql := builder.Build()
 	queryStart, queryEnd := req.GetQueryRange()
 
@@ -422,9 +430,13 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 		WithSchemaProvider(provider),
 		WithNamespace(req.SchemaNamespace()),
 	)
-	paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
-	if err != nil {
-		return nil, nil, nil, err
+	if implicitSelfTarget {
+		paths = []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: string(req.SourceType)}}}}
+	} else {
+		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	if m.executor != nil {
@@ -702,7 +714,7 @@ func extractMatchersFromGraphsWithOptions(
 
 type targetPathInfo struct {
 	Labels      map[string]string
-	NodePeriods []*VisiblePeriod
+	NodePeriods [][]*VisiblePeriod
 	EdgePeriods [][]*VisiblePeriod
 }
 
@@ -748,7 +760,7 @@ func buildTargetMatchersTimeSeriesWithOptions(
 		for _, path := range g.TargetPaths(targetType, pathResource, includeRootTarget) {
 			targetNodes[path.Target.ResourceID] = append(targetNodes[path.Target.ResourceID], &targetPathInfo{
 				Labels:      path.Target.Labels,
-				NodePeriods: path.Target.RawPeriods,
+				NodePeriods: path.NodePeriods,
 				EdgePeriods: path.EdgePeriods,
 			})
 		}
@@ -795,26 +807,22 @@ func filterTargetMatcher(
 	if labels == nil {
 		return nil
 	}
-	if targetInfoShow {
-		matcher := make(cmdb.Matcher, len(labels))
-		for k, v := range labels {
-			matcher[k] = v
-		}
-		return matcher
-	}
 	if provider == nil {
 		provider = GetSchemaProvider()
 	}
-	primaryKeys := provider.GetResourcePrimaryKeys(namespace, targetType)
-	if len(primaryKeys) == 0 {
+	fields := provider.GetResourcePrimaryKeys(namespace, targetType)
+	if targetInfoShow {
+		fields = provider.GetResourceFields(namespace, targetType)
+	}
+	if len(fields) == 0 {
 		matcher := make(cmdb.Matcher, len(labels))
 		for k, v := range labels {
 			matcher[k] = v
 		}
 		return matcher
 	}
-	matcher := make(cmdb.Matcher, len(primaryKeys))
-	for _, key := range primaryKeys {
+	matcher := make(cmdb.Matcher, len(fields))
+	for _, key := range fields {
 		if value, ok := labels[key]; ok {
 			matcher[key] = value
 		}
@@ -824,10 +832,16 @@ func filterTargetMatcher(
 
 func isAnyTargetPathActiveAt(paths []*targetPathInfo, ts int64) bool {
 	for _, path := range paths {
-		if !isActiveAt(path.NodePeriods, ts) {
+		active := true
+		for _, periods := range path.NodePeriods {
+			if !isActiveAt(periods, ts) {
+				active = false
+				break
+			}
+		}
+		if !active {
 			continue
 		}
-		active := true
 		for _, periods := range path.EdgePeriods {
 			if !isActiveAt(periods, ts) {
 				active = false

@@ -644,6 +644,41 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id }")
 }
 
+func TestQueryLivenessGraphProjectsTargetInfoFields(t *testing.T) {
+	ctx := context.Background()
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"custom_source": resourceDefinition("custom_source", "custom_id"),
+				"custom_target": resourceDefinitionWithFields("custom_target", []string{"target_id"}, "version"),
+			},
+		},
+		relations: map[string][]*relation.RelationDefinition{
+			relation.NamespaceAll: {
+				{Name: "custom_source_to_custom_target", FromResource: "custom_source", ToResource: "custom_target", Category: "dynamic", IsDirectional: true},
+			},
+		},
+	})
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(provider)
+
+	_, _, _, err = model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id": "source-1",
+		},
+		TargetType:     "custom_target",
+		TargetInfoShow: true,
+		MaxHops:        1,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id, version: target_id.version }")
+}
+
 func TestInitSchemaProviderRefreshesDefaultModel(t *testing.T) {
 	ctx := context.Background()
 	InitSchemaProvider(nil)
@@ -736,26 +771,8 @@ func TestQueryLivenessGraphDefaultsEmptyTargetTypeToSourceType(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, ResourceType("custom_source"), req.TargetType)
-	assert.ElementsMatch(t, []cmdb.PathV2{
-		{Steps: []cmdb.PathStepV2{
-			{ResourceType: "custom_source"},
-			{
-				ResourceType: "custom_source",
-				RelationType: "custom_source_to_custom_source",
-				Category:     "dynamic",
-				Direction:    "outbound",
-			},
-		}},
-		{Steps: []cmdb.PathStepV2{
-			{ResourceType: "custom_source"},
-			{
-				ResourceType: "custom_source",
-				RelationType: "custom_source_to_custom_source",
-				Category:     "dynamic",
-				Direction:    "inbound",
-			},
-		}},
-	}, paths)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: "custom_source"}}}}, paths)
+	assert.NotContains(t, executor.sql, "custom_source_to_custom_source")
 }
 
 func TestDefaultStaticSchemaProviderMatchesServiceStaticProvider(t *testing.T) {
@@ -884,10 +901,34 @@ func TestExecuteGraphQueryRequiresSpaceUIDForBindingExecutor(t *testing.T) {
 	assert.Contains(t, err.Error(), "space_uid is required")
 }
 
+func TestBindingCacheKeyIncludesTenant(t *testing.T) {
+	resolver := &BindingResolver{cache: make(map[string]*bindingCacheEntry)}
+	first := &BindingInfo{Name: "tenant-a-binding"}
+	second := &BindingInfo{Name: "tenant-b-binding"}
+
+	resolver.storeCache(bindingCacheKey("tenant-a", "2"), first)
+	resolver.storeCache(bindingCacheKey("tenant-b", "2"), second)
+
+	assert.Equal(t, first, resolver.lookupCache(bindingCacheKey("tenant-a", "2")))
+	assert.Equal(t, second, resolver.lookupCache(bindingCacheKey("tenant-b", "2")))
+	assert.Nil(t, resolver.lookupCache("2"))
+}
+
 func resourceDefinition(name string, primaryKeys ...string) *relation.ResourceDefinition {
 	fields := make([]relation.FieldDefinition, 0, len(primaryKeys))
 	for _, primaryKey := range primaryKeys {
 		fields = append(fields, relation.FieldDefinition{Name: primaryKey, Required: true})
+	}
+	return &relation.ResourceDefinition{Name: name, Fields: fields}
+}
+
+func resourceDefinitionWithFields(name string, primaryKeys []string, optionalFields ...string) *relation.ResourceDefinition {
+	fields := make([]relation.FieldDefinition, 0, len(primaryKeys)+len(optionalFields))
+	for _, primaryKey := range primaryKeys {
+		fields = append(fields, relation.FieldDefinition{Name: primaryKey, Required: true})
+	}
+	for _, field := range optionalFields {
+		fields = append(fields, relation.FieldDefinition{Name: field})
 	}
 	return &relation.ResourceDefinition{Name: name, Fields: fields}
 }
@@ -1194,6 +1235,13 @@ func TestExtractMatchersSkipsRootForExplicitSelfTarget(t *testing.T) {
 }
 
 func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"pod": resourceDefinitionWithFields("pod", []string{"bcs_cluster_id", "namespace", "pod"}, "version"),
+			},
+		},
+	})
 	graph := NewLivenessGraph(0, 200)
 	root := &NodeLiveness{
 		ResourceID:   "node:1",
@@ -1215,7 +1263,7 @@ func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
 		[]*LivenessGraph{graph},
 		ResourceTypePod,
 		nil,
-		GetSchemaProvider(),
+		provider,
 		"",
 		false,
 		true,
@@ -1224,7 +1272,7 @@ func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
 		[]*LivenessGraph{graph},
 		ResourceTypePod,
 		nil,
-		GetSchemaProvider(),
+		provider,
 		"",
 		true,
 		true,
@@ -1236,7 +1284,12 @@ func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
 
 func TestBuildTargetMatchersTimeSeriesRequiresEdgeLiveness(t *testing.T) {
 	graph := NewLivenessGraph(0, 200)
-	root := &NodeLiveness{ResourceID: "node:1", ResourceType: ResourceTypeNode, Labels: map[string]string{"node": "node-1"}}
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
 	pod := &NodeLiveness{
 		ResourceID:   "pod:1",
 		ResourceType: ResourceTypePod,
@@ -1256,6 +1309,36 @@ func TestBuildTargetMatchersTimeSeriesRequiresEdgeLiveness(t *testing.T) {
 
 	assert.Equal(t, []cmdb.MatchersWithTimestamp{
 		{Timestamp: 100, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+	}, result)
+}
+
+func TestBuildTargetMatchersTimeSeriesRequiresEveryNodeLiveness(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 50}},
+	}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "nginx-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(pod)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID: "node-pod",
+		FromID:     root.ResourceID,
+		ToID:       pod.ResourceID,
+		RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}},
+	})
+
+	result := buildTargetMatchersTimeSeries([]*LivenessGraph{graph}, ResourceTypePod, nil, 0, 200, 100)
+
+	assert.Equal(t, []cmdb.MatchersWithTimestamp{
+		{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
 	}, result)
 }
 

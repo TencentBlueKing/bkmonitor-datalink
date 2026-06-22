@@ -65,14 +65,15 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 		}
 
 		rd := &RelationDefinition{
-			Namespace:    NamespaceAll,
-			Name:         string(schema.RelationName),
-			FromResource: string(schema.FromType),
-			ToResource:   string(schema.ToType),
-			Category:     category,
-			IsBelongsTo:  schema.IsBelongsTo,
-			Labels:       make(map[string]string),
-			Spec:         make(map[string]interface{}),
+			Namespace:     NamespaceAll,
+			Name:          string(schema.RelationName),
+			FromResource:  string(schema.FromType),
+			ToResource:    string(schema.ToType),
+			Category:      category,
+			IsDirectional: schema.IsDirectional,
+			IsBelongsTo:   schema.IsBelongsTo,
+			Labels:        make(map[string]string),
+			Spec:          make(map[string]interface{}),
 		}
 		provider.relationDefinitions[rd.Name] = rd
 	}

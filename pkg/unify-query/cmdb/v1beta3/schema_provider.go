@@ -22,6 +22,8 @@ import (
 type SchemaProvider interface {
 	// GetResourcePrimaryKeys 获取资源类型的主键字段列表
 	GetResourcePrimaryKeys(namespace string, resourceType ResourceType) []string
+	// GetResourceFields 获取资源类型的所有已定义字段列表
+	GetResourceFields(namespace string, resourceType ResourceType) []string
 	// ListRelationSchemas 列出所有关联 Schema
 	ListRelationSchemas(namespace string) []RelationSchema
 }
@@ -107,18 +109,38 @@ func normalizeSchemaNamespace(namespace string) string {
 }
 
 func (a *v1beta3SchemaProviderAdapter) GetResourcePrimaryKeys(namespace string, resourceType ResourceType) []string {
+	resourceDef := a.getResourceDefinition(namespace, resourceType)
+	if resourceDef == nil {
+		return []string{}
+	}
+	return resourceDef.GetPrimaryKeys()
+}
+
+func (a *v1beta3SchemaProviderAdapter) GetResourceFields(namespace string, resourceType ResourceType) []string {
+	resourceDef := a.getResourceDefinition(namespace, resourceType)
+	if resourceDef == nil {
+		return []string{}
+	}
+	fields := make([]string, 0, len(resourceDef.Fields))
+	for _, field := range resourceDef.Fields {
+		fields = append(fields, field.Name)
+	}
+	return fields
+}
+
+func (a *v1beta3SchemaProviderAdapter) getResourceDefinition(namespace string, resourceType ResourceType) *relation.ResourceDefinition {
 	ns := normalizeSchemaNamespace(namespace)
 	resourceDef, err := a.provider.GetResourceDefinition(ns, string(resourceType))
 	if err == nil {
-		return resourceDef.GetPrimaryKeys()
+		return resourceDef
 	}
 	if ns != relation.NamespaceAll {
 		resourceDef, err = a.provider.GetResourceDefinition(relation.NamespaceAll, string(resourceType))
 		if err == nil {
-			return resourceDef.GetPrimaryKeys()
+			return resourceDef
 		}
 	}
-	return []string{}
+	return nil
 }
 
 func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []RelationSchema {

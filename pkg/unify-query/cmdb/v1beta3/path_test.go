@@ -272,4 +272,37 @@ func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing
 	}
 
 	assert.True(t, found)
+
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"system": {"system"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "pod_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	relationDef, ok := provider.FindRelationByResourceTypes(
+		relation.NamespaceAll,
+		"pod",
+		"system",
+		relation.DirectionTypeDirectional,
+	)
+	assert.True(t, ok)
+	assert.True(t, relationDef.IsDirectional)
+	assert.Equal(t, "pod_to_system", relationDef.Name)
+
+	_, reverseOK := provider.FindRelationByResourceTypes(
+		relation.NamespaceAll,
+		"system",
+		"pod",
+		relation.DirectionTypeDirectional,
+	)
+	assert.False(t, reverseOK)
 }

@@ -157,6 +157,16 @@ func (b *SurrealQueryBuilder) buildRootSelect() string {
 		livenessIDField)
 }
 
+func (b *SurrealQueryBuilder) targetEntityDataFields(targetType ResourceType) []string {
+	fields := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, targetType)
+	if b.request.TargetInfoShow {
+		if infoFields := b.schemaProvider.GetResourceFields(b.namespace, targetType); len(infoFields) > 0 {
+			fields = infoFields
+		}
+	}
+	return fields
+}
+
 // buildHopSelect 构建指定跳数的 SELECT 结构
 func (b *SurrealQueryBuilder) buildHopSelect(hop int, currentType ResourceType) string {
 	if hop > b.request.MaxHops {
@@ -209,7 +219,7 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := relationTable + rel.KeySuffix
-	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, rel.TargetType)
+	targetFields := b.targetEntityDataFields(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -233,7 +243,7 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 		relationLivenessTable,
 		rel.TargetType,
 		rel.SelectField,
-		buildEntityDataFields(targetPrimaryKeys, rel.SelectField),
+		buildEntityDataFields(targetFields, rel.SelectField),
 		targetLivenessTable,
 		targetLivenessIDField,
 		rel.SelectField))
@@ -298,7 +308,7 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := relationTable + rel.KeySuffix
-	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, rel.TargetType)
+	targetFields := b.targetEntityDataFields(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -322,7 +332,7 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 		relationLivenessTable,
 		rel.TargetType,
 		rel.SelectField,
-		buildEntityDataFields(targetPrimaryKeys, rel.SelectField),
+		buildEntityDataFields(targetFields, rel.SelectField),
 		targetLivenessTable,
 		targetLivenessIDField,
 		rel.SelectField))
@@ -392,7 +402,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 	keyName := relationTable + rel.KeySuffix
 	indent := strings.Repeat(sqlIndent1, indentLevel)
 	innerIndent := strings.Repeat(sqlIndent1, indentLevel+1)
-	targetPrimaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, rel.TargetType)
+	targetFields := b.targetEntityDataFields(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -418,7 +428,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 		innerIndent,
 		innerIndent, rel.TargetType,
 		innerIndent, rel.SelectField,
-		innerIndent, buildEntityDataFields(targetPrimaryKeys, rel.SelectField),
+		innerIndent, buildEntityDataFields(targetFields, rel.SelectField),
 		innerIndent, targetLivenessTable, targetLivenessIDField, rel.SelectField))
 
 	if hop < b.request.MaxHops {

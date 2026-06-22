@@ -144,6 +144,13 @@ func (s *TransformByFieldSuite) TestTimeStamp() {
 				"time_zone":   zone,
 			},
 		}, now.Format("2006-01-02 15:04:05"), now.Unix()},
+		{config.MetaFieldConfig{
+			Type: define.MetaFieldTypeTimestamp,
+			Option: map[string]interface{}{
+				"time_format":    "epoch_millisecond",
+				"timestamp_unit": "s",
+			},
+		}, now.UnixMilli(), now.Unix()},
 	}
 	for i, c := range cases {
 		fn := etl.NewTransformByField(&c.field)

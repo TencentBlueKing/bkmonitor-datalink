@@ -160,7 +160,6 @@ func (p *metricsFilter) dropAction(record *define.Record, config Config) {
 								break
 							}
 						default:
-							logger.Warnf("unsupported field %s", rule.PredicateKey)
 							ruleMatch = false
 							break
 						}

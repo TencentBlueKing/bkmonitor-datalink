@@ -47,4 +47,12 @@ func TestCacheManager(t *testing.T) {
 		assert.NotNil(t, mgr.GetOrCreate("key1"))
 		assert.Nil(t, mgr.Get("key2")) // gc
 	})
+
+	t.Run("CleanIdempotent", func(t *testing.T) {
+		mgr := NewManager()
+		assert.NotPanics(t, func() {
+			mgr.Clean()
+			mgr.Clean()
+		})
+	})
 }

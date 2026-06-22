@@ -147,6 +147,22 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 				handle(rs, action)
 			}
 		})
+
+	case define.RecordMetrics:
+		pdMetrics := record.Data.(pmetric.Metrics)
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
+			for _, action := range config.Assemble {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
+			for _, action := range config.Assemble {
+				handle(rs, action)
+			}
+		})
 	}
 }
 

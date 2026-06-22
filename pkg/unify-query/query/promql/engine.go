@@ -26,6 +26,7 @@ type Params struct {
 }
 
 var GlobalEngine *prom.Engine
+
 var defaultLookbackDelta = 5 * time.Minute
 
 // NewEngine
@@ -35,7 +36,10 @@ func NewEngine(params *Params) {
 	if GlobalEngine != nil {
 		return
 	}
-	if params != nil && params.LookbackDelta > 0 {
+	if params == nil {
+		params = &Params{}
+	}
+	if params.LookbackDelta > 0 {
 		defaultLookbackDelta = params.LookbackDelta
 	}
 	GlobalEngine = prom.NewEngine(prom.EngineOpts{

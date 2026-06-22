@@ -32,7 +32,9 @@ const (
 
 	SpaceIsNotExists             = "SPACE_IS_NOT_EXISTS"
 	SpaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
-	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
+	// SpaceTableIDFieldMissingFallback 显式 table_id/data_label 路由下，字段在 RT Fields 中缺失（元数据可能过期/延迟）
+	SpaceTableIDFieldMissingFallback = "SPACE_TABLE_ID_FIELD_MISSING_FALLBACK"
+	TableIDProxyISNotExists          = "TABLE_ID_PROXY_IS_NOT_EXISTS"
 
 	QueryRawError = "QUERY_RAW_ERROR"
 

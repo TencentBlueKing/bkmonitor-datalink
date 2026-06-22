@@ -40,9 +40,19 @@ func TestTierConfig(t *testing.T) {
 
 	tc.Del("token1", "service", "service1")
 	assert.Equal(t, "token1", tc.Get("token1", "service1", "").(testConfig).id)
+	_, ok := tc.GetExact("token1", "service", "service1")
+	assert.False(t, ok)
 
 	tc.DelGlobal()
 	assert.Nil(t, tc.GetGlobal())
+	assert.Nil(t, tc.GetByToken("not_exists"))
+
+	val, ok := tc.GetExact("token1", "service", "service2")
+	assert.True(t, ok)
+	assert.Equal(t, "token1/service2", val.(testConfig).id)
+
+	_, ok = tc.GetExact("not_exists", "default", "")
+	assert.False(t, ok)
 }
 
 func TestConfig(t *testing.T) {

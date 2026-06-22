@@ -110,7 +110,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool, tableIDConditions AllConditions,
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback bool, tableIDConditions AllConditions,
 ) ([]*query.TsDBV2, error) {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
@@ -203,6 +203,22 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 	// 如果字段都不匹配到目标字段，则非目标结果表
 	if len(metricNames) == 0 {
+		// 显式 table_id/data_label 场景下，Fields 只作为辅助展开索引；未命中时按候选 RT 兜底。
+		// 但正则未命中时不能把正则串当字面 metric/measurement 下推。
+		if isFieldMissingFallback && fieldName != "" && fieldNameExp == nil {
+			defaultTsDB.ExpandMetricNames = []string{fieldName}
+			tsDBs = append(tsDBs, &defaultTsDB)
+
+			// 字段在 RT Fields 中缺失但已按显式路由边界兜底返回：单独上报区分性指标与日志，
+			// 避免 fallback 静默掩盖底层字段元数据同步延迟/缺失，便于监控兜底命中频率与排查。
+			// metric label 固定为空，避免把用户输入的 fieldName 作为标签导致 Prometheus 高基数；具体缺失字段见下方日志。
+			metric.SpaceRouterNotExistInc(s.ctx, s.spaceUid, tableID, "", metadata.SpaceTableIDFieldMissingFallback)
+			metadata.NewMessage(
+				metadata.MsgQueryRouter,
+				"field [%s] missing in result_table [%s] fields, fallback to explicit route rt (metadata maybe stale)",
+				fieldName, tableID,
+			).Info(s.ctx)
+		}
 		return tsDBs, nil
 	}
 
@@ -315,16 +331,29 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	// tableID 去重，防止重复获取
 	tableIDs := set.New[string]()
+	// fallbackEnabled 标记每个候选 RT 是否允许"字段缺失兜底"：
+	// 仅显式 data_label/table_id 边界内的候选可兜底，避免越过 data_label 边界误带同名 RT。
+	fallbackEnabled := make(map[string]bool)
 	isK8s := false
 
 	if db != "" {
 		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
 		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
+		// data_label 映射内的候选属于显式 data_label 边界，允许字段缺失兜底
+		for _, tID := range tIDs {
+			fallbackEnabled[tID] = true
+		}
 
 		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
 		if measurement != "" {
-			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
+			fullTableID := fmt.Sprintf("%s.%s", db, measurement)
+			tableIDs.Add(fullTableID)
+			// 合成的完整 table_id 仅在不存在 data_label 映射（纯 table_id 查询）时才允许兜底；
+			// 若已存在 data_label 映射，则它只是与 data_label 同名的兼容项，不应越过 data_label 边界兜底。
+			if len(tIDs) == 0 {
+				fallbackEnabled[fullTableID] = true
+			}
 		}
 
 		if tableIDs.Size() == 0 {
@@ -361,7 +390,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			}
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, tableIDCondsForFilter)
+		newTsDBs, err := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField, fallbackEnabled[tID], tableIDCondsForFilter)
 		if err != nil {
 			return nil, err
 		}

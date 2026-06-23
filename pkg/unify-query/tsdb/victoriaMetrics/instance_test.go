@@ -656,7 +656,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			wantStatus:            "mismatch",
 			wantMissing:           `[{"cluster":"vm_op_2","vm_rt_list":["rt_vm_2"],"table_id_list":["rt_2"]}]`,
 		},
-		"unknown: response storage cluster list is empty": {
+		"unknown: response storage cluster list is missing": {
 			rtDetail: map[string]metadata.RtDetail{
 				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
 				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
@@ -665,6 +665,15 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			wantStatus:            "unknown",
 			wantReason:            "empty_storage_cluster_list",
 			wantMissing:           "",
+		},
+		"mismatch: response storage cluster list is explicitly empty": {
+			rtDetail: map[string]metadata.RtDetail{
+				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
+				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
+			},
+			responseVMClusterList: []string{},
+			wantStatus:            "mismatch",
+			wantMissing:           `[{"cluster":"vm_op_1","vm_rt_list":["rt_vm_1"],"table_id_list":["rt_1"]},{"cluster":"vm_op_2","vm_rt_list":["rt_vm_2"],"table_id_list":["rt_2"]}]`,
 		},
 		"response has extra cluster not in request: match (extra ignored)": {
 			rtDetail: map[string]metadata.RtDetail{

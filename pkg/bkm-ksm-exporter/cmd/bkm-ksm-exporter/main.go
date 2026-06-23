@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
@@ -49,6 +50,13 @@ func main() {
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.Parse()
 
+	// The `version` subcommand prints only the version string: the image-build
+	// pipeline runs `bkm-ksm-exporter version` and uses its output as the image
+	// tag. The -version flag prints the fuller build info for humans.
+	if flag.Arg(0) == "version" {
+		fmt.Println(version)
+		return
+	}
 	if showVer {
 		log.Printf("bkm-ksm-exporter version=%s buildTime=%s gitHash=%s", version, buildTime, gitHash)
 		return

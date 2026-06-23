@@ -635,6 +635,7 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 		rtDetail              map[string]metadata.RtDetail
 		responseVMClusterList []string
 		wantStatus            string
+		wantReason            string
 		wantMissing           string // JSON string or empty
 	}{
 		"match: request cluster names equal response cluster names": {
@@ -654,6 +655,25 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			responseVMClusterList: []string{"vm_op_1"},
 			wantStatus:            "mismatch",
 			wantMissing:           `[{"cluster":"vm_op_2","vm_rt_list":["rt_vm_2"],"table_id_list":["rt_2"]}]`,
+		},
+		"unknown: response storage cluster list is missing": {
+			rtDetail: map[string]metadata.RtDetail{
+				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
+				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
+			},
+			responseVMClusterList: nil,
+			wantStatus:            "unknown",
+			wantReason:            "empty_storage_cluster_list",
+			wantMissing:           "",
+		},
+		"mismatch: response storage cluster list is explicitly empty": {
+			rtDetail: map[string]metadata.RtDetail{
+				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
+				"rt_vm_2": {TableID: "rt_2", StorageName: "vm_op_2"},
+			},
+			responseVMClusterList: []string{},
+			wantStatus:            "mismatch",
+			wantMissing:           `[{"cluster":"vm_op_1","vm_rt_list":["rt_vm_1"],"table_id_list":["rt_1"]},{"cluster":"vm_op_2","vm_rt_list":["rt_vm_2"],"table_id_list":["rt_2"]}]`,
 		},
 		"response has extra cluster not in request: match (extra ignored)": {
 			rtDetail: map[string]metadata.RtDetail{
@@ -683,6 +703,15 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 
 			status, _ := spanAttrString(attrs, "query-storage-status")
 			assert.Equal(t, tc.wantStatus, status)
+
+			if tc.wantReason != "" {
+				reason, ok := spanAttrString(attrs, "query-storage-reason")
+				assert.True(t, ok)
+				assert.Equal(t, tc.wantReason, reason)
+			} else {
+				_, ok := spanAttrString(attrs, "query-storage-reason")
+				assert.False(t, ok)
+			}
 
 			// Check missing field
 			if tc.wantMissing != "" {

@@ -35,6 +35,7 @@ func (s stubSource) Write(w io.Writer) error {
 func TestHandlerMetrics(t *testing.T) {
 	s := New("127.0.0.1:0")
 	s.Register(stubSource{out: "kube_hpa_metadata_generation{namespace=\"d\",hpa=\"h\"} 1\n"})
+	s.SetReady(true)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
@@ -48,6 +49,7 @@ func TestHandlerMetrics(t *testing.T) {
 func TestHandlerMetricsSourceError(t *testing.T) {
 	s := New("127.0.0.1:0")
 	s.Register(stubSource{err: io.ErrUnexpectedEOF})
+	s.SetReady(true)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusInternalServerError {
@@ -60,6 +62,44 @@ func TestHandlerHealthz(t *testing.T) {
 	New("127.0.0.1:0").Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/healthz status = %d, want 200", rec.Code)
+	}
+}
+
+// TestMetricsNotReadyReturns503 is the regression test for the dark-dashboard
+// fix (P2): before the cache has synced, /metrics must fail the scrape (503)
+// rather than return a 200 with no samples that looks like "zero HPAs".
+func TestMetricsNotReadyReturns503(t *testing.T) {
+	s := New("127.0.0.1:0")
+	s.Register(stubSource{out: "kube_hpa_metadata_generation{namespace=\"d\",hpa=\"h\"} 1\n"})
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/metrics before ready = %d, want 503", rec.Code)
+	}
+
+	s.SetReady(true)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics after ready = %d, want 200", rec.Code)
+	}
+}
+
+func TestReadyzReflectsReadiness(t *testing.T) {
+	s := New("127.0.0.1:0")
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/readyz before sync = %d, want 503", rec.Code)
+	}
+
+	s.SetReady(true)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/readyz after sync = %d, want 200", rec.Code)
 	}
 }
 

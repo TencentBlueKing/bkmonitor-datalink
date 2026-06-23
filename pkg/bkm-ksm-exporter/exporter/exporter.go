@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,10 +26,11 @@ type Source interface {
 	Write(io.Writer) error
 }
 
-// Server exposes registered Sources on /metrics plus a /healthz probe.
+// Server exposes registered Sources on /metrics plus /healthz and /readyz probes.
 type Server struct {
 	addr    string
 	sources []Source
+	ready   atomic.Bool
 }
 
 // New returns a Server listening on addr.
@@ -38,11 +40,30 @@ func New(addr string) *Server { return &Server{addr: addr} }
 // all sources during startup.
 func (s *Server) Register(src Source) { s.sources = append(s.sources, src) }
 
+// SetReady marks the exporter ready/not-ready. The caller flips it to true once
+// the informer cache has synced. Until then /metrics and /readyz report
+// not-ready (503) so a scraper does not ingest a successful-but-empty scrape
+// that is indistinguishable from "zero HPAs" -- the dark-dashboard failure mode
+// this exporter exists to prevent.
+func (s *Server) SetReady(v bool) { s.ready.Store(v) }
+
 // Handler returns the HTTP handler (exposed for tests).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", s.handleMetrics)
+	// /healthz is pure liveness: 200 as soon as the process is up, so a slow
+	// cache sync does not get the pod restarted by its liveness probe.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+	})
+	// /readyz reflects cache-synced readiness; wire it to the readiness probe so
+	// the pod is not added to the scrape targets until it can emit real data.
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !s.ready.Load() {
+			http.Error(w, "cache not synced", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	})
@@ -71,6 +92,13 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	if !s.ready.Load() {
+		// Before the informer cache has synced, an empty render is
+		// indistinguishable from "zero HPAs". Fail the scrape (503) so the
+		// scraper marks the target down instead of ingesting false zeros.
+		http.Error(w, "cache not synced", http.StatusServiceUnavailable)
+		return
+	}
 	var buf bytes.Buffer
 	for _, src := range s.sources {
 		if err := src.Write(&buf); err != nil {

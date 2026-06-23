@@ -101,6 +101,7 @@ func main() {
 			log.Fatalf("informer cache sync timed out or failed (api unavailable / RBAC?) for %v", typ)
 		}
 	}
+	srv.SetReady(true) // cache synced: /metrics and /readyz now serve real data
 	log.Printf("bkm-ksm-exporter %s cache synced, serving on %s", version, listen)
 
 	<-ctx.Done()

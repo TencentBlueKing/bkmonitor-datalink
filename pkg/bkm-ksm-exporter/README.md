@@ -51,9 +51,14 @@ Flags:
 | `--sync-timeout` | `2m` | max wait for the initial informer cache sync before exiting for restart |
 | `--version` | | print version and exit |
 
-Endpoints: `/metrics` (exposition), `/healthz` (liveness probe — returns 200 once
-the process is up; it is intentionally a pure liveness check and does not gate on
-informer cache readiness).
+Endpoints:
+
+- `/metrics` — exposition. Returns **503 until the informer cache has synced**, so
+  a scraper never ingests a successful-but-empty scrape that looks like "zero HPAs".
+- `/healthz` — liveness probe. 200 as soon as the process is up; it does not gate
+  on cache readiness, so a slow sync will not get the pod restarted.
+- `/readyz` — readiness probe. 200 once the cache has synced, 503 before. Wire
+  this to the Kubernetes readiness probe.
 
 ## RBAC
 

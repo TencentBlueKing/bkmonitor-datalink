@@ -11,11 +11,14 @@ package bksql_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -84,11 +87,13 @@ func TestClient_QuerySync(t *testing.T) {
 
 	res := MockClient().QuerySync(
 		ctx,
-		fmt.Sprintf(
-			`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
-			start.UnixMilli(),
-			end.UnixMilli(),
-		),
+		bksql.QuerySyncRequest{
+			SQL: fmt.Sprintf(
+				`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
+				start.UnixMilli(),
+				end.UnixMilli(),
+			),
+		},
 		nil,
 	)
 
@@ -100,4 +105,44 @@ func TestClient_QuerySync(t *testing.T) {
 	if d != nil {
 		assert.NotEmpty(t, d.List)
 	}
+}
+
+type captureCurl struct {
+	body []byte
+}
+
+func (c *captureCurl) WithDecoder(func(context.Context, io.Reader, any) (int, error)) {}
+
+func (c *captureCurl) Request(_ context.Context, _ string, opt curl.Options, res any) (int, error) {
+	c.body = append([]byte(nil), opt.Body...)
+	if r, ok := res.(*bksql.Result); ok {
+		r.Result = true
+		r.Code = bksql.StatusOK
+	}
+	return len(opt.Body), nil
+}
+
+func TestClient_QuerySyncWithClusterNameSerializesProperties(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	cc := &captureCurl{}
+
+	res := (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(cc).QuerySync(
+		ctx,
+		bksql.QuerySyncRequest{
+			SQL:         "SELECT * FROM `bkbase_table`.doris",
+			ClusterName: "doris_default",
+		},
+		nil,
+	)
+
+	require.Equal(t, bksql.StatusOK, res.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(cc.body, &body))
+	assert.Equal(t, "SELECT * FROM `bkbase_table`.doris", body["sql"])
+	assert.Equal(t, "bk_code", body["bk_app_code"])
+	assert.Equal(t, "admin", body["bk_username"])
+	assert.Equal(t, "123456", body["bkdata_data_token"])
+	require.Contains(t, body, "properties")
+	assert.Equal(t, map[string]any{"cluster_name": "doris_default"}, body["properties"])
 }

@@ -24,9 +24,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	uqQuery "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
+	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestQueryToMetric(t *testing.T) {
@@ -491,6 +493,156 @@ func TestQueryTsToTimeLookBackDeltaGoDurationFallback(t *testing.T) {
 
 	require.NoError(t, q.ToTime(ctx))
 	assert.Equal(t, 90*time.Minute, md.GetQueryParams(ctx).LookBackDelta)
+}
+
+func TestQueryToMetricStorageClusterRecordStorageType(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	start := time.Unix(1500, 0)
+	end := time.Unix(2500, 0)
+	md.GetQueryParams(ctx).SetTime(start, start, end, time.Minute, "s", "UTC")
+
+	queryMetric, err := (&Query{
+		DataSource:    BkLog,
+		TableID:       "result_table.es",
+		FieldName:     "dtEventTimeStamp",
+		ReferenceName: "a",
+	}).ToQueryMetric(ctx, influxdb.SpaceUid, TsDBs{
+		&uqQuery.TsDBV2{
+			TableID:     "result_table.es",
+			DataLabel:   "log_index_set_test",
+			StorageID:   "1",
+			StorageType: md.ElasticsearchStorageType,
+			DB:          "es_index",
+			Measurement: "__default__",
+			StorageClusterRecords: []uqQuery.Record{
+				{
+					StorageID:   "2",
+					StorageType: md.BkSqlStorageType,
+					StorageName: "doris_default",
+					ClusterName: "doris_default",
+					DB:          "bkbase_table",
+					Measurement: "doris",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "1",
+					EnableTime: 1000,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, queryMetric.QueryList, 2)
+
+	storageTypes := make(map[string]string)
+	for _, query := range queryMetric.QueryList {
+		storageTypes[query.StorageID] = query.StorageType
+	}
+	assert.Equal(t, md.BkSqlStorageType, storageTypes["2"])
+	assert.Equal(t, md.ElasticsearchStorageType, storageTypes["1"])
+}
+
+func TestQueryToMetricStorageClusterRecordStorageTypeFromResultTableDetail(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	start := time.Unix(1500, 0)
+	end := time.Unix(2500, 0)
+	md.GetQueryParams(ctx).SetTime(start, start, end, time.Minute, "s", "UTC")
+
+	tsDB := (&SpaceFilter{}).getTsDBWithResultTableDetail(uqQuery.TsDBV2{
+		TableID:    "result_table.es",
+		MetricName: "dtEventTimeStamp",
+	}, &routerInfluxdb.ResultTableDetail{
+		StorageId:   1,
+		StorageType: md.ElasticsearchStorageType,
+		DB:          "es_index",
+		TableId:     "result_table.es",
+		Measurement: "__default__",
+		DataLabel:   "log_index_set_test",
+		StorageClusterRecords: []routerInfluxdb.Record{
+			{
+				StorageID:   2,
+				StorageType: md.BkSqlStorageType,
+				StorageName: "doris_default",
+				ClusterName: "doris_default",
+				DB:          "bkbase_table",
+				Measurement: "doris",
+				EnableTime:  2000,
+			},
+			{
+				StorageID:  1,
+				EnableTime: 1000,
+			},
+		},
+	})
+
+	queryMetric, err := (&Query{
+		DataSource:    BkLog,
+		TableID:       "result_table.es",
+		FieldName:     "dtEventTimeStamp",
+		ReferenceName: "a",
+	}).ToQueryMetric(ctx, influxdb.SpaceUid, TsDBs{&tsDB})
+	require.NoError(t, err)
+	require.Len(t, queryMetric.QueryList, 2)
+
+	storageTypes := make(map[string]string)
+	for _, query := range queryMetric.QueryList {
+		storageTypes[query.StorageID] = query.StorageType
+	}
+
+	assert.Equal(t, md.BkSqlStorageType, storageTypes["2"])
+	assert.Equal(t, md.ElasticsearchStorageType, storageTypes["1"])
+}
+
+func TestQueryToMetricStorageClusterRecordSourceType(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	start := time.Unix(1500, 0)
+	end := time.Unix(2500, 0)
+	md.GetQueryParams(ctx).SetTime(start, start, end, time.Minute, "s", "UTC")
+
+	queryMetric, err := (&Query{
+		DataSource:    BkLog,
+		TableID:       "result_table.doris",
+		FieldName:     "dtEventTimeStamp",
+		ReferenceName: "a",
+	}).ToQueryMetric(ctx, influxdb.SpaceUid, TsDBs{
+		&uqQuery.TsDBV2{
+			TableID:     "result_table.doris",
+			DataLabel:   "log_index_set_test",
+			StorageID:   "3",
+			StorageType: md.BkSqlStorageType,
+			StorageName: "doris_default",
+			ClusterName: "doris_default",
+			DB:          "bkbase_table",
+			Measurement: "doris",
+			SourceType:  "log",
+			StorageClusterRecords: []uqQuery.Record{
+				{
+					StorageID:   "2",
+					StorageType: md.ElasticsearchStorageType,
+					DB:          "history_es_index",
+					Measurement: "__default__",
+					SourceType:  BkData,
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "3",
+					EnableTime: 1000,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, queryMetric.QueryList, 2)
+
+	sourceTypes := make(map[string]string)
+	for _, query := range queryMetric.QueryList {
+		sourceTypes[query.StorageID] = query.SourceType
+	}
+	assert.Equal(t, BkData, sourceTypes["2"])
+	assert.Equal(t, "log", sourceTypes["3"])
 }
 
 func TestBkData_SQL_ToFinalSQL(t *testing.T) {

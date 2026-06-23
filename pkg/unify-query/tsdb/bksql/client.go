@@ -44,20 +44,26 @@ func (c *Client) WithHeader(headers map[string]string) *Client {
 	return c
 }
 
-func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, span *trace.Span) error {
-	if sql == "" {
+func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncRequest, res *Result, span *trace.Span) error {
+	if req.SQL == "" {
 		return fmt.Errorf("query sql is empty")
 	}
 
 	if method == "" {
 		method = curl.Post
 	}
-	params := make(map[string]string)
-	params["sql"] = sql
-
-	// body 增加 bkdata auth 信息
-	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
-		params[k] = v
+	auth := bkapi.GetBkDataAPI().GetDataAuth()
+	params := Params{
+		SQL:                        req.SQL,
+		BkAppCode:                  auth[bkapi.BkAppCodeKey],
+		BkUsername:                 auth[bkapi.BkUserNameKey],
+		BkdataAuthenticationMethod: auth[bkapi.BkDataAuthenticationMethodKey],
+		BkdataDataToken:            auth[bkapi.BkDataDataTokenKey],
+	}
+	if req.ClusterName != "" {
+		params.Properties = QuerySyncProperties{
+			ClusterName: req.ClusterName,
+		}
 	}
 
 	body, err := json.Marshal(params)
@@ -84,6 +90,9 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	queryCost := time.Since(startAnaylize)
 	if span != nil {
 		span.Set("query-cost", queryCost.String())
+		if req.ClusterName != "" {
+			span.Set("query-cluster-name", req.ClusterName)
+		}
 	}
 
 	metric.TsDBRequestSecond(
@@ -92,11 +101,11 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	return nil
 }
 
-func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *Result {
+func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trace.Span) *Result {
 	data := &QuerySyncResultData{}
 	res := c.response(data)
 
-	err := c.curlGet(ctx, curl.Post, sql, res, span)
+	err := c.curlGet(ctx, curl.Post, req, res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}

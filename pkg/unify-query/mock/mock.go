@@ -28,9 +28,21 @@ func Init() {
 	mockInitOnce.Do(func() {
 		dir, _ := os.Getwd()
 		dir, _ = filepath.Abs(dir)
-		name := `bkmonitor-datalink/pkg/unify-query`
-		rootDir := strings.Split(dir, name)
-		path := fmt.Sprintf("%s%s/unify-query.yaml", rootDir[0], name)
+		path := filepath.Join(dir, "unify-query.yaml")
+		for {
+			if _, err := os.Stat(path); err == nil {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				name := `bkmonitor-datalink/pkg/unify-query`
+				rootDir := strings.Split(dir, name)
+				path = fmt.Sprintf("%s%s/unify-query.yaml", rootDir[0], name)
+				break
+			}
+			dir = parent
+			path = filepath.Join(dir, "unify-query.yaml")
+		}
 		config.CustomConfigFilePath = path
 		config.InitConfig()
 		log.InitTestLogger()

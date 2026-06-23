@@ -9,6 +9,23 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
+const (
+	attrEventTimestamp = "event.timestamp"
+	attrAegisExtPrefix = "aegisv2.ext"
+	attrLink           = "link"
+
+	spanEventAegisFallback = "aegisv2.event"
+	spanNameBrowserVital   = "browser.web_vital"
+
+	defaultFlattenMaxDepth = 10
+	msgKeyDuration         = "duration"
+)
+
+type flattenConfig struct {
+	allowlist map[string]struct{}
+	maxDepth  int
+}
+
 // unmarshalFlexibleJSON 兼容「对象」和「JSON 字符串包裹对象」两种格式。
 func unmarshalFlexibleJSON(raw json.RawMessage, dst any) error {
 	trimmed := bytes.TrimSpace(raw)
@@ -41,6 +58,34 @@ func ensureDefaultServiceName(attrs pcommon.Map) {
 	attrs.UpsertString("service.name", defaultServiceName)
 }
 
+func setCommonResourceAttrs(attrs pcommon.Map, payload collectPayload, sessionID string) {
+	ensureDefaultServiceName(attrs)
+	upsertString(attrs, "aegisv2.topic", payload.Topic)
+	upsertString(attrs, "aegisv2.scheme", payload.Scheme)
+	upsertString(attrs, "version", payload.Bean.Version)
+	upsertString(attrs, "aid", payload.Bean.AID)
+	upsertString(attrs, "env", payload.Bean.Env)
+	upsertString(attrs, "platform", payload.Bean.Platform)
+	upsertString(attrs, "netType", payload.Bean.NetType)
+	upsertString(attrs, "vp", payload.Bean.VP)
+	upsertString(attrs, "sr", payload.Bean.SR)
+	upsertString(attrs, "session.id", sessionID)
+}
+
+func setCollectorScope(scope pcommon.InstrumentationScope, version string) {
+	scope.SetName("aegisv2.collect")
+	if version != "" {
+		scope.SetVersion(version)
+	}
+}
+
+func recordPageURL(record d2Record) string {
+	if record.Fields.View.ViewURL != "" {
+		return record.Fields.View.ViewURL
+	}
+	return record.Fields.From
+}
+
 func upsertNonZeroInt(attrs pcommon.Map, key string, value int64) {
 	if value != 0 {
 		attrs.UpsertInt(key, value)
@@ -48,22 +93,32 @@ func upsertNonZeroInt(attrs pcommon.Map, key string, value int64) {
 }
 
 func upsertFlattenedMap(attrs pcommon.Map, prefix string, objs map[string]any) {
-	upsertFlattenedMapWithAllowlist(attrs, prefix, objs, nil)
+	upsertFlattenedMapWithConfig(attrs, prefix, objs, flattenConfig{maxDepth: defaultFlattenMaxDepth})
 }
 
 // upsertFlattenedMapWithAllowlist 提供可选的顶层字段白名单控制。
 // allowlist 为 nil 或空时，行为与 upsertFlattenedMap 完全一致。
 func upsertFlattenedMapWithAllowlist(attrs pcommon.Map, prefix string, objs map[string]any, allowlist map[string]struct{}) {
+	upsertFlattenedMapWithConfig(attrs, prefix, objs, flattenConfig{
+		allowlist: allowlist,
+		maxDepth:  defaultFlattenMaxDepth,
+	})
+}
+
+func upsertFlattenedMapWithConfig(attrs pcommon.Map, prefix string, objs map[string]any, cfg flattenConfig) {
 	if objs == nil {
 		return
 	}
+	if cfg.maxDepth <= 0 {
+		cfg.maxDepth = defaultFlattenMaxDepth
+	}
 	for key, value := range objs {
-		if len(allowlist) > 0 {
-			if _, ok := allowlist[key]; !ok {
+		if len(cfg.allowlist) > 0 {
+			if _, ok := cfg.allowlist[key]; !ok {
 				continue
 			}
 		}
-		upsertAny(attrs, prefix+"."+key, value)
+		upsertAnyWithMaxDepth(attrs, prefix+"."+key, value, cfg.maxDepth)
 	}
 }
 
@@ -144,12 +199,19 @@ func firstNonEmptyString(objs map[string]any, keys ...string) string {
 
 // upsertAny 将任意 JSON 值写入 OTel 属性 Map：
 // float64 无小数部分存为 int64；[]any 序列化为 JSON 字符串；
-// map[string]any 递归展开为点号键（超出 maxUpsertDepth 后整体序列化）。
+// map[string]any 递归展开为点号键（超出 maxDepth 后整体 JSON 序列化）。
 func upsertAny(attrs pcommon.Map, key string, value any) {
-	upsertAnyDepth(attrs, key, value, 0)
+	upsertAnyWithMaxDepth(attrs, key, value, defaultFlattenMaxDepth)
 }
 
-func upsertAnyDepth(attrs pcommon.Map, key string, value any, depth int) {
+func upsertAnyWithMaxDepth(attrs pcommon.Map, key string, value any, maxDepth int) {
+	if maxDepth <= 0 {
+		maxDepth = defaultFlattenMaxDepth
+	}
+	upsertAnyDepth(attrs, key, value, 0, maxDepth)
+}
+
+func upsertAnyDepth(attrs pcommon.Map, key string, value any, depth, maxDepth int) {
 	switch v := value.(type) {
 	case nil:
 		return
@@ -171,14 +233,14 @@ func upsertAnyDepth(attrs pcommon.Map, key string, value any, depth int) {
 			attrs.UpsertString(key, string(b))
 		}
 	case map[string]any:
-		if depth >= maxUpsertDepth {
+		if depth >= maxDepth {
 			if b, err := json.Marshal(v); err == nil {
 				attrs.UpsertString(key, string(b))
 			}
 			return
 		}
 		for nestedKey, nestedValue := range v {
-			upsertAnyDepth(attrs, key+"."+nestedKey, nestedValue, depth+1)
+			upsertAnyDepth(attrs, key+"."+nestedKey, nestedValue, depth+1, maxDepth)
 		}
 	default:
 		if b, err := json.Marshal(v); err == nil {

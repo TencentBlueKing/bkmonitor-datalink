@@ -36,6 +36,7 @@ import (
 
 const (
 	routeV2Collect        = "/collect"
+	routeV2CollectMetrics = "/collect/metrics"
 	routeAegisV2Whitelist = "/aegiscontrol/whitelist"
 )
 
@@ -49,6 +50,11 @@ func Ready() {
 			Method:       http.MethodPost,
 			RelativePath: routeV2Collect,
 			HandlerFunc:  httpSvc.ExportTraces,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: routeV2CollectMetrics,
+			HandlerFunc:  httpSvc.ExportMetrics,
 		},
 		{
 			Method:       http.MethodGet,
@@ -140,10 +146,21 @@ func (s *httpService) httpExport(w http.ResponseWriter, req *http.Request, rtype
 			traceID = random.TraceID()
 		}
 		rh := s.getResponseHandler(contentType, traceID)
-		data, err := rh.Unmarshal(rtype, bs)
+		// Attempt sanitization if payload appears malformed
+		sanitizedBs := sanitizePayload(bs)
+		data, err := rh.Unmarshal(rtype, sanitizedBs)
 		if err != nil {
 			metricMonitor.IncDroppedCounter(define.RequestHttp, rtype)
-			logger.Warnf("aegisv2 failed to unmarshal body, rtype=%s, ip=%v, error: %s", rtype.S(), ip, err)
+			// Log diagnostic info for debugging
+			preview := "<empty>"
+			if len(bs) > 0 {
+				if len(bs) > 80 {
+					preview = string(bs[:80]) + "..."
+				} else {
+					preview = string(bs)
+				}
+			}
+			logger.Warnf("aegisv2 failed to unmarshal body, rtype=%s, ip=%v, error: %s, preview: %v", rtype.S(), ip, err, preview)
 			return
 		}
 
@@ -176,6 +193,10 @@ func (s *httpService) ExportTraces(w http.ResponseWriter, req *http.Request) {
 	s.httpExport(w, req, define.RecordTraces)
 }
 
+func (s *httpService) ExportMetrics(w http.ResponseWriter, req *http.Request) {
+	s.httpExport(w, req, define.RecordMetrics)
+}
+
 func (s *httpService) Whitelist(w http.ResponseWriter, req *http.Request) {
 	serverTime := time.Now().UnixMilli()
 
@@ -195,6 +216,28 @@ func (s *httpService) Whitelist(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, b)
+}
+
+// sanitizePayload attempts to fix common malformed payload issues
+// (e.g., leading delimiters like comma, which can happen with certain proxies or batching)
+func sanitizePayload(bs []byte) []byte {
+	if len(bs) == 0 {
+		return bs
+	}
+	// Skip leading whitespace and common delimiters
+	start := 0
+	for start < len(bs) {
+		c := bs[start]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' {
+			start++
+		} else {
+			break
+		}
+	}
+	if start > 0 && start < len(bs) {
+		return bs[start:]
+	}
+	return bs
 }
 
 func (s *httpService) getResponseHandler(contentType string, traceID pcommon.TraceID) receiver.ResponseHandler {

@@ -119,14 +119,5 @@ func BenchmarkDecodeTraces_LargeExtKnown(b *testing.B) {
 }
 
 func BenchmarkDecodeTraces_LargeExtUnknownFallback(b *testing.B) {
-	resetBuilderStatsForTest()
-	startDegrade, startUnknown := builderStatsSnapshot()
-
 	runDecodeTracesBenchmark(b, benchTracePayloadLargeUnknown)
-
-	endDegrade, endUnknown := builderStatsSnapshot()
-	if b.N > 0 {
-		b.ReportMetric(float64(endDegrade-startDegrade)/float64(b.N), "degrade/op")
-		b.ReportMetric(float64(endUnknown-startUnknown)/float64(b.N), "unknown/op")
-	}
 }

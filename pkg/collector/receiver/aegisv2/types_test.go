@@ -92,6 +92,44 @@ func TestAegisEventSpanKindUsesAPIHelper(t *testing.T) {
 	assert.Equal(t, ptrace.SpanKindClient, kind)
 }
 
+func TestAegisEventTypePrecedence(t *testing.T) {
+	tests := []struct {
+		name  string
+		event aegisEvent
+		want  EventType
+	}{
+		{
+			name: "websocket keeps websocket type even when treated as error",
+			event: aegisEvent{
+				record: d2Record{Fields: d2Fields{Plugin: "websocket"}},
+				msg:    d2Message{raw: map[string]any{"successFlag": false}},
+			},
+			want: EventTypeWebsocket,
+		},
+		{
+			name: "session message is classified as session",
+			event: aegisEvent{
+				record: d2Record{Fields: d2Fields{}},
+				msg:    d2Message{Msg: "session"},
+			},
+			want: EventTypeSession,
+		},
+		{
+			name: "normal error falls back to error type",
+			event: aegisEvent{
+				record: d2Record{Fields: d2Fields{Type: "normal", Level: "error"}},
+			},
+			want: EventTypeError,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.event.EventType())
+		})
+	}
+}
+
 func TestD2RecordUnmarshalJSON(t *testing.T) {
 	t.Run("object payload", func(t *testing.T) {
 		var record d2Record

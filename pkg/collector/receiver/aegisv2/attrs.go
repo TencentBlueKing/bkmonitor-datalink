@@ -41,9 +41,7 @@ func setAssetSpeedSpanAttrs(attrs pcommon.Map, payload collectPayload, record d2
 		upsertString(attrs, "url.full", resourceURL)
 		setTargetURLAttrs(attrs, resourceURL)
 	}
-	if record.Fields.View.ViewURL != "" {
-		setPageURLAttrs(attrs, record.Fields.View.ViewURL)
-	}
+	setPageAttrs(attrs, record.Fields.View.ViewURL)
 	if hasStatusCode {
 		attrs.UpsertInt("http.response.status_code", statusCode)
 		upsertString(attrs, "status_class", httpStatusClass(statusCode))
@@ -64,24 +62,17 @@ func setAssetSpeedSpanAttrs(attrs pcommon.Map, payload collectPayload, record d2
 	if decodedBodySize, ok := extractInt64(msg.raw, "decodedBodySize"); ok && decodedBodySize >= 0 {
 		attrs.UpsertInt("decoded_body_size", decodedBodySize)
 	}
-	if payload.Bean.NetType != "" {
-		upsertString(attrs, "network.effective_type", payload.Bean.NetType)
-	}
-	setViewportAttrs(attrs, payload.Bean.VP, "browser.viewport")
-	setViewportAttrs(attrs, payload.Bean.SR, "browser.screen")
+	setBrowserContextAttrs(attrs, payload)
 
 	if isErr, ok := extractBool(msg.raw, "isErr"); ok && isErr {
-		upsertString(attrs, "result", "error")
-		upsertString(attrs, "error_type", aegisEvent{record, msg}.ExceptionType())
+		setResultAttrs(attrs, "error", aegisEvent{record, msg}.ExceptionType())
 		return
 	}
 	if hasStatusCode && statusCode >= 400 {
-		upsertString(attrs, "result", "error")
-		upsertString(attrs, "error_type", httpStatusClass(statusCode))
+		setResultAttrs(attrs, "error", httpStatusClass(statusCode))
 		return
 	}
-	upsertString(attrs, "result", "success")
-	upsertString(attrs, "error_type", "none")
+	setResultAttrs(attrs, "success", "none")
 }
 
 func setPagePerformanceSpanAttrs(attrs pcommon.Map, record d2Record) {
@@ -92,13 +83,9 @@ func setPagePerformanceSpanAttrs(attrs pcommon.Map, record d2Record) {
 	upsertString(attrs, "event_label", "文档加载")
 	upsertString(attrs, "trace_scene", "page_load")
 
-	pageURL := record.Fields.View.ViewURL
-	if pageURL == "" {
-		pageURL = record.Fields.From
-	}
+	pageURL := recordPageURL(record)
 	if pageURL != "" {
-		upsertString(attrs, "url.full", pageURL)
-		setPageURLAttrs(attrs, pageURL)
+		setFullPageAttrs(attrs, pageURL)
 		if targetLabel := pathFromURL(pageURL); targetLabel != "" {
 			upsertString(attrs, "target_label", targetLabel)
 		}
@@ -123,55 +110,30 @@ func setWebsocketSpanAttrs(attrs pcommon.Map, payload collectPayload, record d2R
 		setTargetURLAttrs(attrs, endpointURL)
 	}
 
-	pageURL := record.Fields.View.ViewURL
-	if pageURL == "" {
-		pageURL = record.Fields.From
-	}
-	if pageURL != "" {
-		setPageURLAttrs(attrs, pageURL)
-	}
+	setPageAttrs(attrs, recordPageURL(record))
 
-	if payload.Bean.NetType != "" {
-		upsertString(attrs, "network.effective_type", payload.Bean.NetType)
-	}
-	setViewportAttrs(attrs, payload.Bean.VP, "browser.viewport")
-	setViewportAttrs(attrs, payload.Bean.SR, "browser.screen")
+	setBrowserContextAttrs(attrs, payload)
 
 	if success, ok := extractBool(msg.raw, "successFlag"); ok {
 		if success {
-			upsertString(attrs, "result", "success")
-			upsertString(attrs, "error_type", "none")
+			setResultAttrs(attrs, "success", "none")
 			return
 		}
-		upsertString(attrs, "result", "error")
-		upsertString(attrs, "error_type", event.ExceptionType())
+		setResultAttrs(attrs, "error", event.ExceptionType())
 		return
 	}
 
 	if event.IsError() {
-		upsertString(attrs, "result", "error")
-		upsertString(attrs, "error_type", event.ExceptionType())
+		setResultAttrs(attrs, "error", event.ExceptionType())
 		return
 	}
 
-	upsertString(attrs, "result", "success")
-	upsertString(attrs, "error_type", "none")
+	setResultAttrs(attrs, "success", "none")
 }
 
 // appendResourceTimingEvents 将 Resource Timing API 各阶段耗时转换为 SpanEvent。
 func appendResourceTimingEvents(events ptrace.SpanEventSlice, msg d2Message, startTs pcommon.Timestamp) {
-	var offsetMs float64
-	for _, phase := range resourceTimingPhases {
-		durationMs, ok := extractFloat64(msg.raw, phase.key)
-		if !ok || durationMs <= 0 {
-			continue
-		}
-		ts := pcommon.Timestamp(startTs.AsTime().Add(time.Duration(offsetMs * float64(time.Millisecond))).UnixNano())
-		event := events.AppendEmpty()
-		event.SetName(phase.name)
-		event.SetTimestamp(ts)
-		offsetMs += durationMs
-	}
+	appendDurationPhaseEvents(events, msg.raw, resourceTimingPhases, startTs)
 }
 
 // appendPagePerformanceEvents 将 W3C Navigation Timing 各里程碑转换为 SpanEvent。
@@ -189,18 +151,7 @@ func appendPagePerformanceEvents(events ptrace.SpanEventSlice, msg d2Message, st
 
 // appendPagePerformancePhaseEvents 将 aegisv2 页面性能各阶段耗时转换为 SpanEvent。
 func appendPagePerformancePhaseEvents(events ptrace.SpanEventSlice, msg d2Message, startTs pcommon.Timestamp) {
-	var offsetMs float64
-	for _, phase := range pagePerformancePhases {
-		durationMs, ok := extractFloat64(msg.raw, phase.key)
-		if !ok || durationMs <= 0 {
-			continue
-		}
-		ts := pcommon.Timestamp(startTs.AsTime().Add(time.Duration(offsetMs * float64(time.Millisecond))).UnixNano())
-		event := events.AppendEmpty()
-		event.SetName(phase.name)
-		event.SetTimestamp(ts)
-		offsetMs += durationMs
-	}
+	appendDurationPhaseEvents(events, msg.raw, pagePerformancePhases, startTs)
 	if msg.FirstScreenTiming > 0 {
 		var ts pcommon.Timestamp
 		if msg.FirstScreenTiming > absoluteTimestampThresholdMs {
@@ -211,6 +162,21 @@ func appendPagePerformancePhaseEvents(events ptrace.SpanEventSlice, msg d2Messag
 		event := events.AppendEmpty()
 		event.SetName("firstScreen")
 		event.SetTimestamp(ts)
+	}
+}
+
+func appendDurationPhaseEvents(events ptrace.SpanEventSlice, raw map[string]any, phases []struct{ name, key string }, startTs pcommon.Timestamp) {
+	var offsetMs float64
+	for _, phase := range phases {
+		durationMs, ok := extractFloat64(raw, phase.key)
+		if !ok || durationMs <= 0 {
+			continue
+		}
+		ts := pcommon.Timestamp(startTs.AsTime().Add(time.Duration(offsetMs * float64(time.Millisecond))).UnixNano())
+		event := events.AppendEmpty()
+		event.SetName(phase.name)
+		event.SetTimestamp(ts)
+		offsetMs += durationMs
 	}
 }
 
@@ -287,6 +253,32 @@ func setTargetURLAttrs(attrs pcommon.Map, rawURL string) {
 		targetLabel = strings.TrimPrefix(strings.TrimPrefix(rawURL, "https://"), "http://")
 	}
 	upsertString(attrs, "target_label", targetLabel)
+}
+
+func setPageAttrs(attrs pcommon.Map, rawURL string) {
+	if rawURL != "" {
+		setPageURLAttrs(attrs, rawURL)
+	}
+}
+
+func setFullPageAttrs(attrs pcommon.Map, rawURL string) {
+	if rawURL != "" {
+		upsertString(attrs, "url.full", rawURL)
+		setPageURLAttrs(attrs, rawURL)
+	}
+}
+
+func setBrowserContextAttrs(attrs pcommon.Map, payload collectPayload) {
+	if payload.Bean.NetType != "" {
+		upsertString(attrs, "network.effective_type", payload.Bean.NetType)
+	}
+	setViewportAttrs(attrs, payload.Bean.VP, "browser.viewport")
+	setViewportAttrs(attrs, payload.Bean.SR, "browser.screen")
+}
+
+func setResultAttrs(attrs pcommon.Map, result, errorType string) {
+	upsertString(attrs, "result", result)
+	upsertString(attrs, "error_type", errorType)
 }
 
 func setPageURLAttrs(attrs pcommon.Map, rawURL string) {

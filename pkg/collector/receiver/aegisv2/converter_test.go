@@ -184,8 +184,6 @@ func TestDecodeAegisV2Traces_APINoDurationFallbackToInstant(t *testing.T) {
 }
 
 func TestDecodeAegisV2Traces_PVPayload(t *testing.T) {
-	resetBuilderStatsForTest()
-	defer resetBuilderStatsForTest()
 
 	buf := []byte(`{
 		"topic":"SDK-xxxxx",
@@ -245,14 +243,9 @@ func TestDecodeAegisV2Traces_PVPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "http://localhost:8080/entry.html", v.StringVal())
 
-	degradeCount, unknownTypeCount := builderStatsSnapshot()
-	assert.EqualValues(t, 0, degradeCount)
-	assert.EqualValues(t, 0, unknownTypeCount)
 }
 
 func TestDecodeAegisV2Traces_ErrorPayload(t *testing.T) {
-	resetBuilderStatsForTest()
-	defer resetBuilderStatsForTest()
 
 	buf := []byte(`{
 		"topic":"SDK-xxxxx",
@@ -325,14 +318,9 @@ func TestDecodeAegisV2Traces_ErrorPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.EqualValues(t, 1781754057105, v.IntVal())
 
-	degradeCount, unknownTypeCount := builderStatsSnapshot()
-	assert.EqualValues(t, 0, degradeCount)
-	assert.EqualValues(t, 0, unknownTypeCount)
 }
 
 func TestDecodeAegisV2Traces_CustomEventPayload(t *testing.T) {
-	resetBuilderStatsForTest()
-	defer resetBuilderStatsForTest()
 
 	buf := []byte(`{
 		"topic":"SDK-xxxxx",
@@ -401,14 +389,9 @@ func TestDecodeAegisV2Traces_CustomEventPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.EqualValues(t, 1781754057004, v.IntVal())
 
-	degradeCount, unknownTypeCount := builderStatsSnapshot()
-	assert.EqualValues(t, 0, degradeCount)
-	assert.EqualValues(t, 0, unknownTypeCount)
 }
 
 func TestDecodeAegisV2Traces_WebsocketPayload(t *testing.T) {
-	resetBuilderStatsForTest()
-	defer resetBuilderStatsForTest()
 
 	buf := []byte(`{
 		"topic":"SDK-xxxxx",
@@ -501,14 +484,9 @@ func TestDecodeAegisV2Traces_WebsocketPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "WebSocket connection failed", v.StringVal())
 
-	degradeCount, unknownTypeCount := builderStatsSnapshot()
-	assert.EqualValues(t, 0, degradeCount)
-	assert.EqualValues(t, 0, unknownTypeCount)
 }
 
 func TestDecodeAegisV2Traces_WebsocketReplayPayload(t *testing.T) {
-	resetBuilderStatsForTest()
-	defer resetBuilderStatsForTest()
 
 	buf := []byte(`{
 		"topic":"SDK-xxxxx",
@@ -597,9 +575,6 @@ func TestDecodeAegisV2Traces_WebsocketReplayPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "http://localhost:8080/entry.html", v.StringVal())
 
-	degradeCount, unknownTypeCount := builderStatsSnapshot()
-	assert.EqualValues(t, 0, degradeCount)
-	assert.EqualValues(t, 0, unknownTypeCount)
 }
 
 func TestDecodeAegisV2Traces_StringifiedPayload(t *testing.T) {
@@ -1041,4 +1016,173 @@ func TestDecodeAegisV2Traces_UsesRequestTraceID(t *testing.T) {
 
 	span := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	assert.Equal(t, requestTraceID, span.TraceID())
+}
+
+func TestDecodeAegisV2Metrics_WebVitals(t *testing.T) {
+	buf := []byte(`{
+		"topic": "SDK-test",
+		"scheme": "v2",
+		"bean": {
+			"version": "1.0.0",
+			"aid": "aid-metrics-1",
+			"env": "production",
+			"platform": "macOS",
+			"netType": "4G",
+			"vp": "1512 * 315",
+			"sr": "1512 * 982",
+			"referer": ""
+		},
+		"d2": [{
+			"fields": {
+				"from": "https://example.com/index.html",
+				"session": {"id": "session-wv-1"},
+				"view": {
+					"id": "view-wv-1",
+					"loading_type": "initial_load",
+					"view_name": "Test Page",
+					"view_url": "https://example.com/index.html",
+					"referrer": ""
+				},
+				"type": "web_vitals",
+				"level": "info",
+				"plugin": "webVitals"
+			},
+			"message": [{
+				"msg": "web_vitals",
+				"FCP": 452,
+				"LCP": 452,
+				"FID": -1,
+				"CLS": 0.467,
+				"INP": -1,
+				"aegisv2_goto": "abc123",
+				"timestamp": 1782214911075
+			}]
+		}]
+	}`)
+
+	metrics, handled, err := decodeMetrics(buf)
+	require.True(t, handled)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, metrics.ResourceMetrics().Len())
+	rm := metrics.ResourceMetrics().At(0)
+
+	// 资源属性
+	rAttrs := rm.Resource().Attributes()
+	aid, _ := rAttrs.Get("aid")
+	assert.Equal(t, "aid-metrics-1", aid.AsString())
+
+	require.Equal(t, 1, rm.ScopeMetrics().Len())
+	sm := rm.ScopeMetrics().At(0)
+	assert.Equal(t, "aegisv2.collect", sm.Scope().Name())
+
+	// 单一 Histogram 指标，包含所有有效的 web_vitals
+	assert.Equal(t, 1, sm.Metrics().Len())
+	m := sm.Metrics().At(0)
+	assert.Equal(t, "browser.web_vital.duration", m.Name())
+	assert.Equal(t, "ms", m.Unit())
+
+	// FID=-1 和 INP=-1 跳过，预期 FCP、LCP、CLS 三个数据点
+	hist := m.Histogram()
+	assert.Equal(t, 3, hist.DataPoints().Len())
+
+	// 验证数据点
+	metricSet := make(map[string]bool)
+	for i := 0; i < hist.DataPoints().Len(); i++ {
+		dp := hist.DataPoints().At(i)
+		metric, _ := dp.Attributes().Get("vital.metric")
+		metricSet[metric.AsString()] = true
+		assert.Equal(t, uint64(1), dp.Count())
+	}
+	assert.True(t, metricSet["fcp"])
+	assert.True(t, metricSet["lcp"])
+	assert.True(t, metricSet["cls"])
+	assert.False(t, metricSet["fid"])
+	assert.False(t, metricSet["inp"])
+}
+
+func TestDecodeAegisV2Metrics_WebVitalsDataPointAttrs(t *testing.T) {
+	buf := []byte(`{
+		"topic": "SDK-test",
+		"scheme": "v2",
+		"bean": {"version": "1.0.0", "aid": "aid-dp-1", "netType": "WiFi"},
+		"d2": [{
+			"fields": {
+				"from": "https://example.com/",
+				"session": {"id": "sess-dp"},
+				"view": {"id": "view-dp", "view_name": "Home", "view_url": "https://example.com/"},
+				"type": "web_vitals",
+				"level": "info",
+				"plugin": "webVitals"
+			},
+			"message": [{
+				"msg": "web_vitals",
+				"FCP": 300,
+				"LCP": -1,
+				"FID": -1,
+				"CLS": -1,
+				"INP": -1,
+				"timestamp": 1782214911075
+			}]
+		}]
+	}`)
+
+	metrics, handled, err := decodeMetrics(buf)
+	require.True(t, handled)
+	require.NoError(t, err)
+
+	sm := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0)
+	require.Equal(t, 1, sm.Metrics().Len())
+
+	m := sm.Metrics().At(0)
+	assert.Equal(t, "browser.web_vital.duration", m.Name())
+	assert.Equal(t, "ms", m.Unit())
+
+	hist := m.Histogram()
+	require.Equal(t, 1, hist.DataPoints().Len())
+
+	dp := hist.DataPoints().At(0)
+	assert.Equal(t, uint64(1), dp.Count())
+	assert.Equal(t, 300.0, dp.Sum())
+
+	dpAttrs := dp.Attributes()
+	sessID, _ := dpAttrs.Get("session.id")
+	assert.Equal(t, "sess-dp", sessID.AsString())
+	metric, _ := dpAttrs.Get("vital.metric")
+	assert.Equal(t, "fcp", metric.AsString())
+	rating, _ := dpAttrs.Get("vital.rating")
+	assert.Equal(t, "good", rating.AsString())
+	netType, _ := dpAttrs.Get("network.effective_type")
+	assert.Equal(t, "wifi", netType.AsString())
+	urlFull, _ := dpAttrs.Get("url.full")
+	assert.Equal(t, "https://example.com/", urlFull.AsString())
+}
+
+func TestDecodeAegisV2Metrics_NonWebVitalsPayloadHandled(t *testing.T) {
+	// 非 web_vitals 类型的 payload：handled=true，但无指标数据点
+	buf := []byte(`{
+		"topic": "SDK-test",
+		"scheme": "v2",
+		"bean": {"version": "1.0.0"},
+		"d2": [{
+			"fields": {"type": "pv", "plugin": "pv"},
+			"message": [{"msg": "pv", "timestamp": 1782214911075}]
+		}]
+	}`)
+
+	metrics, handled, err := decodeMetrics(buf)
+	require.True(t, handled)
+	require.NoError(t, err)
+
+	sm := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0)
+	assert.Equal(t, 0, sm.Metrics().Len())
+}
+
+func TestDecodeAegisV2Metrics_NotAegisPayload(t *testing.T) {
+	// OTLP 格式不被 aegisv2 处理
+	buf := []byte(`{"resourceMetrics":[]}`)
+
+	_, handled, err := decodeMetrics(buf)
+	assert.False(t, handled)
+	assert.NoError(t, err)
 }

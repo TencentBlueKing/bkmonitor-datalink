@@ -12,7 +12,7 @@ import (
 
 const absoluteTimestampThresholdMs int64 = 1_000_000_000_000
 
-// 以下 slice 字面量在热路径上被反复调用，提升为包级变量避免每次调用重新分配堆内存。
+// slice 字面量在热路径上被反复调用
 var (
 	resourceTimingPhases = []struct{ name, key string }{
 		{"preHandle", "preHandleTime"},
@@ -67,7 +67,7 @@ type collectPayload struct {
 
 type clientBean struct {
 	Version  string `json:"version"`
-	Aid      string `json:"aid"`
+	AID      string `json:"aid"`
 	Env      string `json:"env"`
 	Platform string `json:"platform"`
 	NetType  string `json:"netType"`
@@ -255,6 +255,10 @@ func (e aegisEvent) SpanName() string {
 	return "aegisv2.event"
 }
 
+func (e aegisEvent) isTypeOrMessage(typ string) bool {
+	return e.record.Fields.Type == typ || e.msg.Msg == typ
+}
+
 func (e aegisEvent) IsAssetSpeed() bool {
 	return e.record.Fields.Type == "assets_speed" || e.msg.Msg == "asset_speed"
 }
@@ -262,55 +266,51 @@ func (e aegisEvent) IsAssetSpeed() bool {
 func (e aegisEvent) IsAPI() bool { return e.record.Fields.Type == "api" }
 
 func (e aegisEvent) IsCustom() bool {
-	return e.record.Fields.Type == "custom_event" || e.msg.Msg == "custom_event"
+	return e.isTypeOrMessage("custom_event")
 }
 
 func (e aegisEvent) IsPagePerformance() bool {
-	return e.record.Fields.Type == "page_performance" || e.msg.Msg == "page_performance"
+	return e.isTypeOrMessage("page_performance")
 }
 
 func (e aegisEvent) IsPV() bool {
-	return e.record.Fields.Type == "pv" || e.msg.Msg == "pv" || (e.record.Fields.Plugin == "spa" && e.msg.Msg == "spa")
+	return e.isTypeOrMessage("pv") || (e.record.Fields.Plugin == "spa" && e.msg.Msg == "spa")
 }
 
+func (e aegisEvent) IsSession() bool { return e.isTypeOrMessage("session") }
+
 func (e aegisEvent) IsWebVitals() bool {
-	return e.record.Fields.Type == "web_vitals" || e.msg.Msg == "web_vitals"
+	return e.isTypeOrMessage("web_vitals")
 }
 
 func (e aegisEvent) IsWebsocket() bool {
 	return e.record.Fields.Type == "websocket" || e.record.Fields.Plugin == "websocket"
 }
 
-// EventType 返回当前事件的统一分类，用于 builder registry 分发。
+// EventType 返回当前事件的统一分类。
 func (e aegisEvent) EventType() EventType {
-	if e.IsWebVitals() {
+	switch {
+	case e.IsWebVitals():
 		return EventTypeWebVitals
-	}
-	if e.IsAssetSpeed() {
+	case e.IsAssetSpeed():
 		return EventTypeAssetSpeed
-	}
-	if e.IsAPI() {
+	case e.IsAPI():
 		return EventTypeAPI
-	}
-	if e.IsCustom() {
+	case e.IsCustom():
 		return EventTypeCustom
-	}
-	if e.IsPagePerformance() {
+	case e.IsPagePerformance():
 		return EventTypePagePerformance
-	}
-	if e.IsPV() {
+	case e.IsPV():
 		return EventTypePV
-	}
-	if e.IsWebsocket() {
+	case e.IsWebsocket():
 		return EventTypeWebsocket
-	}
-	if e.record.Fields.Type == "session" || e.msg.Msg == "session" {
+	case e.IsSession():
 		return EventTypeSession
-	}
-	if e.IsError() {
+	case e.IsError():
 		return EventTypeError
+	default:
+		return EventTypeUnknown
 	}
-	return EventTypeUnknown
 }
 
 func (e aegisEvent) IsError() bool {
@@ -333,18 +333,10 @@ func (e aegisEvent) IsError() bool {
 
 // SpanKind 将事件类型映射到 OTel SpanKind。
 func (e aegisEvent) SpanKind() (ptrace.SpanKind, bool) {
-	switch {
-	case e.record.Fields.Type == "assets_speed", e.msg.Msg == "asset_speed", e.IsAPI(), e.IsWebsocket():
+	switch e.EventType() {
+	case EventTypeAssetSpeed, EventTypeAPI, EventTypeWebsocket:
 		return ptrace.SpanKindClient, true
-	case e.IsCustom():
-		return ptrace.SpanKindInternal, true
-	case e.record.Fields.Type == "page_performance", e.msg.Msg == "page_performance":
-		return ptrace.SpanKindInternal, true
-	case e.IsPV():
-		return ptrace.SpanKindInternal, true
-	case e.record.Fields.Type == "session", e.msg.Msg == "session":
-		return ptrace.SpanKindInternal, true
-	case e.IsError():
+	case EventTypeCustom, EventTypePagePerformance, EventTypePV, EventTypeSession, EventTypeError:
 		return ptrace.SpanKindInternal, true
 	default:
 		return ptrace.SpanKindUnspecified, false

@@ -37,7 +37,7 @@ func TestWhitelistResponse_TimeFieldsAreNumbers(t *testing.T) {
 	assert.Equal(t, body.ServerTime, body.StartServerTime)
 }
 
-func TestWhitelistResponse_StartServerTimeUsesUIDTimestamp(t *testing.T) {
+func TestWhitelistResponse_StartServerTimeIgnoresUIDTimestamp(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodGet,
 		routeAegisV2Whitelist+"?uid=user_1781749136169_b838746b&topic=SDK-daffdasfdasfdsafdas",
@@ -55,6 +55,6 @@ func TestWhitelistResponse_StartServerTimeUsesUIDTimestamp(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
 
-	assert.EqualValues(t, 1781749136169, body.StartServerTime)
+	assert.Equal(t, body.ServerTime, body.StartServerTime)
 	assert.GreaterOrEqual(t, body.ServerTime, body.StartServerTime)
 }

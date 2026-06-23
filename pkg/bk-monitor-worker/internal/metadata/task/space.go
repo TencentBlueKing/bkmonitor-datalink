@@ -311,70 +311,90 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 处理 result_table_detail 路由: Elasticsearch 类型
-	wg.Add(1)
-	_ = p.Submit(func() {
-		defer wg.Done()
-		t1 := time.Now()
-		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (elasticsearch)"
+	// NOTE: table_id 在不同租户下可能重复，必须按租户循环并按租户过滤，避免跨租户串数据
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		bkTenantId := bkTenantId
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail (elasticsearch) tenant[%s]", bkTenantId)
 
-		var tableIdList []string
-		var rtList []resulttable.ResultTable
+			var tableIdList []string
+			var rtList []resulttable.ResultTable
 
-		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
-		if err = resulttable.NewResultTableQuerySet(db).
-			Select(resulttable.ResultTableDBSchema.TableId).
-			DefaultStorageEq(models.StorageTypeES).
-			IsEnableEq(true).IsDeletedEq(false).
-			All(&rtList); err != nil {
-			logger.Errorf("%s error, %s", name, err)
-			return
-		}
+			// 查询当前租户下 default_storage 为 "elasticsearch"，启用且未删除的结果表
+			if err = resulttable.NewResultTableQuerySet(db).
+				Select(resulttable.ResultTableDBSchema.TableId).
+				BkTenantIdEq(bkTenantId).
+				DefaultStorageEq(models.StorageTypeES).
+				IsEnableEq(true).IsDeletedEq(false).
+				All(&rtList); err != nil {
+				logger.Errorf("%s error, %s", name, err)
+				return
+			}
 
-		// 提取 TableID 列表
-		for _, rt := range rtList {
-			tableIdList = append(tableIdList, rt.TableId)
-		}
+			// 提取 TableID 列表
+			for _, rt := range rtList {
+				tableIdList = append(tableIdList, rt.TableId)
+			}
 
-		// 调用 PushEsTableIdDetail 方法
-		if err = pusher.PushEsTableIdDetail(tableIdList, true); err != nil {
-			logger.Errorf("%s error %s", name, err)
-			return
-		}
-		logger.Infof("%s success, cost: %s", name, time.Since(t1))
-	})
+			// 当前租户无 ES 结果表时跳过，避免空列表退化为全量查询导致跨租户
+			if len(tableIdList) == 0 {
+				return
+			}
+
+			// 调用 PushEsTableIdDetail 方法
+			if err = pusher.PushEsTableIdDetail(bkTenantId, tableIdList, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
 
 	// 处理 result_table_detail 路由: Doris 类型
-	wg.Add(1)
-	_ = p.Submit(func() {
-		defer wg.Done()
-		t1 := time.Now()
-		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (doris)"
+	// NOTE: table_id 在不同租户下可能重复，必须按租户循环并按租户过滤，避免跨租户串数据
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		bkTenantId := bkTenantId
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail (doris) tenant[%s]", bkTenantId)
 
-		var tableIdList []string
-		var rtList []resulttable.ResultTable
+			var tableIdList []string
+			var rtList []resulttable.ResultTable
 
-		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
-		if err = resulttable.NewResultTableQuerySet(db).
-			Select(resulttable.ResultTableDBSchema.TableId).
-			DefaultStorageEq(models.StorageTypeDoris).
-			IsEnableEq(true).IsDeletedEq(false).
-			All(&rtList); err != nil {
-			logger.Errorf("%s error, %s", name, err)
-			return
-		}
+			// 查询当前租户下 default_storage 为 "doris"，启用且未删除的结果表
+			if err = resulttable.NewResultTableQuerySet(db).
+				Select(resulttable.ResultTableDBSchema.TableId).
+				BkTenantIdEq(bkTenantId).
+				DefaultStorageEq(models.StorageTypeDoris).
+				IsEnableEq(true).IsDeletedEq(false).
+				All(&rtList); err != nil {
+				logger.Errorf("%s error, %s", name, err)
+				return
+			}
 
-		// 提取 TableID 列表
-		for _, rt := range rtList {
-			tableIdList = append(tableIdList, rt.TableId)
-		}
+			// 提取 TableID 列表
+			for _, rt := range rtList {
+				tableIdList = append(tableIdList, rt.TableId)
+			}
 
-		// 调用 PushEsTableIdDetail 方法
-		if err = pusher.PushDorisTableIdDetail(tableIdList, true); err != nil {
-			logger.Errorf("%s error %s", name, err)
-			return
-		}
-		logger.Infof("%s success, cost: %s", name, time.Since(t1))
-	})
+			// 当前租户无 Doris 结果表时跳过，避免空列表退化为全量查询导致跨租户
+			if len(tableIdList) == 0 {
+				return
+			}
+
+			// 调用 PushDorisTableIdDetail 方法
+			if err = pusher.PushDorisTableIdDetail(bkTenantId, tableIdList, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
 
 	wg.Wait()
 	logger.Infof("push and publish space router successfully, cost: %s", time.Since(t0))

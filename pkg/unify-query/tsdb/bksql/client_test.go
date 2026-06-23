@@ -99,12 +99,11 @@ func TestClient_QuerySync(t *testing.T) {
 
 	assert.Equal(t, bksql.StatusOK, res.Code)
 	d, ok := res.Data.(*bksql.QuerySyncResultData)
-	assert.True(t, ok)
-	assert.Equal(t, d.TotalRecords, 5)
+	require.True(t, ok)
+	require.NotNil(t, d)
 
-	if d != nil {
-		assert.NotEmpty(t, d.List)
-	}
+	assert.Equal(t, 5, d.TotalRecords)
+	assert.NotEmpty(t, d.List)
 }
 
 type captureCurl struct {

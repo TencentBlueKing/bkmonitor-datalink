@@ -33,6 +33,8 @@ type ResourceSampler struct {
 	slow      float64   // 慢信号 EWMA，驱动分级
 	fast      float64   // 快信号 EWMA，驱动熔断
 	hasCPU    bool      // 是否已拿到第一帧利用率
+	// lastTickAt 只用于观测实际 tick 间隔；prevAt 是 CPU 利用率计算基线，读 CPU 失败时不会推进，不能复用。
+	lastTickAt time.Time
 }
 
 func NewResourceSampler(reader Reader, config Config, manager *Manager) *ResourceSampler {
@@ -71,7 +73,13 @@ func (s *ResourceSampler) Stop() {
 }
 
 func (s *ResourceSampler) tick() {
-	s.tickAt(time.Now())
+	now := time.Now()
+	s.tickAt(now)
+	if !s.lastTickAt.IsZero() {
+		observeSamplerInterval(now.Sub(s.lastTickAt))
+	}
+	observeSamplerDuration(time.Since(now))
+	s.lastTickAt = now
 }
 
 // tickAt 是一次完整采样：求 CPU 利用率、更新两路 EWMA、算内存占比，最后发布水位。

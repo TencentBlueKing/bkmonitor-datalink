@@ -11,6 +11,7 @@ package throttle
 
 import (
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -19,10 +20,12 @@ import (
 )
 
 var (
-	metricsOnce   sync.Once
-	requestsTotal *prometheus.CounterVec
-	waterLevel    *prometheus.GaugeVec
-	throttleState *prometheus.GaugeVec
+	metricsOnce     sync.Once
+	requestsTotal   *prometheus.CounterVec
+	waterLevel      *prometheus.GaugeVec
+	throttleState   *prometheus.GaugeVec
+	samplerInterval prometheus.Histogram
+	samplerDuration prometheus.Histogram
 )
 
 func initMetrics() {
@@ -52,6 +55,24 @@ func initMetrics() {
 				Help:      "Throttle state by record type",
 			},
 			[]string{"record_type"},
+		)
+
+		samplerInterval = promauto.NewHistogram(
+			prometheus.HistogramOpts{
+				Namespace: define.MonitoringNamespace,
+				Name:      "throttle_sampler_interval_seconds",
+				Help:      "Throttle sampler actual interval seconds",
+				Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+			},
+		)
+
+		samplerDuration = promauto.NewHistogram(
+			prometheus.HistogramOpts{
+				Namespace: define.MonitoringNamespace,
+				Name:      "throttle_sampler_duration_seconds",
+				Help:      "Throttle sampler tick duration seconds",
+				Buckets:   []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1},
+			},
 		)
 	})
 }
@@ -92,4 +113,16 @@ func observeState(recordType define.RecordType, state State) {
 	initMetrics()
 
 	throttleState.WithLabelValues(recordType.S()).Set(float64(state))
+}
+
+func observeSamplerInterval(interval time.Duration) {
+	initMetrics()
+
+	samplerInterval.Observe(interval.Seconds())
+}
+
+func observeSamplerDuration(duration time.Duration) {
+	initMetrics()
+
+	samplerDuration.Observe(duration.Seconds())
 }

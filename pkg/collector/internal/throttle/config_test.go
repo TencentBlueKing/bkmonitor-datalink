@@ -104,6 +104,7 @@ func TestNormalizeConfigMemDefaults(t *testing.T) {
 	assert.Equal(t, defaultMemEnter, config.Thresholds.MemEnter)
 	assert.Equal(t, defaultMemExit, config.Thresholds.MemExit)
 	assert.Equal(t, defaultMemHard, config.Thresholds.MemHard)
+	assert.Equal(t, defaultMemBreachN, config.Thresholds.MemBreachN)
 	assert.Less(t, config.Thresholds.MemExit, config.Thresholds.MemEnter)
 	assert.Less(t, config.Thresholds.MemEnter, config.Thresholds.MemHard)
 }

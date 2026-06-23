@@ -44,6 +44,21 @@ func TestThrottleDisabledBypassesClassifyAndMetrics(t *testing.T) {
 	assertMetricFamilyNotFound(t, "bk_collector_throttle_requests_total")
 }
 
+func TestRetryAfterSecondsFrom(t *testing.T) {
+	called := false
+	assert.Equal(t, "0", retryAfterSecondsFrom(func(n int) int {
+		called = true
+		assert.Equal(t, maxRetryAfterSeconds+1, n)
+		return 0
+	}))
+	assert.True(t, called)
+
+	assert.Equal(t, "30", retryAfterSecondsFrom(func(n int) int {
+		assert.Equal(t, maxRetryAfterSeconds+1, n)
+		return maxRetryAfterSeconds
+	}))
+}
+
 func assertMetricFamilyNotFound(t *testing.T, name string) {
 	t.Helper()
 

@@ -10,13 +10,15 @@
 package httpmiddleware
 
 import (
+	"math/rand"
 	"net/http"
+	"strconv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 )
 
-const retryAfterSeconds = "1" // 429 的 Retry-After，提示客户端 1s 后再来
+const maxRetryAfterSeconds = 30 // 429 的 Retry-After 上限，提示客户端随机退避。
 
 func init() {
 	Register("throttle", Throttle)
@@ -45,8 +47,16 @@ func Throttle(_ string) MiddlewareFunc { // 入参是 optmap 串，这里用不�
 				return
 			}
 
-			w.Header().Set("Retry-After", retryAfterSeconds)
+			w.Header().Set("Retry-After", retryAfterSeconds())
 			http.Error(w, "collector overloaded", http.StatusTooManyRequests)
 		})
 	}
+}
+
+func retryAfterSeconds() string {
+	return retryAfterSecondsFrom(rand.Intn)
+}
+
+func retryAfterSecondsFrom(randIntn func(int) int) string {
+	return strconv.Itoa(randIntn(maxRetryAfterSeconds + 1))
 }

@@ -64,13 +64,16 @@ type Manager struct {
 
 // stateSlot 保存单类数据的状态机以及各信号的连续命中计数。
 type stateSlot struct {
-	state         atomic.Uint32
-	cpuEnterHits  int // cpuSlow > cpu_enter（进入降级）
-	cpuExitHits   int // cpuSlow < cpu_exit（恢复正常）
-	cpuHardHits   int // cpuFast >= cpu_hard（进入熔断）
-	memEnterHits  int // mem > mem_enter（进入降级，内存采样无效时忽略）
-	memExitHits   int // mem < mem_exit（恢复正常，内存采样无效时视为正常）
-	openClearHits int // cpuFast < cpu_hard 且 mem < mem_hard（退出熔断）
+	state            atomic.Uint32
+	cpuEnterHits     int // cpuSlow > cpu_enter（进入降级）
+	cpuExitHits      int // cpuSlow < cpu_exit（恢复正常）
+	cpuHardHits      int // cpuFast >= cpu_hard（进入熔断）
+	cpuHardClearHits int // cpuFast < cpu_hard（退出熔断）
+	memEnterHits     int // mem > mem_enter（进入降级，内存采样无效时忽略）
+	memExitHits      int // mem < mem_exit（恢复正常，内存采样无效时视为正常）
+	memHardClearHits int // mem < mem_hard（退出熔断，内存采样无效时视为正常）
+	openByCPU        bool
+	openByMem        bool
 }
 
 var (
@@ -253,11 +256,13 @@ func (m *Manager) updateStates(level *WaterLevel) {
 func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	th := m.config.Thresholds
 	n := th.BreachN
+	memN := th.MemBreachN
 
 	// 推进所有信号的连续命中计数：每帧只统计、不转移。
 	memSafe := !level.MemValid || level.Mem < th.MemHard
 	tickHits(&slot.cpuHardHits, level.CPUFast >= th.CPUHard)
-	tickHits(&slot.openClearHits, level.CPUFast < th.CPUHard && memSafe)
+	tickHits(&slot.cpuHardClearHits, level.CPUFast < th.CPUHard)
+	tickHits(&slot.memHardClearHits, memSafe)
 	tickHits(&slot.cpuEnterHits, level.CPUSlow > th.CPUEnter)
 	tickHits(&slot.cpuExitHits, level.CPUSlow < th.CPUExit)
 	tickHits(&slot.memEnterHits, level.MemValid && level.Mem > th.MemEnter)
@@ -269,6 +274,7 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	if cpuOpen || memOpen {
 		slot.resetEnterHits()
 		slot.resetExitHits()
+		slot.markOpenCauses(cpuOpen, memOpen)
 		slot.store(StateOpen)
 		return
 	}
@@ -276,7 +282,7 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 	state := State(slot.state.Load())
 	if state == StateOpen {
 		// 走到该分支说明当前负载低于熔断线，根据慢信号当前的水位转移至下一个状态。
-		if slot.openClearHits < n {
+		if !slot.openCausesCleared(n, memN) {
 			return
 		}
 
@@ -290,19 +296,19 @@ func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
 		return
 	}
 
-	enterMet := slot.cpuEnterHits >= n || slot.memEnterHits >= n
-	exitMet := slot.cpuExitHits >= n && slot.memExitHits >= n
+	enterMet := slot.cpuEnterHits >= n || slot.memEnterHits >= memN
+	exitMet := slot.cpuExitHits >= n && slot.memExitHits >= memN
 
 	switch state {
 	case StateNormal:
 		if enterMet {
-			// 正常 -> 降级：CPU、内存任一连续 BreachN 次越 enter（降级线）。
+			// 正常 -> 降级：CPU、内存任一连续越 enter（降级线）即进入，内存使用独立门控。
 			slot.resetExitHits()
 			slot.store(StateShedding)
 		}
 	case StateShedding:
 		if exitMet {
-			// 降级 -> 正常：CPU、内存「同时」连续 BreachN 次低于 exit（正常线）。
+			// 降级 -> 正常：CPU 与内存「同时」满足各自连续门控后退出。
 			slot.store(StateNormal)
 		}
 	}
@@ -327,7 +333,36 @@ func (s *stateSlot) resetExitHits() {
 	s.memExitHits = 0
 }
 
+func (s *stateSlot) markOpenCauses(cpuOpen, memOpen bool) {
+	if cpuOpen {
+		s.openByCPU = true
+		s.cpuHardClearHits = 0
+	}
+	if memOpen {
+		s.openByMem = true
+		s.memHardClearHits = 0
+	}
+}
+
+func (s *stateSlot) openCausesCleared(cpuN, memN int) bool {
+	if s.openByCPU && s.cpuHardClearHits < cpuN {
+		return false
+	}
+	if s.openByMem && s.memHardClearHits < memN {
+		return false
+	}
+	return s.openByCPU || s.openByMem
+}
+
+func (s *stateSlot) resetOpenCauses() {
+	s.openByCPU = false
+	s.openByMem = false
+}
+
 func (s *stateSlot) store(state State) {
+	if state != StateOpen {
+		s.resetOpenCauses()
+	}
 	s.state.Store(uint32(state))
 }
 

@@ -76,6 +76,7 @@ receiver:
       mem_exit: 0.78
       mem_hard: 0.92
       breach_n: 2
+      mem_breach_n: 4
     rules:
       default: {drop_min: 0.1, drop_max: 0.8}
       metrics: {enabled: false}
@@ -92,6 +93,7 @@ receiver:
 	assert.Equal(t, 0.85, receiverConfig.Throttle.Thresholds.MemEnter)
 	assert.Equal(t, 0.78, receiverConfig.Throttle.Thresholds.MemExit)
 	assert.Equal(t, 2, receiverConfig.Throttle.Thresholds.BreachN)
+	assert.Equal(t, 4, receiverConfig.Throttle.Thresholds.MemBreachN)
 	assert.NotNil(t, receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
 	assert.False(t, *receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
 	assert.NotNil(t, receiverConfig.Throttle.Rules["default"].DropMin)

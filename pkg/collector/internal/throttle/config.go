@@ -27,6 +27,7 @@ const (
 	defaultMemExit        = 0.7
 	defaultMemHard        = 0.85
 	defaultBreachN        = 3
+	defaultMemBreachN     = 1
 )
 
 var throttleRecordTypes = []define.RecordType{
@@ -52,13 +53,14 @@ type SignalConfig struct {
 }
 
 type ThresholdConfig struct {
-	CPUEnter float64 `config:"cpu_enter" mapstructure:"cpu_enter"` // CPU 慢信号进入线，连续 breach_n 次越线进入「降级」。
-	CPUExit  float64 `config:"cpu_exit" mapstructure:"cpu_exit"`   // CPU 慢信号退出线，低于该线可退出「降级」「熔断」。
-	CPUHard  float64 `config:"cpu_hard" mapstructure:"cpu_hard"`   // CPU 快信号熔断线，连续 breach_n 次越线进入「熔断」。
-	MemEnter float64 `config:"mem_enter" mapstructure:"mem_enter"` // 内存进入线，连续 breach_n 次越线进入「降级」。
-	MemExit  float64 `config:"mem_exit" mapstructure:"mem_exit"`   // 内存退出线，低于该线可退出「降级」「熔断」。
-	MemHard  float64 `config:"mem_hard" mapstructure:"mem_hard"`   // 内存熔断线，单次越线即熔断。
-	BreachN  int     `config:"breach_n" mapstructure:"breach_n"`   // 连续越界次数门控。
+	CPUEnter   float64 `config:"cpu_enter" mapstructure:"cpu_enter"`       // CPU 慢信号进入线，连续 breach_n 次越线进入「降级」。
+	CPUExit    float64 `config:"cpu_exit" mapstructure:"cpu_exit"`         // CPU 慢信号退出线，低于该线可退出「降级」「熔断」。
+	CPUHard    float64 `config:"cpu_hard" mapstructure:"cpu_hard"`         // CPU 快信号熔断线，连续 breach_n 次越线进入「熔断」。
+	MemEnter   float64 `config:"mem_enter" mapstructure:"mem_enter"`       // 内存进入线，连续 mem_breach_n 次越线进入「降级」。
+	MemExit    float64 `config:"mem_exit" mapstructure:"mem_exit"`         // 内存退出线，低于该线可退出「降级」「熔断」。
+	MemHard    float64 `config:"mem_hard" mapstructure:"mem_hard"`         // 内存熔断线，单次越线即熔断。
+	BreachN    int     `config:"breach_n" mapstructure:"breach_n"`         // CPU 连续越界与恢复次数门控。
+	MemBreachN int     `config:"mem_breach_n" mapstructure:"mem_breach_n"` // 内存软线与内存触发 Open 后恢复的连续命中次数门控，默认单次命中。
 }
 
 type RuleConfig struct {
@@ -104,6 +106,9 @@ func normalizeConfig(c Config) Config {
 	if c.Thresholds.BreachN <= 0 {
 		c.Thresholds.BreachN = defaultBreachN
 	}
+	if c.Thresholds.MemBreachN <= 0 {
+		c.Thresholds.MemBreachN = defaultMemBreachN
+	}
 	return c
 }
 
@@ -143,6 +148,9 @@ func validateConfig(c Config) error {
 	}
 	if c.Thresholds.BreachN <= 0 {
 		return fmt.Errorf("thresholds.breach_n must be greater than 0")
+	}
+	if c.Thresholds.MemBreachN <= 0 {
+		return fmt.Errorf("thresholds.mem_breach_n must be greater than 0")
 	}
 	for name, rc := range c.Rules {
 		if !validRuleName(name) {

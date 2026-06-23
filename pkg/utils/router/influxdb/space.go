@@ -80,6 +80,8 @@ type Record struct {
 	// DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris 使用 bkbase_table_id + doris。
 	DB          string `json:"db,omitempty"`
 	Measurement string `json:"measurement,omitempty"`
+	// SourceType 是 ES 查询入口选择依据；BKData ES 分段需要保留为 bkdata。
+	SourceType string `json:"source_type,omitempty"`
 	// EnableTime 是该路由开始生效的 Unix 秒级时间戳。
 	EnableTime int64 `json:"enable_time,omitempty"`
 }

@@ -558,6 +558,12 @@ func (z *Record) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "Measurement")
 				return
 			}
+		case "SourceType":
+			z.SourceType, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
 		case "EnableTime":
 			z.EnableTime, err = dc.ReadInt64()
 			if err != nil {
@@ -577,9 +583,9 @@ func (z *Record) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *Record) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 7
+	// map header, size 8
 	// write "StorageID"
-	err = en.Append(0x87, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+	err = en.Append(0x88, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 	if err != nil {
 		return
 	}
@@ -638,6 +644,16 @@ func (z *Record) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "Measurement")
 		return
 	}
+	// write "SourceType"
+	err = en.Append(0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.SourceType)
+	if err != nil {
+		err = msgp.WrapError(err, "SourceType")
+		return
+	}
 	// write "EnableTime"
 	err = en.Append(0xaa, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x54, 0x69, 0x6d, 0x65)
 	if err != nil {
@@ -654,9 +670,9 @@ func (z *Record) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Record) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 7
+	// map header, size 8
 	// string "StorageID"
-	o = append(o, 0x87, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
+	o = append(o, 0x88, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 	o = msgp.AppendInt64(o, z.StorageID)
 	// string "StorageType"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
@@ -673,6 +689,9 @@ func (z *Record) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "Measurement"
 	o = append(o, 0xab, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74)
 	o = msgp.AppendString(o, z.Measurement)
+	// string "SourceType"
+	o = append(o, 0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.SourceType)
 	// string "EnableTime"
 	o = append(o, 0xaa, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x54, 0x69, 0x6d, 0x65)
 	o = msgp.AppendInt64(o, z.EnableTime)
@@ -733,6 +752,12 @@ func (z *Record) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "Measurement")
 				return
 			}
+		case "SourceType":
+			z.SourceType, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
 		case "EnableTime":
 			z.EnableTime, bts, err = msgp.ReadInt64Bytes(bts)
 			if err != nil {
@@ -753,7 +778,7 @@ func (z *Record) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Record) Msgsize() (s int) {
-	s = 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageType) + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 11 + msgp.Int64Size
+	s = 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageType) + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 11 + msgp.StringPrefixSize + len(z.SourceType) + 11 + msgp.Int64Size
 	return
 }
 

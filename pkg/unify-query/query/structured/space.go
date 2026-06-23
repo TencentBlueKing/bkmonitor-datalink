@@ -102,6 +102,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 			ClusterName: record.ClusterName,
 			DB:          record.DB,
 			Measurement: record.Measurement,
+			SourceType:  record.SourceType,
 			EnableTime:  record.EnableTime,
 		})
 	}

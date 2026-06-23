@@ -900,6 +900,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				query.Measurement = storageRange.Measurement
 				query.Measurements = []string{storageRange.Measurement}
 			}
+			if storageRange.HasSourceType {
+				query.SourceType = storageRange.SourceType
+			}
 			if !storageRange.IsZero() {
 				query.RouteStart = storageRange.Start
 				query.RouteEnd = storageRange.End

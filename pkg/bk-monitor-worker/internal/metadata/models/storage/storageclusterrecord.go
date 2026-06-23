@@ -170,7 +170,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		var esStorage ESStorage
 		// 优先按当前下发 RT 查 ES storage；查不到 index_set 时再回退到历史记录所属的真实 RT。
 		if err = NewESStorageQuerySet(db).
-			Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId).
+			Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId, ESStorageDBSchema.SourceType).
 			TableIDEq(routeTableID).
 			One(&esStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("compose_table_id_storage_cluster_records: failed to query es storage for table_id->[%s], error: %v", routeTableID, err)
@@ -178,7 +178,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		}
 		if esStorage.IndexSet == "" && routeTableID != tableID {
 			if err = NewESStorageQuerySet(db).
-				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId).
+				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.OriginTableId, ESStorageDBSchema.SourceType).
 				TableIDEq(tableID).
 				One(&esStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 				logger.Errorf("compose_table_id_storage_cluster_records: failed to query es storage for table_id->[%s], error: %v", tableID, err)
@@ -189,7 +189,7 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			// ES 迁移记录可能通过 origin_table_id 指向真实索引配置。
 			var originESStorage ESStorage
 			if err = NewESStorageQuerySet(db).
-				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet).
+				Select(ESStorageDBSchema.TableID, ESStorageDBSchema.IndexSet, ESStorageDBSchema.SourceType).
 				TableIDEq(esStorage.OriginTableId).
 				One(&originESStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 				logger.Errorf("compose_table_id_storage_cluster_records: failed to query origin es storage for table_id->[%s], origin_table_id->[%s], error: %v", tableID, esStorage.OriginTableId, err)
@@ -198,10 +198,14 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			if esStorage.IndexSet == "" {
 				esStorage.IndexSet = originESStorage.IndexSet
 			}
+			if esStorage.SourceType == "" {
+				esStorage.SourceType = originESStorage.SourceType
+			}
 		}
 		if esStorage.IndexSet != "" {
 			esRoute["db"] = esStorage.IndexSet
 			esRoute["measurement"] = models.TSGroupDefaultMeasurement
+			esRoute["source_type"] = esStorage.SourceType
 		}
 	}
 

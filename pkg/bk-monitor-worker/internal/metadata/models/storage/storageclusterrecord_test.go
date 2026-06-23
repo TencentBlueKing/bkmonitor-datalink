@@ -49,7 +49,8 @@ func TestComposeTableIDStorageClusterRecordsCompletesRouteFields(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE metadata_esstorage (
 		table_id text,
 		index_set text,
-		origin_table_id text
+		origin_table_id text,
+		source_type text
 	)`).Error)
 
 	realTableID := "bklog.compose_route_real"
@@ -73,8 +74,8 @@ func TestComposeTableIDStorageClusterRecordsCompletesRouteFields(t *testing.T) {
 		currentTableID, "bklog_compose_route_current", dorisClusterID,
 	).Error)
 	require.NoError(t, db.Exec(
-		"INSERT INTO metadata_esstorage (table_id, index_set) VALUES (?, ?)",
-		currentTableID, "bklog_compose_route_es",
+		"INSERT INTO metadata_esstorage (table_id, index_set, source_type) VALUES (?, ?, ?)",
+		currentTableID, "bklog_compose_route_es", models.EsSourceTypeBKDATA,
 	).Error)
 	require.NoError(t, db.Exec(
 		"INSERT INTO metadata_storageclusterrecord (table_id, cluster_id, is_deleted, is_current, create_time, enable_time) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
@@ -105,5 +106,6 @@ func TestComposeTableIDStorageClusterRecordsCompletesRouteFields(t *testing.T) {
 	assert.Equal(t, models.StorageTypeES, esRoute["storage_type"])
 	assert.Equal(t, "bklog_compose_route_es", esRoute["db"])
 	assert.Equal(t, models.TSGroupDefaultMeasurement, esRoute["measurement"])
+	assert.Equal(t, models.EsSourceTypeBKDATA, esRoute["source_type"])
 	assert.Equal(t, enableES.Unix(), esRoute["enable_time"])
 }

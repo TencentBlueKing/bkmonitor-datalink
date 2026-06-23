@@ -38,6 +38,8 @@ type Record struct {
 	// DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris 使用 bkbase_table_id + doris。
 	DB          string `json:"db,omitempty"`
 	Measurement string `json:"measurement,omitempty"`
+	// SourceType 是 ES 查询入口选择依据；BKData ES 分段需要覆盖外层 RT 的 source_type。
+	SourceType string `json:"source_type,omitempty"`
 	// EnableTime 是该路由开始生效的 Unix 秒级时间戳。
 	EnableTime int64 `json:"enable_time,omitempty"`
 }
@@ -45,16 +47,18 @@ type Record struct {
 type StorageClusterRecords []Record
 
 type StorageIDRange struct {
-	StorageID   string
-	StorageType string
-	StorageName string
-	ClusterName string
-	DB          string
-	Measurement string
-	Start       time.Time
-	End         time.Time
-	QueryStart  time.Time
-	QueryEnd    time.Time
+	StorageID     string
+	StorageType   string
+	StorageName   string
+	ClusterName   string
+	DB            string
+	Measurement   string
+	SourceType    string
+	HasSourceType bool
+	Start         time.Time
+	End           time.Time
+	QueryStart    time.Time
+	QueryEnd      time.Time
 }
 
 func (r StorageIDRange) IsZero() bool {
@@ -159,6 +163,10 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 	if measurement == "" && !hasExplicitStorageType {
 		measurement = z.Measurement
 	}
+	sourceType := record.SourceType
+	if !hasExplicitStorageType {
+		sourceType = z.SourceType
+	}
 	return Record{
 		StorageID:   record.StorageID,
 		StorageType: storageType,
@@ -166,6 +174,7 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 		ClusterName: clusterName,
 		DB:          db,
 		Measurement: measurement,
+		SourceType:  sourceType,
 		EnableTime:  record.EnableTime,
 	}, true, ""
 }
@@ -240,14 +249,16 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 		routeStart := maxTime(routeCheckStart, recordStart)
 		routeEnd := minTime(routeCheckEnd, recordEnd)
 		storageRange := StorageIDRange{
-			StorageID:   route.StorageID,
-			StorageType: route.StorageType,
-			StorageName: route.StorageName,
-			ClusterName: route.ClusterName,
-			DB:          route.DB,
-			Measurement: route.Measurement,
-			QueryStart:  queryStart,
-			QueryEnd:    queryEnd,
+			StorageID:     route.StorageID,
+			StorageType:   route.StorageType,
+			StorageName:   route.StorageName,
+			ClusterName:   route.ClusterName,
+			DB:            route.DB,
+			Measurement:   route.Measurement,
+			SourceType:    route.SourceType,
+			HasSourceType: record.StorageType == metadata.ElasticsearchStorageType,
+			QueryStart:    queryStart,
+			QueryEnd:      queryEnd,
 		}
 		if routeStart.Before(routeEnd) {
 			storageRange.Start = routeStart

@@ -157,11 +157,19 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 	// 如果这里没有补齐，UQ 会拒绝消费 ES -> Doris 的 bk_sql 分段 route，防止 fallback 到外层 ES db/measurement。
 	dorisRoute := map[string]any{}
 	if hasDorisRoute {
-		if dorisStorage.BkbaseTableID == "" && dorisStorage.OriginTableId != "" {
-			// 当前 Doris 记录可能只保留 origin_table_id，继续按 origin RT 查真实的 BKBase 表名。
+		if dorisStorage.OriginTableId != "" &&
+			(dorisStorage.BkbaseTableID == "" || dorisStorage.StorageClusterID == 0 ||
+				dorisStorage.IndexSet == "" || dorisStorage.SourceType == "") {
+			// 当前 Doris 记录可能只保留 origin_table_id，继续按 origin RT 查真实的 BKBase 表名和 ES 查询目标。
 			var originDorisStorage DorisStorage
 			if err = NewDorisStorageQuerySet(db).
-				Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.StorageClusterID).
+				Select(
+					DorisStorageDBSchema.TableID,
+					DorisStorageDBSchema.BkbaseTableID,
+					DorisStorageDBSchema.StorageClusterID,
+					DorisStorageDBSchema.IndexSet,
+					DorisStorageDBSchema.SourceType,
+				).
 				TableIDEq(dorisStorage.OriginTableId).
 				One(&originDorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 				logger.Errorf("compose_table_id_storage_cluster_records: failed to query origin doris storage for table_id->[%s], origin_table_id->[%s], error: %v", tableID, dorisStorage.OriginTableId, err)
@@ -172,6 +180,12 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			}
 			if dorisStorage.StorageClusterID == 0 {
 				dorisStorage.StorageClusterID = originDorisStorage.StorageClusterID
+			}
+			if dorisStorage.IndexSet == "" {
+				dorisStorage.IndexSet = originDorisStorage.IndexSet
+			}
+			if dorisStorage.SourceType == "" {
+				dorisStorage.SourceType = originDorisStorage.SourceType
 			}
 		}
 		if dorisStorage.BkbaseTableID != "" {

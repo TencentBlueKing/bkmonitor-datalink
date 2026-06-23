@@ -118,14 +118,18 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		}
 	}
 
-	// Doris 分段路由需要携带 BKBase 表名和 doris measurement，用于 UQ 生成该时间段的 BKSQL 查询目标。
-	// 如果这里没有补齐，UQ 会拒绝消费 ES -> Doris 的 bk_sql 分段 route，防止 fallback 到外层 ES db/measurement。
-	dorisRoute := map[string]any{}
-	if hasDorisRoute && db.HasTable(DorisStorage{}) {
-		var dorisStorage DorisStorage
+	var dorisStorage DorisStorage
+	if (hasDorisRoute || hasESRoute) && db.HasTable(DorisStorage{}) {
 		// 优先按当前下发 RT 查 Doris storage；虚拟 RT 或迁移场景查不到时，再回退到历史记录所属的真实 RT。
 		if err = NewDorisStorageQuerySet(db).
-			Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.OriginTableId, DorisStorageDBSchema.StorageClusterID).
+			Select(
+				DorisStorageDBSchema.TableID,
+				DorisStorageDBSchema.BkbaseTableID,
+				DorisStorageDBSchema.OriginTableId,
+				DorisStorageDBSchema.StorageClusterID,
+				DorisStorageDBSchema.IndexSet,
+				DorisStorageDBSchema.SourceType,
+			).
 			TableIDEq(routeTableID).
 			One(&dorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("compose_table_id_storage_cluster_records: failed to query doris storage for table_id->[%s], error: %v", routeTableID, err)
@@ -133,13 +137,26 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 		}
 		if dorisStorage.BkbaseTableID == "" && routeTableID != tableID {
 			if err = NewDorisStorageQuerySet(db).
-				Select(DorisStorageDBSchema.TableID, DorisStorageDBSchema.BkbaseTableID, DorisStorageDBSchema.OriginTableId, DorisStorageDBSchema.StorageClusterID).
+				Select(
+					DorisStorageDBSchema.TableID,
+					DorisStorageDBSchema.BkbaseTableID,
+					DorisStorageDBSchema.OriginTableId,
+					DorisStorageDBSchema.StorageClusterID,
+					DorisStorageDBSchema.IndexSet,
+					DorisStorageDBSchema.SourceType,
+				).
 				TableIDEq(tableID).
 				One(&dorisStorage); err != nil && !gorm.IsRecordNotFoundError(err) {
 				logger.Errorf("compose_table_id_storage_cluster_records: failed to query doris storage for table_id->[%s], error: %v", tableID, err)
 				return nil, err
 			}
 		}
+	}
+
+	// Doris 分段路由需要携带 BKBase 表名和 doris measurement，用于 UQ 生成该时间段的 BKSQL 查询目标。
+	// 如果这里没有补齐，UQ 会拒绝消费 ES -> Doris 的 bk_sql 分段 route，防止 fallback 到外层 ES db/measurement。
+	dorisRoute := map[string]any{}
+	if hasDorisRoute {
 		if dorisStorage.BkbaseTableID == "" && dorisStorage.OriginTableId != "" {
 			// 当前 Doris 记录可能只保留 origin_table_id，继续按 origin RT 查真实的 BKBase 表名。
 			var originDorisStorage DorisStorage
@@ -201,6 +218,11 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string, currentTab
 			if esStorage.SourceType == "" {
 				esStorage.SourceType = originESStorage.SourceType
 			}
+		}
+		if esStorage.IndexSet == "" {
+			// Doris 结果表的历史 ES 索引可能保存在 metadata_dorisstorage 上，而没有对应 metadata_esstorage 行。
+			esStorage.IndexSet = dorisStorage.IndexSet
+			esStorage.SourceType = dorisStorage.SourceType
 		}
 		if esStorage.IndexSet != "" {
 			esRoute["db"] = esStorage.IndexSet

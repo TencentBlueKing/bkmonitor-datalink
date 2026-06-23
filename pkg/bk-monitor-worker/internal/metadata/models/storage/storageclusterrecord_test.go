@@ -44,7 +44,9 @@ func TestComposeTableIDStorageClusterRecordsCompletesRouteFields(t *testing.T) {
 		table_id text,
 		bkbase_table_id text,
 		origin_table_id text,
-		storage_cluster_id integer
+		storage_cluster_id integer,
+		index_set text,
+		source_type text
 	)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE metadata_esstorage (
 		table_id text,
@@ -105,6 +107,82 @@ func TestComposeTableIDStorageClusterRecordsCompletesRouteFields(t *testing.T) {
 	require.NotNil(t, esRoute)
 	assert.Equal(t, models.StorageTypeES, esRoute["storage_type"])
 	assert.Equal(t, "bklog_compose_route_es", esRoute["db"])
+	assert.Equal(t, models.TSGroupDefaultMeasurement, esRoute["measurement"])
+	assert.Equal(t, models.EsSourceTypeBKDATA, esRoute["source_type"])
+	assert.Equal(t, enableES.Unix(), esRoute["enable_time"])
+}
+
+func TestComposeTableIDStorageClusterRecordsCompletesESRouteFromDorisStorage(t *testing.T) {
+	db, err := gorm.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+	db.DB().SetMaxOpenConns(1)
+	db.LogMode(false)
+	require.NoError(t, db.Exec(`CREATE TABLE metadata_storageclusterrecord (
+		table_id text,
+		cluster_id integer,
+		is_deleted boolean,
+		is_current boolean,
+		create_time datetime,
+		enable_time datetime
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE metadata_clusterinfo (
+		cluster_id integer,
+		cluster_name text,
+		cluster_type text
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE metadata_dorisstorage (
+		table_id text,
+		bkbase_table_id text,
+		origin_table_id text,
+		storage_cluster_id integer,
+		index_set text,
+		source_type text
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE metadata_esstorage (
+		table_id text,
+		index_set text,
+		origin_table_id text,
+		source_type text
+	)`).Error)
+
+	realTableID := "bklog.doris_with_history_es_real"
+	currentTableID := "bklog.doris_with_history_es_current"
+	const (
+		esClusterID    = uint(194001)
+		dorisClusterID = uint(194002)
+	)
+	enableES := time.Unix(1000, 0)
+	enableDoris := time.Unix(2000, 0)
+
+	require.NoError(t, db.Exec(
+		"INSERT INTO metadata_clusterinfo (cluster_id, cluster_name, cluster_type) VALUES (?, ?, ?), (?, ?, ?)",
+		esClusterID, "es_history_cluster", models.StorageTypeES,
+		dorisClusterID, "doris_current_cluster", models.StorageTypeDoris,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO metadata_dorisstorage (table_id, bkbase_table_id, storage_cluster_id, index_set, source_type) VALUES (?, ?, ?, ?, ?)",
+		currentTableID, "bklog_doris_with_history_es_current", dorisClusterID, "bklog_history_es_index", models.EsSourceTypeBKDATA,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO metadata_storageclusterrecord (table_id, cluster_id, is_deleted, is_current, create_time, enable_time) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
+		realTableID, esClusterID, false, false, enableES.Add(time.Minute), enableES,
+		realTableID, dorisClusterID, false, true, enableDoris.Add(time.Minute), enableDoris,
+	).Error)
+
+	records, err := ComposeTableIDStorageClusterRecords(db, realTableID, currentTableID)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+
+	byStorageID := make(map[int64]map[string]any, len(records))
+	for _, record := range records {
+		byStorageID[record["storage_id"].(int64)] = record
+	}
+
+	esRoute := byStorageID[int64(esClusterID)]
+	require.NotNil(t, esRoute)
+	assert.Equal(t, models.StorageTypeES, esRoute["storage_type"])
+	assert.Equal(t, "bklog_history_es_index", esRoute["db"])
 	assert.Equal(t, models.TSGroupDefaultMeasurement, esRoute["measurement"])
 	assert.Equal(t, models.EsSourceTypeBKDATA, esRoute["source_type"])
 	assert.Equal(t, enableES.Unix(), esRoute["enable_time"])

@@ -293,17 +293,8 @@ func (m *Manager) dropProbability(rt define.RecordType) float64 {
 		return 0
 	}
 
-	t := 0.0
-	for _, signal := range m.signals {
-		slot := record.slots[signal.name]
-		if slot == nil {
-			continue
-		}
-		t = math.Max(t, slot.Ratio(signal.sample(level)))
-	}
-
 	rule := m.rules[rt]
-	return rule.DropMin + (rule.DropMax-rule.DropMin)*t
+	return rule.DropMin + (rule.DropMax-rule.DropMin)*m.maxSlotRatio(record, level)
 }
 
 func (m *Manager) updateStates(level *WaterLevel) {
@@ -324,16 +315,10 @@ func (m *Manager) updateStates(level *WaterLevel) {
 }
 
 func (m *Manager) updateState(record *recordState, level *WaterLevel) {
-	for _, signal := range m.signals {
-		slot := record.slots[signal.name]
-		if slot != nil {
-			slot.Tick(signal.sample(level))
-		}
-	}
-
+	m.tickSlots(record, level)
 	state := State(record.state.Load())
-	hardReached := m.anyHardReached(record)
-	if hardReached {
+	if m.anySlot(record, (*stateSlot).HardReached) {
+		// -> 熔断
 		if state != StateOpen {
 			record.resetEnterHits()
 			record.resetExitHits()
@@ -344,91 +329,98 @@ func (m *Manager) updateState(record *recordState, level *WaterLevel) {
 	}
 
 	if state == StateOpen {
-		if !m.allHardCleared(record) {
+		// 走到该分支说明当前负载低于熔断线，根据慢信号当前的水位转移至下一个状态。
+		if !m.allSlots(record, (*stateSlot).HardCleared) {
 			return
 		}
 
-		if m.anySlowAboveExit(record, level) {
+		if m.anySlotSample(record, level, (*stateSlot).SlowAboveExit) {
+			// 熔断 -> 降级：还没恢复到正常。
 			record.store(StateShedding)
 		} else {
+			// 熔断 -> 正常。
 			record.store(StateNormal)
 		}
 		return
 	}
 
-	enterMet := m.anyEnterReached(record)
-	exitMet := m.allExitReached(record)
-
 	switch state {
 	case StateNormal:
-		if enterMet {
+		if m.anySlot(record, (*stateSlot).EnterReached) {
+			// 正常 -> 降级：某个信号连续 N 次越过 enter（降级）线。
 			record.resetExitHits()
 			record.store(StateShedding)
 		}
 	case StateShedding:
-		if exitMet {
+		if m.allSlots(record, (*stateSlot).ExitReached) {
+			// 降级 -> 正常：CPU 与内存「同时」满足各自连续门控后退出。
 			record.store(StateNormal)
 		}
 	}
 }
 
-func (m *Manager) anyHardReached(record *recordState) bool {
+func (m *Manager) tickSlots(record *recordState, level *WaterLevel) {
 	for _, signal := range m.signals {
-		if slot := record.slots[signal.name]; slot != nil && slot.HardReached() {
+		slot := record.slots[signal.name]
+		if slot != nil {
+			slot.Tick(signal.sample(level))
+		}
+	}
+}
+
+func (m *Manager) anySlot(record *recordState, match func(*stateSlot) bool) bool {
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot != nil && match(slot) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *Manager) allHardCleared(record *recordState) bool {
+func (m *Manager) allSlots(record *recordState, match func(*stateSlot) bool) bool {
 	for _, signal := range m.signals {
 		slot := record.slots[signal.name]
-		if slot != nil && !slot.HardCleared() {
+		if slot != nil && !match(slot) {
 			return false
 		}
 	}
 	return true
 }
 
-func (m *Manager) anyEnterReached(record *recordState) bool {
+func (m *Manager) anySlotSample(record *recordState, level *WaterLevel, match func(*stateSlot, slotSample) bool) bool {
 	for _, signal := range m.signals {
-		if slot := record.slots[signal.name]; slot != nil && slot.EnterReached() {
+		slot := record.slots[signal.name]
+		if slot != nil && match(slot, signal.sample(level)) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *Manager) allExitReached(record *recordState) bool {
+func (m *Manager) maxSlotRatio(record *recordState, level *WaterLevel) float64 {
+	// 将当前 CPU 慢信号转换成一个 0 ~ 1 的「过载程度」，计算水位在「进入线 -> 熔断线」范围的哪个百分比位置（0 ～ 1）。
+	// 假设 CPUEnter = 0.80，CPUHard  = 0.95，CPUSlow = 0.80  => t = 0 ｜ CPUSlow = 0.875 => t = 0.5 ｜ CPUSlow = 0.95  => t = 1
+	// 根据 t 决策丢弃概率，越接近 CPUHard，丢弃概率越高，假设 DropMin = 0.5，DropMax = 1：CPUSlow = 0.875 => t = 0.5 => 0.25，即 25 % 的丢弃概率。
+	ratio := 0.0
 	for _, signal := range m.signals {
 		slot := record.slots[signal.name]
-		if slot != nil && !slot.ExitReached() {
-			return false
+		if slot != nil {
+			ratio = math.Max(ratio, slot.Ratio(signal.sample(level)))
 		}
 	}
-	return true
-}
-
-func (m *Manager) anySlowAboveExit(record *recordState, level *WaterLevel) bool {
-	for _, signal := range m.signals {
-		slot := record.slots[signal.name]
-		if slot != nil && slot.SlowAboveExit(signal.sample(level)) {
-			return true
-		}
-	}
-	return false
+	return ratio
 }
 
 func (r *recordState) resetEnterHits() {
 	for _, slot := range r.slots {
-		slot.ResetEnterHits()
+		slot.enterHits = 0
 	}
 }
 
 func (r *recordState) resetExitHits() {
 	for _, slot := range r.slots {
-		slot.ResetExitHits()
+		slot.exitHits = 0
 	}
 }
 
@@ -480,15 +472,13 @@ func (s *stateSlot) Ratio(sample slotSample) float64 {
 	if !s.enabled || !sample.valid {
 		return 0
 	}
-	return overloadRatio(sample.slow, s.enter, s.hard)
-}
 
-func (s *stateSlot) ResetEnterHits() {
-	s.enterHits = 0
-}
-
-func (s *stateSlot) ResetExitHits() {
-	s.exitHits = 0
+	// 把当前水位归一化到 [0, 1]。
+	span := s.hard - s.enter
+	if span <= 0 {
+		return 0
+	}
+	return clamp((sample.slow-s.enter)/span, 0, 1)
 }
 
 // tickHits 推进一个连续命中计数：满足条件则 +1，否则归零。
@@ -498,15 +488,6 @@ func tickHits(c *int, hit bool) {
 		return
 	}
 	*c = 0
-}
-
-// overloadRatio 把当前水位归一化到 [0, 1]。
-func overloadRatio(value, enter, hard float64) float64 {
-	span := hard - enter
-	if span <= 0 {
-		return 0
-	}
-	return clamp((value-enter)/span, 0, 1)
 }
 
 func clamp(v, min, max float64) float64 {

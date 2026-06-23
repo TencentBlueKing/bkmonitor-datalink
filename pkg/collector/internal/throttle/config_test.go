@@ -61,34 +61,34 @@ func TestValidateConfig(t *testing.T) {
 func TestValidateConfigMemThresholds(t *testing.T) {
 	tests := []struct {
 		name     string
-		mutate   func(*ThresholdConfig)
+		mutate   func(*ThresholdSlotConfig)
 		expected bool // true 表示应通过
 	}{
 		{
 			name:     "default mem thresholds pass",
-			mutate:   func(*ThresholdConfig) {},
+			mutate:   func(*ThresholdSlotConfig) {},
 			expected: true,
 		},
 		{
 			name:     "mem_enter <= mem_exit rejected",
-			mutate:   func(t *ThresholdConfig) { t.MemEnter, t.MemExit = 0.78, 0.85 },
+			mutate:   func(t *ThresholdSlotConfig) { t.Enter, t.Exit = 0.78, 0.85 },
 			expected: false,
 		},
 		{
 			name:     "mem_hard <= mem_enter rejected",
-			mutate:   func(t *ThresholdConfig) { t.MemEnter, t.MemHard = 0.92, 0.85 },
+			mutate:   func(t *ThresholdSlotConfig) { t.Enter, t.Hard = 0.92, 0.85 },
 			expected: false,
 		},
 		{
 			name:     "negative mem_exit rejected",
-			mutate:   func(t *ThresholdConfig) { t.MemExit = -0.1 },
+			mutate:   func(t *ThresholdSlotConfig) { t.Exit = -0.1 },
 			expected: false,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			config := normalizeConfig(Config{Enabled: true})
-			tc.mutate(&config.Thresholds)
+			tc.mutate(&config.Thresholds.Mem)
 			err := validateConfig(config)
 			if tc.expected {
 				assert.NoError(t, err)
@@ -101,10 +101,53 @@ func TestValidateConfigMemThresholds(t *testing.T) {
 
 func TestNormalizeConfigMemDefaults(t *testing.T) {
 	config := normalizeConfig(Config{Enabled: true})
-	assert.Equal(t, defaultMemEnter, config.Thresholds.MemEnter)
-	assert.Equal(t, defaultMemExit, config.Thresholds.MemExit)
-	assert.Equal(t, defaultMemHard, config.Thresholds.MemHard)
-	assert.Equal(t, defaultMemBreachN, config.Thresholds.MemBreachN)
-	assert.Less(t, config.Thresholds.MemExit, config.Thresholds.MemEnter)
-	assert.Less(t, config.Thresholds.MemEnter, config.Thresholds.MemHard)
+	assert.True(t, thresholdEnabled(config.Thresholds.CPU))
+	assert.True(t, thresholdEnabled(config.Thresholds.Mem))
+	assert.Equal(t, defaultMemEnter, config.Thresholds.Mem.Enter)
+	assert.Equal(t, defaultMemExit, config.Thresholds.Mem.Exit)
+	assert.Equal(t, defaultMemHard, config.Thresholds.Mem.Hard)
+	assert.Equal(t, defaultMemBreachN, config.Thresholds.Mem.BreachN)
+	assert.Less(t, config.Thresholds.Mem.Exit, config.Thresholds.Mem.Enter)
+	assert.Less(t, config.Thresholds.Mem.Enter, config.Thresholds.Mem.Hard)
+}
+
+func TestValidateConfigDisabledThresholdSlots(t *testing.T) {
+	disabled := false
+
+	tests := []struct {
+		name   string
+		mutate func(*ThresholdConfig)
+	}{
+		{
+			name: "cpu disabled",
+			mutate: func(thresholds *ThresholdConfig) {
+				thresholds.CPU = ThresholdSlotConfig{
+					Enabled: &disabled,
+					Enter:   0.7,
+					Exit:    0.8,
+					Hard:    0.6,
+					BreachN: 0,
+				}
+			},
+		},
+		{
+			name: "mem disabled",
+			mutate: func(thresholds *ThresholdConfig) {
+				thresholds.Mem = ThresholdSlotConfig{
+					Enabled: &disabled,
+					Enter:   0.7,
+					Exit:    0.8,
+					Hard:    0.6,
+					BreachN: 0,
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config := normalizeConfig(Config{Enabled: true})
+			tc.mutate(&config.Thresholds)
+			assert.NoError(t, validateConfig(config))
+		})
+	}
 }

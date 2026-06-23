@@ -53,14 +53,16 @@ type SignalConfig struct {
 }
 
 type ThresholdConfig struct {
-	CPUEnter   float64 `config:"cpu_enter" mapstructure:"cpu_enter"`       // CPU 慢信号进入线，连续 breach_n 次越线进入「降级」。
-	CPUExit    float64 `config:"cpu_exit" mapstructure:"cpu_exit"`         // CPU 慢信号退出线，低于该线可退出「降级」「熔断」。
-	CPUHard    float64 `config:"cpu_hard" mapstructure:"cpu_hard"`         // CPU 快信号熔断线，连续 breach_n 次越线进入「熔断」。
-	MemEnter   float64 `config:"mem_enter" mapstructure:"mem_enter"`       // 内存进入线，连续 mem_breach_n 次越线进入「降级」。
-	MemExit    float64 `config:"mem_exit" mapstructure:"mem_exit"`         // 内存退出线，低于该线可退出「降级」「熔断」。
-	MemHard    float64 `config:"mem_hard" mapstructure:"mem_hard"`         // 内存熔断线，单次越线即熔断。
-	BreachN    int     `config:"breach_n" mapstructure:"breach_n"`         // CPU 连续越界与恢复次数门控。
-	MemBreachN int     `config:"mem_breach_n" mapstructure:"mem_breach_n"` // 内存软线与内存触发 Open 后恢复的连续命中次数门控，默认单次命中。
+	CPU ThresholdSlotConfig `config:"cpu" mapstructure:"cpu"` // CPU 信号阈值，slow=CPUSlow，fast=CPUFast。
+	Mem ThresholdSlotConfig `config:"mem" mapstructure:"mem"` // 内存信号阈值，slow=fast=Mem。
+}
+
+type ThresholdSlotConfig struct {
+	Enabled *bool   `config:"enabled" mapstructure:"enabled"`   // false 表示该信号不参与进入、退出、熔断和丢弃概率计算。
+	Enter   float64 `config:"enter" mapstructure:"enter"`       // slow 信号进入线，连续 breach_n 次越线进入「降级」。
+	Exit    float64 `config:"exit" mapstructure:"exit"`         // slow 信号退出线，连续 breach_n 次回落退出「降级」。
+	Hard    float64 `config:"hard" mapstructure:"hard"`         // fast 信号熔断线，连续 breach_n 次越线进入「熔断」。
+	BreachN int     `config:"breach_n" mapstructure:"breach_n"` // 连续命中门控，同时作用于 enter、exit、hard 和 hard clear。
 }
 
 type RuleConfig struct {
@@ -85,29 +87,27 @@ func normalizeConfig(c Config) Config {
 	if c.Signal.CPUFastBeta == 0 {
 		c.Signal.CPUFastBeta = defaultCPUFastBeta
 	}
-	if c.Thresholds.CPUEnter == 0 {
-		c.Thresholds.CPUEnter = defaultCPUEnter
+	c.Thresholds.CPU = normalizeThresholdSlot(c.Thresholds.CPU, defaultCPUEnter, defaultCPUExit, defaultCPUHard, defaultBreachN)
+	c.Thresholds.Mem = normalizeThresholdSlot(c.Thresholds.Mem, defaultMemEnter, defaultMemExit, defaultMemHard, defaultMemBreachN)
+	return c
+}
+
+func normalizeThresholdSlot(c ThresholdSlotConfig, enter, exit, hard float64, breachN int) ThresholdSlotConfig {
+	if c.Enabled == nil {
+		enabled := true
+		c.Enabled = &enabled
 	}
-	if c.Thresholds.CPUExit == 0 {
-		c.Thresholds.CPUExit = defaultCPUExit
+	if c.Enter == 0 {
+		c.Enter = enter
 	}
-	if c.Thresholds.CPUHard == 0 {
-		c.Thresholds.CPUHard = defaultCPUHard
+	if c.Exit == 0 {
+		c.Exit = exit
 	}
-	if c.Thresholds.MemEnter == 0 {
-		c.Thresholds.MemEnter = defaultMemEnter
+	if c.Hard == 0 {
+		c.Hard = hard
 	}
-	if c.Thresholds.MemExit == 0 {
-		c.Thresholds.MemExit = defaultMemExit
-	}
-	if c.Thresholds.MemHard == 0 {
-		c.Thresholds.MemHard = defaultMemHard
-	}
-	if c.Thresholds.BreachN <= 0 {
-		c.Thresholds.BreachN = defaultBreachN
-	}
-	if c.Thresholds.MemBreachN <= 0 {
-		c.Thresholds.MemBreachN = defaultMemBreachN
+	if c.BreachN <= 0 {
+		c.BreachN = breachN
 	}
 	return c
 }
@@ -128,29 +128,11 @@ func validateConfig(c Config) error {
 	if c.Signal.FallbackCores < 0 {
 		return fmt.Errorf("signal.fallback_cores must be greater than or equal to 0")
 	}
-	if c.Thresholds.CPUExit < 0 {
-		return fmt.Errorf("thresholds.cpu_exit must be greater than or equal to 0")
+	if err := validateThresholdSlot("cpu", c.Thresholds.CPU); err != nil {
+		return err
 	}
-	if c.Thresholds.CPUEnter <= c.Thresholds.CPUExit {
-		return fmt.Errorf("thresholds.cpu_enter must be greater than thresholds.cpu_exit")
-	}
-	if c.Thresholds.CPUHard <= c.Thresholds.CPUEnter {
-		return fmt.Errorf("thresholds.cpu_hard must be greater than thresholds.cpu_enter")
-	}
-	if c.Thresholds.MemExit < 0 {
-		return fmt.Errorf("thresholds.mem_exit must be greater than or equal to 0")
-	}
-	if c.Thresholds.MemEnter <= c.Thresholds.MemExit {
-		return fmt.Errorf("thresholds.mem_enter must be greater than thresholds.mem_exit")
-	}
-	if c.Thresholds.MemHard <= c.Thresholds.MemEnter {
-		return fmt.Errorf("thresholds.mem_hard must be greater than thresholds.mem_enter")
-	}
-	if c.Thresholds.BreachN <= 0 {
-		return fmt.Errorf("thresholds.breach_n must be greater than 0")
-	}
-	if c.Thresholds.MemBreachN <= 0 {
-		return fmt.Errorf("thresholds.mem_breach_n must be greater than 0")
+	if err := validateThresholdSlot("mem", c.Thresholds.Mem); err != nil {
+		return err
 	}
 	for name, rc := range c.Rules {
 		if !validRuleName(name) {
@@ -172,6 +154,29 @@ func validateConfig(c Config) error {
 		}
 	}
 	return nil
+}
+
+func validateThresholdSlot(name string, c ThresholdSlotConfig) error {
+	if !thresholdEnabled(c) {
+		return nil
+	}
+	if c.Exit < 0 {
+		return fmt.Errorf("thresholds.%s.exit must be greater than or equal to 0", name)
+	}
+	if c.Enter <= c.Exit {
+		return fmt.Errorf("thresholds.%s.enter must be greater than thresholds.%s.exit", name, name)
+	}
+	if c.Hard <= c.Enter {
+		return fmt.Errorf("thresholds.%s.hard must be greater than thresholds.%s.enter", name, name)
+	}
+	if c.BreachN <= 0 {
+		return fmt.Errorf("thresholds.%s.breach_n must be greater than 0", name)
+	}
+	return nil
+}
+
+func thresholdEnabled(c ThresholdSlotConfig) bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 func validRuleName(name string) bool {

@@ -119,10 +119,10 @@ func TestManagerSoftEntryByEitherSignal(t *testing.T) {
 	assert.Equal(t, StateShedding, mem.State(traces))
 }
 
-func TestManagerMemBreachNControlsSoftTransitions(t *testing.T) {
+func TestManagerMemSlotBreachNControlsSoftTransitions(t *testing.T) {
 	config := testConfig()
-	config.Thresholds.BreachN = 1
-	config.Thresholds.MemBreachN = 2
+	config.Thresholds.CPU.BreachN = 1
+	config.Thresholds.Mem.BreachN = 2
 	manager := newManager(config)
 	traces := define.RecordTraces
 
@@ -153,31 +153,36 @@ func TestManagerExitRequiresBothCPUAndMem(t *testing.T) {
 	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemEnter + 0.01, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
 
-	// mem 也跌回 exit 线下，默认 mem_breach_n=1 → Normal
+	// mem 也跌回 exit 线下，默认 mem.breach_n=1 → Normal
 	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.01, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
-func TestManagerMemOpenExitUsesDefaultMemBreachN(t *testing.T) {
-	manager := newManager(testConfig())
+func TestManagerMemOpenExitUsesDefaultMemSlotBreachN(t *testing.T) {
+	config := testConfig()
+	disabled := false
+	config.Thresholds.CPU.Enabled = &disabled
+	manager := newManager(config)
 	traces := define.RecordTraces
 
 	// mem 单次越线即触发 Open
 	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
-	// 纯内存触发 Open 时只等待内存硬线清除；默认 mem_breach_n=1，不被 CPU breach_n 拖住。
+	// CPU disabled 不阻塞恢复；内存默认 breach_n=1，单次硬线清除即可退出 Open。
 	manager.Publish(WaterLevel{Mem: testMemExit - 0.20, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
-func TestManagerOpenExitUsesMemBreachNForMemClear(t *testing.T) {
+func TestManagerOpenExitUsesMemSlotBreachNForMemClear(t *testing.T) {
 	config := testConfig()
-	config.Thresholds.BreachN = 1
-	config.Thresholds.MemBreachN = 2
+	config.Thresholds.CPU.BreachN = 1
+	config.Thresholds.Mem.BreachN = 2
 	manager := newManager(config)
 	traces := define.RecordTraces
 
+	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
+	assert.Equal(t, StateNormal, manager.State(traces))
 	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
@@ -188,15 +193,15 @@ func TestManagerOpenExitUsesMemBreachNForMemClear(t *testing.T) {
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
-func TestManagerOpenExitWaitsForAllOpenCauses(t *testing.T) {
+func TestManagerOpenExitWaitsForAllEnabledSlots(t *testing.T) {
 	manager := newManager(testConfig())
 	traces := define.RecordTraces
 
-	// 第 1 帧：mem 单次越硬线触发 Open，CPU hard 只命中 1 次，还不是 CPU Open 触发源。
+	// 第 1 帧：mem 单次越硬线触发 Open，CPU hard 只命中 1 次。
 	manager.Publish(WaterLevel{CPUFast: testCPUHard + 0.03, Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
-	// 第 2 帧：CPU hard 满 breach_n，Open 触发源扩展为 CPU+mem；mem 已清除但还要等 CPU 清除。
+	// 第 2 帧：CPU hard 满 breach_n；mem 已清除但还要等 CPU 清除。
 	manager.Publish(WaterLevel{CPUFast: testCPUHard + 0.03, Mem: testMemExit - 0.20, MemValid: true})
 	assert.Equal(t, StateOpen, manager.State(traces))
 
@@ -204,6 +209,20 @@ func TestManagerOpenExitWaitsForAllOpenCauses(t *testing.T) {
 	assert.Equal(t, StateOpen, manager.State(traces))
 
 	manager.Publish(WaterLevel{CPUFast: 0.5, Mem: testMemExit - 0.20, MemValid: true})
+	assert.Equal(t, StateNormal, manager.State(traces))
+}
+
+func TestManagerMemOpenExitWaitsForCPUHardClear(t *testing.T) {
+	manager := newManager(testConfig())
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUFast: 0.1, Mem: testMemHard + 0.03, MemValid: true})
+	require.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUFast: 0.1, Mem: testMemExit - 0.20, MemValid: true})
+	assert.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUFast: 0.1, Mem: testMemExit - 0.20, MemValid: true})
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
@@ -224,9 +243,115 @@ func TestManagerOpenExitToSheddingByMem(t *testing.T) {
 	manager.Publish(WaterLevel{Mem: testMemHard + 0.03, MemValid: true})
 	require.Equal(t, StateOpen, manager.State(traces))
 
-	// 第 1 次内存硬线回落满足默认 mem_breach_n；mem 仍高于 mem_exit → Shedding。
+	// 第 1 次回落时 CPU hard clear 还未满足 breach_n，继续 Open。
+	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
+	assert.Equal(t, StateOpen, manager.State(traces))
+
+	// 第 2 次回落满足所有 enabled slot 的 hard clear；mem 仍高于 mem_exit → Shedding。
 	manager.Publish(WaterLevel{Mem: testMemExit + 0.04, MemValid: true})
 	assert.Equal(t, StateShedding, manager.State(traces))
+}
+
+func TestManagerDisabledSignalsDoNotParticipate(t *testing.T) {
+	disabled := false
+	config := testConfig()
+	config.Thresholds.CPU.Enabled = &disabled
+	config.Thresholds.Mem.Enabled = &disabled
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	for i := 0; i < testBreachN+2; i++ {
+		manager.Publish(WaterLevel{
+			CPUSlow:  testCPUEnter + 0.20,
+			CPUFast:  testCPUHard + 0.20,
+			Mem:      testMemHard + 0.20,
+			MemValid: true,
+		})
+	}
+	assert.Equal(t, StateNormal, manager.State(traces))
+	assert.Equal(t, ActionAdmit, manager.Decide(traces))
+	assert.InDelta(t, 0.0, manager.dropProbability(traces), 0.001)
+}
+
+func TestManagerMemDisabledAllowsCPUOnlyDecision(t *testing.T) {
+	disabled := false
+	config := testConfig()
+	config.Thresholds.Mem.Enabled = &disabled
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	assert.Equal(t, StateNormal, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	assert.Equal(t, StateShedding, manager.State(traces))
+}
+
+func TestManagerMemDisabledUsesCPUOnlyDropProbability(t *testing.T) {
+	disabled := false
+	dropMin := 0.0
+	dropMax := 1.0
+	config := testConfig()
+	config.Thresholds.Mem.Enabled = &disabled
+	config.Rules = map[string]RuleConfig{
+		"default": {DropMin: &dropMin, DropMax: &dropMax},
+	}
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(0.3), Mem: memAtRatio(1.0), MemValid: true})
+	assert.InDelta(t, 0.3, manager.dropProbability(traces), 0.001)
+}
+
+func TestManagerMemDisabledDoesNotBlockCPUOpenExit(t *testing.T) {
+	disabled := false
+	config := testConfig()
+	config.Thresholds.Mem.Enabled = &disabled
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: testCPUHard + 0.05, Mem: testMemHard + 0.20, MemValid: true})
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: testCPUHard + 0.06, Mem: testMemHard + 0.20, MemValid: true})
+	require.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	assert.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, Mem: testMemHard + 0.20, MemValid: true})
+	assert.Equal(t, StateNormal, manager.State(traces))
+}
+
+func TestManagerCPUDisabledAllowsMemOnlyDecision(t *testing.T) {
+	disabled := false
+	config := testConfig()
+	config.Thresholds.CPU.Enabled = &disabled
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.20, CPUFast: testCPUHard + 0.20})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.20, CPUFast: testCPUHard + 0.20})
+	assert.Equal(t, StateNormal, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.20, CPUFast: testCPUHard + 0.20, Mem: testMemEnter + 0.01, MemValid: true})
+	assert.Equal(t, StateShedding, manager.State(traces))
+}
+
+func TestManagerCPUDisabledUsesMemOnlyDropProbability(t *testing.T) {
+	disabled := false
+	dropMin := 0.0
+	dropMax := 1.0
+	config := testConfig()
+	config.Thresholds.CPU.Enabled = &disabled
+	config.Rules = map[string]RuleConfig{
+		"default": {DropMin: &dropMin, DropMax: &dropMax},
+	}
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: cpuAtRatio(1.0), CPUFast: testCPUHard + 0.20, Mem: memAtRatio(0.4), MemValid: true})
+	assert.InDelta(t, 0.4, manager.dropProbability(traces), 0.001)
 }
 
 func TestManagerMemInvalidAllowsSoftExit(t *testing.T) {
@@ -243,28 +368,62 @@ func TestManagerMemInvalidAllowsSoftExit(t *testing.T) {
 	assert.Equal(t, StateNormal, manager.State(traces))
 }
 
+func TestManagerMemInvalidDoesNotWaitForMemBreachNOnSoftExit(t *testing.T) {
+	config := testConfig()
+	config.Thresholds.Mem.BreachN = 3
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01})
+	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02})
+	require.Equal(t, StateShedding, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, MemValid: false})
+	assert.Equal(t, StateShedding, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, MemValid: false})
+	assert.Equal(t, StateNormal, manager.State(traces))
+}
+
+func TestManagerMemInvalidDoesNotWaitForMemBreachNOnHardClear(t *testing.T) {
+	config := testConfig()
+	config.Thresholds.Mem.BreachN = 3
+	manager := newManager(config)
+	traces := define.RecordTraces
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: testCPUHard + 0.05, MemValid: false})
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: testCPUHard + 0.06, MemValid: false})
+	require.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, MemValid: false})
+	assert.Equal(t, StateOpen, manager.State(traces))
+
+	manager.Publish(WaterLevel{CPUSlow: 0.1, CPUFast: 0.1, MemValid: false})
+	assert.Equal(t, StateNormal, manager.State(traces))
+}
+
 // 回归 1：Normal 期间 mem 长期低位让 memExitHits 累积，CPU 触发 enter 把状态机推到 Shedding 后，
-// 必须先清掉旧的 exit 计数，再按 CPU breach_n 与内存 mem_breach_n 重新累计退出条件。
+// 必须先清掉旧的 exit 计数，再按 CPU breach_n 与内存 mem.breach_n 重新累计退出条件。
 // 这条用来防 resetExitHits 没清 mem/cpu exit 计数的回归（曾经写错为清 enter 计数）。
 func TestManagerEnterClearsExitHits(t *testing.T) {
 	config := testConfig()
 	manager := newManager(config)
 	traces := define.RecordTraces
-	slot := manager.states[traces]
+	slot := manager.states[traces].slots[signalMem]
 
-	// Normal 期 mem 长期低位 → memExitHits 累积超过默认 mem_breach_n。
+	// Normal 期 mem 长期低位 → exitHits 累积超过默认 mem.breach_n。
 	for i := 0; i < testBreachN+2; i++ {
 		manager.Publish(WaterLevel{Mem: testMemExit - 0.05, MemValid: true})
 	}
 	require.Equal(t, StateNormal, manager.State(traces))
-	require.GreaterOrEqual(t, slot.memExitHits, config.Thresholds.MemBreachN)
+	require.GreaterOrEqual(t, slot.exitHits, config.Thresholds.Mem.BreachN)
 
 	// CPU 单维触发 enter → Shedding
 	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.01, Mem: testMemExit - 0.05, MemValid: true})
 	manager.Publish(WaterLevel{CPUSlow: testCPUEnter + 0.02, Mem: testMemExit - 0.05, MemValid: true})
 	require.Equal(t, StateShedding, manager.State(traces))
 	// resetExitHits 必须清掉 mem 维残留计数，否则下一刻 CPU 一回落就会立即退 Normal。
-	require.Equal(t, 0, slot.memExitHits)
+	require.Equal(t, 0, slot.exitHits)
 
 	// CPU 立刻跌回 exit 线下两帧：第 1 帧 CPU breach_n 未满，第 2 帧才正常退出。
 	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, Mem: testMemExit - 0.05, MemValid: true})
@@ -278,20 +437,20 @@ func TestManagerEnterClearsExitHits(t *testing.T) {
 func TestManagerOpenEntryClearsExitHits(t *testing.T) {
 	manager := newManager(testConfig())
 	traces := define.RecordTraces
-	slot := manager.states[traces]
+	slot := manager.states[traces].slots[signalCPU]
 
 	// 先让 CPU 处于 cpu_exit 之下、cpu_fast 也低，预热 cpuExitHits 累积
 	for i := 0; i < testBreachN+2; i++ {
 		manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: 0.1})
 	}
-	require.GreaterOrEqual(t, slot.cpuExitHits, testBreachN)
+	require.GreaterOrEqual(t, slot.exitHits, testBreachN)
 
 	// 快慢分离：CPUFast 连续越 hard 触发 Open，CPUSlow 仍低于 exit
 	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: testCPUHard + 0.05})
 	manager.Publish(WaterLevel{CPUSlow: testCPUExit - 0.05, CPUFast: testCPUHard + 0.05})
 	require.Equal(t, StateOpen, manager.State(traces))
 	// 进 Open 时 cpuExitHits 必须被清零，避免 Open 退出后带票退 Normal。
-	assert.Equal(t, 0, slot.cpuExitHits)
+	assert.Equal(t, 0, slot.exitHits)
 }
 
 func TestManagerDropProbability(t *testing.T) {
@@ -377,13 +536,18 @@ func testConfig() Config {
 	return normalizeConfig(Config{
 		Enabled: true,
 		Thresholds: ThresholdConfig{
-			CPUEnter: testCPUEnter,
-			CPUExit:  testCPUExit,
-			CPUHard:  testCPUHard,
-			MemEnter: testMemEnter,
-			MemExit:  testMemExit,
-			MemHard:  testMemHard,
-			BreachN:  testBreachN,
+			CPU: ThresholdSlotConfig{
+				Enter:   testCPUEnter,
+				Exit:    testCPUExit,
+				Hard:    testCPUHard,
+				BreachN: testBreachN,
+			},
+			Mem: ThresholdSlotConfig{
+				Enter:   testMemEnter,
+				Exit:    testMemExit,
+				Hard:    testMemHard,
+				BreachN: defaultMemBreachN,
+			},
 		},
 	})
 }

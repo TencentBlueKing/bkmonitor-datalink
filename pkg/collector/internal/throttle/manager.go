@@ -58,22 +58,46 @@ type Manager struct {
 	enabled bool
 	config  Config
 	rules   map[define.RecordType]Rule
-	states  map[define.RecordType]*stateSlot
+	signals []signalSpec
+	states  map[define.RecordType]*recordState
 	level   atomic.Pointer[WaterLevel]
 }
 
-// stateSlot 保存单类数据的状态机以及各信号的连续命中计数。
+const (
+	signalCPU = "cpu"
+	signalMem = "mem"
+)
+
+type signalSpec struct {
+	name   string
+	config ThresholdSlotConfig
+	sample func(*WaterLevel) slotSample
+}
+
+type slotSample struct {
+	slow  float64
+	fast  float64
+	valid bool
+}
+
+// recordState 保存单类数据状态机。每个 slot 承载一种资源信号的阈值与连续命中计数。
+type recordState struct {
+	state atomic.Uint32
+	slots map[string]*stateSlot
+}
+
+// stateSlot 保存单个资源信号的阈值与连续命中计数。
 type stateSlot struct {
-	state            atomic.Uint32
-	cpuEnterHits     int // cpuSlow > cpu_enter（进入降级）
-	cpuExitHits      int // cpuSlow < cpu_exit（恢复正常）
-	cpuHardHits      int // cpuFast >= cpu_hard（进入熔断）
-	cpuHardClearHits int // cpuFast < cpu_hard（退出熔断）
-	memEnterHits     int // mem > mem_enter（进入降级，内存采样无效时忽略）
-	memExitHits      int // mem < mem_exit（恢复正常，内存采样无效时视为正常）
-	memHardClearHits int // mem < mem_hard（退出熔断，内存采样无效时视为正常）
-	openByCPU        bool
-	openByMem        bool
+	enabled bool
+	enter   float64
+	exit    float64
+	hard    float64
+	breachN int
+
+	enterHits     int
+	exitHits      int
+	hardHits      int
+	hardClearHits int
 }
 
 var (
@@ -134,16 +158,58 @@ func newDisabledManager() *Manager {
 }
 
 func newManager(config Config) *Manager {
+	config = normalizeConfig(config)
+	signals := buildSignals(config.Thresholds)
 	m := &Manager{
 		enabled: config.Enabled,
 		config:  config,
 		rules:   buildRules(config.Rules),
-		states:  make(map[define.RecordType]*stateSlot, len(throttleRecordTypes)),
+		signals: signals,
+		states:  make(map[define.RecordType]*recordState, len(throttleRecordTypes)),
 	}
 	for _, rt := range throttleRecordTypes {
-		m.states[rt] = &stateSlot{}
+		m.states[rt] = newRecordState(signals)
 	}
 	return m
+}
+
+func buildSignals(thresholds ThresholdConfig) []signalSpec {
+	return []signalSpec{
+		{
+			name:   signalCPU,
+			config: thresholds.CPU,
+			sample: func(level *WaterLevel) slotSample {
+				return slotSample{slow: level.CPUSlow, fast: level.CPUFast, valid: true}
+			},
+		},
+		{
+			name:   signalMem,
+			config: thresholds.Mem,
+			sample: func(level *WaterLevel) slotSample {
+				return slotSample{slow: level.Mem, fast: level.Mem, valid: level.MemValid}
+			},
+		},
+	}
+}
+
+func newRecordState(signals []signalSpec) *recordState {
+	r := &recordState{
+		slots: make(map[string]*stateSlot, len(signals)),
+	}
+	for _, signal := range signals {
+		r.slots[signal.name] = newStateSlot(signal.config)
+	}
+	return r
+}
+
+func newStateSlot(config ThresholdSlotConfig) *stateSlot {
+	return &stateSlot{
+		enabled: thresholdEnabled(config),
+		enter:   config.Enter,
+		exit:    config.Exit,
+		hard:    config.Hard,
+		breachN: config.BreachN,
+	}
 }
 
 // Publish 接收一帧水位。
@@ -174,12 +240,12 @@ func (m *Manager) decide(rt define.RecordType, random func() float64) Action {
 	if !ok || !rule.Enabled {
 		return ActionAdmit
 	}
-	slot := m.states[rt]
-	if slot == nil {
+	record := m.states[rt]
+	if record == nil {
 		return ActionAdmit
 	}
 
-	switch State(slot.state.Load()) {
+	switch State(record.state.Load()) {
 	case StateNormal:
 		return ActionAdmit
 	case StateShedding:
@@ -202,11 +268,11 @@ func (m *Manager) State(rt define.RecordType) State {
 	if m == nil {
 		return StateNormal
 	}
-	slot := m.states[rt]
-	if slot == nil {
+	record := m.states[rt]
+	if record == nil {
 		return StateNormal
 	}
-	return State(slot.state.Load())
+	return State(record.state.Load())
 }
 
 func (m *Manager) Level() *WaterLevel {
@@ -222,15 +288,19 @@ func (m *Manager) dropProbability(rt define.RecordType) float64 {
 		return 0
 	}
 
-	// 将当前 CPU 慢信号转换成一个 0 ~ 1 的「过载程度」，计算水位在「进入线 -> 熔断线」范围的哪个百分比位置（0 ～ 1）。
-	// 假设 CPUEnter = 0.80，CPUHard  = 0.95，CPUSlow = 0.80  => t = 0 ｜ CPUSlow = 0.875 => t = 0.5 ｜ CPUSlow = 0.95  => t = 1
-	// 根据 t 决策丢弃概率，越接近 CPUHard，丢弃概率越高，假设 DropMin = 0.5，DropMax = 1：CPUSlow = 0.875 => t = 0.5 => 0.25，即 25 % 的丢弃概率。
-	th := m.config.Thresholds
-	tMem := 0.0
-	if level.MemValid {
-		tMem = overloadRatio(level.Mem, th.MemEnter, th.MemHard)
+	record := m.states[rt]
+	if record == nil {
+		return 0
 	}
-	t := math.Max(tMem, overloadRatio(level.CPUSlow, th.CPUEnter, th.CPUHard))
+
+	t := 0.0
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot == nil {
+			continue
+		}
+		t = math.Max(t, slot.Ratio(signal.sample(level)))
+	}
 
 	rule := m.rules[rt]
 	return rule.DropMin + (rule.DropMax-rule.DropMin)*t
@@ -239,131 +309,186 @@ func (m *Manager) dropProbability(rt define.RecordType) float64 {
 func (m *Manager) updateStates(level *WaterLevel) {
 	for _, rt := range throttleRecordTypes {
 		rule := m.rules[rt]
-		slot := m.states[rt]
-		if slot == nil {
+		record := m.states[rt]
+		if record == nil {
 			continue
 		}
 		if !rule.Enabled {
-			slot.store(StateNormal)
+			record.store(StateNormal)
 			observeState(rt, StateNormal)
 			continue
 		}
-		m.updateState(slot, level)
-		observeState(rt, State(slot.state.Load()))
+		m.updateState(record, level)
+		observeState(rt, State(record.state.Load()))
 	}
 }
 
-func (m *Manager) updateState(slot *stateSlot, level *WaterLevel) {
-	th := m.config.Thresholds
-	n := th.BreachN
-	memN := th.MemBreachN
+func (m *Manager) updateState(record *recordState, level *WaterLevel) {
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot != nil {
+			slot.Tick(signal.sample(level))
+		}
+	}
 
-	// 推进所有信号的连续命中计数：每帧只统计、不转移。
-	memSafe := !level.MemValid || level.Mem < th.MemHard
-	tickHits(&slot.cpuHardHits, level.CPUFast >= th.CPUHard)
-	tickHits(&slot.cpuHardClearHits, level.CPUFast < th.CPUHard)
-	tickHits(&slot.memHardClearHits, memSafe)
-	tickHits(&slot.cpuEnterHits, level.CPUSlow > th.CPUEnter)
-	tickHits(&slot.cpuExitHits, level.CPUSlow < th.CPUExit)
-	tickHits(&slot.memEnterHits, level.MemValid && level.Mem > th.MemEnter)
-	tickHits(&slot.memExitHits, !level.MemValid || level.Mem < th.MemExit)
-
-	// -> 熔断：CPU 快信号连续越线，或内存单次越线（OOM 不可逆，等不起连续）。
-	cpuOpen := slot.cpuHardHits >= n
-	memOpen := level.MemValid && level.Mem >= th.MemHard
-	if cpuOpen || memOpen {
-		slot.resetEnterHits()
-		slot.resetExitHits()
-		slot.markOpenCauses(cpuOpen, memOpen)
-		slot.store(StateOpen)
+	state := State(record.state.Load())
+	hardReached := m.anyHardReached(record)
+	if hardReached {
+		if state != StateOpen {
+			record.resetEnterHits()
+			record.resetExitHits()
+			record.resetHardClearHits()
+		}
+		record.store(StateOpen)
 		return
 	}
 
-	state := State(slot.state.Load())
 	if state == StateOpen {
-		// 走到该分支说明当前负载低于熔断线，根据慢信号当前的水位转移至下一个状态。
-		if !slot.openCausesCleared(n, memN) {
+		if !m.allHardCleared(record) {
 			return
 		}
 
-		if softAboveExit(level, th) {
-			// 熔断 -> 降级：还没恢复到正常。
-			slot.store(StateShedding)
+		if m.anySlowAboveExit(record, level) {
+			record.store(StateShedding)
 		} else {
-			// 熔断 -> 正常。
-			slot.store(StateNormal)
+			record.store(StateNormal)
 		}
 		return
 	}
 
-	enterMet := slot.cpuEnterHits >= n || slot.memEnterHits >= memN
-	exitMet := slot.cpuExitHits >= n && slot.memExitHits >= memN
+	enterMet := m.anyEnterReached(record)
+	exitMet := m.allExitReached(record)
 
 	switch state {
 	case StateNormal:
 		if enterMet {
-			// 正常 -> 降级：CPU、内存任一连续越 enter（降级线）即进入，内存使用独立门控。
-			slot.resetExitHits()
-			slot.store(StateShedding)
+			record.resetExitHits()
+			record.store(StateShedding)
 		}
 	case StateShedding:
 		if exitMet {
-			// 降级 -> 正常：CPU 与内存「同时」满足各自连续门控后退出。
-			slot.store(StateNormal)
+			record.store(StateNormal)
 		}
 	}
 }
 
-// softAboveExit 判定熔断退出后是否仍高于 exit 线。
-func softAboveExit(level *WaterLevel, th ThresholdConfig) bool {
-	if level.CPUSlow > th.CPUExit {
-		return true
+func (m *Manager) anyHardReached(record *recordState) bool {
+	for _, signal := range m.signals {
+		if slot := record.slots[signal.name]; slot != nil && slot.HardReached() {
+			return true
+		}
 	}
-	// 内存只在有效时纳入，invalid 视为安全（与 dropProbability、tickHits 一致）。
-	return level.MemValid && level.Mem > th.MemExit
+	return false
 }
 
-func (s *stateSlot) resetEnterHits() {
-	s.cpuEnterHits = 0
-	s.memEnterHits = 0
+func (m *Manager) allHardCleared(record *recordState) bool {
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot != nil && !slot.HardCleared() {
+			return false
+		}
+	}
+	return true
 }
 
-func (s *stateSlot) resetExitHits() {
-	s.cpuExitHits = 0
-	s.memExitHits = 0
+func (m *Manager) anyEnterReached(record *recordState) bool {
+	for _, signal := range m.signals {
+		if slot := record.slots[signal.name]; slot != nil && slot.EnterReached() {
+			return true
+		}
+	}
+	return false
 }
 
-func (s *stateSlot) markOpenCauses(cpuOpen, memOpen bool) {
-	if cpuOpen {
-		s.openByCPU = true
-		s.cpuHardClearHits = 0
+func (m *Manager) allExitReached(record *recordState) bool {
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot != nil && !slot.ExitReached() {
+			return false
+		}
 	}
-	if memOpen {
-		s.openByMem = true
-		s.memHardClearHits = 0
+	return true
+}
+
+func (m *Manager) anySlowAboveExit(record *recordState, level *WaterLevel) bool {
+	for _, signal := range m.signals {
+		slot := record.slots[signal.name]
+		if slot != nil && slot.SlowAboveExit(signal.sample(level)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *recordState) resetEnterHits() {
+	for _, slot := range r.slots {
+		slot.ResetEnterHits()
 	}
 }
 
-func (s *stateSlot) openCausesCleared(cpuN, memN int) bool {
-	if s.openByCPU && s.cpuHardClearHits < cpuN {
-		return false
+func (r *recordState) resetExitHits() {
+	for _, slot := range r.slots {
+		slot.ResetExitHits()
 	}
-	if s.openByMem && s.memHardClearHits < memN {
-		return false
-	}
-	return s.openByCPU || s.openByMem
 }
 
-func (s *stateSlot) resetOpenCauses() {
-	s.openByCPU = false
-	s.openByMem = false
+func (r *recordState) resetHardClearHits() {
+	for _, slot := range r.slots {
+		slot.hardClearHits = 0
+	}
 }
 
-func (s *stateSlot) store(state State) {
-	if state != StateOpen {
-		s.resetOpenCauses()
+func (r *recordState) store(state State) {
+	r.state.Store(uint32(state))
+}
+
+func (s *stateSlot) Tick(sample slotSample) {
+	if !s.enabled || !sample.valid {
+		s.enterHits = 0
+		s.hardHits = 0
+		s.exitHits = s.breachN
+		s.hardClearHits = s.breachN
+		return
 	}
-	s.state.Store(uint32(state))
+	tickHits(&s.enterHits, sample.slow > s.enter)
+	tickHits(&s.exitHits, sample.slow < s.exit)
+	tickHits(&s.hardHits, sample.fast >= s.hard)
+	tickHits(&s.hardClearHits, sample.fast < s.hard)
+}
+
+func (s *stateSlot) EnterReached() bool {
+	return s.enabled && s.enterHits >= s.breachN
+}
+
+func (s *stateSlot) ExitReached() bool {
+	return !s.enabled || s.exitHits >= s.breachN
+}
+
+func (s *stateSlot) HardReached() bool {
+	return s.enabled && s.hardHits >= s.breachN
+}
+
+func (s *stateSlot) HardCleared() bool {
+	return !s.enabled || s.hardClearHits >= s.breachN
+}
+
+func (s *stateSlot) SlowAboveExit(sample slotSample) bool {
+	return s.enabled && sample.valid && sample.slow > s.exit
+}
+
+func (s *stateSlot) Ratio(sample slotSample) float64 {
+	if !s.enabled || !sample.valid {
+		return 0
+	}
+	return overloadRatio(sample.slow, s.enter, s.hard)
+}
+
+func (s *stateSlot) ResetEnterHits() {
+	s.enterHits = 0
+}
+
+func (s *stateSlot) ResetExitHits() {
+	s.exitHits = 0
 }
 
 // tickHits 推进一个连续命中计数：满足条件则 +1，否则归零。

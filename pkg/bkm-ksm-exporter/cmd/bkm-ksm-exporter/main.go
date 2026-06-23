@@ -13,8 +13,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"k8s.io/client-go/informers"
@@ -33,14 +36,16 @@ var (
 
 func main() {
 	var (
-		listen     string
-		kubeconfig string
-		resync     time.Duration
-		showVer    bool
+		listen      string
+		kubeconfig  string
+		resync      time.Duration
+		syncTimeout time.Duration
+		showVer     bool
 	)
 	flag.StringVar(&listen, "listen", ":8080", "metrics HTTP listen address")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig for out-of-cluster runs; empty uses in-cluster config")
 	flag.DurationVar(&resync, "resync", 5*time.Minute, "informer resync period")
+	flag.DurationVar(&syncTimeout, "sync-timeout", 2*time.Minute, "max wait for the initial informer cache sync before exiting for restart")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.Parse()
 
@@ -49,29 +54,47 @@ func main() {
 		return
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	client, err := kube.NewClient(kubeconfig)
 	if err != nil {
 		log.Fatalf("build kube client: %v", err)
 	}
 
-	stop := make(chan struct{})
 	factory := informers.NewSharedInformerFactory(client, resync)
 	hpaInformer := factory.Autoscaling().V2().HorizontalPodAutoscalers()
 	lister := hpaInformer.Lister()
 	_ = hpaInformer.Informer() // ensure the informer is registered before Start
 
-	factory.Start(stop)
-	for typ, ok := range factory.WaitForCacheSync(stop) {
-		if !ok {
-			log.Fatalf("informer cache sync failed: %v", typ)
-		}
-	}
-
 	srv := exporter.New(listen)
 	srv.Register(hpa.New(lister))
 
-	log.Printf("bkm-ksm-exporter %s listening on %s", version, listen)
-	if err := srv.Run(); err != nil {
-		log.Fatalf("server: %v", err)
+	// Serve /healthz (liveness) and /metrics immediately, before the cache sync.
+	// A slow or permanently failing sync must not let the liveness probe kill the
+	// pod before we exit deliberately below.
+	go func() {
+		if err := srv.Run(ctx); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+	}()
+
+	factory.Start(ctx.Done())
+
+	// Bounded wait for the initial sync. If autoscaling/v2 LIST keeps failing
+	// (RBAC denied, apiserver 5xx) the informer never syncs -- do NOT block here
+	// forever. Time out and exit non-zero so Kubernetes restarts us
+	// (CrashLoopBackOff), which is far easier to detect than a process stuck
+	// silently before it ever serves metrics.
+	syncCtx, cancel := context.WithTimeout(ctx, syncTimeout)
+	defer cancel()
+	for typ, ok := range factory.WaitForCacheSync(syncCtx.Done()) {
+		if !ok {
+			log.Fatalf("informer cache sync timed out or failed (api unavailable / RBAC?) for %v", typ)
+		}
 	}
+	log.Printf("bkm-ksm-exporter %s cache synced, serving on %s", version, listen)
+
+	<-ctx.Done()
+	log.Printf("bkm-ksm-exporter shutting down")
 }

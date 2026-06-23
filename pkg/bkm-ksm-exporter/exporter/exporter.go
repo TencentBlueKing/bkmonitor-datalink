@@ -14,8 +14,10 @@ package exporter
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Source renders a block of Prometheus text exposition for one metric family set.
@@ -47,10 +49,25 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// Run starts the blocking HTTP server.
-func (s *Server) Run() error {
-	server := &http.Server{Addr: s.addr, Handler: s.Handler()}
-	return server.ListenAndServe()
+// Run starts the HTTP server and blocks until ctx is cancelled or
+// ListenAndServe fails. A cancelled ctx triggers a graceful shutdown and Run
+// returns nil; any other return is a real serve error.
+func (s *Server) Run(ctx context.Context) error {
+	server := &http.Server{
+		Addr:              s.addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second, // bound slow request headers (gosec G112)
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.ListenAndServe() }()
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
+	}
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {

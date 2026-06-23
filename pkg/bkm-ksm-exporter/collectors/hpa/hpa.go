@@ -145,6 +145,13 @@ func base(h *autoscalingv2.HorizontalPodAutoscaler) *labelSet {
 }
 
 // labelPairs converts Kubernetes labels into sorted Prometheus label_<key> pairs.
+//
+// Like kube-state-metrics v1.9.7, distinct keys that sanitize to the same name
+// (e.g. "app.name" and "app/name" both -> "label_app_name") are NOT de-duplicated;
+// such a collision produces a kube_hpa_labels line with a repeated label name that
+// Prometheus/VM reject. This matches the v1.9.7 baseline and is consciously kept
+// (de-duping would diverge from it); the collision needs an unusual label set and
+// does not arise for the common single-convention label keys.
 func labelPairs(m map[string]string) ([]string, []string) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -161,9 +168,13 @@ func labelPairs(m map[string]string) ([]string, []string) {
 }
 
 // sanitizeLabelName maps a Kubernetes label key to a Prometheus label name,
-// matching kube-state-metrics v1.9.7 exactly: every byte outside [a-zA-Z0-9_] is
+// matching kube-state-metrics v1.9.7: every character outside [a-zA-Z0-9_] is
 // replaced with '_', with no positional special-casing (a leading digit is kept,
 // e.g. key "1app" -> "1app"; the "label_" prefix keeps the full name valid).
+// Kubernetes validates label keys as an ASCII subset, so iterating by rune here
+// is equivalent in practice to kube-state-metrics' byte-level regexp; a
+// hypothetical non-ASCII key would collapse to one '_' per rune rather than per
+// byte, but Kubernetes rejects such keys upstream anyway.
 func sanitizeLabelName(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -217,7 +228,10 @@ func (m *metricWriter) sample(name string, base, extra *labelSet, value float64)
 	appendPairs(base)
 	appendPairs(extra)
 	b.WriteByte('}')
-	_, m.err = fmt.Fprintf(m.w, "%s %s\n", b.String(), strconv.FormatFloat(value, 'g', -1, 64))
+	// Format with 'f' (not 'g') so large integer-valued gauges such as
+	// metadata.generation render as plain integers, matching kube-state-metrics
+	// v1.9.7 instead of switching to scientific notation at >= 1e6.
+	_, m.err = fmt.Fprintf(m.w, "%s %s\n", b.String(), strconv.FormatFloat(value, 'f', -1, 64))
 }
 
 // escapeLabelValue escapes a label value per the Prometheus text format.

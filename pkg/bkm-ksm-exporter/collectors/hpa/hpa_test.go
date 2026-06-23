@@ -113,3 +113,29 @@ func TestEscapeLabelValue(t *testing.T) {
 		t.Errorf("escapeLabelValue should pass through plain value, got %q", got)
 	}
 }
+
+// TestLargeValueNoScientificNotation guards EXP-2: large integer-valued gauges
+// such as metadata.generation must render as plain integers (matching
+// kube-state-metrics v1.9.7), not switch to scientific notation at >= 1e6.
+func TestLargeValueNoScientificNotation(t *testing.T) {
+	hpas := []*autoscalingv2.HorizontalPodAutoscaler{
+		{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "big", Generation: 1234567},
+			Spec:       autoscalingv2.HorizontalPodAutoscalerSpec{MaxReplicas: 1000000},
+		},
+	}
+	var buf bytes.Buffer
+	if err := writeMetrics(&buf, hpas); err != nil {
+		t.Fatalf("writeMetrics: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `kube_hpa_metadata_generation{namespace="ns",hpa="big"} 1234567`) {
+		t.Errorf("generation not rendered as plain integer; output:\n%s", out)
+	}
+	if !strings.Contains(out, `kube_hpa_spec_max_replicas{namespace="ns",hpa="big"} 1000000`) {
+		t.Errorf("max_replicas not rendered as plain integer; output:\n%s", out)
+	}
+	if strings.Contains(out, "e+0") || strings.Contains(out, "E+0") {
+		t.Errorf("output contains scientific notation:\n%s", out)
+	}
+}

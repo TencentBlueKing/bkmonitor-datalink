@@ -48,9 +48,12 @@ Flags:
 | `--listen` | `:8080` | metrics HTTP listen address |
 | `--kubeconfig` | `""` | kubeconfig for out-of-cluster runs; empty uses in-cluster config |
 | `--resync` | `5m` | informer resync period |
+| `--sync-timeout` | `2m` | max wait for the initial informer cache sync before exiting for restart |
 | `--version` | | print version and exit |
 
-Endpoints: `/metrics` (exposition), `/healthz` (liveness/readiness probe).
+Endpoints: `/metrics` (exposition), `/healthz` (liveness probe — returns 200 once
+the process is up; it is intentionally a pure liveness check and does not gate on
+informer cache readiness).
 
 ## RBAC
 

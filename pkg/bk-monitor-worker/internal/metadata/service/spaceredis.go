@@ -1373,9 +1373,11 @@ func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMe
 	tableId := doris.TableID
 	bkbaseTableId := doris.BkbaseTableID
 	storageClusterID := doris.StorageClusterID
-	if bkbaseTableId == "" && doris.OriginTableId != "" {
+	if (bkbaseTableId == "" || storageClusterID == 0) && doris.OriginTableId != "" {
 		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
-			bkbaseTableId = originDoris.BkbaseTableID
+			if bkbaseTableId == "" {
+				bkbaseTableId = originDoris.BkbaseTableID
+			}
 			if storageClusterID == 0 {
 				storageClusterID = originDoris.StorageClusterID
 			}

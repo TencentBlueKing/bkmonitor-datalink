@@ -119,11 +119,11 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 	if storageType == "" {
 		storageType = z.StorageType
 	}
-	isCrossStorageRoute := record.StorageType != "" && z.StorageType != "" && record.StorageType != z.StorageType
-	requiresBkSQLRouteFields := isCrossStorageRoute && record.StorageType == metadata.BkSqlStorageType
-	// 跨存储分段 route 不能从外层 RT 逐字段 fallback，否则会生成 storage_type 和 db/measurement 不匹配的查询。
+	hasExplicitStorageType := record.StorageType != ""
+	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType
+	// 显式声明 storage_type 的新格式 route 必须自带目标物理表字段，不能从外层 RT 逐字段 fallback。
 	// 切到 BKSQL 时还必须携带 cluster_name，用于 BKBase query_sync 的 properties.cluster_name。
-	if isCrossStorageRoute && (record.DB == "" || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
+	if hasExplicitStorageType && (record.DB == "" || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
 		missingFields := make([]string, 0, 3)
 		if record.DB == "" {
 			missingFields = append(missingFields, "db")
@@ -137,26 +137,26 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 		return Record{}, false, strings.Join(missingFields, ",")
 	}
 
-	// 同存储类型允许旧 Redis 缓存只下发 storage_id/enable_time，继续从外层 RT detail 补齐查询目标。
+	// 旧 Redis 缓存未声明 storage_type 时只下发 storage_id/enable_time，继续从外层 RT detail 补齐查询目标。
 	storageName := record.StorageName
 	if storageName == "" {
 		if requiresBkSQLRouteFields {
 			// BKSQL 路由的 storage_name 旧字段和 cluster_name 都表示 BKBase 集群名；record 已校验 cluster_name 非空，可安全回填。
 			storageName = record.ClusterName
-		} else {
+		} else if !hasExplicitStorageType {
 			storageName = z.StorageName
 		}
 	}
 	clusterName := record.ClusterName
-	if clusterName == "" && !requiresBkSQLRouteFields {
+	if clusterName == "" && !hasExplicitStorageType {
 		clusterName = z.ClusterName
 	}
 	db := record.DB
-	if db == "" && !requiresBkSQLRouteFields {
+	if db == "" && !hasExplicitStorageType {
 		db = z.DB
 	}
 	measurement := record.Measurement
-	if measurement == "" && !requiresBkSQLRouteFields {
+	if measurement == "" && !hasExplicitStorageType {
 		measurement = z.Measurement
 	}
 	return Record{

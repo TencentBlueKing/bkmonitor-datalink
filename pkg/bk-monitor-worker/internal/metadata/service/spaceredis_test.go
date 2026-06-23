@@ -2301,9 +2301,9 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID},
 		resultTableDetailMeta{},
 		map[string]storage.DorisStorage{
-			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
+			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris", StorageClusterID: 42},
 		},
-		nil,
+		map[uint]string{42: "origin_doris_cluster"},
 		nil,
 		nil,
 	)
@@ -2312,6 +2312,9 @@ func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
 	err = json.Unmarshal([]byte(detailStr4), &actualDetail4)
 	assert.NoError(t, err, "detailStr should be valid JSON")
 	assert.Equal(t, "bklog_current_doris", actualDetail4["db"], "current bkbase_table_id should be preferred when present")
+	assert.Equal(t, float64(42), actualDetail4["storage_id"], "missing current storage_id should fallback to origin storage_cluster_id")
+	assert.Equal(t, "origin_doris_cluster", actualDetail4["storage_name"], "storage_name should come from origin storage cluster")
+	assert.Equal(t, "origin_doris_cluster", actualDetail4["cluster_name"], "cluster_name should come from origin storage cluster")
 
 	_, detailStr5, err := spacePusher.composeDorisTableIdDetail(
 		storage.DorisStorage{TableID: tableID4, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist"},

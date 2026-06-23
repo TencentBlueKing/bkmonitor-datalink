@@ -375,4 +375,85 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 			},
 		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 0, 0))
 	})
+
+	t.Run("显式同存储 ES 分段字段不完整时跳过该路由", func(t *testing.T) {
+		start := time.Unix(1500, 0)
+		end := time.Unix(2500, 0)
+		db := &TsDBV2{
+			StorageID:   "1",
+			StorageType: "elasticsearch",
+			StorageName: "es_default",
+			ClusterName: "es_default",
+			DB:          "es_index",
+			Measurement: "__default__",
+			StorageClusterRecords: []Record{
+				{
+					StorageID:   "2",
+					StorageType: "elasticsearch",
+					DB:          "history_es_index",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "1",
+					EnableTime: 1000,
+				},
+			},
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:   "1",
+				StorageType: "elasticsearch",
+				StorageName: "es_default",
+				ClusterName: "es_default",
+				DB:          "es_index",
+				Measurement: "__default__",
+				Start:       start,
+				End:         time.Unix(2000, 0),
+				QueryStart:  time.Unix(1000, 0),
+				QueryEnd:    time.Unix(2000, 0),
+			},
+		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 0, 0))
+	})
+
+	t.Run("显式 bk_sql 同存储分段缺 cluster_name 时跳过该路由", func(t *testing.T) {
+		start := time.Unix(1500, 0)
+		end := time.Unix(2500, 0)
+		db := &TsDBV2{
+			StorageID:   "3",
+			StorageType: "bk_sql",
+			StorageName: "current_doris_cluster",
+			ClusterName: "current_doris_cluster",
+			DB:          "current_bkbase_table",
+			Measurement: "doris",
+			StorageClusterRecords: []Record{
+				{
+					StorageID:   "4",
+					StorageType: "bk_sql",
+					DB:          "history_bkbase_table",
+					Measurement: "doris",
+					EnableTime:  2000,
+				},
+				{
+					StorageID:  "3",
+					EnableTime: 1000,
+				},
+			},
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:   "3",
+				StorageType: "bk_sql",
+				StorageName: "current_doris_cluster",
+				ClusterName: "current_doris_cluster",
+				DB:          "current_bkbase_table",
+				Measurement: "doris",
+				Start:       start,
+				End:         time.Unix(2000, 0),
+				QueryStart:  time.Unix(1000, 0),
+				QueryEnd:    time.Unix(2000, 0),
+			},
+		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 0, 0))
+	})
 }

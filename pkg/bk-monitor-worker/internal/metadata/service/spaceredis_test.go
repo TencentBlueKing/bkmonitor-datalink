@@ -70,6 +70,16 @@ func setupStorageRedisForTest(t *testing.T) {
 	storageRedisTestServer = server
 }
 
+func setMultiTenantModeForTest(t *testing.T, enabled bool) {
+	t.Helper()
+
+	old := cfg.EnableMultiTenantMode
+	cfg.EnableMultiTenantMode = enabled
+	t.Cleanup(func() {
+		cfg.EnableMultiTenantMode = old
+	})
+}
+
 func TestSpacePusher_getMeasurementType(t *testing.T) {
 	type args struct {
 		schemaType            string
@@ -1088,7 +1098,7 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
-	cfg.EnableMultiTenantMode = true
+	setMultiTenantModeForTest(t, true)
 	data, err := NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet := mapset.NewSet[string]()
@@ -1104,7 +1114,7 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	assert.Equal(t, []string{"test_1_sys.cpu_detail"}, data["system.cpu_detail|test"])
 	assert.Equal(t, []string{"test_1_dbm.cpu_detail"}, data["dbm_system.cpu_detail|test"])
 
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 	data, err = NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet = mapset.NewSet[string]()
@@ -1305,6 +1315,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 
 func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setMultiTenantModeForTest(t, false)
 
 	db := mysql.GetDBSession().DB
 
@@ -1390,7 +1401,7 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 
 	assert.Equal(t, expected, actual)
 
-	cfg.EnableMultiTenantMode = true
+	setMultiTenantModeForTest(t, true)
 
 	err = pusher.PushBkAppToSpace()
 	assert.NoError(t, err)
@@ -1415,7 +1426,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	indexSet := "index_1"
 
 	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 
 	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
@@ -1535,7 +1546,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
 	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 
 	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &dataLabel, Labels: labels}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
@@ -1636,7 +1647,7 @@ func TestSpacePusher_PushDorisTableIdDetailReturnsClusterRecordError(t *testing.
 	})
 	defer patches.Reset()
 
-	err := NewSpacePusher().PushDorisTableIdDetail([]string{tableID}, false)
+	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), expectedErr.Error())
 		assert.Contains(t, err.Error(), "failed to get storage cluster records")
@@ -1651,7 +1662,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
 
 	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 
 	virtualTableID := "bklog.virtual_doris"
 	currentTableID := "bklog.current_doris"
@@ -1732,8 +1743,7 @@ func TestSpacePusher_PushDorisTableIdDetailMultiTenant(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
 
-	cfg.EnableMultiTenantMode = true
-	defer func() { cfg.EnableMultiTenantMode = false }()
+	setMultiTenantModeForTest(t, true)
 
 	tableID := "bklog.doris_tenant_rt"
 	bkTenantId := "tenant_a"
@@ -1771,8 +1781,7 @@ func TestSpacePusher_PushEsTableIdDetailMultiTenant(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
-	cfg.EnableMultiTenantMode = true
-	defer func() { cfg.EnableMultiTenantMode = false }()
+	setMultiTenantModeForTest(t, true)
 
 	tableID := "bklog.es_tenant_rt"
 	bkTenantId := "tenant_b"
@@ -1845,7 +1854,7 @@ func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.ESStorage{}, &resulttable.ESFieldQueryAliasOption{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
 	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 
 	tableCount := cfg.DefaultDBFilterSize + 1
 	tableIDs := make([]string, 0, tableCount)
@@ -1920,7 +1929,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
 
 	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 
 	tableCount := cfg.DefaultDBFilterSize + 1
 	tableIDs := make([]string, 0, tableCount)

@@ -198,10 +198,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
-	var (
-		wg  sync.WaitGroup
-		err error
-	)
+	var wg sync.WaitGroup
 
 	logger.Info("start push and publish space router task")
 	db := mysql.GetDBSession().DB
@@ -241,8 +238,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		defer wg.Done()
 		t1 := time.Now()
 		name := "[task] PushAndPublishSpaceRouterInfo bk_app_to_space"
-		if err = pusher.PushBkAppToSpace(); err != nil {
-			logger.Errorf("%s error %s", name, err)
+		if pushErr := pusher.PushBkAppToSpace(); pushErr != nil {
+			logger.Errorf("%s error %s", name, pushErr)
 			return
 		}
 		logger.Infof("%s success, cost: %s", name, time.Since(t1))
@@ -259,8 +256,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			// 所有预取路由（v1/v4 RecordRule + VM 短链路 + APM）统一按 (tenant, spaceType, spaceId) 入桶，
 			// 此处直接按当前空间的租户键一次取出即可，不再做 plain key 兼容合并。
 			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)]
-			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); err != nil {
-				logger.Errorf("%s error %s", name, err)
+			if pushErr := pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
 				return
 			}
 			logger.Infof("%s success, cost: %s", name, time.Since(t1))
@@ -275,8 +272,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo data_label_to_result_table tenant[%s]", bkTenantId)
-			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, true); err != nil {
-				logger.Errorf("%s error %s", name, err)
+			if pushErr := pusher.PushDataLabelTableIds(bkTenantId, nil, true); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
 				return
 			}
 			logger.Infof("%s success, cost: %s", name, time.Since(t1))
@@ -286,6 +283,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	// 处理 result_table_detail 路由
 	for bkTenantId := range bkTenantIdSet {
 		wg.Add(1)
+		bkTenantId := bkTenantId
 		_ = p.Submit(func() {
 			defer wg.Done()
 			t1 := time.Now()
@@ -293,8 +291,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail tenant[%s]", bkTenantId)
 			var tableIdList []string
 			var rtList []resulttable.ResultTable
-			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageIn(models.StorageTypeInfluxdb, models.StorageTypeVM).IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
-				logger.Errorf("%s error, %s", name, err)
+			if queryErr := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageIn(models.StorageTypeInfluxdb, models.StorageTypeVM).IsEnableEq(true).IsDeletedEq(false).All(&rtList); queryErr != nil {
+				logger.Errorf("%s error, %s", name, queryErr)
 				return
 			}
 			// 获取结果表
@@ -302,8 +300,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				tableIdList = append(tableIdList, rt.TableId)
 			}
 
-			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
-				logger.Errorf("%s error %s", name, err)
+			if pushErr := pusher.PushTableIdDetail(bkTenantId, tableIdList, true); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
 				return
 			}
 			logger.Infof("%s success, cost: %s", name, time.Since(t1))
@@ -324,13 +322,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			var rtList []resulttable.ResultTable
 
 			// 查询当前租户下 default_storage 为 "elasticsearch"，启用且未删除的结果表
-			if err = resulttable.NewResultTableQuerySet(db).
+			if queryErr := resulttable.NewResultTableQuerySet(db).
 				Select(resulttable.ResultTableDBSchema.TableId).
 				BkTenantIdEq(bkTenantId).
 				DefaultStorageEq(models.StorageTypeES).
 				IsEnableEq(true).IsDeletedEq(false).
-				All(&rtList); err != nil {
-				logger.Errorf("%s error, %s", name, err)
+				All(&rtList); queryErr != nil {
+				logger.Errorf("%s error, %s", name, queryErr)
 				return
 			}
 
@@ -345,8 +343,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			}
 
 			// 调用 PushEsTableIdDetail 方法
-			if err = pusher.PushEsTableIdDetail(bkTenantId, tableIdList, true); err != nil {
-				logger.Errorf("%s error %s", name, err)
+			if pushErr := pusher.PushEsTableIdDetail(bkTenantId, tableIdList, true); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
 				return
 			}
 			logger.Infof("%s success, cost: %s", name, time.Since(t1))
@@ -367,13 +365,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			var rtList []resulttable.ResultTable
 
 			// 查询当前租户下 default_storage 为 "doris"，启用且未删除的结果表
-			if err = resulttable.NewResultTableQuerySet(db).
+			if queryErr := resulttable.NewResultTableQuerySet(db).
 				Select(resulttable.ResultTableDBSchema.TableId).
 				BkTenantIdEq(bkTenantId).
 				DefaultStorageEq(models.StorageTypeDoris).
 				IsEnableEq(true).IsDeletedEq(false).
-				All(&rtList); err != nil {
-				logger.Errorf("%s error, %s", name, err)
+				All(&rtList); queryErr != nil {
+				logger.Errorf("%s error, %s", name, queryErr)
 				return
 			}
 
@@ -388,8 +386,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			}
 
 			// 调用 PushDorisTableIdDetail 方法
-			if err = pusher.PushDorisTableIdDetail(bkTenantId, tableIdList, true); err != nil {
-				logger.Errorf("%s error %s", name, err)
+			if pushErr := pusher.PushDorisTableIdDetail(bkTenantId, tableIdList, true); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
 				return
 			}
 			logger.Infof("%s success, cost: %s", name, time.Since(t1))

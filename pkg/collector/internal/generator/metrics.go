@@ -41,10 +41,10 @@ func NewMetricsGenerator(opts define.MetricsOptions) *MetricsGenerator {
 func (g *MetricsGenerator) Generate() pmetric.Metrics {
 	pdMetrics := pmetric.NewMetrics()
 	rs := pdMetrics.ResourceMetrics().AppendEmpty()
-	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
+	rs.Resource().Attributes().PutString("service.name", "generator.service")
 	g.resources.CopyTo(rs.Resource().Attributes())
 	for k, v := range g.opts.Resources {
-		rs.Resource().Attributes().UpsertString(k, v)
+		rs.Resource().Attributes().PutString(k, v)
 	}
 
 	now := time.Now()
@@ -57,7 +57,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
 		}
-		metric.SetDataType(pmetric.MetricDataTypeGauge)
+		metric.SetEmptyGauge()
 		dp := metric.Gauge().DataPoints().AppendEmpty()
 		dp.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		dp.SetDoubleVal(float64(i))
@@ -66,7 +66,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		}
 		g.attributes.CopyTo(dp.Attributes())
 		for k, v := range g.opts.Attributes {
-			dp.Attributes().UpsertString(k, v)
+			dp.Attributes().PutString(k, v)
 		}
 	}
 
@@ -79,7 +79,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
 		}
-		metric.SetDataType(pmetric.MetricDataTypeSum)
+		metric.SetEmptySum()
 		dp := metric.Sum().DataPoints().AppendEmpty()
 		dp.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		dp.SetDoubleVal(float64(i))
@@ -88,7 +88,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		}
 		g.attributes.CopyTo(dp.Attributes())
 		for k, v := range g.opts.Attributes {
-			dp.Attributes().UpsertString(k, v)
+			dp.Attributes().PutString(k, v)
 		}
 	}
 
@@ -101,13 +101,13 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
 		}
-		metric.SetDataType(pmetric.MetricDataTypeHistogram)
+		metric.SetEmptyHistogram()
 		dp := metric.Histogram().DataPoints().AppendEmpty()
 		dp.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		dp.SetSum(float64(i))
 		g.attributes.CopyTo(dp.Attributes())
 		for k, v := range g.opts.Attributes {
-			dp.Attributes().UpsertString(k, v)
+			dp.Attributes().PutString(k, v)
 		}
 	}
 
@@ -120,7 +120,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
 		}
-		metric.SetDataType(pmetric.MetricDataTypeSummary)
+		metric.SetEmptySummary()
 		dp := metric.Summary().DataPoints().AppendEmpty()
 		dp.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		dp.SetSum(float64(i))
@@ -133,7 +133,7 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 
 		g.attributes.CopyTo(dp.Attributes())
 		for k, v := range g.opts.Attributes {
-			dp.Attributes().UpsertString(k, v)
+			dp.Attributes().PutString(k, v)
 		}
 	}
 

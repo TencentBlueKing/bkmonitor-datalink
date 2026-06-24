@@ -39,12 +39,12 @@ func NewLogsGenerator(opts define.LogsOptions) *LogsGenerator {
 func (g *LogsGenerator) Generate() plog.Logs {
 	pdLogs := plog.NewLogs()
 	rs := pdLogs.ResourceLogs().AppendEmpty()
-	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
-	rs.Resource().Attributes().UpsertString("bk.data.token", "generator.data.token")
+	rs.Resource().Attributes().PutString("service.name", "generator.service")
+	rs.Resource().Attributes().PutString("bk.data.token", "generator.data.token")
 
 	g.resources.CopyTo(rs.Resource().Attributes())
 	for k, v := range g.opts.Resources {
-		rs.Resource().Attributes().UpsertString(k, v)
+		rs.Resource().Attributes().PutString(k, v)
 	}
 
 	now := time.Now()
@@ -56,7 +56,7 @@ func (g *LogsGenerator) Generate() plog.Logs {
 		log.Body().SetStringVal(random.String(g.opts.LogLength))
 		g.attributes.CopyTo(log.Attributes())
 		for k, v := range g.opts.Attributes {
-			log.Attributes().UpsertString(k, v)
+			log.Attributes().PutString(k, v)
 		}
 	}
 

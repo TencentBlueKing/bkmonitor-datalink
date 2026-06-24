@@ -100,14 +100,14 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 
 	resourceSpan := pdTraces.ResourceSpans().AppendEmpty()
 	rs := resourceSpan.Resource().Attributes()
-	rs.InsertString(semconv.AttributeServiceName, segment.GetService())
-	rs.InsertString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
-	rs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
-	rs.InsertString(attributeDataToken, token)
+	rs.PutString(semconv.AttributeServiceName, segment.GetService())
+	rs.PutString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
+	rs.PutString(attributeSkywalkingTraceID, segment.GetTraceId())
+	rs.PutString(attributeDataToken, token)
 
 	// 补充数据字段内容 agentLanguage agentType agentVersion
 	for k, v := range extraAttrs {
-		rs.InsertString(k, v)
+		rs.PutString(k, v)
 	}
 
 	il := resourceSpan.ScopeSpans().AppendEmpty()
@@ -136,7 +136,7 @@ func swTransformIP(instanceId string, attrs pcommon.Map) {
 	s := strings.Split(instanceId, "@")
 	// 如果裁剪出则插入字段，否则不做任何操作
 	if len(s) >= 2 {
-		attrs.UpsertString(semconv.AttributeNetHostIP, s[1])
+		attrs.PutString(semconv.AttributeNetHostIP, s[1])
 	}
 }
 
@@ -188,15 +188,15 @@ func swSpanToSpan(traceID string, segmentID string, span *agentv3.SpanObject, de
 	swKvPairsToInternalAttributes(span.Tags, attrs)
 	swTagsToAttributesByRule(attrs, span)
 
-	attrs.UpsertString(attributeSkywalkingSpanLayer, span.SpanLayer.String())
-	attrs.UpsertInt(attributeSkywalkingComponentID, int64(span.GetComponentId()))
+	attrs.PutString(attributeSkywalkingSpanLayer, span.SpanLayer.String())
+	attrs.PutInt(attributeSkywalkingComponentID, int64(span.GetComponentId()))
 
 	// drop the attributes slice if all of them were replaced during translation
 	if attrs.Len() == 0 {
 		attrs.Clear()
 	}
 
-	attrs.InsertString(attributeSkywalkingSegmentID, segmentID)
+	attrs.PutString(attributeSkywalkingSegmentID, segmentID)
 	setSwSpanIDToAttributes(span, attrs)
 	setInternalSpanStatus(span, dest.Status())
 
@@ -237,7 +237,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 			if _, ok := dest.Get(semconv.AttributeHTTPRoute); !ok {
 				if opName := span.GetOperationName(); opName != "" {
 					routes := strings.Split(opName, ":")
-					dest.UpsertString(semconv.AttributeHTTPRoute, routes[len(routes)-1])
+					dest.PutString(semconv.AttributeHTTPRoute, routes[len(routes)-1])
 				}
 			}
 
@@ -246,12 +246,12 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 			// 2) 尝试获取 refs[0]的 parent.service.name 进行插入
 			// 3) 使用 unknownVal 作为兜底值
 			if refs := span.Refs; len(refs) > 0 && refs[0].ParentService != "" {
-				dest.InsertString(semconv.AttributeNetPeerName, refs[0].ParentService)
+				dest.PutString(semconv.AttributeNetPeerName, refs[0].ParentService)
 			} else {
 				if peerName != "" {
-					dest.InsertString(semconv.AttributeNetPeerName, peerName)
+					dest.PutString(semconv.AttributeNetPeerName, peerName)
 				} else {
-					dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
+					dest.PutString(semconv.AttributeNetPeerName, unknownVal)
 				}
 			}
 		}
@@ -259,9 +259,9 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		// http-client 的情况下
 		if spanType == agentv3.SpanType_Exit {
 			if peerName != "" {
-				dest.InsertString(semconv.AttributeNetPeerName, peerName)
+				dest.PutString(semconv.AttributeNetPeerName, peerName)
 			} else {
-				dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
+				dest.PutString(semconv.AttributeNetPeerName, unknownVal)
 			}
 		}
 
@@ -277,17 +277,17 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 			// attributes.http.scheme
 			httpScheme, ok := dest.Get(semconv.AttributeHTTPScheme)
 			if !ok {
-				dest.InsertString(semconv.AttributeHTTPScheme, utils.FirstUpper(urlObj.Scheme, unknownVal))
+				dest.PutString(semconv.AttributeHTTPScheme, utils.FirstUpper(urlObj.Scheme, unknownVal))
 			} else {
-				dest.UpsertString(semconv.AttributeHTTPScheme, utils.FirstUpper(httpScheme.StringVal(), unknownVal))
+				dest.PutString(semconv.AttributeHTTPScheme, utils.FirstUpper(httpScheme.StringVal(), unknownVal))
 			}
 			// attribute.http.target / attribute.http.host
 			if spanType == agentv3.SpanType_Exit {
 				if _, ok := dest.Get(semconv.AttributeHTTPTarget); !ok {
-					dest.InsertString(semconv.AttributeHTTPTarget, urlObj.Path)
+					dest.PutString(semconv.AttributeHTTPTarget, urlObj.Path)
 				}
 				if _, ok := dest.Get(semconv.AttributeHTTPHost); !ok {
-					dest.InsertString(semconv.AttributeHTTPHost, urlObj.Host)
+					dest.PutString(semconv.AttributeHTTPHost, urlObj.Host)
 				}
 			}
 		}
@@ -296,7 +296,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		// attributes.rpc.method
 		if _, ok := dest.Get(semconv.AttributeRPCMethod); !ok {
 			if rpcMethod := span.GetOperationName(); rpcMethod != "" {
-				dest.UpsertString(semconv.AttributeRPCMethod, rpcMethod)
+				dest.PutString(semconv.AttributeRPCMethod, rpcMethod)
 			}
 		}
 
@@ -305,45 +305,45 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		if span.SpanLayer == agentv3.SpanLayer_Database {
 			if opName := span.GetOperationName(); opName != "" {
 				dbs := strings.Split(opName, "/")
-				dest.UpsertString(semconv.AttributeDBSystem, utils.FirstUpper(dbs[0], unknownVal))
+				dest.PutString(semconv.AttributeDBSystem, utils.FirstUpper(dbs[0], unknownVal))
 			}
 		} else {
 			// 对于 Cache 类型尝试进行首字母大写转化工作
 			if v, ok := dest.Get(semconv.AttributeDBSystem); ok {
-				dest.UpsertString(semconv.AttributeDBSystem, utils.FirstUpper(v.StringVal(), unknownVal))
+				dest.PutString(semconv.AttributeDBSystem, utils.FirstUpper(v.StringVal(), unknownVal))
 			}
 		}
 		// attributes.db.operation
 		if _, ok := dest.Get(semconv.AttributeDBOperation); !ok {
 			if v, ok := dest.Get(semconv.AttributeDBStatement); ok && v.StringVal() != "" {
 				ops := strings.Split(v.StringVal(), " ")
-				dest.InsertString(semconv.AttributeDBOperation, ops[0])
+				dest.PutString(semconv.AttributeDBOperation, ops[0])
 			} else {
 				// spanOperationName 样例 Mysql/JDBI/Connection/commit
 				if opName := span.GetOperationName(); opName != "" {
 					ops := strings.Split(opName, "/")
-					dest.InsertString(semconv.AttributeDBOperation, ops[len(ops)-1])
+					dest.PutString(semconv.AttributeDBOperation, ops[len(ops)-1])
 				}
 			}
 		}
 
 		if peerName != "" {
-			dest.InsertString(semconv.AttributeNetPeerName, peerName)
+			dest.PutString(semconv.AttributeNetPeerName, peerName)
 		} else {
-			dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
+			dest.PutString(semconv.AttributeNetPeerName, unknownVal)
 		}
 
 	case agentv3.SpanLayer_MQ:
 		// attributes.messaging.system
 		if opName := span.GetOperationName(); opName != "" {
 			dbs := strings.Split(opName, "/")
-			dest.UpsertString(semconv.AttributeMessagingSystem, utils.FirstUpper(dbs[0], unknownVal))
+			dest.PutString(semconv.AttributeMessagingSystem, utils.FirstUpper(dbs[0], unknownVal))
 		}
 
 		if peerName != "" {
-			dest.InsertString(semconv.AttributeNetPeerName, peerName)
+			dest.PutString(semconv.AttributeNetPeerName, peerName)
 		} else {
-			dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
+			dest.PutString(semconv.AttributeNetPeerName, unknownVal)
 		}
 	}
 
@@ -363,8 +363,8 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 				}
 			}
 		}
-		dest.UpsertString(semconv.AttributeNetHostIP, strings.Join(hosts, ","))
-		dest.UpsertInt(semconv.AttributeNetHostPort, int64(port))
+		dest.PutString(semconv.AttributeNetHostIP, strings.Join(hosts, ","))
+		dest.PutInt(semconv.AttributeNetHostPort, int64(port))
 	}
 }
 
@@ -379,8 +379,7 @@ func swReferencesToSpanLinks(refs []*agentv3.SegmentReference, dest ptrace.SpanL
 		link := dest.AppendEmpty()
 		link.SetTraceID(swTraceIDToTraceID(ref.TraceId))
 		link.SetSpanID(segmentIDToSpanID(ref.ParentTraceSegmentId, uint32(ref.ParentSpanId)))
-		// link.TraceState().FromRaw("")
-		link.SetTraceState("")
+		link.TraceState().FromRaw("")
 		kvParis := []*commonv3.KeyStringValuePair{
 			{
 				Key:   attributeParentInstance,
@@ -426,9 +425,9 @@ func setInternalSpanStatus(span *agentv3.SpanObject, dest ptrace.SpanStatus) {
 }
 
 func setSwSpanIDToAttributes(span *agentv3.SpanObject, dest pcommon.Map) {
-	dest.InsertInt(attributeSkywalkingSpanID, int64(span.GetSpanId()))
+	dest.PutInt(attributeSkywalkingSpanID, int64(span.GetSpanId()))
 	if span.ParentSpanId != -1 {
-		dest.InsertInt(attributeSkywalkingParentSpanID, int64(span.GetParentSpanId()))
+		dest.PutInt(attributeSkywalkingParentSpanID, int64(span.GetParentSpanId()))
 	}
 }
 
@@ -462,7 +461,7 @@ func swLogsToSpanEvents(logs []*agentv3.Log, dest ptrace.SpanEventSlice) {
 func swTagsToEventsAttributes(tags []*commonv3.KeyStringValuePair, dest pcommon.Map) {
 	for _, tag := range tags {
 		if v, ok := otSpanEventsMapping[tag.Key]; ok {
-			dest.UpsertString(v, tag.Value)
+			dest.PutString(v, tag.Value)
 		}
 	}
 }
@@ -475,9 +474,9 @@ func swKvPairsToInternalAttributes(pairs []*commonv3.KeyStringValuePair, dest pc
 	for _, pair := range pairs {
 		// OT 数据格式转换的时候将所有数据都插入 Resource 维度
 		if v, ok := otSpanTagsMapping[pair.Key]; ok {
-			dest.InsertString(v, pair.Value)
+			dest.PutString(v, pair.Value)
 		} else {
-			dest.InsertString(pair.Key, pair.Value)
+			dest.PutString(pair.Key, pair.Value)
 		}
 	}
 }
@@ -495,11 +494,11 @@ func swTraceIDToTraceID(traceID string) pcommon.TraceID {
 	if len(traceID) <= 36 { // 36: uuid length (rfc4122)
 		uid, err := uuid.Parse(traceID)
 		if err != nil {
-			return pcommon.InvalidTraceID()
+			return pcommon.NewTraceIDEmpty()
 		}
-		return pcommon.NewTraceID(uid)
+		return pcommon.TraceID(uid)
 	}
-	return pcommon.NewTraceID(swStringToUUID(traceID, 0))
+	return pcommon.TraceID(swStringToUUID(traceID, 0))
 }
 
 func segmentIDToSpanID(segmentID string, spanID uint32) pcommon.SpanID {
@@ -508,9 +507,9 @@ func segmentIDToSpanID(segmentID string, spanID uint32) pcommon.SpanID {
 	// 56a5e1c519ae4c76a2b8b11d92cead7f: from ParentTraceSegmentId
 
 	if len(segmentID) < 32 {
-		return pcommon.InvalidSpanID()
+		return pcommon.NewSpanIDEmpty()
 	}
-	return pcommon.NewSpanID(uuidTo8Bytes(swStringToUUID(segmentID, spanID)))
+	return pcommon.SpanID(uuidTo8Bytes(swStringToUUID(segmentID, spanID)))
 }
 
 func swStringToUUID(s string, extra uint32) (dst [16]byte) {

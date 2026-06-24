@@ -2173,11 +2173,6 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 }
 
 func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
-	// 初始化数据库
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &storage.ClusterRecord{})
-
 	// 准备测试数据
 	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
 	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
@@ -2186,51 +2181,17 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	labels1 := json.RawMessage(`{"env":"prod","region":"sh"}`)
 	labels3 := json.RawMessage(`["unexpected"]`)
 
-	// 插入 ResultTable 数据
-	resultTables := []resulttable.ResultTable{
-		{
-			TableId:      tableID1,
-			BkBizId:      1001,
-			BkBizIdAlias: "appid",
-			DataLabel:    &dataLabel1, // 使用字符串指针
-			Labels:       labels1,
-		},
-		{
-			TableId:      tableID2,
-			BkBizId:      1001,
-			BkBizIdAlias: "",
-			DataLabel:    nil,
-		},
-		{
-			TableId:      tableID3,
-			BkBizId:      1001,
-			BkBizIdAlias: "",
-			DataLabel:    nil,
-			Labels:       labels3,
-		},
-	}
-	for _, rt := range resultTables {
-		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-	}
-
-	// composeEsTableIdDetail 会先查询 ESStorage 获取 origin_table_id, 需保证存在对应记录
-	for _, tableID := range []string{tableID1, tableID2, tableID3} {
-		db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
-		esStorage := storage.ESStorage{TableID: tableID, StorageClusterID: 1, SourceType: "sourceType1", IndexSet: "indexSet1", NeedCreateIndex: true}
-		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
-	}
-
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
-		"",
 		tableID1,
 		map[string]any{"option1": "value1"},
 		1,
 		"sourceType1",
 		"indexSet1",
+		nil,
+		esResultTableDetailMeta{DataLabel: &dataLabel1, Labels: normalizeResultTableLabels(tableID1, labels1)},
 		nil,
 	)
 
@@ -2261,12 +2222,13 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
-		"",
 		tableID2,
 		map[string]any{"option1": "value1"},
 		1,
 		"sourceType1",
 		"indexSet1",
+		nil,
+		esResultTableDetailMeta{Labels: map[string]any{}},
 		nil,
 	)
 
@@ -2294,12 +2256,13 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
 
 	resTid3, detailStr3, err := spacePusher.composeEsTableIdDetail(
-		"",
 		tableID3,
 		map[string]any{"option1": "value1"},
 		1,
 		"sourceType1",
 		"indexSet1",
+		nil,
+		esResultTableDetailMeta{Labels: normalizeResultTableLabels(tableID3, labels3)},
 		nil,
 	)
 	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")

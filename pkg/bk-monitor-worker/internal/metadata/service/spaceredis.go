@@ -787,6 +787,7 @@ func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []strin
 		storage.ESStorageDBSchema.StorageClusterID,
 		storage.ESStorageDBSchema.SourceType,
 		storage.ESStorageDBSchema.IndexSet,
+		storage.ESStorageDBSchema.OriginTableId,
 	)
 
 	// 如果过滤结果表存在，则添加过滤条件
@@ -814,6 +815,32 @@ func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []strin
 	// 组装结果表对应的选项
 	tidOptionMap := s.composeEsTableIdOptions(bkTenantId, tidList)
 
+	rtMetaMap, err := s.getESResultTableDetailMetaMap(bkTenantId, tidList)
+	if err != nil {
+		logger.Errorf("PushEsTableIdDetail: failed to get result table metadata map, error: %s", err)
+		return err
+	}
+
+	clusterRecordRequests := make([]storage.TableIDStorageClusterRecordRequest, 0, len(esStorageList))
+	clusterRecordRequestMap := make(map[string]storage.TableIDStorageClusterRecordRequest, len(esStorageList))
+	for _, es := range esStorageList {
+		realTableId := es.TableID
+		if es.OriginTableId != "" {
+			realTableId = es.OriginTableId
+		}
+		request := storage.TableIDStorageClusterRecordRequest{
+			TableID:        realTableId,
+			CurrentTableID: es.TableID,
+		}
+		clusterRecordRequests = append(clusterRecordRequests, request)
+		clusterRecordRequestMap[es.TableID] = request
+	}
+	clusterRecordsMap, err := storage.ComposeTableIDStorageClusterRecordsBatch(db, clusterRecordRequests)
+	if err != nil {
+		logger.Errorf("PushEsTableIdDetail: failed to get storage cluster records map, error: %s", err)
+		return err
+	}
+
 	// 获取查询别名映射关系
 	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
 	if err != nil {
@@ -825,6 +852,7 @@ func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []strin
 	wg := &sync.WaitGroup{}
 	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
+	errCh := make(chan error, len(esStorageList))
 	wg.Add(len(esStorageList))
 	for _, es := range esStorageList {
 		// 获取 option 数据
@@ -850,9 +878,19 @@ func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []strin
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeEsTableIdDetail(bkTenantId, tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeEsTableIdDetail(
+				tableId,
+				options,
+				es.StorageClusterID,
+				sourceType,
+				indexSet,
+				clusterRecordsMap[clusterRecordRequestMap[tableId]],
+				rtMetaMap[tableId],
+				fieldAliasSettings,
+			)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
+				errCh <- errors.Wrapf(err, "compose es table id detail error, table_id: %s", tableId)
 				return
 			}
 			// 多租户模式下，redis key 需要补充租户ID后缀
@@ -863,12 +901,17 @@ func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []strin
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				errCh <- errors.Wrapf(err, "push and publish es table id detail error, table_id: %s", tableId)
 				return
 			}
 			logger.Infof("PushEsTableIdDetail:push es table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
 		}(es, options, wg, ch)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		return err
+	}
 	logger.Infof("PushEsTableIdDetail:push es table id detail success, table_id_list [%v]", tableIdList)
 	return nil
 }
@@ -1115,6 +1158,11 @@ type resultTableDetailMeta struct {
 	Labels    map[string]any
 }
 
+type esResultTableDetailMeta struct {
+	DataLabel *string
+	Labels    map[string]any
+}
+
 func resultTableDataLabel(dataLabel *string) string {
 	if dataLabel == nil {
 		return ""
@@ -1145,6 +1193,40 @@ func (s *SpacePusher) getResultTableDetailMetaMap(bkTenantId string, tableIDList
 				DataLabel: resultTableDataLabel(rt.DataLabel),
 				Labels:    normalizeResultTableLabels(rt.TableId, rt.Labels),
 			}
+		}
+	}
+
+	return metaMap, nil
+}
+
+func (s *SpacePusher) getESResultTableDetailMetaMap(bkTenantId string, tableIDList []string) (map[string]esResultTableDetailMeta, error) {
+	db := mysql.GetDBSession().DB
+	metaMap := make(map[string]esResultTableDetailMeta)
+	if len(tableIDList) == 0 {
+		return metaMap, nil
+	}
+
+	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
+		var resultTables []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.DataLabel,
+			resulttable.ResultTableDBSchema.Labels,
+		).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
+			return nil, err
+		}
+
+		for _, rt := range resultTables {
+			metaMap[rt.TableId] = esResultTableDetailMeta{
+				DataLabel: rt.DataLabel,
+				Labels:    normalizeResultTableLabels(rt.TableId, rt.Labels),
+			}
+		}
+	}
+
+	for _, tableID := range tableIDList {
+		if _, ok := metaMap[tableID]; !ok {
+			return nil, errors.Errorf("result table not found, table_id: %s", tableID)
 		}
 	}
 
@@ -1315,42 +1397,26 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[str
 	return tableIdDetail, nil
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
-	logger.Infof("compose es table id detail, bk_tenant_id [%s], table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", bkTenantId, tableId, options, storageClusterId, sourceType, indexSet)
-
-	// 获取历史存储集群记录
-	db := mysql.GetDBSession().DB
-
-	// 若该RT是虚拟RT,则使用其关联的真实RT去查询存储集群记录信息
-	var storageIns storage.ESStorage
-	realTableId := tableId
-	if err := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.OriginTableId).TableIDEq(tableId).One(&storageIns); err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get origin table_id for table_id [%s], error: %v", tableId, err)
-		return tableId, "", err
-	}
-
-	if storageIns.OriginTableId != "" {
-		logger.Infof("composeEsTableIdDetail: origin table_id [%s] found for table_id [%s]", storageIns.OriginTableId, tableId)
-		realTableId = storageIns.OriginTableId
-	}
-
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
-	if err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
-		return "", "", err
-	}
-
-	// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
-	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(
-		resulttable.ResultTableDBSchema.DataLabel,
-		resulttable.ResultTableDBSchema.Labels,
-	).BkTenantIdEq(bkTenantId).TableIdEq(tableId).One(&rt); err != nil {
-		return tableId, "", err
-	}
+func (s *SpacePusher) composeEsTableIdDetail(
+	tableId string,
+	options map[string]any,
+	storageClusterId uint,
+	sourceType string,
+	indexSet string,
+	clusterRecords []map[string]any,
+	rtMeta esResultTableDetailMeta,
+	fieldAliasSettings map[string]string,
+) (string, string, error) {
+	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
 	if fieldAliasSettings == nil {
 		fieldAliasSettings = make(map[string]string)
+	}
+	if clusterRecords == nil {
+		clusterRecords = make([]map[string]any, 0)
+	}
+	if rtMeta.Labels == nil {
+		rtMeta.Labels = make(map[string]any)
 	}
 
 	// 组装数据
@@ -1362,8 +1428,8 @@ func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, 
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
-		"data_label":              rt.DataLabel,
-		"labels":                  normalizeResultTableLabels(tableId, rt.Labels),
+		"data_label":              rtMeta.DataLabel,
+		"labels":                  rtMeta.Labels,
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {

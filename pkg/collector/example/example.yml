@@ -163,6 +163,12 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
+    # NetworkFlow Receiver Config
+    # 全部配置在子文件中定义（enabled/dataid/listeners/workers 等）
+    networkflow:
+      listeners_file:
+        - "./example/networkflow.yml"
+
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项
   # config: 配置内容
@@ -1093,6 +1099,10 @@ bk-collector:
 
     - name: "pingserver_pipeline/common"
       type: "pingserver"
+      processors:
+
+    - name: "networkflow_pipeline/common"
+      type: "networkflow"
       processors:
 
     - name: "metrics_pipeline/common"

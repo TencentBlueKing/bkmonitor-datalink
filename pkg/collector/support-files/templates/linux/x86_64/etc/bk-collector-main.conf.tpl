@@ -186,6 +186,12 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
+    # NetworkFlow Receiver Config
+    networkflow:
+      # 子配置文件包含 networkflow 全部配置（enabled/dataid/listeners/workers 等）
+      listeners_file:
+        - "{{ plugin_path.subconfig_path }}/bk-collector-networkflow.conf"
+
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"
@@ -394,6 +400,10 @@ bk-collector:
 
     - name: "pingserver_pipeline/common"
       type: "pingserver"
+      processors:
+
+    - name: "networkflow_pipeline/common"
+      type: "networkflow"
       processors:
 
     - name: "fta_pipeline/common"

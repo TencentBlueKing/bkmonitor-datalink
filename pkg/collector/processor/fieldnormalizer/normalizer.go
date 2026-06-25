@@ -43,7 +43,7 @@ func FuncConcat(l, r, op string) NormalizeFunc {
 		if !ok {
 			return
 		}
-		attrs.InsertString(key, lv.AsString()+op+rv.AsString())
+		attrs.PutString(key, lv.AsString()+op+rv.AsString())
 	}
 }
 
@@ -56,7 +56,7 @@ func FuncOr(keys ...string) NormalizeFunc {
 
 		for _, k := range keys {
 			if v, ok := attrs.Get(k); ok {
-				attrs.Insert(key, v)
+				v.CopyTo(attrs.PutEmpty(key))
 				return
 			}
 		}

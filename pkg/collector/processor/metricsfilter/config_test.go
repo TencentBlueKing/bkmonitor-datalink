@@ -335,7 +335,7 @@ func TestRelabelRuleMatch(t *testing.T) {
 func createTestMap(pairs ...string) pcommon.Map {
 	m := pcommon.NewMap()
 	for i := 0; i < len(pairs); i += 2 {
-		m.UpsertString(pairs[i], pairs[i+1])
+		m.PutString(pairs[i], pairs[i+1])
 	}
 	return m
 }

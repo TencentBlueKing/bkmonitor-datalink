@@ -346,6 +346,9 @@ var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) C
 		Transport: transport,
 		Jar:       cj,
 		Timeout:   conf.GetTimeout(),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	return client
 }

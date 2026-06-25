@@ -30,10 +30,18 @@ All gauges, with default labels `namespace` and `hpa`:
 | `kube_hpa_status_desired_replicas` | `.status.desiredReplicas` |
 | `kube_hpa_labels` | object labels, as `label_<key>` (value `1`) |
 | `kube_hpa_status_condition` | `.status.conditions[]` (labels `condition`, `status`) |
+| `kube_hpa_spec_target_metric` | `.spec.metrics[]` target (labels `metric_name`, `metric_target_type` one of `utilization`/`value`/`average`) |
 
-> `kube_hpa_spec_target_metric` (the 8th kube-state-metrics HPA family) is not
-> emitted yet — it requires mapping the `autoscaling/v2` `MetricSpec` shape and is
-> tracked as a follow-up.
+> `kube_hpa_spec_target_metric` maps the `autoscaling/v2` `MetricSpec` to the same
+> labels and values as kube-state-metrics v1.9.7: one series per target field that
+> is set, with `metric_target_type` one of `utilization`/`value`/`average`. Like
+> v1.9.7, a `Quantity` target that is not an exact integer (e.g. `1500m`) is
+> skipped (`AsInt64` reports it cannot be represented), not emitted as `0`. The
+> `autoscaling/v2`-only `ContainerResource` source (absent from the
+> `autoscaling/v2beta1` that v1.9.7 read) is **not** emitted: the metric has no
+> `container` label, so multiple `ContainerResource` targets differing only by
+> container — e.g. the old/new pair recommended during a container rename — would
+> collide into duplicate samples.
 
 ## Run
 

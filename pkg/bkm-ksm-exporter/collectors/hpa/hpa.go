@@ -51,6 +51,7 @@ const (
 	helpDesiredReplicas = "Desired number of replicas of pods managed by this autoscaler."
 	helpLabels          = "Kubernetes labels converted to Prometheus labels."
 	helpCondition       = "The condition of this autoscaler."
+	helpTargetMetric    = "The metric specifications used by this autoscaler when calculating the desired replica count."
 )
 
 // conditionStatuses mirrors kube-state-metrics: every condition is emitted as
@@ -58,10 +59,6 @@ const (
 var conditionStatuses = []string{"true", "false", "unknown"}
 
 // Write renders all kube_hpa_* metrics in Prometheus text exposition format.
-//
-// kube_hpa_spec_target_metric (the 8th kube-state-metrics family) is intentionally
-// not emitted yet: it requires mapping the autoscaling/v2 MetricSpec shape and is
-// not consumed by current strategies. It is tracked as a follow-up.
 func (c *Collector) Write(w io.Writer) error {
 	hpas, err := c.lister.List(labels.Everything())
 	if err != nil {
@@ -130,7 +127,105 @@ func writeMetrics(w io.Writer, hpas []*autoscalingv2.HorizontalPodAutoscaler) er
 		}
 	}
 
+	mw.help("kube_hpa_spec_target_metric", helpTargetMetric)
+	for _, h := range hpas {
+		for _, m := range h.Spec.Metrics {
+			name, target, ok := metricSpecTarget(m)
+			if !ok {
+				continue
+			}
+			for _, tv := range targetTypeValues(target) {
+				extra := &labelSet{
+					keys: []string{"metric_name", "metric_target_type"},
+					vals: []string{name, tv.typ},
+				}
+				mw.sample("kube_hpa_spec_target_metric", base(h), extra, tv.val)
+			}
+		}
+	}
+
 	return mw.err
+}
+
+// targetTypeValue is one (metric_target_type, value) pair derived from a v2
+// MetricTarget for kube_hpa_spec_target_metric.
+type targetTypeValue struct {
+	typ string
+	val float64
+}
+
+// metricSpecTarget extracts the metric name and target from a v2 MetricSpec,
+// matching kube-state-metrics v1.9.7's per-source-type handling. ok is false for
+// a source v1.9.7 did not emit (ContainerResource; see the case below) and for a
+// malformed (nil) source struct or an unknown type.
+func metricSpecTarget(m autoscalingv2.MetricSpec) (name string, target autoscalingv2.MetricTarget, ok bool) {
+	switch m.Type {
+	case autoscalingv2.ResourceMetricSourceType:
+		if m.Resource == nil {
+			return "", autoscalingv2.MetricTarget{}, false
+		}
+		return string(m.Resource.Name), m.Resource.Target, true
+	case autoscalingv2.ContainerResourceMetricSourceType:
+		// Not emitted. kube-state-metrics v1.9.7 read autoscaling/v2beta1, which has
+		// no ContainerResource source, so there is no v1.9.7 series to match. It is
+		// also unsafe to emit here: kube_hpa_spec_target_metric has no container
+		// label, so two ContainerResource targets differing only by container -- e.g.
+		// the old/new pair the autoscaling docs recommend keeping during a container
+		// rename -- would collide into duplicate, conflicting samples.
+		return "", autoscalingv2.MetricTarget{}, false
+	case autoscalingv2.PodsMetricSourceType:
+		if m.Pods == nil {
+			return "", autoscalingv2.MetricTarget{}, false
+		}
+		return m.Pods.Metric.Name, m.Pods.Target, true
+	case autoscalingv2.ObjectMetricSourceType:
+		if m.Object == nil {
+			return "", autoscalingv2.MetricTarget{}, false
+		}
+		return m.Object.Metric.Name, m.Object.Target, true
+	case autoscalingv2.ExternalMetricSourceType:
+		if m.External == nil {
+			return "", autoscalingv2.MetricTarget{}, false
+		}
+		return m.External.Metric.Name, m.External.Target, true
+	default:
+		return "", autoscalingv2.MetricTarget{}, false
+	}
+}
+
+// targetTypeValues renders a v2 MetricTarget into kube-state-metrics v1.9.7's
+// (metric_target_type, value) pairs, one series per target field that is set, in
+// v1.9.7's value/utilization/average order.
+//
+// The Quantity fields (Value, AverageValue) are gated on Quantity.AsInt64's ok
+// flag exactly as v1.9.7 is: AsInt64 returns ok=false for any non-integer
+// Quantity (e.g. "1500m"), and v1.9.7 then emits no series for it. Discarding ok
+// would instead emit a misleading 0-valued series, so we skip when !ok.
+// AverageUtilization is an *int32 (no Quantity), so it is emitted whenever set,
+// matching v1.9.7's nil check.
+//
+// Note: v1.9.7 read a fixed set of target fields per source type; autoscaling/v2
+// unifies them into one MetricTarget whose single set field matches Target.Type.
+// This source-type-agnostic sweep reproduces v1.9.7 for the field a valid v2
+// object actually sets, but cannot recreate v2beta1-only shapes (e.g. an
+// averageValue Object, where v2beta1 also carried a separate required TargetValue
+// row that has no v2 counterpart).
+func targetTypeValues(t autoscalingv2.MetricTarget) []targetTypeValue {
+	var out []targetTypeValue
+	if t.Value != nil {
+		if v, ok := t.Value.AsInt64(); ok {
+			out = append(out, targetTypeValue{typ: "value", val: float64(v)})
+		}
+	}
+	if t.AverageUtilization != nil {
+		out = append(out, targetTypeValue{typ: "utilization", val: float64(*t.AverageUtilization)})
+	}
+	if t.AverageValue != nil {
+		if v, ok := t.AverageValue.AsInt64(); ok {
+			out = append(out, targetTypeValue{typ: "average", val: float64(v)})
+		}
+	}
+	return out
 }
 
 // labelSet is an ordered list of label key/value pairs.

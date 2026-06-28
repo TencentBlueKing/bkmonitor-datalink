@@ -293,7 +293,9 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]an
 // UpdateMetrics update ts metrics
 func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
-	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
+	if err != nil {
+		return false, errors.Wrapf(err, "query auto discovery mode for table id [%s] failed", s.TableID)
+	}
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v,metricInfoList: %d", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery, len(metricInfoList))
 
 	// 过滤非法的指标
@@ -306,7 +308,13 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (boo
 	}
 	logger.Infof("UpdateMetrics: BulkRefreshTSScopes for table id: %v, metricInfoList: %d", s.TableID, len(newMetricInfoList))
 
+	if !isAutoDiscovery {
+		logger.Infof("UpdateMetrics: table_id [%s] is whitelist mode, skip managing TimeSeriesMetric and ResultTableField", s.TableID)
+		return false, nil
+	}
+
 	// 2. 刷新 ts 表中的指标和维度（使用带 scope_id 的列表）
+	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, newMetricInfoList, isAutoDiscovery)
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshTSMetrics for table id [%s] with metric info failed", s.TableID)

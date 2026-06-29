@@ -290,6 +290,18 @@ default:
               destination: '{{ replace_config.destination }}'
               extract_pattern: '{{ replace_config.extract_pattern }}'
             {%- endfor %}
+          {%- if resource_filter_config_logs.get("from_record") %}
+          from_record:
+            {%- for record_item in resource_filter_config_logs.from_record %}
+            - source: '{{ record_item.source }}'
+              destination: '{{ record_item.destination }}'
+            {%- endfor %}
+          {%- endif %}
+          {%- if resource_filter_config_logs.get("from_cache") %}
+          from_cache:
+            key: '{{ resource_filter_config_logs.from_cache.get("key", "") }}'
+            cache_name: '{{ resource_filter_config_logs.from_cache.get("cache_name", "") }}'
+          {%- endif %}
 {%- endif %}
 
 {% if resource_filter_config_metrics is defined %}

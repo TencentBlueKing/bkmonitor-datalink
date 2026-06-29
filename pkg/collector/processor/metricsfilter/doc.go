@@ -16,8 +16,14 @@ processor:
       # Drop Action
       drop:
         metrics:
-        - "runtime.go.mem.live_objects"
-        - "none.exist.metric"
+          - "runtime.go.mem.live_objects"
+          - "none.exist.metric"
+        op: "in"  # in | not_in，默认为 in
+        extra_rules:
+          - predicate_key: "resource.telemetry.distro.name"
+            match:
+              op: "eq"
+              value: "opentelemetry-java-instrumentation"
 
       # Replace Action
       replace:

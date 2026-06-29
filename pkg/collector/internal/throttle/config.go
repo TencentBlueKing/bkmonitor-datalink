@@ -20,12 +20,12 @@ const (
 	defaultSampleInterval = 250 * time.Millisecond
 	defaultCPUSlowBeta    = 0.95
 	defaultCPUFastBeta    = 0.7
-	defaultCPUEnter       = 0.95
-	defaultCPUExit        = 0.85
-	defaultCPUHard        = 1.2
-	defaultMemEnter       = 0.75
-	defaultMemExit        = 0.7
-	defaultMemHard        = 0.85
+	defaultCPUEnter       = 0.8
+	defaultCPUExit        = 0.7
+	defaultCPUHard        = 1.0
+	defaultMemEnter       = 0.65
+	defaultMemExit        = 0.6
+	defaultMemHard        = 0.75
 	defaultBreachN        = 3
 	defaultMemBreachN     = 1
 )

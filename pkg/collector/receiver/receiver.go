@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/grpcmiddleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/httpmiddleware"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -102,6 +103,13 @@ func New(conf *confengine.Config) (*Receiver, error) {
 
 	// 全局状态记录
 	globalSkywalkingConfig = LoadConfigFrom(conf)
+	if c.Throttle.Enabled {
+		if err = throttle.Init(c.Throttle); err != nil {
+			return nil, err
+		}
+	} else {
+		throttle.Stop()
+	}
 
 	return &Receiver{
 		config:  c,
@@ -370,6 +378,10 @@ func (r *Receiver) shutdownGrpcServer() {
 }
 
 func (r *Receiver) Stop() error {
+	if r.config.Throttle.Enabled {
+		defer throttle.Stop()
+	}
+
 	if err := r.shutdownRecvServer(); err != nil {
 		return err
 	}

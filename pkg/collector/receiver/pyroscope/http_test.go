@@ -27,9 +27,11 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	pushv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1/pushv1connect"
 	typesv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/types/v1"
 )
 
@@ -41,6 +43,11 @@ func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
 		Ready()
 	})
+}
+
+func TestThrottleClassifyRoutes(t *testing.T) {
+	assert.Equal(t, define.RecordProfiles, throttle.ClassifyHTTP(routePyroscopeIngest))
+	assert.Equal(t, define.RecordProfiles, throttle.ClassifyHTTP(pushv1connect.PusherServicePushProcedure))
 }
 
 func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {

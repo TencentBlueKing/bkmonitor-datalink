@@ -19,6 +19,8 @@ import (
 type Interface interface {
 	// DataIDs returns a DataIDInformer.
 	DataIDs() DataIDInformer
+	// ProcessMonitors returns a ProcessMonitorInformer.
+	ProcessMonitors() ProcessMonitorInformer
 	// QCloudMonitors returns a QCloudMonitorInformer.
 	QCloudMonitors() QCloudMonitorInformer
 }
@@ -37,6 +39,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // DataIDs returns a DataIDInformer.
 func (v *version) DataIDs() DataIDInformer {
 	return &dataIDInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// ProcessMonitors returns a ProcessMonitorInformer.
+func (v *version) ProcessMonitors() ProcessMonitorInformer {
+	return &processMonitorInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // QCloudMonitors returns a QCloudMonitorInformer.

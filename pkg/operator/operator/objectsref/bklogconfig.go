@@ -22,8 +22,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bkinfs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
@@ -254,7 +254,7 @@ func (m *BkLogConfigMap) Range(visitFunc func(e *bkLogConfigEntity)) {
 	}
 }
 
-func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
+func newBklogConfigObjects(ctx context.Context, client bkcli.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
 	objsMap := &BkLogConfigMap{
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
@@ -270,7 +270,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 		return objsMap, nil
 	}
 
-	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
+	factory := bkinfs.NewSharedInformerFactory(client, define.ReSyncPeriod)
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{

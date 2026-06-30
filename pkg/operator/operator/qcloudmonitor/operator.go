@@ -29,7 +29,6 @@ import (
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
 	"k8s.io/utils/ptr"
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
@@ -39,6 +38,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/syncer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -74,11 +74,10 @@ type Operator struct {
 	cancel context.CancelFunc
 
 	client  kubernetes.Interface
-	metaCli metadata.Interface
 	bkCli   bkcli.Interface
 	promCli promcli.Interface
 
-	seh *syncEventHandler
+	seh *syncer.SyncEventHandler
 
 	qcmInfs *prominfs.ForResource // QCloudMonitor
 	dpInfs  *prominfs.ForResource // Deployment
@@ -89,7 +88,6 @@ type Operator struct {
 
 type ClientSet struct {
 	Client kubernetes.Interface
-	Meta   metadata.Interface
 	BK     bkcli.Interface
 	Prom   promcli.Interface
 }
@@ -102,7 +100,6 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 
 	operator.ctx, operator.cancel = context.WithCancel(ctx)
 	operator.client = cs.Client
-	operator.metaCli = cs.Meta
 	operator.promCli = cs.Prom
 	operator.bkCli = cs.BK
 
@@ -198,7 +195,7 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 		return nil, errors.Wrap(err, "create QCloudMonitor informer failed")
 	}
 
-	operator.seh = newSyncEventHandler(operator)
+	operator.seh = syncer.NewSyncEventHandler(operator)
 	return operator, nil
 }
 
@@ -301,7 +298,7 @@ func (c *Operator) createOrUpdateConfigMap(ctx context.Context, qcm *bkv1beta1.Q
 			Name:            qcm.Name,
 			Namespace:       qcm.Namespace,
 			Labels:          selector,
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
+			OwnerReferences: []metav1.OwnerReference{ownerRef(qcm)},
 		},
 		Data: map[string]string{
 			"qcloud.yml": qcm.Spec.Config.FileContent,
@@ -324,7 +321,7 @@ func (c *Operator) createOrUpdateService(ctx context.Context, qcm *bkv1beta1.QCl
 			Name:            qcm.Name,
 			Namespace:       qcm.Namespace,
 			Labels:          selector,
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
+			OwnerReferences: []metav1.OwnerReference{ownerRef(qcm)},
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
@@ -375,7 +372,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 			Namespace:       qcm.Namespace,
 			Labels:          selector,
 			Annotations:     annotations,
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
+			OwnerReferences: []metav1.OwnerReference{ownerRef(qcm)},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(int32(1)),
@@ -450,7 +447,7 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 				feature.KeyScheduledDataID: strconv.Itoa(qcm.Spec.DataID),
 				feature.KeyExtendLabels:    utils.MapToSelector(qcm.Spec.ExtendLabels),
 			},
-			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
+			OwnerReferences: []metav1.OwnerReference{ownerRef(qcm)},
 		},
 		Spec: promv1.ServiceMonitorSpec{
 			NamespaceSelector: promv1.NamespaceSelector{
@@ -472,4 +469,15 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 
 	cli := c.promCli.MonitoringV1().ServiceMonitors(qcm.Namespace)
 	return k8sutils.CreateOrUpdateServiceMonitor(ctx, cli, serviceMonitor)
+}
+
+func ownerRef(qcm *bkv1beta1.QCloudMonitor) metav1.OwnerReference {
+	return metav1.OwnerReference{
+		APIVersion:         bkv1beta1.SchemeGroupVersion.String(),
+		BlockOwnerDeletion: ptr.To(true),
+		Controller:         ptr.To(true),
+		Kind:               "QCloudMonitor",
+		Name:               qcm.Name,
+		UID:                qcm.UID,
+	}
 }

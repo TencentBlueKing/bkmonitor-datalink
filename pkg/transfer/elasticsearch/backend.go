@@ -40,6 +40,8 @@ type BulkHandler struct {
 	writer        BulkWriter
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
+
+	fields *define.ETLRecordFields
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
@@ -100,6 +102,9 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 		}
 	}
 
+	if b.fields != nil {
+		etlRecord = b.fields.Filter(etlRecord)
+	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
 
@@ -170,6 +175,24 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 	return count, errs.AsError()
 }
 
+func (b *BulkHandler) grouping(records Records) Records {
+	if b.fields == nil || len(b.fields.GroupKeys) <= 0 {
+		return records
+	}
+
+	uniq := make(map[uint64]*Record)
+	for _, record := range records {
+		uid := b.fields.GroupID(record.Document)
+		uniq[uid] = record
+	}
+
+	dst := make(Records, 0, len(uniq))
+	for _, item := range uniq {
+		dst = append(dst, item)
+	}
+	return dst
+}
+
 // Flush :
 func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count int, err error) {
 	lastIndex := ""
@@ -193,9 +216,12 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
+		// TODO(mando): grouping 会导致实际写入数量低于 results 数量
+		// 但实际上并非写入失败
+
 		// 处理跨时间间隔
 		if index != lastIndex && lastIndex != "" {
-			cnt, err := b.flush(ctx, lastIndex, records)
+			cnt, err := b.flush(ctx, lastIndex, b.grouping(records))
 			records = records[:0]
 			count += cnt
 			errs.Add(err)
@@ -205,12 +231,16 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 	}
 
 	if len(records) > 0 {
-		cnt, err := b.flush(ctx, lastIndex, records)
+		cnt, err := b.flush(ctx, lastIndex, b.grouping(records))
 		count += cnt
 		errs.Add(err)
 	}
 
 	return count, errs.AsError()
+}
+
+func (b *BulkHandler) SetETLRecordFields(f *define.ETLRecordFields) {
+	b.fields = f
 }
 
 // Close :
@@ -268,7 +298,7 @@ func NewBulkHandler(cluster *config.ElasticSearchMetaClusterInfo, table *config.
 }
 
 // NewBackend :
-func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, error) {
+func NewBackend(ctx context.Context, name string, options *utils.MapHelper) (define.Backend, error) {
 	conf := config.FromContext(ctx)
 	resultTable := config.ResultTableConfigFromContext(ctx)
 
@@ -300,6 +330,7 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 		return nil, err
 	}
 
+	maxQps, _ := options.GetInt(config.PipelineConfigOptMaxQps)
 	return pipeline.NewBulkBackendDefaultAdapter(ctx, name, bulk, maxQps), nil
 }
 
@@ -318,7 +349,6 @@ func init() {
 		}
 
 		options := utils.NewMapHelper(rt.Option)
-		maxQps, _ := options.GetInt(config.PipelineConfigOptMaxQps)
-		return NewBackend(ctx, rt.FormatName(name), maxQps)
+		return NewBackend(ctx, rt.FormatName(name), options)
 	})
 }

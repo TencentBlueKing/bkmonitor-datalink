@@ -70,6 +70,16 @@ func setupStorageRedisForTest(t *testing.T) {
 	storageRedisTestServer = server
 }
 
+func setMultiTenantModeForTest(t *testing.T, enabled bool) {
+	t.Helper()
+
+	old := cfg.EnableMultiTenantMode
+	cfg.EnableMultiTenantMode = enabled
+	t.Cleanup(func() {
+		cfg.EnableMultiTenantMode = old
+	})
+}
+
 func TestSpacePusher_getMeasurementType(t *testing.T) {
 	type args struct {
 		schemaType            string
@@ -1088,7 +1098,7 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
-	cfg.EnableMultiTenantMode = true
+	setMultiTenantModeForTest(t, true)
 	data, err := NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet := mapset.NewSet[string]()
@@ -1104,7 +1114,7 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	assert.Equal(t, []string{"test_1_sys.cpu_detail"}, data["system.cpu_detail|test"])
 	assert.Equal(t, []string{"test_1_dbm.cpu_detail"}, data["dbm_system.cpu_detail|test"])
 
-	cfg.EnableMultiTenantMode = false
+	setMultiTenantModeForTest(t, false)
 	data, err = NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet = mapset.NewSet[string]()
@@ -1294,17 +1304,18 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 
 	// 获取正常数据
 	spacePusher := NewSpacePusher()
-	data := spacePusher.composeEsTableIdOptions([]string{rt1, rt2, rt3})
+	data := spacePusher.composeEsTableIdOptions("", []string{rt1, rt2, rt3})
 	assert.Equal(t, 3, len(data))
 	assert.Equal(t, map[string]any{"name": "v1"}, data[rt1][rtOp1.Name])
 
 	// 获取不存在的rt数据
-	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
+	data = spacePusher.composeEsTableIdOptions("", []string{"not_exist"})
 	assert.Equal(t, 0, len(data))
 }
 
 func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setMultiTenantModeForTest(t, false)
 
 	db := mysql.GetDBSession().DB
 
@@ -1390,7 +1401,7 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 
 	assert.Equal(t, expected, actual)
 
-	cfg.EnableMultiTenantMode = true
+	setMultiTenantModeForTest(t, true)
 
 	err = pusher.PushBkAppToSpace()
 	assert.NoError(t, err)
@@ -1413,6 +1424,9 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	storageClusterID := uint(1)
 	sourceType := "log"
 	indexSet := "index_1"
+
+	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
+	setMultiTenantModeForTest(t, false)
 
 	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
@@ -1514,7 +1528,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail([]string{tableID}, false)
+	err := pusher.PushEsTableIdDetail("", []string{tableID}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 }
 
@@ -1531,7 +1545,10 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
-	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel, Labels: labels}
+	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
+	setMultiTenantModeForTest(t, false)
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &dataLabel, Labels: labels}
 	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
 	assert.NoError(t, rtObj1.Create(db))
 
@@ -1554,6 +1571,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
 		{
 			TableID:    tableID,
+			BkTenantID: tenant.DefaultTenantId,
 			FieldPath:  "__ext.pod_name",
 			PathType:   "keyword",
 			QueryAlias: "pod_name",
@@ -1561,6 +1579,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 		},
 		{
 			TableID:    tableID,
+			BkTenantID: tenant.DefaultTenantId,
 			FieldPath:  "__ext.pod_id",
 			PathType:   "keyword",
 			QueryAlias: "pod_id",
@@ -1581,7 +1600,7 @@ func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushDorisTableIdDetail([]string{tableID}, false)
+	err := pusher.PushDorisTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
 	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
 
 	detailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID)
@@ -1628,7 +1647,7 @@ func TestSpacePusher_PushDorisTableIdDetailReturnsClusterRecordError(t *testing.
 	})
 	defer patches.Reset()
 
-	err := NewSpacePusher().PushDorisTableIdDetail([]string{tableID}, false)
+	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), expectedErr.Error())
 		assert.Contains(t, err.Error(), "failed to get storage cluster records")
@@ -1641,6 +1660,9 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	setupStorageRedisForTest(t)
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
+	setMultiTenantModeForTest(t, false)
 
 	virtualTableID := "bklog.virtual_doris"
 	currentTableID := "bklog.current_doris"
@@ -1657,10 +1679,10 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	}
 
 	resultTables := []resulttable.ResultTable{
-		{TableId: virtualTableID, IsDeleted: false, IsEnable: true, DataLabel: &virtualDataLabel, Labels: json.RawMessage(`{"scene":"virtual"}`)},
-		{TableId: currentTableID, IsDeleted: false, IsEnable: true, DataLabel: &currentDataLabel, Labels: json.RawMessage(`{"scene":"current"}`)},
-		{TableId: originTableID, IsDeleted: false, IsEnable: true, DataLabel: &originDataLabel, Labels: json.RawMessage(`{"scene":"origin"}`)},
-		{TableId: missingOriginTableID, IsDeleted: false, IsEnable: true, Labels: json.RawMessage(`{"scene":"missing"}`)},
+		{TableId: virtualTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &virtualDataLabel, Labels: json.RawMessage(`{"scene":"virtual"}`)},
+		{TableId: currentTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &currentDataLabel, Labels: json.RawMessage(`{"scene":"current"}`)},
+		{TableId: originTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &originDataLabel, Labels: json.RawMessage(`{"scene":"origin"}`)},
+		{TableId: missingOriginTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, Labels: json.RawMessage(`{"scene":"missing"}`)},
 	}
 	for _, rt := range resultTables {
 		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
@@ -1678,6 +1700,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 
 	fieldAlias := resulttable.ESFieldQueryAliasOption{
 		TableID:    virtualTableID,
+		BkTenantID: tenant.DefaultTenantId,
 		FieldPath:  "__ext.pod_name",
 		PathType:   "keyword",
 		QueryAlias: "pod_name",
@@ -1685,7 +1708,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	}
 	assert.NoError(t, db.Create(&fieldAlias).Error, "Failed to insert ESFieldQueryAliasOption")
 
-	err := NewSpacePusher().PushDorisTableIdDetail([]string{virtualTableID, currentTableID, missingOriginTableID}, false)
+	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, []string{virtualTableID, currentTableID, missingOriginTableID}, false)
 	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
 
 	virtualDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, virtualTableID)
@@ -1713,6 +1736,81 @@ func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
 	assert.Equal(t, map[string]any{"scene": "missing"}, missingOriginDetail["labels"])
 }
 
+func TestSpacePusher_PushDorisTableIdDetailMultiTenant(t *testing.T) {
+	// 多租户模式下，redis key 需要补充租户ID后缀
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	setMultiTenantModeForTest(t, true)
+
+	tableID := "bklog.doris_tenant_rt"
+	bkTenantId := "tenant_a"
+	dataLabel := "tenant_label"
+
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+	db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
+
+	rtObj := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: bkTenantId, DataLabel: &dataLabel, Labels: json.RawMessage(`{"scene":"tenant"}`)}
+	assert.NoError(t, db.Create(&rtObj).Error, "Failed to insert ResultTable")
+
+	dorisStorage := storage.DorisStorage{TableID: tableID, BkbaseTableID: "bklog_doris_tenant_bkbase", SourceType: "log"}
+	assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
+
+	err := NewSpacePusher().PushDorisTableIdDetail(bkTenantId, []string{tableID}, false)
+	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
+
+	client := redis.GetStorageRedisInstance()
+	// 带租户后缀的 key 存在
+	suffixedKey := fmt.Sprintf("%s|%s", tableID, bkTenantId)
+	detailStr := client.HGet(cfg.ResultTableDetailKey, suffixedKey)
+	assert.NotEmpty(t, detailStr, "detail should be stored under tenant suffixed key")
+	var detail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(detailStr), &detail), "doris detail should be valid JSON")
+	assert.Equal(t, "bklog_doris_tenant_bkbase", detail["db"])
+
+	// 不带后缀的 key 不应存在
+	assert.Empty(t, client.HGet(cfg.ResultTableDetailKey, tableID), "detail should not be stored under non-suffixed key in multi-tenant mode")
+}
+
+func TestSpacePusher_PushEsTableIdDetailMultiTenant(t *testing.T) {
+	// 多租户模式下，redis key 需要补充租户ID后缀
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	setupStorageRedisForTest(t)
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	setMultiTenantModeForTest(t, true)
+
+	tableID := "bklog.es_tenant_rt"
+	bkTenantId := "tenant_b"
+
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
+	db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
+
+	rtObj := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: bkTenantId}
+	assert.NoError(t, db.Create(&rtObj).Error, "Failed to insert ResultTable")
+
+	esStorage := storage.ESStorage{TableID: tableID, StorageClusterID: uint(1), SourceType: "log", IndexSet: "index_1", NeedCreateIndex: true}
+	assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
+
+	err := NewSpacePusher().PushEsTableIdDetail(bkTenantId, []string{tableID}, false)
+	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+
+	client := redis.GetStorageRedisInstance()
+	// 带租户后缀的 key 存在
+	suffixedKey := fmt.Sprintf("%s|%s", tableID, bkTenantId)
+	detailStr := client.HGet(cfg.ResultTableDetailKey, suffixedKey)
+	assert.NotEmpty(t, detailStr, "detail should be stored under tenant suffixed key")
+	var detail map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(detailStr), &detail), "es detail should be valid JSON")
+	assert.Equal(t, models.StorageTypeES, detail["storage_type"])
+
+	// 不带后缀的 key 不应存在
+	assert.Empty(t, client.HGet(cfg.ResultTableDetailKey, tableID), "detail should not be stored under non-suffixed key in multi-tenant mode")
+}
+
 func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -1730,6 +1828,7 @@ func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 
 		record := resulttable.ESFieldQueryAliasOption{
 			TableID:    tableID,
+			BkTenantID: tenant.DefaultTenantId,
 			FieldPath:  fmt.Sprintf("__ext.field_%03d", i),
 			PathType:   "keyword",
 			QueryAlias: fmt.Sprintf("alias_%03d", i),
@@ -1738,7 +1837,7 @@ func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 		assert.NoError(t, db.Create(&record).Error, "Failed to insert ESFieldQueryAliasOption")
 	}
 
-	aliasMap, err := NewSpacePusher().getFieldAliasMap(tableIDs)
+	aliasMap, err := NewSpacePusher().getFieldAliasMap(tenant.DefaultTenantId, tableIDs)
 	assert.NoError(t, err, "getFieldAliasMap should not return an error")
 	assert.Len(t, aliasMap, tableCount, "field alias map should include records from all chunks")
 	assert.Equal(t, "__ext.field_000", aliasMap[tableIDs[0]]["alias_000"])
@@ -1753,6 +1852,9 @@ func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
 
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.ESStorage{}, &resulttable.ESFieldQueryAliasOption{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
+	setMultiTenantModeForTest(t, false)
 
 	tableCount := cfg.DefaultDBFilterSize + 1
 	tableIDs := make([]string, 0, tableCount)
@@ -1787,6 +1889,7 @@ func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
 
 		aliasRecord := resulttable.ESFieldQueryAliasOption{
 			TableID:    tableID,
+			BkTenantID: tenant.DefaultTenantId,
 			FieldPath:  fmt.Sprintf("__ext.es_field_%03d", i),
 			PathType:   "keyword",
 			QueryAlias: fmt.Sprintf("es_alias_%03d", i),
@@ -1798,7 +1901,7 @@ func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
 	client := redis.GetStorageRedisInstance()
 	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
 
-	err := NewSpacePusher().PushEsTableIdDetail(tableIDs, false)
+	err := NewSpacePusher().PushEsTableIdDetail(tenant.DefaultTenantId, tableIDs, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 	details := client.HGetAll(cfg.ResultTableDetailKey)
@@ -1824,6 +1927,9 @@ func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
 
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
+
+	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
+	setMultiTenantModeForTest(t, false)
 
 	tableCount := cfg.DefaultDBFilterSize + 1
 	tableIDs := make([]string, 0, tableCount)
@@ -1857,6 +1963,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
 
 		aliasRecord := resulttable.ESFieldQueryAliasOption{
 			TableID:    tableID,
+			BkTenantID: tenant.DefaultTenantId,
 			FieldPath:  fmt.Sprintf("__ext.doris_field_%03d", i),
 			PathType:   "keyword",
 			QueryAlias: fmt.Sprintf("doris_alias_%03d", i),
@@ -1868,7 +1975,7 @@ func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
 	client := redis.GetStorageRedisInstance()
 	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
 
-	err := NewSpacePusher().PushDorisTableIdDetail(tableIDs, false)
+	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, tableIDs, false)
 	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
 
 	details := client.HGetAll(cfg.ResultTableDetailKey)
@@ -2107,10 +2214,18 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
 	}
 
+	// composeEsTableIdDetail 会先查询 ESStorage 获取 origin_table_id, 需保证存在对应记录
+	for _, tableID := range []string{tableID1, tableID2, tableID3} {
+		db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
+		esStorage := storage.ESStorage{TableID: tableID, StorageClusterID: 1, SourceType: "sourceType1", IndexSet: "indexSet1", NeedCreateIndex: true}
+		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
+	}
+
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
+		"",
 		tableID1,
 		map[string]any{"option1": "value1"},
 		1,
@@ -2146,6 +2261,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
+		"",
 		tableID2,
 		map[string]any{"option1": "value1"},
 		1,
@@ -2178,6 +2294,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
 
 	resTid3, detailStr3, err := spacePusher.composeEsTableIdDetail(
+		"",
 		tableID3,
 		map[string]any{"option1": "value1"},
 		1,

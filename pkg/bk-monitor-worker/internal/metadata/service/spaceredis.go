@@ -774,8 +774,10 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 }
 
 // PushEsTableIdDetail compose the es table id detail
-func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, table_id_list [%v]", tableIdList)
+// NOTE: ESStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
+// 同时透传 bkTenantId 用于关联 ResultTable/Option/别名等租户维度数据以及补充 redis key 的租户后缀
+func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
+	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
 	db := mysql.GetDBSession().DB
 
 	// 获取数据
@@ -810,10 +812,10 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 		tidList = append(tidList, es.TableID)
 	}
 	// 组装结果表对应的选项
-	tidOptionMap := s.composeEsTableIdOptions(tidList)
+	tidOptionMap := s.composeEsTableIdOptions(bkTenantId, tidList)
 
 	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushEsTableIdDetail: failed to get field alias map, error: %s", err)
 	}
@@ -848,15 +850,17 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeEsTableIdDetail(bkTenantId, tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
+			// 多租户模式下，redis key 需要补充租户ID后缀
+			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
 			// 推送数据
 			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
 				return
@@ -870,8 +874,10 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 }
 
 // PushDorisTableIdDetail  推送Doris结果表详情路由
-func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data")
+// NOTE: DorisStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
+// 同时透传 bkTenantId 用于关联 ResultTable/别名等租户维度数据以及补充 redis key 的租户后缀
+func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
 	db := mysql.GetDBSession().DB
 
 	// 获取数据
@@ -905,7 +911,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		tidList = append(tidList, doris.TableID)
 	}
 
-	rtMetaMap, err := s.getResultTableDetailMetaMap(tidList)
+	rtMetaMap, err := s.getResultTableDetailMetaMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get result table metadata map, error: %s", err)
 		return err
@@ -945,7 +951,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 	}
 
 	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
 	}
@@ -992,10 +998,12 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 				errCh <- errors.Wrapf(err, "compose doris table id detail error, table_id: %s", tableId)
 				return
 			}
+			// 多租户模式下，redis key 需要补充租户ID后缀
+			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
 			// 推送数据
 			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
 				errCh <- errors.Wrapf(err, "push and publish doris table id detail error, table_id: %s", tableId)
@@ -1014,13 +1022,14 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 }
 
 // composeEsTableIdOptions 组装 es
-func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]any {
+func (s *SpacePusher) composeEsTableIdOptions(bkTenantId string, tableIdList []string) map[string]map[string]any {
 	db := mysql.GetDBSession().DB
 	// 分批获取结果表的option
 	tidOptionMap := make(map[string]map[string]any)
 	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTableOption
-		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的 option
+		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
 			logger.Errorf("query result table option error, error: %s", err)
 			continue
 		}
@@ -1047,8 +1056,8 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 }
 
 // getFieldAliasMap 构建字段别名映射map
-func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[string]string, error) {
-	logger.Infof("getFieldAliasMap: try to get field alias map, table_id_list->[%v]", tableIDList)
+func (s *SpacePusher) getFieldAliasMap(bkTenantId string, tableIDList []string) (map[string]map[string]string, error) {
+	logger.Infof("getFieldAliasMap: try to get field alias map, bk_tenant_id->[%s], table_id_list->[%v]", bkTenantId, tableIDList)
 
 	db := mysql.GetDBSession().DB
 
@@ -1056,7 +1065,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 		return make(map[string]map[string]string), nil
 	}
 
-	// 获取指定table_id列表的未删除别名记录
+	// 获取指定table_id列表的未删除别名记录, 按租户过滤避免跨租户 table_id 重复
 	var aliasRecords []resulttable.ESFieldQueryAliasOption
 
 	fieldAliasQuerySet := resulttable.NewESFieldQueryAliasOptionQuerySet(db).Select(
@@ -1064,7 +1073,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 		resulttable.ESFieldQueryAliasOptionDBSchema.FieldPath,
 		resulttable.ESFieldQueryAliasOptionDBSchema.QueryAlias,
 		resulttable.ESFieldQueryAliasOptionDBSchema.IsDeleted,
-	)
+	).BkTenantIDEq(bkTenantId)
 
 	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
 		var tempRecords []resulttable.ESFieldQueryAliasOption
@@ -1113,7 +1122,7 @@ func resultTableDataLabel(dataLabel *string) string {
 	return *dataLabel
 }
 
-func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[string]resultTableDetailMeta, error) {
+func (s *SpacePusher) getResultTableDetailMetaMap(bkTenantId string, tableIDList []string) (map[string]resultTableDetailMeta, error) {
 	db := mysql.GetDBSession().DB
 	metaMap := make(map[string]resultTableDetailMeta)
 	if len(tableIDList) == 0 {
@@ -1122,11 +1131,12 @@ func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[str
 
 	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
 		var resultTables []resulttable.ResultTable
+		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
 		if err := resulttable.NewResultTableQuerySet(db).Select(
 			resulttable.ResultTableDBSchema.TableId,
 			resulttable.ResultTableDBSchema.DataLabel,
 			resulttable.ResultTableDBSchema.Labels,
-		).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
+		).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
 			return nil, err
 		}
 
@@ -1139,6 +1149,14 @@ func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[str
 	}
 
 	return metaMap, nil
+}
+
+// composeTenantRedisKey 在多租户模式下为 redis key 补充租户ID后缀
+func composeTenantRedisKey(redisKey, bkTenantId string) string {
+	if cfg.EnableMultiTenantMode {
+		return fmt.Sprintf("%s|%s", redisKey, bkTenantId)
+	}
+	return redisKey
 }
 
 func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]storage.DorisStorage, error) {
@@ -1297,8 +1315,8 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[str
 	return tableIdDetail, nil
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
-	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
+func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
+	logger.Infof("compose es table id detail, bk_tenant_id [%s], table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", bkTenantId, tableId, options, storageClusterId, sourceType, indexSet)
 
 	// 获取历史存储集群记录
 	db := mysql.GetDBSession().DB
@@ -1322,11 +1340,12 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		return "", "", err
 	}
 
+	// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
 	var rt resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).Select(
 		resulttable.ResultTableDBSchema.DataLabel,
 		resulttable.ResultTableDBSchema.Labels,
-	).TableIdEq(tableId).One(&rt); err != nil {
+	).BkTenantIdEq(bkTenantId).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 

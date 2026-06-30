@@ -36,6 +36,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pushgateway"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/remotewrite"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/rum"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/skywalking"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/tars"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/zipkin"

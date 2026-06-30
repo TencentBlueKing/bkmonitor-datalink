@@ -43,6 +43,7 @@ const (
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
 	SourceLogPush     = "logpush"
+	SourceDatadog     = "datadog"
 
 	KeyToken        = "X-BK-TOKEN"
 	KeyDataID       = "X-BK-DATA-ID"

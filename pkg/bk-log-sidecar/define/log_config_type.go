@@ -221,22 +221,16 @@ func (s *ContainerLogConfig) Config() []byte {
 	local.RemovePathPrefix = strings.TrimRight(config.HostPath, string(filepath.Separator))
 	local.RootFs = filepath.Join(local.RemovePathPrefix, containerRootPath)
 
-	mountMap := make(map[string]string)
-	mounts := make([]Mount, 0)
-	for _, path := range local.Path {
-		newMountMap, err := GetContainerMount(path, s.Container)
-		if utils.NotNil(err) {
-			continue
+	// 下发容器的全量卷挂载信息(host_path/container_path)，由采集器(bkunifylogbeat)在遍历
+	// 采集路径时按需做 container_path->host_path 切换并解析软链。sidecar 不再预先按字面前缀
+	// 匹配筛选 mounts，避免采集路径为软链(穿越卷边界,如 rootfs 软链->PVC)时漏配 mounts、
+	// 导致卷内日志采集不到。采集器侧 selectFileSystem 按最长 container_path 前缀命中才切换，
+	// 全量下发对未命中卷的路径无副作用。
+	if len(s.Container.Mounts) > 0 {
+		mounts := make([]Mount, 0, len(s.Container.Mounts))
+		for _, mount := range s.Container.Mounts {
+			mounts = append(mounts, Mount{HostPath: ToHostPath(mount.HostPath), ContainerPath: mount.ContainerPath})
 		}
-		// 更新 mountMap
-		for k, v := range newMountMap {
-			mountMap[k] = v
-		}
-	}
-	for k, v := range mountMap {
-		mounts = append(mounts, Mount{HostPath: ToHostPath(k), ContainerPath: v})
-	}
-	if len(mountMap) > 0 {
 		local.Mounts = mounts
 	}
 

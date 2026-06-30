@@ -22,7 +22,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -85,11 +84,9 @@ func (m *ServiceInstanceCacheManager) useBiz() bool {
 // getServiceInstances 获取服务实例列表
 func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([]*AlarmServiceInstanceInfo, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
-	// 设置超时时间
-	_ = cmdbApi.AddOperationOptions()
-
 	// 批量拉取业务下的服务实例信息
-	results, err := api.BatchApiRequest(
+	results, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize, func(resp any) (int, error) {
 			var res cmdb.ListServiceInstanceDetailResp
 			err := mapstructure.Decode(resp, &res)

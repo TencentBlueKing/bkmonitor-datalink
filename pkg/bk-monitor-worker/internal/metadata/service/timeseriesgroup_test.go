@@ -16,6 +16,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
@@ -135,4 +136,78 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	err = jsonx.UnmarshalString(metricA.TagList, &tagListA)
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"d1", "d2", "target"}, tagListA)
+}
+
+func TestTimeSeriesGroupSvc_UpdateMetricsWhitelistModeSkipsMetricAndRtFieldManagement(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	tsm := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID:            99022113,
+			TableID:             "test_whitelist_update_metrics.base",
+			IsEnable:            true,
+			MaxFutureTimeOffset: -1,
+		},
+		BkTenantId:          "system",
+		TimeSeriesGroupID:   9903344,
+		TimeSeriesGroupName: "test_whitelist_update_metrics_group",
+	}
+
+	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
+	db.Delete(&customreport.TimeSeriesScope{}, "group_id = ?", tsm.TimeSeriesGroupID)
+	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
+	db.Delete(&resulttable.ResultTableOption{}, "bk_tenant_id = ? AND table_id = ?", tsm.BkTenantId, tsm.TableID)
+	defer func() {
+		db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
+		db.Delete(&customreport.TimeSeriesScope{}, "group_id = ?", tsm.TimeSeriesGroupID)
+		db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
+		db.Delete(&resulttable.ResultTableOption{}, "bk_tenant_id = ? AND table_id = ?", tsm.BkTenantId, tsm.TableID)
+	}()
+
+	whiteListModeOption := resulttable.ResultTableOption{
+		OptionBase: models.OptionBase{Value: "false", ValueType: "bool", Creator: "system"},
+		BkTenantId: tsm.BkTenantId,
+		TableID:    tsm.TableID,
+		Name:       models.OptionEnableFieldBlackList,
+	}
+	require.NoError(t, whiteListModeOption.Create(db))
+
+	currTime := time.Now().Unix()
+	metricInfoList := []map[string]any{
+		{
+			"field_name":       "metric_a",
+			"last_modify_time": float64(currTime),
+			"tag_value_list": map[string]any{
+				"endpoint": map[string]any{
+					"last_update_time": currTime,
+					"values":           []any{},
+				},
+				"target": map[string]any{
+					"last_update_time": currTime,
+					"values":           []any{},
+				},
+			},
+			"is_active": true,
+		},
+	}
+
+	svc := NewTimeSeriesGroupSvc(&tsm)
+	updated, err := svc.UpdateMetrics(metricInfoList)
+	require.NoError(t, err)
+	assert.False(t, updated)
+
+	var metricCount int64
+	db.Model(&customreport.TimeSeriesMetric{}).Where("group_id = ?", tsm.TimeSeriesGroupID).Count(&metricCount)
+	assert.Equal(t, int64(0), metricCount)
+
+	var rtFieldCount int64
+	db.Model(&resulttable.ResultTableField{}).Where("table_id = ?", tsm.TableID).Count(&rtFieldCount)
+	assert.Equal(t, int64(0), rtFieldCount)
+
+	var scope customreport.TimeSeriesScope
+	err = customreport.NewTimeSeriesScopeQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).ScopeNameEq("default").One(&scope)
+	require.NoError(t, err)
+	assert.Contains(t, scope.DimensionConfig, "endpoint")
+	assert.Contains(t, scope.DimensionConfig, "target")
 }

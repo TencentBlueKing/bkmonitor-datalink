@@ -179,7 +179,7 @@ func (g *LivenessGraph) collectTargetPaths(
 		nextPathIdx >= len(pathResource) &&
 		(includeRootTarget || len(edgePeriods) > 0) &&
 		(!directOnly || len(edgePeriods) <= 1) &&
-		g.nodeOverlapsQuery(node) {
+		g.pathOverlapsQuery(currentNodePeriods, edgePeriods) {
 		*result = append(*result, &TargetPath{Target: node, NodePeriods: currentNodePeriods, EdgePeriods: edgePeriods})
 	}
 
@@ -239,17 +239,62 @@ func (g *LivenessGraph) outEdgesFromMap(resourceID string) []*EdgeLiveness {
 	return edges
 }
 
-func (g *LivenessGraph) nodeOverlapsQuery(node *NodeLiveness) bool {
-	if node == nil || len(node.RawPeriods) == 0 {
+func (g *LivenessGraph) pathOverlapsQuery(nodePeriods, edgePeriods [][]*VisiblePeriod) bool {
+	periodGroups := make([][]*VisiblePeriod, 0, len(nodePeriods)+len(edgePeriods))
+	periodGroups = append(periodGroups, nodePeriods...)
+	periodGroups = append(periodGroups, edgePeriods...)
+	if len(periodGroups) == 0 {
 		return false
 	}
+
 	if g.QueryStart == 0 && g.QueryEnd == 0 {
+		for _, periods := range periodGroups {
+			if len(nonNilPeriods(periods)) == 0 {
+				return false
+			}
+		}
 		return true
 	}
-	for _, period := range node.RawPeriods {
-		if period != nil && period.End >= g.QueryStart && period.Start <= g.QueryEnd {
-			return true
+
+	candidates := []VisiblePeriod{{Start: g.QueryStart, End: g.QueryEnd}}
+	for _, periods := range periodGroups {
+		candidates = intersectVisiblePeriods(candidates, periods)
+		if len(candidates) == 0 {
+			return false
 		}
 	}
-	return false
+	return true
+}
+
+func nonNilPeriods(periods []*VisiblePeriod) []*VisiblePeriod {
+	result := make([]*VisiblePeriod, 0, len(periods))
+	for _, period := range periods {
+		if period != nil {
+			result = append(result, period)
+		}
+	}
+	return result
+}
+
+func intersectVisiblePeriods(left []VisiblePeriod, right []*VisiblePeriod) []VisiblePeriod {
+	result := make([]VisiblePeriod, 0)
+	for _, l := range left {
+		for _, r := range right {
+			if r == nil {
+				continue
+			}
+			start := l.Start
+			if r.Start > start {
+				start = r.Start
+			}
+			end := l.End
+			if r.End < end {
+				end = r.End
+			}
+			if start <= end {
+				result = append(result, VisiblePeriod{Start: start, End: end})
+			}
+		}
+	}
+	return result
 }

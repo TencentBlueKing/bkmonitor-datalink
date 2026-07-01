@@ -136,8 +136,10 @@ func normalizePathResource(source, target ResourceType, pathResource []ResourceT
 
 	pathConstraint := make([]ResourceType, 0, len(pathResource))
 	hasEndpointConstraint := false
+	hasDirectOnlyConstraint := false
 	for _, resourceType := range pathResource {
 		if resourceType == "" {
+			hasDirectOnlyConstraint = true
 			continue
 		}
 		if resourceType == source || resourceType == target {
@@ -147,7 +149,7 @@ func normalizePathResource(source, target ResourceType, pathResource []ResourceT
 		pathConstraint = append(pathConstraint, resourceType)
 	}
 
-	directOnly := len(pathConstraint) == 0 && hasEndpointConstraint
+	directOnly := len(pathConstraint) == 0 && (hasEndpointConstraint || hasDirectOnlyConstraint)
 	return pathConstraint, directOnly
 }
 

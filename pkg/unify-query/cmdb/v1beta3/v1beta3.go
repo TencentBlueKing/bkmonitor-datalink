@@ -278,7 +278,7 @@ func (m *Model) QueryResourceMatcherRange(
 	result = buildTargetMatchersTimeSeriesWithOptions(
 		graphs,
 		req.TargetType,
-		req.PathResource,
+		targetExtractionPathResource(req),
 		start,
 		end,
 		stepMs,
@@ -363,7 +363,7 @@ func (m *Model) QueryDynamicPathsRange(
 	result = buildTargetMatchersTimeSeriesWithOptions(
 		graphs,
 		req.TargetType,
-		req.PathResource,
+		targetExtractionPathResource(req),
 		start,
 		end,
 		stepMs,
@@ -397,6 +397,8 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	if implicitSelfTarget {
 		req.MaxHops = 0
 		req.PathResource = nil
+	} else if isExplicitDirectSelfTarget(req) {
+		req.MaxHops = 1
 	}
 
 	if err := validateQueryResources(req, provider); err != nil {
@@ -457,7 +459,7 @@ func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (grap
 	matchers = extractMatchersFromGraphsWithOptions(
 		graphs,
 		req.TargetType,
-		req.PathResource,
+		targetExtractionPathResource(req),
 		provider,
 		req.SchemaNamespace(),
 		req.TargetInfoShow,
@@ -558,6 +560,17 @@ func shouldIncludeRootTarget(req *QueryRequest) bool {
 	return !req.TargetTypeExplicit || req.SourceType != req.TargetType
 }
 
+func isExplicitDirectSelfTarget(req *QueryRequest) bool {
+	return req != nil && req.TargetTypeExplicit && req.SourceType == req.TargetType && len(req.PathResource) == 0
+}
+
+func targetExtractionPathResource(req *QueryRequest) []ResourceType {
+	if isExplicitDirectSelfTarget(req) {
+		return []ResourceType{req.SourceType}
+	}
+	return req.PathResource
+}
+
 func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (ResourceType, error) {
 	if req == nil {
 		return "", fmt.Errorf("query request cannot be nil")
@@ -641,6 +654,31 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 		}
 		if _, ok := known[resourceType]; !ok {
 			return fmt.Errorf("unknown path resource type %q", resourceType)
+		}
+	}
+	if err := validateSourceInfoFields(req, provider); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSourceInfoFields(req *QueryRequest, provider SchemaProvider) error {
+	if req == nil || len(req.SourceInfo) == 0 {
+		return nil
+	}
+
+	primaryKeys := provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType)
+	if len(primaryKeys) == 0 {
+		return fmt.Errorf("source type %q has no primary keys for source_info", req.SourceType)
+	}
+
+	allowed := make(map[string]struct{}, len(primaryKeys))
+	for _, key := range primaryKeys {
+		allowed[key] = struct{}{}
+	}
+	for key := range req.SourceInfo {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unknown source_info field %q for source type %q", key, req.SourceType)
 		}
 	}
 	return nil

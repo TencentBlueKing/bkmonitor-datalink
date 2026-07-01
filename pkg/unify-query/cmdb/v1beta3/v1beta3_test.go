@@ -149,6 +149,7 @@ func TestQueryResourceMatcher(t *testing.T) {
 							Category:     RelationCategoryStatic,
 							FromID:       "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
 							ToID:         "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩",
+							RawPeriods:   []*VisiblePeriod{{Start: 100000, End: 500000}},
 						},
 						"node_with_pod:2": {
 							RelationID:   "node_with_pod:2",
@@ -156,6 +157,7 @@ func TestQueryResourceMatcher(t *testing.T) {
 							Category:     RelationCategoryStatic,
 							FromID:       "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
 							ToID:         "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=kube-system,pod=coredns-1⟩",
+							RawPeriods:   []*VisiblePeriod{{Start: 200000, End: 500000}},
 						},
 					},
 				},
@@ -595,6 +597,41 @@ func TestQueryLivenessGraphRejectsUnknownResourceType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "unknown resource type")
+}
+
+func TestQueryLivenessGraphRejectsUnknownSourceInfoField(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom_source": {"custom_id"},
+			"custom_target": {"target_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom_source_to_custom_target",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "custom_source",
+				ToType:       "custom_target",
+			},
+		},
+	})
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, _, _, err = model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id":   "source-1",
+			"custom_typo": "typo",
+		},
+		TargetType: "custom_target",
+		MaxHops:    1,
+	})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `unknown source_info field "custom_typo"`)
 }
 
 func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
@@ -1194,8 +1231,18 @@ func TestQueryResourceMatcherRangeUsesFullRangeLookback(t *testing.T) {
 
 func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
 	graph := NewLivenessGraph(0, 200)
-	root := &NodeLiveness{ResourceID: "node:1", ResourceType: ResourceTypeNode, Labels: map[string]string{"node": "node-1"}}
-	system := &NodeLiveness{ResourceID: "system:1", ResourceType: ResourceTypeSystem, Labels: map[string]string{"system": "system-1"}}
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	system := &NodeLiveness{
+		ResourceID:   "system:1",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"system": "system-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
 	podViaSystem := &NodeLiveness{
 		ResourceID:   "pod:via-system",
 		ResourceType: ResourceTypePod,
@@ -1212,9 +1259,9 @@ func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
 	graph.AddNode(system)
 	graph.AddNode(podViaSystem)
 	graph.AddNode(podDirect)
-	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: root.ResourceID, ToID: system.ResourceID})
-	graph.AddEdge(&EdgeLiveness{RelationID: "system-pod", FromID: system.ResourceID, ToID: podViaSystem.ResourceID})
-	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: podDirect.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: root.ResourceID, ToID: system.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-pod", FromID: system.ResourceID, ToID: podViaSystem.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: podDirect.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
 
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, []ResourceType{ResourceTypeSystem})
 
@@ -1258,10 +1305,10 @@ func TestQueryResourceMatcherPathResourceAllowsUnconstrainedIntermediateHops(t *
 	graph.AddNode(system)
 	graph.AddNode(hostViaSystem)
 	graph.AddNode(hostDirect)
-	graph.AddEdge(&EdgeLiveness{RelationID: "pod-node", FromID: pod.ResourceID, ToID: node.ResourceID})
-	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: node.ResourceID, ToID: system.ResourceID})
-	graph.AddEdge(&EdgeLiveness{RelationID: "system-host", FromID: system.ResourceID, ToID: hostViaSystem.ResourceID})
-	graph.AddEdge(&EdgeLiveness{RelationID: "pod-host", FromID: pod.ResourceID, ToID: hostDirect.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "pod-node", FromID: pod.ResourceID, ToID: node.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: node.ResourceID, ToID: system.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-host", FromID: system.ResourceID, ToID: hostViaSystem.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "pod-host", FromID: pod.ResourceID, ToID: hostDirect.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
 
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
 
@@ -1288,6 +1335,60 @@ func TestExtractMatchersFiltersInactiveInstantTargets(t *testing.T) {
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, nil)
 
 	assert.Nil(t, matchers)
+}
+
+func TestExtractMatchersRequiresPathWideInstantOverlap(t *testing.T) {
+	testCases := []struct {
+		name     string
+		root     []*VisiblePeriod
+		edge     []*VisiblePeriod
+		target   []*VisiblePeriod
+		expected cmdb.Matchers
+	}{
+		{
+			name:   "path_has_no_common_active_window",
+			root:   []*VisiblePeriod{{Start: 0, End: 50}},
+			edge:   []*VisiblePeriod{{Start: 0, End: 50}},
+			target: []*VisiblePeriod{{Start: 100, End: 200}},
+		},
+		{
+			name:     "path_has_common_active_window",
+			root:     []*VisiblePeriod{{Start: 0, End: 150}},
+			edge:     []*VisiblePeriod{{Start: 50, End: 150}},
+			target:   []*VisiblePeriod{{Start: 100, End: 200}},
+			expected: cmdb.Matchers{{"pod": "nginx-1"}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			graph := NewLivenessGraph(0, 200)
+			root := &NodeLiveness{
+				ResourceID:   "node:1",
+				ResourceType: ResourceTypeNode,
+				Labels:       map[string]string{"node": "node-1"},
+				RawPeriods:   tc.root,
+			}
+			pod := &NodeLiveness{
+				ResourceID:   "pod:1",
+				ResourceType: ResourceTypePod,
+				Labels:       map[string]string{"pod": "nginx-1"},
+				RawPeriods:   tc.target,
+			}
+			graph.AddNode(root)
+			graph.AddNode(pod)
+			graph.AddEdge(&EdgeLiveness{
+				RelationID: "node-pod",
+				FromID:     root.ResourceID,
+				ToID:       pod.ResourceID,
+				RawPeriods: tc.edge,
+			})
+
+			matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, nil)
+
+			assert.Equal(t, tc.expected, matchers)
+		})
+	}
 }
 
 func TestExtractMatchersSkipsRootForExplicitSelfTarget(t *testing.T) {
@@ -1322,6 +1423,110 @@ func TestExtractMatchersSkipsRootForExplicitSelfTarget(t *testing.T) {
 	assert.Nil(t, explicitSelfTarget)
 }
 
+func TestQueryLivenessGraphConstrainsExplicitSameTypeTargetsToSelfRelation(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "system_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "system",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+			{
+				RelationName:  "system_to_pod",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "system",
+				ToType:        "pod",
+				IsDirectional: true,
+			},
+			{
+				RelationName:  "pod_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	periods := []*VisiblePeriod{{Start: 0, End: 200}}
+	graph := NewLivenessGraph(0, 200)
+	source := &NodeLiveness{
+		ResourceID:   "system:source",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "source"},
+		RawPeriods:   periods,
+	}
+	directTarget := &NodeLiveness{
+		ResourceID:   "system:direct",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "direct"},
+		RawPeriods:   periods,
+	}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "pod-1"},
+		RawPeriods:   periods,
+	}
+	indirectTarget := &NodeLiveness{
+		ResourceID:   "system:indirect",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "indirect"},
+		RawPeriods:   periods,
+	}
+	graph.AddNode(source)
+	graph.AddNode(directTarget)
+	graph.AddNode(pod)
+	graph.AddNode(indirectTarget)
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-system", FromID: source.ResourceID, ToID: directTarget.ResourceID, RawPeriods: periods})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-pod", FromID: source.ResourceID, ToID: pod.ResourceID, RawPeriods: periods})
+	graph.AddEdge(&EdgeLiveness{RelationID: "pod-system", FromID: pod.ResourceID, ToID: indirectTarget.ResourceID, RawPeriods: periods})
+
+	executor := &mockGraphQueryExecutor{graphs: []*LivenessGraph{graph}}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, paths, matchers, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:          200,
+		LookBackDelta:      200,
+		SourceType:         ResourceTypeSystem,
+		SourceInfo:         map[string]string{"bk_target_ip": "source"},
+		TargetType:         ResourceTypeSystem,
+		TargetTypeExplicit: true,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{
+		{Steps: []cmdb.PathStepV2{
+			{ResourceType: "system"},
+			{
+				ResourceType: "system",
+				RelationType: "system_to_system",
+				Category:     "dynamic",
+				Direction:    "outbound",
+			},
+		}},
+		{Steps: []cmdb.PathStepV2{
+			{ResourceType: "system"},
+			{
+				ResourceType: "system",
+				RelationType: "system_to_system",
+				Category:     "dynamic",
+				Direction:    "inbound",
+			},
+		}},
+	}, paths)
+	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "direct"}}, matchers)
+	assert.NotContains(t, executor.sql, "hop2")
+}
+
 func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
 	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
 		resources: map[string]map[string]*relation.ResourceDefinition{
@@ -1345,7 +1550,7 @@ func TestExtractMatchersRespectsTargetInfoShow(t *testing.T) {
 	}
 	graph.AddNode(root)
 	graph.AddNode(pod)
-	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: pod.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-pod", FromID: root.ResourceID, ToID: pod.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
 
 	withoutInfo := extractMatchersFromGraphsWithOptions(
 		[]*LivenessGraph{graph},

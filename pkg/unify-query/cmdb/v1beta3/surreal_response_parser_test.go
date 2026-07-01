@@ -10,6 +10,7 @@
 package v1beta3
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1468,6 +1469,15 @@ func TestSurrealResponseParser_parseLivenessPeriods(t *testing.T) {
 		periods := parser.parseLivenessPeriods(data)
 		assert.Equal(t, []*VisiblePeriod{{Start: 1000, End: 1500}}, periods)
 	})
+
+	t.Run("json number values", func(t *testing.T) {
+		data := []any{
+			map[string]any{"period_start": json.Number("1000"), "period_end": json.Number("1500")},
+		}
+
+		periods := parser.parseLivenessPeriods(data)
+		assert.Equal(t, []*VisiblePeriod{{Start: 1000, End: 1500}}, periods)
+	})
 }
 
 func TestSurrealResponseParser_toInt64(t *testing.T) {
@@ -1490,6 +1500,11 @@ func TestSurrealResponseParser_toInt64(t *testing.T) {
 
 	t.Run("string", func(t *testing.T) {
 		result := parser.toInt64("1234")
+		assert.Equal(t, int64(1234), result)
+	})
+
+	t.Run("json.Number", func(t *testing.T) {
+		result := parser.toInt64(json.Number("1234"))
 		assert.Equal(t, int64(1234), result)
 	})
 

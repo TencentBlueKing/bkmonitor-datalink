@@ -10,6 +10,7 @@
 package v1beta3
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -255,6 +256,15 @@ func (p *SurrealResponseParser) toInt64(v any) int64 {
 		return n
 	case int:
 		return int64(n)
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return i
+		}
+		f, err := n.Float64()
+		if err == nil {
+			return int64(f)
+		}
 	case string:
 		var i int64
 		fmt.Sscanf(n, "%d", &i)

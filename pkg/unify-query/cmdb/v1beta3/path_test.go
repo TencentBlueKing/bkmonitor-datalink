@@ -44,6 +44,21 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			},
 		},
 		{
+			Name:             "empty_path_resource_keeps_direct_only_semantics",
+			Source:           ResourceTypeNode,
+			Target:           ResourceTypeSystem,
+			PathResource:     []ResourceType{""},
+			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
+			DynamicDirection: DirectionBoth,
+			MaxHops:          3,
+			Expected: []cmdb.PathV2{
+				{Steps: []cmdb.PathStepV2{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
+				}},
+			},
+		},
+		{
 			Name:             "system_to_pod_dynamic_outbound",
 			Source:           ResourceTypeSystem,
 			Target:           ResourceTypePod,

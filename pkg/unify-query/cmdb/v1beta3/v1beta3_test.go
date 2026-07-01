@@ -679,6 +679,47 @@ func TestQueryLivenessGraphProjectsTargetInfoFields(t *testing.T) {
 	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id, version: target_id.version }")
 }
 
+func TestSurrealQueryBuilderProjectsRootInfoFieldsForImplicitTarget(t *testing.T) {
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"custom_source": resourceDefinitionWithFields("custom_source", []string{"custom_id"}, "version"),
+			},
+		},
+	})
+
+	builder := NewSurrealQueryBuilderWithSchemaProvider(&QueryRequest{
+		Timestamp:      300000,
+		SourceType:     "custom_source",
+		TargetInfoShow: true,
+	}, provider)
+
+	sql := builder.buildRootSelect()
+	assert.Contains(t, sql, "entity_data: { custom_id: custom_id, version: version }")
+}
+
+func TestSurrealQueryBuilderKeepsRootPrimaryKeysForExplicitSameTypeTarget(t *testing.T) {
+	provider := NewSchemaProviderFromRelation(&namespaceRelationProvider{
+		resources: map[string]map[string]*relation.ResourceDefinition{
+			relation.NamespaceAll: {
+				"custom_source": resourceDefinitionWithFields("custom_source", []string{"custom_id"}, "version"),
+			},
+		},
+	})
+
+	builder := NewSurrealQueryBuilderWithSchemaProvider(&QueryRequest{
+		Timestamp:          300000,
+		SourceType:         "custom_source",
+		TargetType:         "custom_source",
+		TargetTypeExplicit: true,
+		TargetInfoShow:     true,
+	}, provider)
+
+	sql := builder.buildRootSelect()
+	assert.Contains(t, sql, "entity_data: { custom_id: custom_id }")
+	assert.NotContains(t, sql, "version: version")
+}
+
 func TestInitSchemaProviderRefreshesDefaultModel(t *testing.T) {
 	ctx := context.Background()
 	InitSchemaProvider(nil)
@@ -1178,6 +1219,53 @@ func TestQueryResourceMatcherFiltersTargetsByPathResource(t *testing.T) {
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, []ResourceType{ResourceTypeSystem})
 
 	assert.Equal(t, cmdb.Matchers{{"pod": "via-system"}}, matchers)
+}
+
+func TestQueryResourceMatcherPathResourceAllowsUnconstrainedIntermediateHops(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "root"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	node := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	system := &NodeLiveness{
+		ResourceID:   "system:1",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"system": "system-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	hostViaSystem := &NodeLiveness{
+		ResourceID:   "host:via-system",
+		ResourceType: ResourceTypeHost,
+		Labels:       map[string]string{"bk_host_id": "via-system"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	hostDirect := &NodeLiveness{
+		ResourceID:   "host:direct",
+		ResourceType: ResourceTypeHost,
+		Labels:       map[string]string{"bk_host_id": "direct"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(pod)
+	graph.AddNode(node)
+	graph.AddNode(system)
+	graph.AddNode(hostViaSystem)
+	graph.AddNode(hostDirect)
+	graph.AddEdge(&EdgeLiveness{RelationID: "pod-node", FromID: pod.ResourceID, ToID: node.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: node.ResourceID, ToID: system.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-host", FromID: system.ResourceID, ToID: hostViaSystem.ResourceID})
+	graph.AddEdge(&EdgeLiveness{RelationID: "pod-host", FromID: pod.ResourceID, ToID: hostDirect.ResourceID})
+
+	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
+
+	assert.Equal(t, cmdb.Matchers{{"bk_host_id": "via-system"}}, matchers)
 }
 
 func TestExtractMatchersFiltersInactiveInstantTargets(t *testing.T) {

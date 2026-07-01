@@ -84,20 +84,24 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]cmdb.PathV2, error) {
-	if source == target {
-		paths := pf.findSelfRelationPaths(source, pathResource)
+	if source == target && len(pathResource) == 0 {
+		paths := pf.findSelfRelationPaths(source)
 		if len(paths) > 0 {
 			return paths, nil
 		}
 		return []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: string(source)}}}}, nil
 	}
 
+	pathConstraint, directOnly := normalizePathResource(source, target, pathResource)
 	var results []cmdb.PathV2
 	visited := make(map[ResourceType]bool)
 	currentPath := []cmdb.PathStepV2{{ResourceType: string(source)}}
 	visited[source] = true
 
-	pf.dfs(source, target, pathResource, 0, visited, currentPath, &results)
+	pf.dfs(source, target, pathConstraint, visited, currentPath, &results)
+	if directOnly {
+		results = filterDirectPaths(results)
+	}
 
 	if len(results) == 0 {
 		return nil, fmt.Errorf("empty paths with %s => %s through %v", source, target, pathResource)
@@ -106,11 +110,7 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	return results, nil
 }
 
-func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType, pathResource []ResourceType) []cmdb.PathV2 {
-	if len(pathResource) > 0 {
-		return nil
-	}
-
+func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []cmdb.PathV2 {
 	var results []cmdb.PathV2
 	for _, rel := range pf.getRelationsForType(resourceType) {
 		if rel.TargetType != resourceType {
@@ -129,11 +129,42 @@ func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType, pathResou
 	return results
 }
 
+func normalizePathResource(source, target ResourceType, pathResource []ResourceType) ([]ResourceType, bool) {
+	if len(pathResource) == 0 {
+		return nil, false
+	}
+
+	pathConstraint := make([]ResourceType, 0, len(pathResource))
+	hasEndpointConstraint := false
+	for _, resourceType := range pathResource {
+		if resourceType == "" {
+			continue
+		}
+		if resourceType == source || resourceType == target {
+			hasEndpointConstraint = true
+			continue
+		}
+		pathConstraint = append(pathConstraint, resourceType)
+	}
+
+	directOnly := len(pathConstraint) == 0 && hasEndpointConstraint
+	return pathConstraint, directOnly
+}
+
+func filterDirectPaths(paths []cmdb.PathV2) []cmdb.PathV2 {
+	result := make([]cmdb.PathV2, 0, len(paths))
+	for _, path := range paths {
+		if len(path.Steps) == 2 {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
 // dfs 深度优先搜索所有路径
 func (pf *PathFinder) dfs(
 	current, target ResourceType,
 	pathResource []ResourceType,
-	pathIdx int,
 	visited map[ResourceType]bool,
 	currentPath []cmdb.PathStepV2,
 	results *[]cmdb.PathV2,
@@ -142,7 +173,7 @@ func (pf *PathFinder) dfs(
 		return
 	}
 
-	if current == target {
+	if current == target && len(currentPath) > 1 {
 		if pf.satisfiesPathConstraint(currentPath, pathResource) {
 			pathCopy := make([]cmdb.PathStepV2, len(currentPath))
 			copy(pathCopy, currentPath)
@@ -155,17 +186,14 @@ func (pf *PathFinder) dfs(
 
 	for _, rel := range relations {
 		nextType := rel.TargetType
-		if visited[nextType] {
+		wasVisited := visited[nextType]
+		if wasVisited && nextType != target {
 			continue
 		}
 
-		if len(pathResource) > 0 && pathIdx < len(pathResource) {
-			if nextType != pathResource[pathIdx] && nextType != target {
-				continue
-			}
+		if !wasVisited {
+			visited[nextType] = true
 		}
-
-		visited[nextType] = true
 		nextStep := cmdb.PathStepV2{
 			ResourceType: string(nextType),
 			RelationType: string(rel.Schema.RelationType),
@@ -174,15 +202,12 @@ func (pf *PathFinder) dfs(
 		}
 		currentPath = append(currentPath, nextStep)
 
-		nextPathIdx := pathIdx
-		if len(pathResource) > 0 && pathIdx < len(pathResource) && nextType == pathResource[pathIdx] {
-			nextPathIdx++
-		}
-
-		pf.dfs(nextType, target, pathResource, nextPathIdx, visited, currentPath, results)
+		pf.dfs(nextType, target, pathResource, visited, currentPath, results)
 
 		currentPath = currentPath[:len(currentPath)-1]
-		visited[nextType] = false
+		if !wasVisited {
+			visited[nextType] = false
+		}
 	}
 }
 

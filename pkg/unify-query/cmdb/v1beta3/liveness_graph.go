@@ -141,8 +141,13 @@ func (g *LivenessGraph) TargetPaths(
 
 	var result []*TargetPath
 	for _, rootID := range g.rootNodeIDs() {
+		root := g.Nodes[rootID]
+		if root == nil {
+			continue
+		}
+		pathConstraint, directOnly := normalizePathResource(root.ResourceType, targetType, pathResource)
 		visited := map[string]bool{rootID: true}
-		g.collectTargetPaths(rootID, targetType, pathResource, 0, nil, nil, visited, includeRootTarget, &result)
+		g.collectTargetPaths(rootID, targetType, pathConstraint, 0, nil, nil, visited, includeRootTarget, directOnly, &result)
 	}
 	return result
 }
@@ -156,6 +161,7 @@ func (g *LivenessGraph) collectTargetPaths(
 	edgePeriods [][]*VisiblePeriod,
 	visited map[string]bool,
 	includeRootTarget bool,
+	directOnly bool,
 	result *[]*TargetPath,
 ) {
 	node := g.Nodes[nodeID]
@@ -172,6 +178,7 @@ func (g *LivenessGraph) collectTargetPaths(
 	if node.ResourceType == targetType &&
 		nextPathIdx >= len(pathResource) &&
 		(includeRootTarget || len(edgePeriods) > 0) &&
+		(!directOnly || len(edgePeriods) <= 1) &&
 		g.nodeOverlapsQuery(node) {
 		*result = append(*result, &TargetPath{Target: node, NodePeriods: currentNodePeriods, EdgePeriods: edgePeriods})
 	}
@@ -182,10 +189,6 @@ func (g *LivenessGraph) collectTargetPaths(
 		}
 		target := g.Nodes[edge.ToID]
 		if target == nil {
-			continue
-		}
-		if len(pathResource) > 0 && nextPathIdx < len(pathResource) &&
-			target.ResourceType != pathResource[nextPathIdx] && target.ResourceType != targetType {
 			continue
 		}
 		visited[edge.ToID] = true
@@ -199,6 +202,7 @@ func (g *LivenessGraph) collectTargetPaths(
 			nextEdgePeriods,
 			visited,
 			includeRootTarget,
+			directOnly,
 			result,
 		)
 		visited[edge.ToID] = false

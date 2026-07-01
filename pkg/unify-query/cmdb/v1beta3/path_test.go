@@ -257,6 +257,117 @@ func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T)
 	}}}, paths)
 }
 
+func TestPathFinderFindAllPathsSameResourceWithPathResourceSearchesConstrainedPath(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "system_to_pod",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "system",
+				ToType:        "pod",
+				IsDirectional: true,
+			},
+			{
+				RelationName:  "pod_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryDynamic),
+		WithDynamicDirection(DirectionOutbound),
+		WithMaxHops(2),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, []ResourceType{ResourceTypePod})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "system"},
+		{
+			ResourceType: "pod",
+			RelationType: "system_to_pod",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+		{
+			ResourceType: "system",
+			RelationType: "pod_to_system",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderFindAllPathsPathResourceAllowsUnconstrainedIntermediateHops(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"node":   {"node"},
+			"system": {"bk_target_ip"},
+			"host":   {"bk_host_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "node_with_pod",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "pod",
+			},
+			{
+				RelationName: "node_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "system",
+			},
+			{
+				RelationName: "host_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "host",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(3),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "node",
+			RelationType: "node_with_pod",
+			Category:     "static",
+			Direction:    "inbound",
+		},
+		{
+			ResourceType: "system",
+			RelationType: "node_with_system",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+		{
+			ResourceType: "host",
+			RelationType: "host_with_system",
+			Category:     "static",
+			Direction:    "inbound",
+		},
+	}}}, paths)
+}
+
 func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing.T) {
 	config := relation.DefaultStaticProviderConfig()
 

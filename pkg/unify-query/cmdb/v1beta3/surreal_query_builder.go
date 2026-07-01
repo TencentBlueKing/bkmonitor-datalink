@@ -140,7 +140,7 @@ func (b *SurrealQueryBuilder) buildMainQuery() string {
 // buildRootSelect 构建 Root 实体的 SELECT 结构
 func (b *SurrealQueryBuilder) buildRootSelect() string {
 	sourceType := b.request.SourceType
-	primaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, sourceType)
+	rootFields := b.rootEntityDataFields(sourceType)
 	livenessTable := GetLivenessRecordTableName(sourceType)
 	livenessIDField := GetLivenessIDField(sourceType)
 
@@ -152,9 +152,19 @@ func (b *SurrealQueryBuilder) buildRootSelect() string {
         updated_at: updated_at,
         liveness: `+tplLivenessSelect+`
     }`,
-		buildEntityDataFields(primaryKeys, ""),
+		buildEntityDataFields(rootFields, ""),
 		livenessTable,
 		livenessIDField)
+}
+
+func (b *SurrealQueryBuilder) rootEntityDataFields(sourceType ResourceType) []string {
+	fields := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, sourceType)
+	if b.request.TargetInfoShow && !b.request.TargetTypeExplicit && b.request.TargetType == sourceType {
+		if infoFields := b.schemaProvider.GetResourceFields(b.namespace, sourceType); len(infoFields) > 0 {
+			fields = infoFields
+		}
+	}
+	return fields
 }
 
 func (b *SurrealQueryBuilder) targetEntityDataFields(targetType ResourceType) []string {

@@ -19,7 +19,17 @@ var webVitalsDefs = []struct{ metric, key string }{
 	{"lcp", "LCP"},
 	{"fid", "FID"},
 	{"inp", "INP"},
+	{"ttfb", "TTFB"},
 	{"cls", "CLS"},
+}
+
+// webVitalsDurationDefs 仅包含时长类指标（单位 ms）。
+var webVitalsDurationDefs = []struct{ metric, key string }{
+	{"fcp", "FCP"},
+	{"lcp", "LCP"},
+	{"fid", "FID"},
+	{"inp", "INP"},
+	{"ttfb", "TTFB"},
 }
 
 // vitalThresholds 定义 Web Vital 指标的质量阈值
@@ -29,11 +39,12 @@ type vitalThresholds struct {
 }
 
 var vitalRatingConfig = map[string]vitalThresholds{
-	"fcp": {1800, 3000}, // FCP: Good ≤ 1.8s, Needs Improvement ≤ 3s
-	"lcp": {2500, 4000}, // LCP: Good ≤ 2.5s, Needs Improvement ≤ 4s
-	"fid": {100, 300},   // FID: Good ≤ 100ms, Needs Improvement ≤ 300ms
-	"inp": {200, 500},   // INP: Good ≤ 200ms, Needs Improvement ≤ 500ms
-	"cls": {0.1, 0.25},  // CLS: Good ≤ 0.1, Needs Improvement ≤ 0.25
+	"fcp":  {1800, 3000}, // FCP: Good ≤ 1.8s, Needs Improvement ≤ 3s
+	"lcp":  {2500, 4000}, // LCP: Good ≤ 2.5s, Needs Improvement ≤ 4s
+	"fid":  {100, 300},   // FID: Good ≤ 100ms, Needs Improvement ≤ 300ms
+	"inp":  {200, 500},   // INP: Good ≤ 200ms, Needs Improvement ≤ 500ms
+	"ttfb": {800, 1800},  // TTFB: Good ≤ 0.8s, Needs Improvement ≤ 1.8s
+	"cls":  {0.1, 0.25},  // CLS: Good ≤ 0.1, Needs Improvement ≤ 0.25
 }
 
 // appendWebVitalsSpans 将一条 web_vitals 消息拆解为每个指标各自独立的 Span。
@@ -81,21 +92,22 @@ func newWebVitalsCollector() *webVitalsCollector {
 }
 
 func (c *webVitalsCollector) collect(event aegisEvent, timestamp pcommon.Timestamp, pageURL, netType string) {
-	for _, def := range webVitalsDefs {
+	for _, def := range webVitalsDurationDefs {
 		value, ok := extractFloat64(event.msg.raw, def.key)
 		if !ok || value < 0 {
 			continue
 		}
 		c.data = append(c.data, webVitalDataPoint{
-			timestamp:  timestamp,
-			metricName: def.metric,
-			value:      value,
-			sessionID:  event.record.Fields.Session.ID,
-			viewID:     event.record.Fields.View.ID,
-			viewName:   event.record.Fields.View.ViewName,
-			viewURL:    event.record.Fields.View.ViewURL,
-			pageURL:    pageURL,
-			netType:    netType,
+			timestamp:   timestamp,
+			metricName:  def.metric,
+			value:       value,
+			sessionID:   event.record.Fields.Session.ID,
+			viewID:      event.record.Fields.View.ID,
+			viewName:    event.record.Fields.View.ViewName,
+			loadingType: event.record.Fields.View.LoadingType,
+			viewURL:     event.record.Fields.View.ViewURL,
+			pageURL:     pageURL,
+			netType:     netType,
 		})
 	}
 }
@@ -124,19 +136,21 @@ func newWebVitalsHistogram(scopeMetrics pmetric.ScopeMetrics) pmetric.Histogram 
 }
 
 type webVitalDataPoint struct {
-	timestamp  pcommon.Timestamp
-	metricName string
-	value      float64
-	sessionID  string
-	viewID     string
-	viewName   string
-	viewURL    string
-	pageURL    string
-	netType    string
+	timestamp   pcommon.Timestamp
+	metricName  string
+	value       float64
+	sessionID   string
+	viewID      string
+	viewName    string
+	loadingType string
+	viewURL     string
+	pageURL     string
+	netType     string
 }
 
 func (d webVitalDataPoint) appendTo(histogram pmetric.Histogram) {
 	dataPoint := histogram.DataPoints().AppendEmpty()
+	dataPoint.SetStartTimestamp(d.timestamp)
 	dataPoint.SetTimestamp(d.timestamp)
 	dataPoint.SetCount(1)
 	dataPoint.SetSum(d.value)

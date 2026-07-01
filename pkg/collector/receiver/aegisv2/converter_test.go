@@ -920,21 +920,42 @@ func TestDecodeAegisV2Metrics_WebVitals(t *testing.T) {
 
 	// FID=-1 和 INP=-1 跳过，预期 FCP、LCP、CLS 三个数据点
 	hist := m.Histogram()
-	assert.Equal(t, 3, hist.DataPoints().Len())
+	assert.Equal(t, 2, hist.DataPoints().Len())
 
 	// 验证数据点
 	metricSet := make(map[string]bool)
+	metricDP := make(map[string]int)
 	for i := 0; i < hist.DataPoints().Len(); i++ {
 		dp := hist.DataPoints().At(i)
 		metric, _ := dp.Attributes().Get("vital.metric")
 		metricSet[metric.AsString()] = true
+		metricDP[metric.AsString()] = i
 		assert.Equal(t, uint64(1), dp.Count())
 	}
 	assert.True(t, metricSet["fcp"])
 	assert.True(t, metricSet["lcp"])
-	assert.True(t, metricSet["cls"])
+	assert.False(t, metricSet["cls"])
 	assert.False(t, metricSet["fid"])
 	assert.False(t, metricSet["inp"])
+
+	// LCP=452ms 应落在 <500 的桶（Prometheus 累计桶语义下对应 le="500" 桶及以上都会累加）。
+	lcpIdx, ok := metricDP["lcp"]
+	require.True(t, ok)
+	lcpDP := hist.DataPoints().At(lcpIdx)
+	bounds := lcpDP.MExplicitBounds()
+	assert.Equal(t, histogramBoundsMS, bounds)
+	bucketCounts := lcpDP.MBucketCounts()
+	require.Len(t, bucketCounts, len(bounds)+1)
+
+	lcpBucketIdx := findBucketIndex(452, bounds)
+	assert.Equal(t, 8, lcpBucketIdx)
+	for i := range bucketCounts {
+		if i == lcpBucketIdx {
+			assert.Equal(t, uint64(1), bucketCounts[i])
+		} else {
+			assert.Equal(t, uint64(0), bucketCounts[i])
+		}
+	}
 }
 
 func TestDecodeAegisV2Metrics_WebVitalsDataPointAttrs(t *testing.T) {
@@ -984,6 +1005,72 @@ func TestDecodeAegisV2Metrics_WebVitalsDataPointAttrs(t *testing.T) {
 	assert.Equal(t, "wifi", netType.AsString())
 	urlFull, _ := dpAttrs.Get("url.full")
 	assert.Equal(t, "https://example.com/", urlFull.AsString())
+}
+
+func TestDecodeAegisV2Metrics_OTELStructureAndFieldMapping(t *testing.T) {
+	buf := []byte(`{
+	"topic": "SDK-test",
+	"scheme": "v2",
+	"bean": {
+		"version": "1.0.0",
+		"aid": "demo-app",
+		"env": "production",
+		"platform": "webjs",
+		"netType": "4G"
+	},
+	"d2": [
+		{
+			"fields": "{\"from\": \"https://apps.paas3-dev.bktencent.com/otelfrontenddemo/\", \"session\": {\"id\": \"sess-otel-1\"}, \"view\": {\"id\": \"view-otel-1\", \"loading_type\": \"reload\", \"view_name\": \"OTel Frontend Demo\", \"view_url\": \"https://apps.paas3-dev.bktencent.com/otelfrontenddemo/\"}, \"type\": \"web_vitals\", \"level\": \"info\", \"plugin\": \"webVitals\"}",
+			"message": [
+				"{\"msg\": \"web_vitals\", \"FCP\": 632, \"LCP\": 956, \"TTFB\": 38.7, \"FID\": -1, \"CLS\": -1, \"INP\": -1, \"timestamp\": 1782736188098}"
+			]
+		}
+	]
+}`)
+
+	metrics, err := decodeMetrics(buf)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, metrics.ResourceMetrics().Len())
+	rm := metrics.ResourceMetrics().At(0)
+
+	// ResourceMetrics -> ScopeMetrics -> Metrics -> Histogram 的 OTEL 结构应完整。
+	require.Equal(t, 1, rm.ScopeMetrics().Len())
+	sm := rm.ScopeMetrics().At(0)
+	require.Equal(t, 1, sm.Metrics().Len())
+	m := sm.Metrics().At(0)
+	assert.Equal(t, "browser.web_vital.duration", m.Name())
+	assert.Equal(t, "Web Vitals duration metrics from aegisv2", m.Description())
+	assert.Equal(t, "ms", m.Unit())
+
+	hist := m.Histogram()
+	require.Equal(t, 3, hist.DataPoints().Len())
+
+	byMetric := make(map[string]int)
+	for i := 0; i < hist.DataPoints().Len(); i++ {
+		dp := hist.DataPoints().At(i)
+		v, ok := dp.Attributes().Get("vital.metric")
+		require.True(t, ok)
+		byMetric[v.AsString()] = i
+
+		assert.Equal(t, uint64(1), dp.Count())
+		assert.Equal(t, dp.Timestamp(), dp.StartTimestamp())
+		require.NotZero(t, dp.MExplicitBounds())
+		assert.Equal(t, len(dp.MExplicitBounds())+1, len(dp.MBucketCounts()))
+	}
+
+	_, ok := byMetric["fcp"]
+	assert.True(t, ok)
+	_, ok = byMetric["lcp"]
+	assert.True(t, ok)
+	ttfbIdx, ok := byMetric["ttfb"]
+	assert.True(t, ok)
+
+	ttfb := hist.DataPoints().At(ttfbIdx)
+	assert.InDelta(t, 38.7, ttfb.Sum(), 0.0001)
+	rating, ok := ttfb.Attributes().Get("vital.rating")
+	require.True(t, ok)
+	assert.Equal(t, "good", rating.AsString())
 }
 
 func TestDecodeAegisV2Metrics_NonWebVitalsPayloadHandled(t *testing.T) {

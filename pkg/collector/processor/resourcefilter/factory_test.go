@@ -452,6 +452,134 @@ processor:
 	})
 }
 
+func TestFromRecordActionEmptyFallback(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/from_record"
+      config:
+        from_record:
+          - source: "request.client.ip"
+            destination: "resource.net.host.ip"
+`
+	type testCase struct {
+		name       string
+		initial    *string
+		clientIP   string
+		want       string
+		wantExists bool
+	}
+	cases := []testCase{
+		{
+			name:       "missing target",
+			clientIP:   "mock-client-ip",
+			want:       "mock-client-ip",
+			wantExists: true,
+		},
+		{
+			name:       "empty target",
+			initial:    stringPtr(""),
+			clientIP:   "mock-client-ip",
+			want:       "mock-client-ip",
+			wantExists: true,
+		},
+		{
+			name:       "non-empty target",
+			initial:    stringPtr("mock-existing-ip"),
+			clientIP:   "mock-client-ip",
+			want:       "mock-existing-ip",
+			wantExists: true,
+		},
+		{
+			name:       "empty source with missing target",
+			clientIP:   "",
+			wantExists: false,
+		},
+		{
+			name:       "empty source with empty target",
+			initial:    stringPtr(""),
+			clientIP:   "",
+			want:       "",
+			wantExists: true,
+		},
+		{
+			name:       "placeholder source",
+			clientIP:   "0.0.0.0",
+			wantExists: false,
+		},
+		{
+			name:       "placeholder target overwritten",
+			initial:    stringPtr("127.0.0.1"),
+			clientIP:   "mock-client-ip",
+			want:       "mock-client-ip",
+			wantExists: true,
+		},
+		{
+			name:       "placeholder target with placeholder source",
+			initial:    stringPtr("0.0.0.0"),
+			clientIP:   "127.0.0.1",
+			want:       "0.0.0.0",
+			wantExists: true,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run("traces "+tt.name, func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType:    define.RecordTraces,
+				Data:          makeTracesRecord(1, "bool"),
+				RequestClient: define.RequestClient{IP: tt.clientIP},
+			}
+			attrs := testkits.FirstSpanAttrs(record.Data)
+			assertFromRecordEmptyFallback(t, factory, record, attrs, tt.initial, tt.want, tt.wantExists)
+		})
+
+		t.Run("metrics "+tt.name, func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType:    define.RecordMetrics,
+				Data:          makeMetricsRecord(1, "int"),
+				RequestClient: define.RequestClient{IP: tt.clientIP},
+			}
+			attrs := testkits.FirstMetricAttrs(record.Data)
+			assertFromRecordEmptyFallback(t, factory, record, attrs, tt.initial, tt.want, tt.wantExists)
+		})
+
+		t.Run("logs "+tt.name, func(t *testing.T) {
+			factory := processor.MustCreateFactory(content, NewFactory)
+			record := define.Record{
+				RecordType:    define.RecordLogs,
+				Data:          makeLogsRecord(1, 10, "int"),
+				RequestClient: define.RequestClient{IP: tt.clientIP},
+			}
+			attrs := testkits.FirstLogRecordAttrs(record.Data)
+			assertFromRecordEmptyFallback(t, factory, record, attrs, tt.initial, tt.want, tt.wantExists)
+		})
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func assertFromRecordEmptyFallback(
+	t *testing.T, factory processor.Processor, record define.Record, attrs pcommon.Map, initial *string, want string,
+	wantExists bool,
+) {
+	t.Helper()
+
+	if initial != nil {
+		attrs.InsertString("net.host.ip", *initial)
+	}
+
+	testkits.MustProcess(t, factory, record)
+	value, ok := attrs.Get("net.host.ip")
+	assert.Equal(t, wantExists, ok)
+	if wantExists {
+		assert.Equal(t, want, value.AsString())
+	}
+}
+
 func TestFromCacheAction(t *testing.T) {
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string][]map[string]string{
@@ -476,6 +604,13 @@ func TestFromCacheAction(t *testing.T) {
 					"name":      "myapp3",
 					"namespace": "my-ns3",
 					"cluster":   "K8S-BCS-90000",
+				},
+				{
+					"action":    "CreateOrUpdate",
+					"ip":        "",
+					"name":      "empty-ip-pod",
+					"namespace": "empty-ip-ns",
+					"cluster":   "EMPTY-IP-CLUSTER",
 				},
 			},
 		})
@@ -521,6 +656,31 @@ processor:
 		)
 	})
 
+	t.Run("traces fill empty cache dimensions", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
+		data := makeTracesRecord(1, "bool")
+		attrs := testkits.FirstSpanAttrs(data)
+		attrs.InsertString("net.host.ip", "127.1.0.1")
+		attrs.InsertString("k8s.bcs.cluster.id", "")
+		attrs.InsertString("k8s.namespace.name", "")
+		attrs.InsertString("k8s.pod.name", "existing-pod")
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+
+		testkits.MustProcess(t, factory, record)
+		attrs = testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.1",
+			"k8s.pod.name", "existing-pod",
+			"k8s.namespace.name", "my-ns1",
+			"k8s.bcs.cluster.id", "K8S-BCS-00000",
+		)
+	})
+
 	t.Run("traces client.ip", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
@@ -534,6 +694,29 @@ processor:
 
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.2",
+			"k8s.pod.name", "myapp2",
+			"k8s.namespace.name", "my-ns2",
+			"k8s.bcs.cluster.id", "K8S-BCS-90000",
+		)
+	})
+
+	t.Run("traces skip empty cache key", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
+		data := makeTracesRecord(1, "bool")
+		attrs := testkits.FirstSpanAttrs(data)
+		attrs.InsertString("net.host.ip", "")
+		attrs.InsertString("client.ip", "127.1.0.2")
+
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+
+		testkits.MustProcess(t, factory, record)
+		attrs = testkits.FirstSpanAttrs(record.Data)
 		testkits.AssertAttrsStringKeyVal(t, attrs,
 			"k8s.pod.ip", "127.1.0.2",
 			"k8s.pod.name", "myapp2",

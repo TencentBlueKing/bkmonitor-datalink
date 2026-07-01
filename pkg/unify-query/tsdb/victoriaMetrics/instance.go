@@ -189,6 +189,17 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		}
 	}
 
+	if len(reqClusterToInfo) == 0 {
+		span.Set("query-storage-status", "match")
+		return
+	}
+
+	if responseVMClusterList == nil {
+		span.Set("query-storage-status", "unknown")
+		span.Set("query-storage-reason", "empty_storage_cluster_list")
+		return
+	}
+
 	respSet := make(map[string]struct{}, len(responseVMClusterList))
 	for _, s := range responseVMClusterList {
 		respSet[s] = struct{}{}
@@ -210,6 +221,9 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 			})
 		}
 	}
+	sort.Slice(missing, func(i, j int) bool {
+		return missing[i].Cluster < missing[j].Cluster
+	})
 
 	if len(missing) > 0 {
 		span.Set("query-storage-status", "mismatch")

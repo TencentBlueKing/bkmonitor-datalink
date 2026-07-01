@@ -14,7 +14,6 @@ package timesync
 import (
 	"bufio"
 	"bytes"
-	"math"
 	"net"
 	"os"
 	"strings"
@@ -72,10 +71,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 		return nil, err
 	}
 
-	stat := &Stat{
-		Source: "ntpd",
-		Min:    math.MaxInt64,
-	}
+	stat := newStat("ntpd")
 	scanner := bufio.NewScanner(bytes.NewBuffer(b))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -97,14 +93,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 			continue
 		}
 
-		stat.Count++
-		stat.Sum += delay
-		if stat.Max < delay {
-			stat.Max = delay
-		}
-		if stat.Min > delay {
-			stat.Min = delay
-		}
+		stat.Add(delay)
 	}
 	return stat, nil
 }
@@ -129,10 +118,7 @@ func (c *Client) queryChrony() (*Stat, error) {
 		return nil, errors.Errorf("want *chrony.ReplySources type, but got %T", packet)
 	}
 
-	stat := &Stat{
-		Source: "chrony",
-		Min:    math.MaxInt64,
-	}
+	stat := newStat("chrony")
 	for i := 0; i < sources.NSources; i++ {
 		packet, err = client.Communicate(chrony.NewSourceDataPacket(int32(i)))
 		if err != nil {
@@ -157,14 +143,7 @@ func (c *Client) queryChrony() (*Stat, error) {
 			continue
 		}
 
-		stat.Count++
-		stat.Sum += sourceData.LatestMeas
-		if stat.Max < sourceData.LatestMeas {
-			stat.Max = sourceData.LatestMeas
-		}
-		if stat.Min > sourceData.LatestMeas {
-			stat.Min = sourceData.LatestMeas
-		}
+		stat.Add(sourceData.LatestMeas)
 	}
 	return stat, nil
 }

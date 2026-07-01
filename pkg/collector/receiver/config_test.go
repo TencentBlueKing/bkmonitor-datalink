@@ -11,10 +11,13 @@ package receiver
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -53,4 +56,90 @@ apm:
 			},
 		},
 	}, subConfig)
+}
+
+func TestLoadThrottleConfig(t *testing.T) {
+	content := `
+receiver:
+  throttle:
+    enabled: true
+    sample_interval: 250ms
+    signal:
+      cpu_slow_beta: 0.95
+      cpu_fast_beta: 0.7
+      fallback_cores: 1.5
+    thresholds:
+      cpu:
+        enabled: true
+        enter: 0.8
+        exit: 0.7
+        hard: 0.9
+        breach_n: 2
+      mem:
+        enabled: false
+        enter: 0.85
+        exit: 0.78
+        hard: 0.92
+        breach_n: 4
+    rules:
+      default: {drop_min: 0.1, drop_max: 0.8}
+      metrics: {enabled: false}
+`
+	config, err := confengine.LoadConfigContent(content)
+	assert.NoError(t, err)
+
+	var receiverConfig Config
+	assert.NoError(t, config.UnpackChild("receiver", &receiverConfig))
+	assert.True(t, receiverConfig.Throttle.Enabled)
+	assert.Equal(t, 250*time.Millisecond, receiverConfig.Throttle.SampleInterval)
+	assert.Equal(t, 0.95, receiverConfig.Throttle.Signal.CPUSlowBeta)
+	assert.Equal(t, 1.5, receiverConfig.Throttle.Signal.FallbackCores)
+	assert.NotNil(t, receiverConfig.Throttle.Thresholds.CPU.Enabled)
+	assert.True(t, *receiverConfig.Throttle.Thresholds.CPU.Enabled)
+	assert.Equal(t, 0.8, receiverConfig.Throttle.Thresholds.CPU.Enter)
+	assert.Equal(t, 2, receiverConfig.Throttle.Thresholds.CPU.BreachN)
+	assert.NotNil(t, receiverConfig.Throttle.Thresholds.Mem.Enabled)
+	assert.False(t, *receiverConfig.Throttle.Thresholds.Mem.Enabled)
+	assert.Equal(t, 0.85, receiverConfig.Throttle.Thresholds.Mem.Enter)
+	assert.Equal(t, 0.78, receiverConfig.Throttle.Thresholds.Mem.Exit)
+	assert.Equal(t, 4, receiverConfig.Throttle.Thresholds.Mem.BreachN)
+	assert.NotNil(t, receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
+	assert.False(t, *receiverConfig.Throttle.Rules[define.RecordMetrics.S()].Enabled)
+	assert.NotNil(t, receiverConfig.Throttle.Rules["default"].DropMin)
+	assert.Equal(t, 0.1, *receiverConfig.Throttle.Rules["default"].DropMin)
+}
+
+func TestNewWithThrottleDisabledKeepsMiddlewareAndClearsGlobalThrottle(t *testing.T) {
+	throttle.Stop()
+	defer throttle.Stop()
+	assert.NoError(t, throttle.Init(throttle.Config{Enabled: true}))
+	enabledManager := throttle.GlobalManager()
+
+	content := `
+receiver:
+  http_server:
+    middlewares:
+      - "logging"
+      - "throttle"
+      - "maxconns;maxConnectionsRatio=2"
+  admin_server:
+    middlewares:
+      - "throttle"
+  grpc_server:
+    middlewares:
+      - "throttle"
+      - "maxbytes;maxRequestBytes=1024"
+  throttle:
+    enabled: false
+`
+	config, err := confengine.LoadConfigContent(content)
+	assert.NoError(t, err)
+
+	r, err := New(config)
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{"logging", "throttle", "maxconns;maxConnectionsRatio=2"}, r.config.RecvServer.Middlewares)
+	assert.Equal(t, []string{"throttle"}, r.config.AdminServer.Middlewares)
+	assert.Equal(t, []string{"throttle", "maxbytes;maxRequestBytes=1024"}, r.config.GrpcServer.Middlewares)
+	assert.NotSame(t, enabledManager, throttle.GlobalManager())
 }

@@ -81,6 +81,75 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
+func TestFactoryValidateDropRulesAtLoadTime(t *testing.T) {
+	t.Run("invalid main config returns error", func(t *testing.T) {
+		content := `
+processor:
+  - name: "metrics_filter/drop"
+    config:
+      drop:
+        metrics:
+          - "my_metrics"
+        extra_rules:
+          - predicate_key: "attributes.telemetry.sdk.language"
+            match:
+              op: "eq"
+              value: "go"
+`
+
+		mainConf := processor.MustLoadConfigs(content)[0].Config
+		obj, err := NewFactory(mainConf, nil)
+		assert.Nil(t, obj)
+		assert.ErrorContains(t, err, "only resource.* is supported")
+	})
+
+	t.Run("invalid customized config falls back to global", func(t *testing.T) {
+		mainContent := `
+processor:
+  - name: "metrics_filter/drop"
+    config:
+      drop:
+        metrics:
+          - "my_metrics"
+        extra_rules:
+          - predicate_key: "resource.telemetry.sdk.language"
+            match:
+              op: "eq"
+              value: "go"
+`
+		customContent := `
+processor:
+  - name: "metrics_filter/drop"
+    config:
+      drop:
+        metrics:
+          - "my_metrics"
+        extra_rules:
+          - predicate_key: "attributes.telemetry.sdk.language"
+            match:
+              op: "eq"
+              value: "java"
+`
+
+		mainConf := processor.MustLoadConfigs(mainContent)[0].Config
+		customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+		obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		}})
+		assert.NoError(t, err)
+
+		factory := obj.(*metricsFilter)
+		var want Config
+		assert.NoError(t, mapstructure.Decode(mainConf, &want))
+		assert.Equal(t, want, factory.configs.GetByToken("token1").(Config))
+	})
+}
+
 func makeMetricsRecord(n int) pmetric.Metrics {
 	opts := define.MetricsOptions{
 		MetricName: "my_metrics",
@@ -138,7 +207,8 @@ func TestMetricsNoAction(t *testing.T) {
 }
 
 func TestMetricsDropAction(t *testing.T) {
-	content := `
+	t.Run("simple_in", func(t *testing.T) {
+		content := `
 processor:
    - name: "metrics_filter/drop"
      config:
@@ -146,16 +216,138 @@ processor:
          metrics:
            - "my_metrics"
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
+		factory := processor.MustCreateFactory(content, NewFactory)
 
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       makeMetricsRecord(1),
-	}
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       makeMetricsRecord(1),
+		}
 
-	testkits.MustProcess(t, factory, record)
-	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
-	assert.Equal(t, 0, metrics.Len())
+		testkits.MustProcess(t, factory, record)
+		metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
+		assert.Equal(t, 0, metrics.Len())
+	})
+
+	t.Run("simple_notin", func(t *testing.T) {
+		content := `
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       drop:
+         metrics:
+           - "my_metrics1"
+         op: "notin"
+`
+		factory := processor.MustCreateFactory(content, NewFactory)
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       makeMetricsRecord(1),
+		}
+
+		testkits.MustProcess(t, factory, record)
+		metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
+		assert.Equal(t, 0, metrics.Len())
+	})
+
+	t.Run("notin_with_one_rules", func(t *testing.T) {
+		content := `
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       drop:
+         metrics:
+           - "my_metrics111"
+         op: "notin"
+         extra_rules:
+           - predicate_key: "resource.telemetry.distro.name"
+             match:
+               op: "eq"
+               value: "opentelemetry-java-instrumentation"
+`
+		factory := processor.MustCreateFactory(content, NewFactory)
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data: makeMetricsRecordWith(
+				"my_metrics", 1, map[string]string{
+					"telemetry.distro.name": "opentelemetry-java-instrumentation",
+				}, map[string]string{}),
+		}
+
+		testkits.MustProcess(t, factory, record)
+		metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
+		assert.Equal(t, 0, metrics.Len())
+	})
+
+	t.Run("notin_with_multiple_rules_all_match", func(t *testing.T) {
+		content := `
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       drop:
+         metrics:
+           - "my_metrics111"
+         op: "notin"
+         extra_rules:
+           - predicate_key: "resource.telemetry.distro.name"
+             match:
+               op: "eq"
+               value: "opentelemetry-java-instrumentation"
+           - predicate_key: "resource.telemetry.sdk.language"
+             match:
+               op: "eq"
+               value: "java"
+`
+		factory := processor.MustCreateFactory(content, NewFactory)
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data: makeMetricsRecordWith(
+				"my_metrics", 1, map[string]string{
+					"telemetry.distro.name":  "opentelemetry-java-instrumentation",
+					"telemetry.sdk.language": "java",
+				}, map[string]string{}),
+		}
+
+		testkits.MustProcess(t, factory, record)
+		metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
+		assert.Equal(t, 0, metrics.Len())
+	})
+
+	t.Run("notin_with_multiple_rules_partial_match", func(t *testing.T) {
+		content := `
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       drop:
+         metrics:
+           - "my_metrics111"
+         op: "notin"
+         extra_rules:
+           - predicate_key: "resource.telemetry.distro.name"
+             match:
+               op: "eq"
+               value: "opentelemetry-java-instrumentation"
+           - predicate_key: "resource.telemetry.sdk.language"
+             match:
+               op: "eq"
+               value: "java"
+`
+		factory := processor.MustCreateFactory(content, NewFactory)
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data: makeMetricsRecordWith(
+				"my_metrics", 1, map[string]string{
+					"telemetry.distro.name": "opentelemetry-java-instrumentation",
+				}, map[string]string{}),
+		}
+
+		testkits.MustProcess(t, factory, record)
+		metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
+		assert.Equal(t, 1, metrics.Len())
+	})
 }
 
 func TestMetricsReplaceAction(t *testing.T) {

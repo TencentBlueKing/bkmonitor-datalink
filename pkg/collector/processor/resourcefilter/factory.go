@@ -30,6 +30,13 @@ func init() {
 	processor.Register(define.ProcessorResourceFilter, NewFactory)
 }
 
+// requestClientIPPlaceholders 列出 request.client.ip 场景下应视为占位 IP。
+// 这类地址（例如 IPv4 通配地址、本机回环）不具备识别 Pod 的能力，写入后会污染下游 from_cache 的查询 key。
+var requestClientIPPlaceholders = map[string]struct{}{
+	"0.0.0.0":   {},
+	"127.0.0.1": {},
+}
+
 func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
@@ -312,13 +319,17 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 			if !ok {
 				continue
 			}
-			dims, ok := cache.Get(v.AsString())
+			cacheKey := v.AsString()
+			if cacheKey == "" {
+				continue
+			}
+			dims, ok := cache.Get(cacheKey)
 			if !ok {
 				continue
 			}
 
 			for dk, dv := range dims {
-				rs.Attributes().InsertString(dk, dv)
+				upsertStringIfMissingOrEmpty(rs.Attributes(), dk, dv, nil)
 			}
 			return // 找到一次即可
 		}
@@ -350,7 +361,7 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 	handle := func(rs pcommon.Resource, action FromRecordAction) {
 		switch action.Source {
 		case "request.client.ip":
-			rs.Attributes().InsertString(action.Destination, record.RequestClient.IP)
+			upsertStringIfMissingOrEmpty(rs.Attributes(), action.Destination, record.RequestClient.IP, requestClientIPPlaceholders)
 		}
 	}
 
@@ -379,6 +390,29 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 			}
 		})
 	}
+}
+
+// upsertStringIfMissingOrEmpty 在目标字段缺失或视为空时写入 value。
+func upsertStringIfMissingOrEmpty(attrs pcommon.Map, key, value string, placeholders map[string]struct{}) {
+	if value == "" {
+		return
+	}
+
+	// 来源命中占位符（如 0.0.0.0），不进行替换。
+	// placeholders 为 nil 在这里也是安全的写法。
+	if _, ok := placeholders[value]; ok {
+		return
+	}
+	if current, ok := attrs.Get(key); ok {
+		cur := current.AsString()
+		if cur != "" {
+			// 目标已有值，且不是占位符。
+			if _, isPlaceholder := placeholders[cur]; !isPlaceholder {
+				return
+			}
+		}
+	}
+	attrs.UpsertString(key, value)
 }
 
 // fromMetadataAction 补充 metadata 字段

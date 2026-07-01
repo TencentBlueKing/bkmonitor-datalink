@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 )
 
 type Config struct {
@@ -22,6 +23,8 @@ type Config struct {
 	AdminServer HttpServerConfig `config:"admin_server"`
 	GrpcServer  GrpcServerConfig `config:"grpc_server"`
 	TarsServer  TarsServerConfig `config:"tars_server"`
+	// 自适应限流配置块，随 receiver 块一起被 UnpackChild 解出（中间件列表里只放占位项）。
+	Throttle throttle.Config `config:"throttle"`
 }
 
 type HttpServerConfig struct {

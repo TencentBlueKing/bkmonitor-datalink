@@ -16,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -28,6 +29,7 @@ const (
 )
 
 func init() {
+	throttle.RegisterHTTPRecordType(routeRemoteWrite, define.RecordMetrics)
 	receiver.RegisterReadyFunc(define.SourceRemoteWrite, Ready)
 }
 

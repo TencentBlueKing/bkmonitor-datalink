@@ -12,7 +12,6 @@
 package timesync
 
 import (
-	"math"
 	"strings"
 	"time"
 
@@ -67,10 +66,7 @@ func (c *Client) getTimeServer() ([]string, error) {
 }
 
 func (c *Client) queryNtpd() (*Stat, error) {
-	stat := &Stat{
-		Source: "ntpd",
-		Min:    math.MaxInt64,
-	}
+	stat := newStat("ntpd")
 
 	lst, err := c.getTimeServer()
 	if err != nil {
@@ -89,14 +85,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 			continue
 		}
 
-		stat.Count++
-		stat.Sum += delay
-		if stat.Max < delay {
-			stat.Max = delay
-		}
-		if stat.Min > delay {
-			stat.Min = delay
-		}
+		stat.Add(delay)
 	}
 	return stat, nil
 }

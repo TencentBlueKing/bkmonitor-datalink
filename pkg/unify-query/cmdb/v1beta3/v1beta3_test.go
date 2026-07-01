@@ -962,9 +962,71 @@ func TestInferSourceTypePrefersMostSpecificPrimaryKeys(t *testing.T) {
 }
 
 func TestComputeMaxHopsKeepsRoomForPartialPathResource(t *testing.T) {
-	assert.Equal(t, DefaultMaxHops, computeMaxHops(nil))
-	assert.Equal(t, DefaultMaxHops+1, computeMaxHops([]cmdb.Resource{"pod"}))
-	assert.Equal(t, MaxAllowedHops, computeMaxHops([]cmdb.Resource{"a", "b", "c", "d", "e"}))
+	assert.Equal(t, DefaultMaxHops, computeMaxHops("", "", nil))
+	assert.Equal(t, 1, computeMaxHops("node", "pod", []cmdb.Resource{""}))
+	assert.Equal(t, 1, computeMaxHops("node", "pod", []cmdb.Resource{"pod"}))
+	assert.Equal(t, DefaultMaxHops+1, computeMaxHops("node", "deployment", []cmdb.Resource{"pod"}))
+	assert.Equal(t, MaxAllowedHops, computeMaxHops("node", "host", []cmdb.Resource{"a", "b", "c", "d", "e"}))
+}
+
+func TestQueryResourceMatcherReturnsLegacyResourcePath(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"node": {"node"},
+			"pod":  {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "node_with_pod",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "pod",
+			},
+		},
+	})
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	source, matcher, path, target, matchers, err := model.QueryResourceMatcher(
+		ctx,
+		"10m",
+		"test-space",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Resource("node"), source)
+	assert.Equal(t, cmdb.Matcher{"node": "node-1"}, matcher)
+	assert.Equal(t, []string{"node", "pod"}, path)
+	assert.Equal(t, cmdb.Resource("pod"), target)
+	assert.Nil(t, matchers)
+
+	_, _, rangePath, _, rangeResult, err := model.QueryResourceMatcherRange(
+		ctx,
+		"10m",
+		"test-space",
+		"60s",
+		"0",
+		"60",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node", "pod"}, rangePath)
+	assert.Nil(t, rangeResult)
 }
 
 func TestExecuteGraphQueryRequiresSpaceUIDForBindingExecutor(t *testing.T) {
@@ -1313,6 +1375,39 @@ func TestQueryResourceMatcherPathResourceAllowsUnconstrainedIntermediateHops(t *
 	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
 
 	assert.Equal(t, cmdb.Matchers{{"bk_host_id": "via-system"}}, matchers)
+}
+
+func TestExtractMatchersUsesRootIDForCyclicDirectOnlyGraph(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{
+		ResourceID:   "node:root",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "root"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	system := &NodeLiveness{
+		ResourceID:   "system:1",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "127.0.0.1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "pod-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(system)
+	graph.AddNode(pod)
+	graph.RootID = root.ResourceID
+	graph.AddEdge(&EdgeLiveness{RelationID: "node-system", FromID: root.ResourceID, ToID: system.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-node", FromID: system.ResourceID, ToID: root.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+	graph.AddEdge(&EdgeLiveness{RelationID: "system-pod", FromID: system.ResourceID, ToID: pod.ResourceID, RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}}})
+
+	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, []ResourceType{""})
+
+	assert.Nil(t, matchers)
 }
 
 func TestExtractMatchersFiltersInactiveInstantTargets(t *testing.T) {

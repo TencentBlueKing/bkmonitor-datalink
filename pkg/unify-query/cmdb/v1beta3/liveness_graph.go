@@ -16,6 +16,7 @@ import (
 type LivenessGraph struct {
 	QueryStart      int64                    `json:"query_start"`
 	QueryEnd        int64                    `json:"query_end"`
+	RootID          string                   `json:"root_id,omitempty"`
 	Nodes           map[string]*NodeLiveness `json:"nodes"`
 	Edges           map[string]*EdgeLiveness `json:"edges"`
 	Adjacency       map[string][]string      `json:"adjacency"`
@@ -210,6 +211,12 @@ func (g *LivenessGraph) collectTargetPaths(
 }
 
 func (g *LivenessGraph) rootNodeIDs() []string {
+	if g.RootID != "" {
+		if _, ok := g.Nodes[g.RootID]; ok {
+			return []string{g.RootID}
+		}
+	}
+
 	incoming := make(map[string]bool, len(g.Edges))
 	for _, edge := range g.Edges {
 		incoming[edge.ToID] = true

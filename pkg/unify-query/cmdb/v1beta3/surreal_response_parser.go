@@ -81,6 +81,7 @@ func (p *SurrealResponseParser) Parse(rawResponse []map[string]any) ([]*Liveness
 		// 为每条记录创建一个新的图
 		graph := NewLivenessGraph(p.queryStart, p.queryEnd)
 		graph.AddNode(rootNode)
+		graph.RootID = rootNode.ResourceID
 
 		// 解析 hop1, hop2, ... 的关系
 		for key, value := range resultData {

@@ -136,7 +136,7 @@ func (m *Model) QueryResourceMatcher(
 		TargetTypeExplicit: target != "",
 		TargetInfoShow:     expandShow,
 		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(pathResource),
+		MaxHops:            computeMaxHops(source, target, pathResource),
 		LookBackDelta:      lbd,
 	}
 	req.Normalize()
@@ -146,7 +146,7 @@ func (m *Model) QueryResourceMatcher(
 		return "", nil, nil, "", nil, err
 	}
 
-	paths := convertPathsV2ToStrings(pathsV2)
+	paths := convertPathsV2ToLegacyResources(pathsV2)
 
 	span.Set("paths-count", len(paths))
 	span.Set("matchers-count", len(matchers))
@@ -195,7 +195,7 @@ func (m *Model) QueryDynamicPaths(
 		TargetTypeExplicit: target != "",
 		TargetInfoShow:     expandShow,
 		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(pathResource),
+		MaxHops:            computeMaxHops(source, target, pathResource),
 		LookBackDelta:      lbd,
 	}
 	req.Normalize()
@@ -264,7 +264,7 @@ func (m *Model) QueryResourceMatcherRange(
 		TargetTypeExplicit: target != "",
 		TargetInfoShow:     expandShow,
 		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(pathResource),
+		MaxHops:            computeMaxHops(source, target, pathResource),
 		LookBackDelta:      maxInt64(lbd, end-start),
 	}
 	req.Normalize()
@@ -288,7 +288,7 @@ func (m *Model) QueryResourceMatcherRange(
 		shouldIncludeRootTarget(req),
 	)
 
-	paths := convertPathsV2ToStrings(pathsV2)
+	paths := convertPathsV2ToLegacyResources(pathsV2)
 
 	span.Set("paths-count", len(paths))
 	span.Set("result-count", len(result))
@@ -349,7 +349,7 @@ func (m *Model) QueryDynamicPathsRange(
 		TargetTypeExplicit: target != "",
 		TargetInfoShow:     expandShow,
 		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(pathResource),
+		MaxHops:            computeMaxHops(source, target, pathResource),
 		LookBackDelta:      maxInt64(lbd, end-start),
 	}
 	req.Normalize()
@@ -695,9 +695,13 @@ func matcherToMap(m cmdb.Matcher) map[string]string {
 	return result
 }
 
-func computeMaxHops(pathResource []cmdb.Resource) int {
+func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) int {
 	if len(pathResource) == 0 {
 		return DefaultMaxHops
+	}
+	_, directOnly := normalizePathResource(FromCMDBResource(source), FromCMDBResource(target), toResourceTypes(pathResource))
+	if directOnly {
+		return 1
 	}
 	maxHops := DefaultMaxHops + len(pathResource)
 	if maxHops > MaxAllowedHops {
@@ -906,13 +910,19 @@ func FromCMDBResource(r cmdb.Resource) ResourceType {
 	return ResourceType(r)
 }
 
-func convertPathsV2ToStrings(pathsV2 []cmdb.PathV2) []string {
+func convertPathsV2ToLegacyResources(pathsV2 []cmdb.PathV2) []string {
 	if len(pathsV2) == 0 {
 		return nil
 	}
-	result := make([]string, len(pathsV2))
-	for i, path := range pathsV2 {
-		result[i] = path.String()
+	path := pathsV2[0]
+	if len(path.Steps) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(path.Steps))
+	for _, step := range path.Steps {
+		if step.ResourceType != "" {
+			result = append(result, step.ResourceType)
+		}
 	}
 	return result
 }

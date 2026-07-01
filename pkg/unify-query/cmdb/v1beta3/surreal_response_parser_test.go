@@ -955,6 +955,7 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
 			QueryEnd:   2000,
+			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
 			Nodes: map[string]*NodeLiveness{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
 					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
@@ -1013,6 +1014,7 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
 			QueryEnd:   2000,
+			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
 			Nodes: map[string]*NodeLiveness{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
 					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
@@ -1078,6 +1080,7 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
 			QueryEnd:   2000,
+			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
 			Nodes: map[string]*NodeLiveness{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
 					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
@@ -1094,6 +1097,7 @@ func TestSurrealResponseParser_Parse(t *testing.T) {
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
 			QueryEnd:   2000,
+			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",
 			Nodes: map[string]*NodeLiveness{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p2⟩": {
 					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",

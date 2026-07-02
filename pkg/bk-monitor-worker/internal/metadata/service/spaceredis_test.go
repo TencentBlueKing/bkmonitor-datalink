@@ -1461,6 +1461,105 @@ func TestSpacePusher_PushSurrealDBBindingDetailsMultiTenant(t *testing.T) {
 	assert.Equal(t, details[0], actual)
 }
 
+func TestSpacePusher_PushSurrealDBBindingDetailsClearsStaleTenantRoutes(t *testing.T) {
+	setupStorageRedisForTest(t)
+	setMultiTenantModeForTest(t, true)
+	setSurrealDBBindingRedisConfigForTest(t, "test:surrealdb_binding:stale", "test:surrealdb_binding:stale:channel")
+
+	client := redis.GetStorageRedisInstance()
+	pusher := NewSpacePusher()
+	newDetail := func(name, bizID string) SurrealDBBindingDetail {
+		return SurrealDBBindingDetail{
+			Name:        name,
+			BkBizID:     bizID,
+			Database:    fmt.Sprintf("%s_graph_rt", bizID),
+			Namespace:   fmt.Sprintf("mapleleaf_%s", bizID),
+			ClusterName: "surrealdb-main",
+			Phase:       "Ok",
+		}
+	}
+
+	tests := []struct {
+		name                 string
+		initialTenantADetail []SurrealDBBindingDetail
+		nextTenantADetail    []SurrealDBBindingDetail
+		missingFields        []string
+		keptFields           []string
+	}{
+		{
+			name:                 "部分结果清理同租户缺失业务",
+			initialTenantADetail: []SurrealDBBindingDetail{newDetail("binding-a", "2"), newDetail("binding-b", "3")},
+			nextTenantADetail:    []SurrealDBBindingDetail{newDetail("binding-b", "3")},
+			missingFields:        []string{"bkcc__2|tenant-a"},
+			keptFields:           []string{"bkcc__3|tenant-a", "bkcc__4|tenant-b"},
+		},
+		{
+			name:                 "空结果清理同租户全部旧路由",
+			initialTenantADetail: []SurrealDBBindingDetail{newDetail("binding-a", "2")},
+			nextTenantADetail:    nil,
+			missingFields:        []string{"bkcc__2|tenant-a"},
+			keptFields:           []string{"bkcc__4|tenant-b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NoError(t, client.Delete(cfg.SurrealDBBindingKey))
+			assert.NoError(t, pusher.PushSurrealDBBindingDetails("tenant-a", tt.initialTenantADetail, false))
+			assert.NoError(t, pusher.PushSurrealDBBindingDetails("tenant-b", []SurrealDBBindingDetail{newDetail("binding-c", "4")}, false))
+
+			err := pusher.PushSurrealDBBindingDetails("tenant-a", tt.nextTenantADetail, false)
+			assert.NoError(t, err)
+
+			for _, field := range tt.missingFields {
+				assert.Empty(t, client.HGet(cfg.SurrealDBBindingKey, field), "stale field should be deleted: %s", field)
+			}
+			for _, field := range tt.keptFields {
+				assert.NotEmpty(t, client.HGet(cfg.SurrealDBBindingKey, field), "active or other tenant field should remain: %s", field)
+			}
+		})
+	}
+}
+
+func TestSpacePusher_PushSurrealDBBindingDetailsPublishesDeletedRoutes(t *testing.T) {
+	setupStorageRedisForTest(t)
+	setMultiTenantModeForTest(t, true)
+	setSurrealDBBindingRedisConfigForTest(t, "test:surrealdb_binding:publish", "test:surrealdb_binding:publish:channel")
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.SurrealDBBindingKey))
+
+	pubsub := client.Client.Subscribe(context.Background(), cfg.SurrealDBBindingChannel)
+	defer pubsub.Close()
+	_, err := pubsub.Receive(context.Background())
+	assert.NoError(t, err)
+	ch := pubsub.Channel()
+
+	details := []SurrealDBBindingDetail{
+		{
+			Name:        "binding-a",
+			BkBizID:     "2",
+			Database:    "2_graph_rt",
+			Namespace:   "mapleleaf_2",
+			ClusterName: "surrealdb-main",
+			Phase:       "Ok",
+		},
+	}
+	assert.NoError(t, NewSpacePusher().PushSurrealDBBindingDetails("tenant-a", details, false))
+
+	err = NewSpacePusher().PushSurrealDBBindingDetails("tenant-a", nil, true)
+	assert.NoError(t, err)
+	assert.Empty(t, client.HGet(cfg.SurrealDBBindingKey, "bkcc__2|tenant-a"))
+
+	select {
+	case msg := <-ch:
+		assert.Equal(t, cfg.SurrealDBBindingChannel, msg.Channel)
+		assert.Equal(t, "bkcc__2|tenant-a", msg.Payload)
+	case <-time.After(time.Second):
+		t.Fatal("expected stale SurrealDBBinding route deletion to publish the deleted field")
+	}
+}
+
 func TestSelectSurrealDBBindingDetailsPrefersGraphRelationLabel(t *testing.T) {
 	defaultBinding := newBKBaseSurrealDBBindingForTest("binding-default", "2", "2_default_rt", "mapleleaf_2", "Ok", nil)
 	preferredBinding := newBKBaseSurrealDBBindingForTest("binding-graph", "2", "2_graph_rt", "mapleleaf_2", "Ok", map[string]string{

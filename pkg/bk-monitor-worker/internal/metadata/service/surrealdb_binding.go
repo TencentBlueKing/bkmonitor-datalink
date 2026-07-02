@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -206,20 +207,17 @@ func (s *SpacePusher) PushSurrealDBBindings(ctx context.Context, bkTenantId stri
 }
 
 func (s *SpacePusher) PushSurrealDBBindingDetails(bkTenantId string, details []SurrealDBBindingDetail, isPublish bool) error {
-	if len(details) == 0 {
-		logger.Infof("PushSurrealDBBindingDetails: no SurrealDBBinding route to push, bk_tenant_id [%s]", bkTenantId)
-		return nil
-	}
-
 	client := redis.GetStorageRedisInstance()
 	key := surrealDBBindingRedisKey()
 	channel := surrealDBBindingRedisChannel()
+	activeFields := make(map[string]struct{}, len(details))
 	for _, detail := range details {
 		if detail.BkBizID == "" || detail.Database == "" || detail.Namespace == "" {
 			return fmt.Errorf("invalid SurrealDBBinding route detail: %+v", detail)
 		}
 
 		field := composeTenantRedisKey(SpaceRouteKey(models.SpaceTypeBKCC, detail.BkBizID), bkTenantId)
+		activeFields[field] = struct{}{}
 		value, err := jsonx.MarshalString(detail)
 		if err != nil {
 			return err
@@ -236,7 +234,59 @@ func (s *SpacePusher) PushSurrealDBBindingDetails(bkTenantId string, details []S
 			return err
 		}
 	}
+
+	return clearStaleSurrealDBBindingDetails(client, key, channel, bkTenantId, activeFields, isPublish)
+}
+
+func clearStaleSurrealDBBindingDetails(
+	client *redis.Instance,
+	key string,
+	channel string,
+	bkTenantId string,
+	activeFields map[string]struct{},
+	isPublish bool,
+) error {
+	fields, err := client.HKeys(key)
+	if err != nil {
+		return err
+	}
+
+	staleFields := make([]string, 0)
+	for _, field := range fields {
+		if _, ok := activeFields[field]; ok {
+			continue
+		}
+		if !surrealDBBindingFieldBelongsToTenant(field, bkTenantId) {
+			continue
+		}
+		staleFields = append(staleFields, field)
+	}
+	if len(staleFields) == 0 {
+		logger.Infof("clearStaleSurrealDBBindingDetails: no stale SurrealDBBinding route, bk_tenant_id [%s]", bkTenantId)
+		return nil
+	}
+	sort.Strings(staleFields)
+
+	logger.Infof("clearStaleSurrealDBBindingDetails: delete stale SurrealDBBinding routes, bk_tenant_id [%s], fields [%v]", bkTenantId, staleFields)
+	if err := client.HDel(key, staleFields...); err != nil {
+		return err
+	}
+	if !isPublish {
+		return nil
+	}
+	for _, field := range staleFields {
+		if err := client.Publish(channel, field); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func surrealDBBindingFieldBelongsToTenant(field string, bkTenantId string) bool {
+	if !cfg.EnableMultiTenantMode {
+		return true
+	}
+	return strings.HasSuffix(field, fmt.Sprintf("|%s", bkTenantId))
 }
 
 func surrealDBBindingRedisKey() string {

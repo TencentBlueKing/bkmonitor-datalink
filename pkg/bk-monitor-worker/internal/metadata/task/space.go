@@ -280,6 +280,22 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		})
 	}
 
+	// 处理 surrealdb_binding 关联路由
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		bkTenantId := bkTenantId
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo surrealdb_binding tenant[%s]", bkTenantId)
+			if pushErr := pusher.PushSurrealDBBindings(ctx, bkTenantId, true); pushErr != nil {
+				logger.Errorf("%s error %s", name, pushErr)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
+
 	// 处理 result_table_detail 路由
 	for bkTenantId := range bkTenantIdSet {
 		wg.Add(1)

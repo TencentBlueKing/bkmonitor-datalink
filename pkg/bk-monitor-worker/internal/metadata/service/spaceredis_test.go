@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strconv"
 	"testing"
@@ -77,6 +79,19 @@ func setMultiTenantModeForTest(t *testing.T, enabled bool) {
 	cfg.EnableMultiTenantMode = enabled
 	t.Cleanup(func() {
 		cfg.EnableMultiTenantMode = old
+	})
+}
+
+func setSurrealDBBindingRedisConfigForTest(t *testing.T, key, channel string) {
+	t.Helper()
+
+	oldKey := cfg.SurrealDBBindingKey
+	oldChannel := cfg.SurrealDBBindingChannel
+	cfg.SurrealDBBindingKey = key
+	cfg.SurrealDBBindingChannel = channel
+	t.Cleanup(func() {
+		cfg.SurrealDBBindingKey = oldKey
+		cfg.SurrealDBBindingChannel = oldChannel
 	})
 }
 
@@ -1413,6 +1428,141 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 		"other_code":       `[]`,
 	}
 	assert.Equal(t, expected, actual)
+}
+
+func TestSpacePusher_PushSurrealDBBindingDetailsMultiTenant(t *testing.T) {
+	setupStorageRedisForTest(t)
+	setMultiTenantModeForTest(t, true)
+	setSurrealDBBindingRedisConfigForTest(t, "test:surrealdb_binding", "test:surrealdb_binding:channel")
+
+	client := redis.GetStorageRedisInstance()
+	assert.NoError(t, client.Delete(cfg.SurrealDBBindingKey))
+
+	details := []SurrealDBBindingDetail{
+		{
+			Name:        "binding-a",
+			BkBizID:     "2",
+			Database:    "2_graph_rt",
+			Namespace:   "mapleleaf_2",
+			ClusterName: "surrealdb-main",
+			Phase:       "Ok",
+		},
+	}
+
+	err := NewSpacePusher().PushSurrealDBBindingDetails("tenant-a", details, false)
+	assert.NoError(t, err)
+
+	value := client.HGet(cfg.SurrealDBBindingKey, "bkcc__2|tenant-a")
+	assert.NotEmpty(t, value)
+	assert.Empty(t, client.HGet(cfg.SurrealDBBindingKey, "bkcc__2"))
+
+	var actual SurrealDBBindingDetail
+	assert.NoError(t, json.Unmarshal([]byte(value), &actual))
+	assert.Equal(t, details[0], actual)
+}
+
+func TestSelectSurrealDBBindingDetailsPrefersGraphRelationLabel(t *testing.T) {
+	defaultBinding := newBKBaseSurrealDBBindingForTest("binding-default", "2", "2_default_rt", "mapleleaf_2", "Ok", nil)
+	preferredBinding := newBKBaseSurrealDBBindingForTest("binding-graph", "2", "2_graph_rt", "mapleleaf_2", "Ok", map[string]string{
+		graphRelationBindingLabelKey: graphRelationBindingLabelValue,
+	})
+
+	details, err := selectSurrealDBBindingDetails([]bkbaseSurrealDBBinding{defaultBinding, preferredBinding})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []SurrealDBBindingDetail{
+		{
+			Name:      "binding-graph",
+			BkBizID:   "2",
+			Database:  "2_graph_rt",
+			Namespace: "mapleleaf_2",
+			Phase:     "Ok",
+		},
+	}, details)
+
+	details, err = selectSurrealDBBindingDetails([]bkbaseSurrealDBBinding{defaultBinding})
+
+	assert.NoError(t, err)
+	assert.Empty(t, details)
+}
+
+func TestBKBaseSurrealDBBindingSourceListAddsGraphRelationLabelSelector(t *testing.T) {
+	oldMultiTenantMode := cfg.EnableMultiTenantMode
+	cfg.EnableMultiTenantMode = false
+	t.Cleanup(func() {
+		cfg.EnableMultiTenantMode = oldMultiTenantMode
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v4/namespaces/bkmonitor/surrealdbbindings/", r.URL.Path)
+		assert.Equal(t, fmt.Sprintf("%s=%s", graphRelationBindingLabelKey, graphRelationBindingLabelValue), r.URL.Query().Get("label_selector"))
+		assert.Equal(t, "system", r.Header.Get("X-Bk-Tenant-Id"))
+		assert.NotEmpty(t, r.Header.Get("X-Bkapi-Authorization"))
+		assert.NotEmpty(t, r.Header.Get("X-Bkbase-Authorization"))
+
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"result": true,
+			"data": []any{
+				map[string]any{
+					"metadata": map[string]any{
+						"name": "binding-graph",
+						"labels": map[string]string{
+							"bk_biz_id":                  "2",
+							graphRelationBindingLabelKey: graphRelationBindingLabelValue,
+						},
+						"annotations": map[string]string{
+							"database":  "2_graph_rt",
+							"namespace": "mapleleaf_2",
+						},
+					},
+					"spec": map[string]any{
+						"storage": map[string]string{
+							"name": "surrealdb-main",
+						},
+					},
+					"status": map[string]string{
+						"phase": "Ok",
+					},
+				},
+			},
+		}))
+	}))
+	defer server.Close()
+
+	source := &BKBaseSurrealDBBindingSource{
+		baseURL:    server.URL + "/v4/namespaces/bkmonitor",
+		httpClient: server.Client(),
+	}
+
+	details, err := source.ListSurrealDBBindings(context.Background(), "system")
+
+	assert.NoError(t, err)
+	assert.Equal(t, []SurrealDBBindingDetail{
+		{
+			Name:        "binding-graph",
+			BkBizID:     "2",
+			Database:    "2_graph_rt",
+			Namespace:   "mapleleaf_2",
+			ClusterName: "surrealdb-main",
+			Phase:       "Ok",
+		},
+	}, details)
+}
+
+func newBKBaseSurrealDBBindingForTest(name, bizID, database, namespace, phase string, labels map[string]string) bkbaseSurrealDBBinding {
+	item := bkbaseSurrealDBBinding{}
+	item.Metadata.Name = name
+	item.Metadata.Labels = map[string]string{"bk_biz_id": bizID}
+	for key, value := range labels {
+		item.Metadata.Labels[key] = value
+	}
+	item.Metadata.Annotations = map[string]string{
+		"database":  database,
+		"namespace": namespace,
+	}
+	item.Status.Phase = phase
+	return item
 }
 
 func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {

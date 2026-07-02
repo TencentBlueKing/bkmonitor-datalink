@@ -93,6 +93,12 @@ var (
 	ResultTableDetailKey string
 	// ResultTableDetailChannel 结果表详情channel
 	ResultTableDetailChannel string
+	// SurrealDBBindingKey SurrealDBBinding 路由详情 key
+	SurrealDBBindingKey string
+	// SurrealDBBindingChannel SurrealDBBinding 路由详情 channel
+	SurrealDBBindingChannel string
+	// SurrealDBBindingResourceAPIURL bkbase SurrealDBBinding 资源 API 地址
+	SurrealDBBindingResourceAPIURL string
 	// SpaceToResultTableKey 空间关联的结果表key
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
@@ -193,6 +199,9 @@ func initMetadataVariables() {
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
+	SurrealDBBindingKey = GetValue("taskConfig.metadata.space.surrealDBBindingKey", fmt.Sprintf("%s:surrealdb_binding", SpaceRedisKey))
+	SurrealDBBindingChannel = GetValue("taskConfig.metadata.space.surrealDBBindingChannel", fmt.Sprintf("%s:surrealdb_binding:channel", SpaceRedisKey))
+	SurrealDBBindingResourceAPIURL = GetValue("taskConfig.metadata.space.surrealDBBindingResourceAPIURL", "")
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))

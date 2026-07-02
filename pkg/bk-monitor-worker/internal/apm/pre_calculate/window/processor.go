@@ -534,6 +534,7 @@ type ProcessorOptions struct {
 	metricReportEnabled               bool
 	infoReportEnabled                 bool
 	metricLayer4ReportEnabled         bool
+	dynamicRelationFlowReportEnabled  bool
 	podInstanceErrorFlowReportEnabled bool // pod <-> pod , 错误流上报开关
 	podApmErrorFlowReportEnabled      bool // pod <-> apm_service , 错误流上报开关
 	podSystemErrorFlowReportEnabled   bool // pod <-> system , 错误流上报开关
@@ -574,6 +575,12 @@ func TraceInfoReportEnabled(e bool) ProcessorOption {
 func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
 	return func(options *ProcessorOptions) {
 		options.metricLayer4ReportEnabled = e
+	}
+}
+
+func DynamicRelationFlowReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.dynamicRelationFlowReportEnabled = e
 	}
 }
 

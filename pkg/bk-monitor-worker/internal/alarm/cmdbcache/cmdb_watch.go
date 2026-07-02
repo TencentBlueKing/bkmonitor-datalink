@@ -35,19 +35,19 @@ import (
 // 同时为 schema_provider 相关日志添加统一前缀，便于过滤和调试
 type bmwLogger struct{}
 
-func (l *bmwLogger) Infof(format string, args ...any) {
+func (l *bmwLogger) Infof(format string, args ...interface{}) {
 	logger.Infof("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Warnf(format string, args ...any) {
+func (l *bmwLogger) Warnf(format string, args ...interface{}) {
 	logger.Warnf("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Errorf(format string, args ...any) {
+func (l *bmwLogger) Errorf(format string, args ...interface{}) {
 	logger.Errorf("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Debugf(format string, args ...any) {
+func (l *bmwLogger) Debugf(format string, args ...interface{}) {
 	logger.Debugf("[schema_provider] "+format, args...)
 }
 

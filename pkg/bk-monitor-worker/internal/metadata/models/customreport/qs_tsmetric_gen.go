@@ -1159,7 +1159,7 @@ var TimeSeriesMetricDBSchema = struct {
 // Update updates TimeSeriesMetric fields by primary key
 // nolint: dupl
 func (o *TimeSeriesMetric) Update(db *gorm.DB, fields ...TimeSeriesMetricDBSchemaField) error {
-	dbNameToFieldName := map[string]any{
+	dbNameToFieldName := map[string]interface{}{
 		"field_id":         o.FieldID,
 		"group_id":         o.GroupID,
 		"scope_id":         o.ScopeID,
@@ -1174,7 +1174,7 @@ func (o *TimeSeriesMetric) Update(db *gorm.DB, fields ...TimeSeriesMetricDBSchem
 		"is_active":        o.IsActive,
 		"last_index":       o.LastIndex,
 	}
-	u := map[string]any{}
+	u := map[string]interface{}{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1193,7 +1193,7 @@ func (o *TimeSeriesMetric) Update(db *gorm.DB, fields ...TimeSeriesMetricDBSchem
 
 // TimeSeriesMetricUpdater is an TimeSeriesMetric updates manager
 type TimeSeriesMetricUpdater struct {
-	fields map[string]any
+	fields map[string]interface{}
 	db     *gorm.DB
 }
 
@@ -1201,7 +1201,7 @@ type TimeSeriesMetricUpdater struct {
 // nolint: dupl
 func NewTimeSeriesMetricUpdater(db *gorm.DB) TimeSeriesMetricUpdater {
 	return TimeSeriesMetricUpdater{
-		fields: map[string]any{},
+		fields: map[string]interface{}{},
 		db:     db.Model(&TimeSeriesMetric{}),
 	}
 }

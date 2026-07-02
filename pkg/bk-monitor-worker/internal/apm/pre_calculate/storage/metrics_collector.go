@@ -41,10 +41,6 @@ const (
 	SystemFlow           = "system_to_system_flow"
 
 	InstanceErrorFlow = "instance_to_instance_error_flow"
-
-	PodToPodFlow    = "pod_to_pod_flow"
-	PodToSystemFlow = "pod_to_system_flow"
-	SystemToPodFlow = "system_to_pod_flow"
 )
 
 // Flow metrics category and kind

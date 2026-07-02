@@ -180,6 +180,7 @@ func GetTenantList() ([]ListTenantData, error) {
 	tenantList = result.Data
 	lastTenantListUpdate = time.Now()
 	return tenantList, nil
+
 }
 
 // GetTenantAdminUser get tenant admin user

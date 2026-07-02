@@ -26,7 +26,7 @@ func setDefaultConfig() {
 	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
 	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
 	viper.SetDefault(BindingCacheTTLConfigPath, DefaultBindingCacheTTL)
-	viper.SetDefault(BindingResourceAPIURLConfigPath, "")
+	viper.SetDefault(BindingRedisKeyConfigPath, DefaultBindingRedisKey)
 }
 
 func LoadConfig() {
@@ -38,9 +38,9 @@ func LoadConfig() {
 	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)
 	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)
 	BindingCacheTTL = viper.GetDuration(BindingCacheTTLConfigPath)
-	BindingResourceAPIURL = viper.GetString(BindingResourceAPIURLConfigPath)
-	if BindingResourceAPIURL == "" {
-		fmt.Printf("cmdb v1beta3 binding resource api url is empty, please configure %s before enabling binding resolver.\n", BindingResourceAPIURLConfigPath)
+	BindingRedisKey = viper.GetString(BindingRedisKeyConfigPath)
+	if BindingRedisKey == "" {
+		BindingRedisKey = DefaultBindingRedisKey
 	}
 }
 

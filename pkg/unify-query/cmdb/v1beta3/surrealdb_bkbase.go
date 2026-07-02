@@ -26,6 +26,7 @@ const (
 	BKBaseSurrealDBResultTableIDConfigPath = "cmdb.v1beta3.surrealdb.bkbase.result_table_id"
 	BKBaseSurrealDBTimeoutConfigPath       = "cmdb.v1beta3.surrealdb.bkbase.timeout"
 	BindingCacheTTLConfigPath              = "cmdb.v1beta3.binding_cache_ttl"
+	BindingRedisKeyConfigPath              = "cmdb.v1beta3.binding_redis_key"
 
 	// PreferStorageSurrealDB 是 bkbase query_sync 的 prefer_storage 固定值
 	PreferStorageSurrealDB = "surrealdb"
@@ -36,13 +37,14 @@ var (
 	DefaultBKBaseSurrealDBResultTableID = ""
 	DefaultBKBaseSurrealDBTimeout       = 30 * time.Second
 	DefaultBindingCacheTTL              = 5 * time.Minute
+	DefaultBindingRedisKey              = "bkmonitorv3:spaces:surrealdb_binding"
 )
 
 var (
 	BKBaseSurrealDBResultTableID string
 	BKBaseSurrealDBTimeout       time.Duration
 	BindingCacheTTL              time.Duration
-	BindingResourceAPIURL        string
+	BindingRedisKey              string
 )
 
 // BKBaseSurrealDBClient 通过 bkbase query_sync 接口转发 SurrealQL 查询。

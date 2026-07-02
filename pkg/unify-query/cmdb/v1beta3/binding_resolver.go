@@ -11,34 +11,21 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
+	goRedis "github.com/go-redis/redis/v8"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	uqredis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// BindingResourceAPIURLConfigPath 指向 bkbase v4 namespaces 资源 API 的基础 URL
-// 例：https://bkapi.xxx.com/api/bk-base/prod/v4/namespaces/bkmonitor
-//
-// 之所以独立配置：bkbase resource API 的路径不同于 query_sync（后者走
-// bk_data.address），因此不能复用 GetBkDataAPI().QueryUrl()。鉴权 header 仍然
-// 通过 GetBkDataAPI().Headers() 注入（X-Bkapi-Authorization + X-Bkbase-Authorization）。
-const BindingResourceAPIURLConfigPath = "cmdb.v1beta3.bkbase.resource_api_url"
-
-const (
-	graphRelationBindingLabelKey   = "bkm_data_link_strategy"
-	graphRelationBindingLabelValue = "graph_relation_time_series"
-)
-
-// BindingInfo 是 SurrealDBBinding 对象里 unify-query 查询需要的字段，
+// BindingInfo 是 SurrealDBBinding 路由里 unify-query 查询需要的字段，
 // 对应 bkbase 回填的 metadata.annotations.{database, namespace} + storage name。
 type BindingInfo struct {
 	Name        string // binding metadata.name
@@ -59,39 +46,26 @@ func (e *BindingLookupError) Error() string {
 	return fmt.Sprintf("binding lookup failed for space=%s: %s", e.SpaceUID, e.Reason)
 }
 
-// bkbase list 响应结构，只反序列化需要的字段
-type bindingListResponse struct {
-	Result  bool          `json:"result"`
-	Code    string        `json:"code"`
-	Message string        `json:"message"`
-	Data    []bindingItem `json:"data"`
-}
-
-type bindingItem struct {
-	Metadata struct {
-		Name        string            `json:"name"`
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
-	} `json:"metadata"`
-	Spec struct {
-		Storage struct {
-			Name string `json:"name"`
-		} `json:"storage"`
-	} `json:"spec"`
-	Status struct {
-		Phase string `json:"phase"`
-	} `json:"status"`
-}
-
 // cache 条目
 type bindingCacheEntry struct {
 	info   *BindingInfo
 	expiry time.Time
 }
 
+type bindingRedisLookup func(ctx context.Context, key, field string) (string, error)
+
+type bindingRouteDetail struct {
+	Name        string `json:"name"`
+	BkBizID     string `json:"bk_biz_id"`
+	Database    string `json:"database"`
+	Namespace   string `json:"namespace"`
+	ClusterName string `json:"cluster_name"`
+	Phase       string `json:"phase"`
+}
+
 // BindingResolver 解析 spaceUID → BindingInfo，带 TTL 缓存。
 type BindingResolver struct {
-	curl curl.Curl
+	redisLookup bindingRedisLookup
 
 	cacheMu sync.RWMutex
 	cache   map[string]*bindingCacheEntry // key = bk_biz_id
@@ -106,8 +80,8 @@ var (
 func GetBindingResolver() *BindingResolver {
 	defaultBindingResolverOnce.Do(func() {
 		defaultBindingResolver = &BindingResolver{
-			curl:  &curl.HttpCurl{},
-			cache: make(map[string]*bindingCacheEntry),
+			redisLookup: defaultBindingRedisLookup,
+			cache:       make(map[string]*bindingCacheEntry),
 		}
 	})
 	return defaultBindingResolver
@@ -137,7 +111,7 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 	}
 	span.Set("cache", "miss")
 
-	info, err := r.fetchFromBKBase(ctx, bizID)
+	info, err := r.fetchFromRedis(ctx, tenantID, spaceUID, bizID)
 	if err != nil {
 		ObserveBindingLookup(spaceUID, "error")
 		return nil, err
@@ -203,67 +177,75 @@ func (r *BindingResolver) cacheSize() int {
 	return len(r.cache)
 }
 
-func (r *BindingResolver) fetchFromBKBase(ctx context.Context, bizID string) (*BindingInfo, error) {
-	baseURL := BindingResourceAPIURL
-	if baseURL == "" {
-		baseURL = viper.GetString(BindingResourceAPIURLConfigPath)
-	}
-	if baseURL == "" {
-		return nil, fmt.Errorf("binding resource api url not configured (%s)", BindingResourceAPIURLConfigPath)
-	}
-	url := fmt.Sprintf("%s/surrealdbbindings/?label_selector=bk_biz_id=%s", strings.TrimRight(baseURL, "/"), bizID)
+func defaultBindingRedisLookup(ctx context.Context, key, field string) (string, error) {
+	return uqredis.HGet(ctx, key, field)
+}
 
-	var resp bindingListResponse
-	headers := metadata.Headers(ctx, bkapi.GetBkDataAPI().Headers(map[string]string{"Content-Type": "application/json"}))
-	_, err := r.curl.Request(ctx, curl.Get, curl.Options{
-		UrlPath: url,
-		Headers: headers,
-		Timeout: BKBaseSurrealDBTimeout,
-	}, &resp)
-	if err != nil {
-		return nil, fmt.Errorf("list SurrealDBBinding failed: %w", err)
+func (r *BindingResolver) fetchFromRedis(ctx context.Context, tenantID, spaceUID, bizID string) (*BindingInfo, error) {
+	lookup := r.redisLookup
+	if lookup == nil {
+		lookup = defaultBindingRedisLookup
 	}
-	if !resp.Result {
-		return nil, fmt.Errorf("bkbase list SurrealDBBinding response error: code=%s, message=%s", resp.Code, resp.Message)
+	key := BindingRedisKey
+	if key == "" {
+		key = DefaultBindingRedisKey
 	}
 
-	candidates := make([]*BindingInfo, 0, len(resp.Data))
-	for i := range resp.Data {
-		item := &resp.Data[i]
-		if item.Status.Phase != "Ok" {
+	for _, field := range bindingRedisFields(tenantID, spaceUID) {
+		value, err := lookup(ctx, key, field)
+		if errors.Is(err, goRedis.Nil) {
 			continue
 		}
-		db := item.Metadata.Annotations["database"]
-		ns := item.Metadata.Annotations["namespace"]
-		if db == "" || ns == "" {
-			// phase=Ok 但 annotations 缺失，跳过
+		if err != nil {
+			return nil, fmt.Errorf("get SurrealDBBinding route from redis failed: key=%s field=%s: %w", key, field, err)
+		}
+		if value == "" {
 			continue
 		}
-		info := &BindingInfo{
-			Name:        item.Metadata.Name,
-			BkBizID:     item.Metadata.Labels["bk_biz_id"],
-			Database:    db,
-			Namespace:   ns,
-			ClusterName: item.Spec.Storage.Name,
-			Phase:       item.Status.Phase,
+
+		info, err := decodeBindingInfo(value)
+		if err != nil {
+			return nil, fmt.Errorf("decode SurrealDBBinding route failed: key=%s field=%s: %w", key, field, err)
 		}
-		if item.Metadata.Labels[graphRelationBindingLabelKey] == graphRelationBindingLabelValue {
-			return info, nil
+		if info.BkBizID == "" {
+			info.BkBizID = bizID
 		}
-		candidates = append(candidates, info)
+		if info.Phase != "" && info.Phase != "Ok" {
+			return nil, fmt.Errorf("SurrealDBBinding route is not ready: key=%s field=%s phase=%s", key, field, info.Phase)
+		}
+		if info.Database == "" || info.Namespace == "" {
+			return nil, fmt.Errorf("SurrealDBBinding route missing database or namespace: key=%s field=%s", key, field)
+		}
+		return info, nil
 	}
-	if len(candidates) == 1 {
-		return candidates[0], nil
-	}
-	if len(candidates) > 1 {
-		return nil, fmt.Errorf(
-			"multiple usable SurrealDBBinding found for bk_biz_id=%s, missing %s=%s label",
-			bizID,
-			graphRelationBindingLabelKey,
-			graphRelationBindingLabelValue,
-		)
-	}
+
 	return nil, nil
+}
+
+func bindingRedisFields(tenantID, spaceUID string) []string {
+	if tenantID == "" {
+		return []string{spaceUID}
+	}
+	return []string{bindingRedisField(spaceUID, tenantID), spaceUID}
+}
+
+func bindingRedisField(spaceUID, tenantID string) string {
+	return fmt.Sprintf("%s|%s", spaceUID, tenantID)
+}
+
+func decodeBindingInfo(value string) (*BindingInfo, error) {
+	var detail bindingRouteDetail
+	if err := json.Unmarshal([]byte(value), &detail); err != nil {
+		return nil, err
+	}
+	return &BindingInfo{
+		Name:        detail.Name,
+		BkBizID:     detail.BkBizID,
+		Database:    detail.Database,
+		Namespace:   detail.Namespace,
+		ClusterName: detail.ClusterName,
+		Phase:       detail.Phase,
+	}, nil
 }
 
 // parseBkBizIDFromSpaceUID 把形如 "bkcc__39" 的 spaceUID 解析成 "39"。
@@ -283,6 +265,3 @@ func parseBkBizIDFromSpaceUID(spaceUID string) (string, error) {
 	}
 	return parts[1], nil
 }
-
-// 构建简单的 list 接口辅助 URL（供测试/调试）
-var _ = json.Marshal

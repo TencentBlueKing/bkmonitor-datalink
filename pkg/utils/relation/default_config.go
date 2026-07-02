@@ -160,6 +160,13 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 	},
 	{
 		Namespace: NamespaceAll,
+		Name:      "business",
+		Fields: []FieldDefinition{
+			{Name: "bk_biz_id", Required: true},
+		},
+	},
+	{
+		Namespace: NamespaceAll,
 		Name:      "biz",
 		Fields: []FieldDefinition{
 			{Name: "bk_biz_id", Required: true},
@@ -245,6 +252,7 @@ var defaultRelationDefinitions = []*RelationDefinition{
 	{Namespace: NamespaceAll, Name: "apm_service_instance_with_pod", FromResource: "apm_service_instance", ToResource: "pod"},
 	{Namespace: NamespaceAll, Name: "apm_service_with_apm_service_instance", FromResource: "apm_service", ToResource: "apm_service_instance"},
 	{Namespace: NamespaceAll, Name: "bklogconfig_with_datasource", FromResource: "bklogconfig", ToResource: "datasource"},
+	{Namespace: NamespaceAll, Name: "business_set", FromResource: "business", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "biz_with_set", FromResource: "biz", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "module_with_set", FromResource: "module", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "host_with_module", FromResource: "host", ToResource: "module"},

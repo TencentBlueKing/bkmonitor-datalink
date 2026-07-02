@@ -44,7 +44,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "biz", "bklogconfig", "container", "daemonset", "datasource", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "p4_changelist", "pod", "replicaset", "service", "set", "statefulset", "svn_revision", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "app_version", "biz", "bklogconfig", "business", "container", "daemonset", "datasource", "deployment", "domain", "git_commit", "host", "ingress", "job", "k8s_address", "module", "node", "p4_changelist", "pod", "replicaset", "service", "set", "statefulset", "svn_revision", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -85,6 +85,18 @@ func TestModel_GetPath(t *testing.T) {
 				{"apm_service", "apm_service_instance", "pod", "node", "system"},
 				{"apm_service", "apm_service_instance", "pod", "datasource", "node", "system"},
 				{"apm_service", "apm_service_instance", "pod", "container", "app_version", "host", "system"},
+			},
+		},
+		"legacy business to set": {
+			target: "set",
+			matcher: cmdb.Matcher{
+				"bk_biz_id": "2",
+			},
+			source:       "business",
+			indexMatcher: cmdb.Matcher{"bk_biz_id": "2"},
+			allMatch:     true,
+			expected: [][]string{
+				{"business", "set"},
 			},
 		},
 		"apm_service to system through wrong service": {

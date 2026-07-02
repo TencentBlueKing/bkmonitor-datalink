@@ -635,16 +635,12 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 	if provider == nil {
 		provider = GetSchemaProvider()
 	}
-	known := make(map[ResourceType]struct{})
-	for _, schema := range provider.ListRelationSchemas(req.SchemaNamespace()) {
-		known[schema.FromType] = struct{}{}
-		known[schema.ToType] = struct{}{}
-	}
+	namespace := req.SchemaNamespace()
 	for _, resourceType := range []ResourceType{req.SourceType, req.TargetType} {
 		if resourceType == "" {
 			return fmt.Errorf("resource type cannot be empty")
 		}
-		if _, ok := known[resourceType]; !ok {
+		if !isKnownResource(provider, namespace, resourceType) {
 			return fmt.Errorf("unknown resource type %q", resourceType)
 		}
 	}
@@ -652,7 +648,7 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 		if resourceType == "" {
 			continue
 		}
-		if _, ok := known[resourceType]; !ok {
+		if !isKnownResource(provider, namespace, resourceType) {
 			return fmt.Errorf("unknown path resource type %q", resourceType)
 		}
 	}
@@ -660,6 +656,11 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 		return err
 	}
 	return nil
+}
+
+func isKnownResource(provider SchemaProvider, namespace string, resourceType ResourceType) bool {
+	return len(provider.GetResourcePrimaryKeys(namespace, resourceType)) > 0 ||
+		len(provider.GetResourceFields(namespace, resourceType)) > 0
 }
 
 func validateSourceInfoFields(req *QueryRequest, provider SchemaProvider) error {

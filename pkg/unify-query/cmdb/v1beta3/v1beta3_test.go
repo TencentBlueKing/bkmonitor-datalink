@@ -634,6 +634,29 @@ func TestQueryLivenessGraphRejectsUnknownSourceInfoField(t *testing.T) {
 	assert.ErrorContains(t, err, `unknown source_info field "custom_typo"`)
 }
 
+func TestQueryLivenessGraphAllowsDefinedResourceWithoutRelations(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"cluster": {"bcs_cluster_id"},
+		},
+	})
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, paths, _, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: ResourceTypeCluster,
+		SourceInfo: map[string]string{
+			"bcs_cluster_id": "BCS-K8S-00001",
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: "cluster"}}}}, paths)
+}
+
 func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
@@ -1484,6 +1507,44 @@ func TestExtractMatchersRequiresPathWideInstantOverlap(t *testing.T) {
 			assert.Equal(t, tc.expected, matchers)
 		})
 	}
+}
+
+func TestLivenessGraphPreservesRepeatedRelationRowsByDirection(t *testing.T) {
+	graph := NewLivenessGraph(0, 200)
+	root := &NodeLiveness{
+		ResourceID:   "node:1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	pod := &NodeLiveness{
+		ResourceID:   "pod:1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "pod-1"},
+		RawPeriods:   []*VisiblePeriod{{Start: 0, End: 200}},
+	}
+	graph.AddNode(root)
+	graph.AddNode(pod)
+	graph.RootID = root.ResourceID
+	graph.AddEdge(&EdgeLiveness{
+		RelationID: "node-pod:1",
+		Direction:  DirectionOutbound,
+		FromID:     root.ResourceID,
+		ToID:       pod.ResourceID,
+		RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}},
+	})
+	graph.AddEdge(&EdgeLiveness{
+		RelationID: "node-pod:1",
+		Direction:  DirectionInbound,
+		FromID:     pod.ResourceID,
+		ToID:       root.ResourceID,
+		RawPeriods: []*VisiblePeriod{{Start: 0, End: 200}},
+	})
+
+	matchers := extractMatchersFromGraphs([]*LivenessGraph{graph}, ResourceTypePod, nil)
+
+	assert.Len(t, graph.Edges, 2)
+	assert.Equal(t, cmdb.Matchers{{"pod": "pod-1"}}, matchers)
 }
 
 func TestExtractMatchersSkipsRootForExplicitSelfTarget(t *testing.T) {

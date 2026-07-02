@@ -64,11 +64,29 @@ func (g *LivenessGraph) AddNode(node *NodeLiveness) {
 }
 
 func (g *LivenessGraph) AddEdge(edge *EdgeLiveness) {
-	_, exists := g.Edges[edge.RelationID]
-	g.Edges[edge.RelationID] = edge
-	if !exists {
-		g.Adjacency[edge.FromID] = append(g.Adjacency[edge.FromID], edge.RelationID)
+	key := edge.RelationID
+	if existing := g.Edges[key]; existing != nil && !sameEdgeLiveness(existing, edge) {
+		key = directionalEdgeKey(edge)
 	}
+	_, exists := g.Edges[key]
+	g.Edges[key] = edge
+	if !exists {
+		g.Adjacency[edge.FromID] = append(g.Adjacency[edge.FromID], key)
+	}
+}
+
+func sameEdgeLiveness(left, right *EdgeLiveness) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.RelationID == right.RelationID &&
+		left.Direction == right.Direction &&
+		left.FromID == right.FromID &&
+		left.ToID == right.ToID
+}
+
+func directionalEdgeKey(edge *EdgeLiveness) string {
+	return edge.RelationID + "\x00" + string(edge.Direction) + "\x00" + edge.FromID + "\x00" + edge.ToID
 }
 
 func (g *LivenessGraph) GetNode(resourceID string) *NodeLiveness {
@@ -76,7 +94,15 @@ func (g *LivenessGraph) GetNode(resourceID string) *NodeLiveness {
 }
 
 func (g *LivenessGraph) GetEdge(relationID string) *EdgeLiveness {
-	return g.Edges[relationID]
+	if edge := g.Edges[relationID]; edge != nil {
+		return edge
+	}
+	for _, edge := range g.Edges {
+		if edge.RelationID == relationID {
+			return edge
+		}
+	}
+	return nil
 }
 
 func (g *LivenessGraph) AddTraversalError(errMsg string) {

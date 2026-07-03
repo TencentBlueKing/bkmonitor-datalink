@@ -301,6 +301,36 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "(`case_sensitive_log` LIKE '%ERROR%' OR `case_sensitive_log` LIKE '%Traceback%')",
 			dsl:   `{"bool":{"should":[{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}},{"wildcard":{"case_sensitive_log":{"value":"*Traceback*"}}}]}}`,
 		},
+		{
+			name:  "大小写不敏感 analyzed 字段的正则会 lower pattern",
+			input: `case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "旧版大小写不敏感字段的正则会 lower pattern",
+			input: `legacy_case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`legacy_case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"legacy_case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "大小写敏感 analyzed 字段的正则保持原始大小写",
+			input: `case_sensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_sensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_sensitive_log":{"value":".*SSR_REQUEST_ERROR.*"}}}`,
+		},
+		{
+			name:  "混合大小写语义字段的正则同时保留原始和 lower pattern",
+			input: `mixed_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`mixed_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"bool":{"should":[{"regexp":{"mixed_log":{"value":".*SSR_REQUEST_ERROR.*"}}},{"regexp":{"mixed_log":{"value":".*ssr_request_error.*"}}}]}}`,
+		},
+		{
+			name:  "大小写不敏感字段的不包含正则 lower 后保持反向语义",
+			input: `case_insensitive_log:/^(?!.*ERROR).*/`,
+			sql:   "`case_insensitive_log` REGEXP '^(?!.*ERROR).*'",
+			dsl:   `{"bool":{"must":{"exists":{"field":"case_insensitive_log"}},"must_not":{"regexp":{"case_insensitive_log":{"value":".*error.*"}}}}}`,
+		},
 	}
 
 	mock.Init()

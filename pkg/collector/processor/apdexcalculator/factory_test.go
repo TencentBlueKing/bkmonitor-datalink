@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
@@ -270,6 +271,151 @@ func TestProcessTracesStandardCalculator(t *testing.T) {
 	})
 }
 
+func TestProcessTracesPredicateKeySpanName(t *testing.T) {
+	newFactoryForTest := func(t *testing.T, config *Config) processor.Processor {
+		confMap := make(map[string]any)
+		assert.NoError(t, mapstructure.Decode(config, &confMap))
+
+		factory, err := NewFactory(confMap, nil)
+		assert.NoError(t, err)
+		return factory
+	}
+
+	t.Run("matched traces", func(t *testing.T) {
+		data := generator.NewTracesGenerator(define.TracesOptions{
+			SpanCount: 1,
+			SpanKind:  int(ptrace.SpanKindInternal),
+		}).Generate()
+		span := testkits.FirstSpan(data)
+		span.SetName("documentLoad")
+
+		factory := newFactoryForTest(t, &Config{
+			Calculator: CalculatorConfig{Type: "standard"},
+			Rules: []RuleConfig{{
+				Kind:         "SPAN_KIND_INTERNAL",
+				PredicateKey: "span_name",
+				Destination:  "apdex_type",
+				ApdexT:       1000,
+			}},
+		})
+
+		record := &define.Record{RecordType: define.RecordTraces, Data: data}
+		_, err := factory.Process(record)
+		assert.NoError(t, err)
+
+		v, ok := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes().Get("apdex_type")
+		assert.True(t, ok)
+		assert.NotEmpty(t, v.AsString())
+	})
+
+	t.Run("unmatched empty span_name", func(t *testing.T) {
+		data := generator.NewTracesGenerator(define.TracesOptions{
+			SpanCount: 1,
+			SpanKind:  int(ptrace.SpanKindInternal),
+		}).Generate()
+		span := testkits.FirstSpan(data)
+		span.SetName("")
+
+		factory := newFactoryForTest(t, &Config{
+			Calculator: CalculatorConfig{Type: "standard"},
+			Rules: []RuleConfig{{
+				Kind:         "SPAN_KIND_INTERNAL",
+				PredicateKey: "span_name",
+				Destination:  "apdex_type",
+				ApdexT:       1000,
+			}},
+		})
+
+		record := &define.Record{RecordType: define.RecordTraces, Data: data}
+		_, err := factory.Process(record)
+		assert.NoError(t, err)
+
+		_, ok := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes().Get("apdex_type")
+		assert.False(t, ok)
+	})
+
+	t.Run("matched rum by span_name", func(t *testing.T) {
+		data := generator.NewTracesGenerator(define.TracesOptions{
+			SpanCount: 1,
+			SpanKind:  int(ptrace.SpanKindInternal),
+		}).Generate()
+		span := testkits.FirstSpan(data)
+		span.SetName("documentLoad")
+
+		factory := newFactoryForTest(t, &Config{
+			Calculator: CalculatorConfig{Type: "standard"},
+			Rules: []RuleConfig{{
+				Kind:         "SPAN_KIND_INTERNAL",
+				PredicateKey: "span_name",
+				Destination:  "rum_apdex_type",
+				ApdexT:       1000,
+			}},
+		})
+
+		record := &define.Record{RecordType: define.RecordRum, Data: data}
+		_, err := factory.Process(record)
+		assert.NoError(t, err)
+
+		v, ok := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes().Get("rum_apdex_type")
+		assert.True(t, ok)
+		assert.NotEmpty(t, v.AsString())
+	})
+
+	t.Run("matched traces by resource field", func(t *testing.T) {
+		data := generator.NewTracesGenerator(define.TracesOptions{
+			SpanCount: 1,
+			SpanKind:  int(ptrace.SpanKindServer),
+			GeneratorOptions: define.GeneratorOptions{
+				Resources: map[string]string{"service.name": "frontend-demo"},
+			},
+		}).Generate()
+
+		factory := newFactoryForTest(t, &Config{
+			Calculator: CalculatorConfig{Type: "standard"},
+			Rules: []RuleConfig{{
+				Kind:         "SPAN_KIND_SERVER",
+				PredicateKey: "resource.service.name",
+				Destination:  "apdex_type",
+				ApdexT:       1000,
+			}},
+		})
+
+		record := &define.Record{RecordType: define.RecordTraces, Data: data}
+		_, err := factory.Process(record)
+		assert.NoError(t, err)
+
+		v, ok := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes().Get("apdex_type")
+		assert.True(t, ok)
+		assert.NotEmpty(t, v.AsString())
+	})
+
+	t.Run("default kind still respects predicate_key", func(t *testing.T) {
+		data := generator.NewTracesGenerator(define.TracesOptions{
+			SpanCount: 1,
+			SpanKind:  int(ptrace.SpanKindInternal),
+		}).Generate()
+		span := testkits.FirstSpan(data)
+		span.SetName("")
+
+		factory := newFactoryForTest(t, &Config{
+			Calculator: CalculatorConfig{Type: "standard"},
+			Rules: []RuleConfig{ {
+				Kind:         "",
+				PredicateKey: "span_name",
+				Destination:  "apdex_type",
+				ApdexT:       1000,
+			}},
+		})
+
+		record := &define.Record{RecordType: define.RecordTraces, Data: data}
+		_, err := factory.Process(record)
+		assert.NoError(t, err)
+
+		_, ok := testkits.FirstSpan(record.Data.(ptrace.Traces)).Attributes().Get("apdex_type")
+		assert.False(t, ok)
+	})
+}
+
 func testProcessTracesStandardCalculator(startTime, endTime time.Duration, threshold float64) (string, error) {
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		SpanCount: 1,
@@ -343,5 +489,106 @@ func TestFindMetricsAttributes(t *testing.T) {
 		m := pcommon.NewMap()
 		found := findMetricsAttributes("attributes.net.port", m)
 		assert.False(t, found)
+	})
+}
+
+func TestFindTracePredicate(t *testing.T) {
+	t.Run("span_name exists", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		span.SetName("documentLoad")
+
+		found := findTracePredicate("span_name", pcommon.NewMap(), span)
+		assert.True(t, found)
+	})
+
+	t.Run("span_name empty", func(t *testing.T) {
+		span := ptrace.NewSpan()
+
+		found := findTracePredicate("span_name", pcommon.NewMap(), span)
+		assert.False(t, found)
+	})
+
+	t.Run("attributes exists", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		span.Attributes().UpsertString("http.method", "GET")
+
+		found := findTracePredicate("attributes.http.method", pcommon.NewMap(), span)
+		assert.True(t, found)
+	})
+
+	t.Run("attributes empty", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		span.Attributes().UpsertString("http.method", "")
+
+		found := findTracePredicate("attributes.http.method", pcommon.NewMap(), span)
+		assert.False(t, found)
+	})
+
+	t.Run("resource exists", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		resource := pcommon.NewMap()
+		resource.UpsertString("service.name", "frontend-demo")
+
+		found := findTracePredicate("resource.service.name", resource, span)
+		assert.True(t, found)
+	})
+
+	t.Run("resource empty", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		resource := pcommon.NewMap()
+		resource.UpsertString("service.name", "")
+
+		found := findTracePredicate("resource.service.name", resource, span)
+		assert.False(t, found)
+	})
+
+	t.Run("unsupported field", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		resource := pcommon.NewMap()
+
+		found := findTracePredicate("kind", resource, span)
+		assert.False(t, found)
+	})
+}
+
+func TestCalcTraceDurationByRule(t *testing.T) {
+	t.Run("use event mapping duration", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		span.SetStartTimestamp(pcommon.Timestamp(time.Second))
+		span.SetEndTimestamp(pcommon.Timestamp(time.Second * 10))
+
+		event1 := span.Events().AppendEmpty()
+		event1.SetName("fetchStart")
+		event1.SetTimestamp(pcommon.Timestamp(time.Second))
+
+		event2 := span.Events().AppendEmpty()
+		event2.SetName("loadEventEnd")
+		event2.SetTimestamp(pcommon.Timestamp(time.Second * 2))
+
+		rule := RuleConfig{
+			Duration: &RuleDurationConfig{
+				StartEvent: "fetchStart",
+				EndEvent:   "loadEventEnd",
+			},
+		}
+
+		duration := calcTraceDurationByRule(rule, span)
+		assert.Equal(t, float64(time.Second), duration)
+	})
+
+	t.Run("fallback to span duration when event missing", func(t *testing.T) {
+		span := ptrace.NewSpan()
+		span.SetStartTimestamp(pcommon.Timestamp(time.Second))
+		span.SetEndTimestamp(pcommon.Timestamp(time.Second * 3))
+
+		rule := RuleConfig{
+			Duration: &RuleDurationConfig{
+				StartEvent: "missingStart",
+				EndEvent:   "missingEnd",
+			},
+		}
+
+		duration := calcTraceDurationByRule(rule, span)
+		assert.Equal(t, float64(2*time.Second), duration)
 	})
 }

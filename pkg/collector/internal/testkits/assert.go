@@ -46,7 +46,7 @@ func AssertAttrsStringKeyVal(t *testing.T, attrs pcommon.Map, kv ...string) {
 		key, val := kv[i], kv[i+1]
 		v, ok := attrs.Get(key)
 		if ok {
-			assert.Equal(t, val, v.StringVal())
+			assert.Equal(t, val, v.Str())
 		} else {
 			assert.Equal(t, val, "")
 		}
@@ -56,5 +56,5 @@ func AssertAttrsStringKeyVal(t *testing.T, attrs pcommon.Map, kv ...string) {
 func AssertAttrsIntVal(t *testing.T, attrs pcommon.Map, key string, val int) {
 	v, ok := attrs.Get(key)
 	assert.True(t, ok)
-	assert.Equal(t, int64(val), v.IntVal())
+	assert.Equal(t, int64(val), v.Int())
 }

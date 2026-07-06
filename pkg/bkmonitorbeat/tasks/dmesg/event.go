@@ -10,13 +10,12 @@
 package dmesg
 
 import (
-	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
@@ -48,15 +47,7 @@ func (e *Event) AsMapStr() common.MapStr {
 			"event": common.MapStr{
 				"content": exception.Message,
 			},
-			"dimension": common.MapStr{
-				"bk_cloud_id":  strconv.Itoa(int(info.Cloudid)),
-				"bk_target_ip": info.IP,
-				"bk_agent_id":  info.BKAgentID,
-				"bk_host_id":   strconv.Itoa(int(info.HostID)),
-				"bk_biz_id":    strconv.Itoa(int(info.BKBizID)),
-				"node_id":      fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
-				"hostname":     info.Hostname,
-			},
+			"dimension": tasks.HostDimension(info),
 			"timestamp": exception.Time.UnixMilli(),
 		})
 	}

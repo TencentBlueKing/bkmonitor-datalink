@@ -349,6 +349,9 @@ func (f *Frontend) init() error {
 		logging.Errorf("frontend %v make config error %v", f, err)
 		return err
 	}
+	if initialOffset, ok := kafkaConfig.GetInitialOffset(); ok {
+		c.Consumer.Offsets.Initial = initialOffset
+	}
 
 	auth := config.NewAuthInfo(config.MQConfigFromContext(f.ctx))
 	userName, err := auth.GetUserName()

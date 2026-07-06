@@ -39,6 +39,7 @@ type MetaClusterInfo struct {
 	BatchSize     int                    `mapstructure:"batch_size" json:"batch_size"`
 	FlushInterval string                 `mapstructure:"flush_interval" json:"flush_interval"`
 	ConsumeRate   int                    `mapstructure:"consume_rate" json:"consume_rate"` // unit:Bytes
+	InitialOffset *int64                 `mapstructure:"initial_offset" json:"initial_offset"`
 }
 
 // NewMetaClusterInfo :

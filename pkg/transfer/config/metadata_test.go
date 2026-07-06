@@ -114,8 +114,9 @@ func (s *PipelineConfigSuite) TestStruct() {
     },
     "storage_config": {
       "topic": "bkmonitor_130",
-      "partition": 1	
+      "partition": 1
     },
+    "initial_offset": -2,
     "auth_info": {
       "username": "admin",
       "password": "admin"
@@ -140,6 +141,7 @@ func (s *PipelineConfigSuite) TestStruct() {
 		{9092.0, pipe.MQConfig.ClusterConfig["port"]},
 		{"bkmonitor_130", pipe.MQConfig.StorageConfig["topic"]},
 		{1.0, pipe.MQConfig.StorageConfig["partition"]},
+		{int64(-2), *pipe.MQConfig.InitialOffset},
 		{"admin", pipe.MQConfig.AuthInfo["username"]},
 		{"admin", pipe.MQConfig.AuthInfo["password"]},
 		{config.ResultTableSchemaTypeFree, pipe.ResultTableList[0].SchemaType},

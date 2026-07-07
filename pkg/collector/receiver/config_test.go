@@ -143,3 +143,22 @@ receiver:
 	assert.Equal(t, []string{"throttle", "maxbytes;maxRequestBytes=1024"}, r.config.GrpcServer.Middlewares)
 	assert.NotSame(t, enabledManager, throttle.GlobalManager())
 }
+
+func TestNewWithMissingNetworkFlowConfigFileDoesNotFail(t *testing.T) {
+	content := `
+receiver:
+  networkflow:
+    enabled: true
+    listeners_file:
+      - "./definitely-missing-networkflow.conf"
+`
+	config, err := confengine.LoadConfigContent(content)
+	assert.NoError(t, err)
+
+	r, err := New(config)
+	assert.NoError(t, err)
+	assert.NotNil(t, r)
+	assert.True(t, r.config.NetworkFlow.Enabled)
+	assert.Equal(t, []string{"./definitely-missing-networkflow.conf"}, r.config.NetworkFlow.ListenersFile)
+	assert.Empty(t, r.config.NetworkFlow.Listeners)
+}

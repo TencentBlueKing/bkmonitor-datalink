@@ -49,8 +49,9 @@ type Receiver struct {
 }
 
 var (
-	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
-	globalSkywalkingConfig map[string]SkywalkingConfig
+	globalRecords                = define.NewRecordQueue(define.PushModeGuarantee)
+	globalSkywalkingConfig       map[string]SkywalkingConfig
+	errNetworkFlowConfigNotFound = errors.New("networkflow config not found")
 )
 
 // Records 返回 Receiver 全局消息管道
@@ -98,9 +99,14 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	if len(c.NetworkFlow.ListenersFile) > 0 {
 		nf, err := loadNetworkFlowConfig(c.NetworkFlow.ListenersFile)
 		if err != nil {
-			return nil, fmt.Errorf("load networkflow sub-config failed: %w", err)
+			if errors.Is(err, errNetworkFlowConfigNotFound) {
+				logger.Warnf("networkflow sub-config is missing, skip loading listeners_file=%v, err: %v", c.NetworkFlow.ListenersFile, err)
+			} else {
+				return nil, fmt.Errorf("load networkflow sub-config failed: %w", err)
+			}
+		} else {
+			c.NetworkFlow = *nf
 		}
-		c.NetworkFlow = *nf
 	}
 	logger.Infof("receiver config: %+v", c)
 
@@ -157,7 +163,7 @@ func loadNetworkFlowConfig(patterns []string) (*NetworkFlowConfig, error) {
 		}
 		return &nf, nil
 	}
-	return nil, fmt.Errorf("no networkflow config found from patterns: %v", patterns)
+	return nil, fmt.Errorf("%w from patterns: %v", errNetworkFlowConfigNotFound, patterns)
 }
 
 func (r *Receiver) ready() {

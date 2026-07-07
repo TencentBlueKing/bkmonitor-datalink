@@ -12,9 +12,12 @@ package kafka_test
 import (
 	"context"
 	"sync"
+	"testing"
+	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/kafka"
@@ -31,12 +34,15 @@ type FrontendSuite struct {
 // SetupTest :
 func (s *FrontendSuite) SetupTest() {
 	s.ConfigSuite.SetupTest()
+	s.Config.Set(kafka.ConfKafkaFlowInterval, time.Second)
 
 	kafkaConfig := s.PipelineConfig.MQConfig.AsKafkaCluster()
 	kafkaConfig.SetTopic("test")
 	kafkaConfig.SetDomain("localhost")
 	kafkaConfig.SetPort(9092)
 	kafkaConfig.SetPartition(0)
+	s.PipelineConfig.MQConfig.AuthInfo["username"] = ""
+	s.PipelineConfig.MQConfig.AuthInfo["password"] = ""
 
 	s.newKafkaConsumerGroup = kafka.NewKafkaConsumerGroup
 	s.newKafkaConfig = kafka.NewKafkaConsumerConfig
@@ -128,4 +134,43 @@ func (s *FrontendSuite) TestPull() {
 	close(outCh)
 	s.NoError(f.Close())
 	wg.Wait()
+}
+
+func (s *FrontendSuite) TestInitialOffsetFromMQConfig() {
+	ctrl := gomock.NewController(s.T())
+	defer ctrl.Finish()
+
+	offset := int64(sarama.OffsetOldest)
+	s.PipelineConfig.MQConfig.InitialOffset = &offset
+	s.Config.Set(kafka.ConfKafkaConsumerOffsetInitial, sarama.OffsetNewest)
+
+	var captured *sarama.Config
+	kafka.NewKafkaConsumerConfig = func(_ define.Configuration) (*sarama.Config, error) {
+		cfg := sarama.NewConfig()
+		cfg.Consumer.Offsets.Initial = sarama.OffsetNewest
+		return cfg, nil
+	}
+
+	errCh := make(chan error)
+	close(errCh)
+	group := NewMockConsumerGroup(ctrl)
+	group.EXPECT().Errors().Return(errCh).AnyTimes()
+	group.EXPECT().Consume(gomock.Any(), gomock.Any(), gomock.Any()).Return(context.Canceled)
+	group.EXPECT().Close().Return(nil)
+	kafka.NewKafkaConsumerGroup = func(_ []string, _ string, cfg *sarama.Config) (sarama.ConsumerGroup, error) {
+		captured = cfg
+		return group, nil
+	}
+
+	f := kafka.NewFrontend(s.CTX, "test")
+	killCh := make(chan error, 1)
+	f.Pull(make(chan define.Payload), killCh)
+	s.NoError(f.Close())
+
+	s.NotNil(captured)
+	s.Equal(int64(sarama.OffsetOldest), captured.Consumer.Offsets.Initial)
+}
+
+func TestFrontendSuite(t *testing.T) {
+	suite.Run(t, new(FrontendSuite))
 }

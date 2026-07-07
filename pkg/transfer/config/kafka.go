@@ -34,6 +34,14 @@ func (c *KafkaMetaClusterInfo) SetPartition(val int) {
 	c.StorageConfigHelper.Set("partition", val)
 }
 
+// GetInitialOffset :
+func (c *KafkaMetaClusterInfo) GetInitialOffset() (int64, bool) {
+	if c.InitialOffset == nil {
+		return 0, false
+	}
+	return *c.InitialOffset, true
+}
+
 // GetTarget :
 func (c *KafkaMetaClusterInfo) GetTarget() string {
 	return c.GetTopic()

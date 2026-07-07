@@ -20,9 +20,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
+
+const uidNameCacheTTL = 10 * time.Minute
 
 // procFSReader avoids gopsutil's repeated /proc/<pid>/stat and boot time reads during full host scans.
 type procFSReader struct {
@@ -33,11 +36,17 @@ type procFSReader struct {
 	readLink func(string) (string, error)
 
 	lookupUsername func(string) (string, error)
+	now            func() time.Time
 
 	mut        sync.Mutex
 	boot       uint64
 	bootLoaded bool
-	uidNames   map[string]string
+	uidNames   map[string]uidNameCacheEntry
+}
+
+type uidNameCacheEntry struct {
+	name     string
+	expireAt time.Time
 }
 
 func newProcFSReader(root string) *procFSReader {
@@ -49,7 +58,8 @@ func newProcFSReader(root string) *procFSReader {
 		readFile:       os.ReadFile,
 		readLink:       os.Readlink,
 		lookupUsername: lookupUsername,
-		uidNames:       map[string]string{},
+		now:            time.Now,
+		uidNames:       map[string]uidNameCacheEntry{},
 	}
 	r.bootTime = r.readBootTime
 	return r
@@ -138,10 +148,11 @@ func (r *procFSReader) username(uid string) string {
 		return ""
 	}
 
+	now := r.now()
 	r.mut.Lock()
-	if name, ok := r.uidNames[uid]; ok {
+	if entry, ok := r.uidNames[uid]; ok && now.Before(entry.expireAt) {
 		r.mut.Unlock()
-		return name
+		return entry.name
 	}
 	r.mut.Unlock()
 
@@ -151,7 +162,10 @@ func (r *procFSReader) username(uid string) string {
 	}
 
 	r.mut.Lock()
-	r.uidNames[uid] = name
+	r.uidNames[uid] = uidNameCacheEntry{
+		name:     name,
+		expireAt: now.Add(uidNameCacheTTL),
+	}
 	r.mut.Unlock()
 	return name
 }

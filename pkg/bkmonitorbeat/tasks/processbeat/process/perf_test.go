@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetProcState(t *testing.T) {
@@ -132,6 +133,37 @@ func TestProcFSReaderCompletesTruncatedProcessName(t *testing.T) {
 	}
 	if stat.Name != "very-long-process-name" {
 		t.Fatalf("name = %q, want completed long process name", stat.Name)
+	}
+}
+
+func TestProcFSReaderExpiresUsernameCache(t *testing.T) {
+	now := time.Unix(100, 0)
+	lookups := 0
+	reader := newProcFSReader(t.TempDir())
+	reader.now = func() time.Time {
+		return now
+	}
+	reader.lookupUsername = func(uid string) (string, error) {
+		lookups++
+		return "user-" + strconv.Itoa(lookups), nil
+	}
+
+	if got := reader.username("1000"); got != "user-1" {
+		t.Fatalf("first username = %q, want user-1", got)
+	}
+	if got := reader.username("1000"); got != "user-1" {
+		t.Fatalf("cached username = %q, want user-1", got)
+	}
+	if lookups != 1 {
+		t.Fatalf("lookups before ttl = %d, want 1", lookups)
+	}
+
+	now = now.Add(uidNameCacheTTL + time.Second)
+	if got := reader.username("1000"); got != "user-2" {
+		t.Fatalf("expired username = %q, want user-2", got)
+	}
+	if lookups != 2 {
+		t.Fatalf("lookups after ttl = %d, want 2", lookups)
 	}
 }
 

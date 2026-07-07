@@ -223,25 +223,38 @@ func (pf *PathFinder) satisfiesPathConstraint(path []cmdb.PathStepV2, pathResour
 		pathTypes = append(pathTypes, ResourceType(step.ResourceType))
 	}
 
-	pathIdx := 0
+	return containsContiguousResourcePath(pathTypes, pathResource)
+}
+
+func containsContiguousResourcePath(pathTypes []ResourceType, pathResource []ResourceType) bool {
+	constraint := make([]ResourceType, 0, len(pathResource))
 	for _, required := range pathResource {
-		if required == "" {
-			continue
+		// 空 path_resource 在入口层表示“只走直连”，不是一个真实资源类型；
+		// 连续性判断只看规范化后的资源约束。
+		if required != "" {
+			constraint = append(constraint, required)
 		}
-		found := false
-		for ; pathIdx < len(pathTypes); pathIdx++ {
-			if pathTypes[pathIdx] == required {
-				found = true
-				pathIdx++
+	}
+	if len(constraint) == 0 {
+		return true
+	}
+	if len(constraint) > len(pathTypes) {
+		return false
+	}
+	for start := 0; start <= len(pathTypes)-len(constraint); start++ {
+		matched := true
+		for offset, required := range constraint {
+			// 旧 VM 的 path_resource 是连续片段约束，不能在两个指定资源之间跳过额外资源。
+			if pathTypes[start+offset] != required {
+				matched = false
 				break
 			}
 		}
-		if !found {
-			return false
+		if matched {
+			return true
 		}
 	}
-
-	return true
+	return false
 }
 
 // getRelationsForType 获取指定资源类型的所有可用关系

@@ -383,6 +383,33 @@ func TestPathFinderFindAllPathsPathResourceAllowsUnconstrainedIntermediateHops(t
 	}}}, paths)
 }
 
+func TestPathFinderPathResourceRequiresContiguousResources(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"source": {"source"},
+			"b":      {"b"},
+			"x":      {"x"},
+			"c":      {"c"},
+			"target": {"target"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "source_with_b", Category: relation.RelationCategoryStatic, FromType: "source", ToType: "b"},
+			{RelationName: "b_with_x", Category: relation.RelationCategoryStatic, FromType: "b", ToType: "x"},
+			{RelationName: "x_with_c", Category: relation.RelationCategoryStatic, FromType: "x", ToType: "c"},
+			{RelationName: "c_with_target", Category: relation.RelationCategoryStatic, FromType: "c", ToType: "target"},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(4),
+	)
+
+	_, err := pf.FindAllPaths("source", "target", []ResourceType{"b", "c"})
+
+	assert.Error(t, err)
+}
+
 func TestPathFinderEndpointOnlyPathResourceAllowsIndirectPaths(t *testing.T) {
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{

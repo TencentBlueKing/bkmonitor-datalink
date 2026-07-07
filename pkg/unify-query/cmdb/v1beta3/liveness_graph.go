@@ -185,7 +185,7 @@ func (g *LivenessGraph) targetPaths(
 		}
 		pathConstraint, directOnly := normalizePathResource(root.ResourceType, targetType, pathResource)
 		visited := map[string]bool{rootID: true}
-		g.collectTargetPaths(rootID, targetType, pathConstraint, 0, nil, nil, nil, visited, includeRootTarget, directOnly, requireCommonOverlap, &result)
+		g.collectTargetPaths(rootID, targetType, pathConstraint, nil, nil, nil, visited, includeRootTarget, directOnly, requireCommonOverlap, &result)
 	}
 	return result
 }
@@ -194,7 +194,6 @@ func (g *LivenessGraph) collectTargetPaths(
 	nodeID string,
 	targetType ResourceType,
 	pathResource []ResourceType,
-	pathIdx int,
 	resourcePath []ResourceType,
 	nodePeriods [][]*VisiblePeriod,
 	edgePeriods [][]*VisiblePeriod,
@@ -211,13 +210,10 @@ func (g *LivenessGraph) collectTargetPaths(
 	currentResourcePath := append(append([]ResourceType{}, resourcePath...), node.ResourceType)
 	currentNodePeriods := append(append([][]*VisiblePeriod{}, nodePeriods...), node.RawPeriods)
 
-	nextPathIdx := pathIdx
-	if len(pathResource) > 0 && pathIdx < len(pathResource) && node.ResourceType == pathResource[pathIdx] {
-		nextPathIdx++
-	}
-
 	if node.ResourceType == targetType &&
-		nextPathIdx >= len(pathResource) &&
+		// path_resource 对齐旧 VM 的连续片段语义；例如 [B,C] 只能命中 A->B->C->D，
+		// 不能命中 A->B->X->C->D，否则会把调用方没有允许的中间跳数也返回出去。
+		containsContiguousResourcePath(currentResourcePath, pathResource) &&
 		(includeRootTarget || len(edgePeriods) > 0) &&
 		(!directOnly || len(edgePeriods) <= 1) &&
 		(!requireCommonOverlap || g.pathOverlapsQuery(currentNodePeriods, edgePeriods)) {
@@ -246,7 +242,6 @@ func (g *LivenessGraph) collectTargetPaths(
 			edge.ToID,
 			targetType,
 			pathResource,
-			nextPathIdx,
 			currentResourcePath,
 			currentNodePeriods,
 			nextEdgePeriods,

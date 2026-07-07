@@ -237,10 +237,18 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 
 	provider := m.getSchemaProvider()
+	selectedPath := legacyResourcePathForRangeQuery(graphs, pathsV2, req, start, end, stepMs)
+	extractionPathResource := targetExtractionPathResource(req)
+	if len(selectedPath) > 0 {
+		// 旧 VM range 会按候选路径顺序停在第一条有数据的路径上。这里先选出同一条命中路径，
+		// 再用它限制 target_list 抽取，避免把低优先级路径上的 target 混入响应。
+		extractionPathResource = selectedPath
+	}
+
 	result = buildTargetMatchersTimeSeriesWithOptions(
 		graphs,
 		req.TargetType,
-		targetExtractionPathResource(req),
+		extractionPathResource,
 		start,
 		end,
 		stepMs,
@@ -250,7 +258,7 @@ func (m *Model) QueryResourceMatcherRange(
 		shouldIncludeRootTarget(req),
 	)
 
-	paths := legacyPathForRangeQuery(graphs, pathsV2, req, start, end, stepMs)
+	paths := resourceTypesToLegacyPath(selectedPath)
 
 	span.Set("paths-count", len(paths))
 	span.Set("result-count", len(result))
@@ -600,7 +608,13 @@ func parseLookBackDelta(lbd string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return d.Milliseconds(), nil
+	ms := d.Milliseconds()
+	if ms < 0 {
+		// 负 look_back_delta 会把 instant 查询窗口反转成 start > end，后续 SurrealDB 查询只会成功返回空结果。
+		// 提前拒绝非法输入，可以让调用方拿到明确的 bad-request 语义。
+		return 0, fmt.Errorf("look_back_delta must be greater than or equal to 0, got %q", lbd)
+	}
+	return ms, nil
 }
 
 func parseStep(step string) (int64, error) {
@@ -873,7 +887,12 @@ func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) 
 	if directOnly {
 		return 1
 	}
-	maxHops := DefaultMaxHops + len(pathConstraint)
+	if len(pathConstraint) == 0 {
+		return DefaultMaxHops
+	}
+	// path_resource 可能只给出部分中间资源。除了约束本身，还要给 source/target 两侧各留出默认 schema
+	// 的连接空间；否则 host->system->pod->replicaset->deployment 这类合法 legacy 路径会因为预算太浅被剪掉。
+	maxHops := DefaultMaxHops + len(pathConstraint) + 1
 	if maxHops > MaxAllowedHops {
 		return MaxAllowedHops
 	}
@@ -1082,14 +1101,20 @@ func legacyPathForQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *Que
 			shouldIncludeRootTarget(req),
 		)
 		if path := selectLegacyPathCandidate(pathsV2, candidates); len(path) > 0 {
-			return path
+			return resourceTypesToLegacyPath(path)
 		}
 	}
 	return convertPathsV2ToLegacyResources(pathsV2)
 }
 
 func legacyPathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *QueryRequest, start, end, stepMs int64) []string {
+	return resourceTypesToLegacyPath(legacyResourcePathForRangeQuery(graphs, pathsV2, req, start, end, stepMs))
+}
+
+func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *QueryRequest, start, end, stepMs int64) []ResourceType {
 	if req != nil {
+		// range 响应里的 path 和 target_list 必须来自同一条 legacy 命中路径；
+		// 因此这里保留 ResourceType 形态，供调用方继续限制 target 抽取。
 		candidates := legacyPathCandidatesFromRangeTargetGraphs(
 			graphs,
 			req.TargetType,
@@ -1103,7 +1128,10 @@ func legacyPathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req
 			return path
 		}
 	}
-	return convertPathsV2ToLegacyResources(pathsV2)
+	if len(pathsV2) == 0 {
+		return nil
+	}
+	return pathV2ResourceTypes(pathsV2[0])
 }
 
 func legacyPathCandidatesFromTargetGraphs(
@@ -1158,7 +1186,7 @@ func legacyPathCandidatesFromRangeTargetGraphs(
 	return candidates
 }
 
-func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceType) []string {
+func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceType) []ResourceType {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -1178,7 +1206,7 @@ func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceTyp
 			continue
 		}
 		if _, ok := candidateSet[resourcePathKey(resources)]; ok {
-			return resourceTypesToLegacyPath(resources)
+			return resources
 		}
 	}
 
@@ -1188,7 +1216,7 @@ func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceTyp
 		}
 		return resourcePathKey(candidates[i]) < resourcePathKey(candidates[j])
 	})
-	return resourceTypesToLegacyPath(candidates[0])
+	return candidates[0]
 }
 
 func pathV2ResourceTypes(path cmdb.PathV2) []ResourceType {

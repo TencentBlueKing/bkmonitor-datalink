@@ -890,7 +890,7 @@ func TestComputeMaxHopsKeepsRoomForPartialPathResource(t *testing.T) {
 	assert.Equal(t, DefaultMaxHops, computeMaxHops("node", "", nil))
 	assert.Equal(t, 1, computeMaxHops("node", "pod", []cmdb.Resource{""}))
 	assert.Equal(t, DefaultMaxHops, computeMaxHops("node", "pod", []cmdb.Resource{"pod"}))
-	assert.Equal(t, DefaultMaxHops+1, computeMaxHops("node", "deployment", []cmdb.Resource{"pod"}))
+	assert.Equal(t, DefaultMaxHops+2, computeMaxHops("node", "deployment", []cmdb.Resource{"pod"}))
 	assert.Equal(t, MaxAllowedHops, computeMaxHops("node", "host", []cmdb.Resource{"a", "b", "c", "d", "e"}))
 }
 
@@ -1185,6 +1185,118 @@ func TestQueryResourceMatcherReturnsPathFromMatchedGraph(t *testing.T) {
 	assert.Equal(t, []string{"node", "pod"}, rangePath)
 	require.NotEmpty(t, rangeResult)
 	assert.Equal(t, []cmdb.Matcher{{"pod": "pod-1"}}, rangeResult[0].Matchers)
+}
+
+func TestQueryResourceMatcherRangeFiltersTargetsBySelectedLegacyPath(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"node":   {"node"},
+			"system": {"system"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "node_with_pod", Category: relation.RelationCategoryStatic, FromType: "node", ToType: "pod"},
+			{RelationName: "node_with_system", Category: relation.RelationCategoryStatic, FromType: "node", ToType: "system"},
+			{RelationName: "system_to_pod", Category: relation.RelationCategoryStatic, FromType: "system", ToType: "pod"},
+		},
+	})
+	periods := []*VisiblePeriod{{Start: 0, End: 600000}}
+	graph := NewLivenessGraph(0, 600000)
+	node := &NodeLiveness{
+		ResourceID:   "node:node-1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+		RawPeriods:   periods,
+	}
+	system := &NodeLiveness{
+		ResourceID:   "system:system-1",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"system": "system-1"},
+		RawPeriods:   periods,
+	}
+	directPod := &NodeLiveness{
+		ResourceID:   "pod:direct",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "direct"},
+		RawPeriods:   periods,
+	}
+	indirectPod := &NodeLiveness{
+		ResourceID:   "pod:indirect",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "indirect"},
+		RawPeriods:   periods,
+	}
+	graph.AddNode(node)
+	graph.AddNode(system)
+	graph.AddNode(directPod)
+	graph.AddNode(indirectPod)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   "node_with_pod:direct",
+		RelationType: RelationNodeWithPod,
+		FromID:       node.ResourceID,
+		ToID:         directPod.ResourceID,
+		RawPeriods:   periods,
+	})
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   "node_with_system:1",
+		RelationType: RelationNodeWithSystem,
+		FromID:       node.ResourceID,
+		ToID:         system.ResourceID,
+		RawPeriods:   periods,
+	})
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   "system_to_pod:indirect",
+		RelationType: RelationSystemToPod,
+		FromID:       system.ResourceID,
+		ToID:         indirectPod.ResourceID,
+		RawPeriods:   periods,
+	})
+
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{graphs: []*LivenessGraph{graph}})
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, _, rangePath, _, rangeResult, err := model.QueryResourceMatcherRange(
+		ctx,
+		"10m",
+		"test-space",
+		"60s",
+		"0",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node", "system", "pod"}, rangePath)
+	require.NotEmpty(t, rangeResult)
+	assert.Equal(t, []cmdb.Matcher{{"pod": "indirect"}}, rangeResult[0].Matchers)
+}
+
+func TestQueryResourceMatcherRejectsNegativeLookBackDelta(t *testing.T) {
+	model, err := NewModel(context.Background(), &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcher(
+		context.Background(),
+		"-1m",
+		"test-space",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "look_back_delta must be greater than or equal to 0")
 }
 
 func TestExecuteGraphQueryRequiresSpaceUIDForBindingExecutor(t *testing.T) {

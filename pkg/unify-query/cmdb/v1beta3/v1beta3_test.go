@@ -1202,7 +1202,6 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedLegacyPath(t *testing.
 		},
 	})
 	periods := []*VisiblePeriod{{Start: 0, End: 600000}}
-	graph := NewLivenessGraph(0, 600000)
 	node := &NodeLiveness{
 		ResourceID:   "node:node-1",
 		ResourceType: ResourceTypeNode,
@@ -1227,33 +1226,49 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedLegacyPath(t *testing.
 		Labels:       map[string]string{"pod": "indirect"},
 		RawPeriods:   periods,
 	}
-	graph.AddNode(node)
-	graph.AddNode(system)
-	graph.AddNode(directPod)
-	graph.AddNode(indirectPod)
-	graph.AddEdge(&EdgeLiveness{
-		RelationID:   "node_with_pod:direct",
-		RelationType: RelationNodeWithPod,
-		FromID:       node.ResourceID,
-		ToID:         directPod.ResourceID,
-		RawPeriods:   periods,
-	})
-	graph.AddEdge(&EdgeLiveness{
-		RelationID:   "node_with_system:1",
-		RelationType: RelationNodeWithSystem,
-		FromID:       node.ResourceID,
-		ToID:         system.ResourceID,
-		RawPeriods:   periods,
-	})
-	graph.AddEdge(&EdgeLiveness{
-		RelationID:   "system_to_pod:indirect",
-		RelationType: RelationSystemToPod,
-		FromID:       system.ResourceID,
-		ToID:         indirectPod.ResourceID,
-		RawPeriods:   periods,
-	})
 
-	model, err := NewModel(ctx, &mockGraphQueryExecutor{graphs: []*LivenessGraph{graph}})
+	executor := &recordingGraphQueryExecutor{
+		responseForSQL: func(sql string) graphQueryResponse {
+			switch {
+			case strings.Contains(sql, "node_with_pod"):
+				directGraph := NewLivenessGraph(0, 600000)
+				directGraph.AddNode(node)
+				directGraph.AddNode(directPod)
+				directGraph.AddEdge(&EdgeLiveness{
+					RelationID:   "node_with_pod:direct",
+					RelationType: RelationNodeWithPod,
+					FromID:       node.ResourceID,
+					ToID:         directPod.ResourceID,
+					RawPeriods:   periods,
+				})
+				return graphQueryResponse{graphs: []*LivenessGraph{directGraph}}
+			case strings.Contains(sql, "node_with_system"):
+				indirectGraph := NewLivenessGraph(0, 600000)
+				indirectGraph.AddNode(node)
+				indirectGraph.AddNode(system)
+				indirectGraph.AddNode(indirectPod)
+				indirectGraph.AddEdge(&EdgeLiveness{
+					RelationID:   "node_with_system:1",
+					RelationType: RelationNodeWithSystem,
+					FromID:       node.ResourceID,
+					ToID:         system.ResourceID,
+					RawPeriods:   periods,
+				})
+				indirectGraph.AddEdge(&EdgeLiveness{
+					RelationID:   "system_to_pod:indirect",
+					RelationType: RelationSystemToPod,
+					FromID:       system.ResourceID,
+					ToID:         indirectPod.ResourceID,
+					RawPeriods:   periods,
+				})
+				return graphQueryResponse{graphs: []*LivenessGraph{indirectGraph}}
+			default:
+				return graphQueryResponse{}
+			}
+		},
+	}
+
+	model, err := NewModel(ctx, executor)
 	require.NoError(t, err)
 	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
 
@@ -1273,9 +1288,20 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedLegacyPath(t *testing.
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"node", "system", "pod"}, rangePath)
+	assert.Len(t, executor.sqls, 2)
+	for _, sql := range executor.sqls {
+		if strings.Contains(sql, "node_with_pod") {
+			assert.NotContains(t, sql, "node_with_system")
+			assert.NotContains(t, sql, "system_to_pod")
+			continue
+		}
+		assert.Contains(t, sql, "node_with_system")
+		assert.Contains(t, sql, "system_to_pod")
+		assert.NotContains(t, sql, "node_with_pod")
+	}
+	assert.Equal(t, []string{"node", "pod"}, rangePath)
 	require.NotEmpty(t, rangeResult)
-	assert.Equal(t, []cmdb.Matcher{{"pod": "indirect"}}, rangeResult[0].Matchers)
+	assert.Equal(t, []cmdb.Matcher{{"pod": "direct"}}, rangeResult[0].Matchers)
 }
 
 func TestQueryResourceMatcherRejectsNegativeLookBackDelta(t *testing.T) {
@@ -2197,14 +2223,14 @@ func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
 	}
 }
 
-func TestSortPathsForInstantQueryPrefersShorterPaths(t *testing.T) {
+func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
 	paths := []cmdb.PathV2{
 		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
 		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "pod"}}},
 		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
 	}
 
-	sorted := sortPathsForInstantQuery(paths)
+	sorted := sortPathsForQuery(paths)
 
 	assert.Equal(t, []cmdb.PathV2{
 		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "pod"}}},

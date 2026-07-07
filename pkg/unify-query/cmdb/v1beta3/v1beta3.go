@@ -231,7 +231,7 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 	req.Normalize()
 
-	graphs, pathsV2, _, err := m.queryLivenessGraph(ctx, req, false)
+	graphs, pathsV2, _, err := m.queryLivenessGraph(ctx, req, true, graphQueryModeRange, start, end, stepMs)
 	if err != nil {
 		return "", nil, nil, "", nil, err
 	}
@@ -268,10 +268,23 @@ func (m *Model) QueryResourceMatcherRange(
 
 // QueryLivenessGraph 执行图查询，返回图数据、路径和目标 Matchers
 func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (graphs []*LivenessGraph, paths []cmdb.PathV2, matchers cmdb.Matchers, err error) {
-	return m.queryLivenessGraph(ctx, req, true)
+	return m.queryLivenessGraph(ctx, req, true, graphQueryModeInstant, 0, 0, 0)
 }
 
-func (m *Model) queryLivenessGraph(ctx context.Context, req *QueryRequest, splitPaths bool) (graphs []*LivenessGraph, paths []cmdb.PathV2, matchers cmdb.Matchers, err error) {
+type graphQueryMode string
+
+const (
+	graphQueryModeInstant graphQueryMode = "instant"
+	graphQueryModeRange   graphQueryMode = "range"
+)
+
+func (m *Model) queryLivenessGraph(
+	ctx context.Context,
+	req *QueryRequest,
+	splitPaths bool,
+	mode graphQueryMode,
+	rangeStart, rangeEnd, stepMs int64,
+) (graphs []*LivenessGraph, paths []cmdb.PathV2, matchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
 	defer span.End(&err)
 
@@ -329,10 +342,11 @@ func (m *Model) queryLivenessGraph(ctx context.Context, req *QueryRequest, split
 
 	if m.executor != nil {
 		start := time.Now()
-		if shouldSplitInstantQueryByPath(req, paths, splitPaths) {
+		if shouldSplitQueryByPath(req, paths, splitPaths) {
 			span.Set("query-mode", "path-by-path")
+			span.Set("query-result-mode", string(mode))
 			span.Set("candidate-paths-count", len(paths))
-			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd)
+			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs)
 		} else {
 			span.Set("query-mode", "single")
 			builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
@@ -372,10 +386,10 @@ func (m *Model) queryLivenessGraph(ctx context.Context, req *QueryRequest, split
 	return graphs, paths, matchers, nil
 }
 
-func shouldSplitInstantQueryByPath(req *QueryRequest, paths []cmdb.PathV2, enabled bool) bool {
-	// 只对 instant relation 查询做 path 拆分：
-	// 1. range 查询需要保留完整时间序列语义，调用方会传 enabled=false；
-	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL。
+func shouldSplitQueryByPath(req *QueryRequest, paths []cmdb.PathV2, enabled bool) bool {
+	// 只拆显式 target 且 source!=target 的多候选路径查询：
+	// 1. instant 和 range 都能按单条 path 生成独立 SurrealQL；
+	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL，避免拆分后改变含义。
 	return enabled &&
 		req != nil &&
 		req.SourceType != req.TargetType &&
@@ -389,10 +403,12 @@ func (m *Model) executeGraphQueryPathByPath(
 	provider SchemaProvider,
 	paths []cmdb.PathV2,
 	start, end int64,
+	mode graphQueryMode,
+	rangeStart, rangeEnd, stepMs int64,
 ) ([]*LivenessGraph, []cmdb.PathV2, error) {
 	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
-	queryPaths := sortPathsForInstantQuery(paths)
+	queryPaths := sortPathsForQuery(paths)
 
 	// 命中或遇到错误后会 cancel，通知仍在执行的 path 尽快停止。
 	// 注意：底层 HTTP 是否能立刻中断取决于 executor/client 是否正确透传 ctx。
@@ -426,7 +442,7 @@ func (m *Model) executeGraphQueryPathByPath(
 		if err := p.Submit(func() {
 			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
 			// 后面会用它做稳定裁决。
-			resultCh <- m.executeOneGraphQueryPath(queryCtx, req, provider, path, idx, start, end)
+			resultCh <- m.executeOneGraphQueryPath(queryCtx, req, provider, path, idx, start, end, mode, rangeStart, rangeEnd, stepMs)
 		}); err != nil {
 			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
 			// 处理错误，不会因为少一个结果而一直等待。
@@ -456,8 +472,9 @@ func (m *Model) executeGraphQueryPathByPath(
 				cancel()
 				return nil, nil, results[i].err
 			}
-			if len(results[i].matchers) > 0 {
-				// 第一个按优先级命中的 path 就是 instant 查询结果。
+			if results[i].hit {
+				// 第一个按优先级命中的 path 就是最终结果：
+				// instant 用 target matcher 判定命中，range 用 step bucket 内的路径活跃性判定命中。
 				// cancel 用于尽快停止低优先级慢查询，减少尾部资源占用。
 				cancel()
 				return results[i].graphs, []cmdb.PathV2{results[i].path}, nil
@@ -478,6 +495,7 @@ type pathQueryResult struct {
 	path     cmdb.PathV2
 	graphs   []*LivenessGraph
 	matchers cmdb.Matchers
+	hit      bool
 	err      error
 }
 
@@ -488,6 +506,8 @@ func (m *Model) executeOneGraphQueryPath(
 	path cmdb.PathV2,
 	idx int,
 	start, end int64,
+	mode graphQueryMode,
+	rangeStart, rangeEnd, stepMs int64,
 ) pathQueryResult {
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
@@ -511,15 +531,29 @@ func (m *Model) executeOneGraphQueryPath(
 		req.TargetInfoShow,
 		shouldIncludeRootTarget(req),
 	)
-	return pathQueryResult{idx: idx, path: path, graphs: graphs, matchers: matchers}
+	hit := len(matchers) > 0
+	if mode == graphQueryModeRange {
+		// range 的命中语义必须对齐旧 VM count_over_time：只要任意 step bucket
+		// 的 (ts-step, ts] 窗口内整条 path 活跃，就认为该 path 命中。
+		hit = len(legacyPathCandidatesFromRangeTargetGraphs(
+			graphs,
+			req.TargetType,
+			targetExtractionPathResource(req),
+			shouldIncludeRootTarget(req),
+			rangeStart,
+			rangeEnd,
+			stepMs,
+		)) > 0
+	}
+	return pathQueryResult{idx: idx, path: path, graphs: graphs, matchers: matchers, hit: hit}
 }
 
-func sortPathsForInstantQuery(paths []cmdb.PathV2) []cmdb.PathV2 {
+func sortPathsForQuery(paths []cmdb.PathV2) []cmdb.PathV2 {
 	// 复制一份再排序，避免影响 all-empty 返回时使用的原始 paths。
 	sorted := append([]cmdb.PathV2(nil), paths...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		// relation instant 查询会在首个命中 path 后短路。短路径通常生成更小的
-		// SurrealQL，也更接近旧 VM 直连关系优先命中的执行成本。
+		// relation 查询会在首个命中 path 后短路。短路径通常生成更小的
+		// SurrealQL，也更接近旧 VM 直连关系优先命中的执行成本；range 拆分也复用同一优先级。
 		return len(sorted[i].Steps) < len(sorted[j].Steps)
 	})
 	return sorted

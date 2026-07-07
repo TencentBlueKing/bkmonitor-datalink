@@ -11,7 +11,6 @@ package selfstats
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -53,15 +52,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	info, _ := gse.GetAgentInfo()
-	lbs := map[string]string{
-		"bk_cloud_id":  strconv.Itoa(int(info.Cloudid)),
-		"bk_target_ip": info.IP,
-		"bk_agent_id":  info.BKAgentID,
-		"bk_host_id":   strconv.Itoa(int(info.HostID)),
-		"bk_biz_id":    strconv.Itoa(int(info.BKBizID)),
-		"node_id":      fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
-		"hostname":     info.Hostname,
-	}
+	lbs := tasks.HostDimension(info)
 
 	var data []common.MapStr
 	for i := 0; i < len(metrics); i++ {

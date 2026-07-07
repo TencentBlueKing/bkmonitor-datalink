@@ -342,7 +342,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.PromData"
+                            "$ref": "#/definitions/http.ListData"
                         }
                     },
                     "400": {
@@ -404,7 +404,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/http.PromData"
+                            "$ref": "#/definitions/http.ListData"
                         }
                     },
                     "400": {
@@ -1385,15 +1385,15 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "data": {
-                    "description": "Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody。非直查若某存储无预览体则该项不出现在 data 中；可为空数组，此时若 route_info 非空仍返回 200 表示仅路由预览。",
+                    "description": "Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则该项不出现在 data 中。\nData 可为空：当仅有路由预览（RouteInfo 非空）且各存储未实现 GetRequestBody 预览体时，不调真实 TSDB 仍返回 200。",
                     "type": "array",
                     "items": {}
                 },
                 "route_info": {
-                    "description": "与 ToQueryReference 展开后的子查询对应的路由摘要，用于排障（不调真实 TSDB）。",
+                    "description": "RouteInfo 与 ToQueryReference 展开后的每条子查询一一对应，用于路由排障（如 table_id、db 是否为空）。与 data 是否为空无关。",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/metadata.CheckRouteInfo"
+                        "$ref": "#/definitions/metadata.RouteInfo"
                     }
                 },
                 "trace_id": {
@@ -1407,6 +1407,40 @@ const docTemplate = `{
             "properties": {
                 "error": {
                     "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.ListData": {
+            "type": "object",
+            "properties": {
+                "done": {
+                    "type": "boolean"
+                },
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "result_table_id": {
+                    "description": "ResultTableID 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "result_table_options": {
+                    "$ref": "#/definitions/metadata.ResultTableOptions"
+                },
+                "status": {
+                    "$ref": "#/definitions/metadata.Status"
+                },
+                "total": {
+                    "type": "integer"
                 },
                 "trace_id": {
                     "type": "string"
@@ -1451,6 +1485,16 @@ const docTemplate = `{
                 "table_id": {
                     "type": "string"
                 },
+                "table_id_conditions": {
+                    "description": "TableIDConditions 表标签条件；与 /query/ts 的 body.table_id_conditions 一致，\n仅在未指定 table_id / data_label 的全空间扫表场景下按结果表 Labels 收窄候选 RT。",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/structured.ConditionField"
+                        }
+                    }
+                },
                 "timezone": {
                     "type": "string",
                     "example": "Asia/Shanghai"
@@ -1471,6 +1515,13 @@ const docTemplate = `{
             "properties": {
                 "is_partial": {
                     "type": "boolean"
+                },
+                "result_table_id": {
+                    "description": "ResultTableID 来自 QueryReference 路由解析结果；查询响应只暴露 RT 列表，不返回完整 RouteInfo。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "series": {
                     "type": "array",
@@ -1608,20 +1659,6 @@ const docTemplate = `{
                 }
             }
         },
-        "metadata.CheckRouteInfo": {
-            "type": "object",
-            "properties": {
-                "reference_name": {"type": "string"},
-                "metric_name": {"type": "string"},
-                "table_id": {"type": "string"},
-                "db": {"type": "string"},
-                "data_label": {"type": "string"},
-                "data_source": {"type": "string"},
-                "storage_type": {"type": "string"},
-                "storage_id": {"type": "string"},
-                "measurement": {"type": "string"}
-            }
-        },
         "metadata.FieldAlias": {
             "type": "object",
             "additionalProperties": {
@@ -1676,6 +1713,38 @@ const docTemplate = `{
                 "$ref": "#/definitions/metadata.ResultTableOption"
             }
         },
+        "metadata.RouteInfo": {
+            "type": "object",
+            "properties": {
+                "data_label": {
+                    "type": "string"
+                },
+                "data_source": {
+                    "type": "string"
+                },
+                "db": {
+                    "type": "string"
+                },
+                "measurement": {
+                    "type": "string"
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "reference_name": {
+                    "type": "string"
+                },
+                "storage_id": {
+                    "type": "string"
+                },
+                "storage_type": {
+                    "type": "string"
+                },
+                "table_id": {
+                    "type": "string"
+                }
+            }
+        },
         "metadata.Status": {
             "type": "object",
             "properties": {
@@ -1714,6 +1783,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "storage_id": {
+                    "type": "string"
+                },
+                "storage_type": {
                     "type": "string"
                 }
             }
@@ -2279,24 +2351,7 @@ const docTemplate = `{
         },
         "time.Duration": {
             "type": "integer",
-            "format": "int64",
             "enum": [
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000,
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000,
                 -9223372036854775808,
                 9223372036854775807,
                 1,
@@ -2315,22 +2370,6 @@ const docTemplate = `{
                 3600000000000
             ],
             "x-enum-varnames": [
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour",
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour",
                 "minDuration",
                 "maxDuration",
                 "Nanosecond",

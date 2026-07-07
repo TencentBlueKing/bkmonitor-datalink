@@ -22,6 +22,7 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -773,8 +774,10 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 }
 
 // PushEsTableIdDetail compose the es table id detail
-func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, table_id_list [%v]", tableIdList)
+// NOTE: ESStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
+// 同时透传 bkTenantId 用于关联 ResultTable/Option/别名等租户维度数据以及补充 redis key 的租户后缀
+func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
+	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
 	db := mysql.GetDBSession().DB
 
 	// 获取数据
@@ -809,10 +812,10 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 		tidList = append(tidList, es.TableID)
 	}
 	// 组装结果表对应的选项
-	tidOptionMap := s.composeEsTableIdOptions(tidList)
+	tidOptionMap := s.composeEsTableIdOptions(bkTenantId, tidList)
 
 	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushEsTableIdDetail: failed to get field alias map, error: %s", err)
 	}
@@ -847,15 +850,17 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeEsTableIdDetail(bkTenantId, tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
+			// 多租户模式下，redis key 需要补充租户ID后缀
+			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
 			// 推送数据
 			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
 				return
@@ -869,8 +874,10 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 }
 
 // PushDorisTableIdDetail  推送Doris结果表详情路由
-func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data")
+// NOTE: DorisStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
+// 同时透传 bkTenantId 用于关联 ResultTable/别名等租户维度数据以及补充 redis key 的租户后缀
+func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
 	db := mysql.GetDBSession().DB
 
 	// 获取数据
@@ -879,6 +886,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		storage.DorisStorageDBSchema.TableID,
 		storage.DorisStorageDBSchema.BkbaseTableID,
 		storage.DorisStorageDBSchema.OriginTableId,
+		storage.DorisStorageDBSchema.StorageClusterID,
 	)
 
 	// 如果过滤结果表存在，则添加过滤条件
@@ -903,30 +911,47 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 		tidList = append(tidList, doris.TableID)
 	}
 
-	rtMetaMap, err := s.getResultTableDetailMetaMap(tidList)
+	rtMetaMap, err := s.getResultTableDetailMetaMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get result table metadata map, error: %s", err)
 		return err
 	}
 
-	originTableIdSet := make(map[string]struct{})
-	for _, doris := range dorisStorageList {
+	originTableIdList := lo.Uniq(lo.FilterMap(dorisStorageList, func(doris storage.DorisStorage, _ int) (string, bool) {
 		if doris.OriginTableId != "" {
-			originTableIdSet[doris.OriginTableId] = struct{}{}
+			return doris.OriginTableId, true
 		}
-	}
-	originTableIdList := make([]string, 0, len(originTableIdSet))
-	for tableId := range originTableIdSet {
-		originTableIdList = append(originTableIdList, tableId)
-	}
+		return "", false
+	}))
 	originDorisMap, err := s.getDorisStorageMap(originTableIdList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get origin doris storage map, error: %s", err)
 		return err
 	}
 
+	storageClusterIDList := lo.Uniq(lo.FilterMap(append(dorisStorageList, lo.Values(originDorisMap)...), func(doris storage.DorisStorage, _ int) (uint, bool) {
+		if doris.StorageClusterID != 0 {
+			return doris.StorageClusterID, true
+		}
+		return 0, false
+	}))
+	storageClusterNameMap := make(map[uint]string, len(storageClusterIDList))
+	if len(storageClusterIDList) > 0 {
+		var storageClusterList []storage.ClusterInfo
+		if err = storage.NewClusterInfoQuerySet(db).
+			Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).
+			ClusterIDIn(storageClusterIDList...).
+			All(&storageClusterList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: failed to get doris cluster info map, error: %s", err)
+			return err
+		}
+		for _, cluster := range storageClusterList {
+			storageClusterNameMap[cluster.ClusterID] = cluster.ClusterName
+		}
+	}
+
 	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
 	}
@@ -936,6 +961,7 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 	wg := &sync.WaitGroup{}
 	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
+	errCh := make(chan error, len(dorisStorageList))
 	wg.Add(len(dorisStorageList))
 	for _, doris := range dorisStorageList {
 		ch <- struct{}{}
@@ -955,35 +981,55 @@ func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish boo
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, fieldAliasSettings)
+			realTableId := tableId
+			if doris.OriginTableId != "" {
+				realTableId = doris.OriginTableId
+			}
+			clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
 			if err != nil {
-				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				logger.Errorf("PushDorisTableIdDetail:failed to get storage cluster records, table_id: %s, real_table_id: %s, error: %s", tableId, realTableId, err)
+				errCh <- errors.Wrapf(err, "failed to get storage cluster records, table_id: %s, real_table_id: %s", tableId, realTableId)
 				return
 			}
+
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, clusterRecords, fieldAliasSettings)
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				errCh <- errors.Wrapf(err, "compose doris table id detail error, table_id: %s", tableId)
+				return
+			}
+			// 多租户模式下，redis key 需要补充租户ID后缀
+			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
 			// 推送数据
 			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				errCh <- errors.Wrapf(err, "push and publish doris table id detail error, table_id: %s", tableId)
 				return
 			}
 			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
 		}(doris, wg, ch)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		return err
+	}
 	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
 	return nil
 }
 
 // composeEsTableIdOptions 组装 es
-func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]any {
+func (s *SpacePusher) composeEsTableIdOptions(bkTenantId string, tableIdList []string) map[string]map[string]any {
 	db := mysql.GetDBSession().DB
 	// 分批获取结果表的option
 	tidOptionMap := make(map[string]map[string]any)
 	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTableOption
-		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的 option
+		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
 			logger.Errorf("query result table option error, error: %s", err)
 			continue
 		}
@@ -1010,8 +1056,8 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 }
 
 // getFieldAliasMap 构建字段别名映射map
-func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[string]string, error) {
-	logger.Infof("getFieldAliasMap: try to get field alias map, table_id_list->[%v]", tableIDList)
+func (s *SpacePusher) getFieldAliasMap(bkTenantId string, tableIDList []string) (map[string]map[string]string, error) {
+	logger.Infof("getFieldAliasMap: try to get field alias map, bk_tenant_id->[%s], table_id_list->[%v]", bkTenantId, tableIDList)
 
 	db := mysql.GetDBSession().DB
 
@@ -1019,7 +1065,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 		return make(map[string]map[string]string), nil
 	}
 
-	// 获取指定table_id列表的未删除别名记录
+	// 获取指定table_id列表的未删除别名记录, 按租户过滤避免跨租户 table_id 重复
 	var aliasRecords []resulttable.ESFieldQueryAliasOption
 
 	fieldAliasQuerySet := resulttable.NewESFieldQueryAliasOptionQuerySet(db).Select(
@@ -1027,7 +1073,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 		resulttable.ESFieldQueryAliasOptionDBSchema.FieldPath,
 		resulttable.ESFieldQueryAliasOptionDBSchema.QueryAlias,
 		resulttable.ESFieldQueryAliasOptionDBSchema.IsDeleted,
-	)
+	).BkTenantIDEq(bkTenantId)
 
 	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
 		var tempRecords []resulttable.ESFieldQueryAliasOption
@@ -1076,7 +1122,7 @@ func resultTableDataLabel(dataLabel *string) string {
 	return *dataLabel
 }
 
-func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[string]resultTableDetailMeta, error) {
+func (s *SpacePusher) getResultTableDetailMetaMap(bkTenantId string, tableIDList []string) (map[string]resultTableDetailMeta, error) {
 	db := mysql.GetDBSession().DB
 	metaMap := make(map[string]resultTableDetailMeta)
 	if len(tableIDList) == 0 {
@@ -1085,11 +1131,12 @@ func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[str
 
 	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
 		var resultTables []resulttable.ResultTable
+		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
 		if err := resulttable.NewResultTableQuerySet(db).Select(
 			resulttable.ResultTableDBSchema.TableId,
 			resulttable.ResultTableDBSchema.DataLabel,
 			resulttable.ResultTableDBSchema.Labels,
-		).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
+		).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
 			return nil, err
 		}
 
@@ -1102,6 +1149,14 @@ func (s *SpacePusher) getResultTableDetailMetaMap(tableIDList []string) (map[str
 	}
 
 	return metaMap, nil
+}
+
+// composeTenantRedisKey 在多租户模式下为 redis key 补充租户ID后缀
+func composeTenantRedisKey(redisKey, bkTenantId string) string {
+	if cfg.EnableMultiTenantMode {
+		return fmt.Sprintf("%s|%s", redisKey, bkTenantId)
+	}
+	return redisKey
 }
 
 func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]storage.DorisStorage, error) {
@@ -1117,6 +1172,7 @@ func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]stora
 			storage.DorisStorageDBSchema.TableID,
 			storage.DorisStorageDBSchema.BkbaseTableID,
 			storage.DorisStorageDBSchema.OriginTableId,
+			storage.DorisStorageDBSchema.StorageClusterID,
 		).TableIDIn(chunkTableIDList...).All(&dorisStorageList); err != nil {
 			return nil, err
 		}
@@ -1259,8 +1315,8 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[str
 	return tableIdDetail, nil
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
-	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
+func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
+	logger.Infof("compose es table id detail, bk_tenant_id [%s], table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", bkTenantId, tableId, options, storageClusterId, sourceType, indexSet)
 
 	// 获取历史存储集群记录
 	db := mysql.GetDBSession().DB
@@ -1278,17 +1334,18 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		realTableId = storageIns.OriginTableId
 	}
 
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
 	if err != nil {
 		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
 		return "", "", err
 	}
 
+	// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
 	var rt resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).Select(
 		resulttable.ResultTableDBSchema.DataLabel,
 		resulttable.ResultTableDBSchema.Labels,
-	).TableIdEq(tableId).One(&rt); err != nil {
+	).BkTenantIdEq(bkTenantId).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
 
@@ -1331,12 +1388,18 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	return tableId, detailStr, err
 }
 
-func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, fieldAliasSettings map[string]string) (string, string, error) {
+func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, storageClusterNameMap map[uint]string, clusterRecords []map[string]any, fieldAliasSettings map[string]string) (string, string, error) {
 	tableId := doris.TableID
 	bkbaseTableId := doris.BkbaseTableID
-	if bkbaseTableId == "" && doris.OriginTableId != "" {
+	storageClusterID := doris.StorageClusterID
+	if (bkbaseTableId == "" || storageClusterID == 0) && doris.OriginTableId != "" {
 		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
-			bkbaseTableId = originDoris.BkbaseTableID
+			if bkbaseTableId == "" {
+				bkbaseTableId = originDoris.BkbaseTableID
+			}
+			if storageClusterID == 0 {
+				storageClusterID = originDoris.StorageClusterID
+			}
 		}
 	}
 	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s], origin_table_id [%s]", tableId, bkbaseTableId, doris.OriginTableId)
@@ -1350,12 +1413,16 @@ func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMe
 
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type": models.StorageTypeBkSql,
-		"db":           bkbaseTableId,
-		"measurement":  models.DorisMeasurement,
-		"data_label":   rtMeta.DataLabel,
-		"labels":       rtMeta.Labels,
-		"field_alias":  fieldAliasSettings, // 添加字段别名
+		"storage_type":            models.StorageTypeBkSql,
+		"storage_id":              storageClusterID,
+		"storage_name":            storageClusterNameMap[storageClusterID],
+		"cluster_name":            storageClusterNameMap[storageClusterID],
+		"db":                      bkbaseTableId,
+		"measurement":             models.DorisMeasurement,
+		"storage_cluster_records": clusterRecords,
+		"data_label":              rtMeta.DataLabel,
+		"labels":                  rtMeta.Labels,
+		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
 		return tableId, "", err

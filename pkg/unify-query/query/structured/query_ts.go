@@ -127,6 +127,14 @@ func StepParse(step string) time.Duration {
 	}
 }
 
+func parseLookBackDeltaDuration(s string) (time.Duration, error) {
+	duration, err := model.ParseDuration(s)
+	if err == nil {
+		return time.Duration(duration), nil
+	}
+	return time.ParseDuration(s)
+}
+
 func (q *QueryTs) ToTime(ctx context.Context) error {
 	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
@@ -145,7 +153,14 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 		alianStart = function.TimeOffset(startTime, timezone, step)
 	}
 
-	metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	queryParams := metadata.GetQueryParams(ctx).SetTime(alianStart, startTime, endTime, step, unit, timezone).SetIsReference(reference)
+	if q.LookBackDelta != "" {
+		lookBackDelta, err := parseLookBackDeltaDuration(q.LookBackDelta)
+		if err != nil {
+			return err
+		}
+		queryParams.SetLookBackDelta(lookBackDelta)
+	}
 	return nil
 }
 
@@ -422,6 +437,10 @@ type Query struct {
 	StartOrEnd parser.ItemType `json:"start_or_end,omitempty"`
 	// VectorOffset
 	VectorOffset time.Duration `json:"vector_offset,omitempty"`
+	// 以下字段来自 PromQL AST，仅用于让存储路由预选对齐 selector 的真实覆盖时间。
+	RouteSelectorOffset time.Duration `json:"-"`
+	RouteSubqueryOffset time.Duration `json:"-"`
+	RouteSubqueryRange  time.Duration `json:"-"`
 	// Offset 偏移量
 	Offset string `json:"offset,omitempty" example:""`
 	// OffsetForward 偏移方向，默认 false 为向前偏移
@@ -480,6 +499,125 @@ func (q *Query) ToRouter() (*Route, error) {
 	}
 	router.db, router.measurement = q.TableID.Split()
 	return router, nil
+}
+
+func (q *Query) windowDuration(window Window) time.Duration {
+	if window == "" {
+		return 0
+	}
+	duration, err := model.ParseDuration(string(window))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
+}
+
+func (q *Query) selectorWindowDuration() time.Duration {
+	var matrixRange time.Duration
+	var subqueryRange time.Duration
+
+	addWindow := func(window Window, isSubQuery bool) {
+		duration := q.windowDuration(window)
+		if duration <= 0 {
+			return
+		}
+		if isSubQuery {
+			subqueryRange += duration
+			return
+		}
+		if duration > matrixRange {
+			matrixRange = duration
+		}
+	}
+
+	addWindow(q.TimeAggregation.Window, q.TimeAggregation.IsSubQuery)
+	for _, aggregateMethod := range q.AggregateMethodList {
+		addWindow(aggregateMethod.Window, aggregateMethod.IsSubQuery)
+	}
+	if q.RouteSubqueryRange > 0 {
+		subqueryRange = q.RouteSubqueryRange
+	}
+	if subqueryRange > 0 {
+		return subqueryRange + matrixRange
+	}
+	return matrixRange
+}
+
+func (q *Query) publicSignedOffsetDuration() time.Duration {
+	if q.VectorOffset != 0 {
+		if q.OffsetForward {
+			return -q.VectorOffset
+		}
+		return q.VectorOffset
+	}
+	if q.Offset == "" {
+		return 0
+	}
+	offsetText := q.Offset
+	sign := time.Duration(1)
+	if strings.HasPrefix(offsetText, "-") {
+		sign = -1
+		offsetText = strings.TrimPrefix(offsetText, "-")
+	}
+	offset, err := model.ParseDuration(offsetText)
+	if err != nil {
+		return 0
+	}
+	duration := sign * time.Duration(offset)
+	if q.OffsetForward {
+		return -duration
+	}
+	return duration
+}
+
+func (q *Query) routeOverlapDuration(lookBackDelta time.Duration) (backward, forward time.Duration) {
+	// 普通 instant selector 使用 lookback；range/subquery selector 使用真实窗口，
+	// subquery 窗口和内层 matrix range 需要相加，不能只取最大值。
+	backward = q.selectorWindowDuration()
+	if backward == 0 {
+		backward = lookBackDelta
+	}
+
+	if q.RouteSelectorOffset != 0 || q.RouteSubqueryOffset != 0 || q.RouteSubqueryRange != 0 {
+		offset := q.RouteSelectorOffset + q.RouteSubqueryOffset
+		if offset < 0 {
+			forward = -offset
+		} else {
+			backward += offset
+		}
+	} else {
+		offset := q.publicSignedOffsetDuration()
+		if offset < 0 {
+			forward = -offset
+		} else {
+			backward += offset
+		}
+	}
+	return backward, forward
+}
+
+func (q *Query) routeLookbackDuration(lookBackDelta time.Duration) time.Duration {
+	backward, _ := q.routeOverlapDuration(lookBackDelta)
+	return backward
+}
+
+func (q *Query) routeTimeRange(qp *metadata.QueryParams) (time.Time, time.Time) {
+	// `@` modifier 会覆盖外层 range query 的 eval start/end，route 预选要跟随这个锚点。
+	if qp == nil {
+		return time.Time{}, time.Time{}
+	}
+	if q.Timestamp != nil {
+		t := time.UnixMilli(*q.Timestamp)
+		return t, t
+	}
+	switch q.StartOrEnd {
+	case parser.START:
+		return qp.Start, qp.Start
+	case parser.END:
+		return qp.End, qp.End
+	default:
+		return qp.Start, qp.End
+	}
 }
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
@@ -730,10 +868,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
+	routeBaseStart, routeBaseEnd := q.routeTimeRange(qp)
+	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
 	for _, tsDB := range tsDBs {
-		storageIDs := tsDB.GetStorageIDs(qp.Start, qp.End)
+		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(routeBaseStart, routeBaseEnd, routeLookback, routeLookForward)
 
-		for _, storageID := range storageIDs {
+		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
 				continue
@@ -741,7 +881,36 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
-			query.StorageID = storageID
+			query.StorageID = storageRange.StorageID
+			// storageRange 是按时间段命中的完整路由信息；存在时必须覆盖外层 RT detail，
+			// 否则 ES + Doris 混合场景会用外层存储的 db/measurement 去查另一种存储。
+			if storageRange.StorageType != "" {
+				query.StorageType = storageRange.StorageType
+			}
+			if storageRange.StorageName != "" {
+				query.StorageName = storageRange.StorageName
+			}
+			if storageRange.ClusterName != "" {
+				query.ClusterName = storageRange.ClusterName
+			}
+			if storageRange.DB != "" {
+				query.DB = storageRange.DB
+			}
+			if storageRange.Measurement != "" {
+				query.Measurement = storageRange.Measurement
+				query.Measurements = []string{storageRange.Measurement}
+			}
+			if storageRange.HasSourceType {
+				query.SourceType = storageRange.SourceType
+			}
+			if !storageRange.IsZero() {
+				query.RouteStart = storageRange.Start
+				query.RouteEnd = storageRange.End
+			}
+			if !storageRange.QueryIsZero() {
+				query.RouteQueryStart = storageRange.QueryStart
+				query.RouteQueryEnd = storageRange.QueryEnd
+			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 			// 如果没有指定查询类型，则通过 storageID 获取
@@ -820,7 +989,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			storageUUID := query.StorageUUID()
 			if oq, ok := queryMap[storageUUID]; ok {
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
-				oq.DBs = append(oq.DBs, query.DB)
+				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
+				if query.TableID < oq.TableID {
+					query.DBs = append(oq.DBs, query.DB)
+					queryMap[storageUUID] = query
+				} else {
+					oq.DBs = append(oq.DBs, query.DB)
+				}
 			} else {
 				query.DBs = []string{query.DB}
 				queryMap[storageUUID] = query

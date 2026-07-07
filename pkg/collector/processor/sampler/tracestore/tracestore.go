@@ -24,9 +24,9 @@ type TraceKey struct {
 func (tk TraceKey) Bytes() []byte {
 	b := make([]byte, 0, 24)
 
-	tb := tk.TraceID.Bytes()
+	tb := tk.TraceID[:]
 	b = append(b, tb[:]...)
-	sb := tk.SpanID.Bytes()
+	sb := tk.SpanID[:]
 	b = append(b, sb[:]...)
 	return b
 }

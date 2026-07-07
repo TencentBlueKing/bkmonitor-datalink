@@ -20,6 +20,7 @@ import (
 	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/spf13/cast"
@@ -61,6 +62,21 @@ func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef
 		}
 		return false
 	})
+}
+
+func parseLookBackDelta(s string) (time.Duration, error) {
+	duration, err := model.ParseDuration(s)
+	if err == nil {
+		return time.Duration(duration), nil
+	}
+	return time.ParseDuration(s)
+}
+
+func queryLookBackDelta(queryTs *structured.QueryTs, fallback time.Duration) (time.Duration, error) {
+	if queryTs.LookBackDelta == "" {
+		return fallback, nil
+	}
+	return parseLookBackDelta(queryTs.LookBackDelta)
 }
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -180,7 +196,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	return resp, err
 }
 
-func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
 	list = make([]map[string]any, 0)
 	resultTableOptions = make(metadata.ResultTableOptions)
@@ -205,9 +221,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return total, list, resultTableOptions, err
+		return total, list, resultTableOptions, routeInfo, err
 	}
 	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
+	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
+	routeInfo = queryRef.CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
@@ -432,10 +450,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}
 	}
 
-	return total, list, resultTableOptions, err
+	return total, list, resultTableOptions, routeInfo, err
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, bool, error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
@@ -444,6 +462,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		total              int64
 		err                error
 		resultTableOptions = make(metadata.ResultTableOptions)
+		routeInfo          []metadata.RouteInfo
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
@@ -452,7 +471,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	// 先获取分布式锁，是否正在使用中
 	err = session.Start(ctx)
 	if err != nil {
-		return 0, nil, nil, true, metadata.NewMessage(
+		return 0, nil, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"下载已经触发，请稍后重试",
 		).Error(ctx, err)
@@ -465,7 +484,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return 0, nil, nil, true, metadata.NewMessage(
+		return 0, nil, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"查询参数配置异常",
 		).Error(ctx, err)
@@ -479,6 +498,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
 		}
 	})
+	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
+	routeInfo = queryRef.CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
@@ -614,7 +635,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	receiveWg.Wait()
 
-	return total, list, resultTableOptions, session.Done(), err
+	return total, list, resultTableOptions, routeInfo, session.Done(), err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
@@ -655,23 +676,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		}
 	}
 
+	// reference 接口背后都使用了存储引擎计算，未指定时使用 1s 补点逻辑，防止出的数据异常。
+	lookBackDelta, err := queryLookBackDelta(queryTs, time.Second)
+	if err != nil {
+		return nil, err
+	}
+	metadata.GetQueryParams(ctx).SetLookBackDelta(lookBackDelta)
+
 	// 开启时间 Reference 模式
 	queryTs.Reference = true
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	var lookBackDelta time.Duration
-	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// reference 接口背后都使用了存储引擎计算，所以在不特殊指定的情况下，使用 1s 补点逻辑，防止出的数据异常
-		lookBackDelta = time.Second
-	}
+	// reference 查询复用内部路由摘要，并在响应阶段投影成 RT 列表。
+	resp.SetResultTableIDFromRouteInfo(queryRef.CollectRouteInfo())
 
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 		QueryMaxRouting: QueryMaxRouting,
@@ -770,25 +789,13 @@ func sortTablesByOrderBy(tables *promql.Tables, orderBy structured.OrderBy) {
 	tables.SortByOrders(orders)
 }
 
-// queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
-func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
-	var (
-		lookBackDelta time.Duration
-		promExprOpt   = &structured.PromExprOption{}
-	)
-
-	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
-	defer func() {
-		span.End(&err)
-	}()
-
-	queryString, _ := json.Marshal(queryTs)
-	span.Set("query-ts", queryString)
-
+// queryTsToReference 统一 QueryTs 到 QueryReference 前的前置处理，供查询和 check 接口复用。
+func queryTsToReference(ctx context.Context, queryTs *structured.QueryTs) (metadata.QueryReference, time.Duration, error) {
+	var lookBackDelta time.Duration
 	// 限制 queryList 是否过长
 	if DefaultQueryListLimit > 0 {
 		if len(queryTs.QueryList) > DefaultQueryListLimit {
-			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
+			return nil, lookBackDelta, fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
 		}
 	}
 
@@ -816,12 +823,11 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	}
 
 	// 判断是否指定 LookBackDelta
-	if queryTs.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
-		if err != nil {
-			return instance, stmt, err
-		}
+	lookBackDelta, err := queryLookBackDelta(queryTs, promql.GetDefaultLookbackDelta())
+	if err != nil {
+		return nil, lookBackDelta, err
 	}
+	metadata.GetQueryParams(ctx).SetLookBackDelta(lookBackDelta)
 
 	// 如果 step 为空，则补充默认 step
 	if queryTs.Step == "" {
@@ -830,9 +836,27 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	// 转换成 queryRef
 	queryRef, err := queryTs.ToQueryReference(ctx)
+	return queryRef, lookBackDelta, err
+}
+
+// queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
+func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
+	var promExprOpt = &structured.PromExprOption{}
+
+	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
+	defer func() {
+		span.End(&err)
+	}()
+
+	queryString, _ := json.Marshal(queryTs)
+	span.Set("query-ts", queryString)
+
+	queryRef, lookBackDelta, err := queryTsToReference(ctx, queryTs)
 	if err != nil {
-		return instance, stmt, err
+		return instance, stmt, routeInfo, err
 	}
+	// 在生成 PromQL 前固定路由摘要，后续存储查询结果不参与推导。
+	routeInfo = queryRef.CollectRouteInfo()
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
@@ -858,19 +882,19 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
-		return instance, stmt, err
+		return instance, stmt, routeInfo, err
 	}
 
 	stmt = expr.String()
 
 	if instance == nil {
 		err = fmt.Errorf("storage get error")
-		return instance, stmt, err
+		return instance, stmt, routeInfo, err
 	}
 
 	span.Set("storage-type", instance.InstanceType())
 	span.Set("stmt", stmt)
-	return instance, stmt, err
+	return instance, stmt, routeInfo, err
 }
 
 func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -892,10 +916,12 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		span.End(&err)
 	}()
 
-	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
+	instance, stmt, routeInfo, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+	// QueryTs/PromQL 成功响应复用内部路由摘要，并在响应阶段投影成 RT 列表。
+	resp.SetResultTableIDFromRouteInfo(routeInfo)
 
 	span.Set("storage-type", instance.InstanceType())
 

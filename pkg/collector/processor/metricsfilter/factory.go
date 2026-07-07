@@ -17,8 +17,10 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/opmatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -84,10 +86,10 @@ func upsertLabels(labels *[]*dto.LabelPair, name, value string) {
 func buildPushGatewayAttrs(pd *define.PushGatewayData, metric *dto.Metric) pcommon.Map {
 	attrs := pcommon.NewMap()
 	for k, v := range pd.Labels {
-		attrs.UpsertString(k, v)
+		attrs.PutString(k, v)
 	}
 	for _, label := range metric.Label {
-		attrs.UpsertString(label.GetName(), label.GetValue())
+		attrs.PutString(label.GetName(), label.GetValue())
 	}
 	return attrs
 }
@@ -140,18 +142,34 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 func (p *metricsFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordMetrics:
-		for _, name := range config.Drop.Metrics {
-			pdMetrics := record.Data.(pmetric.Metrics)
-			pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-				resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
-					scopeMetrics.Metrics().RemoveIf(func(metric pmetric.Metric) bool {
-						return metric.Name() == name
-					})
-					return scopeMetrics.Metrics().Len() == 0
+		action := config.Drop
+		pdMetrics := record.Data.(pmetric.Metrics)
+		pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
+			rs := resourceMetrics.Resource().Attributes()
+			resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
+				scopeMetrics.Metrics().RemoveIf(func(metric pmetric.Metric) bool {
+					ruleMatch := true
+					for _, rule := range action.Rules {
+						ff, pk := fields.DecodeFieldFrom(rule.PredicateKey)
+						switch ff {
+						// TODO(aivan): 目前 predicateKey 暂时只支持 resource 后续可能会扩展
+						case fields.FieldFromResource:
+							rv, ok := rs.Get(pk)
+							if !ok || !opmatch.Match(rv.AsString(), rule.MatchConfig.Value, rule.MatchConfig.Op) {
+								ruleMatch = false
+								break
+							}
+						default:
+							ruleMatch = false
+							break
+						}
+					}
+					return action.MetricMatch(metric.Name()) && ruleMatch
 				})
-				return resourceMetrics.ScopeMetrics().Len() == 0
+				return scopeMetrics.Metrics().Len() == 0
 			})
-		}
+			return resourceMetrics.ScopeMetrics().Len() == 0
+		})
 	}
 }
 
@@ -182,7 +200,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				target := action.Target
 				switch action.Target.Action {
 				case relabelUpsert:
-					attrs.UpsertString(target.Label, target.Value)
+					attrs.PutString(target.Label, target.Value)
 				}
 			})
 		}
@@ -201,7 +219,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			target := action.Target
 			switch target.Action {
 			case relabelUpsert:
-				lbs.Upsert(target.Label, target.Value)
+				lbs.Put(target.Label, target.Value)
 			}
 			ts.Labels = lbs
 		}
@@ -251,7 +269,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 				// service_name 需要从 rs 中获取
 				// 其余字段从 attrs 中获取
 				name := metric.Name()
-				if metric.DataType() == pmetric.MetricDataTypeHistogram {
+				if metric.Type() == pmetric.MetricTypeHistogram {
 					// OTLP Histogram 类型指标需补充后缀进行匹配，避免因指标名不完整导致无法命中。
 					name += "_bucket"
 				}
@@ -272,7 +290,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 						target := code.Target
 						switch target.Action {
 						case relabelUpsert:
-							attrs.UpsertString(target.Label, target.Value)
+							attrs.PutString(target.Label, target.Value)
 							return // 每个指标只可能命中一次
 						}
 					}
@@ -303,7 +321,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 					target := code.Target
 					switch target.Action {
 					case relabelUpsert:
-						lbs.Upsert(target.Label, target.Value)
+						lbs.Put(target.Label, target.Value)
 						ts.Labels = lbs
 						return // 每个指标只可能命中一次
 					}

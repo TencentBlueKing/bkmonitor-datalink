@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"golang.org/x/exp/slices"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
 )
@@ -44,6 +45,10 @@ type Config struct {
 }
 
 func (c *Config) Validate() error {
+	if err := c.Drop.Validate(); err != nil {
+		return err
+	}
+
 	for i := 0; i < len(c.Relabel); i++ {
 		if err := c.Relabel[i].Validate(); err != nil {
 			return err
@@ -59,7 +64,51 @@ func (c *Config) Validate() error {
 }
 
 type DropAction struct {
-	Metrics []string `config:"metrics" mapstructure:"metrics"`
+	Metrics []string    `config:"metrics" mapstructure:"metrics"`
+	Op      Op          `config:"op" mapstructure:"op"`
+	Rules   []*DropRule `config:"extra_rules" mapstructure:"extra_rules"`
+}
+
+func (d *DropAction) Validate() error {
+	for i := 0; i < len(d.Rules); i++ {
+		if err := d.Rules[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DropAction) MetricMatch(name string) bool {
+	switch d.Op {
+	case OpNotIn:
+		return !slices.Contains(d.Metrics, name)
+
+	default:
+		return slices.Contains(d.Metrics, name)
+	}
+}
+
+type DropRule struct {
+	PredicateKey string      `config:"predicate_key" mapstructure:"predicate_key"`
+	MatchConfig  MatchConfig `config:"match" mapstructure:"match"`
+}
+
+func (r *DropRule) Validate() error {
+	predicateKey := strings.TrimSpace(r.PredicateKey)
+	if predicateKey == "" {
+		return errors.New("drop action: extra_rules.predicate_key is required")
+	}
+
+	ff, key := fields.DecodeFieldFrom(predicateKey)
+	if ff != fields.FieldFromResource || key == "" {
+		return errors.Errorf("drop action: unsupported extra_rules.predicate_key %q, only resource.* is supported", r.PredicateKey)
+	}
+	return nil
+}
+
+type MatchConfig struct {
+	Op    string `config:"op" mapstructure:"op"`
+	Value string `config:"value" mapstructure:"value"`
 }
 
 type ReplaceAction struct {

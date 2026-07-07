@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,7 +21,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -37,7 +35,7 @@ type CheckQueryTsDataResponse struct {
 	// Data 可为空：当仅有路由预览（RouteInfo 非空）且各存储未实现 GetRequestBody 预览体时，不调真实 TSDB 仍返回 200。
 	Data []any `json:"data"`
 	// RouteInfo 与 ToQueryReference 展开后的每条子查询一一对应，用于路由排障（如 table_id、db 是否为空）。与 data 是否为空无关。
-	RouteInfo []metadata.CheckRouteInfo `json:"route_info,omitempty"`
+	RouteInfo []metadata.RouteInfo `json:"route_info,omitempty"`
 	// TraceID 链路 ID（与 trace span 一致）。
 	TraceID string `json:"trace_id"`
 }
@@ -153,12 +151,12 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 // checkQueryTsData 将 QueryTs 转为 QueryReference，再按直查/非直查组装预览（不调真实 TSDB）。
 // 直查 VM：vmCheckMetricql 后 SetCheckPreviewMetricQL；与 queryTsToInstanceAndStmt 同源 GetTsDbInstance(VM)，Instance.GetRequestBody(ctx) 产出 VmQueryCheckBody。
 // 非直查：统一经 GetTsDbInstance + GetRequestBody，默认实现返回 nil 预览体则跳过；若 RouteInfo 非空仍返回 200 以便路由排障。
-func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, routeInfo []metadata.CheckRouteInfo, err error) {
+func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, routeInfo []metadata.RouteInfo, err error) {
 	qr, err := checkQueryTsToReference(ctx, q)
 	if err != nil {
 		return nil, nil, err
 	}
-	routeInfo = qr.CollectCheckRouteInfo()
+	routeInfo = qr.CollectRouteInfo()
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 与 queryTsToInstanceAndStmt 直查分支一致：ToVmExpand + SetExpand，后续与 DirectQuery 同源读 GetExpand。
@@ -222,42 +220,10 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, r
 
 // --- QueryReference（与 queryTsToInstanceAndStmt 前置对齐）
 
-// checkQueryTsToReference 在 ToQueryReference 前的处理与 queryTsToInstanceAndStmt 内联逻辑一致（复制，避免改动 query.go）。
+// checkQueryTsToReference 复用查询前置处理，确保 check 与正式查询的参数约束一致。
 func checkQueryTsToReference(ctx context.Context, q *structured.QueryTs) (metadata.QueryReference, error) {
-	var err error
-	if DefaultQueryListLimit > 0 {
-		if len(q.QueryList) > DefaultQueryListLimit {
-			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
-		}
-	}
-	for _, ql := range q.QueryList {
-		ql.NotPromFunc = false
-		ql.AlignInfluxdbResult = AlignInfluxdbResult && !q.Reference && !q.NotTimeAlign
-		ql.OrderBy = q.OrderBy
-		if ql.Step == "" {
-			ql.Step = q.Step
-		}
-		if ql.Limit == 0 && q.Limit > 0 {
-			ql.Limit = q.Limit
-		}
-		if ql.From == 0 && q.From > 0 {
-			ql.From = q.From
-		}
-	}
-	if q.LookBackDelta != "" {
-		if _, e := time.ParseDuration(q.LookBackDelta); e != nil {
-			return nil, e
-		}
-	}
-	if q.Step == "" {
-		q.Step = promql.GetDefaultStep().String()
-	}
-	qr, err2 := q.ToQueryReference(ctx)
-	if err2 != nil {
-		return nil, err2
-	}
-	_ = err
-	return qr, nil
+	qr, _, err := queryTsToReference(ctx, q)
+	return qr, err
 }
 
 // --- 直查 VM：VmExpand、MetricQL 预览、VmQueryCheckBody

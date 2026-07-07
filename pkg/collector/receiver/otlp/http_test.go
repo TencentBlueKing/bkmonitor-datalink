@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
@@ -39,6 +40,17 @@ func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
 		Ready()
 	})
+}
+
+func TestThrottleClassifyRoutes(t *testing.T) {
+	assert.Equal(t, define.RecordTraces, throttle.ClassifyHTTP(routeV1Traces))
+	assert.Equal(t, define.RecordTraces, throttle.ClassifyHTTP(routeV1Trace))
+	assert.Equal(t, define.RecordMetrics, throttle.ClassifyHTTP(routeV1Metrics))
+	assert.Equal(t, define.RecordLogs, throttle.ClassifyHTTP(routeV1Logs))
+
+	assert.Equal(t, define.RecordTraces, throttle.ClassifyGRPC(grpcTraceExport))
+	assert.Equal(t, define.RecordMetrics, throttle.ClassifyGRPC(grpcMetricsExport))
+	assert.Equal(t, define.RecordLogs, throttle.ClassifyGRPC(grpcLogsExport))
 }
 
 func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {

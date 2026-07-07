@@ -27,6 +27,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -42,6 +43,10 @@ const (
 )
 
 func init() {
+	throttle.RegisterHTTPRecordType(routeV1Traces, define.RecordTraces)
+	throttle.RegisterHTTPRecordType(routeV1Trace, define.RecordTraces)
+	throttle.RegisterHTTPRecordType(routeV1Metrics, define.RecordMetrics)
+	throttle.RegisterHTTPRecordType(routeV1Logs, define.RecordLogs)
 	receiver.RegisterReadyFunc(define.SourceOtlp, Ready)
 }
 

@@ -254,6 +254,13 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 			case *parser.MatrixSelector:
 				window = e.Range
 			case *parser.SubqueryExpr:
+				query.RouteSubqueryOffset += e.OriginalOffset
+				query.RouteSubqueryRange += e.Range
+				if e.Timestamp != nil || e.StartOrEnd != 0 {
+					query.RouteSubqueryOffset = e.OriginalOffset
+					query.RouteSubqueryRange = e.Range
+				}
+
 				window = e.Range
 				step = e.Step.String()
 				isSubQuery = true
@@ -272,8 +279,10 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				}
 
 				// @-modifier
-				query.Timestamp = e.Timestamp
-				query.StartOrEnd = e.StartOrEnd
+				if (e.Timestamp != nil || e.StartOrEnd != 0) && query.Timestamp == nil && query.StartOrEnd == 0 {
+					query.Timestamp = e.Timestamp
+					query.StartOrEnd = e.StartOrEnd
+				}
 				query.VectorOffset = e.Offset
 			case *parser.Call:
 				// 判断是否存在 matrix，是则写入到 timeAggregation
@@ -509,6 +518,7 @@ func vectorQuery(
 	query.Timestamp = e.Timestamp
 	query.StartOrEnd = e.StartOrEnd
 	query.VectorOffset = e.Offset
+	query.RouteSelectorOffset = e.OriginalOffset
 
 	return query, nil
 }

@@ -77,7 +77,23 @@ func GetBkDataAPI() *BkDataAPI {
 }
 
 func (i *BkDataAPI) GetDataAuth() map[string]string {
-	return i.authConfig
+	authConfig := make(map[string]string, len(i.authConfig))
+	for k, v := range i.authConfig {
+		authConfig[k] = v
+	}
+	if authConfig[BkDataDataTokenKey] == "" {
+		authConfig[BkDataDataTokenKey] = viper.GetString(BkDataTokenConfigPath)
+	}
+	if authConfig[BkDataAuthenticationMethodKey] == "" {
+		authConfig[BkDataAuthenticationMethodKey] = viper.GetString(BkDataAuthenticationMethodConfigPath)
+	}
+	if authConfig[BkUserNameKey] == "" {
+		authConfig[BkUserNameKey] = AdminUserName
+	}
+	if authConfig[BkAppCodeKey] == "" {
+		authConfig[BkAppCodeKey] = viper.GetString(BkAPICodeConfigPath)
+	}
+	return authConfig
 }
 
 func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
@@ -85,7 +101,7 @@ func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
 		headers = make(map[string]string)
 	}
 
-	auth, _ := json.Marshal(i.authConfig)
+	auth, _ := json.Marshal(i.GetDataAuth())
 	headers[BkDataAuthorization] = string(auth)
 	return i.bkAPI.Headers(headers)
 }

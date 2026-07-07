@@ -111,6 +111,58 @@ func TestRelabelConfigValidate(t *testing.T) {
 	}
 }
 
+func TestDropConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   []*DropRule
+		wantErr string
+	}{
+		{
+			name: "valid resource predicate key",
+			rules: []*DropRule{{
+				PredicateKey: "resource.telemetry.sdk.language",
+				MatchConfig:  MatchConfig{Op: "eq", Value: "go"},
+			}},
+		},
+		{
+			name: "invalid attributes predicate key",
+			rules: []*DropRule{{
+				PredicateKey: "attributes.telemetry.sdk.language",
+				MatchConfig:  MatchConfig{Op: "eq", Value: "go"},
+			}},
+			wantErr: "only resource.* is supported",
+		},
+		{
+			name: "invalid bare predicate key",
+			rules: []*DropRule{{
+				PredicateKey: "telemetry.sdk.language",
+				MatchConfig:  MatchConfig{Op: "eq", Value: "go"},
+			}},
+			wantErr: "only resource.* is supported",
+		},
+		{
+			name: "empty predicate key",
+			rules: []*DropRule{{
+				PredicateKey: " ",
+				MatchConfig:  MatchConfig{Op: "eq", Value: "go"},
+			}},
+			wantErr: "predicate_key is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Config{Drop: DropAction{Rules: tt.rules}}
+			err := c.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestCodeRelabelConfigValidate(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -335,7 +387,7 @@ func TestRelabelRuleMatch(t *testing.T) {
 func createTestMap(pairs ...string) pcommon.Map {
 	m := pcommon.NewMap()
 	for i := 0; i < len(pairs); i += 2 {
-		m.UpsertString(pairs[i], pairs[i+1])
+		m.PutString(pairs[i], pairs[i+1])
 	}
 	return m
 }

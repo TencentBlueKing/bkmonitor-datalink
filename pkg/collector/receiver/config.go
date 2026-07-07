@@ -15,25 +15,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 )
 
 type Config struct {
-	RecvServer  HttpServerConfig `config:"http_server"`
-	AdminServer HttpServerConfig `config:"admin_server"`
-	GrpcServer  GrpcServerConfig `config:"grpc_server"`
-	TarsServer  TarsServerConfig `config:"tars_server"`
+	RecvServer  HttpServerConfig  `config:"http_server"`
+	AdminServer HttpServerConfig  `config:"admin_server"`
+	GrpcServer  GrpcServerConfig  `config:"grpc_server"`
+	TarsServer  TarsServerConfig  `config:"tars_server"`
 	NetworkFlow NetworkFlowConfig `config:"networkflow"`
+	// 自适应限流配置块，随 receiver 块一起被 UnpackChild 解出（中间件列表里只放占位项）。
+	Throttle throttle.Config `config:"throttle"`
 }
 
 type NetworkFlowConfig struct {
-	Enabled      bool     `config:"enabled"`
-	DataID       int32    `config:"dataid"`
-	Listeners    []string `config:"listeners"`
+	Enabled       bool     `config:"enabled"`
+	DataID        int32    `config:"dataid"`
+	Listeners     []string `config:"listeners"`
 	ListenersFile []string `config:"listeners_file"`
-	Workers      int      `config:"workers"`
-	Sockets      int      `config:"sockets"`
-	QueueSize    int      `config:"queue_size"`
-	Blocking     bool     `config:"blocking"`
+	Workers       int      `config:"workers"`
+	Sockets       int      `config:"sockets"`
+	QueueSize     int      `config:"queue_size"`
+	Blocking      bool     `config:"blocking"`
 }
 
 type HttpServerConfig struct {

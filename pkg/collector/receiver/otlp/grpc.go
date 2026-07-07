@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -29,6 +30,18 @@ import (
 )
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceOtlp)
+
+const (
+	grpcTraceExport   = "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
+	grpcMetricsExport = "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export"
+	grpcLogsExport    = "/opentelemetry.proto.collector.logs.v1.LogsService/Export"
+)
+
+func init() {
+	throttle.RegisterGRPCRecordType(grpcTraceExport, define.RecordTraces)
+	throttle.RegisterGRPCRecordType(grpcMetricsExport, define.RecordMetrics)
+	throttle.RegisterGRPCRecordType(grpcLogsExport, define.RecordLogs)
+}
 
 type GrpcService struct {
 	traces  ptraceotlp.Server

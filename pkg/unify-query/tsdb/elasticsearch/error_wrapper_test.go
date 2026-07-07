@@ -25,7 +25,7 @@ func Test_handleESError(t *testing.T) {
 		name string
 
 		errMsg string
-		err   error
+		err    error
 		esAddr string
 		res    *elastic.SearchResult
 

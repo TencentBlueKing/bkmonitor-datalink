@@ -188,6 +188,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"nested":{"path":"event","query":{"term":{"event.name":"test"}}}}`,
 		},
 		{
+			name:  "grouped negated nested empty string keeps nested non-empty semantics",
+			input: `NOT ((event.name:""))`,
+			sql:   "CAST(event['name'] AS STRING) IS NOT NULL AND CAST(event['name'] AS STRING) != ''",
+			dsl:   `{"nested":{"path":"event","query":{"bool":{"must":{"exists":{"field":"event.name"}},"must_not":{"term":{"event.name":""}}}}}}`,
+		},
+		{
 			name:  "test-1",
 			input: `__ext.io_kubernetes_pod_namespace: "gfp-online-livepy-b" AND is_data_valid: "1" AND born_dist_to_recipient: <400 AND recipient_exists: "1" AND bot_dead_reason: (*killed_by_unknown* OR *bot_without_injury*) AND approach_succ: "0" AND approach_curr_recipient_frame: >200 AND in_fight_aggressive_ratio: "0"`,
 			sql:   "CAST(__ext['io_kubernetes_pod_namespace'] AS STRING) = 'gfp-online-livepy-b' AND `is_data_valid` = '1' AND `born_dist_to_recipient` < '400' AND `recipient_exists` = '1' AND (`bot_dead_reason` LIKE '%killed_by_unknown%' OR `bot_dead_reason` LIKE '%bot_without_injury%') AND `approach_succ` = '0' AND `approach_curr_recipient_frame` > '200' AND `in_fight_aggressive_ratio` = '0'",
@@ -206,16 +212,124 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			sql:   "`log` NOT MATCH_PHRASE 'WorldAttrPool free num (15) less than'",
 		},
 		{
-			name:  "wildcard on analyzed field should lowercase",
-			input: "log: *TSpiderCreateTableException*",
-			sql:   "`log` LIKE '%TSpiderCreateTableException%'",
-			dsl:   `{"wildcard":{"log":{"value":"*tspidercreatetableexception*"}}}`,
+			name:  "大小写不敏感的 analyzed 字段使用 case_insensitive wildcard 查询",
+			input: "case_insensitive_log: *TSpiderCreateTableException*",
+			sql:   "`case_insensitive_log` LIKE '%TSpiderCreateTableException%'",
+			dsl:   `{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*tspidercreatetableexception*"}}}`,
+		},
+		{
+			name:  "大小写不敏感的 analyzed 字段会先在 Go 侧 lower unicode",
+			input: "case_insensitive_log: *Ä*",
+			sql:   "`case_insensitive_log` LIKE '%Ä%'",
+			dsl:   `{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*ä*"}}}`,
+		},
+		{
+			name:  "大小写敏感的 analyzed 字段保持原始 wildcard 大小写",
+			input: "case_sensitive_log: *ERROR*",
+			sql:   "`case_sensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}}`,
+		},
+		{
+			name:  "旧版大小写不敏感字段仅使用 lower 后的 wildcard",
+			input: "legacy_case_insensitive_log: *ERROR*",
+			sql:   "`legacy_case_insensitive_log` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"legacy_case_insensitive_log":{"value":"*error*"}}}`,
 		},
 		{
 			name:  "wildcard on non-analyzed field keeps case",
 			input: "status: *Active*",
 			sql:   "`status` LIKE '%Active%'",
 			dsl:   `{"wildcard":{"status":{"value":"*Active*"}}}`,
+		},
+		{
+			name:  "带 lowercase normalizer 的 keyword 使用 case_insensitive wildcard 查询",
+			input: "normalized_keyword: *Active*",
+			sql:   "`normalized_keyword` LIKE '%Active%'",
+			dsl:   `{"wildcard":{"normalized_keyword":{"case_insensitive":true,"value":"*active*"}}}`,
+		},
+		{
+			name:  "默认 keyword 保持原始 wildcard 大小写",
+			input: "level: *ERROR*",
+			sql:   "`level` LIKE '%ERROR%'",
+			dsl:   `{"wildcard":{"level":{"value":"*ERROR*"}}}`,
+		},
+		{
+			name:  "旧版混合大小写语义字段同时保留原始和 lower wildcard",
+			input: "mixed_legacy_log: *ERROR*",
+			sql:   "`mixed_legacy_log` LIKE '%ERROR%'",
+			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_legacy_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_legacy_log":{"value":"*error*"}}}]}}`,
+		},
+		{
+			name:  "支持 case_insensitive 的混合字段仍使用显式双 wildcard",
+			input: "mixed_log: *ERROR*",
+			sql:   "`mixed_log` LIKE '%ERROR%'",
+			dsl:   `{"bool":{"should":[{"wildcard":{"mixed_log":{"value":"*ERROR*"}}},{"wildcard":{"mixed_log":{"value":"*error*"}}}]}}`,
+		},
+		{
+			name:  "混合字段的小写 wildcard 不扩大匹配大小写敏感索引",
+			input: "mixed_log: *error*",
+			sql:   "`mixed_log` LIKE '%error%'",
+			dsl:   `{"wildcard":{"mixed_log":{"value":"*error*"}}}`,
+		},
+		{
+			name:  "negative prefix regexp keeps implicit should semantics",
+			input: `name:/^(?!.*foo).*/ status:ok`,
+			sql:   "`name` REGEXP '^(?!.*foo).*' OR `status` = 'ok'",
+			dsl:   `{"bool":{"should":[{"bool":{"must":{"exists":{"field":"name"}},"must_not":{"regexp":{"name":{"value":".*foo.*"}}}}},{"term":{"status":"ok"}}]}}`,
+		},
+		{
+			name:  "negated empty string stays required with explicit must",
+			input: `+status:ok NOT log:""`,
+			sql:   "`status` = 'ok' AND `log` IS NOT NULL AND `log` != ''",
+			dsl:   `{"bool":{"must":[{"term":{"status":"ok"}},{"bool":{"must":{"exists":{"field":"log"}}}}]}}`,
+		},
+		{
+			name:  "composite negated group does not collapse sql empty check",
+			input: `NOT ((status:ok) OR (log:""))`,
+			sql:   "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
+			dsl:   `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
+		},
+		{
+			name:  "大小写不敏感字段的 OR wildcard 使用 case_insensitive 查询",
+			input: `case_insensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_insensitive_log` LIKE '%ERROR%' OR `case_insensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*error*"}}},{"wildcard":{"case_insensitive_log":{"case_insensitive":true,"value":"*traceback*"}}}]}}`,
+		},
+		{
+			name:  "大小写敏感字段的 OR wildcard 保持原始大小写",
+			input: `case_sensitive_log: (*ERROR* OR *Traceback*)`,
+			sql:   "(`case_sensitive_log` LIKE '%ERROR%' OR `case_sensitive_log` LIKE '%Traceback%')",
+			dsl:   `{"bool":{"should":[{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}},{"wildcard":{"case_sensitive_log":{"value":"*Traceback*"}}}]}}`,
+		},
+		{
+			name:  "大小写不敏感 analyzed 字段的正则会 lower pattern",
+			input: `case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "旧版大小写不敏感字段的正则会 lower pattern",
+			input: `legacy_case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`legacy_case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"legacy_case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "大小写敏感 analyzed 字段的正则保持原始大小写",
+			input: `case_sensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_sensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_sensitive_log":{"value":".*SSR_REQUEST_ERROR.*"}}}`,
+		},
+		{
+			name:  "混合大小写语义字段的正则同时保留原始和 lower pattern",
+			input: `mixed_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`mixed_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"bool":{"should":[{"regexp":{"mixed_log":{"value":".*SSR_REQUEST_ERROR.*"}}},{"regexp":{"mixed_log":{"value":".*ssr_request_error.*"}}}]}}`,
+		},
+		{
+			name:  "大小写不敏感字段的不包含正则 lower 后保持反向语义",
+			input: `case_insensitive_log:/^(?!.*ERROR).*/`,
+			sql:   "`case_insensitive_log` REGEXP '^(?!.*ERROR).*'",
+			dsl:   `{"bool":{"must":{"exists":{"field":"case_insensitive_log"}},"must_not":{"regexp":{"case_insensitive_log":{"value":".*error.*"}}}}}`,
 		},
 	}
 
@@ -226,6 +340,45 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		"log": {
 			IsAnalyzed: true,
 			FieldType:  "text",
+		},
+		"case_insensitive_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			WildcardCaseInsensitive: true,
+			FieldType:               "text",
+		},
+		"legacy_case_insensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: false,
+			FieldType:       "text",
+		},
+		"case_sensitive_log": {
+			IsAnalyzed:      true,
+			IsCaseSensitive: true,
+			FieldType:       "text",
+		},
+		"normalized_keyword": {
+			IsCaseSensitive:         false,
+			IsCaseInsensitive:       true,
+			WildcardCaseInsensitive: true,
+			FieldType:               "keyword",
+		},
+		"level": {
+			FieldType: "keyword",
+		},
+		"mixed_legacy_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			IsMixedCaseSensitivity:  true,
+			WildcardCaseInsensitive: false,
+			FieldType:               "text",
+		},
+		"mixed_log": {
+			IsAnalyzed:              true,
+			IsCaseSensitive:         false,
+			IsMixedCaseSensitivity:  true,
+			WildcardCaseInsensitive: true,
+			FieldType:               "text",
 		},
 		"__ext.container_name": {
 			AliasName: "container_name",
@@ -317,7 +470,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"正则匹配": {
 			q:   `name: /joh?n(ath[oa]n)/`,
-			es:  `{"regexp":{"name":{"value":"joh?n(ath[oa]n)"}}}`,
+			es:  `{"regexp":{"name":{"value":".*joh?n(ath[oa]n).*"}}}`,
 			sql: "`name` REGEXP 'joh?n(ath[oa]n)'",
 		},
 		"范围匹配，左闭右开": {
@@ -586,6 +739,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
 			sql: "`author` IS NULL",
 		},
+		"field_query_exists_group_not": {
+			q:   `NOT ((_exists_:author))`,
+			es:  `{"bool":{"must_not":{"exists":{"field":"author"}}}}`,
+			sql: "`author` IS NULL",
+		},
 		"field_query_exists_or": {
 			q:   `_exists_: Dsa OR _exists_: Allocate`,
 			es:  `{"bool":{"should":[{"exists":{"field":"Dsa"}},{"exists":{"field":"Allocate"}}]}}`,
@@ -673,8 +831,33 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"regex_field": {
 			q:   `log:/patt.*n/`,
-			es:  `{"regexp":{"log":{"value":"patt.*n"}}}`,
+			es:  `{"regexp":{"log":{"value":".*patt.*n.*"}}}`,
 			sql: "`log` REGEXP 'patt.*n'",
+		},
+		"字段正则普通文本补齐为包含匹配": {
+			q:   `msg:/TypeError/`,
+			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
+			sql: "`msg` REGEXP 'TypeError'",
+		},
+		"字段正则顶层或表达式按分支补齐包含匹配": {
+			q:   `msg:/foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,
+			sql: "`msg` REGEXP 'foo|bar'",
+		},
+		"字段正则顶层或表达式保留分支锚点语义": {
+			q:   `msg:/^foo|bar/`,
+			es:  `{"regexp":{"msg":{"value":"(foo.*|.*bar.*)"}}}`,
+			sql: "`msg` REGEXP '^foo|bar'",
+		},
+		"字段正则前缀锚点改写为整值前缀匹配": {
+			q:   `msg:/^TypeError/`,
+			es:  `{"regexp":{"msg":{"value":"TypeError.*"}}}`,
+			sql: "`msg` REGEXP '^TypeError'",
+		},
+		"字段正则不包含前缀形式改写为反向正则": {
+			q:   `msg:/^(?!.*idip).*/`,
+			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
+			sql: "`msg` REGEXP '^(?!.*idip).*'",
 		},
 		"fuzzy_and_field": {
 			q:   `log: test~`,
@@ -1257,7 +1440,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_field_regex": {
 			q:   `field:/pattern/`,
-			es:  `{"regexp":{"field":{"value":"pattern"}}}`,
+			es:  `{"regexp":{"field":{"value":".*pattern.*"}}}`,
 			sql: "`field` REGEXP 'pattern'",
 		},
 
@@ -1274,10 +1457,25 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"exists":{"field":"log"}}`,
 			sql: "`log` IS NOT NULL",
 		},
-		"edge_empty_field_value_negated_becomes_not_exists": {
+		"取反空字符串在 ES 中改写为字段存在且非空": {
 			q:   `NOT log:""`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NOT NULL AND `log` != ''",
+		},
+		"取反分组空字符串在 ES 中改写为字段存在且非空": {
+			q:   `NOT ((log:""))`,
+			es:  `{"bool":{"must":{"exists":{"field":"log"}}}}`,
+			sql: "`log` IS NOT NULL AND `log` != ''",
+		},
+		"取反分组 exists 不改写为空字符串非空语义": {
+			q:   `NOT ((_exists_:log))`,
 			es:  `{"bool":{"must_not":{"exists":{"field":"log"}}}}`,
 			sql: "`log` IS NULL",
+		},
+		"取反复合分组空字符串不误改写 SQL": {
+			q:   `NOT ((status:ok) OR (log:""))`,
+			es:  `{"bool":{"must_not":{"bool":{"should":[{"term":{"status":"ok"}},{"exists":{"field":"log"}}]}}}}`,
+			sql: "NOT ((`status` = 'ok') OR (`log` IS NOT NULL))",
 		},
 		"edge_field_with_underscore": {
 			q:   `_field:value`,
@@ -1600,6 +1798,39 @@ func TestLuceneParser(t *testing.T) {
 	}
 }
 
+func TestExplicitAndChainImplicitTerms(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	testCases := map[string]struct {
+		q  string
+		es string
+	}{
+		"explicit_and_chain_with_multiple_implicit_terms": {
+			q:  `a AND b c d AND e`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"e"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}`,
+		},
+		"implicit_terms_before_and_are_required": {
+			q:  `quick brown AND fox`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}}]}}`,
+		},
+		"implicit_terms_around_and_are_required": {
+			q:  `a b AND c d`,
+			es: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"c"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"a"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"b"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"d"}}]}}`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			node := ParseLuceneWithVisitor(ctx, c.q, Option{})
+			assert.Nil(t, node.Error())
+
+			dsl := MergeQuery(node.DSL())
+			dslActual, _ := queryToJSON(dsl)
+			assert.Equal(t, c.es, dslActual)
+		})
+	}
+}
+
 func queryToJSON(query elastic.Query) (string, error) {
 	if query == nil {
 		return "null", nil
@@ -1613,6 +1844,45 @@ func queryToJSON(query elastic.Query) (string, error) {
 		return "", err
 	}
 	return string(jsonBytes), nil
+}
+
+func TestNonEmptyFieldQuery(t *testing.T) {
+	tests := map[string]struct {
+		field     string
+		fieldsMap metadata.FieldsMap
+		want      string
+	}{
+		"keyword 字段直接排除空串": {
+			field: "level",
+			fieldsMap: metadata.FieldsMap{
+				"level": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"level"}},"must_not":{"term":{"level":""}}}}`,
+		},
+		"text 字段有 keyword 子字段时用子字段排除空串": {
+			field: "log",
+			fieldsMap: metadata.FieldsMap{
+				"log":         {FieldType: "text", IsAnalyzed: true},
+				"log.keyword": {FieldType: "keyword"},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"log"}},"must_not":{"term":{"log.keyword":""}}}}`,
+		},
+		"text 字段没有精确子字段时只保留 exists": {
+			field: "message",
+			fieldsMap: metadata.FieldsMap{
+				"message": {FieldType: "text", IsAnalyzed: true},
+			},
+			want: `{"bool":{"must":{"exists":{"field":"message"}}}}`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := queryToJSON(nonEmptyFieldQuery(tt.field, tt.fieldsMap))
+			assert.Nil(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestConvertSingleQuotes(t *testing.T) {

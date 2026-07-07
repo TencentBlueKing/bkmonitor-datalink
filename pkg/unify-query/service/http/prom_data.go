@@ -10,6 +10,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -20,10 +21,14 @@ import (
 // 返回结构化数据
 type PromData struct {
 	dimensions map[string]bool
-	Tables     []*TablesItem    `json:"series"`
-	Status     *metadata.Status `json:"status,omitempty"`
-	TraceID    string           `json:"trace_id,omitempty"`
-	IsPartial  bool             `json:"is_partial"`
+	// includeResultTableID 表示本次响应需要输出 result_table_id；即使为空也输出 []。
+	includeResultTableID bool
+	Tables               []*TablesItem    `json:"series"`
+	Status               *metadata.Status `json:"status,omitempty"`
+	TraceID              string           `json:"trace_id,omitempty"`
+	IsPartial            bool             `json:"is_partial"`
+	// ResultTableID 来自 QueryReference 路由解析结果；查询响应只暴露 RT 列表，不返回完整 RouteInfo。
+	ResultTableID []string `json:"result_table_id,omitempty"`
 }
 
 // NewPromData
@@ -36,6 +41,59 @@ func NewPromData(dimensions []string) *PromData {
 		dimensions: dimensionsMap,
 		Tables:     make([]*TablesItem, 0),
 	}
+}
+
+// SetResultTableID 标记本次响应需要输出 result_table_id；即使没有路由也输出 []。
+func (d *PromData) SetResultTableID(resultTableID []string) {
+	d.ResultTableID = normalizeResultTableID(resultTableID)
+	d.includeResultTableID = true
+}
+
+// normalizeResultTableID 保证成功响应中 result_table_id 为 [] 而不是 null。
+func normalizeResultTableID(resultTableID []string) []string {
+	if resultTableID == nil {
+		return make([]string, 0)
+	}
+	return resultTableID
+}
+
+// SetResultTableIDFromRouteInfo 复用内部路由摘要，只在响应阶段投影为 RT 列表。
+func (d *PromData) SetResultTableIDFromRouteInfo(routeInfo []metadata.RouteInfo) {
+	d.SetResultTableID(resultTableIDFromRouteInfo(routeInfo))
+}
+
+// MarshalJSON 在未调用 SetResultTableID 时沿用 result_table_id 的 omitempty；调用后即使为空也输出 []。
+func (d *PromData) MarshalJSON() ([]byte, error) {
+	type promData struct {
+		Tables        []*TablesItem    `json:"series"`
+		Status        *metadata.Status `json:"status,omitempty"`
+		TraceID       string           `json:"trace_id,omitempty"`
+		IsPartial     bool             `json:"is_partial"`
+		ResultTableID []string         `json:"result_table_id,omitempty"`
+	}
+	if d.includeResultTableID {
+		type promDataWithResultTableID struct {
+			Tables        []*TablesItem    `json:"series"`
+			Status        *metadata.Status `json:"status,omitempty"`
+			TraceID       string           `json:"trace_id,omitempty"`
+			IsPartial     bool             `json:"is_partial"`
+			ResultTableID []string         `json:"result_table_id"`
+		}
+		return json.Marshal(promDataWithResultTableID{
+			Tables:        d.Tables,
+			Status:        d.Status,
+			TraceID:       d.TraceID,
+			IsPartial:     d.IsPartial,
+			ResultTableID: normalizeResultTableID(d.ResultTableID),
+		})
+	}
+	return json.Marshal(promData{
+		Tables:        d.Tables,
+		Status:        d.Status,
+		TraceID:       d.TraceID,
+		IsPartial:     d.IsPartial,
+		ResultTableID: d.ResultTableID,
+	})
 }
 
 // Fill

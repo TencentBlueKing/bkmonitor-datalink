@@ -248,6 +248,90 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
 		},
+		"结构化正则普通文本补齐为包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
+		},
+		"结构化正则顶层或表达式按分支补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(.*foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则顶层或表达式保留分支锚点语义": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^foo|bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"(foo.*|.*bar.*)"}}}}`,
+		},
+		"结构化正则前缀锚点改写为整值前缀匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^TypeError"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"TypeError.*"}}}}`,
+		},
+		"结构化正则不包含前缀形式改写为反向正则": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化正则不包含前缀形式只作用于当前 value": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*foo).*", "bar"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*foo.*"}}}}},{"regexp":{"keyword":{"value":".*bar.*"}}}]}}}`,
+		},
+		"结构化反向正则不包含前缀形式避免双重取反": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*idip).*"},
+						Operator:      structured.ConditionNotRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}}}`,
+		},
 		"multiple nested fields in same condition group": {
 			conditions: metadata.AllConditions{
 				{
@@ -1314,6 +1398,267 @@ func TestBuildQuery(t *testing.T) {
 			assert.JSONEq(t, c.expected, bodyString)
 		})
 	}
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsNegatedQueryStringValues(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(game_ret:"-55" AND cmd:20118172) AND ((result:"-3888") OR (result:"-3999") OR (result:"-4000")) AND NOT (game_ret:"-16")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"result", "game_ret"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"game_ret": {
+				"aggregations": {
+					"result": {
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "_index"
+								}
+							}
+						},
+						"terms": {
+							"field": "result",
+							"include": ["-3888", "-3999", "-4000"],
+							"missing": " ",
+							"size": 10000
+						}
+					}
+				},
+				"terms": {
+					"field": "game_ret",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+		}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesKeepsImplicitOrSameFieldGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `level:("warn" "error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"level": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "level",
+					"include": ["warn", "error"],
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesKeepsMustModifierInMixedExpression(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `+level:"warn" status:"error"`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level", "status"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"status": {
+				"aggregations": {
+					"level": {
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "_index"
+								}
+							}
+						},
+						"terms": {
+							"field": "level",
+							"include": ["warn"],
+							"missing": " ",
+							"size": 10000
+						}
+					}
+				},
+				"terms": {
+					"field": "status",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsMustModifierUnderExplicitOr(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `+level:"warn" OR status:"error"`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"level"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"level": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "level",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
+}
+
+func TestFormatFactory_AggIncludeValuesSkipsOptionalPositiveLeafFromNegatedMixedGroup(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	query := &metadata.Query{
+		QueryString: `NOT(foo:"x" AND NOT status:"error")`,
+		Aggregates: metadata.Aggregates{
+			{
+				Name:       Count,
+				Field:      "_index",
+				Dimensions: []string{"status"},
+			},
+		},
+	}
+
+	fact := NewFormatFactory(ctx).
+		WithIncludeValues(function.LabelMap(ctx, query)).
+		WithQuery("_index", metadata.TimeField{}, time.Time{}, time.Time{}, function.Millisecond, 10000)
+
+	name, agg, err := fact.EsAgg(query.Aggregates)
+	assert.NoError(t, err)
+
+	ss := elastic.NewSearchSource().Aggregation(name, agg).Size(0)
+	body, err := ss.Source()
+	assert.NoError(t, err)
+
+	bodyJSON, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"aggregations": {
+			"status": {
+				"aggregations": {
+					"_value": {
+						"value_count": {
+							"field": "_index"
+						}
+					}
+				},
+				"terms": {
+					"field": "status",
+					"missing": " ",
+					"size": 10000
+				}
+			}
+		},
+		"size": 0
+	}`, string(bodyJSON))
 }
 
 func TestFactory_Agg(t *testing.T) {

@@ -25,6 +25,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -67,6 +68,8 @@ type HttpService struct {
 var httpSvc HttpService
 
 func init() {
+	throttle.RegisterHTTPRecordType(routePyroscopeIngest, define.RecordProfiles)
+	throttle.RegisterHTTPRecordType(pushv1connect.PusherServicePushProcedure, define.RecordProfiles)
 	receiver.RegisterReadyFunc(define.SourcePyroscope, Ready)
 }
 

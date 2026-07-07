@@ -71,14 +71,22 @@ func (f FieldsMap) Field(k string) FieldOption {
 }
 
 type FieldOption struct {
-	AliasName       string   `json:"alias_name"`
-	FieldName       string   `json:"field_name"`
-	FieldType       string   `json:"field_type"`
-	OriginField     string   `json:"origin_field"`
-	IsAgg           bool     `json:"is_agg"`
-	IsAnalyzed      bool     `json:"is_analyzed"`
-	IsCaseSensitive bool     `json:"is_case_sensitive"`
-	TokenizeOnChars []string `json:"tokenize_on_chars"`
+	AliasName       string `json:"alias_name"`
+	FieldName       string `json:"field_name"`
+	FieldType       string `json:"field_type"`
+	OriginField     string `json:"origin_field"`
+	IsAgg           bool   `json:"is_agg"`
+	IsAnalyzed      bool   `json:"is_analyzed"`
+	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
+	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
+	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
+	// IsMixedCaseSensitivity 表示跨索引同名字段同时存在大小写敏感和不敏感的索引语义。
+	// 旧 ES 无 wildcard.case_insensitive 时需要同时保留原 pattern 和 lower pattern，避免只 lower 后漏掉保留大小写的索引。
+	IsMixedCaseSensitivity bool `json:"is_mixed_case_sensitivity,omitempty"`
+	// WildcardCaseInsensitive 表示目标 ES 版本是否支持 wildcard.case_insensitive 参数。
+	WildcardCaseInsensitive bool     `json:"wildcard_case_insensitive,omitempty"`
+	TokenizeOnChars         []string `json:"tokenize_on_chars"`
 }
 
 func (f FieldOption) Existed() bool {
@@ -180,6 +188,11 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
+	RouteStart      time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd        time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteQueryStart time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`
 	IsPrefix    bool   `json:"is_prefix,omitempty"`
@@ -209,9 +222,9 @@ type Query struct {
 	IsMergeDB bool `json:"is_merge_db"`
 }
 
-// ToCheckRouteInfo 生成 Check 接口用的单条子查询路由摘要，不调用实际 TSDB 查询
-func (q *Query) ToCheckRouteInfo(referenceName, metricName string) CheckRouteInfo {
-	return CheckRouteInfo{
+// ToRouteInfo 生成单条子查询路由摘要，不调用实际 TSDB 查询。
+func (q *Query) ToRouteInfo(referenceName, metricName string) RouteInfo {
+	return RouteInfo{
 		ReferenceName: referenceName,
 		MetricName:    metricName,
 		TableID:       q.TableID,
@@ -357,8 +370,8 @@ type QueryClusterMetric struct {
 
 type QueryReference map[string][]*QueryMetric
 
-// CheckRouteInfo Check 单条子查询路由摘要（与 Query 同源；不含敏感字段；不调真实 TSDB）。
-type CheckRouteInfo struct {
+// RouteInfo 单条子查询路由摘要（与 Query 同源；不含敏感字段；不调真实 TSDB）。
+type RouteInfo struct {
 	ReferenceName string `json:"reference_name"`
 	MetricName    string `json:"metric_name,omitempty"`
 	TableID       string `json:"table_id"`
@@ -370,17 +383,17 @@ type CheckRouteInfo struct {
 	Measurement   string `json:"measurement,omitempty"`
 }
 
-// CollectCheckRouteInfo 汇总子查询路由字段；reference 名排序以保证输出稳定。
-func (qRef QueryReference) CollectCheckRouteInfo() []CheckRouteInfo {
+// CollectRouteInfo 汇总子查询路由字段；无路由时返回空切片，最终按路由摘要排序以保证输出稳定。
+func (qRef QueryReference) CollectRouteInfo() []RouteInfo {
+	rows := make([]RouteInfo, 0)
 	if len(qRef) == 0 {
-		return nil
+		return rows
 	}
 	refs := make([]string, 0, len(qRef))
 	for ref := range qRef {
 		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
-	rows := make([]CheckRouteInfo, 0)
 	for _, refName := range refs {
 		for _, qm := range qRef[refName] {
 			if qm == nil {
@@ -390,11 +403,44 @@ func (qRef QueryReference) CollectCheckRouteInfo() []CheckRouteInfo {
 				if qry == nil {
 					continue
 				}
-				rows = append(rows, qry.ToCheckRouteInfo(refName, qm.MetricName))
+				rows = append(rows, qry.ToRouteInfo(refName, qm.MetricName))
 			}
 		}
 	}
+	// QueryList 的来源可能受路由表遍历影响，最终统一排序避免响应顺序漂移。
+	sort.SliceStable(rows, func(i, j int) bool {
+		return routeInfoLess(rows[i], rows[j])
+	})
 	return rows
+}
+
+// routeInfoLess 定义 route_info 的稳定输出顺序。
+func routeInfoLess(a, b RouteInfo) bool {
+	if a.ReferenceName != b.ReferenceName {
+		return a.ReferenceName < b.ReferenceName
+	}
+	if a.MetricName != b.MetricName {
+		return a.MetricName < b.MetricName
+	}
+	if a.TableID != b.TableID {
+		return a.TableID < b.TableID
+	}
+	if a.DB != b.DB {
+		return a.DB < b.DB
+	}
+	if a.DataLabel != b.DataLabel {
+		return a.DataLabel < b.DataLabel
+	}
+	if a.DataSource != b.DataSource {
+		return a.DataSource < b.DataSource
+	}
+	if a.StorageType != b.StorageType {
+		return a.StorageType < b.StorageType
+	}
+	if a.StorageID != b.StorageID {
+		return a.StorageID < b.StorageID
+	}
+	return a.Measurement < b.Measurement
 }
 
 type Queries struct {
@@ -544,8 +590,17 @@ func (vs VmCondition) ToMatch() string {
 	return fmt.Sprintf("{%s}", vs)
 }
 
-// LastAggName 获取最新的聚合函数
-func (a Aggregates) LastAggName() string {
+// InnerAggName 获取最内层聚合函数；Aggregates 按内到外排序。
+func (a Aggregates) InnerAggName() string {
+	if len(a) == 0 {
+		return ""
+	}
+
+	return a[0].Name
+}
+
+// OuterAggName 获取最外层聚合函数；Aggregates 按内到外排序。
+func (a Aggregates) OuterAggName() string {
 	if len(a) == 0 {
 		return ""
 	}

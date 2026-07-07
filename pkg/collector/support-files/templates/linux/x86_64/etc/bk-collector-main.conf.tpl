@@ -325,7 +325,37 @@ bk-collector:
     - name: "traces_deriver/count"
     - name: "traces_deriver/duration"
 
+    # 页面加载耗时
+    - name: "apdex_calculator/rum_apdex_common"
+      config:
+        calculator:
+          type: "standard"
+        rules:
+          - kind: "SPAN_KIND_INTERNAL"
+            # documentLoad span: loadEventEnd - fetchStart ~= span end - span start
+            predicate_key: "span_name"
+            predicate_value: "documentLoad"
+            destination: "rum_view_load_apdex_type"
+            apdex_t: 500 # ms
+          - kind: "SPAN_KIND_CLIENT"
+            predicate_key: "attributes.http.method"
+            destination: "rum_api_request_apdex_type"
+            apdex_t: 500 # ms
+            duration:
+              start_event: "fetchStart"
+              end_event: "responseEnd"
+
+
   pipeline:
+
+    - name: "rum_pipeline/direct"
+      type: "rum"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+        - "apdex_calculator/rum_apdex_common"
+
+
     - name: "traces_pipeline/common"
       type: "traces"
       processors:

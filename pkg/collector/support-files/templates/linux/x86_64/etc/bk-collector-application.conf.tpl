@@ -47,9 +47,17 @@ default:
             {%- for rule_config in apdex_config.rules %}
             - kind: '{{ rule_config.kind }}'
               predicate_key: '{{ rule_config.predicate_key }}'
+              {% if apdex_config.predicate_value is defined %}
+              predicate_value: '{{ apdex_config.predicate_value }}'
+              {%- endif %}
               metric_name: '{{ rule_config.metric_name }}'
               destination: '{{ rule_config.destination }}'
-              apdex_t: {{ rule_config.apdex_t }} # ms
+              apdex_t: {{ rule_config.apdex_t }}
+              {%- if rule_config.duration %}
+              duration:
+                start_event: {{ rule_config.duration.start_event }}
+                end_event: {{ rule_config.duration.end_event }}
+              {% endif %}
             {%- endfor %}
 {%- endif %}
 
@@ -86,7 +94,6 @@ default:
 {% if metrics_filter_config is defined %}
       - name: "{{ metrics_filter_config.name }}"
         config:
-          {%- if metrics_filter_config.code_relabel is defined %}
           code_relabel:
             {%- for item in metrics_filter_config.code_relabel %}
             - metrics: {{ item.metrics | tojson }}

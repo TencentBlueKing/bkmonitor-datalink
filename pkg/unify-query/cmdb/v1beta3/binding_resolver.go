@@ -130,17 +130,6 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 	return info, nil
 }
 
-// Invalidate 从 cache 中剔除指定 biz_id 的 binding（通常用于错误恢复）。
-func (r *BindingResolver) Invalidate(bizID string) {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-	for key := range r.cache {
-		if key == bizID || strings.HasSuffix(key, ":"+bizID) {
-			delete(r.cache, key)
-		}
-	}
-}
-
 func (r *BindingResolver) lookupCache(cacheKey string) *BindingInfo {
 	r.cacheMu.RLock()
 	defer r.cacheMu.RUnlock()

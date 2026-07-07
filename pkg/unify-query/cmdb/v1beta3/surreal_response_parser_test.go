@@ -259,7 +259,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 		assert.NotNil(t, graph.GetNode("replicaset:⟨cluster=c1,namespace=ns1,replicaset=rs1⟩"))
 		assert.NotNil(t, graph.GetEdge("rel_1"))
 		assert.NotNil(t, graph.GetEdge("rel_2"))
-		assert.False(t, graph.HasErrors())
+		assert.Empty(t, graph.TraversalErrors)
 	})
 
 	t.Run("nested hop relations (hop2 inside target)", func(t *testing.T) {
@@ -817,7 +817,7 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 		assert.NotNil(t, graph.GetEdge("rel_2"))
 		assert.NotNil(t, graph.GetEdge("rel_3"))
 		assert.NotNil(t, graph.GetEdge("rel_4"))
-		assert.False(t, graph.HasErrors())
+		assert.Empty(t, graph.TraversalErrors)
 	})
 
 	t.Run("liveness periods parsed correctly", func(t *testing.T) {

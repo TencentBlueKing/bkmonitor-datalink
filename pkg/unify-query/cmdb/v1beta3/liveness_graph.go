@@ -110,14 +110,6 @@ func (g *LivenessGraph) AddTraversalError(errMsg string) {
 	g.TraversalErrors = append(g.TraversalErrors, errMsg)
 }
 
-func (g *LivenessGraph) HasErrors() bool {
-	return len(g.TraversalErrors) > 0
-}
-
-func (g *LivenessGraph) IsComplete() bool {
-	return len(g.TraversalErrors) == 0
-}
-
 func (g *LivenessGraph) GetOutEdges(resourceID string) []*EdgeLiveness {
 	relationIDs := g.Adjacency[resourceID]
 	edges := make([]*EdgeLiveness, 0, len(relationIDs))

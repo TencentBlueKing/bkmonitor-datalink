@@ -116,6 +116,42 @@ func (m *mockBKBaseCurl) Request(ctx context.Context, method string, opt curl.Op
 	return 0, nil
 }
 
+func extractMatchersFromGraphs(
+	graphs []*LivenessGraph,
+	targetType ResourceType,
+	pathResource []ResourceType,
+) cmdb.Matchers {
+	return extractMatchersFromGraphsWithOptions(
+		graphs,
+		targetType,
+		pathResource,
+		GetSchemaProvider(),
+		"",
+		true,
+		true,
+	)
+}
+
+func buildTargetMatchersTimeSeries(
+	graphs []*LivenessGraph,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	start, end, stepMs int64,
+) []cmdb.MatchersWithTimestamp {
+	return buildTargetMatchersTimeSeriesWithOptions(
+		graphs,
+		targetType,
+		pathResource,
+		start,
+		end,
+		stepMs,
+		GetSchemaProvider(),
+		"",
+		true,
+		true,
+	)
+}
+
 type CMDBHandlerTestCase struct {
 	Name          string
 	LookBackDelta string
@@ -136,290 +172,10 @@ type CMDBHandlerTestCase struct {
 
 	ExpectedSource     cmdb.Resource
 	ExpectedMatcher    cmdb.Matcher
-	ExpectedPath       []cmdb.PathV2
 	ExpectedTarget     cmdb.Resource
 	ExpectedMatchers   cmdb.Matchers                // instant 查询用
 	ExpectedTimeSeries []cmdb.MatchersWithTimestamp // range 查询用：完整时间序列
 	ExpectedError      bool
-}
-
-func TestQueryResourceMatcher(t *testing.T) {
-	testCases := []CMDBHandlerTestCase{
-		{
-			Name:          "Node_To_Pod_SingleHop",
-			LookBackDelta: "10m",
-			SpaceUid:      "test-space",
-			Ts:            "600",
-			Target:        "pod",
-			Source:        "node",
-			IndexMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00001",
-				"node":           "node-1",
-			},
-			ExpandMatcher: nil,
-			ExpandShow:    false,
-			PathResource:  nil,
-			MockGraphs: []*LivenessGraph{
-				{
-					Nodes: map[string]*NodeLiveness{
-						"node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩": {
-							ResourceID:   "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
-							ResourceType: ResourceTypeNode,
-							Labels: map[string]string{
-								"bcs_cluster_id": "BCS-K8S-00001",
-								"node":           "node-1",
-							},
-							RawPeriods: []*VisiblePeriod{{Start: 100000, End: 500000}},
-						},
-						"pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩": {
-							ResourceID:   "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩",
-							ResourceType: ResourceTypePod,
-							Labels: map[string]string{
-								"bcs_cluster_id": "BCS-K8S-00001",
-								"namespace":      "default",
-								"pod":            "nginx-1",
-							},
-							RawPeriods: []*VisiblePeriod{{Start: 100000, End: 500000}},
-						},
-						"pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=kube-system,pod=coredns-1⟩": {
-							ResourceID:   "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=kube-system,pod=coredns-1⟩",
-							ResourceType: ResourceTypePod,
-							Labels: map[string]string{
-								"bcs_cluster_id": "BCS-K8S-00001",
-								"namespace":      "kube-system",
-								"pod":            "coredns-1",
-							},
-							RawPeriods: []*VisiblePeriod{{Start: 200000, End: 600000}},
-						},
-					},
-					Edges: map[string]*EdgeLiveness{
-						"node_with_pod:1": {
-							RelationID:   "node_with_pod:1",
-							RelationType: RelationNodeWithPod,
-							Category:     RelationCategoryStatic,
-							FromID:       "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
-							ToID:         "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩",
-							RawPeriods:   []*VisiblePeriod{{Start: 100000, End: 500000}},
-						},
-						"node_with_pod:2": {
-							RelationID:   "node_with_pod:2",
-							RelationType: RelationNodeWithPod,
-							Category:     RelationCategoryStatic,
-							FromID:       "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
-							ToID:         "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=kube-system,pod=coredns-1⟩",
-							RawPeriods:   []*VisiblePeriod{{Start: 200000, End: 500000}},
-						},
-					},
-				},
-			},
-			ExpectedSource: "node",
-			ExpectedMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00001",
-				"node":           "node-1",
-			},
-			ExpectedPath: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
-					{ResourceType: "pod", RelationType: "pod_to_system", Category: "dynamic", Direction: "inbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
-					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
-					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
-				}},
-			},
-			ExpectedTarget: "pod",
-			ExpectedMatchers: cmdb.Matchers{
-				{
-					"bcs_cluster_id": "BCS-K8S-00001",
-					"namespace":      "default",
-					"pod":            "nginx-1",
-				},
-				{
-					"bcs_cluster_id": "BCS-K8S-00001",
-					"namespace":      "kube-system",
-					"pod":            "coredns-1",
-				},
-			},
-			ExpectedError: false,
-		},
-		{
-			Name:          "Pod_To_Node_WithPath",
-			LookBackDelta: "5m",
-			SpaceUid:      "test-space",
-			Ts:            "1000",
-			Target:        "node",
-			Source:        "pod",
-			IndexMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00001",
-				"namespace":      "default",
-				"pod":            "nginx-1",
-			},
-			ExpandMatcher: nil,
-			ExpandShow:    false,
-			PathResource:  []cmdb.Resource{"node"},
-			MockGraphs: []*LivenessGraph{
-				{
-					Nodes: map[string]*NodeLiveness{
-						"pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩": {
-							ResourceID:   "pod:⟨bcs_cluster_id=BCS-K8S-00001,namespace=default,pod=nginx-1⟩",
-							ResourceType: ResourceTypePod,
-							Labels: map[string]string{
-								"bcs_cluster_id": "BCS-K8S-00001",
-								"namespace":      "default",
-								"pod":            "nginx-1",
-							},
-							RawPeriods: []*VisiblePeriod{{Start: 0, End: 1000000}},
-						},
-						"node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩": {
-							ResourceID:   "node:⟨bcs_cluster_id=BCS-K8S-00001,node=node-1⟩",
-							ResourceType: ResourceTypeNode,
-							Labels: map[string]string{
-								"bcs_cluster_id": "BCS-K8S-00001",
-								"node":           "node-1",
-							},
-							RawPeriods: []*VisiblePeriod{{Start: 0, End: 1000000}},
-						},
-					},
-				},
-			},
-			ExpectedSource: "pod",
-			ExpectedMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00001",
-				"namespace":      "default",
-				"pod":            "nginx-1",
-			},
-			ExpectedPath: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "datasource", RelationType: "datasource_with_pod", Category: "static", Direction: "inbound"},
-					{ResourceType: "node", RelationType: "datasource_with_node", Category: "static", Direction: "outbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
-					{ResourceType: "node", RelationType: "node_with_system", Category: "static", Direction: "inbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
-					{ResourceType: "node", RelationType: "node_with_system", Category: "static", Direction: "inbound"},
-				}},
-			},
-			ExpectedTarget: "node",
-			ExpectedMatchers: cmdb.Matchers{
-				{
-					"bcs_cluster_id": "BCS-K8S-00001",
-					"node":           "node-1",
-				},
-			},
-			ExpectedError: false,
-		},
-		{
-			Name:          "Empty_Result",
-			LookBackDelta: "10m",
-			SpaceUid:      "test-space",
-			Ts:            "600",
-			Target:        "pod",
-			Source:        "node",
-			IndexMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "BCS-K8S-00001",
-				"node":           "non-existent",
-			},
-			MockGraphs:      nil,
-			ExpectedSource:  "node",
-			ExpectedMatcher: cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "node": "non-existent"},
-			ExpectedPath: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
-					{ResourceType: "pod", RelationType: "pod_to_system", Category: "dynamic", Direction: "inbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
-					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-				}},
-				{Steps: []cmdb.PathStepV2{
-					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
-					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
-				}},
-			},
-			ExpectedTarget:   "pod",
-			ExpectedMatchers: nil,
-			ExpectedError:    false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			ctx := context.Background()
-			model, err := NewModel(ctx, &mockGraphQueryExecutor{
-				graphs: tc.MockGraphs,
-				err:    tc.MockError,
-			})
-			require.NoError(t, err)
-
-			source, matcher, path, target, matchers, err := model.QueryDynamicPaths(
-				ctx,
-				tc.LookBackDelta,
-				tc.SpaceUid,
-				tc.Ts,
-				tc.Target,
-				tc.Source,
-				tc.IndexMatcher,
-				tc.ExpandMatcher,
-				tc.ExpandShow,
-				tc.PathResource,
-			)
-
-			if tc.ExpectedError {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.ExpectedSource, source, "source mismatch")
-			assert.Equal(t, tc.ExpectedMatcher, matcher, "matcher mismatch")
-			assert.Equal(t, tc.ExpectedPath, path, "path mismatch")
-			assert.Equal(t, tc.ExpectedTarget, target, "target mismatch")
-
-			if tc.ExpectedMatchers == nil {
-				assert.Nil(t, matchers)
-			} else {
-				assert.Equal(t, len(tc.ExpectedMatchers), len(matchers), "matchers count mismatch")
-				for _, expected := range tc.ExpectedMatchers {
-					found := false
-					for _, actual := range matchers {
-						if matchersEqual(expected, actual) {
-							found = true
-							break
-						}
-					}
-					assert.True(t, found, "expected matcher not found: %v", expected)
-				}
-			}
-		})
-	}
 }
 
 func TestQueryResourceMatcherRange(t *testing.T) {
@@ -653,29 +409,6 @@ func TestQueryResourceMatcherRangeRejectsReversedWindow(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, _, _, _, err = model.QueryResourceMatcherRange(
-		ctx,
-		"10m",
-		"test-space",
-		"1m",
-		"300",
-		"0",
-		"pod",
-		"node",
-		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
-		nil,
-		false,
-		nil,
-	)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "start_time must be less than or equal to end_time")
-}
-
-func TestQueryDynamicPathsRangeRejectsReversedWindow(t *testing.T) {
-	ctx := context.Background()
-	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
-	require.NoError(t, err)
-
-	_, _, _, _, _, err = model.QueryDynamicPathsRange(
 		ctx,
 		"10m",
 		"test-space",
@@ -3040,89 +2773,6 @@ func TestBuildTargetMatchersTimeSeries(t *testing.T) {
 						expected.Timestamp, expectedMatcher)
 				}
 			}
-		})
-	}
-}
-
-func TestIsActiveAt(t *testing.T) {
-	testCases := []struct {
-		Name     string
-		Periods  []*VisiblePeriod
-		Ts       int64
-		Expected bool
-	}{
-		{
-			Name:     "NilPeriods",
-			Periods:  nil,
-			Ts:       100,
-			Expected: false,
-		},
-		{
-			Name:     "EmptyPeriods",
-			Periods:  []*VisiblePeriod{},
-			Ts:       100,
-			Expected: false,
-		},
-		{
-			Name:     "WithinSinglePeriod",
-			Periods:  []*VisiblePeriod{{Start: 0, End: 200}},
-			Ts:       100,
-			Expected: true,
-		},
-		{
-			Name:     "AtPeriodStart",
-			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
-			Ts:       100,
-			Expected: true,
-		},
-		{
-			Name:     "AtPeriodEnd",
-			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
-			Ts:       200,
-			Expected: true,
-		},
-		{
-			Name:     "BeforePeriod",
-			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
-			Ts:       50,
-			Expected: false,
-		},
-		{
-			Name:     "AfterPeriod",
-			Periods:  []*VisiblePeriod{{Start: 100, End: 200}},
-			Ts:       250,
-			Expected: false,
-		},
-		{
-			Name: "WithinSecondPeriod",
-			Periods: []*VisiblePeriod{
-				{Start: 0, End: 100},
-				{Start: 200, End: 300},
-			},
-			Ts:       250,
-			Expected: true,
-		},
-		{
-			Name: "BetweenPeriods",
-			Periods: []*VisiblePeriod{
-				{Start: 0, End: 100},
-				{Start: 200, End: 300},
-			},
-			Ts:       150,
-			Expected: false,
-		},
-		{
-			Name:     "ExactPointPeriod",
-			Periods:  []*VisiblePeriod{{Start: 100, End: 100}},
-			Ts:       100,
-			Expected: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			result := isActiveAt(tc.Periods, tc.Ts)
-			assert.Equal(t, tc.Expected, result)
 		})
 	}
 }

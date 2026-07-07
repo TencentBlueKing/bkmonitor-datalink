@@ -169,64 +169,6 @@ func (m *Model) QueryResourceMatcher(
 	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), paths, cmdb.Resource(req.TargetType), matchers, nil
 }
 
-// QueryDynamicPaths 实现 cmdb.CMDB 接口（instant 查询），返回 []PathV2
-func (m *Model) QueryDynamicPaths(
-	ctx context.Context,
-	lookBackDelta, spaceUid string,
-	ts string,
-	target, source cmdb.Resource,
-	indexMatcher, expandMatcher cmdb.Matcher,
-	expandShow bool,
-	pathResource []cmdb.Resource,
-) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []cmdb.PathV2, resTarget cmdb.Resource, resMatchers cmdb.Matchers, err error) {
-	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-dynamic-paths")
-	defer span.End(&err)
-
-	span.Set("space-uid", spaceUid)
-	span.Set("timestamp", ts)
-	span.Set("look-back-delta", lookBackDelta)
-	span.Set("source", source)
-	span.Set("target", target)
-	span.Set("index-matcher", indexMatcher)
-	span.Set("path-resource", pathResource)
-
-	timestamp, err := parseTimestamp(ts)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	lbd, err := parseLookBackDelta(lookBackDelta)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	req := &QueryRequest{
-		SpaceUID:           spaceUid,
-		Timestamp:          timestamp,
-		SourceType:         FromCMDBResource(source),
-		SourceInfo:         matcherToMap(indexMatcher.Rename()),
-		SourceExpandInfo:   matcherToMap(expandMatcher),
-		TargetType:         FromCMDBResource(target),
-		TargetTypeExplicit: target != "",
-		TargetInfoShow:     expandShow,
-		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(source, target, pathResource),
-		LookBackDelta:      lbd,
-		LookBackDeltaSet:   lookBackDelta != "",
-	}
-	req.Normalize()
-
-	_, paths, matchers, err := m.queryLivenessGraph(ctx, req, false)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	span.Set("paths-count", len(paths))
-	span.Set("matchers-count", len(matchers))
-
-	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), paths, cmdb.Resource(req.TargetType), matchers, nil
-}
-
 // QueryResourceMatcherRange 实现 cmdb.CMDB 接口（range 查询）
 func (m *Model) QueryResourceMatcherRange(
 	ctx context.Context,
@@ -309,93 +251,6 @@ func (m *Model) QueryResourceMatcherRange(
 	)
 
 	paths := legacyPathForRangeQuery(graphs, pathsV2, req, start, end, stepMs)
-
-	span.Set("paths-count", len(paths))
-	span.Set("result-count", len(result))
-
-	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), paths, cmdb.Resource(req.TargetType), result, nil
-}
-
-// QueryDynamicPathsRange 实现 cmdb.CMDB 接口（range 查询），返回 []PathV2
-func (m *Model) QueryDynamicPathsRange(
-	ctx context.Context,
-	lookBackDelta, spaceUid string,
-	step string,
-	startTs, endTs string,
-	target, source cmdb.Resource,
-	indexMatcher, expandMatcher cmdb.Matcher,
-	expandShow bool,
-	pathResource []cmdb.Resource,
-) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []cmdb.PathV2, resTarget cmdb.Resource, result []cmdb.MatchersWithTimestamp, err error) {
-	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-dynamic-paths-range")
-	defer span.End(&err)
-
-	span.Set("space-uid", spaceUid)
-	span.Set("start-ts", startTs)
-	span.Set("end-ts", endTs)
-	span.Set("step", step)
-	span.Set("look-back-delta", lookBackDelta)
-	span.Set("source", source)
-	span.Set("target", target)
-	span.Set("index-matcher", indexMatcher)
-	span.Set("path-resource", pathResource)
-
-	start, err := parseTimestamp(startTs)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-	end, err := parseTimestamp(endTs)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-	if start > end {
-		return "", nil, nil, "", nil, fmt.Errorf("start_time must be less than or equal to end_time")
-	}
-
-	lbd, err := parseLookBackDelta(lookBackDelta)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	stepMs, err := parseStep(step)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	req := &QueryRequest{
-		SpaceUID:           spaceUid,
-		Timestamp:          end,
-		SourceType:         FromCMDBResource(source),
-		SourceInfo:         matcherToMap(indexMatcher.Rename()),
-		SourceExpandInfo:   matcherToMap(expandMatcher),
-		TargetType:         FromCMDBResource(target),
-		TargetTypeExplicit: target != "",
-		TargetInfoShow:     expandShow,
-		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(source, target, pathResource),
-		LookBackDelta:      rangeQueryLookBackDelta(lbd, start, end, stepMs),
-		LookBackDeltaSet:   lookBackDelta != "",
-	}
-	req.Normalize()
-
-	graphs, paths, _, err := m.queryLivenessGraph(ctx, req, false)
-	if err != nil {
-		return "", nil, nil, "", nil, err
-	}
-
-	provider := m.getSchemaProvider()
-	result = buildTargetMatchersTimeSeriesWithOptions(
-		graphs,
-		req.TargetType,
-		targetExtractionPathResource(req),
-		start,
-		end,
-		stepMs,
-		provider,
-		req.SchemaNamespace(),
-		req.TargetInfoShow,
-		shouldIncludeRootTarget(req),
-	)
 
 	span.Set("paths-count", len(paths))
 	span.Set("result-count", len(result))
@@ -512,8 +367,7 @@ func (m *Model) queryLivenessGraph(ctx context.Context, req *QueryRequest, split
 func shouldSplitInstantQueryByPath(req *QueryRequest, paths []cmdb.PathV2, enabled bool) bool {
 	// 只对 instant relation 查询做 path 拆分：
 	// 1. range 查询需要保留完整时间序列语义，调用方会传 enabled=false；
-	// 2. QueryDynamicPaths 需要完整候选路径，调用方也会传 enabled=false；
-	// 3. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL。
+	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL。
 	return enabled &&
 		req != nil &&
 		req.SourceType != req.TargetType &&
@@ -653,7 +507,7 @@ func (m *Model) executeOneGraphQueryPath(
 }
 
 func sortPathsForInstantQuery(paths []cmdb.PathV2) []cmdb.PathV2 {
-	// 复制一份再排序，避免影响 QueryDynamicPaths / all-empty 返回时使用的原始 paths。
+	// 复制一份再排序，避免影响 all-empty 返回时使用的原始 paths。
 	sorted := append([]cmdb.PathV2(nil), paths...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		// relation instant 查询会在首个命中 path 后短路。短路径通常生成更小的
@@ -1026,22 +880,6 @@ func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) 
 	return maxHops
 }
 
-func extractMatchersFromGraphs(
-	graphs []*LivenessGraph,
-	targetType ResourceType,
-	pathResource []ResourceType,
-) cmdb.Matchers {
-	return extractMatchersFromGraphsWithOptions(
-		graphs,
-		targetType,
-		pathResource,
-		GetSchemaProvider(),
-		"",
-		true,
-		true,
-	)
-}
-
 func extractMatchersFromGraphsWithOptions(
 	graphs []*LivenessGraph,
 	targetType ResourceType,
@@ -1075,26 +913,6 @@ type targetPathInfo struct {
 	ResourcePath []ResourceType
 	NodePeriods  [][]*VisiblePeriod
 	EdgePeriods  [][]*VisiblePeriod
-}
-
-func buildTargetMatchersTimeSeries(
-	graphs []*LivenessGraph,
-	targetType ResourceType,
-	pathResource []ResourceType,
-	start, end, stepMs int64,
-) []cmdb.MatchersWithTimestamp {
-	return buildTargetMatchersTimeSeriesWithOptions(
-		graphs,
-		targetType,
-		pathResource,
-		start,
-		end,
-		stepMs,
-		GetSchemaProvider(),
-		"",
-		true,
-		true,
-	)
 }
 
 func buildTargetMatchersTimeSeriesWithOptions(
@@ -1228,15 +1046,6 @@ func hasPeriodOverlapWindow(periods []*VisiblePeriod, windowStart, windowEnd int
 			continue
 		}
 		if p.End > windowStart && p.Start <= windowEnd {
-			return true
-		}
-	}
-	return false
-}
-
-func isActiveAt(periods []*VisiblePeriod, ts int64) bool {
-	for _, p := range periods {
-		if p != nil && ts >= p.Start && ts <= p.End {
 			return true
 		}
 	}

@@ -641,6 +641,16 @@ func shimMatcherWithTimestamp(matchers []cmdb.MatchersWithTimestamp) cmdb.Matche
 	return pick.Matchers
 }
 
+// QueryDynamicPaths 获取动态路径（v2），v1beta1 不支持，返回空
+func (r *model) QueryDynamicPaths(ctx context.Context, lookBackDelta, spaceUid string, ts string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, cmdb.Matchers, error) {
+	return "", nil, nil, "", nil, fmt.Errorf("v1beta1 does not support QueryDynamicPaths")
+}
+
+// QueryDynamicPathsRange 获取动态路径范围（v2），v1beta1 不支持，返回空
+func (r *model) QueryDynamicPathsRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source cmdb.Resource, indexesMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.PathV2, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	return "", nil, nil, "", nil, fmt.Errorf("v1beta1 does not support QueryDynamicPathsRange")
+}
+
 // ReloadConfig 重新从 SchemaProvider 加载所有 namespace 的配置并重建 model。
 func ReloadConfig(ctx context.Context) error {
 	mtx.Lock()

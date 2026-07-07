@@ -167,6 +167,13 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 	},
 	{
 		Namespace: NamespaceAll,
+		Name:      "biz",
+		Fields: []FieldDefinition{
+			{Name: "bk_biz_id", Required: true},
+		},
+	},
+	{
+		Namespace: NamespaceAll,
 		Name:      "set",
 		Fields: []FieldDefinition{
 			{Name: "bk_set_id", Required: true},
@@ -227,33 +234,40 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 
 // defaultRelationDefinitions 默认关联定义，覆盖 CMDB、K8s、APM、应用版本等资源间的关联。
 var defaultRelationDefinitions = []*RelationDefinition{
-	{Namespace: NamespaceAll, Name: "node_system", FromResource: "node", ToResource: "system"},
-	{Namespace: NamespaceAll, Name: "node_pod", FromResource: "node", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "job_pod", FromResource: "job", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "container_pod", FromResource: "container", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "pod_replicaset", FromResource: "pod", ToResource: "replicaset"},
-	{Namespace: NamespaceAll, Name: "pod_statefulset", FromResource: "pod", ToResource: "statefulset"},
-	{Namespace: NamespaceAll, Name: "daemonset_pod", FromResource: "daemonset", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "deployment_replicaset", FromResource: "deployment", ToResource: "replicaset"},
-	{Namespace: NamespaceAll, Name: "pod_service", FromResource: "pod", ToResource: "service"},
-	{Namespace: NamespaceAll, Name: "datasource_pod", FromResource: "datasource", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "datasource_node", FromResource: "datasource", ToResource: "node"},
-	{Namespace: NamespaceAll, Name: "ingress_service", FromResource: "ingress", ToResource: "service"},
-	{Namespace: NamespaceAll, Name: "k8s_address_service", FromResource: "k8s_address", ToResource: "service"},
-	{Namespace: NamespaceAll, Name: "domain_service", FromResource: "domain", ToResource: "service"},
-	{Namespace: NamespaceAll, Name: "apm_service_instance_system", FromResource: "apm_service_instance", ToResource: "system"},
-	{Namespace: NamespaceAll, Name: "apm_service_instance_pod", FromResource: "apm_service_instance", ToResource: "pod"},
-	{Namespace: NamespaceAll, Name: "apm_service_apm_service_instance", FromResource: "apm_service", ToResource: "apm_service_instance"},
-	{Namespace: NamespaceAll, Name: "bklogconfig_datasource", FromResource: "bklogconfig", ToResource: "datasource"},
+	{Namespace: NamespaceAll, Name: "node_with_system", FromResource: "node", ToResource: "system"},
+	{Namespace: NamespaceAll, Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "job_with_pod", FromResource: "job", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "container_with_pod", FromResource: "container", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "pod_with_replicaset", FromResource: "pod", ToResource: "replicaset"},
+	{Namespace: NamespaceAll, Name: "pod_with_statefulset", FromResource: "pod", ToResource: "statefulset"},
+	{Namespace: NamespaceAll, Name: "daemonset_with_pod", FromResource: "daemonset", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "deployment_with_replicaset", FromResource: "deployment", ToResource: "replicaset"},
+	{Namespace: NamespaceAll, Name: "pod_with_service", FromResource: "pod", ToResource: "service"},
+	{Namespace: NamespaceAll, Name: "datasource_with_pod", FromResource: "datasource", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "datasource_with_node", FromResource: "datasource", ToResource: "node"},
+	{Namespace: NamespaceAll, Name: "ingress_with_service", FromResource: "ingress", ToResource: "service"},
+	{Namespace: NamespaceAll, Name: "k8s_address_with_service", FromResource: "k8s_address", ToResource: "service"},
+	{Namespace: NamespaceAll, Name: "domain_with_service", FromResource: "domain", ToResource: "service"},
+	{Namespace: NamespaceAll, Name: "apm_service_instance_with_system", FromResource: "apm_service_instance", ToResource: "system"},
+	{Namespace: NamespaceAll, Name: "apm_service_instance_with_pod", FromResource: "apm_service_instance", ToResource: "pod"},
+	{Namespace: NamespaceAll, Name: "apm_service_with_apm_service_instance", FromResource: "apm_service", ToResource: "apm_service_instance"},
+	{Namespace: NamespaceAll, Name: "bklogconfig_with_datasource", FromResource: "bklogconfig", ToResource: "datasource"},
 	{Namespace: NamespaceAll, Name: "business_set", FromResource: "business", ToResource: "set"},
-	{Namespace: NamespaceAll, Name: "module_set", FromResource: "module", ToResource: "set"},
-	{Namespace: NamespaceAll, Name: "host_module", FromResource: "host", ToResource: "module"},
-	{Namespace: NamespaceAll, Name: "host_system", FromResource: "host", ToResource: "system"},
-	{Namespace: NamespaceAll, Name: "app_version_host", FromResource: "app_version", ToResource: "host"},
-	{Namespace: NamespaceAll, Name: "app_version_container", FromResource: "app_version", ToResource: "container"},
-	{Namespace: NamespaceAll, Name: "app_version_git_commit", FromResource: "app_version", ToResource: "git_commit"},
-	{Namespace: NamespaceAll, Name: "app_version_p4_changelist", FromResource: "app_version", ToResource: "p4_changelist"},
-	{Namespace: NamespaceAll, Name: "app_version_svn_revision", FromResource: "app_version", ToResource: "svn_revision"},
+	{Namespace: NamespaceAll, Name: "biz_with_set", FromResource: "biz", ToResource: "set"},
+	{Namespace: NamespaceAll, Name: "module_with_set", FromResource: "module", ToResource: "set"},
+	{Namespace: NamespaceAll, Name: "host_with_module", FromResource: "host", ToResource: "module"},
+	{Namespace: NamespaceAll, Name: "host_with_system", FromResource: "host", ToResource: "system"},
+	{Namespace: NamespaceAll, Name: "app_version_with_host", FromResource: "app_version", ToResource: "host"},
+	{Namespace: NamespaceAll, Name: "app_version_with_container", FromResource: "app_version", ToResource: "container"},
+	{Namespace: NamespaceAll, Name: "app_version_with_git_commit", FromResource: "app_version", ToResource: "git_commit"},
+	{Namespace: NamespaceAll, Name: "app_version_with_p4_changelist", FromResource: "app_version", ToResource: "p4_changelist"},
+	{Namespace: NamespaceAll, Name: "app_version_with_svn_revision", FromResource: "app_version", ToResource: "svn_revision"},
+	{Namespace: NamespaceAll, Name: "pod_to_pod", FromResource: "pod", ToResource: "pod", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "pod_to_pod_flow"}},
+	{Namespace: NamespaceAll, Name: "pod_to_system", FromResource: "pod", ToResource: "system", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "pod_to_system_flow"}},
+	{Namespace: NamespaceAll, Name: "system_to_pod", FromResource: "system", ToResource: "pod", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "system_to_pod_flow"}},
+	{Namespace: NamespaceAll, Name: "system_to_system", FromResource: "system", ToResource: "system", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "system_to_system_flow"}},
+	{Namespace: NamespaceAll, Name: "service_to_service", FromResource: "service", ToResource: "service", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "service_to_service_flow"}},
+	{Namespace: NamespaceAll, Name: "apm_service_to_apm_service", FromResource: "apm_service", ToResource: "apm_service", Category: string(RelationCategoryDynamic), IsDirectional: true, Labels: map[string]string{"metric_name": "apm_service_to_apm_service_flow"}},
 }
 
 // DefaultStaticProviderConfig 返回包含完整默认 schema 的 StaticProviderConfig。
@@ -273,17 +287,25 @@ func DefaultStaticProviderConfig() StaticProviderConfig {
 	relationSchemas := make([]RelationSchema, 0, len(defaultRelationDefinitions))
 	for _, rd := range defaultRelationDefinitions {
 		relationSchemas = append(relationSchemas, RelationSchema{
-			RelationName: RelationName(rd.Name),
-			Category:     RelationCategoryStatic,
-			FromType:     ResourceType(rd.FromResource),
-			ToType:       ResourceType(rd.ToResource),
+			RelationName:  RelationName(rd.Name),
+			Category:      ToRelationCategory(rd.Category),
+			FromType:      ResourceType(rd.FromResource),
+			ToType:        ResourceType(rd.ToResource),
+			IsDirectional: rd.IsDirectional,
+			IsBelongsTo:   rd.IsBelongsTo,
 		})
 	}
 
 	return StaticProviderConfig{
+		ResourceDefinitions: defaultResourceDefinitions,
 		ResourcePrimaryKeys: resourcePrimaryKeys,
 		RelationSchemas:     relationSchemas,
 	}
+}
+
+// NewDefaultStaticSchemaProvider creates a StaticSchemaProvider from the single default static schema config.
+func NewDefaultStaticSchemaProvider() *StaticSchemaProvider {
+	return NewStaticSchemaProvider(DefaultStaticProviderConfig())
 }
 
 // DefaultResourceDefinitions 返回默认资源定义列表（含 Info 字段）。

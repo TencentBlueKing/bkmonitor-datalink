@@ -63,6 +63,8 @@ type GraphQueryExecutorWithBinding interface {
 	ExecuteWithBinding(ctx context.Context, spaceUID string, binding BindingInfo, dsl string, start, end int64) ([]*LivenessGraph, error)
 }
 
+type graphQueryRunner func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error)
+
 var sourceInferencePriority = map[ResourceType]int{
 	ResourceTypeBiz:          0,
 	ResourceType("business"): 1,
@@ -350,11 +352,19 @@ func (m *Model) queryLivenessGraph(
 
 	if m.executor != nil {
 		start := time.Now()
+		runner, err := m.newGraphQueryRunner(ctx, req)
+		if err != nil {
+			elapsed := time.Since(start).Seconds()
+			status := CategorizeError(err)
+			ObserveError(req.SpaceUID, status)
+			ObserveQueryDuration(req.SpaceUID, status, elapsed)
+			return nil, nil, nil, err
+		}
 		if shouldSplitQueryByPath(req, paths, splitPaths) {
 			span.Set("query-mode", "path-by-path")
 			span.Set("query-result-mode", string(mode))
 			span.Set("candidate-paths-count", len(paths))
-			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs)
+			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs, runner)
 		} else {
 			span.Set("query-mode", "single")
 			builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
@@ -363,7 +373,7 @@ func (m *Model) queryLivenessGraph(
 			}
 			sql := builder.Build()
 			span.Set("query-sql", sql)
-			graphs, err = m.executeGraphQuery(ctx, req, sql, queryStart, queryEnd)
+			graphs, err = runner(ctx, sql, queryStart, queryEnd)
 		}
 		elapsed := time.Since(start).Seconds()
 		status := "ok"
@@ -413,6 +423,7 @@ func (m *Model) executeGraphQueryPathByPath(
 	start, end int64,
 	mode graphQueryMode,
 	rangeStart, rangeEnd, stepMs int64,
+	runner graphQueryRunner,
 ) ([]*LivenessGraph, []resourcePath, error) {
 	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
@@ -448,7 +459,7 @@ func (m *Model) executeGraphQueryPathByPath(
 			defer workerWg.Done()
 			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
 			// 后面会用它做稳定的图合并和响应 path 选择。
-			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end)
+			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, runner)
 		}); err != nil {
 			workerWg.Done()
 			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
@@ -538,11 +549,12 @@ func (m *Model) executeOneGraphQueryPath(
 	path resourcePath,
 	idx int,
 	start, end int64,
+	runner graphQueryRunner,
 ) pathQueryResult {
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
 	sql := NewSurrealQueryBuilderForPath(req, provider, path).Build()
-	graphs, err := m.executeGraphQuery(ctx, req, sql, start, end)
+	graphs, err := runner(ctx, sql, start, end)
 	if err != nil {
 		return pathQueryResult{idx: idx, path: path, err: err}
 	}
@@ -580,12 +592,10 @@ func resourcePathSortKey(path resourcePath) string {
 	return strings.Join(parts, "|")
 }
 
-// executeGraphQuery 根据 resolver / executor 能力选择最合适的调用路径。
-//
-//  1. 若同时具备 resolver 与支持 binding 的 executor，则先 resolve binding，
-//     再走 ExecuteWithBinding，DSL 前会加 "USE NS ... DB ...;" 前缀。
-//  2. 否则退化到原始 Execute（全局 result_table_id，单测 / 旧路径）。
-func (m *Model) executeGraphQuery(ctx context.Context, req *QueryRequest, sql string, start, end int64) ([]*LivenessGraph, error) {
+// newGraphQueryRunner 在一次 v1beta3 relation 请求内固定 executor 调用路径。
+// path-by-path 会并发执行多条 SQL；binding 元数据只和 space_uid 相关，提前解析一次
+// 可以避免每条 path 重复访问 binding resolver，同时保证所有 path 使用同一份路由上下文。
+func (m *Model) newGraphQueryRunner(ctx context.Context, req *QueryRequest) (graphQueryRunner, error) {
 	if m.resolver != nil {
 		if ex, ok := m.executor.(GraphQueryExecutorWithBinding); ok {
 			if req.SpaceUID == "" {
@@ -595,24 +605,41 @@ func (m *Model) executeGraphQuery(ctx context.Context, req *QueryRequest, sql st
 			if err != nil {
 				return nil, err
 			}
-			graphs, err := ex.ExecuteWithBinding(ctx, req.SpaceUID, *binding, sql, start, end)
-			if err != nil {
-				return nil, err
-			}
-			if err := rejectGraphTraversalErrors(graphs); err != nil {
-				return nil, err
-			}
-			return graphs, nil
+			return func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
+				graphs, err := ex.ExecuteWithBinding(ctx, req.SpaceUID, *binding, sql, start, end)
+				if err != nil {
+					return nil, err
+				}
+				if err := rejectGraphTraversalErrors(graphs); err != nil {
+					return nil, err
+				}
+				return graphs, nil
+			}, nil
 		}
 	}
-	graphs, err := m.executor.Execute(ctx, sql, start, end)
+	return func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
+		graphs, err := m.executor.Execute(ctx, sql, start, end)
+		if err != nil {
+			return nil, err
+		}
+		if err := rejectGraphTraversalErrors(graphs); err != nil {
+			return nil, err
+		}
+		return graphs, nil
+	}, nil
+}
+
+// executeGraphQuery 根据 resolver / executor 能力选择最合适的调用路径。
+//
+//  1. 若同时具备 resolver 与支持 binding 的 executor，则先 resolve binding，
+//     再走 ExecuteWithBinding，DSL 前会加 "USE NS ... DB ...;" 前缀。
+//  2. 否则退化到原始 Execute（全局 result_table_id，单测 / 旧路径）。
+func (m *Model) executeGraphQuery(ctx context.Context, req *QueryRequest, sql string, start, end int64) ([]*LivenessGraph, error) {
+	runner, err := m.newGraphQueryRunner(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectGraphTraversalErrors(graphs); err != nil {
-		return nil, err
-	}
-	return graphs, nil
+	return runner(ctx, sql, start, end)
 }
 
 func rejectGraphTraversalErrors(graphs []*LivenessGraph) error {

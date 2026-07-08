@@ -145,6 +145,7 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		finalDSL = fmt.Sprintf("USE NS %s DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
 	span.Set("dsl", finalDSL)
+	span.Set("dsl-bytes", len(finalDSL))
 
 	sqlPayload := BKBaseSQLPayload{
 		DSL:           finalDSL,
@@ -154,6 +155,7 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	if err != nil {
 		return nil, fmt.Errorf("marshal sql payload: %w", err)
 	}
+	span.Set("sql-payload-bytes", len(sqlPayloadBytes))
 
 	dataAPI := bkapi.GetBkDataAPI()
 
@@ -173,6 +175,7 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
+	span.Set("request-body-bytes", len(requestBody))
 
 	url := surrealDBQuerySyncURL(spaceUID)
 	span.Set("request-url", url)
@@ -195,6 +198,8 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	span.Set("trace-id", resp.TraceID)
 	if resp.Data != nil {
 		span.Set("total-records", resp.Data.TotalRecords)
+		span.Set("bkbase-timetaken", resp.Data.Timetaken)
+		span.Set("response-list-count", len(resp.Data.List))
 	}
 
 	// 转换响应格式为标准 SurrealDB 响应格式

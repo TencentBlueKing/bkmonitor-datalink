@@ -67,6 +67,8 @@ func (g *LivenessGraph) AddNode(node *NodeLiveness) {
 func (g *LivenessGraph) AddEdge(edge *EdgeLiveness) {
 	key := edge.RelationID
 	if existing := g.Edges[key]; existing != nil && !sameEdgeLiveness(existing, edge) {
+		// 动态关系和非定向自关联可能复用同一个 relation_id 表达不同方向。
+		// 图内 key 必须带方向和端点，否则后解析到的边会覆盖先解析到的边，导致路径抽取少边。
 		key = directionalEdgeKey(edge)
 	}
 	_, exists := g.Edges[key]
@@ -237,6 +239,8 @@ func (g *LivenessGraph) collectTargetPaths(
 		if !allowSelfLoop {
 			visited[edge.ToID] = true
 		}
+		// 显式 source_type == target_type 查询要返回真实自关联边，而不是 root 本身。
+		// 因此第一跳允许 source->source 自环绕过 visited；后续仍按 visited 防止普通环路递归。
 		nextEdgePeriods := append(append([][]*VisiblePeriod{}, edgePeriods...), edge.RawPeriods)
 		g.collectTargetPaths(
 			edge.ToID,
@@ -302,6 +306,8 @@ func (g *LivenessGraph) pathOverlapsQuery(nodePeriods, edgePeriods [][]*VisibleP
 	}
 
 	if g.QueryStart == 0 && g.QueryEnd == 0 {
+		// 单测或离线构图可能没有查询窗口；这种场景只要求每一段都有可见区间，
+		// 不再强行和一个不存在的时间窗口做交集。
 		for _, periods := range periodGroups {
 			if len(nonNilPeriods(periods)) == 0 {
 				return false

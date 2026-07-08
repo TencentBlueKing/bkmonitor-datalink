@@ -162,12 +162,12 @@ func (m *Model) QueryResourceMatcher(
 		return "", nil, nil, "", nil, err
 	}
 
-	legacyPaths := convertResourcePathToLegacyResources(paths)
+	responsePaths := convertResourcePathToResources(paths)
 
-	span.Set("paths-count", len(legacyPaths))
+	span.Set("paths-count", len(responsePaths))
 	span.Set("matchers-count", len(matchers))
 
-	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), legacyPaths, cmdb.Resource(req.TargetType), matchers, nil
+	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), responsePaths, cmdb.Resource(req.TargetType), matchers, nil
 }
 
 // QueryResourceMatcherRange 实现 cmdb.CMDB 接口（range 查询）
@@ -238,7 +238,7 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 
 	provider := m.getSchemaProvider()
-	selectedPath := legacyResourcePathForRangeQuery(graphs, candidatePaths, req, start, end, stepMs)
+	selectedPath := resourcePathForRangeQuery(graphs, candidatePaths, req, start, end, stepMs)
 	extractionPathResource := targetExtractionPathResource(req)
 	if len(selectedPath) > 0 {
 		// 旧 VM range 会按候选路径顺序停在第一条有数据的路径上。这里先选出同一条命中路径，
@@ -259,7 +259,7 @@ func (m *Model) QueryResourceMatcherRange(
 		shouldIncludeRootTarget(req),
 	)
 
-	paths := resourceTypesToLegacyPath(selectedPath)
+	paths := resourceTypesToPath(selectedPath)
 
 	span.Set("paths-count", len(paths))
 	span.Set("result-count", len(result))
@@ -555,7 +555,7 @@ func (m *Model) executeOneGraphQueryPath(
 	if mode == graphQueryModeRange {
 		// range 的命中语义必须对齐旧 VM count_over_time：只要任意 step bucket
 		// 的 (ts-step, ts] 窗口内整条 path 活跃，就认为该 path 命中。
-		hit = len(legacyPathCandidatesFromRangeTargetGraphs(
+		hit = len(resourcePathCandidatesFromRangeTargetGraphs(
 			graphs,
 			req.TargetType,
 			targetExtractionPathResource(req),
@@ -949,7 +949,7 @@ func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) 
 		return DefaultMaxHops
 	}
 	// path_resource 可能只给出部分中间资源。除了约束本身，还要给 source/target 两侧各留出默认 schema
-	// 的连接空间；否则 host->system->pod->replicaset->deployment 这类合法 legacy 路径会因为预算太浅被剪掉。
+	// 的连接空间；否则 host->system->pod->replicaset->deployment 这类合法路径会因为预算太浅被剪掉。
 	maxHops := DefaultMaxHops + len(pathConstraint) + 1
 	if maxHops > MaxAllowedHops {
 		return MaxAllowedHops
@@ -1133,7 +1133,7 @@ func FromCMDBResource(r cmdb.Resource) ResourceType {
 	return ResourceType(r)
 }
 
-func convertResourcePathToLegacyResources(paths []resourcePath) []string {
+func convertResourcePathToResources(paths []resourcePath) []string {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -1150,15 +1150,11 @@ func convertResourcePathToLegacyResources(paths []resourcePath) []string {
 	return result
 }
 
-func legacyPathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest, start, end, stepMs int64) []string {
-	return resourceTypesToLegacyPath(legacyResourcePathForRangeQuery(graphs, paths, req, start, end, stepMs))
-}
-
-func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest, start, end, stepMs int64) []ResourceType {
+func resourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest, start, end, stepMs int64) []ResourceType {
 	if req != nil {
-		// range 响应里的 path 和 target_list 必须来自同一条 legacy 命中路径；
+		// range 响应里的 path 和 target_list 必须来自同一条命中资源路径；
 		// 因此这里保留 ResourceType 形态，供调用方继续限制 target 抽取。
-		candidates := legacyPathCandidatesFromRangeTargetGraphs(
+		candidates := resourcePathCandidatesFromRangeTargetGraphs(
 			graphs,
 			req.TargetType,
 			targetExtractionPathResource(req),
@@ -1167,7 +1163,7 @@ func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePa
 			end,
 			stepMs,
 		)
-		if path := selectLegacyPathCandidate(paths, candidates); len(path) > 0 {
+		if path := selectResourcePathCandidate(paths, candidates); len(path) > 0 {
 			return path
 		}
 	}
@@ -1177,7 +1173,7 @@ func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePa
 	return resourcePathTypes(paths[0])
 }
 
-func legacyPathCandidatesFromRangeTargetGraphs(
+func resourcePathCandidatesFromRangeTargetGraphs(
 	graphs []*LivenessGraph,
 	targetType ResourceType,
 	pathResource []ResourceType,
@@ -1208,7 +1204,7 @@ func legacyPathCandidatesFromRangeTargetGraphs(
 	return candidates
 }
 
-func selectLegacyPathCandidate(paths []resourcePath, candidates [][]ResourceType) []ResourceType {
+func selectResourcePathCandidate(paths []resourcePath, candidates [][]ResourceType) []ResourceType {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -1221,7 +1217,7 @@ func selectLegacyPathCandidate(paths []resourcePath, candidates [][]ResourceType
 		candidateSet[resourcePathKey(candidate)] = candidate
 	}
 
-	// 对齐旧 VM 行为：有 target 数据时，legacy path 优先返回候选路径顺序中的第一条命中路径。
+	// 对齐旧 VM 行为：有 target 数据时，path 优先返回候选路径顺序中的第一条命中路径。
 	for _, path := range paths {
 		resources := resourcePathTypes(path)
 		if len(resources) == 0 {
@@ -1260,7 +1256,7 @@ func isTargetPathActiveInAnyBucket(path *targetPathInfo, start, end, stepMs int6
 	return false
 }
 
-func resourceTypesToLegacyPath(resources []ResourceType) []string {
+func resourceTypesToPath(resources []ResourceType) []string {
 	result := make([]string, 0, len(resources))
 	for _, resource := range resources {
 		if resource != "" {

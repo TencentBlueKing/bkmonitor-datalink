@@ -92,6 +92,8 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
 	if source == target && len(pathResource) == 0 {
+		// 显式 source==target 优先解释为“查真实自关联边”；
+		// 只有 schema 中完全没有自关联时，才回退成单节点信息展示路径。
 		paths := pf.findSelfRelationPaths(source)
 		if len(paths) > 0 {
 			return paths, nil
@@ -146,10 +148,14 @@ func normalizePathResource(source, target ResourceType, pathResource []ResourceT
 	hasFullEndpointConstraint := len(pathResource) >= 2 && pathResource[0] == source && pathResource[len(pathResource)-1] == target
 	for _, resourceType := range pathResource {
 		if resourceType == "" {
+			// 旧 VM 客户端用空字符串表达“只允许 source->target 直连”。
+			// 它不是资源类型，后续连续片段匹配必须忽略这个哨兵。
 			hasDirectOnlyConstraint = true
 			continue
 		}
 		if resourceType == source || resourceType == target {
+			// 调用方有时会把完整资源路径原样传回来，例如 [source, ..., target]。
+			// 路径搜索本身已经固定两端点，这里只保留中间资源约束，避免把端点重复参与连续片段判断。
 			continue
 		}
 		pathConstraint = append(pathConstraint, resourceType)
@@ -195,6 +201,9 @@ func (pf *PathFinder) dfs(
 	for _, rel := range relations {
 		nextType := rel.TargetType
 		wasVisited := visited[nextType]
+		// nextType == target 时允许“访问已访问过的终点”来保留
+		// source -> ... -> target 这种显式闭环；递归开头会在命中 target 后直接 return，
+		// 因此不会继续从 target 扩散成无限环路。
 		if wasVisited && nextType != target {
 			continue
 		}
@@ -317,6 +326,8 @@ func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentTy
 		info.TargetField = fieldOut
 		info.TargetType = schema.ToType
 		if schema.ToType == currentType && !schema.IsDirectional {
+			// 非定向自关联同一张关系表既可从 in->out 走，也可从 out->in 走。
+			// 这里拆成两个带不同 key 后缀的 transition，避免 SQL 结果 map 中同名字段互相覆盖。
 			reverseInfo := &RelationQueryInfo{
 				Schema:      schema,
 				Direction:   DirectionInbound,

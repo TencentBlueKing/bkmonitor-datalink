@@ -201,6 +201,8 @@ func (b *SurrealQueryBuilder) Build() string {
 // buildVariables 构建变量定义部分
 func (b *SurrealQueryBuilder) buildVariables() string {
 	startMs, endMs := b.request.GetQueryRange()
+	// 实体 liveness 表沿用旧 VM 秒级窗口，关系 liveness 表写入的是毫秒级窗口。
+	// 同一条 SurrealQL 同时保留两组变量，避免在查询层混用单位导致节点或边误判为不活跃。
 	startSec := startMs / 1000
 	endSec := endMs / 1000
 	return fmt.Sprintf(`LET $timestamp = %d;
@@ -264,6 +266,8 @@ func (b *SurrealQueryBuilder) buildRootSelect() string {
 func (b *SurrealQueryBuilder) rootEntityDataFields(sourceType ResourceType) []string {
 	fields := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, sourceType)
 	if b.request.TargetInfoShow && !b.request.TargetTypeExplicit && b.request.TargetType == sourceType {
+		// 省略 target_type 时 root 就是隐式 target。此时 target_info_show 必须作用在 root 投影上，
+		// 否则后续 filterTargetMatcher 会保留扩展字段，但 SQL 根本没有查出这些字段。
 		if infoFields := b.schemaProvider.GetResourceFields(b.namespace, sourceType); len(infoFields) > 0 {
 			fields = infoFields
 		}
@@ -596,7 +600,8 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 	var conditions []string
 
 	if len(b.request.SourceInfo) > 0 {
-		// 获取合法字段白名单（主键字段），防止字段名注入
+		// SourceInfo 已在 validateSourceInfoFields 中要求包含完整主键。
+		// 这里再次只接收主键白名单，是 SQL 拼接层的兜底保护，避免未知字段进入 SurrealQL。
 		allowedFields := make(map[string]bool)
 		for _, pk := range b.schemaProvider.GetResourcePrimaryKeys(b.namespace, b.request.SourceType) {
 			allowedFields[pk] = true
@@ -626,6 +631,8 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 
 		for _, k := range keys {
 			if !isSafeSurrealField(k) {
+				// expand 字段来自调用方可选过滤，不像 SourceInfo 那样强制主键；
+				// 因此这里只允许简单字段名，避免把表达式片段拼进 SurrealQL。
 				continue
 			}
 			v := b.request.SourceExpandInfo[k]

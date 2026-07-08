@@ -210,11 +210,14 @@ LIMIT 1;`,
 			)
 			paths, err := pathFinder.FindAllPaths(tt.req.SourceType, tt.req.TargetType, tt.req.PathResource)
 			require.NoError(t, err)
+			responsePath := resourceTypesToPath(
+				resourcePathForRangeQuery(graphs, paths, tt.req, queryStart, queryEnd, tt.stepMs),
+			)
 
 			gotResponse := sqlProxyIntegrationResponse{
 				Source:  cmdb.Resource(tt.req.SourceType),
 				Matcher: cmdb.Matcher(tt.req.SourceInfo),
-				Path:    legacyPathForRangeQuery(graphs, paths, tt.req, queryStart, queryEnd, tt.stepMs),
+				Path:    responsePath,
 				Target:  cmdb.Resource(tt.req.TargetType),
 				Series: buildTargetMatchersTimeSeriesWithOptions(
 					graphs,

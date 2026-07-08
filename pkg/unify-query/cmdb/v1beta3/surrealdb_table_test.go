@@ -335,7 +335,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 
 			actualResponse := tablePathSplitQueryResponse{
 				QueryMode:         "path-by-path",
-				Path:              convertResourcePathToLegacyResources(paths),
+				Path:              convertResourcePathToResources(paths),
 				Matchers:          matchers,
 				QuerySyncRequests: tablePathSplitQuerySyncRequestSummaries(t, server.Requests()),
 			}

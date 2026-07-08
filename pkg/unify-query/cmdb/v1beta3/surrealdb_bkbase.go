@@ -140,6 +140,8 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 
 	finalDSL := dsl
 	if binding.Namespace != "" && binding.Database != "" {
+		// BKBase query_sync 只负责把 DSL 发送到 SurrealDB；具体 NS/DB 必须由 UQ 根据
+		// SurrealDBBinding 注入，否则同一个 result_table_id 在多租户场景下会查到错误 database。
 		finalDSL = fmt.Sprintf("USE NS %s DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
 	span.Set("dsl", finalDSL)
@@ -160,6 +162,8 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		"prefer_storage": PreferStorageSurrealDB,
 	}
 	if binding.ClusterName != "" {
+		// route 里带 cluster_name 时显式传给 BKBase，避免 query_sync 只靠 result_table_id
+		// 在多集群环境中选到默认 SurrealDB 集群。
 		reqMap["properties"] = BKBaseQuerySyncProperties{ClusterName: binding.ClusterName}
 	}
 	for k, v := range dataAPI.GetDataAuth() {
@@ -203,6 +207,8 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 			list = append(list, item)
 		}
 	}
+	// parser 只依赖标准 SurrealDB 客户端形态：[{"result": [...]}]。
+	// BKBase query_sync 的 data.list 在这里包一层 result，可以让解析器和单测 mock 共用同一套结构。
 	rawResponse := []map[string]any{
 		{
 			ResponseFieldResult: list,

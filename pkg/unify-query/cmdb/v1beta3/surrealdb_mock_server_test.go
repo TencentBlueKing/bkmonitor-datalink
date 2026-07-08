@@ -224,7 +224,7 @@ func tablePathSplitBKBaseResponsesBySurrealQL(
 
 	result := make(map[surrealQL]string, len(paths))
 	for _, path := range sortPathsForQuery(paths) {
-		pathKey := strings.Join(resourceTypesToLegacyPath(resourcePathTypes(path)), "/")
+		pathKey := strings.Join(resourceTypesToPath(resourcePathTypes(path)), "/")
 		responseJSON, ok := responsesByPath[pathKey]
 		require.True(t, ok, "missing mock response for path %s", pathKey)
 

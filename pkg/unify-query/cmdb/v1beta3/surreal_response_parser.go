@@ -236,6 +236,8 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 
 		start := p.toInt64(periodData[FieldPeriodStart])
 		end := p.toInt64(periodData[FieldPeriodEnd])
+		// BKBase HTTP 客户端开启 UseNumber 后会把 JSON 数字保留为 json.Number；
+		// mock / 单测里又常见 int、float64 或 string。先统一成 int64，再按查询窗口判断是否需要秒转毫秒。
 		start = p.normalizePeriodTimestamp(start)
 		end = p.normalizePeriodTimestamp(end)
 
@@ -252,6 +254,8 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 
 func (p *SurrealResponseParser) normalizePeriodTimestamp(ts int64) int64 {
 	if p.queryEnd >= 1e12 && ts > 0 && ts < 1e12 {
+		// v1beta3 对外和 range bucket 都使用毫秒时间戳；实体 liveness 查询可能返回秒级 period。
+		// 只在查询窗口明确是毫秒且 period 看起来像秒时转换，避免把已经是毫秒的关系 period 再放大。
 		return ts * 1000
 	}
 	return ts

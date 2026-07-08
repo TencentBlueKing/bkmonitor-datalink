@@ -559,8 +559,8 @@ func TestQueryLivenessGraphIgnoresExtraSourceInfoFields(t *testing.T) {
 		Timestamp:  300000,
 		SourceType: "custom_source",
 		SourceInfo: map[string]string{
-			"custom_id":    "source-1",
-			"legacy_extra": "ignored",
+			"custom_id":  "source-1",
+			"extra_info": "ignored",
 		},
 		TargetType: "custom_target",
 		MaxHops:    1,
@@ -568,7 +568,7 @@ func TestQueryLivenessGraphIgnoresExtraSourceInfoFields(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, executor.sql, "custom_id = 'source-1'")
-	assert.NotContains(t, executor.sql, "legacy_extra")
+	assert.NotContains(t, executor.sql, "extra_info")
 }
 
 func TestQueryLivenessGraphAllowsDefinedResourceWithoutRelations(t *testing.T) {
@@ -1148,7 +1148,7 @@ func TestSurrealParserNormalizesSecondEntityPeriodsForRangeTargetList(t *testing
 	assert.Equal(t, []cmdb.Matcher{{"bk_set_id": "2731"}}, targetList[0].Matchers)
 }
 
-func TestQueryResourceMatcherReturnsLegacyResourcePath(t *testing.T) {
+func TestQueryResourceMatcherReturnsResourcePath(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{
@@ -1288,7 +1288,7 @@ func TestQueryResourceMatcherReturnsPathFromMatchedGraph(t *testing.T) {
 	assert.Equal(t, []cmdb.Matcher{{"pod": "pod-1"}}, rangeResult[0].Matchers)
 }
 
-func TestQueryResourceMatcherRangeFiltersTargetsBySelectedLegacyPath(t *testing.T) {
+func TestQueryResourceMatcherRangeFiltersTargetsBySelectedResourcePath(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{

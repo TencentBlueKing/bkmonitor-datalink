@@ -166,6 +166,8 @@ func (a *v1beta3SchemaProviderAdapter) getResourceDefinition(namespace string, r
 		return resourceDef
 	}
 	if ns != relation.NamespaceAll {
+		// v1beta3 优先使用 space 专属 schema；未下发专属定义时回退到 __all__，
+		// 保持老静态 relation 配置仍可服务新增 route。
 		resourceDef, err = a.provider.GetResourceDefinition(relation.NamespaceAll, string(resourceType))
 		if err == nil {
 			return resourceDef
@@ -181,6 +183,8 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 		definitions = nil
 	}
 	if len(definitions) == 0 && ns != relation.NamespaceAll {
+		// 空的 space schema 不应让 v1beta3 直接变成无路径；
+		// 回退到 __all__ 后仍按下方稳定顺序输出，保证路径优先级可预测。
 		definitions, err = a.provider.ListRelationDefinitions(relation.NamespaceAll)
 		if err != nil {
 			definitions = nil

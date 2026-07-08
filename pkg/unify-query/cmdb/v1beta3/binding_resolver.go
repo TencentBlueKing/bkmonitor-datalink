@@ -102,6 +102,8 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 	}
 	span.Set("bk-biz-id", bizID)
 	tenantID := metadata.GetUser(ctx).TenantID
+	// 同一个 bk_biz_id 在不同租户下可能对应不同 SurrealDBBinding；
+	// 缓存键必须带 tenantID，避免命中其它租户的 namespace/database。
 	cacheKey := bindingCacheKey(tenantID, bizID)
 
 	if info := r.lookupCache(cacheKey); info != nil {
@@ -226,8 +228,11 @@ func (r *BindingResolver) fetchFromRedis(ctx context.Context, tenantID, spaceUID
 
 func bindingRedisFields(tenantID, spaceUID string) []string {
 	if tenantID == "" {
+		// 老环境没有租户上下文时仍沿用 spaceUID 字段，保证单租户灰度验证可用。
 		return []string{spaceUID}
 	}
+	// 多租户环境只查带租户后缀的字段，不 fallback 到裸 spaceUID，
+	// 防止租户缺失配置时误读全局旧字段。
 	return []string{bindingRedisField(spaceUID, tenantID)}
 }
 

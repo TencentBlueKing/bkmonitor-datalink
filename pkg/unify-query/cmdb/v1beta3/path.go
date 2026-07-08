@@ -9,11 +9,18 @@
 
 package v1beta3
 
-import (
-	"fmt"
+import "fmt"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-)
+type resourcePathStep struct {
+	ResourceType string
+	RelationType string
+	Category     string
+	Direction    string
+}
+
+type resourcePath struct {
+	Steps []resourcePathStep
+}
 
 // PathFinder 路径发现器，用于查找资源之间的关联路径
 type PathFinder struct {
@@ -83,19 +90,19 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 }
 
 // FindAllPaths 查找从 source 到 target 的所有路径
-func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]cmdb.PathV2, error) {
+func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
 	if source == target && len(pathResource) == 0 {
 		paths := pf.findSelfRelationPaths(source)
 		if len(paths) > 0 {
 			return paths, nil
 		}
-		return []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: string(source)}}}}, nil
+		return []resourcePath{{Steps: []resourcePathStep{{ResourceType: string(source)}}}}, nil
 	}
 
 	pathConstraint, directOnly := normalizePathResource(source, target, pathResource)
-	var results []cmdb.PathV2
+	var results []resourcePath
 	visited := make(map[ResourceType]bool)
-	currentPath := []cmdb.PathStepV2{{ResourceType: string(source)}}
+	currentPath := []resourcePathStep{{ResourceType: string(source)}}
 	visited[source] = true
 
 	pf.dfs(source, target, pathConstraint, visited, currentPath, &results)
@@ -110,13 +117,13 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	return results, nil
 }
 
-func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []cmdb.PathV2 {
-	var results []cmdb.PathV2
+func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []resourcePath {
+	var results []resourcePath
 	for _, rel := range pf.getRelationsForType(resourceType) {
 		if rel.TargetType != resourceType {
 			continue
 		}
-		results = append(results, cmdb.PathV2{Steps: []cmdb.PathStepV2{
+		results = append(results, resourcePath{Steps: []resourcePathStep{
 			{ResourceType: string(resourceType)},
 			{
 				ResourceType: string(resourceType),
@@ -152,8 +159,8 @@ func normalizePathResource(source, target ResourceType, pathResource []ResourceT
 	return pathConstraint, directOnly
 }
 
-func filterDirectPaths(paths []cmdb.PathV2) []cmdb.PathV2 {
-	result := make([]cmdb.PathV2, 0, len(paths))
+func filterDirectPaths(paths []resourcePath) []resourcePath {
+	result := make([]resourcePath, 0, len(paths))
 	for _, path := range paths {
 		if len(path.Steps) == 2 {
 			result = append(result, path)
@@ -167,8 +174,8 @@ func (pf *PathFinder) dfs(
 	current, target ResourceType,
 	pathResource []ResourceType,
 	visited map[ResourceType]bool,
-	currentPath []cmdb.PathStepV2,
-	results *[]cmdb.PathV2,
+	currentPath []resourcePathStep,
+	results *[]resourcePath,
 ) {
 	if len(currentPath) > pf.maxHops+1 {
 		return
@@ -176,9 +183,9 @@ func (pf *PathFinder) dfs(
 
 	if current == target && len(currentPath) > 1 {
 		if pf.satisfiesPathConstraint(currentPath, pathResource) {
-			pathCopy := make([]cmdb.PathStepV2, len(currentPath))
+			pathCopy := make([]resourcePathStep, len(currentPath))
 			copy(pathCopy, currentPath)
-			*results = append(*results, cmdb.PathV2{Steps: pathCopy})
+			*results = append(*results, resourcePath{Steps: pathCopy})
 		}
 		return
 	}
@@ -195,7 +202,7 @@ func (pf *PathFinder) dfs(
 		if !wasVisited {
 			visited[nextType] = true
 		}
-		nextStep := cmdb.PathStepV2{
+		nextStep := resourcePathStep{
 			ResourceType: string(nextType),
 			RelationType: string(rel.Schema.RelationType),
 			Category:     string(rel.Schema.Category),
@@ -213,7 +220,7 @@ func (pf *PathFinder) dfs(
 }
 
 // satisfiesPathConstraint 检查路径是否满足 pathResource 约束
-func (pf *PathFinder) satisfiesPathConstraint(path []cmdb.PathStepV2, pathResource []ResourceType) bool {
+func (pf *PathFinder) satisfiesPathConstraint(path []resourcePathStep, pathResource []ResourceType) bool {
 	if len(pathResource) == 0 {
 		return true
 	}

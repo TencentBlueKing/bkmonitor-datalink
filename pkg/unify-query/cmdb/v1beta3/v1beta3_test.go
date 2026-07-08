@@ -522,7 +522,7 @@ func TestQueryLivenessGraphAllowsDefinedResourceWithoutRelations(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: "cluster"}}}}, paths)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{{ResourceType: "cluster"}}}}, paths)
 }
 
 func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
@@ -559,7 +559,7 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "custom_source"},
 		{
 			ResourceType: "custom_target",
@@ -694,7 +694,7 @@ func TestInitSchemaProviderRefreshesDefaultModel(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "custom_source"},
 		{
 			ResourceType: "custom_target",
@@ -740,7 +740,7 @@ func TestQueryLivenessGraphDefaultsEmptyTargetTypeToSourceType(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, ResourceType("custom_source"), req.TargetType)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: "custom_source"}}}}, paths)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{{ResourceType: "custom_source"}}}}, paths)
 	assert.NotContains(t, executor.sql, "custom_source_to_custom_source")
 }
 
@@ -817,7 +817,7 @@ func TestQueryLivenessGraphUsesSpaceUIDSchemaNamespace(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "pod"},
 		{
 			ResourceType: "node",
@@ -924,7 +924,7 @@ func TestQueryLivenessGraphRaisesMaxHopsWhenDefaultCannotReachTarget(t *testing.
 
 	require.NoError(t, err)
 	assert.Contains(t, executor.sql, "hop3")
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "node"},
 		{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 		{ResourceType: "replicaset", RelationType: "pod_with_replicaset", Category: "static", Direction: "outbound"},
@@ -1961,8 +1961,8 @@ func TestQueryLivenessGraphConstrainsExplicitSameTypeTargetsToSelfRelation(t *te
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{
-		{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{
+		{Steps: []resourcePathStep{
 			{ResourceType: "system"},
 			{
 				ResourceType: "system",
@@ -1971,7 +1971,7 @@ func TestQueryLivenessGraphConstrainsExplicitSameTypeTargetsToSelfRelation(t *te
 				Direction:    "outbound",
 			},
 		}},
-		{Steps: []cmdb.PathStepV2{
+		{Steps: []resourcePathStep{
 			{ResourceType: "system"},
 			{
 				ResourceType: "system",
@@ -2121,7 +2121,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 		name             string
 		responseForSQL   func(sql string) graphQueryResponse
 		expectedMatchers cmdb.Matchers
-		expectedPaths    []cmdb.PathV2
+		expectedPaths    []resourcePath
 	}{
 		{
 			name: "direct path hit wins",
@@ -2132,7 +2132,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				return graphQueryResponse{}
 			},
 			expectedMatchers: cmdb.Matchers{{"pod": "direct"}},
-			expectedPaths: []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+			expectedPaths: []resourcePath{{Steps: []resourcePathStep{
 				{ResourceType: "system"},
 				{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
 			}}},
@@ -2146,7 +2146,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				return graphQueryResponse{}
 			},
 			expectedMatchers: cmdb.Matchers{{"pod": "via-container"}},
-			expectedPaths: []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+			expectedPaths: []resourcePath{{Steps: []resourcePathStep{
 				{ResourceType: "system"},
 				{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
 				{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},
@@ -2158,17 +2158,17 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				return graphQueryResponse{}
 			},
 			expectedMatchers: nil,
-			expectedPaths: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			expectedPaths: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system"},
 					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system"},
 					{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
 					{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system"},
 					{ResourceType: "statefulset", RelationType: "system_to_statefulset", Category: "dynamic", Direction: "outbound"},
 					{ResourceType: "pod", RelationType: "statefulset_to_pod", Category: "dynamic", Direction: "outbound"},
@@ -2224,18 +2224,18 @@ func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
 }
 
 func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
-	paths := []cmdb.PathV2{
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "pod"}}},
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
+	paths := []resourcePath{
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
 	}
 
 	sorted := sortPathsForQuery(paths)
 
-	assert.Equal(t, []cmdb.PathV2{
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "pod"}}},
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
-		{Steps: []cmdb.PathStepV2{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
+	assert.Equal(t, []resourcePath{
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
 	}, sorted)
 	assert.Equal(t, "container", paths[0].Steps[1].ResourceType, "sort should not mutate caller paths")
 }
@@ -2310,7 +2310,7 @@ func TestQueryLivenessGraphPathByPathDoesNotWaitForLowerPriorityPath(t *testing.
 	require.NoError(t, err)
 	assert.Less(t, elapsed, 150*time.Millisecond)
 	assert.Equal(t, cmdb.Matchers{{"pod": "target"}}, matchers)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "system"},
 		{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
 		{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},

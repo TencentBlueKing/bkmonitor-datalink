@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -27,7 +26,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 		AllowedCategory  []RelationCategory
 		DynamicDirection TraversalDirection
 		MaxHops          int
-		Expected         []cmdb.PathV2
+		Expected         []resourcePath
 		ExpectError      bool
 	}{
 		{
@@ -36,8 +35,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			Target:          ResourceTypeSystem,
 			AllowedCategory: []RelationCategory{RelationCategoryStatic},
 			MaxHops:         2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
 				}},
@@ -51,8 +50,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 			DynamicDirection: DirectionBoth,
 			MaxHops:          3,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
 				}},
@@ -65,8 +64,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
 			DynamicDirection: DirectionOutbound,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
 				}},
@@ -79,8 +78,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
 			DynamicDirection: DirectionOutbound,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
 				}},
@@ -93,8 +92,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
 			DynamicDirection: DirectionInbound,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
 				}},
@@ -107,12 +106,12 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
 			DynamicDirection: DirectionBoth,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
 				}},
@@ -125,12 +124,12 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 			DynamicDirection: DirectionOutbound,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "node", RelationType: "node_with_system", Category: "static", Direction: "inbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
 					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
@@ -144,17 +143,17 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 			DynamicDirection: DirectionBoth,
 			MaxHops:          2,
-			Expected: []cmdb.PathV2{
-				{Steps: []cmdb.PathStepV2{
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
 				}},
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
@@ -168,40 +167,40 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
 			DynamicDirection: DirectionBoth,
 			MaxHops:          3,
-			Expected: []cmdb.PathV2{
+			Expected: []resourcePath{
 				// 1跳: node -> system (静态)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
 				}},
 				// 3跳: node -> pod -> apm_service_instance -> system (静态)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "apm_service_instance", RelationType: "apm_service_instance_with_pod", Category: "static", Direction: "inbound"},
 					{ResourceType: "system", RelationType: "apm_service_instance_with_system", Category: "static", Direction: "outbound"},
 				}},
 				// 2跳: node -> pod -> system (动态 outbound)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
 				}},
 				// 2跳: node -> pod -> system (动态 inbound)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
 				}},
 				// 3跳: node -> datasource -> pod -> system (动态 outbound)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
 					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
 				}},
 				// 3跳: node -> datasource -> pod -> system (动态 inbound)
-				{Steps: []cmdb.PathStepV2{
+				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
 					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
@@ -261,7 +260,7 @@ func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T)
 	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, nil)
 
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "system"},
 		{
 			ResourceType: "system",
@@ -305,7 +304,7 @@ func TestPathFinderFindAllPathsSameResourceWithPathResourceSearchesConstrainedPa
 	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, []ResourceType{ResourceTypePod})
 
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "system"},
 		{
 			ResourceType: "pod",
@@ -360,7 +359,7 @@ func TestPathFinderFindAllPathsPathResourceAllowsUnconstrainedIntermediateHops(t
 	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
 
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "pod"},
 		{
 			ResourceType: "node",
@@ -441,7 +440,7 @@ func TestPathFinderEndpointOnlyPathResourceAllowsIndirectPaths(t *testing.T) {
 	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, []ResourceType{ResourceTypeSystem})
 
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "pod"},
 		{
 			ResourceType: "node",
@@ -495,7 +494,7 @@ func TestPathFinderFullEndpointPathResourceKeepsDirectConstraint(t *testing.T) {
 	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, []ResourceType{ResourceTypePod, ResourceTypeSystem})
 
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "pod"},
 		{
 			ResourceType: "system",
@@ -530,7 +529,7 @@ func TestPathFinderSkipsReverseTraversalForDirectionalStaticRelations(t *testing
 
 	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, []cmdb.PathV2{{Steps: []cmdb.PathStepV2{
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "pod"},
 		{
 			ResourceType: "system",

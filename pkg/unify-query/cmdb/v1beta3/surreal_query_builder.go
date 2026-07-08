@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 )
 
 // SQL 模板常量
@@ -101,7 +99,7 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 	}
 }
 
-func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvider, path cmdb.PathV2) *SurrealQueryBuilder {
+func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvider, path resourcePath) *SurrealQueryBuilder {
 	pathRequest := cloneQueryRequest(request)
 	if hops := len(path.Steps) - 1; hops >= 0 {
 		// 单 path 查询只需要展开该 path 的实际跳数；直接路径不再生成空 hop2。
@@ -109,7 +107,7 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 	}
 
 	builder := NewSurrealQueryBuilderWithSchemaProvider(pathRequest, provider)
-	builder.transitions = buildTransitionsFromPaths([]cmdb.PathV2{path})
+	builder.transitions = buildTransitionsFromPaths([]resourcePath{path})
 	return builder
 }
 
@@ -163,7 +161,7 @@ func buildPathTransitions(request *QueryRequest, pf *PathFinder) map[int]map[Res
 	return buildTransitionsFromPaths(paths)
 }
 
-func buildTransitionsFromPaths(paths []cmdb.PathV2) map[int]map[ResourceType]map[pathTransition]struct{} {
+func buildTransitionsFromPaths(paths []resourcePath) map[int]map[ResourceType]map[pathTransition]struct{} {
 	transitions := make(map[int]map[ResourceType]map[pathTransition]struct{})
 	for _, path := range paths {
 		for hop := 1; hop < len(path.Steps); hop++ {

@@ -156,17 +156,17 @@ func (m *Model) QueryResourceMatcher(
 	}
 	req.Normalize()
 
-	graphs, pathsV2, matchers, err := m.QueryLivenessGraph(ctx, req)
+	_, paths, matchers, err := m.QueryLivenessGraph(ctx, req)
 	if err != nil {
 		return "", nil, nil, "", nil, err
 	}
 
-	paths := legacyPathForQuery(graphs, pathsV2, req)
+	legacyPaths := convertResourcePathToLegacyResources(paths)
 
-	span.Set("paths-count", len(paths))
+	span.Set("paths-count", len(legacyPaths))
 	span.Set("matchers-count", len(matchers))
 
-	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), paths, cmdb.Resource(req.TargetType), matchers, nil
+	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), legacyPaths, cmdb.Resource(req.TargetType), matchers, nil
 }
 
 // QueryResourceMatcherRange 实现 cmdb.CMDB 接口（range 查询）
@@ -231,13 +231,13 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 	req.Normalize()
 
-	graphs, pathsV2, _, err := m.queryLivenessGraph(ctx, req, true, graphQueryModeRange, start, end, stepMs)
+	graphs, candidatePaths, _, err := m.queryLivenessGraph(ctx, req, true, graphQueryModeRange, start, end, stepMs)
 	if err != nil {
 		return "", nil, nil, "", nil, err
 	}
 
 	provider := m.getSchemaProvider()
-	selectedPath := legacyResourcePathForRangeQuery(graphs, pathsV2, req, start, end, stepMs)
+	selectedPath := legacyResourcePathForRangeQuery(graphs, candidatePaths, req, start, end, stepMs)
 	extractionPathResource := targetExtractionPathResource(req)
 	if len(selectedPath) > 0 {
 		// 旧 VM range 会按候选路径顺序停在第一条有数据的路径上。这里先选出同一条命中路径，
@@ -267,7 +267,7 @@ func (m *Model) QueryResourceMatcherRange(
 }
 
 // QueryLivenessGraph 执行图查询，返回图数据、路径和目标 Matchers
-func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (graphs []*LivenessGraph, paths []cmdb.PathV2, matchers cmdb.Matchers, err error) {
+func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (graphs []*LivenessGraph, paths []resourcePath, matchers cmdb.Matchers, err error) {
 	return m.queryLivenessGraph(ctx, req, true, graphQueryModeInstant, 0, 0, 0)
 }
 
@@ -284,7 +284,7 @@ func (m *Model) queryLivenessGraph(
 	splitPaths bool,
 	mode graphQueryMode,
 	rangeStart, rangeEnd, stepMs int64,
-) (graphs []*LivenessGraph, paths []cmdb.PathV2, matchers cmdb.Matchers, err error) {
+) (graphs []*LivenessGraph, paths []resourcePath, matchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
 	defer span.End(&err)
 
@@ -297,11 +297,18 @@ func (m *Model) queryLivenessGraph(
 		req.SourceType = sourceType
 	}
 	req.Normalize()
+	// 同类型查询有两种不同语义，必须在路径发现前归一化：
+	// 1. target_type 未显式传入时，这是旧接口的信息展示路径，只查 source 自身；
+	// 2. target_type 显式等于 source_type 时，这是自关联查询，只允许一跳直连自关联。
 	implicitSelfTarget := !req.TargetTypeExplicit && req.SourceType == req.TargetType
 	if implicitSelfTarget {
+		// 信息展示路径不应展开任何 relation hop；否则会把同类型自关联结果混入
+		// “source 自身信息”的响应。
 		req.MaxHops = 0
 		req.PathResource = nil
 	} else if isExplicitDirectSelfTarget(req) {
+		// 显式同类型 target 要求查询真实自关联边。空资源占位符是 PathFinder
+		// 的“只走直连”约束，避免在 source -> ... -> source 的多跳环路里取数。
 		req.MaxHops = 1
 		req.PathResource = []ResourceType{""}
 	}
@@ -328,7 +335,7 @@ func (m *Model) queryLivenessGraph(
 		WithNamespace(req.SchemaNamespace()),
 	)
 	if implicitSelfTarget {
-		paths = []cmdb.PathV2{{Steps: []cmdb.PathStepV2{{ResourceType: string(req.SourceType)}}}}
+		paths = []resourcePath{{Steps: []resourcePathStep{{ResourceType: string(req.SourceType)}}}}
 	} else {
 		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 		if err != nil {
@@ -386,7 +393,7 @@ func (m *Model) queryLivenessGraph(
 	return graphs, paths, matchers, nil
 }
 
-func shouldSplitQueryByPath(req *QueryRequest, paths []cmdb.PathV2, enabled bool) bool {
+func shouldSplitQueryByPath(req *QueryRequest, paths []resourcePath, enabled bool) bool {
 	// 只拆显式 target 且 source!=target 的多候选路径查询：
 	// 1. instant 和 range 都能按单条 path 生成独立 SurrealQL；
 	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL，避免拆分后改变含义。
@@ -401,11 +408,11 @@ func (m *Model) executeGraphQueryPathByPath(
 	ctx context.Context,
 	req *QueryRequest,
 	provider SchemaProvider,
-	paths []cmdb.PathV2,
+	paths []resourcePath,
 	start, end int64,
 	mode graphQueryMode,
 	rangeStart, rangeEnd, stepMs int64,
-) ([]*LivenessGraph, []cmdb.PathV2, error) {
+) ([]*LivenessGraph, []resourcePath, error) {
 	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
 	queryPaths := sortPathsForQuery(paths)
@@ -477,7 +484,7 @@ func (m *Model) executeGraphQueryPathByPath(
 				// instant 用 target matcher 判定命中，range 用 step bucket 内的路径活跃性判定命中。
 				// cancel 用于尽快停止低优先级慢查询，减少尾部资源占用。
 				cancel()
-				return results[i].graphs, []cmdb.PathV2{results[i].path}, nil
+				return results[i].graphs, []resourcePath{results[i].path}, nil
 			}
 		}
 	}
@@ -492,7 +499,7 @@ func (m *Model) executeGraphQueryPathByPath(
 // “应该先采信哪条 path”，不受 goroutine 完成顺序影响。
 type pathQueryResult struct {
 	idx      int
-	path     cmdb.PathV2
+	path     resourcePath
 	graphs   []*LivenessGraph
 	matchers cmdb.Matchers
 	hit      bool
@@ -503,7 +510,7 @@ func (m *Model) executeOneGraphQueryPath(
 	ctx context.Context,
 	req *QueryRequest,
 	provider SchemaProvider,
-	path cmdb.PathV2,
+	path resourcePath,
 	idx int,
 	start, end int64,
 	mode graphQueryMode,
@@ -548,9 +555,9 @@ func (m *Model) executeOneGraphQueryPath(
 	return pathQueryResult{idx: idx, path: path, graphs: graphs, matchers: matchers, hit: hit}
 }
 
-func sortPathsForQuery(paths []cmdb.PathV2) []cmdb.PathV2 {
+func sortPathsForQuery(paths []resourcePath) []resourcePath {
 	// 复制一份再排序，避免影响 all-empty 返回时使用的原始 paths。
-	sorted := append([]cmdb.PathV2(nil), paths...)
+	sorted := append([]resourcePath(nil), paths...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		// relation 查询会在首个命中 path 后短路。短路径通常生成更小的
 		// SurrealQL，也更接近旧 VM 直连关系优先命中的执行成本；range 拆分也复用同一优先级。
@@ -1109,11 +1116,11 @@ func FromCMDBResource(r cmdb.Resource) ResourceType {
 	return ResourceType(r)
 }
 
-func convertPathsV2ToLegacyResources(pathsV2 []cmdb.PathV2) []string {
-	if len(pathsV2) == 0 {
+func convertResourcePathToLegacyResources(paths []resourcePath) []string {
+	if len(paths) == 0 {
 		return nil
 	}
-	path := pathsV2[0]
+	path := paths[0]
 	if len(path.Steps) == 0 {
 		return nil
 	}
@@ -1126,26 +1133,11 @@ func convertPathsV2ToLegacyResources(pathsV2 []cmdb.PathV2) []string {
 	return result
 }
 
-func legacyPathForQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *QueryRequest) []string {
-	if req != nil {
-		candidates := legacyPathCandidatesFromTargetGraphs(
-			graphs,
-			req.TargetType,
-			targetExtractionPathResource(req),
-			shouldIncludeRootTarget(req),
-		)
-		if path := selectLegacyPathCandidate(pathsV2, candidates); len(path) > 0 {
-			return resourceTypesToLegacyPath(path)
-		}
-	}
-	return convertPathsV2ToLegacyResources(pathsV2)
+func legacyPathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest, start, end, stepMs int64) []string {
+	return resourceTypesToLegacyPath(legacyResourcePathForRangeQuery(graphs, paths, req, start, end, stepMs))
 }
 
-func legacyPathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *QueryRequest, start, end, stepMs int64) []string {
-	return resourceTypesToLegacyPath(legacyResourcePathForRangeQuery(graphs, pathsV2, req, start, end, stepMs))
-}
-
-func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.PathV2, req *QueryRequest, start, end, stepMs int64) []ResourceType {
+func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest, start, end, stepMs int64) []ResourceType {
 	if req != nil {
 		// range 响应里的 path 和 target_list 必须来自同一条 legacy 命中路径；
 		// 因此这里保留 ResourceType 形态，供调用方继续限制 target 抽取。
@@ -1158,35 +1150,14 @@ func legacyResourcePathForRangeQuery(graphs []*LivenessGraph, pathsV2 []cmdb.Pat
 			end,
 			stepMs,
 		)
-		if path := selectLegacyPathCandidate(pathsV2, candidates); len(path) > 0 {
+		if path := selectLegacyPathCandidate(paths, candidates); len(path) > 0 {
 			return path
 		}
 	}
-	if len(pathsV2) == 0 {
+	if len(paths) == 0 {
 		return nil
 	}
-	return pathV2ResourceTypes(pathsV2[0])
-}
-
-func legacyPathCandidatesFromTargetGraphs(
-	graphs []*LivenessGraph,
-	targetType ResourceType,
-	pathResource []ResourceType,
-	includeRootTarget bool,
-) [][]ResourceType {
-	var candidates [][]ResourceType
-	for _, graph := range graphs {
-		for _, path := range graph.TargetPaths(targetType, pathResource, includeRootTarget) {
-			if len(path.ResourcePath) == 0 {
-				continue
-			}
-			candidates = append(candidates, path.ResourcePath)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	return candidates
+	return resourcePathTypes(paths[0])
 }
 
 func legacyPathCandidatesFromRangeTargetGraphs(
@@ -1220,7 +1191,7 @@ func legacyPathCandidatesFromRangeTargetGraphs(
 	return candidates
 }
 
-func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceType) []ResourceType {
+func selectLegacyPathCandidate(paths []resourcePath, candidates [][]ResourceType) []ResourceType {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -1234,8 +1205,8 @@ func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceTyp
 	}
 
 	// 对齐旧 VM 行为：有 target 数据时，legacy path 优先返回候选路径顺序中的第一条命中路径。
-	for _, path := range pathsV2 {
-		resources := pathV2ResourceTypes(path)
+	for _, path := range paths {
+		resources := resourcePathTypes(path)
 		if len(resources) == 0 {
 			continue
 		}
@@ -1253,7 +1224,7 @@ func selectLegacyPathCandidate(pathsV2 []cmdb.PathV2, candidates [][]ResourceTyp
 	return candidates[0]
 }
 
-func pathV2ResourceTypes(path cmdb.PathV2) []ResourceType {
+func resourcePathTypes(path resourcePath) []ResourceType {
 	resources := make([]ResourceType, 0, len(path.Steps))
 	for _, step := range path.Steps {
 		if step.ResourceType != "" {

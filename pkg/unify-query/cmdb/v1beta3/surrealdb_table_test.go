@@ -33,7 +33,7 @@ func TestSurrealDBQuerySync(t *testing.T) {
 		{
 			name: "host to module query uses runtime binding schema and bkbase query_sync payload",
 			request: QueryRequest{
-				SpaceUID:             "bkcc__39",
+				SpaceUID:             tableMockSpaceUID,
 				Timestamp:            1776910000000,
 				SourceType:           ResourceTypeHost,
 				SourceInfo:           map[string]string{"bk_host_id": "38268"},
@@ -57,14 +57,7 @@ func TestSurrealDBQuerySync(t *testing.T) {
 					},
 				},
 			),
-			binding: BindingInfo{
-				Name:        "test_rt_with_bkcc_39_shamcleren",
-				BkBizID:     "39",
-				Database:    "39_test_rt_with_bkcc_39_shamcleren",
-				Namespace:   "mapleleaf_39",
-				ClusterName: "surrealdb_bkmonitor_test",
-				Phase:       "Ok",
-			},
+			binding: *tableMockBindingInfo(),
 			expectedSQL: `LET $timestamp = 1776910000000;
 LET $look_back_delta = 7000000000;
 LET $start = 1769910000;
@@ -137,7 +130,7 @@ LIMIT 10;`,
 
 			var payload BKBaseSQLPayload
 			require.NoError(t, json.Unmarshal([]byte(sqlPayloadText), &payload))
-			assert.Equal(t, "USE NS mapleleaf_39 DB `39_test_rt_with_bkcc_39_shamcleren`;"+tt.expectedSQL, payload.DSL)
+			assert.Equal(t, tableMockUseNSDBStatement+tt.expectedSQL, payload.DSL)
 			assert.Equal(t, tt.binding.Database, payload.ResultTableID)
 		})
 	}
@@ -162,7 +155,7 @@ func TestSurrealDBResponseParsing(t *testing.T) {
     "total_records": 1,
     "device": "surrealdb",
     "result_table_ids": [
-      "39_test_rt_with_bkcc_39_shamcleren"
+      "mock_graph_result_table"
     ],
     "list": [
       {
@@ -258,6 +251,113 @@ func TestSurrealDBResponseParsing(t *testing.T) {
 			graphs, err := client.Execute(context.Background(), "SELECT * FROM host", tt.queryStart, tt.queryEnd)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, summarizeTableGraphs(graphs))
+		})
+	}
+}
+
+func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeNode:   {primaryKeys: []string{"node"}},
+			ResourceTypeSystem: {primaryKeys: []string{"system"}},
+			ResourceTypePod:    {primaryKeys: []string{"pod"}},
+		},
+		[]RelationSchema{
+			{RelationType: RelationNodeWithPod, Category: RelationCategoryStatic, FromType: ResourceTypeNode, ToType: ResourceTypePod},
+			{RelationType: RelationNodeWithSystem, Category: RelationCategoryStatic, FromType: ResourceTypeNode, ToType: ResourceTypeSystem},
+			{RelationType: RelationSystemToPod, Category: RelationCategoryStatic, FromType: ResourceTypeSystem, ToType: ResourceTypePod},
+		},
+	)
+
+	tests := []struct {
+		name                    string
+		mode                    graphQueryMode
+		requestJSON             string
+		rangeStart              int64
+		rangeEnd                int64
+		stepMs                  int64
+		bkbaseResponseOverrides map[string]string
+		expectedResponseJSON    string
+	}{
+		{
+			name:                 "instant query returns target from the direct path response",
+			mode:                 graphQueryModeInstant,
+			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":600000}`,
+			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","pod"],"matchers":[{"pod":"pod-1"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+		},
+		{
+			name:                 "range query returns target series from the direct path response",
+			mode:                 graphQueryModeRange,
+			rangeStart:           0,
+			rangeEnd:             600000,
+			stepMs:               60000,
+			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":1200000}`,
+			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+		},
+		{
+			name:        "instant query falls back to indirect path when direct path is empty",
+			mode:        graphQueryModeInstant,
+			requestJSON: `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":600000}`,
+			bkbaseResponseOverrides: map[string]string{
+				"node/pod": tableEmptyBKBaseResponseJSON,
+			},
+			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
+			server := newSurrealDBMockServer(t, tablePathSplitBKBaseResponsesBySurrealQL(t, req, provider, tt.bkbaseResponseOverrides))
+			defer server.Close()
+
+			restoreQueryURL := setTableBKBaseQueryURLForTest(server.URL)
+			defer restoreQueryURL()
+
+			resolver := &BindingResolver{cache: make(map[string]*bindingCacheEntry)}
+			resolver.storeCache(tableMockBindingCacheKey, tableMockBindingInfo())
+
+			model, err := NewModel(context.Background(), &BKBaseSurrealDBClient{curl: &curl.HttpCurl{}})
+			require.NoError(t, err)
+			model.SetResolver(resolver)
+			model.SetSchemaProvider(provider)
+
+			graphs, paths, matchers, err := model.queryLivenessGraph(
+				context.Background(),
+				&req,
+				true,
+				tt.mode,
+				tt.rangeStart,
+				tt.rangeEnd,
+				tt.stepMs,
+			)
+			require.NoError(t, err)
+
+			actualResponse := tablePathSplitQueryResponse{
+				QueryMode:         "path-by-path",
+				Path:              convertResourcePathToLegacyResources(paths),
+				Matchers:          matchers,
+				QuerySyncRequests: tablePathSplitQuerySyncRequestSummaries(t, server.Requests()),
+			}
+			if tt.mode == graphQueryModeRange {
+				actualResponse.RangeResult = tableRangeResultFromMatchersWithTimestamp(
+					buildTargetMatchersTimeSeriesWithOptions(
+						graphs,
+						req.TargetType,
+						targetExtractionPathResource(&req),
+						tt.rangeStart,
+						tt.rangeEnd,
+						tt.stepMs,
+						provider,
+						req.SchemaNamespace(),
+						req.TargetInfoShow,
+						shouldIncludeRootTarget(&req),
+					),
+				)
+			}
+			assert.JSONEq(t, tt.expectedResponseJSON, encodeTablePathSplitQueryResponseJSON(t, actualResponse))
+
+			require.Len(t, actualResponse.QuerySyncRequests, 2)
 		})
 	}
 }

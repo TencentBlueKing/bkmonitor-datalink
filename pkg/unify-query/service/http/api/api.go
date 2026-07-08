@@ -10,6 +10,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -254,14 +255,18 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 		sendWg sync.WaitGroup
 		lock   sync.Mutex
 	)
-	p, _ := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting)
+	if err != nil {
+		resp.failed(ctx, fmt.Errorf("create v1beta3 relation worker pool: %w", err))
+		return
+	}
 	defer p.Release()
 
 	for idx, qry := range request.QueryList {
 		idx := idx
 		qry := qry
 		sendWg.Add(1)
-		_ = p.Submit(func() {
+		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
 			d := cmdb.RelationMultiResourceResponseData{
 				Code: http.StatusOK,
@@ -289,7 +294,16 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 			lock.Lock()
 			data.Data[idx] = d
 			lock.Unlock()
-		})
+		}); submitErr != nil {
+			sendWg.Done()
+			lock.Lock()
+			data.Data[idx] = cmdb.RelationMultiResourceResponseData{
+				Code:       http.StatusBadRequest,
+				Message:    submitErr.Error(),
+				TargetList: make(cmdb.Matchers, 0),
+			}
+			lock.Unlock()
+		}
 	}
 	sendWg.Wait()
 
@@ -346,14 +360,18 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 		sendWg sync.WaitGroup
 		lock   sync.Mutex
 	)
-	p, _ := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting)
+	if err != nil {
+		resp.failed(ctx, fmt.Errorf("create v1beta3 relation range worker pool: %w", err))
+		return
+	}
 	defer p.Release()
 
 	for idx, qry := range request.QueryList {
 		idx := idx
 		qry := qry
 		sendWg.Add(1)
-		_ = p.Submit(func() {
+		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
 			d := cmdb.RelationMultiResourceRangeResponseData{
 				Code: http.StatusOK,
@@ -386,7 +404,16 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 			lock.Lock()
 			data.Data[idx] = d
 			lock.Unlock()
-		})
+		}); submitErr != nil {
+			sendWg.Done()
+			lock.Lock()
+			data.Data[idx] = cmdb.RelationMultiResourceRangeResponseData{
+				Code:       http.StatusBadRequest,
+				Message:    submitErr.Error(),
+				TargetList: make([]cmdb.MatchersWithTimestamp, 0),
+			}
+			lock.Unlock()
+		}
 	}
 	sendWg.Wait()
 

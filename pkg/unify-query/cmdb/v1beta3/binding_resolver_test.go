@@ -12,6 +12,7 @@ package v1beta3
 import (
 	"context"
 	"testing"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -132,6 +133,19 @@ func TestBindingResolverRejectsRedisRouteForDifferentBiz(t *testing.T) {
 	assert.Contains(t, err.Error(), "biz mismatch")
 	assert.Contains(t, err.Error(), "binding_bk_biz_id=3")
 	assert.Contains(t, err.Error(), "request_bk_biz_id=2")
+}
+
+func TestBindingResolverDeletesExpiredCacheEntry(t *testing.T) {
+	resolver := &BindingResolver{cache: make(map[string]*bindingCacheEntry)}
+	cacheKey := bindingCacheKey("tenant-a", "2")
+	expired := &bindingCacheEntry{
+		info:   &BindingInfo{Name: "expired"},
+		expiry: time.Now().Add(-time.Second),
+	}
+	resolver.cache[cacheKey] = expired
+
+	assert.Nil(t, resolver.lookupCache(cacheKey))
+	assert.Equal(t, 0, resolver.cacheSize())
 }
 
 func contextWithTenantForBindingResolverTest(tenantID string) context.Context {

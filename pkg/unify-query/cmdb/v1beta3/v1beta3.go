@@ -11,6 +11,7 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -441,16 +442,20 @@ func (m *Model) executeGraphQueryPathByPath(
 	// resultCh 使用 len(queryPaths) 作为缓冲，保证主协程提前返回并 cancel 后，
 	// 已经跑完的 worker 发送结果时不会因为没人接收而阻塞泄漏。
 	resultCh := make(chan pathQueryResult, len(queryPaths))
+	var workerWg sync.WaitGroup
 	for idx, path := range queryPaths {
 		// Go 闭包会捕获循环变量；这里复制一份，保证每个 worker 看到自己的
 		// path 和优先级下标。
 		idx := idx
 		path := path
+		workerWg.Add(1)
 		if err := p.Submit(func() {
+			defer workerWg.Done()
 			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
 			// 后面会用它做稳定裁决。
 			resultCh <- m.executeOneGraphQueryPath(queryCtx, req, provider, path, idx, start, end, mode, rangeStart, rangeEnd, stepMs)
 		}); err != nil {
+			workerWg.Done()
 			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
 			// 处理错误，不会因为少一个结果而一直等待。
 			resultCh <- pathQueryResult{idx: idx, path: path, err: err}
@@ -460,10 +465,14 @@ func (m *Model) executeGraphQueryPathByPath(
 	// results 按排序后的 path 下标存放结果。这样即使 goroutine 乱序返回，
 	// 也能稳定地按 path 优先级裁决，避免同一个请求有时返回 path A、有时返回 path B。
 	results := make([]*pathQueryResult, len(queryPaths))
+	var pathErrors []error
 	for completed := 0; completed < len(queryPaths); completed++ {
 		// 收到任意一个 path 的结果后，先放回它的优先级槽位。
 		result := <-resultCh
 		results[result.idx] = &result
+		if result.err != nil {
+			pathErrors = append(pathErrors, result.err)
+		}
 
 		// 从最高优先级 path 开始连续扫描：
 		// - 前面的 path 还没返回时，不能采用后面已经命中的 path，否则返回会不稳定；
@@ -474,19 +483,23 @@ func (m *Model) executeGraphQueryPathByPath(
 				break
 			}
 			if results[i].err != nil {
-				// 当前语义选择 fail-fast：优先级更高的 path 失败时直接返回错误，
-				// 不用低优先级 path 的成功结果掩盖真实查询失败。
-				cancel()
-				return nil, nil, results[i].err
+				// 单条 path 查询失败不立即终止；旧 VM 语义会继续尝试后续 path，
+				// 让低优先级可用路径仍有机会返回结果。
+				continue
 			}
 			if results[i].hit {
 				// 第一个按优先级命中的 path 就是最终结果：
 				// instant 用 target matcher 判定命中，range 用 step bucket 内的路径活跃性判定命中。
 				// cancel 用于尽快停止低优先级慢查询，减少尾部资源占用。
 				cancel()
+				workerWg.Wait()
 				return results[i].graphs, []resourcePath{results[i].path}, nil
 			}
 		}
+	}
+
+	if len(pathErrors) > 0 {
+		return nil, nil, errors.Join(pathErrors...)
 	}
 
 	// 所有 path 都完成且没有命中 target。保持原始候选 paths 返回，便于调用方

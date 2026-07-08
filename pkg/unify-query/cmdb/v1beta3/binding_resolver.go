@@ -132,15 +132,26 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 
 func (r *BindingResolver) lookupCache(cacheKey string) *BindingInfo {
 	r.cacheMu.RLock()
-	defer r.cacheMu.RUnlock()
 	entry, ok := r.cache[cacheKey]
 	if !ok {
+		r.cacheMu.RUnlock()
 		return nil
 	}
 	if time.Now().After(entry.expiry) {
+		r.cacheMu.RUnlock()
+		r.deleteExpiredCache(cacheKey, entry)
 		return nil
 	}
+	r.cacheMu.RUnlock()
 	return entry.info
+}
+
+func (r *BindingResolver) deleteExpiredCache(cacheKey string, expiredEntry *bindingCacheEntry) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	if r.cache[cacheKey] == expiredEntry {
+		delete(r.cache, cacheKey)
+	}
 }
 
 func (r *BindingResolver) storeCache(cacheKey string, info *BindingInfo) {

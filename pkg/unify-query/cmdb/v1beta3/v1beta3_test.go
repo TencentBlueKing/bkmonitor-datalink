@@ -12,6 +12,7 @@ package v1beta3
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -39,19 +40,51 @@ type mockGraphQueryExecutor struct {
 
 func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.sql = sql
 	m.sqls = append(m.sqls, sql)
 	m.start = start
 	m.end = end
-	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
+	graphs := make([]*LivenessGraph, 0, len(m.graphs))
 	for _, g := range m.graphs {
-		g.QueryStart = start
-		g.QueryEnd = end
+		graphs = append(graphs, cloneLivenessGraphForTest(g, start, end))
 	}
-	return m.graphs, nil
+	return graphs, nil
+}
+
+func cloneLivenessGraphForTest(graph *LivenessGraph, start, end int64) *LivenessGraph {
+	if graph == nil {
+		return nil
+	}
+	cloned := NewLivenessGraph(start, end)
+	cloned.RootID = graph.RootID
+	cloned.TraversalErrors = append([]string(nil), graph.TraversalErrors...)
+	for _, node := range graph.Nodes {
+		nodeCopy := *node
+		nodeCopy.Labels = cloneStringMapForTest(node.Labels)
+		nodeCopy.RawPeriods = append([]*VisiblePeriod(nil), node.RawPeriods...)
+		cloned.AddNode(&nodeCopy)
+	}
+	for _, edge := range graph.Edges {
+		edgeCopy := *edge
+		edgeCopy.RawPeriods = append([]*VisiblePeriod(nil), edge.RawPeriods...)
+		cloned.AddEdge(&edgeCopy)
+	}
+	return cloned
+}
+
+func cloneStringMapForTest(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 type graphQueryResponse struct {
@@ -2138,6 +2171,24 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 			}}},
 		},
 		{
+			name: "direct path error continues to next matching path",
+			responseForSQL: func(sql string) graphQueryResponse {
+				if strings.Contains(sql, "system_to_pod") {
+					return graphQueryResponse{err: errors.New("direct path unavailable")}
+				}
+				if strings.Contains(sql, "system_to_container") {
+					return graphQueryResponse{graphs: []*LivenessGraph{targetGraph("via-container")}}
+				}
+				return graphQueryResponse{}
+			},
+			expectedMatchers: cmdb.Matchers{{"pod": "via-container"}},
+			expectedPaths: []resourcePath{{Steps: []resourcePathStep{
+				{ResourceType: "system"},
+				{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
+				{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},
+			}}},
+		},
+		{
 			name: "empty direct path continues to next matching path",
 			responseForSQL: func(sql string) graphQueryResponse {
 				if strings.Contains(sql, "system_to_container") {
@@ -2240,7 +2291,7 @@ func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
 	assert.Equal(t, "container", paths[0].Steps[1].ResourceType, "sort should not mutate caller paths")
 }
 
-func TestQueryLivenessGraphPathByPathDoesNotWaitForLowerPriorityPath(t *testing.T) {
+func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{
@@ -2308,7 +2359,7 @@ func TestQueryLivenessGraphPathByPathDoesNotWaitForLowerPriorityPath(t *testing.
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
-	assert.Less(t, elapsed, 150*time.Millisecond)
+	assert.GreaterOrEqual(t, elapsed, 180*time.Millisecond)
 	assert.Equal(t, cmdb.Matchers{{"pod": "target"}}, matchers)
 	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "system"},

@@ -308,7 +308,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
-			server := newSurrealDBMockServer(t, tablePathSplitBKBaseResponsesBySurrealQL(t, req, provider, tt.bkbaseResponseOverrides))
+			server := newSurrealDBMockServer(t, tablePathSplitBKBaseResponsesBySurrealQL(t, req, provider, tt.mode, tt.bkbaseResponseOverrides))
 			defer server.Close()
 
 			restoreQueryURL := setTableBKBaseQueryURLForTest(server.URL)

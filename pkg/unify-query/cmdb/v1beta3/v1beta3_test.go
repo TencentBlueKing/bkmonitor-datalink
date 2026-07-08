@@ -1052,6 +1052,30 @@ func TestSurrealQueryBuilderUsesScalarLivenessFilters(t *testing.T) {
 	assert.NotContains(t, sql, "(SELECT count() FROM only")
 }
 
+func TestSurrealQueryBuilderCanOmitLivenessProjection(t *testing.T) {
+	req := &QueryRequest{
+		Timestamp:     600000,
+		LookBackDelta: 600000,
+		SourceType:    ResourceTypeNode,
+		SourceInfo:    map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		TargetType:    ResourceTypePod,
+		MaxHops:       1,
+		Limit:         10,
+	}
+
+	rangeSQL := NewSurrealQueryBuilder(cloneQueryRequest(req)).Build()
+	assert.Contains(t, rangeSQL, ResponseFieldLiveness+":")
+	assert.Contains(t, rangeSQL, ResponseFieldRelationLiveness+":")
+	assert.Contains(t, rangeSQL, "node_liveness_record WHERE reference_id = $parent.id")
+	assert.Contains(t, rangeSQL, "node_with_pod_liveness_record WHERE relation_id = $parent.id")
+
+	instantSQL := NewSurrealQueryBuilder(cloneQueryRequest(req)).WithoutLivenessProjection().Build()
+	assert.NotContains(t, instantSQL, ResponseFieldLiveness+":")
+	assert.NotContains(t, instantSQL, ResponseFieldRelationLiveness+":")
+	assert.Contains(t, instantSQL, "node_liveness_record WHERE reference_id = $parent.id")
+	assert.Contains(t, instantSQL, "node_with_pod_liveness_record WHERE relation_id = $parent.id")
+}
+
 func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *testing.T) {
 	sql := NewSurrealQueryBuilder(&QueryRequest{
 		Timestamp:     1782984106000,
@@ -1613,6 +1637,8 @@ func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, executor.sql, "namespace = 'default'")
 	assert.Contains(t, executor.sql, "pod_liveness_record WHERE reference_id = $parent.")
+	assert.NotContains(t, executor.sql, ResponseFieldLiveness+":")
+	assert.NotContains(t, executor.sql, ResponseFieldRelationLiveness+":")
 	assert.NotContains(t, executor.sql, "unsafe.field")
 }
 

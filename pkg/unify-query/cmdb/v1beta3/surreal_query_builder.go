@@ -52,11 +52,12 @@ func buildEntityDataFields(keys []string, prefix string) string {
 
 // SurrealQueryBuilder 构建 SurrealQL 关联查询
 type SurrealQueryBuilder struct {
-	request        *QueryRequest
-	pathFinder     *PathFinder
-	schemaProvider SchemaProvider
-	namespace      string
-	transitions    map[int]map[ResourceType]map[pathTransition]struct{}
+	request         *QueryRequest
+	pathFinder      *PathFinder
+	schemaProvider  SchemaProvider
+	namespace       string
+	transitions     map[int]map[ResourceType]map[pathTransition]struct{}
+	projectLiveness bool
 }
 
 type pathTransition struct {
@@ -91,11 +92,12 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 	pf := NewPathFinder(allOpts...)
 
 	return &SurrealQueryBuilder{
-		request:        request,
-		pathFinder:     pf,
-		schemaProvider: provider,
-		namespace:      namespace,
-		transitions:    buildPathTransitions(request, pf),
+		request:         request,
+		pathFinder:      pf,
+		schemaProvider:  provider,
+		namespace:       namespace,
+		transitions:     buildPathTransitions(request, pf),
+		projectLiveness: true,
 	}
 }
 
@@ -109,6 +111,23 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 	builder := NewSurrealQueryBuilderWithSchemaProvider(pathRequest, provider)
 	builder.transitions = buildTransitionsFromPaths([]resourcePath{path})
 	return builder
+}
+
+// WithoutLivenessProjection keeps liveness existence filters but omits liveness
+// payloads from SELECT projections. Instant relation APIs only need target
+// labels, while range APIs still require periods for bucket alignment.
+func (b *SurrealQueryBuilder) WithoutLivenessProjection() *SurrealQueryBuilder {
+	if b != nil {
+		b.projectLiveness = false
+	}
+	return b
+}
+
+func (b *SurrealQueryBuilder) livenessProjection(prefix, field, tpl string, args ...any) string {
+	if b == nil || !b.projectLiveness {
+		return ""
+	}
+	return prefix + field + ": " + fmt.Sprintf(tpl, args...)
 }
 
 func cloneQueryRequest(request *QueryRequest) *QueryRequest {
@@ -255,12 +274,10 @@ func (b *SurrealQueryBuilder) buildRootSelect() string {
         entity_id: <string>id,
         entity_data: { %s },
         created_at: created_at,
-        updated_at: updated_at,
-        liveness: `+tplLivenessSelect+`
+        updated_at: updated_at%s
     }`,
 		buildEntityDataFields(rootFields, ""),
-		livenessTable,
-		livenessIDField)
+		b.livenessProjection(",\n        ", ResponseFieldLiveness, tplLivenessSelect, livenessTable, livenessIDField))
 }
 
 func (b *SurrealQueryBuilder) rootEntityDataFields(sourceType ResourceType) []string {
@@ -376,20 +393,16 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	}
 
 	fieldsBuilder.WriteString(fmt.Sprintf(`
-            relation_id: <string>id,
-            relation_liveness: `+tplRelLivenessSelect+`,
+            relation_id: <string>id%s,
             target: {
                 entity_type: '%s',
                 entity_id: <string>%s,
-                entity_data: { %s },
-                liveness: `+tplLivenessSelectRef,
-		relationLivenessTable,
+                entity_data: { %s }%s`,
+		b.livenessProjection(",\n            ", ResponseFieldRelationLiveness, tplRelLivenessSelect, relationLivenessTable),
 		rel.TargetType,
 		rel.SelectField,
 		buildEntityDataFields(targetFields, rel.SelectField),
-		targetLivenessTable,
-		targetLivenessIDField,
-		rel.SelectField))
+		b.livenessProjection(",\n                ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)
@@ -465,20 +478,16 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 	}
 
 	fieldsBuilder.WriteString(fmt.Sprintf(`
-                        relation_id: <string>id,
-                        relation_liveness: `+tplRelLivenessSelect+`,
+                        relation_id: <string>id%s,
                         target: {
                             entity_type: '%s',
                             entity_id: <string>%s,
-                            entity_data: { %s },
-                            liveness: `+tplLivenessSelectRef,
-		relationLivenessTable,
+                            entity_data: { %s }%s`,
+		b.livenessProjection(",\n                        ", ResponseFieldRelationLiveness, tplRelLivenessSelect, relationLivenessTable),
 		rel.TargetType,
 		rel.SelectField,
 		buildEntityDataFields(targetFields, rel.SelectField),
-		targetLivenessTable,
-		targetLivenessIDField,
-		rel.SelectField))
+		b.livenessProjection(",\n                            ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)
@@ -559,20 +568,18 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 	}
 
 	fieldsBuilder.WriteString(fmt.Sprintf(`
-%srelation_id: <string>id,
-%srelation_liveness: `+tplRelLivenessSelect+`,
+%srelation_id: <string>id%s,
 %starget: {
 %s    entity_type: '%s',
 %s    entity_id: <string>%s,
-%s    entity_data: { %s },
-%s    liveness: `+tplLivenessSelectRef,
+%s    entity_data: { %s }%s`,
 		innerIndent,
-		innerIndent, relationLivenessTable,
+		b.livenessProjection(fmt.Sprintf(",\n%s", innerIndent), ResponseFieldRelationLiveness, tplRelLivenessSelect, relationLivenessTable),
 		innerIndent,
 		innerIndent, rel.TargetType,
 		innerIndent, rel.SelectField,
 		innerIndent, buildEntityDataFields(targetFields, rel.SelectField),
-		innerIndent, targetLivenessTable, targetLivenessIDField, rel.SelectField))
+		b.livenessProjection(fmt.Sprintf(",\n%s    ", innerIndent), ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)

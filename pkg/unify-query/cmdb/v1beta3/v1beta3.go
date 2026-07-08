@@ -368,6 +368,7 @@ func (m *Model) queryLivenessGraph(
 		} else {
 			span.Set("query-mode", "single")
 			builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
+			configureBuilderForGraphQueryMode(builder, mode)
 			if implicitSelfTarget {
 				builder.request.MaxHops = 0
 			}
@@ -459,7 +460,7 @@ func (m *Model) executeGraphQueryPathByPath(
 			defer workerWg.Done()
 			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
 			// 后面会用它做稳定的图合并和响应 path 选择。
-			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, runner)
+			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, mode, runner)
 		}); err != nil {
 			workerWg.Done()
 			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
@@ -549,11 +550,14 @@ func (m *Model) executeOneGraphQueryPath(
 	path resourcePath,
 	idx int,
 	start, end int64,
+	mode graphQueryMode,
 	runner graphQueryRunner,
 ) pathQueryResult {
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
-	sql := NewSurrealQueryBuilderForPath(req, provider, path).Build()
+	builder := NewSurrealQueryBuilderForPath(req, provider, path)
+	configureBuilderForGraphQueryMode(builder, mode)
+	sql := builder.Build()
 	graphs, err := runner(ctx, sql, start, end)
 	if err != nil {
 		return pathQueryResult{idx: idx, path: path, err: err}
@@ -563,6 +567,12 @@ func (m *Model) executeOneGraphQueryPath(
 	}
 
 	return pathQueryResult{idx: idx, path: path, graphs: graphs}
+}
+
+func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQueryMode) {
+	if mode == graphQueryModeInstant {
+		builder.WithoutLivenessProjection()
+	}
 }
 
 func sortPathsForQuery(paths []resourcePath) []resourcePath {

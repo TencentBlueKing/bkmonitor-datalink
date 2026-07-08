@@ -201,6 +201,7 @@ func tablePathSplitBKBaseResponsesBySurrealQL(
 	t *testing.T,
 	req QueryRequest,
 	provider SchemaProvider,
+	mode graphQueryMode,
 	responseOverridesByPath map[string]string,
 ) map[surrealQL]string {
 	t.Helper()
@@ -228,7 +229,9 @@ func tablePathSplitBKBaseResponsesBySurrealQL(
 		responseJSON, ok := responsesByPath[pathKey]
 		require.True(t, ok, "missing mock response for path %s", pathKey)
 
-		dsl := NewSurrealQueryBuilderForPath(&req, provider, path).Build()
+		builder := NewSurrealQueryBuilderForPath(&req, provider, path)
+		configureBuilderForGraphQueryMode(builder, mode)
+		dsl := builder.Build()
 		finalDSL := tableMockUseNSDBStatement + dsl
 		result[surrealQL(finalDSL)] = responseJSON
 	}

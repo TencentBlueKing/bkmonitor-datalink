@@ -395,14 +395,14 @@ func (m *Model) queryLivenessGraph(
 }
 
 func shouldSplitQueryByPath(req *QueryRequest, paths []resourcePath, enabled bool) bool {
-	// 只拆显式 target 且 source!=target 的多候选路径查询：
-	// 1. instant 和 range 都能按单条 path 生成独立 SurrealQL；
+	// 显式 target 且 source!=target 的关联查询统一走 path-by-path：
+	// 1. 即使只有一条关联路径，也能用该 path 的真实 hop 数生成更短 SurrealQL；
 	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL，避免拆分后改变含义。
 	return enabled &&
 		req != nil &&
 		req.SourceType != req.TargetType &&
 		req.TargetTypeExplicit &&
-		len(paths) > 1
+		len(paths) > 0
 }
 
 func (m *Model) executeGraphQueryPathByPath(
@@ -417,11 +417,6 @@ func (m *Model) executeGraphQueryPathByPath(
 	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
 	queryPaths := sortPathsForQuery(paths)
-
-	// 命中或遇到错误后会 cancel，通知仍在执行的 path 尽快停止。
-	// 注意：底层 HTTP 是否能立刻中断取决于 executor/client 是否正确透传 ctx。
-	queryCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	// ants pool 大小取 min(path 数量, 默认并发上限)。
 	// path 数量通常不大，但这里仍显式限流，避免多个 relation 请求叠加时放大
@@ -439,8 +434,8 @@ func (m *Model) executeGraphQueryPathByPath(
 	}
 	defer p.Release()
 
-	// resultCh 使用 len(queryPaths) 作为缓冲，保证主协程提前返回并 cancel 后，
-	// 已经跑完的 worker 发送结果时不会因为没人接收而阻塞泄漏。
+	// resultCh 使用 len(queryPaths) 作为缓冲，保证 worker 发送结果时不会因为
+	// 主协程正在等待其他 path 而阻塞。
 	resultCh := make(chan pathQueryResult, len(queryPaths))
 	var workerWg sync.WaitGroup
 	for idx, path := range queryPaths {
@@ -452,8 +447,8 @@ func (m *Model) executeGraphQueryPathByPath(
 		if err := p.Submit(func() {
 			defer workerWg.Done()
 			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
-			// 后面会用它做稳定裁决。
-			resultCh <- m.executeOneGraphQueryPath(queryCtx, req, provider, path, idx, start, end, mode, rangeStart, rangeEnd, stepMs)
+			// 后面会用它做稳定的图合并和响应 path 选择。
+			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end)
 		}); err != nil {
 			workerWg.Done()
 			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
@@ -463,7 +458,7 @@ func (m *Model) executeGraphQueryPathByPath(
 	}
 
 	// results 按排序后的 path 下标存放结果。这样即使 goroutine 乱序返回，
-	// 也能稳定地按 path 优先级裁决，避免同一个请求有时返回 path A、有时返回 path B。
+	// 后续合并 LivenessGraph 和选择响应 path 时仍能沿用稳定的 path 优先级。
 	results := make([]*pathQueryResult, len(queryPaths))
 	var pathErrors []error
 	for completed := 0; completed < len(queryPaths); completed++ {
@@ -474,28 +469,47 @@ func (m *Model) executeGraphQueryPathByPath(
 			pathErrors = append(pathErrors, result.err)
 		}
 
-		// 从最高优先级 path 开始连续扫描：
-		// - 前面的 path 还没返回时，不能采用后面已经命中的 path，否则返回会不稳定；
-		// - 前面的 path 返回空以后，才允许采用后面优先级更低的命中结果。
-		for i := range queryPaths {
-			if results[i] == nil {
-				// 遇到第一个尚未完成的高优先级 path，当前还不能做最终裁决。
-				break
-			}
-			if results[i].err != nil {
-				// 单条 path 查询失败不立即终止；旧 VM 语义会继续尝试后续 path，
-				// 让低优先级可用路径仍有机会返回结果。
-				continue
-			}
-			if results[i].hit {
-				// 第一个按优先级命中的 path 就是最终结果：
-				// instant 用 target matcher 判定命中，range 用 step bucket 内的路径活跃性判定命中。
-				// cancel 用于尽快停止低优先级慢查询，减少尾部资源占用。
-				cancel()
-				workerWg.Wait()
-				return results[i].graphs, []resourcePath{results[i].path}, nil
-			}
+	}
+	workerWg.Wait()
+
+	var graphFragments []*LivenessGraph
+	for _, result := range results {
+		if result == nil || result.err != nil {
+			continue
 		}
+		graphFragments = append(graphFragments, result.graphs...)
+	}
+	mergedGraphs := mergeLivenessGraphsByRoot(graphFragments)
+
+	if mode == graphQueryModeRange {
+		candidates := resourcePathCandidatesFromRangeTargetGraphs(
+			mergedGraphs,
+			req.TargetType,
+			targetExtractionPathResource(req),
+			shouldIncludeRootTarget(req),
+			rangeStart,
+			rangeEnd,
+			stepMs,
+		)
+		if selectedPath, ok := selectResourcePathFromCandidates(queryPaths, candidates); ok {
+			return mergedGraphs, []resourcePath{selectedPath}, nil
+		}
+	} else {
+		candidates := resourcePathCandidatesFromTargetGraphs(
+			mergedGraphs,
+			req.TargetType,
+			targetExtractionPathResource(req),
+			shouldIncludeRootTarget(req),
+		)
+		if selectedPath, ok := selectResourcePathFromCandidates(queryPaths, candidates); ok {
+			return mergedGraphs, []resourcePath{selectedPath}, nil
+		}
+	}
+
+	if len(mergedGraphs) > 0 {
+		// 有 root 图但没有命中 target 时，继续返回合并后的图，方便调用方保留
+		// source/root 信息；path 仍保持原始候选集合。
+		return mergedGraphs, paths, nil
 	}
 
 	if len(pathErrors) > 0 {
@@ -508,15 +522,13 @@ func (m *Model) executeGraphQueryPathByPath(
 }
 
 // pathQueryResult 是单条 path 查询的收敛结果。
-// idx 使用排序后的优先级下标，而不是原始 PathFinder 下标；这样收敛逻辑只关心
-// “应该先采信哪条 path”，不受 goroutine 完成顺序影响。
+// idx 使用排序后的优先级下标，而不是原始 PathFinder 下标；这样图合并和响应 path
+// 选择不受 goroutine 完成顺序影响。
 type pathQueryResult struct {
-	idx      int
-	path     resourcePath
-	graphs   []*LivenessGraph
-	matchers cmdb.Matchers
-	hit      bool
-	err      error
+	idx    int
+	path   resourcePath
+	graphs []*LivenessGraph
+	err    error
 }
 
 func (m *Model) executeOneGraphQueryPath(
@@ -526,8 +538,6 @@ func (m *Model) executeOneGraphQueryPath(
 	path resourcePath,
 	idx int,
 	start, end int64,
-	mode graphQueryMode,
-	rangeStart, rangeEnd, stepMs int64,
 ) pathQueryResult {
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
@@ -540,32 +550,7 @@ func (m *Model) executeOneGraphQueryPath(
 		return pathQueryResult{idx: idx, path: path, err: err}
 	}
 
-	// instant relation 查询只需要返回第一条实际命中的路径。这里用现有 matcher
-	// 抽取规则判断是否命中，避免 root 有数据但目标资源为空时提前短路。
-	matchers := extractMatchersFromGraphsWithOptions(
-		graphs,
-		req.TargetType,
-		targetExtractionPathResource(req),
-		provider,
-		req.SchemaNamespace(),
-		req.TargetInfoShow,
-		shouldIncludeRootTarget(req),
-	)
-	hit := len(matchers) > 0
-	if mode == graphQueryModeRange {
-		// range 的命中语义必须对齐旧 VM count_over_time：只要任意 step bucket
-		// 的 (ts-step, ts] 窗口内整条 path 活跃，就认为该 path 命中。
-		hit = len(resourcePathCandidatesFromRangeTargetGraphs(
-			graphs,
-			req.TargetType,
-			targetExtractionPathResource(req),
-			shouldIncludeRootTarget(req),
-			rangeStart,
-			rangeEnd,
-			stepMs,
-		)) > 0
-	}
-	return pathQueryResult{idx: idx, path: path, graphs: graphs, matchers: matchers, hit: hit}
+	return pathQueryResult{idx: idx, path: path, graphs: graphs}
 }
 
 func sortPathsForQuery(paths []resourcePath) []resourcePath {
@@ -974,9 +959,18 @@ func extractMatchersFromGraphsWithOptions(
 	var result cmdb.Matchers
 
 	for _, g := range graphs {
-		for resourceID, matcher := range g.ExtractTargetMatchersWithID(targetType, pathResource, includeRootTarget) {
+		for _, path := range g.TargetPaths(targetType, pathResource, includeRootTarget) {
+			node := path.Target
+			if node == nil {
+				continue
+			}
+			resourceID := node.ResourceID
 			if !seen[resourceID] {
 				seen[resourceID] = true
+				matcher := make(cmdb.Matcher, len(node.Labels))
+				for k, v := range node.Labels {
+					matcher[k] = v
+				}
 				result = append(result, filterTargetMatcher(matcher, provider, namespace, targetType, targetInfoShow))
 			}
 		}
@@ -1204,6 +1198,38 @@ func resourcePathCandidatesFromRangeTargetGraphs(
 	return candidates
 }
 
+func resourcePathCandidatesFromTargetGraphs(
+	graphs []*LivenessGraph,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTarget bool,
+) [][]ResourceType {
+	var candidates [][]ResourceType
+	for _, graph := range graphs {
+		for _, path := range graph.TargetPaths(targetType, pathResource, includeRootTarget) {
+			if len(path.ResourcePath) == 0 {
+				continue
+			}
+			candidates = append(candidates, path.ResourcePath)
+		}
+	}
+	return candidates
+}
+
+func selectResourcePathFromCandidates(paths []resourcePath, candidates [][]ResourceType) (resourcePath, bool) {
+	selected := selectResourcePathCandidate(paths, candidates)
+	if len(selected) == 0 {
+		return resourcePath{}, false
+	}
+	selectedKey := resourcePathKey(selected)
+	for _, path := range paths {
+		if resourcePathKey(resourcePathTypes(path)) == selectedKey {
+			return path, true
+		}
+	}
+	return resourcePath{Steps: resourcePathStepsFromTypes(selected)}, true
+}
+
 func selectResourcePathCandidate(paths []resourcePath, candidates [][]ResourceType) []ResourceType {
 	if len(candidates) == 0 {
 		return nil
@@ -1245,6 +1271,17 @@ func resourcePathTypes(path resourcePath) []ResourceType {
 		}
 	}
 	return resources
+}
+
+func resourcePathStepsFromTypes(resources []ResourceType) []resourcePathStep {
+	steps := make([]resourcePathStep, 0, len(resources))
+	for _, resource := range resources {
+		if resource == "" {
+			continue
+		}
+		steps = append(steps, resourcePathStep{ResourceType: string(resource)})
+	}
+	return steps
 }
 
 func isTargetPathActiveInAnyBucket(path *targetPathInfo, start, end, stepMs int64) bool {

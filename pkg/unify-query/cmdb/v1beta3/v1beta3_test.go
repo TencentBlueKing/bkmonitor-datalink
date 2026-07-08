@@ -2217,6 +2217,44 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 		})
 		return graph
 	}
+	viaContainerGraph := func(podName string) *LivenessGraph {
+		graph := NewLivenessGraph(0, 200)
+		source := &NodeLiveness{
+			ResourceID:   "system:source",
+			ResourceType: ResourceTypeSystem,
+			Labels:       map[string]string{"bk_target_ip": "source"},
+			RawPeriods:   periods,
+		}
+		container := &NodeLiveness{
+			ResourceID:   "container:" + podName,
+			ResourceType: ResourceTypeContainer,
+			Labels:       map[string]string{"container_id": podName},
+			RawPeriods:   periods,
+		}
+		target := &NodeLiveness{
+			ResourceID:   "pod:" + podName,
+			ResourceType: ResourceTypePod,
+			Labels:       map[string]string{"pod": podName},
+			RawPeriods:   periods,
+		}
+		graph.RootID = source.ResourceID
+		graph.AddNode(source)
+		graph.AddNode(container)
+		graph.AddNode(target)
+		graph.AddEdge(&EdgeLiveness{
+			RelationID: "system-container-" + podName,
+			FromID:     source.ResourceID,
+			ToID:       container.ResourceID,
+			RawPeriods: periods,
+		})
+		graph.AddEdge(&EdgeLiveness{
+			RelationID: "container-pod-" + podName,
+			FromID:     container.ResourceID,
+			ToID:       target.ResourceID,
+			RawPeriods: periods,
+		})
+		return graph
+	}
 
 	testCases := []struct {
 		name             string
@@ -2245,7 +2283,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 					return graphQueryResponse{err: errors.New("direct path unavailable")}
 				}
 				if strings.Contains(sql, "system_to_container") {
-					return graphQueryResponse{graphs: []*LivenessGraph{targetGraph("via-container")}}
+					return graphQueryResponse{graphs: []*LivenessGraph{viaContainerGraph("via-container")}}
 				}
 				return graphQueryResponse{}
 			},
@@ -2260,7 +2298,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 			name: "empty direct path continues to next matching path",
 			responseForSQL: func(sql string) graphQueryResponse {
 				if strings.Contains(sql, "system_to_container") {
-					return graphQueryResponse{graphs: []*LivenessGraph{targetGraph("via-container")}}
+					return graphQueryResponse{graphs: []*LivenessGraph{viaContainerGraph("via-container")}}
 				}
 				return graphQueryResponse{}
 			},
@@ -2319,6 +2357,73 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 			assertTrimmedPathSQLs(t, executor.sqls)
 		})
 	}
+}
+
+func TestQueryLivenessGraphExecutesSingleCandidatePathByPath(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "system_to_pod",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "system",
+				ToType:        "pod",
+				IsDirectional: true,
+			},
+		},
+	})
+
+	periods := []*VisiblePeriod{{Start: 0, End: 200}}
+	graph := NewLivenessGraph(0, 200)
+	source := &NodeLiveness{
+		ResourceID:   "system:source",
+		ResourceType: ResourceTypeSystem,
+		Labels:       map[string]string{"bk_target_ip": "source"},
+		RawPeriods:   periods,
+	}
+	target := &NodeLiveness{
+		ResourceID:   "pod:direct",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "direct"},
+		RawPeriods:   periods,
+	}
+	graph.RootID = source.ResourceID
+	graph.AddNode(source)
+	graph.AddNode(target)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID: "edge-direct",
+		FromID:     source.ResourceID,
+		ToID:       target.ResourceID,
+		RawPeriods: periods,
+	})
+
+	executor := &recordingGraphQueryExecutor{responses: []graphQueryResponse{{graphs: []*LivenessGraph{graph}}}}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, paths, matchers, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:          200,
+		LookBackDelta:      200,
+		SourceType:         ResourceTypeSystem,
+		SourceInfo:         map[string]string{"bk_target_ip": "source"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, executor.sqls, 1)
+	assert.Contains(t, executor.sqls[0], "system_to_pod")
+	assert.NotContains(t, executor.sqls[0], "hop2:")
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "system"},
+		{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
+	}}}, paths)
+	assert.Equal(t, cmdb.Matchers{{"pod": "direct"}}, matchers)
 }
 
 func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
@@ -2390,10 +2495,18 @@ func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testi
 		Labels:       map[string]string{"pod": "target"},
 		RawPeriods:   periods,
 	}
+	container := &NodeLiveness{
+		ResourceID:   "container:target",
+		ResourceType: ResourceTypeContainer,
+		Labels:       map[string]string{"container_id": "target"},
+		RawPeriods:   periods,
+	}
 	hitGraph.RootID = source.ResourceID
 	hitGraph.AddNode(source)
+	hitGraph.AddNode(container)
 	hitGraph.AddNode(target)
-	hitGraph.AddEdge(&EdgeLiveness{RelationID: "edge-target", FromID: source.ResourceID, ToID: target.ResourceID, RawPeriods: periods})
+	hitGraph.AddEdge(&EdgeLiveness{RelationID: "edge-container", FromID: source.ResourceID, ToID: container.ResourceID, RawPeriods: periods})
+	hitGraph.AddEdge(&EdgeLiveness{RelationID: "edge-target", FromID: container.ResourceID, ToID: target.ResourceID, RawPeriods: periods})
 
 	executor := &recordingGraphQueryExecutor{
 		responseForSQL: func(sql string) graphQueryResponse {

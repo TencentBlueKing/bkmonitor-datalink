@@ -10,6 +10,8 @@
 package v1beta3
 
 import (
+	"strconv"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 )
 
@@ -121,6 +123,62 @@ func (g *LivenessGraph) GetOutEdges(resourceID string) []*EdgeLiveness {
 		}
 	}
 	return edges
+}
+
+func mergeLivenessGraphsByRoot(graphs []*LivenessGraph) []*LivenessGraph {
+	mergedByRoot := make(map[string]*LivenessGraph)
+	rootOrder := make([]string, 0, len(graphs))
+
+	for _, graph := range graphs {
+		if graph == nil {
+			continue
+		}
+		rootKey := graph.RootID
+		if rootKey == "" {
+			rootIDs := graph.rootNodeIDs()
+			if len(rootIDs) > 0 {
+				rootKey = rootIDs[0]
+			}
+		}
+		if rootKey == "" {
+			rootKey = "\x00anonymous-root\x00" + strconv.Itoa(len(rootOrder))
+		}
+
+		merged := mergedByRoot[rootKey]
+		if merged == nil {
+			merged = NewLivenessGraph(graph.QueryStart, graph.QueryEnd)
+			merged.RootID = graph.RootID
+			mergedByRoot[rootKey] = merged
+			rootOrder = append(rootOrder, rootKey)
+		}
+		mergeLivenessGraphInto(merged, graph)
+	}
+
+	result := make([]*LivenessGraph, 0, len(rootOrder))
+	for _, rootKey := range rootOrder {
+		if graph := mergedByRoot[rootKey]; graph != nil {
+			result = append(result, graph)
+		}
+	}
+	return result
+}
+
+func mergeLivenessGraphInto(dst, src *LivenessGraph) {
+	if dst == nil || src == nil {
+		return
+	}
+	if dst.RootID == "" {
+		dst.RootID = src.RootID
+	}
+	for _, node := range src.Nodes {
+		dst.AddNode(node)
+	}
+	for _, edge := range src.Edges {
+		dst.AddEdge(edge)
+	}
+	for _, errMsg := range src.TraversalErrors {
+		dst.AddTraversalError(errMsg)
+	}
 }
 
 func (g *LivenessGraph) ExtractTargetMatchersWithID(
@@ -288,11 +346,21 @@ func (g *LivenessGraph) rootNodeIDs() []string {
 }
 
 func (g *LivenessGraph) outEdgesFromMap(resourceID string) []*EdgeLiveness {
-	edges := make([]*EdgeLiveness, 0, len(g.Edges))
-	for _, edge := range g.Edges {
-		if edge.FromID == resourceID {
+	relationIDs := g.Adjacency[resourceID]
+	edges := make([]*EdgeLiveness, 0, len(relationIDs))
+	seen := make(map[string]bool, len(relationIDs))
+	for _, relationID := range relationIDs {
+		edge := g.Edges[relationID]
+		if edge != nil {
 			edges = append(edges, edge)
+			seen[relationID] = true
 		}
+	}
+	for relationID, edge := range g.Edges {
+		if seen[relationID] || edge.FromID != resourceID {
+			continue
+		}
+		edges = append(edges, edge)
 	}
 	return edges
 }

@@ -75,7 +75,7 @@ func (c tracesConverter) Extract(ip string, span ptrace.Span, resources common.M
 		"kind":           span.Kind(),
 		"start_time":     span.StartTimestamp() / 1000,
 		"end_time":       span.EndTimestamp() / 1000,
-		"trace_state":    span.TraceState(),
+		"trace_state":    span.TraceState().AsRaw(),
 		"elapsed_time":   c.spanElapsedTime(span.EndTimestamp(), span.StartTimestamp()),
 		"links":          c.spanLinks(span.Links()),
 		"events":         c.spanEvents(span.Events()),
@@ -98,7 +98,7 @@ func (c tracesConverter) spanLinks(links ptrace.SpanLinkSlice) []common.MapStr {
 		result = append(result, common.MapStr{
 			"trace_id":    link.TraceID().HexString(),
 			"span_id":     link.SpanID().HexString(),
-			"trace_state": link.TraceState(),
+			"trace_state": link.TraceState().AsRaw(),
 			"attributes":  CleanAttributesMap(link.Attributes().AsRaw()),
 		})
 	}

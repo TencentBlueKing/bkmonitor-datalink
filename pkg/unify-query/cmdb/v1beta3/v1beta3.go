@@ -227,7 +227,7 @@ func (m *Model) QueryResourceMatcherRange(
 		TargetInfoShow:     expandShow,
 		PathResource:       toResourceTypes(pathResource),
 		MaxHops:            computeMaxHops(source, target, pathResource),
-		LookBackDelta:      rangeQueryLookBackDelta(lbd, start, end, stepMs),
+		LookBackDelta:      rangeQueryLookBackDelta(lbd, start, end, stepMs, lookBackDelta != ""),
 		LookBackDeltaSet:   lookBackDelta != "",
 	}
 	req.Normalize()
@@ -574,9 +574,25 @@ func sortPathsForQuery(paths []resourcePath) []resourcePath {
 	sort.SliceStable(sorted, func(i, j int) bool {
 		// relation 查询会在首个命中 path 后短路。短路径通常生成更小的
 		// SurrealQL，也更接近旧 VM 直连关系优先命中的执行成本；range 拆分也复用同一优先级。
-		return len(sorted[i].Steps) < len(sorted[j].Steps)
+		if len(sorted[i].Steps) != len(sorted[j].Steps) {
+			return len(sorted[i].Steps) < len(sorted[j].Steps)
+		}
+		return resourcePathSortKey(sorted[i]) < resourcePathSortKey(sorted[j])
 	})
 	return sorted
+}
+
+func resourcePathSortKey(path resourcePath) string {
+	parts := make([]string, 0, len(path.Steps))
+	for _, step := range path.Steps {
+		parts = append(parts, strings.Join([]string{
+			step.ResourceType,
+			step.RelationType,
+			step.Category,
+			step.Direction,
+		}, "/"))
+	}
+	return strings.Join(parts, "|")
 }
 
 // executeGraphQuery 根据 resolver / executor 能力选择最合适的调用路径。
@@ -693,7 +709,7 @@ func maxInt64(left, right int64) int64 {
 	return right
 }
 
-func rangeQueryLookBackDelta(configured, start, end, stepMs int64) int64 {
+func rangeQueryLookBackDelta(configured, start, end, stepMs int64, explicitlySet bool) int64 {
 	required := end - start
 	if stepMs > 0 {
 		// 对齐旧 VM range 的 count_over_time 语义：第一个 bucket 也要能读取 (start-step, start] 窗口内的样本。
@@ -701,6 +717,9 @@ func rangeQueryLookBackDelta(configured, start, end, stepMs int64) int64 {
 	}
 	if required < 0 {
 		required = 0
+	}
+	if !explicitlySet {
+		return required
 	}
 	return maxInt64(configured, required)
 }
@@ -731,17 +750,6 @@ func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvide
 		req.TargetType == "" ||
 		req.SourceType == req.TargetType ||
 		req.MaxHops >= MaxAllowedHops {
-		return
-	}
-
-	defaultFinder := NewPathFinder(
-		WithAllowedCategories(req.AllowedRelationTypes...),
-		WithDynamicDirection(req.DynamicRelationDirection),
-		WithMaxHops(req.MaxHops),
-		WithSchemaProvider(provider),
-		WithNamespace(req.SchemaNamespace()),
-	)
-	if _, err := defaultFinder.FindAllPaths(req.SourceType, req.TargetType, nil); err == nil {
 		return
 	}
 
@@ -910,13 +918,9 @@ func validateSourceInfoFields(req *QueryRequest, provider SchemaProvider) error 
 		return fmt.Errorf("source type %q has no primary keys for source_info", req.SourceType)
 	}
 
-	allowed := make(map[string]struct{}, len(primaryKeys))
 	for _, key := range primaryKeys {
-		allowed[key] = struct{}{}
-	}
-	for key := range req.SourceInfo {
-		if _, ok := allowed[key]; !ok {
-			return fmt.Errorf("unknown source_info field %q for source type %q", key, req.SourceType)
+		if _, ok := req.SourceInfo[key]; !ok {
+			return fmt.Errorf("source_info missing primary field %q for source type %q", key, req.SourceType)
 		}
 	}
 	return nil

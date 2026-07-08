@@ -283,10 +283,7 @@ func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*Relation
 		}
 
 		if schema.Category == RelationCategoryStatic {
-			info := pf.buildStaticRelationInfo(schema, resourceType)
-			if info != nil {
-				results = append(results, info)
-			}
+			results = append(results, pf.buildStaticRelationInfos(schema, resourceType)...)
 		} else {
 			infos := pf.buildDynamicRelationInfos(schema, resourceType)
 			results = append(results, infos...)
@@ -306,8 +303,8 @@ func (pf *PathFinder) isRelationCategoryAllowed(category RelationCategory) bool 
 	return false
 }
 
-// buildStaticRelationInfo 构建静态关系查询信息
-func (pf *PathFinder) buildStaticRelationInfo(schema *RelationSchema, currentType ResourceType) *RelationQueryInfo {
+// buildStaticRelationInfos 构建静态关系查询信息
+func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentType ResourceType) []*RelationQueryInfo {
 	info := &RelationQueryInfo{
 		Schema:    schema,
 		KeySuffix: "",
@@ -319,6 +316,19 @@ func (pf *PathFinder) buildStaticRelationInfo(schema *RelationSchema, currentTyp
 		info.SelectField = fieldOut
 		info.TargetField = fieldOut
 		info.TargetType = schema.ToType
+		if schema.ToType == currentType && !schema.IsDirectional {
+			reverseInfo := &RelationQueryInfo{
+				Schema:      schema,
+				Direction:   DirectionInbound,
+				KeySuffix:   "_inbound",
+				WhereField:  fieldOut,
+				SelectField: fieldIn,
+				TargetField: fieldIn,
+				TargetType:  schema.FromType,
+			}
+			info.KeySuffix = "_outbound"
+			return []*RelationQueryInfo{info, reverseInfo}
+		}
 	} else {
 		if schema.IsDirectional {
 			return nil
@@ -330,7 +340,7 @@ func (pf *PathFinder) buildStaticRelationInfo(schema *RelationSchema, currentTyp
 		info.TargetType = schema.FromType
 	}
 
-	return info
+	return []*RelationQueryInfo{info}
 }
 
 // buildDynamicRelationInfos 构建动态关系查询信息

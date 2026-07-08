@@ -271,6 +271,51 @@ func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T)
 	}}}, paths)
 }
 
+func TestPathFinderFindAllPathsSameResourceUsesBothDirectionsForStaticSelfRelation(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"service": {"service"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "service_with_service",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "service",
+				ToType:       "service",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(1),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeService, ResourceTypeService, nil)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{
+		{Steps: []resourcePathStep{
+			{ResourceType: "service"},
+			{
+				ResourceType: "service",
+				RelationType: "service_with_service",
+				Category:     "static",
+				Direction:    "outbound",
+			},
+		}},
+		{Steps: []resourcePathStep{
+			{ResourceType: "service"},
+			{
+				ResourceType: "service",
+				RelationType: "service_with_service",
+				Category:     "static",
+				Direction:    "inbound",
+			},
+		}},
+	}, paths)
+}
+
 func TestPathFinderFindAllPathsSameResourceWithPathResourceSearchesConstrainedPath(t *testing.T) {
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{

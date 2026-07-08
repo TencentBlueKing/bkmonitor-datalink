@@ -500,11 +500,11 @@ func TestQueryLivenessGraphRejectsUnknownResourceType(t *testing.T) {
 	assert.ErrorContains(t, err, "unknown resource type")
 }
 
-func TestQueryLivenessGraphRejectsUnknownSourceInfoField(t *testing.T) {
+func TestQueryLivenessGraphRejectsMissingSourceInfoPrimaryField(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{
-			"custom_source": {"custom_id"},
+			"custom_source": {"custom_id", "custom_name"},
 			"custom_target": {"target_id"},
 		},
 		RelationSchemas: []relation.RelationSchema{
@@ -524,15 +524,51 @@ func TestQueryLivenessGraphRejectsUnknownSourceInfoField(t *testing.T) {
 		Timestamp:  300000,
 		SourceType: "custom_source",
 		SourceInfo: map[string]string{
-			"custom_id":   "source-1",
-			"custom_typo": "typo",
+			"custom_id": "source-1",
 		},
 		TargetType: "custom_target",
 		MaxHops:    1,
 	})
 
 	require.Error(t, err)
-	assert.ErrorContains(t, err, `unknown source_info field "custom_typo"`)
+	assert.ErrorContains(t, err, `source_info missing primary field "custom_name"`)
+}
+
+func TestQueryLivenessGraphIgnoresExtraSourceInfoFields(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom_source": {"custom_id"},
+			"custom_target": {"target_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom_source_to_custom_target",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "custom_source",
+				ToType:       "custom_target",
+			},
+		},
+	})
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, _, _, err = model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:  300000,
+		SourceType: "custom_source",
+		SourceInfo: map[string]string{
+			"custom_id":    "source-1",
+			"legacy_extra": "ignored",
+		},
+		TargetType: "custom_target",
+		MaxHops:    1,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, executor.sql, "custom_id = 'source-1'")
+	assert.NotContains(t, executor.sql, "legacy_extra")
 }
 
 func TestQueryLivenessGraphAllowsDefinedResourceWithoutRelations(t *testing.T) {
@@ -927,6 +963,12 @@ func TestComputeMaxHopsKeepsRoomForPartialPathResource(t *testing.T) {
 	assert.Equal(t, MaxAllowedHops, computeMaxHops("node", "host", []cmdb.Resource{"a", "b", "c", "d", "e"}))
 }
 
+func TestRangeQueryLookBackDeltaUsesRequiredWindowWhenOmitted(t *testing.T) {
+	assert.Equal(t, int64(660000), rangeQueryLookBackDelta(DefaultLookBackDelta, 0, 600000, 60000, false))
+	assert.Equal(t, DefaultLookBackDelta, rangeQueryLookBackDelta(DefaultLookBackDelta, 0, 600000, 60000, true))
+	assert.Equal(t, int64(660000), rangeQueryLookBackDelta(60000, 0, 600000, 60000, true))
+}
+
 func TestQueryLivenessGraphRaisesMaxHopsWhenDefaultCannotReachTarget(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
@@ -963,6 +1005,32 @@ func TestQueryLivenessGraphRaisesMaxHopsWhenDefaultCannotReachTarget(t *testing.
 		{ResourceType: "replicaset", RelationType: "pod_with_replicaset", Category: "static", Direction: "outbound"},
 		{ResourceType: "deployment", RelationType: "deployment_with_replicaset", Category: "static", Direction: "inbound"},
 	}}}, paths)
+}
+
+func TestAdjustMaxHopsForUnconstrainedPathKeepsLongerAlternatives(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"node":    {"node"},
+			"system":  {"system"},
+			"pod":     {"pod"},
+			"service": {"service"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "node_with_pod", Category: relation.RelationCategoryStatic, FromType: "node", ToType: "pod"},
+			{RelationName: "pod_with_service", Category: relation.RelationCategoryStatic, FromType: "pod", ToType: "service"},
+			{RelationName: "node_with_system", Category: relation.RelationCategoryStatic, FromType: "node", ToType: "system"},
+			{RelationName: "system_with_pod", Category: relation.RelationCategoryStatic, FromType: "system", ToType: "pod"},
+		},
+	})
+	req := &QueryRequest{
+		SourceType: ResourceTypeNode,
+		TargetType: ResourceTypeService,
+		MaxHops:    DefaultMaxHops,
+	}
+
+	adjustMaxHopsForUnconstrainedPath(req, NewSchemaProviderFromRelation(provider))
+
+	assert.Equal(t, 3, req.MaxHops)
 }
 
 func TestSurrealQueryBuilderUsesScalarLivenessFilters(t *testing.T) {
@@ -2277,8 +2345,8 @@ func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
 func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
 	paths := []resourcePath{
 		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
-		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "pod"}}},
 		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "statefulset"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "pod"}}},
 	}
 
 	sorted := sortPathsForQuery(paths)

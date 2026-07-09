@@ -260,6 +260,18 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
 		},
+		"结构化整段字符类正则不补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"[Page Error]"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":"[Page Error]"}}}}`,
+		},
 		"结构化正则顶层或表达式按分支补齐包含匹配": {
 			conditions: metadata.AllConditions{
 				{

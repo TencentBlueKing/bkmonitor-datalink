@@ -60,6 +60,9 @@ func rewriteSinglePattern(pattern string) string {
 	if isExplicitContains(pattern) {
 		return pattern
 	}
+	if isStandaloneCharClass(pattern) {
+		return pattern
+	}
 
 	hasPrefix := hasUnescapedPrefixAnchor(pattern)
 	hasSuffix := hasUnescapedSuffixAnchor(pattern)
@@ -174,6 +177,28 @@ func hasUnescapedSuffixAnchor(pattern string) bool {
 // isExplicitContains 判断表达式是否已经显式写成 .*foo.* 这类包含匹配。
 func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
+}
+
+// isStandaloneCharClass 判断表达式是否是整段裸字符类，例如 [abc] 或 [^abc]。
+func isStandaloneCharClass(pattern string) bool {
+	if !strings.HasPrefix(pattern, "[") {
+		return false
+	}
+
+	escaped := false
+	for i := 1; i < len(pattern); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch pattern[i] {
+		case '\\':
+			escaped = true
+		case ']':
+			return i == len(pattern)-1
+		}
+	}
+	return false
 }
 
 // addContainsPrefix 在缺少前置 .* 时补齐包含匹配前缀。

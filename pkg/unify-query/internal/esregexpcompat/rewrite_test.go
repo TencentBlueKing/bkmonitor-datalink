@@ -45,9 +45,29 @@ func TestRewrite(t *testing.T) {
 			pattern:     "(foo|bar)",
 			wantPattern: ".*(foo|bar).*",
 		},
+		"整段字符类不补齐包含匹配": {
+			pattern:     "[Page Error]",
+			wantPattern: "[Page Error]",
+		},
+		"整段排除字符类不补齐包含匹配": {
+			pattern:     "[^abc]",
+			wantPattern: "[^abc]",
+		},
 		"字符类内竖线不视为顶层或表达式": {
 			pattern:     "[a|b]",
-			wantPattern: ".*[a|b].*",
+			wantPattern: "[a|b]",
+		},
+		"非整段字符类仍补齐包含匹配": {
+			pattern:     "[Ee]rror",
+			wantPattern: ".*[Ee]rror.*",
+		},
+		"顶层或表达式中的整段字符类分支不补齐包含匹配": {
+			pattern:     "foo|[Page Error]",
+			wantPattern: "(.*foo.*|[Page Error])",
+		},
+		"转义字符类按普通包含处理": {
+			pattern:     `\[Page Error\]`,
+			wantPattern: `.*\[Page Error\].*`,
 		},
 		"前缀锚点改写为整值前缀匹配": {
 			pattern:     "^foo",

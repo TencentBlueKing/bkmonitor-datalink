@@ -839,6 +839,11 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
 			sql: "`msg` REGEXP 'TypeError'",
 		},
+		"字段整段字符类正则不补齐包含匹配": {
+			q:   `msg:/[Page Error]/`,
+			es:  `{"regexp":{"msg":{"value":"[Page Error]"}}}`,
+			sql: "`msg` REGEXP '[Page Error]'",
+		},
 		"字段正则顶层或表达式按分支补齐包含匹配": {
 			q:   `msg:/foo|bar/`,
 			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,

@@ -348,6 +348,9 @@ func (s *FlowFormatterSuite) TestFlowFormatterRetainsDerivedFields() {
 	s.Equal(float64(432), formatted.Metrics["packets"])
 	s.Equal(float64(240), formatted.Metrics["flow_bytes"])
 	s.Equal(float64(432), formatted.Metrics["flow_packets"])
+	s.Equal(float64(1779421614709), formatted.Metrics["time_flow_start_ms"])
+	s.Equal(float64(1779421614773), formatted.Metrics["time_flow_end_ms"])
+	s.Equal(float64(1779421615216), formatted.Metrics["time_received_ms"])
 	s.Equal(float64(1779421614773), formatted.Metrics["stat_time"])
 	s.Equal(float64(1779421614773), formatted.Metrics["@timestamp"])
 }

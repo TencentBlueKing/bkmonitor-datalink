@@ -464,6 +464,53 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	return sql, err
 }
 
+// collectUnionSelectFields 根据已生成的 SELECT/GROUP/ORDER 表达式提取底层表字段。
+//
+// 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
+// 这里复用“只收集反引号物理字段、忽略 AS 后别名”的规则，让内层 UNION 子查询只投影
+// 外层聚合真正需要的列。若表达式里没有可识别字段，例如 SELECT COUNT(*)，则回退到 *，
+// 避免改变原有语义。
+func collectUnionSelectFields(sqlParts ...[]string) string {
+	seen := make(map[string]struct{})
+	fields := make([]string, 0)
+
+	for _, parts := range sqlParts {
+		for _, part := range parts {
+			for idx := 0; idx < len(part); idx++ {
+				if part[idx] != '`' {
+					continue
+				}
+				start := idx
+				end := strings.IndexByte(part[idx+1:], '`')
+				if end < 0 {
+					break
+				}
+				end += idx + 1
+				name := part[idx+1 : end]
+				idx = end
+				if name == "" {
+					continue
+				}
+				prefixStart := start - len(" AS ")
+				if prefixStart >= 0 && strings.EqualFold(part[prefixStart:start], " AS ") {
+					continue
+				}
+				field := fmt.Sprintf("`%s`", name)
+				if _, ok := seen[field]; ok {
+					continue
+				}
+				seen[field] = struct{}{}
+				fields = append(fields, field)
+			}
+		}
+	}
+
+	if len(fields) == 0 {
+		return selectAll
+	}
+	return strings.Join(fields, ", ")
+}
+
 func (f *QueryFactory) SQL() (sql string, err error) {
 	// sql 解析语法不一样需要重新拼写
 	if f.query.SQL != "" {
@@ -508,8 +555,10 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 			table = f.Tables()[0]
 		} else {
 			stmts := make([]string, 0, len(f.Tables()))
+			selectList := collectUnionSelectFields(selectFields, groupFields, orderFields)
 			for _, t := range f.Tables() {
-				s := fmt.Sprintf("SELECT * FROM %s", t)
+				// 显式投影可以让 current/his Doris 表字段不完全一致时仍能完成 UNION ALL。
+				s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
 				if whereString != "" {
 					s = fmt.Sprintf("%s WHERE %s", s, whereString)
 				}

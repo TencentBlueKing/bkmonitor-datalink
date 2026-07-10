@@ -105,6 +105,78 @@ type Statement struct {
 	errNode []string
 }
 
+// collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
+//
+// 这里故意只识别带反引号的字段：Doris visitor 在字段映射完成后会把真实字段渲染为 `field`，
+// 而字符串字面量、函数名、数字常量不会被误收集。SELECT alias 不是底层表字段，不能出现在
+// UNION 子查询的投影里，否则会把外层计算别名错误地下推到 Doris 表。
+func collectColumnNamesFromSQL(s string, aliases map[string]struct{}) []string {
+	var names []string
+	seen := make(map[string]struct{})
+
+	for idx := 0; idx < len(s); idx++ {
+		if s[idx] != '`' {
+			continue
+		}
+		start := idx
+		end := strings.IndexByte(s[idx+1:], '`')
+		if end < 0 {
+			break
+		}
+		end += idx + 1
+		name := s[idx+1 : end]
+		idx = end
+		if name == "" {
+			continue
+		}
+		if _, ok := aliases[name]; ok {
+			continue
+		}
+
+		prefixStart := start - len(" AS ")
+		if prefixStart >= 0 && strings.EqualFold(s[prefixStart:start], " AS ") {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, fmt.Sprintf("`%s`", name))
+	}
+
+	return names
+}
+
+func (v *Statement) unionSelectList() string {
+	selectSQL := v.ItemString(SelectItem)
+	if selectSQL == Star {
+		return Star
+	}
+
+	// 多张 Doris 表合并时不能无条件 SELECT *：
+	// 历史表和当前表可能存在字段漂移，Doris 要求 UNION ALL 两侧列数一致。
+	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；如果无法可靠推导，
+	// 继续回退到 *，保持 SELECT * 这类原始数据查询的兼容行为。
+	aliases := v.collectSelectAliases()
+	fields := collectColumnNamesFromSQL(selectSQL, aliases)
+	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(GroupItem), aliases)...)
+	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(OrderItem), aliases)...)
+	if len(fields) == 0 {
+		return Star
+	}
+
+	seen := make(map[string]struct{}, len(fields))
+	result := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		result = append(result, field)
+	}
+	return strings.Join(result, ", ")
+}
+
 func (v *Statement) ItemString(name string) string {
 	if n, ok := v.nodeMap[name]; ok {
 		return nodeToString(n)
@@ -161,8 +233,10 @@ func (v *Statement) String() string {
 					res = v.Tables[0]
 				} else {
 					stmts := make([]string, 0, len(v.Tables))
+					selectList := v.unionSelectList()
 					for _, t := range v.Tables {
-						s := fmt.Sprintf("SELECT * FROM %s", t)
+						// 多表合并时将时间/查询条件下推到每张物理表，同时用显式投影规避表结构不一致。
+						s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
 						if v.Where != "" {
 							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
 						}

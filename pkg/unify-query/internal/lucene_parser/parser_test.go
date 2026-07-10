@@ -849,10 +849,25 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":".*[0-9].*"}}}`,
 			sql: "`msg` REGEXP '[0-9]'",
 		},
+		"字段空格下划线字符类正则仍补齐包含匹配": {
+			q:   `msg:/[ _]/`,
+			es:  `{"regexp":{"msg":{"value":".*[ _].*"}}}`,
+			sql: "`msg` REGEXP '[ _]'",
+		},
 		"字段正则顶层或表达式按分支补齐包含匹配": {
 			q:   `msg:/foo|bar/`,
 			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,
 			sql: "`msg` REGEXP 'foo|bar'",
+		},
+		"字段正则外层分组方括号短语不补齐包含匹配": {
+			q:   `msg:/([Page Error])/`,
+			es:  `{"regexp":{"msg":{"value":"([Page Error])"}}}`,
+			sql: "`msg` REGEXP '([Page Error])'",
+		},
+		"字段正则外层分组内的方括号短语分支不补齐包含匹配": {
+			q:   `msg:/([Page Error]|foo)/`,
+			es:  `{"regexp":{"msg":{"value":"([Page Error]|.*foo.*)"}}}`,
+			sql: "`msg` REGEXP '([Page Error]|foo)'",
 		},
 		"字段正则顶层或表达式保留分支锚点语义": {
 			q:   `msg:/^foo|bar/`,

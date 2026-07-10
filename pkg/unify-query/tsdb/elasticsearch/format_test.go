@@ -260,7 +260,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
 		},
-		"结构化方括号短语正则不补齐包含匹配": {
+		"结构化方括号短语正则仍补齐包含匹配": {
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -270,7 +270,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"regexp":{"keyword":{"value":"[Page Error]"}}}}`,
+			expected: `{"query":{"regexp":{"keyword":{"value":".*[Page Error].*"}}}}`,
 		},
 		"结构化普通字符类正则仍补齐包含匹配": {
 			conditions: metadata.AllConditions{

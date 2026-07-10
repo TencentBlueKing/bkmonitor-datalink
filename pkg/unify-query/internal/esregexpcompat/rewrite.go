@@ -31,6 +31,15 @@ type RewriteResult struct {
 
 // Rewrite 将 Python/Doris 搜索语义下的基础正则，改写成 ES regexp 整值匹配语义。
 func Rewrite(pattern string) RewriteResult {
+	return rewrite(pattern, false)
+}
+
+// RewriteForQueryString 在 Rewrite 基础上兼容 query_string 字段正则的方括号短语写法。
+func RewriteForQueryString(pattern string) RewriteResult {
+	return rewrite(pattern, true)
+}
+
+func rewrite(pattern string, keepBracketPhrase bool) RewriteResult {
 	if inner, ok := extractNegativeLookahead(pattern); ok {
 		return RewriteResult{
 			Pattern:  rewritePositivePattern(inner, false),
@@ -38,7 +47,7 @@ func Rewrite(pattern string) RewriteResult {
 		}
 	}
 
-	return RewriteResult{Pattern: rewritePositivePattern(pattern, true)}
+	return RewriteResult{Pattern: rewritePositivePattern(pattern, keepBracketPhrase)}
 }
 
 // rewritePositivePattern 将正向 regexp 改写为 ES 整值匹配下的等价 pattern。
@@ -60,8 +69,13 @@ func rewriteSinglePattern(pattern string, keepBracketPhrase bool) string {
 	if isExplicitContains(pattern) {
 		return pattern
 	}
-	if keepBracketPhrase && isBracketPhrase(pattern) {
+	if keepBracketPhrase && isLikelyBracketPhrase(pattern) {
 		return pattern
+	}
+	if keepBracketPhrase {
+		if rewritten, ok := rewriteWrappedBracketPhrase(pattern); ok {
+			return rewritten
+		}
 	}
 
 	hasPrefix := hasUnescapedPrefixAnchor(pattern)
@@ -179,23 +193,105 @@ func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
 }
 
-// isBracketPhrase 判断表达式是否像误写成字符类的方括号短语，例如 [Page Error]。
-func isBracketPhrase(pattern string) bool {
+// rewriteWrappedBracketPhrase 处理外层透明分组里的方括号短语，例如 ([Page Error]|foo)。
+func rewriteWrappedBracketPhrase(pattern string) (string, bool) {
+	inner, ok := trimOuterParens(pattern)
+	if !ok {
+		return "", false
+	}
+	if isLikelyBracketPhrase(inner) {
+		return "(" + inner + ")", true
+	}
+
+	alternatives, ok := splitTopLevelAlternation(inner)
+	if !ok {
+		return "", false
+	}
+
+	hasBracketPhrase := false
+	rewritten := make([]string, 0, len(alternatives))
+	for _, alternative := range alternatives {
+		if isLikelyBracketPhrase(alternative) {
+			hasBracketPhrase = true
+		}
+		rewritten = append(rewritten, rewriteSinglePattern(alternative, true))
+	}
+	if !hasBracketPhrase {
+		return "", false
+	}
+	return "(" + strings.Join(rewritten, "|") + ")", true
+}
+
+// isLikelyBracketPhrase 判断表达式是否像误写成字符类的方括号短语，例如 [Page Error]。
+func isLikelyBracketPhrase(pattern string) bool {
 	body, ok := standaloneCharClassBody(pattern)
-	if !ok || body == "" || strings.HasPrefix(body, "^") {
+	trimmedBody := strings.TrimSpace(body)
+	if !ok || trimmedBody == "" || strings.HasPrefix(trimmedBody, "^") {
 		return false
 	}
 
-	hasSpace := false
+	hasUpper := false
 	for i := 0; i < len(body); i++ {
 		switch body[i] {
-		case '\\', '-', '|', '[', ']':
+		case '\\', '-', '|', '[', ']', '(', ')':
 			return false
-		case ' ', '\t':
-			hasSpace = true
+		default:
+			if body[i] >= 'A' && body[i] <= 'Z' {
+				hasUpper = true
+			}
 		}
 	}
-	return hasSpace
+
+	longTokens := 0
+	for _, token := range strings.Fields(body) {
+		if len(token) > 1 {
+			longTokens++
+		}
+	}
+	return hasUpper && longTokens >= 2
+}
+
+func trimOuterParens(pattern string) (string, bool) {
+	if len(pattern) < 2 || pattern[0] != '(' || pattern[len(pattern)-1] != ')' {
+		return "", false
+	}
+
+	escaped := false
+	bracketDepth := 0
+	parenDepth := 0
+	for i := 0; i < len(pattern); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch pattern[i] {
+		case '\\':
+			escaped = true
+		case '[':
+			if bracketDepth == 0 {
+				bracketDepth = 1
+			}
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 {
+				parenDepth--
+				if parenDepth < 0 || (parenDepth == 0 && i != len(pattern)-1) {
+					return "", false
+				}
+			}
+		}
+	}
+	if parenDepth != 0 || bracketDepth != 0 {
+		return "", false
+	}
+	return pattern[1 : len(pattern)-1], true
 }
 
 func standaloneCharClassBody(pattern string) (string, bool) {

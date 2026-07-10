@@ -45,9 +45,9 @@ func TestRewrite(t *testing.T) {
 			pattern:     "(foo|bar)",
 			wantPattern: ".*(foo|bar).*",
 		},
-		"方括号短语不补齐包含匹配": {
+		"默认方括号短语仍补齐包含匹配": {
 			pattern:     "[Page Error]",
-			wantPattern: "[Page Error]",
+			wantPattern: ".*[Page Error].*",
 		},
 		"普通字符类仍补齐包含匹配": {
 			pattern:     "[0-9]",
@@ -85,9 +85,9 @@ func TestRewrite(t *testing.T) {
 			pattern:     "[Ee]rror",
 			wantPattern: ".*[Ee]rror.*",
 		},
-		"顶层或表达式中的整段字符类分支不补齐包含匹配": {
+		"默认顶层或表达式中的方括号短语分支仍补齐包含匹配": {
 			pattern:     "foo|[Page Error]",
-			wantPattern: "(.*foo.*|[Page Error])",
+			wantPattern: "(.*foo.*|.*[Page Error].*)",
 		},
 		"转义字符类按普通包含处理": {
 			pattern:     `\[Page Error\]`,
@@ -164,6 +164,80 @@ func TestRewrite(t *testing.T) {
 			}
 			if got.Negative != tt.wantNegative {
 				t.Fatalf("Rewrite(%q).Negative = %v, want %v", tt.pattern, got.Negative, tt.wantNegative)
+			}
+		})
+	}
+}
+
+func TestRewriteForQueryString(t *testing.T) {
+	tests := map[string]struct {
+		pattern      string
+		wantPattern  string
+		wantNegative bool
+	}{
+		"方括号短语不补齐包含匹配": {
+			pattern:     "[Page Error]",
+			wantPattern: "[Page Error]",
+		},
+		"空白字符类仍补齐包含匹配": {
+			pattern:     "[ ]",
+			wantPattern: ".*[ ].*",
+		},
+		"单字符加空格字符类仍补齐包含匹配": {
+			pattern:     "[a b]",
+			wantPattern: ".*[a b].*",
+		},
+		"数字加空格字符类仍补齐包含匹配": {
+			pattern:     "[0 9]",
+			wantPattern: ".*[0 9].*",
+		},
+		"空格和下划线字符类仍补齐包含匹配": {
+			pattern:     "[ _]",
+			wantPattern: ".*[ _].*",
+		},
+		"普通字符类仍补齐包含匹配": {
+			pattern:     "[0-9]",
+			wantPattern: ".*[0-9].*",
+		},
+		"十六进制转义字符类仍补齐包含匹配": {
+			pattern:     `[\x61]`,
+			wantPattern: `.*[\x61].*`,
+		},
+		"外层透明分组方括号短语不补齐包含匹配": {
+			pattern:     "([Page Error])",
+			wantPattern: "([Page Error])",
+		},
+		"外层透明分组内的方括号短语分支不补齐包含匹配": {
+			pattern:     "([Page Error]|foo)",
+			wantPattern: "([Page Error]|.*foo.*)",
+		},
+		"外层透明分组内无方括号短语时保持原包含匹配": {
+			pattern:     "(foo|bar)",
+			wantPattern: ".*(foo|bar).*",
+		},
+		"外层透明分组内合法字符类时保持原包含匹配": {
+			pattern:     "([ _]|foo)",
+			wantPattern: ".*([ _]|foo).*",
+		},
+		"顶层或表达式中的方括号短语分支不补齐包含匹配": {
+			pattern:     "foo|[Page Error]",
+			wantPattern: "(.*foo.*|[Page Error])",
+		},
+		"不包含语义固定前缀内的方括号短语保持包含匹配": {
+			pattern:      "^(?!.*[Page Error]).*",
+			wantPattern:  ".*[Page Error].*",
+			wantNegative: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := RewriteForQueryString(tt.pattern)
+			if got.Pattern != tt.wantPattern {
+				t.Fatalf("RewriteForQueryString(%q).Pattern = %q, want %q", tt.pattern, got.Pattern, tt.wantPattern)
+			}
+			if got.Negative != tt.wantNegative {
+				t.Fatalf("RewriteForQueryString(%q).Negative = %v, want %v", tt.pattern, got.Negative, tt.wantNegative)
 			}
 		})
 	}

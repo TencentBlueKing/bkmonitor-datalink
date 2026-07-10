@@ -38,11 +38,51 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			ignoreNames: map[string]struct{}{"_value_": {}},
 			expected:    nil,
 		},
+		{
+			name:     "dotted 引用只收集 root 字段",
+			sql:      "__ext.cluster.extra.name_space, `path`",
+			expected: []string{"`__ext`", "`path`"},
+		},
+		{
+			name:     "反引号 keyword 字段保留为真实字段",
+			sql:      "`time`, `path`",
+			expected: []string{"`time`", "`path`"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, collectColumnNamesFromSQL(tt.sql, tt.ignoreNames))
+		})
+	}
+}
+
+func TestCollectAliasesFromSQLForUnion(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		expected map[string]struct{}
+	}{
+		{
+			name:     "跳过字符串里的 AS 文本",
+			sql:      "COUNT(regexp_extract(log, ' AS path ', 1)) AS user_id",
+			expected: map[string]struct{}{"user_id": {}},
+		},
+		{
+			name:     "跳过括号内 CAST 类型 AS",
+			sql:      "CAST(log AS TEXT) AS log_text",
+			expected: map[string]struct{}{"log_text": {}},
+		},
+		{
+			name:     "收集反引号 alias",
+			sql:      "COUNT(*) AS `log_count`",
+			expected: map[string]struct{}{"log_count": {}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, collectAliasesFromSQL(tt.sql))
 		})
 	}
 }
@@ -84,6 +124,12 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			groupSQL:  "`path`",
 			orderSQL:  "`path` DESC",
 			expected:  "`path`",
+		},
+		{
+			name:      "字符串里的 AS 不会误跳过 GROUP BY 字段",
+			selectSQL: "regexp_extract(log, ' AS path ', 1) AS user_id",
+			groupSQL:  "path",
+			expected:  "`log`, `path`",
 		},
 	}
 

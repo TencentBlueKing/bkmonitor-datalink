@@ -112,9 +112,10 @@ type Statement struct {
 // 因此这里同时识别反引号字段和可解析的未反引号 identifier。
 //
 // 这里不是完整 SQL parser，只处理 visitor 已渲染出的 SELECT/GROUP/ORDER 片段：
-// 跳过字符串字面量、SQL keyword、函数名和 AS 后的 alias。ignoreNames 只用于
-// GROUP/ORDER 这类可能引用 SELECT alias 的片段；SELECT 自身不能用全局 alias 名过滤，
-// 否则 `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
+// 跳过字符串字面量、未反引号 SQL keyword、函数名和 AS 后的 alias。dotted path
+// 只收 root，避免把对象 key 或路径段误投影为原表列。ignoreNames 只用于 GROUP/ORDER
+// 这类可能引用 SELECT alias 的片段；SELECT 自身不能用全局 alias 名过滤，否则
+// `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
 func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []string {
 	var names []string
 	seen := make(map[string]struct{})
@@ -132,7 +133,7 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 			end += idx + 1
 			name := s[idx+1 : end]
 			idx = end
-			if shouldSkipColumnName(s, start, name, ignoreNames) {
+			if shouldSkipColumnName(s, start, name, ignoreNames, true) {
 				continue
 			}
 			field := fmt.Sprintf("`%s`", name)
@@ -154,7 +155,10 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 		}
 		name := s[start:idx]
 		idx--
-		if shouldSkipColumnName(s, start, name, ignoreNames) {
+		if previousNonSpaceByte(s, start) == '.' {
+			continue
+		}
+		if shouldSkipColumnName(s, start, name, ignoreNames, false) {
 			continue
 		}
 		// 标识符后紧跟 '(' 时是函数名，例如 COUNT(*) 或 CAST(...)，
@@ -172,14 +176,14 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 	return names
 }
 
-func shouldSkipColumnName(s string, start int, name string, ignoreNames map[string]struct{}) bool {
+func shouldSkipColumnName(s string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {
 	if name == "" {
 		return true
 	}
 	if _, ok := ignoreNames[name]; ok {
 		return true
 	}
-	if isSQLKeyword(name) {
+	if !quoted && isSQLKeyword(name) {
 		return true
 	}
 	if previousTokenIsAS(s, start) {
@@ -198,6 +202,15 @@ func previousTokenIsAS(s string, start int) bool {
 		idx--
 	}
 	return strings.EqualFold(s[idx+1:end], "AS")
+}
+
+func previousNonSpaceByte(s string, start int) byte {
+	for idx := start - 1; idx >= 0; idx-- {
+		if s[idx] != ' ' {
+			return s[idx]
+		}
+	}
+	return 0
 }
 
 func nextNonSpaceByte(s string, start int) byte {
@@ -349,13 +362,33 @@ func (v *Statement) collectSelectAliases() map[string]struct{} {
 // 这里补齐 AS alias，避免 GROUP/ORDER 引用外层 alias 时被误下推到原表。
 func collectAliasesFromSQL(s string) map[string]struct{} {
 	aliases := make(map[string]struct{})
-	upper := strings.ToUpper(s)
+	depth := 0
 	for idx := 0; idx < len(s); idx++ {
-		asIdx := strings.Index(upper[idx:], " AS ")
-		if asIdx < 0 {
-			break
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '`':
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return aliases
+			}
+			idx += end + 1
+			continue
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
 		}
-		idx += asIdx + len(" AS ")
+		if depth > 0 || !isASClauseAt(s, idx) {
+			continue
+		}
+
+		idx += len(" AS ")
 		for idx < len(s) && s[idx] == ' ' {
 			idx++
 		}
@@ -383,6 +416,10 @@ func collectAliasesFromSQL(s string) map[string]struct{} {
 		}
 	}
 	return aliases
+}
+
+func isASClauseAt(s string, idx int) bool {
+	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
 func (v *Statement) String() string {

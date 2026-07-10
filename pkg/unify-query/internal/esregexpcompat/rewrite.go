@@ -241,11 +241,22 @@ func isLikelyBracketPhrase(pattern string) bool {
 
 	longTokens := 0
 	for _, token := range strings.Fields(body) {
-		if len(token) > 1 {
+		if runeCountGreaterThanOne(token) {
 			longTokens++
 		}
 	}
 	return longTokens >= 2
+}
+
+func runeCountGreaterThanOne(s string) bool {
+	count := 0
+	for range s {
+		count++
+		if count > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func trimOuterParens(pattern string) (string, bool) {

@@ -199,6 +199,14 @@ func TestRewriteForQueryString(t *testing.T) {
 			pattern:     "[ _]",
 			wantPattern: ".*[ _].*",
 		},
+		"中文单字符加空格字符类仍补齐包含匹配": {
+			pattern:     "[中 文]",
+			wantPattern: ".*[中 文].*",
+		},
+		"中文方括号短语不补齐包含匹配": {
+			pattern:     "[页面 错误]",
+			wantPattern: "[页面 错误]",
+		},
 		"普通字符类仍补齐包含匹配": {
 			pattern:     "[0-9]",
 			wantPattern: ".*[0-9].*",

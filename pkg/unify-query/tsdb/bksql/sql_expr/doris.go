@@ -144,16 +144,21 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 }
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (sql string, err error) {
+	return d.parserSQL(ctx, q, tables, where, offset, limit, tableFieldsMap, true)
+}
+
+func (d *DorisSQLExpr) parserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap, rejectSelectAllUnion bool) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
 		AddIgnoreField: func(s string) {
 			d.ignoreFieldSet.Add(strings.ToUpper(s))
 		},
-		Tables:         tables,
-		Where:          where,
-		TableFieldsMap: tableFieldsMap,
-		Offset:         offset,
-		Limit:          limit,
+		Tables:               tables,
+		Where:                where,
+		TableFieldsMap:       tableFieldsMap,
+		RejectSelectAllUnion: rejectSelectAllUnion,
+		Offset:               offset,
+		Limit:                limit,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)

@@ -102,9 +102,11 @@ type Statement struct {
 	Tables         []string
 	Where          string
 	TableFieldsMap TableFieldsMap
-	Offset         int
-	Limit          int
-	errNode        []string
+	// RejectSelectAllUnion controls Doris-only schema drift protection for SELECT * unions.
+	RejectSelectAllUnion bool
+	Offset               int
+	Limit                int
+	errNode              []string
 }
 
 type TableFieldsMap map[string]metadata.FieldsMap
@@ -340,7 +342,7 @@ func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
 
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
-		if len(v.Tables) > 1 {
+		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
 			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
 		}
 		return Star
@@ -593,6 +595,7 @@ func (v *Statement) String() string {
 				tableNode.SubQuery.Tables = v.Tables
 				tableNode.SubQuery.Where = v.Where
 				tableNode.SubQuery.TableFieldsMap = v.TableFieldsMap
+				tableNode.SubQuery.RejectSelectAllUnion = v.RejectSelectAllUnion
 				v.Where = ""
 				res = tableNode.String()
 				if err := tableNode.SubQuery.Error(); err != nil {
@@ -1817,9 +1820,10 @@ type Option struct {
 	DimensionTransform Encode
 	AddIgnoreField     func(string)
 
-	Tables         []string
-	Where          string
-	TableFieldsMap TableFieldsMap
-	Offset         int
-	Limit          int
+	Tables               []string
+	Where                string
+	TableFieldsMap       TableFieldsMap
+	RejectSelectAllUnion bool
+	Offset               int
+	Limit                int
 }

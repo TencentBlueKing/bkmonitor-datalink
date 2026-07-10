@@ -184,7 +184,8 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 
 func TestStatementUnionSelectListRejectsMultiTableWildcard(t *testing.T) {
 	stmt := &Statement{
-		Tables: []string{"`db_b`.doris", "`db_a`.doris"},
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
 		nodeMap: map[string]Node{
 			SelectItem: &unionSelectTestNode{value: "*"},
 		},

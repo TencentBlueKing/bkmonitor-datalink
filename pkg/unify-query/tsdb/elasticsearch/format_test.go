@@ -260,7 +260,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
 		},
-		"结构化整段字符类正则不补齐包含匹配": {
+		"结构化方括号短语正则不补齐包含匹配": {
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -271,6 +271,18 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":"[Page Error]"}}}}`,
+		},
+		"结构化普通字符类正则仍补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"[0-9]"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*[0-9].*"}}}}`,
 		},
 		"结构化正则顶层或表达式按分支补齐包含匹配": {
 			conditions: metadata.AllConditions{
@@ -319,6 +331,18 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化正则不包含前缀内的字符类保持包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*[abc]).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*[abc].*"}}}}}}`,
 		},
 		"结构化正则不包含前缀形式只作用于当前 value": {
 			conditions: metadata.AllConditions{

@@ -33,34 +33,34 @@ type RewriteResult struct {
 func Rewrite(pattern string) RewriteResult {
 	if inner, ok := extractNegativeLookahead(pattern); ok {
 		return RewriteResult{
-			Pattern:  rewritePositivePattern(inner),
+			Pattern:  rewritePositivePattern(inner, false),
 			Negative: true,
 		}
 	}
 
-	return RewriteResult{Pattern: rewritePositivePattern(pattern)}
+	return RewriteResult{Pattern: rewritePositivePattern(pattern, true)}
 }
 
 // rewritePositivePattern 将正向 regexp 改写为 ES 整值匹配下的等价 pattern。
-func rewritePositivePattern(pattern string) string {
+func rewritePositivePattern(pattern string, keepBracketPhrase bool) string {
 	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
 		rewritten := make([]string, 0, len(alternatives))
 		for _, alternative := range alternatives {
-			rewritten = append(rewritten, rewriteSinglePattern(alternative))
+			rewritten = append(rewritten, rewriteSinglePattern(alternative, keepBracketPhrase))
 		}
 		return "(" + strings.Join(rewritten, "|") + ")"
 	}
 
-	return rewriteSinglePattern(pattern)
+	return rewriteSinglePattern(pattern, keepBracketPhrase)
 }
 
 // rewriteSinglePattern 改写不含顶层 | 的单个正则分支。
 // 未显式锚定的分支会补齐 .* 以模拟历史包含匹配；^/$ 锚点会被转换成 ES 整值匹配下的前缀/后缀约束。
-func rewriteSinglePattern(pattern string) string {
+func rewriteSinglePattern(pattern string, keepBracketPhrase bool) string {
 	if isExplicitContains(pattern) {
 		return pattern
 	}
-	if isStandaloneCharClass(pattern) {
+	if keepBracketPhrase && isBracketPhrase(pattern) {
 		return pattern
 	}
 
@@ -179,10 +179,28 @@ func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
 }
 
-// isStandaloneCharClass 判断表达式是否是整段裸字符类，例如 [abc] 或 [^abc]。
-func isStandaloneCharClass(pattern string) bool {
-	if !strings.HasPrefix(pattern, "[") {
+// isBracketPhrase 判断表达式是否像误写成字符类的方括号短语，例如 [Page Error]。
+func isBracketPhrase(pattern string) bool {
+	body, ok := standaloneCharClassBody(pattern)
+	if !ok || body == "" || strings.HasPrefix(body, "^") {
 		return false
+	}
+
+	hasSpace := false
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\\', '-', '|', '[', ']':
+			return false
+		case ' ', '\t':
+			hasSpace = true
+		}
+	}
+	return hasSpace
+}
+
+func standaloneCharClassBody(pattern string) (string, bool) {
+	if !strings.HasPrefix(pattern, "[") {
+		return "", false
 	}
 
 	escaped := false
@@ -195,10 +213,13 @@ func isStandaloneCharClass(pattern string) bool {
 		case '\\':
 			escaped = true
 		case ']':
-			return i == len(pattern)-1
+			if i != len(pattern)-1 {
+				return "", false
+			}
+			return pattern[1:i], true
 		}
 	}
-	return false
+	return "", false
 }
 
 // addContainsPrefix 在缺少前置 .* 时补齐包含匹配前缀。

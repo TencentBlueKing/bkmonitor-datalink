@@ -45,17 +45,41 @@ func TestRewrite(t *testing.T) {
 			pattern:     "(foo|bar)",
 			wantPattern: ".*(foo|bar).*",
 		},
-		"整段字符类不补齐包含匹配": {
+		"方括号短语不补齐包含匹配": {
 			pattern:     "[Page Error]",
 			wantPattern: "[Page Error]",
 		},
-		"整段排除字符类不补齐包含匹配": {
+		"普通字符类仍补齐包含匹配": {
+			pattern:     "[0-9]",
+			wantPattern: ".*[0-9].*",
+		},
+		"整段排除字符类仍补齐包含匹配": {
 			pattern:     "[^abc]",
-			wantPattern: "[^abc]",
+			wantPattern: ".*[^abc].*",
+		},
+		"空字符类仍补齐包含匹配": {
+			pattern:     "[]",
+			wantPattern: ".*[].*",
+		},
+		"空排除字符类仍补齐包含匹配": {
+			pattern:     "[^]",
+			wantPattern: ".*[^].*",
+		},
+		"带量词字符类仍补齐包含匹配": {
+			pattern:     "[abc]+",
+			wantPattern: ".*[abc]+.*",
+		},
+		"带转义右中括号字符类仍补齐包含匹配": {
+			pattern:     `[a\]b]`,
+			wantPattern: `.*[a\]b].*`,
+		},
+		"带十六进制转义字符类仍补齐包含匹配": {
+			pattern:     `[\x61]`,
+			wantPattern: `.*[\x61].*`,
 		},
 		"字符类内竖线不视为顶层或表达式": {
 			pattern:     "[a|b]",
-			wantPattern: "[a|b]",
+			wantPattern: ".*[a|b].*",
 		},
 		"非整段字符类仍补齐包含匹配": {
 			pattern:     "[Ee]rror",
@@ -110,6 +134,16 @@ func TestRewrite(t *testing.T) {
 		"不包含语义固定前缀内的顶层或表达式按分支补齐包含匹配": {
 			pattern:      "^(?!.*foo|.*bar).*",
 			wantPattern:  "(.*foo.*|.*bar.*)",
+			wantNegative: true,
+		},
+		"不包含语义固定前缀内的字符类保持包含匹配": {
+			pattern:      "^(?!.*[abc]).*",
+			wantPattern:  ".*[abc].*",
+			wantNegative: true,
+		},
+		"不包含语义固定前缀内的方括号短语保持包含匹配": {
+			pattern:      "^(?!.*[Page Error]).*",
+			wantPattern:  ".*[Page Error].*",
 			wantNegative: true,
 		},
 		"转义前缀锚点按普通包含处理": {

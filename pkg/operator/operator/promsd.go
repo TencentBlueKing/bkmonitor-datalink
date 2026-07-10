@@ -70,6 +70,9 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 		}
 	}
 
+	c.promSdConfigsMut.Lock()
+	defer c.promSdConfigsMut.Unlock()
+
 	eq := reflect.DeepEqual(c.promSdConfigsBytes, newRound) // 对比是否需要更新操作
 	c.promSdConfigsBytes = newRound
 	return rscs, !eq // changed
@@ -343,6 +346,12 @@ func (c *Operator) reloadPromScrapeConfigDiscovers() {
 	if !ok {
 		return
 	}
+	c.reconcilePromScrapeConfigs(resourceScrapeConfigs)
+}
+
+func (c *Operator) reconcilePromScrapeConfigs(resourceScrapeConfigs []resourceScrapConfig) {
+	c.promSdReconcileMut.Lock()
+	defer c.promSdReconcileMut.Unlock()
 
 	newRound := make(map[string]resourceScrapConfig)
 	for _, sc := range resourceScrapeConfigs {
@@ -357,6 +366,8 @@ func (c *Operator) reloadPromScrapeConfigDiscovers() {
 
 	var addOrUpdateScrapeConfigs []resourceScrapConfig
 	var removeScrapeConfigs []resourceScrapConfig
+
+	c.promSdConfigsMut.Lock()
 	for _, sc := range resourceScrapeConfigs {
 		uid := fmt.Sprintf("%s/%s", sc.Resource, sc.Config.JobName)
 		v, ok := c.prevResourceScrapeConfigs[uid]
@@ -378,6 +389,8 @@ func (c *Operator) reloadPromScrapeConfigDiscovers() {
 			logger.Infof("promsd remove (%s) scrapeConfig", uid)
 		}
 	}
+	c.prevResourceScrapeConfigs = newRound
+	c.promSdConfigsMut.Unlock()
 
 	// 模拟 monitor 资源监听变化
 	if len(addOrUpdateScrapeConfigs) > 0 {
@@ -386,10 +399,22 @@ func (c *Operator) reloadPromScrapeConfigDiscovers() {
 	if len(removeScrapeConfigs) > 0 {
 		c.handlePromScrapeConfigDiscovers(removeScrapeConfigs, opRemove)
 	}
-	c.prevResourceScrapeConfigs = newRound
 }
 
-func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resourceScrapConfig, op string) {
+func (c *Operator) snapshotPromScrapeConfigs() []resourceScrapConfig {
+	c.promSdConfigsMut.Lock()
+	defer c.promSdConfigsMut.Unlock()
+
+	configs := make([]resourceScrapConfig, 0, len(c.prevResourceScrapeConfigs))
+	for _, scrapeConfig := range c.prevResourceScrapeConfigs {
+		configs = append(configs, scrapeConfig)
+	}
+	return configs
+}
+
+func (c *Operator) createPromScrapeConfigDiscovers(
+	resourceScrapeConfigs []resourceScrapConfig,
+) []discover.Discover {
 	var discovers []discover.Discover
 	kinds := configs.G().PromSDKinds
 	for i := 0; i < len(resourceScrapeConfigs); i++ {
@@ -442,7 +467,11 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 			}
 		}
 	}
+	return discovers
+}
 
+func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resourceScrapConfig, op string) {
+	discovers := c.createPromScrapeConfigDiscovers(resourceScrapeConfigs)
 	switch op {
 	case opAddOrUpdate:
 		for _, dis := range discovers {

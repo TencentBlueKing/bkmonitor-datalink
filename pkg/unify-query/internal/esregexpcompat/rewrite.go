@@ -69,11 +69,8 @@ func rewriteSinglePattern(pattern string, keepBracketPhrase bool) string {
 	if isExplicitContains(pattern) {
 		return pattern
 	}
-	if keepBracketPhrase && isLikelyBracketPhrase(pattern) {
-		return pattern
-	}
 	if keepBracketPhrase {
-		if rewritten, ok := rewriteWrappedBracketPhrase(pattern); ok {
+		if rewritten, ok := rewriteBracketPhrasePattern(pattern); ok {
 			return rewritten
 		}
 	}
@@ -193,33 +190,38 @@ func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
 }
 
-// rewriteWrappedBracketPhrase 处理外层透明分组里的方括号短语，例如 ([Page Error]|foo)。
-func rewriteWrappedBracketPhrase(pattern string) (string, bool) {
+// rewriteBracketPhrasePattern 递归处理透明分组里的方括号短语，例如 (([Page Error])|foo)。
+func rewriteBracketPhrasePattern(pattern string) (string, bool) {
+	if isLikelyBracketPhrase(pattern) {
+		return pattern, true
+	}
+
+	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
+		hasBracketPhrase := false
+		rewritten := make([]string, 0, len(alternatives))
+		for _, alternative := range alternatives {
+			if rewrittenAlternative, ok := rewriteBracketPhrasePattern(alternative); ok {
+				hasBracketPhrase = true
+				rewritten = append(rewritten, rewrittenAlternative)
+				continue
+			}
+			rewritten = append(rewritten, rewriteSinglePattern(alternative, true))
+		}
+		if !hasBracketPhrase {
+			return "", false
+		}
+		return strings.Join(rewritten, "|"), true
+	}
+
 	inner, ok := trimOuterParens(pattern)
 	if !ok {
 		return "", false
 	}
-	if isLikelyBracketPhrase(inner) {
-		return "(" + inner + ")", true
-	}
-
-	alternatives, ok := splitTopLevelAlternation(inner)
+	rewrittenInner, ok := rewriteBracketPhrasePattern(inner)
 	if !ok {
 		return "", false
 	}
-
-	hasBracketPhrase := false
-	rewritten := make([]string, 0, len(alternatives))
-	for _, alternative := range alternatives {
-		if isLikelyBracketPhrase(alternative) {
-			hasBracketPhrase = true
-		}
-		rewritten = append(rewritten, rewriteSinglePattern(alternative, true))
-	}
-	if !hasBracketPhrase {
-		return "", false
-	}
-	return "(" + strings.Join(rewritten, "|") + ")", true
+	return "(" + rewrittenInner + ")", true
 }
 
 // isLikelyBracketPhrase 判断表达式是否像误写成字符类的方括号短语，例如 [Page Error]。
@@ -230,15 +232,10 @@ func isLikelyBracketPhrase(pattern string) bool {
 		return false
 	}
 
-	hasUpper := false
 	for i := 0; i < len(body); i++ {
 		switch body[i] {
-		case '\\', '-', '|', '[', ']', '(', ')':
+		case '\\', '-', '|', '^', '[', ']', '(', ')':
 			return false
-		default:
-			if body[i] >= 'A' && body[i] <= 'Z' {
-				hasUpper = true
-			}
 		}
 	}
 
@@ -248,7 +245,7 @@ func isLikelyBracketPhrase(pattern string) bool {
 			longTokens++
 		}
 	}
-	return hasUpper && longTokens >= 2
+	return longTokens >= 2
 }
 
 func trimOuterParens(pattern string) (string, bool) {

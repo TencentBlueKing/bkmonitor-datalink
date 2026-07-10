@@ -179,6 +179,10 @@ func TestRewriteForQueryString(t *testing.T) {
 			pattern:     "[Page Error]",
 			wantPattern: "[Page Error]",
 		},
+		"小写方括号短语不补齐包含匹配": {
+			pattern:     "[page error]",
+			wantPattern: "[page error]",
+		},
 		"空白字符类仍补齐包含匹配": {
 			pattern:     "[ ]",
 			wantPattern: ".*[ ].*",
@@ -207,9 +211,17 @@ func TestRewriteForQueryString(t *testing.T) {
 			pattern:     "([Page Error])",
 			wantPattern: "([Page Error])",
 		},
+		"双层透明分组方括号短语不补齐包含匹配": {
+			pattern:     "(([Page Error]))",
+			wantPattern: "(([Page Error]))",
+		},
 		"外层透明分组内的方括号短语分支不补齐包含匹配": {
 			pattern:     "([Page Error]|foo)",
 			wantPattern: "([Page Error]|.*foo.*)",
+		},
+		"双层透明分组内的方括号短语分支不补齐包含匹配": {
+			pattern:     "(([Page Error])|foo)",
+			wantPattern: "(([Page Error])|.*foo.*)",
 		},
 		"外层透明分组内无方括号短语时保持原包含匹配": {
 			pattern:     "(foo|bar)",

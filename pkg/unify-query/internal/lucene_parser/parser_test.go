@@ -308,6 +308,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"regexp":{"case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
 		},
 		{
+			name:  "大小写不敏感字段的大写方括号短语 lower 后不补齐包含匹配",
+			input: `case_insensitive_log:/[Page Error]/`,
+			sql:   "`case_insensitive_log` REGEXP '[Page Error]'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":"[page error]"}}}`,
+		},
+		{
+			name:  "大小写不敏感字段的小写方括号短语不补齐包含匹配",
+			input: `case_insensitive_log:/[page error]/`,
+			sql:   "`case_insensitive_log` REGEXP '[page error]'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":"[page error]"}}}`,
+		},
+		{
 			name:  "旧版大小写不敏感字段的正则会 lower pattern",
 			input: `legacy_case_insensitive_log:/SSR_REQUEST_ERROR/`,
 			sql:   "`legacy_case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
@@ -864,10 +876,20 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":"([Page Error])"}}}`,
 			sql: "`msg` REGEXP '([Page Error])'",
 		},
+		"字段正则双层分组方括号短语不补齐包含匹配": {
+			q:   `msg:/(([Page Error]))/`,
+			es:  `{"regexp":{"msg":{"value":"(([Page Error]))"}}}`,
+			sql: "`msg` REGEXP '(([Page Error]))'",
+		},
 		"字段正则外层分组内的方括号短语分支不补齐包含匹配": {
 			q:   `msg:/([Page Error]|foo)/`,
 			es:  `{"regexp":{"msg":{"value":"([Page Error]|.*foo.*)"}}}`,
 			sql: "`msg` REGEXP '([Page Error]|foo)'",
+		},
+		"字段正则双层分组内的方括号短语分支不补齐包含匹配": {
+			q:   `msg:/(([Page Error])|foo)/`,
+			es:  `{"regexp":{"msg":{"value":"(([Page Error])|.*foo.*)"}}}`,
+			sql: "`msg` REGEXP '(([Page Error])|foo)'",
 		},
 		"字段正则顶层或表达式保留分支锚点语义": {
 			q:   `msg:/^foo|bar/`,

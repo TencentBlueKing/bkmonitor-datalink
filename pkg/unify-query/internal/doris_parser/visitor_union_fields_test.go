@@ -49,6 +49,12 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			expected:    nil,
 		},
 		{
+			name:        "GROUP/ORDER 引用外层 alias 时大小写不敏感",
+			sql:         "C DESC",
+			ignoreNames: map[string]struct{}{"c": {}},
+			expected:    nil,
+		},
+		{
 			name:     "dotted 引用只收集 root 字段",
 			sql:      "__ext.cluster.extra.name_space, `path`",
 			expected: []string{"`__ext`", "`path`"},
@@ -165,6 +171,25 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
 			expected:  Star,
 		},
+		{
+			name:      "混合 DISTINCT star 按 wildcard 处理",
+			selectSQL: "DISTINCT(*), `log`",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
+		{
+			name:      "混合 DISTINCT 空格 star 按 wildcard 处理",
+			selectSQL: "DISTINCT *, `log`",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
+		{
+			name:      "ORDER BY 大小写不同的 alias 不下推",
+			selectSQL: "COUNT(*) AS c",
+			orderSQL:  "C DESC",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
 	}
 
 	for _, tt := range tests {
@@ -214,6 +239,29 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 
 	assert.Equal(t, "`path`", stmt.unionSelectList())
 	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
+}
+
+func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar"},
+				"dimensions.retry_count":  {FieldType: "double"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions['pipelineName'], COUNT(*) AS c"},
+			GroupItem:  &unionSelectTestNode{value: "dimensions['pipelineName']"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
 }
 
 func TestStatementSubQueryUnionInheritsTableSchema(t *testing.T) {

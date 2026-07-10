@@ -111,6 +111,11 @@ type Statement struct {
 
 type TableFieldsMap map[string]metadata.FieldsMap
 
+type unionProjectionField struct {
+	field        string
+	validateName string
+}
+
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
 //
 // 多表 UNION 的内层投影必须保留外层表达式依赖的源字段，例如
@@ -123,7 +128,21 @@ type TableFieldsMap map[string]metadata.FieldsMap
 // 这类可能引用 SELECT alias 的片段；SELECT 自身不能用全局 alias 名过滤，否则
 // `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
 func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []string {
+	fields := collectUnionProjectionFields(s, ignoreNames)
 	var names []string
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field.field]; ok {
+			continue
+		}
+		seen[field.field] = struct{}{}
+		names = append(names, field.field)
+	}
+	return names
+}
+
+func collectUnionProjectionFields(s string, ignoreNames map[string]struct{}) []unionProjectionField {
+	var fields []unionProjectionField
 	seen := make(map[string]struct{})
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -137,7 +156,7 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 			start := idx
 			end := strings.IndexByte(s[idx+1:], '`')
 			if end < 0 {
-				return names
+				return fields
 			}
 			end += idx + 1
 			name := s[idx+1 : end]
@@ -146,11 +165,12 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 				continue
 			}
 			field := fmt.Sprintf("`%s`", name)
-			if _, ok := seen[field]; ok {
+			key := field + "\x00" + name
+			if _, ok := seen[key]; ok {
 				continue
 			}
-			seen[field] = struct{}{}
-			names = append(names, field)
+			seen[key] = struct{}{}
+			fields = append(fields, unionProjectionField{field: field, validateName: name})
 			continue
 		}
 
@@ -178,21 +198,23 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 		if nextNonSpaceByte(s, idx+1) == '(' {
 			continue
 		}
+		validateName := name + collectObjectPathSuffix(s, idx+1)
 		field := fmt.Sprintf("`%s`", name)
-		if _, ok := seen[field]; ok {
+		key := field + "\x00" + validateName
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[field] = struct{}{}
-		names = append(names, field)
+		seen[key] = struct{}{}
+		fields = append(fields, unionProjectionField{field: field, validateName: validateName})
 	}
-	return names
+	return fields
 }
 
 func shouldSkipColumnName(s string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {
 	if name == "" {
 		return true
 	}
-	if _, ok := ignoreNames[name]; ok {
+	if ignoreNamesContains(ignoreNames, name) {
 		return true
 	}
 	if !quoted && isSQLKeyword(name) {
@@ -202,6 +224,92 @@ func shouldSkipColumnName(s string, start int, name string, ignoreNames map[stri
 		return true
 	}
 	return false
+}
+
+func ignoreNamesContains(ignoreNames map[string]struct{}, name string) bool {
+	if len(ignoreNames) == 0 {
+		return false
+	}
+	if _, ok := ignoreNames[name]; ok {
+		return true
+	}
+	_, ok := ignoreNames[strings.ToLower(name)]
+	return ok
+}
+
+func collectObjectPathSuffix(s string, start int) string {
+	var parts []string
+	for idx := start; idx < len(s); {
+		for idx < len(s) && s[idx] == ' ' {
+			idx++
+		}
+		if idx >= len(s) {
+			break
+		}
+		switch s[idx] {
+		case '.':
+			idx++
+			for idx < len(s) && s[idx] == ' ' {
+				idx++
+			}
+			partStart := idx
+			if idx >= len(s) || !isSQLIdentifierStart(s[idx]) {
+				return strings.Join(parts, "")
+			}
+			for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+				idx++
+			}
+			parts = append(parts, "."+s[partStart:idx])
+		case '[':
+			part, next, ok := scanBracketObjectPathPart(s, idx)
+			if !ok {
+				return strings.Join(parts, "")
+			}
+			if part != "" {
+				parts = append(parts, "."+part)
+			}
+			idx = next
+		default:
+			return strings.Join(parts, "")
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func scanBracketObjectPathPart(s string, start int) (string, int, bool) {
+	idx := start + 1
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) {
+		return "", idx, false
+	}
+
+	var part string
+	switch s[idx] {
+	case '\'', '"', '`':
+		quote := s[idx]
+		end := skipQuotedSQLString(s, idx, quote)
+		if end <= idx || end >= len(s) {
+			return "", end, false
+		}
+		part = s[idx+1 : end]
+		idx = end + 1
+	default:
+		partStart := idx
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
+		}
+		part = s[partStart:idx]
+	}
+
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) || s[idx] != ']' {
+		return "", idx, false
+	}
+	return part, idx + 1, true
 }
 
 func previousTokenIsAS(s string, start int) bool {
@@ -311,6 +419,10 @@ func hasTopLevelWildcard(s string) bool {
 			if depth > 0 {
 				depth--
 			}
+		default:
+			if depth == 0 && isDistinctStarAt(s, idx) {
+				return true
+			}
 		case '*':
 			if depth == 0 && isWildcardToken(s, idx) {
 				return true
@@ -318,6 +430,42 @@ func hasTopLevelWildcard(s string) bool {
 		}
 	}
 	return false
+}
+
+func isDistinctStarAt(s string, idx int) bool {
+	if idx > 0 && isSQLIdentifierPart(s[idx-1]) {
+		return false
+	}
+	const distinct = "DISTINCT"
+	if idx+len(distinct) > len(s) || !strings.EqualFold(s[idx:idx+len(distinct)], distinct) {
+		return false
+	}
+	idx += len(distinct)
+	if idx < len(s) && isSQLIdentifierPart(s[idx]) {
+		return false
+	}
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx < len(s) && s[idx] == '*' {
+		next := nextNonSpaceByte(s, idx+1)
+		return next == 0 || next == ','
+	}
+	if idx >= len(s) || s[idx] != '(' {
+		return false
+	}
+	idx++
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) || s[idx] != '*' {
+		return false
+	}
+	idx++
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	return idx < len(s) && s[idx] == ')'
 }
 
 func isDistinctStarExpression(s string) bool {
@@ -355,11 +503,11 @@ func (v *Statement) unionSelectList() string {
 	// wildcard，不会被展开。若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
 	aliases := v.collectSelectAliases()
 	for alias := range collectAliasesFromSQL(selectSQL) {
-		aliases[alias] = struct{}{}
+		addAlias(aliases, alias)
 	}
-	fields := collectColumnNamesFromSQL(selectSQL, nil)
-	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(GroupItem), aliases)...)
-	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(OrderItem), aliases)...)
+	fields := collectUnionProjectionFields(selectSQL, nil)
+	fields = append(fields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+	fields = append(fields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
 	if len(fields) == 0 {
 		if len(v.Tables) > 1 {
 			return unionDummyProjection
@@ -370,24 +518,44 @@ func (v *Statement) unionSelectList() string {
 	seen := make(map[string]struct{}, len(fields))
 	result := make([]string, 0, len(fields))
 	for _, field := range fields {
-		if _, ok := seen[field]; ok {
+		if _, ok := seen[field.field]; ok {
 			continue
 		}
-		seen[field] = struct{}{}
-		result = append(result, field)
+		seen[field.field] = struct{}{}
+		result = append(result, field.field)
 	}
-	if err := ValidateUnionProjectionFields(v.Tables, result, v.TableFieldsMap); err != nil {
+	if err := validateUnionProjectionFields(v.Tables, fields, v.TableFieldsMap); err != nil {
 		v.errNode = append(v.errNode, err.Error())
 	}
 	return strings.Join(result, ", ")
 }
 
 func ValidateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
+	projectionFields := make([]unionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		projectionFields = append(projectionFields, unionProjectionField{
+			field:        field,
+			validateName: unquoteUnionField(field),
+		})
+	}
+	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
+}
+
+func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
 	if len(tableFieldsMap) == 0 {
 		return nil
 	}
+	seen := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
-		name := unquoteUnionField(field)
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		key := field.field + "\x00" + name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		var base metadata.FieldOption
 		var baseTable string
 		for _, table := range tables {
@@ -395,17 +563,17 @@ func ValidateUnionProjectionFields(tables []string, fields []string, tableFields
 			if !ok {
 				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
 			}
-			fieldOption, existed := unionFieldOption(fieldsMap, name)
+			fieldOption, existed := unionFieldOption(fieldsMap, field.field, name)
 			if !existed {
-				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field.field, table)
 			}
 			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
-				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field, table, fieldOption.FieldType)
+				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field.field, table, fieldOption.FieldType)
 			}
 			if base.Existed() && !compatibleUnionFieldTypes(base.FieldType, fieldOption.FieldType) {
 				return fmt.Errorf(
 					"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
-					field, baseTable, base.FieldType, table, fieldOption.FieldType,
+					field.field, baseTable, base.FieldType, table, fieldOption.FieldType,
 				)
 			}
 			if !base.Existed() {
@@ -417,13 +585,22 @@ func ValidateUnionProjectionFields(tables []string, fields []string, tableFields
 	return nil
 }
 
-func unionFieldOption(fieldsMap metadata.FieldsMap, name string) (metadata.FieldOption, bool) {
-	fieldOption := fieldsMap.Field(name)
+func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
+	fieldOption := fieldsMap.Field(validateName)
 	if fieldOption.Existed() {
 		return fieldOption, true
 	}
 
-	prefix := name + "."
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		fieldOption = fieldsMap.Field(rootName)
+		if fieldOption.Existed() {
+			return fieldOption, true
+		}
+		return metadata.FieldOption{}, false
+	}
+
+	prefix := rootName + "."
 	for fieldName, option := range fieldsMap {
 		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
 			return option, true
@@ -506,11 +683,19 @@ func (v *Statement) collectSelectAliases() map[string]struct{} {
 		if fieldNode.as != nil {
 			name := strings.Trim(nodeToString(fieldNode.as), "`")
 			if name != "" {
-				aliases[name] = struct{}{}
+				addAlias(aliases, name)
 			}
 		}
 	}
 	return aliases
+}
+
+func addAlias(aliases map[string]struct{}, name string) {
+	if name == "" {
+		return
+	}
+	aliases[name] = struct{}{}
+	aliases[strings.ToLower(name)] = struct{}{}
 }
 
 // collectAliasesFromSQL 是测试和非标准节点的兜底：真实 parser 节点优先通过
@@ -561,7 +746,7 @@ func collectAliasesFromSQL(s string) map[string]struct{} {
 			}
 			name := s[idx+1 : idx+1+end]
 			if name != "" {
-				aliases[name] = struct{}{}
+				addAlias(aliases, name)
 			}
 			idx += end + 1
 			continue
@@ -571,7 +756,7 @@ func collectAliasesFromSQL(s string) map[string]struct{} {
 			idx++
 		}
 		if idx > start {
-			aliases[s[start:idx]] = struct{}{}
+			addAlias(aliases, s[start:idx])
 		}
 	}
 	return aliases

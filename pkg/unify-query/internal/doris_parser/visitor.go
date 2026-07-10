@@ -107,17 +107,24 @@ type Statement struct {
 
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
 //
-// 这里故意只识别带反引号的字段：Doris visitor 在字段映射完成后会把真实字段渲染为 `field`，
-// 而字符串字面量、函数名、数字常量不会被误收集。SELECT alias 不是底层表字段，不能出现在
-// UNION 子查询的投影里，否则会把外层计算别名错误地下推到 Doris 表。
-func collectColumnNamesFromSQL(s string, aliases map[string]struct{}) []string {
+// 这里故意只识别字符串字面量外的反引号字段：Doris visitor 在字段映射完成后会把真实字段
+// 渲染为 `field`，而字符串字面量、函数名、数字常量不会被误收集。ignoreNames 只用于
+// GROUP/ORDER 这类可能引用 SELECT alias 的片段，SELECT 自身不能用全局 alias 名过滤，
+// 否则 `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
+func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []string {
 	var names []string
 	seen := make(map[string]struct{})
 
 	for idx := 0; idx < len(s); idx++ {
-		if s[idx] != '`' {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '`':
+		default:
 			continue
 		}
+
 		start := idx
 		end := strings.IndexByte(s[idx+1:], '`')
 		if end < 0 {
@@ -129,7 +136,7 @@ func collectColumnNamesFromSQL(s string, aliases map[string]struct{}) []string {
 		if name == "" {
 			continue
 		}
-		if _, ok := aliases[name]; ok {
+		if _, ok := ignoreNames[name]; ok {
 			continue
 		}
 
@@ -147,9 +154,81 @@ func collectColumnNamesFromSQL(s string, aliases map[string]struct{}) []string {
 	return names
 }
 
+func skipSingleQuotedSQLString(s string, start int) int {
+	for idx := start + 1; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\\':
+			idx++
+		case '\'':
+			if idx+1 < len(s) && s[idx+1] == '\'' {
+				idx++
+				continue
+			}
+			return idx
+		}
+	}
+	return len(s) - 1
+}
+
+func hasTopLevelWildcard(s string) bool {
+	depth := 0
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+		case '`':
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return false
+			}
+			idx += end + 1
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case '*':
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasUnsafeUnquotedColumnReference(s string) bool {
+	inBacktick := false
+	var normalized strings.Builder
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+			normalized.WriteByte(' ')
+		case '`':
+			inBacktick = !inBacktick
+			normalized.WriteByte(' ')
+		default:
+			if inBacktick {
+				normalized.WriteByte(' ')
+				continue
+			}
+			normalized.WriteByte(s[idx])
+		}
+	}
+
+	raw := normalized.String()
+	for _, token := range []string{"__ext", "__shard_key__", "dtEventTimeStamp", "events"} {
+		if strings.Contains(raw, token) {
+			return true
+		}
+	}
+	return false
+}
+
 func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
-	if selectSQL == Star {
+	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
 		return Star
 	}
 
@@ -158,7 +237,13 @@ func (v *Statement) unionSelectList() string {
 	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；如果无法可靠推导，
 	// 继续回退到 *，保持 SELECT * 这类原始数据查询的兼容行为。
 	aliases := v.collectSelectAliases()
-	fields := collectColumnNamesFromSQL(selectSQL, aliases)
+	for _, sqlPart := range []string{selectSQL, v.ItemString(GroupItem), v.ItemString(OrderItem)} {
+		if hasUnsafeUnquotedColumnReference(sqlPart) {
+			return Star
+		}
+	}
+
+	fields := collectColumnNamesFromSQL(selectSQL, nil)
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(GroupItem), aliases)...)
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(OrderItem), aliases)...)
 	if len(fields) == 0 {

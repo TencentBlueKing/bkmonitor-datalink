@@ -467,48 +467,201 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 // collectUnionSelectFields 根据已生成的 SELECT/GROUP/ORDER 表达式提取底层表字段。
 //
 // 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
-// 这里复用“只收集反引号物理字段、忽略 AS 后别名”的规则，让内层 UNION 子查询只投影
-// 外层聚合真正需要的列。若表达式里没有可识别字段，例如 SELECT COUNT(*)，则回退到 *，
-// 避免改变原有语义。
-func collectUnionSelectFields(sqlParts ...[]string) string {
+// 这里复用“只收集字符串字面量外的反引号物理字段、忽略 AS 后别名”的规则，让内层
+// UNION 子查询只投影外层聚合真正需要的列。若表达式里没有可识别字段，或包含 `*`/
+// 未加反引号的物理列依赖，则回退到 *，避免改变 raw 查询和复杂表达式语义。
+func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
+	allParts := [][]string{selectFields, groupFields, orderFields}
+	for _, parts := range allParts {
+		for _, part := range parts {
+			if hasTopLevelUnionWildcard(part) || hasUnsafeUnquotedUnionColumnReference(part) {
+				return selectAll
+			}
+		}
+	}
+
+	aliases := collectSQLAliases(selectFields)
 	seen := make(map[string]struct{})
 	fields := make([]string, 0)
 
-	for _, parts := range sqlParts {
-		for _, part := range parts {
-			for idx := 0; idx < len(part); idx++ {
-				if part[idx] != '`' {
-					continue
-				}
-				start := idx
-				end := strings.IndexByte(part[idx+1:], '`')
-				if end < 0 {
-					break
-				}
-				end += idx + 1
-				name := part[idx+1 : end]
-				idx = end
-				if name == "" {
-					continue
-				}
-				prefixStart := start - len(" AS ")
-				if prefixStart >= 0 && strings.EqualFold(part[prefixStart:start], " AS ") {
-					continue
-				}
-				field := fmt.Sprintf("`%s`", name)
-				if _, ok := seen[field]; ok {
-					continue
-				}
-				seen[field] = struct{}{}
-				fields = append(fields, field)
-			}
+	for _, field := range collectUnionColumnsFromSQLParts(selectFields, nil) {
+		if _, ok := seen[field]; ok {
+			continue
 		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
+	}
+
+	for _, field := range collectUnionColumnsFromSQLParts(groupFields, aliases) {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
+	}
+
+	for _, field := range collectUnionColumnsFromSQLParts(orderFields, aliases) {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
 	}
 
 	if len(fields) == 0 {
 		return selectAll
 	}
 	return strings.Join(fields, ", ")
+}
+
+func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]struct{}) []string {
+	fields := make([]string, 0)
+	for _, part := range parts {
+		for idx := 0; idx < len(part); idx++ {
+			switch part[idx] {
+			case '\'':
+				idx = skipSingleQuotedUnionString(part, idx)
+				continue
+			case '`':
+			default:
+				continue
+			}
+
+			start := idx
+			end := strings.IndexByte(part[idx+1:], '`')
+			if end < 0 {
+				break
+			}
+			end += idx + 1
+			name := part[idx+1 : end]
+			idx = end
+			if name == "" {
+				continue
+			}
+			if _, ok := ignoreNames[name]; ok {
+				continue
+			}
+			prefixStart := start - len(" AS ")
+			if prefixStart >= 0 && strings.EqualFold(part[prefixStart:start], " AS ") {
+				continue
+			}
+			fields = append(fields, fmt.Sprintf("`%s`", name))
+		}
+	}
+	return fields
+}
+
+func collectSQLAliases(parts []string) map[string]struct{} {
+	aliases := make(map[string]struct{})
+	for _, part := range parts {
+		upper := strings.ToUpper(part)
+		for idx := 0; idx < len(part); idx++ {
+			asIdx := strings.Index(upper[idx:], " AS ")
+			if asIdx < 0 {
+				break
+			}
+			idx += asIdx + len(" AS ")
+			for idx < len(part) && part[idx] == ' ' {
+				idx++
+			}
+			if idx >= len(part) {
+				break
+			}
+			if part[idx] == '`' {
+				end := strings.IndexByte(part[idx+1:], '`')
+				if end < 0 {
+					break
+				}
+				name := part[idx+1 : idx+1+end]
+				if name != "" {
+					aliases[name] = struct{}{}
+				}
+				idx += end + 1
+				continue
+			}
+			start := idx
+			for idx < len(part) && (part[idx] == '_' || part[idx] == '.' || part[idx] >= '0' && part[idx] <= '9' ||
+				part[idx] >= 'a' && part[idx] <= 'z' || part[idx] >= 'A' && part[idx] <= 'Z') {
+				idx++
+			}
+			if idx > start {
+				aliases[part[start:idx]] = struct{}{}
+			}
+		}
+	}
+	return aliases
+}
+
+func skipSingleQuotedUnionString(s string, start int) int {
+	for idx := start + 1; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\\':
+			idx++
+		case '\'':
+			if idx+1 < len(s) && s[idx+1] == '\'' {
+				idx++
+				continue
+			}
+			return idx
+		}
+	}
+	return len(s) - 1
+}
+
+func hasTopLevelUnionWildcard(s string) bool {
+	depth := 0
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedUnionString(s, idx)
+		case '`':
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return false
+			}
+			idx += end + 1
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case '*':
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasUnsafeUnquotedUnionColumnReference(s string) bool {
+	inBacktick := false
+	var normalized strings.Builder
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedUnionString(s, idx)
+			normalized.WriteByte(' ')
+		case '`':
+			inBacktick = !inBacktick
+			normalized.WriteByte(' ')
+		default:
+			if inBacktick {
+				normalized.WriteByte(' ')
+				continue
+			}
+			normalized.WriteByte(s[idx])
+		}
+	}
+
+	raw := normalized.String()
+	for _, token := range []string{"__ext", "__shard_key__", "dtEventTimeStamp", "events"} {
+		if strings.Contains(raw, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {

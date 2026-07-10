@@ -30,7 +30,8 @@ import (
 )
 
 const (
-	selectAll = "*"
+	selectAll            = "*"
+	unionDummyProjection = "1"
 
 	dtEventTimeStamp = "dtEventTimeStamp"
 	dtEventTime      = "dtEventTime"
@@ -477,28 +478,37 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 //
 // 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
 // 这里从已渲染表达式中收集外层真正依赖的源字段，让内层 UNION 子查询只投影这些列。
-// 顶层 wildcard 仍回退为 *，避免改变 raw/明细查询语义；COUNT(*) 位于函数参数内，
-// 不会被当成 wildcard 展开，也不会给 UNION 分支增加字段依赖。
+// 顶层 wildcard 仍保留为 *，让调用方拒绝多表 schema 漂移场景的 raw 明细查询。
+// COUNT(*) 位于函数参数内，不会被当成 wildcard 展开；如果没有任何真实字段依赖，
+// UNION 分支只需投影常量，外层 COUNT 仍按行数聚合。
 type unionProjection struct {
 	selectAll bool
+	dummy     bool
 	fields    []string
 }
 
 func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
 	projection := collectUnionProjection(selectFields, groupFields, orderFields)
-	if projection.selectAll {
+	switch {
+	case projection.selectAll:
 		return selectAll
+	case projection.dummy:
+		return unionDummyProjection
+	default:
+		return strings.Join(projection.fields, ", ")
 	}
-	return strings.Join(projection.fields, ", ")
 }
 
 func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []string, tables []string) (string, error) {
 	projection := collectUnionProjection(selectFields, groupFields, orderFields)
-	if projection.selectAll {
+	switch {
+	case projection.selectAll:
 		if len(f.tableFieldsMap) > 0 {
 			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields or aggregate dependencies")
 		}
 		return selectAll, nil
+	case projection.dummy:
+		return unionDummyProjection, nil
 	}
 	if err := validateUnionProjectionFields(tables, projection.fields, f.tableFieldsMap); err != nil {
 		return "", err
@@ -625,7 +635,7 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 	}
 
 	if len(fields) == 0 {
-		return unionProjection{selectAll: true}
+		return unionProjection{dummy: true}
 	}
 	return unionProjection{fields: fields}
 }

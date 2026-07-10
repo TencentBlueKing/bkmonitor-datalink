@@ -340,7 +340,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				dbs:     []string{"db_a", "db_b"},
 				field:   "login_rate",
 				userSQL: "SELECT 1 FROM tbl",
-				wantSQL: "SELECT 1 FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+				wantSQL: "SELECT 1 FROM (SELECT 1 FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT 1 FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
 			},
 			{
 				name:    "parenthesized_or_and_is_not_null_limit_offset",

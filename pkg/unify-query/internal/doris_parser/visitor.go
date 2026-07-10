@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	Star = "*"
+	Star                 = "*"
+	unionDummyProjection = "1"
 )
 
 const (
@@ -305,8 +306,8 @@ func (v *Statement) unionSelectList() string {
 	// 多张 Doris 表合并时不能无条件 SELECT *：
 	// 历史表和当前表可能存在字段漂移，Doris 要求 UNION ALL 两侧列数一致。
 	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段。
-	// 顶层 SELECT * 仍会回退到 *，保持原始数据查询的兼容行为；COUNT(*) 不是顶层
-	// wildcard，不会被展开，也不会给 UNION 分支增加字段依赖。
+	// 顶层 SELECT * 仍会被识别出来并在多表场景返回明确错误；COUNT(*) 不是顶层
+	// wildcard，不会被展开。若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
 	aliases := v.collectSelectAliases()
 	for alias := range collectAliasesFromSQL(selectSQL) {
 		aliases[alias] = struct{}{}
@@ -315,6 +316,9 @@ func (v *Statement) unionSelectList() string {
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(GroupItem), aliases)...)
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(OrderItem), aliases)...)
 	if len(fields) == 0 {
+		if len(v.Tables) > 1 {
+			return unionDummyProjection
+		}
 		return Star
 	}
 

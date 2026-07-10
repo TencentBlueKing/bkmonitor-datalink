@@ -93,6 +93,7 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 		selectSQL string
 		groupSQL  string
 		orderSQL  string
+		tables    []string
 		expected  string
 	}{
 		{
@@ -119,6 +120,12 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			expected:  "`minute1`",
 		},
 		{
+			name:      "纯 COUNT star 多表 union 使用常量投影",
+			selectSQL: "COUNT(*) AS log_count",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
+		{
 			name:      "可识别字段按首次出现顺序去重",
 			selectSQL: "`path`, COUNT(*) AS cnt",
 			groupSQL:  "`path`",
@@ -141,6 +148,7 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt := &Statement{
+				Tables: tt.tables,
 				nodeMap: map[string]Node{
 					SelectItem: &unionSelectTestNode{value: tt.selectSQL},
 					GroupItem:  &unionSelectTestNode{value: tt.groupSQL},

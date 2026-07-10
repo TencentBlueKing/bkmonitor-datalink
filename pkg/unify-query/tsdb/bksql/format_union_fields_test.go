@@ -31,6 +31,11 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			expected:     "`path`",
 		},
 		{
+			name:         "纯 COUNT star 使用常量投影",
+			selectFields: []string{"COUNT(*) AS `_value_`"},
+			expected:     unionDummyProjection,
+		},
+		{
 			name:         "未加反引号的系统字段依赖保守回退",
 			selectFields: []string{"HISTOGRAM(`value`, dtEventTimeStamp) AS `_value_`"},
 			expected:     "`value`, `dtEventTimeStamp`",
@@ -145,6 +150,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_a`.doris": {"path": {FieldType: "text"}},
 			},
 			errContains: "SELECT *",
+		},
+		{
+			name:         "无真实字段依赖时使用常量投影",
+			selectFields: []string{"COUNT(*) AS `_value_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"extra": {FieldType: "bigint"}},
+			},
+			expected: unionDummyProjection,
 		},
 	}
 

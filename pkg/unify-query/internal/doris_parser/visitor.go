@@ -99,12 +99,15 @@ type Statement struct {
 
 	nodeMap map[string]Node
 
-	Tables  []string
-	Where   string
-	Offset  int
-	Limit   int
-	errNode []string
+	Tables         []string
+	Where          string
+	TableFieldsMap TableFieldsMap
+	Offset         int
+	Limit          int
+	errNode        []string
 }
+
+type TableFieldsMap map[string]metadata.FieldsMap
 
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
 //
@@ -124,6 +127,9 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 		switch s[idx] {
 		case '\'':
 			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
 			continue
 		case '`':
 			start := idx
@@ -156,6 +162,9 @@ func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []stri
 		}
 		name := s[start:idx]
 		idx--
+		if isIdentifierPartOfNumericLiteral(s, start) {
+			continue
+		}
 		if previousNonSpaceByte(s, start) == '.' {
 			continue
 		}
@@ -231,6 +240,14 @@ func isSQLIdentifierPart(b byte) bool {
 	return isSQLIdentifierStart(b) || b >= '0' && b <= '9'
 }
 
+func isSQLDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isIdentifierPartOfNumericLiteral(s string, start int) bool {
+	return start > 0 && isSQLDigit(s[start-1])
+}
+
 func isSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
@@ -245,12 +262,20 @@ func isSQLKeyword(name string) bool {
 }
 
 func skipSingleQuotedSQLString(s string, start int) int {
+	return skipQuotedSQLString(s, start, '\'')
+}
+
+func skipDoubleQuotedSQLString(s string, start int) int {
+	return skipQuotedSQLString(s, start, '"')
+}
+
+func skipQuotedSQLString(s string, start int, quote byte) int {
 	for idx := start + 1; idx < len(s); idx++ {
 		switch s[idx] {
 		case '\\':
 			idx++
-		case '\'':
-			if idx+1 < len(s) && s[idx+1] == '\'' {
+		case quote:
+			if idx+1 < len(s) && s[idx+1] == quote {
 				idx++
 				continue
 			}
@@ -261,11 +286,17 @@ func skipSingleQuotedSQLString(s string, start int) int {
 }
 
 func hasTopLevelWildcard(s string) bool {
+	if isDistinctStarExpression(s) {
+		return true
+	}
+
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
 		case '\'':
 			idx = skipSingleQuotedSQLString(s, idx)
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
 		case '`':
 			end := strings.IndexByte(s[idx+1:], '`')
 			if end < 0 {
@@ -285,6 +316,18 @@ func hasTopLevelWildcard(s string) bool {
 		}
 	}
 	return false
+}
+
+func isDistinctStarExpression(s string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	return strings.EqualFold(normalized, "DISTINCT(*)") || strings.EqualFold(normalized, "DISTINCT*")
 }
 
 func isWildcardToken(s string, idx int) bool {
@@ -331,7 +374,90 @@ func (v *Statement) unionSelectList() string {
 		seen[field] = struct{}{}
 		result = append(result, field)
 	}
+	if err := ValidateUnionProjectionFields(v.Tables, result, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
 	return strings.Join(result, ", ")
+}
+
+func ValidateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	for _, field := range fields {
+		name := unquoteUnionField(field)
+		var base metadata.FieldOption
+		var baseTable string
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			fieldOption := fieldsMap.Field(name)
+			if !fieldOption.Existed() {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+			}
+			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
+				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field, table, fieldOption.FieldType)
+			}
+			if base.Existed() && !compatibleUnionFieldTypes(base.FieldType, fieldOption.FieldType) {
+				return fmt.Errorf(
+					"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+					field, baseTable, base.FieldType, table, fieldOption.FieldType,
+				)
+			}
+			if !base.Existed() {
+				base = fieldOption
+				baseTable = table
+			}
+		}
+	}
+	return nil
+}
+
+func unquoteUnionField(field string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+}
+
+func isUnsupportedUnionFieldType(fieldType string) bool {
+	switch normalizeUnionFieldType(fieldType) {
+	case "json", "jsonb":
+		return true
+	default:
+		return false
+	}
+}
+
+func compatibleUnionFieldTypes(left, right string) bool {
+	return normalizeUnionFieldType(left) == normalizeUnionFieldType(right)
+}
+
+func normalizeUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return "array:" + normalizeUnionFieldType(t[len("array<"):len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return "array:" + normalizeUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	t = strings.TrimSpace(t)
+	switch t {
+	case "char", "varchar", "string", "text":
+		return "string"
+	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
+		return "integer"
+	case "float", "double", "decimal", "decimalv3":
+		return "number"
+	case "bool", "boolean":
+		return "boolean"
+	case "date", "datetime", "timestamp":
+		return "time"
+	default:
+		return t
+	}
 }
 
 func (v *Statement) ItemString(name string) string {
@@ -380,6 +506,9 @@ func collectAliasesFromSQL(s string) map[string]struct{} {
 		switch s[idx] {
 		case '\'':
 			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
 			continue
 		case '`':
 			end := strings.IndexByte(s[idx+1:], '`')
@@ -1669,8 +1798,9 @@ type Option struct {
 	DimensionTransform Encode
 	AddIgnoreField     func(string)
 
-	Tables []string
-	Where  string
-	Offset int
-	Limit  int
+	Tables         []string
+	Where          string
+	TableFieldsMap TableFieldsMap
+	Offset         int
+	Limit          int
 }

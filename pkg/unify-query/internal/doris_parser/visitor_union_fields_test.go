@@ -33,6 +33,16 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			expected: []string{"`log`"},
 		},
 		{
+			name:     "双引号字符串里的标识符不当作字段",
+			sql:      `regexp_extract(log, "user=(\\d+)", 1) AS user_id`,
+			expected: []string{"`log`"},
+		},
+		{
+			name:     "数字科学计数法不当作字段",
+			sql:      "1e3",
+			expected: nil,
+		},
+		{
 			name:        "GROUP/ORDER 引用外层聚合 alias 时不下推",
 			sql:         "`_value_` DESC",
 			ignoreNames: map[string]struct{}{"_value_": {}},
@@ -143,6 +153,18 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			selectSQL: "a * b AS value",
 			expected:  "`a`, `b`",
 		},
+		{
+			name:      "纯数字科学计数法多表 union 使用常量投影",
+			selectSQL: "1e3",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
+		{
+			name:      "DISTINCT star 按 wildcard 处理",
+			selectSQL: "DISTINCT(*)",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
 	}
 
 	for _, tt := range tests {
@@ -170,4 +192,25 @@ func TestStatementUnionSelectListRejectsMultiTableWildcard(t *testing.T) {
 
 	assert.Equal(t, Star, stmt.unionSelectList())
 	assert.ErrorContains(t, stmt.Error(), "SELECT *")
+}
+
+func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"log": {FieldType: "text"},
+			},
+			"`db_current`.doris": {
+				"path": {FieldType: "text"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`path`, COUNT(*) AS c"},
+			GroupItem:  &unionSelectTestNode{value: "`path`"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
 }

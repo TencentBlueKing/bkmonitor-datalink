@@ -21,6 +21,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -86,7 +87,7 @@ type QueryFactory struct {
 	tableFieldsMap TableFieldsMap
 }
 
-type TableFieldsMap map[string]metadata.FieldsMap
+type TableFieldsMap = doris_parser.TableFieldsMap
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
@@ -466,7 +467,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 		from = *f.query.ResultTableOption.From
 	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where, from, f.query.Size, f.tableFieldsMap)
 	span.Set("bksql.sql_expr_type", f.expr.Type())
 	span.Set("query-sql", f.query.SQL)
 
@@ -510,90 +511,10 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	case projection.dummy:
 		return unionDummyProjection, nil
 	}
-	if err := validateUnionProjectionFields(tables, projection.fields, f.tableFieldsMap); err != nil {
+	if err := doris_parser.ValidateUnionProjectionFields(tables, projection.fields, f.tableFieldsMap); err != nil {
 		return "", err
 	}
 	return strings.Join(projection.fields, ", "), nil
-}
-
-func validateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
-	if len(tableFieldsMap) == 0 {
-		return nil
-	}
-	for _, field := range fields {
-		name := unquoteUnionField(field)
-		var base metadata.FieldOption
-		var baseTable string
-		for _, table := range tables {
-			fieldsMap, ok := tableFieldsMap[table]
-			if !ok {
-				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
-			}
-			fieldOption := fieldsMap.Field(name)
-			if !fieldOption.Existed() {
-				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
-			}
-			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
-				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field, table, fieldOption.FieldType)
-			}
-			if base.Existed() && !compatibleUnionFieldTypes(base.FieldType, fieldOption.FieldType) {
-				return fmt.Errorf(
-					"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
-					field, baseTable, base.FieldType, table, fieldOption.FieldType,
-				)
-			}
-			if !base.Existed() {
-				base = fieldOption
-				baseTable = table
-			}
-		}
-	}
-	return nil
-}
-
-func unquoteUnionField(field string) string {
-	return strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
-}
-
-func isUnsupportedUnionFieldType(fieldType string) bool {
-	switch normalizeUnionFieldType(fieldType) {
-	case "json", "jsonb":
-		return true
-	default:
-		return false
-	}
-}
-
-func compatibleUnionFieldTypes(left, right string) bool {
-	return normalizeUnionFieldType(left) == normalizeUnionFieldType(right)
-}
-
-func normalizeUnionFieldType(fieldType string) string {
-	t := strings.ToLower(strings.TrimSpace(fieldType))
-	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
-		return "array:" + normalizeUnionFieldType(t[len("array<"):len(t)-1])
-	}
-	if strings.HasSuffix(t, " array") {
-		return "array:" + normalizeUnionFieldType(strings.TrimSuffix(t, " array"))
-	}
-	if idx := strings.IndexByte(t, '('); idx >= 0 {
-		t = t[:idx]
-	}
-	t = strings.TrimSpace(t)
-	switch t {
-	case "char", "varchar", "string", "text":
-		return "string"
-	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
-		return "integer"
-	case "float", "double", "decimal", "decimalv3":
-		return "number"
-	case "bool", "boolean":
-		return "boolean"
-	case "date", "datetime", "timestamp":
-		return "time"
-	default:
-		return t
-	}
 }
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
@@ -666,6 +587,9 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		case '\'':
 			idx = skipSingleQuotedUnionString(part, idx)
 			continue
+		case '"':
+			idx = skipDoubleQuotedUnionString(part, idx)
+			continue
 		case '`':
 			start := idx
 			end := strings.IndexByte(part[idx+1:], '`')
@@ -692,6 +616,9 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		}
 		name := part[start:idx]
 		idx--
+		if isUnionIdentifierPartOfNumericLiteral(part, start) {
+			continue
+		}
 		if previousNonSpaceUnionByte(part, start) == '.' {
 			continue
 		}
@@ -762,6 +689,14 @@ func isUnionIdentifierPart(b byte) bool {
 	return isUnionIdentifierStart(b) || b >= '0' && b <= '9'
 }
 
+func isUnionDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isUnionIdentifierPartOfNumericLiteral(part string, start int) bool {
+	return start > 0 && isUnionDigit(part[start-1])
+}
+
 func isUnionSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
@@ -783,6 +718,9 @@ func collectSQLAliases(parts []string) map[string]struct{} {
 			switch part[idx] {
 			case '\'':
 				idx = skipSingleQuotedUnionString(part, idx)
+				continue
+			case '"':
+				idx = skipDoubleQuotedUnionString(part, idx)
 				continue
 			case '`':
 				end := strings.IndexByte(part[idx+1:], '`')
@@ -841,12 +779,20 @@ func isUnionASClauseAt(s string, idx int) bool {
 }
 
 func skipSingleQuotedUnionString(s string, start int) int {
+	return skipQuotedUnionString(s, start, '\'')
+}
+
+func skipDoubleQuotedUnionString(s string, start int) int {
+	return skipQuotedUnionString(s, start, '"')
+}
+
+func skipQuotedUnionString(s string, start int, quote byte) int {
 	for idx := start + 1; idx < len(s); idx++ {
 		switch s[idx] {
 		case '\\':
 			idx++
-		case '\'':
-			if idx+1 < len(s) && s[idx+1] == '\'' {
+		case quote:
+			if idx+1 < len(s) && s[idx+1] == quote {
 				idx++
 				continue
 			}
@@ -857,11 +803,17 @@ func skipSingleQuotedUnionString(s string, start int) int {
 }
 
 func hasTopLevelUnionWildcard(s string) bool {
+	if isUnionDistinctStarExpression(s) {
+		return true
+	}
+
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
 		case '\'':
 			idx = skipSingleQuotedUnionString(s, idx)
+		case '"':
+			idx = skipDoubleQuotedUnionString(s, idx)
 		case '`':
 			end := strings.IndexByte(s[idx+1:], '`')
 			if end < 0 {
@@ -881,6 +833,18 @@ func hasTopLevelUnionWildcard(s string) bool {
 		}
 	}
 	return false
+}
+
+func isUnionDistinctStarExpression(s string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	return strings.EqualFold(normalized, "DISTINCT(*)") || strings.EqualFold(normalized, "DISTINCT*")
 }
 
 func isUnionWildcardToken(s string, idx int) bool {

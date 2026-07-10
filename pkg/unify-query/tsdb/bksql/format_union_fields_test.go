@@ -46,6 +46,16 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			expected:     "`log`",
 		},
 		{
+			name:         "双引号字符串里的标识符不当作字段",
+			selectFields: []string{`regexp_extract(log, "user=(\\d+)", 1) AS user_id`},
+			expected:     "`log`",
+		},
+		{
+			name:         "数字科学计数法不当作字段",
+			selectFields: []string{"1e3"},
+			expected:     unionDummyProjection,
+		},
+		{
 			name:         "COUNT star 不增加字段依赖",
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			groupFields:  []string{"`minute1`"},
@@ -77,6 +87,11 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			name:         "反引号 keyword 字段保留为真实字段",
 			selectFields: []string{"`time`, `path`"},
 			expected:     "`time`, `path`",
+		},
+		{
+			name:         "DISTINCT star 按 wildcard 处理",
+			selectFields: []string{"DISTINCT(*)"},
+			expected:     selectAll,
 		},
 	}
 

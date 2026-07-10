@@ -107,51 +107,127 @@ type Statement struct {
 
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
 //
-// 这里故意只识别字符串字面量外的反引号字段：Doris visitor 在字段映射完成后会把真实字段
-// 渲染为 `field`，而字符串字面量、函数名、数字常量不会被误收集。ignoreNames 只用于
-// GROUP/ORDER 这类可能引用 SELECT alias 的片段，SELECT 自身不能用全局 alias 名过滤，
+// 多表 UNION 的内层投影必须保留外层表达式依赖的源字段，例如
+// `CAST(log AS TEXT)` 里的 log、`CAST(__ext[...] AS TEXT)` 里的 __ext。
+// 因此这里同时识别反引号字段和可解析的未反引号 identifier。
+//
+// 这里不是完整 SQL parser，只处理 visitor 已渲染出的 SELECT/GROUP/ORDER 片段：
+// 跳过字符串字面量、SQL keyword、函数名和 AS 后的 alias。ignoreNames 只用于
+// GROUP/ORDER 这类可能引用 SELECT alias 的片段；SELECT 自身不能用全局 alias 名过滤，
 // 否则 `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
 func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []string {
 	var names []string
 	seen := make(map[string]struct{})
-
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
 		case '\'':
 			idx = skipSingleQuotedSQLString(s, idx)
 			continue
 		case '`':
-		default:
+			start := idx
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return names
+			}
+			end += idx + 1
+			name := s[idx+1 : end]
+			idx = end
+			if shouldSkipColumnName(s, start, name, ignoreNames) {
+				continue
+			}
+			field := fmt.Sprintf("`%s`", name)
+			if _, ok := seen[field]; ok {
+				continue
+			}
+			seen[field] = struct{}{}
+			names = append(names, field)
+			continue
+		}
+
+		if !isSQLIdentifierStart(s[idx]) {
 			continue
 		}
 
 		start := idx
-		end := strings.IndexByte(s[idx+1:], '`')
-		if end < 0 {
-			break
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
 		}
-		end += idx + 1
-		name := s[idx+1 : end]
-		idx = end
-		if name == "" {
+		name := s[start:idx]
+		idx--
+		if shouldSkipColumnName(s, start, name, ignoreNames) {
 			continue
 		}
-		if _, ok := ignoreNames[name]; ok {
+		// 标识符后紧跟 '(' 时是函数名，例如 COUNT(*) 或 CAST(...)，
+		// 函数参数会在后续扫描中单独识别，COUNT(*) 不会产生字段依赖。
+		if nextNonSpaceByte(s, idx+1) == '(' {
 			continue
 		}
-
-		prefixStart := start - len(" AS ")
-		if prefixStart >= 0 && strings.EqualFold(s[prefixStart:start], " AS ") {
+		field := fmt.Sprintf("`%s`", name)
+		if _, ok := seen[field]; ok {
 			continue
 		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, fmt.Sprintf("`%s`", name))
+		seen[field] = struct{}{}
+		names = append(names, field)
 	}
-
 	return names
+}
+
+func shouldSkipColumnName(s string, start int, name string, ignoreNames map[string]struct{}) bool {
+	if name == "" {
+		return true
+	}
+	if _, ok := ignoreNames[name]; ok {
+		return true
+	}
+	if isSQLKeyword(name) {
+		return true
+	}
+	if previousTokenIsAS(s, start) {
+		return true
+	}
+	return false
+}
+
+func previousTokenIsAS(s string, start int) bool {
+	idx := start - 1
+	for idx >= 0 && s[idx] == ' ' {
+		idx--
+	}
+	end := idx + 1
+	for idx >= 0 && isSQLIdentifierPart(s[idx]) {
+		idx--
+	}
+	return strings.EqualFold(s[idx+1:end], "AS")
+}
+
+func nextNonSpaceByte(s string, start int) byte {
+	for idx := start; idx < len(s); idx++ {
+		if s[idx] != ' ' {
+			return s[idx]
+		}
+	}
+	return 0
+}
+
+func isSQLIdentifierStart(b byte) bool {
+	return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+func isSQLIdentifierPart(b byte) bool {
+	return isSQLIdentifierStart(b) || b >= '0' && b <= '9'
+}
+
+func isSQLKeyword(name string) bool {
+	switch strings.ToUpper(name) {
+	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
+		"DATE", "DATETIME", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
+		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_PHRASE",
+		"NOT", "NULL", "OR", "ORDER", "REGEXP", "SELECT", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP",
+		"TRUE", "VARCHAR", "WHEN", "WHERE":
+		return true
+	default:
+		return false
+	}
 }
 
 func skipSingleQuotedSQLString(s string, start int) int {
@@ -197,52 +273,22 @@ func hasTopLevelWildcard(s string) bool {
 	return false
 }
 
-func hasUnsafeUnquotedColumnReference(s string) bool {
-	inBacktick := false
-	var normalized strings.Builder
-	for idx := 0; idx < len(s); idx++ {
-		switch s[idx] {
-		case '\'':
-			idx = skipSingleQuotedSQLString(s, idx)
-			normalized.WriteByte(' ')
-		case '`':
-			inBacktick = !inBacktick
-			normalized.WriteByte(' ')
-		default:
-			if inBacktick {
-				normalized.WriteByte(' ')
-				continue
-			}
-			normalized.WriteByte(s[idx])
-		}
-	}
-
-	raw := normalized.String()
-	for _, token := range []string{"__ext", "__shard_key__", "dtEventTimeStamp", "events"} {
-		if strings.Contains(raw, token) {
-			return true
-		}
-	}
-	return false
-}
-
 func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
+
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
 		return Star
 	}
 
 	// 多张 Doris 表合并时不能无条件 SELECT *：
 	// 历史表和当前表可能存在字段漂移，Doris 要求 UNION ALL 两侧列数一致。
-	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；如果无法可靠推导，
-	// 继续回退到 *，保持 SELECT * 这类原始数据查询的兼容行为。
+	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段。
+	// 顶层 SELECT * 仍会回退到 *，保持原始数据查询的兼容行为；COUNT(*) 不是顶层
+	// wildcard，不会被展开，也不会给 UNION 分支增加字段依赖。
 	aliases := v.collectSelectAliases()
-	for _, sqlPart := range []string{selectSQL, v.ItemString(GroupItem), v.ItemString(OrderItem)} {
-		if hasUnsafeUnquotedColumnReference(sqlPart) {
-			return Star
-		}
+	for alias := range collectAliasesFromSQL(selectSQL) {
+		aliases[alias] = struct{}{}
 	}
-
 	fields := collectColumnNamesFromSQL(selectSQL, nil)
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(GroupItem), aliases)...)
 	fields = append(fields, collectColumnNamesFromSQL(v.ItemString(OrderItem), aliases)...)
@@ -293,6 +339,47 @@ func (v *Statement) collectSelectAliases() map[string]struct{} {
 			if name != "" {
 				aliases[name] = struct{}{}
 			}
+		}
+	}
+	return aliases
+}
+
+// collectAliasesFromSQL 是测试和非标准节点的兜底：真实 parser 节点优先通过
+// collectSelectAliases() 提供 alias，但部分单测直接塞渲染后的 SQL 字符串。
+// 这里补齐 AS alias，避免 GROUP/ORDER 引用外层 alias 时被误下推到原表。
+func collectAliasesFromSQL(s string) map[string]struct{} {
+	aliases := make(map[string]struct{})
+	upper := strings.ToUpper(s)
+	for idx := 0; idx < len(s); idx++ {
+		asIdx := strings.Index(upper[idx:], " AS ")
+		if asIdx < 0 {
+			break
+		}
+		idx += asIdx + len(" AS ")
+		for idx < len(s) && s[idx] == ' ' {
+			idx++
+		}
+		if idx >= len(s) {
+			break
+		}
+		if s[idx] == '`' {
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				break
+			}
+			name := s[idx+1 : idx+1+end]
+			if name != "" {
+				aliases[name] = struct{}{}
+			}
+			idx += end + 1
+			continue
+		}
+		start := idx
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
+		}
+		if idx > start {
+			aliases[s[start:idx]] = struct{}{}
 		}
 	}
 	return aliases

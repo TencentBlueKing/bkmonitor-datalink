@@ -467,14 +467,14 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 // collectUnionSelectFields 根据已生成的 SELECT/GROUP/ORDER 表达式提取底层表字段。
 //
 // 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
-// 这里复用“只收集字符串字面量外的反引号物理字段、忽略 AS 后别名”的规则，让内层
-// UNION 子查询只投影外层聚合真正需要的列。若表达式里没有可识别字段，或包含 `*`/
-// 未加反引号的物理列依赖，则回退到 *，避免改变 raw 查询和复杂表达式语义。
+// 这里从已渲染表达式中收集外层真正依赖的源字段，让内层 UNION 子查询只投影这些列。
+// 顶层 wildcard 仍回退为 *，避免改变 raw/明细查询语义；COUNT(*) 位于函数参数内，
+// 不会被当成 wildcard 展开，也不会给 UNION 分支增加字段依赖。
 func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
 	allParts := [][]string{selectFields, groupFields, orderFields}
 	for _, parts := range allParts {
 		for _, part := range parts {
-			if hasTopLevelUnionWildcard(part) || hasUnsafeUnquotedUnionColumnReference(part) {
+			if hasTopLevelUnionWildcard(part) {
 				return selectAll
 			}
 		}
@@ -516,39 +516,124 @@ func collectUnionSelectFields(selectFields, groupFields, orderFields []string) s
 
 func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]struct{}) []string {
 	fields := make([]string, 0)
+	seen := make(map[string]struct{})
 	for _, part := range parts {
-		for idx := 0; idx < len(part); idx++ {
-			switch part[idx] {
-			case '\'':
-				idx = skipSingleQuotedUnionString(part, idx)
-				continue
-			case '`':
-			default:
+		for _, field := range collectUnionColumnsFromSQLPart(part, ignoreNames) {
+			if _, ok := seen[field]; ok {
 				continue
 			}
+			seen[field] = struct{}{}
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
 
+// collectUnionColumnsFromSQLPart 不是完整 SQL parser，只处理 bksql 已生成的表达式片段。
+// 它会跳过字符串字面量、SQL keyword、函数名和 AS 后的 alias，同时保留未反引号 root，
+// 例如 CAST(resource['bk.instance.id'] AS STRING) 里的 resource，或自定义 TimeField.Name。
+func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}) []string {
+	fields := make([]string, 0)
+	for idx := 0; idx < len(part); idx++ {
+		switch part[idx] {
+		case '\'':
+			idx = skipSingleQuotedUnionString(part, idx)
+			continue
+		case '`':
 			start := idx
 			end := strings.IndexByte(part[idx+1:], '`')
 			if end < 0 {
-				break
+				return fields
 			}
 			end += idx + 1
 			name := part[idx+1 : end]
 			idx = end
-			if name == "" {
-				continue
-			}
-			if _, ok := ignoreNames[name]; ok {
-				continue
-			}
-			prefixStart := start - len(" AS ")
-			if prefixStart >= 0 && strings.EqualFold(part[prefixStart:start], " AS ") {
+			if shouldSkipUnionColumnName(part, start, name, ignoreNames) {
 				continue
 			}
 			fields = append(fields, fmt.Sprintf("`%s`", name))
+			continue
 		}
+
+		if !isUnionIdentifierStart(part[idx]) {
+			continue
+		}
+
+		start := idx
+		for idx < len(part) && isUnionIdentifierPart(part[idx]) {
+			idx++
+		}
+		name := part[start:idx]
+		idx--
+		if shouldSkipUnionColumnName(part, start, name, ignoreNames) {
+			continue
+		}
+		// 标识符后紧跟 '(' 时是函数名；函数参数会继续被扫描。
+		// 这保证 COUNT(*) 不会被误认为需要展开的字段依赖。
+		if nextNonSpaceUnionByte(part, idx+1) == '(' {
+			continue
+		}
+		fields = append(fields, fmt.Sprintf("`%s`", name))
 	}
 	return fields
+}
+
+func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames map[string]struct{}) bool {
+	if name == "" {
+		return true
+	}
+	if _, ok := ignoreNames[name]; ok {
+		return true
+	}
+	if isUnionSQLKeyword(name) {
+		return true
+	}
+	if previousUnionTokenIsAS(part, start) {
+		return true
+	}
+	return false
+}
+
+func previousUnionTokenIsAS(part string, start int) bool {
+	idx := start - 1
+	for idx >= 0 && part[idx] == ' ' {
+		idx--
+	}
+	end := idx + 1
+	for idx >= 0 && isUnionIdentifierPart(part[idx]) {
+		idx--
+	}
+	return strings.EqualFold(part[idx+1:end], "AS")
+}
+
+func nextNonSpaceUnionByte(part string, start int) byte {
+	for idx := start; idx < len(part); idx++ {
+		if part[idx] != ' ' {
+			return part[idx]
+		}
+	}
+	return 0
+}
+
+func isUnionIdentifierStart(b byte) bool {
+	return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+func isUnionIdentifierPart(b byte) bool {
+	return isUnionIdentifierStart(b) || b >= '0' && b <= '9'
+}
+
+func isUnionSQLKeyword(name string) bool {
+	switch strings.ToUpper(name) {
+	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
+		"DATE", "DATETIME", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
+		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_PHRASE",
+		"NOT", "NULL", "OR", "ORDER", "REGEXP", "SELECT", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP",
+		"TRUE", "VARCHAR", "WHEN", "WHERE":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectSQLAliases(parts []string) map[string]struct{} {
@@ -630,35 +715,6 @@ func hasTopLevelUnionWildcard(s string) bool {
 			if depth == 0 {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func hasUnsafeUnquotedUnionColumnReference(s string) bool {
-	inBacktick := false
-	var normalized strings.Builder
-	for idx := 0; idx < len(s); idx++ {
-		switch s[idx] {
-		case '\'':
-			idx = skipSingleQuotedUnionString(s, idx)
-			normalized.WriteByte(' ')
-		case '`':
-			inBacktick = !inBacktick
-			normalized.WriteByte(' ')
-		default:
-			if inBacktick {
-				normalized.WriteByte(' ')
-				continue
-			}
-			normalized.WriteByte(s[idx])
-		}
-	}
-
-	raw := normalized.String()
-	for _, token := range []string{"__ext", "__shard_key__", "dtEventTimeStamp", "events"} {
-		if strings.Contains(raw, token) {
-			return true
 		}
 	}
 	return false

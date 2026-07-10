@@ -29,12 +29,30 @@ func TestCollectUnionSelectFields(t *testing.T) {
 		{
 			name:         "未加反引号的系统字段依赖保守回退",
 			selectFields: []string{"HISTOGRAM(`value`, dtEventTimeStamp) AS `_value_`"},
-			expected:     selectAll,
+			expected:     "`value`, `dtEventTimeStamp`",
 		},
 		{
 			name:         "字符串字面量里的反引号不当作字段",
 			selectFields: []string{"regexp_extract(`log`, '`user`=(\\\\d+)', 1) AS user_id"},
 			expected:     "`log`",
+		},
+		{
+			name:         "COUNT star 不增加字段依赖",
+			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
+			groupFields:  []string{"`minute1`"},
+			orderFields:  []string{"`minute1` DESC"},
+			expected:     "`minute1`",
+		},
+		{
+			name:         "CAST 对象字段表达式收集未加反引号 root",
+			selectFields: []string{"CAST(resource['bk.instance.id'] AS STRING) AS `resource__bk_46__bk__bk_46__instance__bk_46__id`", "`path`"},
+			groupFields:  []string{"`resource__bk_46__bk__bk_46__instance__bk_46__id`", "`path`"},
+			expected:     "`resource`, `path`",
+		},
+		{
+			name:         "自定义时间字段未加反引号时参与投影",
+			selectFields: []string{"HISTOGRAM(`value`, customTimeField) AS `_value_`"},
+			expected:     "`value`, `customTimeField`",
 		},
 	}
 

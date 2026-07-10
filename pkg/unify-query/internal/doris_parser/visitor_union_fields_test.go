@@ -64,7 +64,19 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			name:      "未加反引号的对象字段表达式保守回退",
 			selectSQL: "CAST(__ext['pod'] AS TEXT) AS pod, COUNT(*) AS cnt",
 			groupSQL:  "pod",
-			expected:  Star,
+			expected:  "`__ext`",
+		},
+		{
+			name:      "CAST 普通字段表达式保留源字段",
+			selectSQL: "CAST(log AS TEXT) AS log_text, `path`",
+			expected:  "`log`, `path`",
+		},
+		{
+			name:      "COUNT star 不增加字段依赖",
+			selectSQL: "`minute1`, COUNT(*) AS log_count",
+			groupSQL:  "`minute1`",
+			orderSQL:  "`minute1` DESC",
+			expected:  "`minute1`",
 		},
 		{
 			name:      "可识别字段按首次出现顺序去重",

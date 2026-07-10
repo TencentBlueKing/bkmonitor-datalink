@@ -393,8 +393,8 @@ func ValidateUnionProjectionFields(tables []string, fields []string, tableFields
 			if !ok {
 				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
 			}
-			fieldOption := fieldsMap.Field(name)
-			if !fieldOption.Existed() {
+			fieldOption, existed := unionFieldOption(fieldsMap, name)
+			if !existed {
 				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
 			}
 			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
@@ -413,6 +413,21 @@ func ValidateUnionProjectionFields(tables []string, fields []string, tableFields
 		}
 	}
 	return nil
+}
+
+func unionFieldOption(fieldsMap metadata.FieldsMap, name string) (metadata.FieldOption, bool) {
+	fieldOption := fieldsMap.Field(name)
+	if fieldOption.Existed() {
+		return fieldOption, true
+	}
+
+	prefix := name + "."
+	for fieldName, option := range fieldsMap {
+		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
+			return option, true
+		}
+	}
+	return metadata.FieldOption{}, false
 }
 
 func unquoteUnionField(field string) string {
@@ -577,8 +592,12 @@ func (v *Statement) String() string {
 			if tableNode, ok := v.nodeMap[TableItem].(*TableNode); ok && tableNode.SubQuery != nil {
 				tableNode.SubQuery.Tables = v.Tables
 				tableNode.SubQuery.Where = v.Where
+				tableNode.SubQuery.TableFieldsMap = v.TableFieldsMap
 				v.Where = ""
 				res = tableNode.String()
+				if err := tableNode.SubQuery.Error(); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+				}
 			} else if len(v.Tables) > 0 {
 				if len(v.Tables) == 1 {
 					res = v.Tables[0]

@@ -504,7 +504,7 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	projection := collectUnionProjection(selectFields, groupFields, orderFields)
 	switch {
 	case projection.selectAll:
-		if len(f.tableFieldsMap) > 0 {
+		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
 			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields or aggregate dependencies")
 		}
 		return selectAll, nil

@@ -214,3 +214,33 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 	assert.Equal(t, "`path`", stmt.unionSelectList())
 	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
 }
+
+func TestStatementSubQueryUnionInheritsTableSchema(t *testing.T) {
+	subQuery := &Statement{
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`path`"},
+			TableItem:  &unionSelectTestNode{value: "`ignored`.doris"},
+		},
+	}
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"log": {FieldType: "text"},
+			},
+			"`db_current`.doris": {
+				"path": {FieldType: "text"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`path`"},
+			TableItem: &TableNode{
+				SubQuery: subQuery,
+				Alias:    "s",
+			},
+		},
+	}
+
+	_ = stmt.String()
+	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
+}

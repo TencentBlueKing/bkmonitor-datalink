@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestCollectUnionSelectFields(t *testing.T) {
@@ -140,6 +141,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			errContains: "missing",
 		},
 		{
+			name:         "对象 root 投影允许 leaf schema 校验",
+			selectFields: []string{"`dimensions`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"dimensions.pipelineName": {FieldType: "text"}},
+				"`db_a`.doris": {"dimensions.pipelineName": {FieldType: "varchar(128)"}},
+			},
+			expected: "`dimensions`",
+		},
+		{
 			name:         "类型不兼容返回明确错误",
 			selectFields: []string{"`path`"},
 			tableFieldsMap: TableFieldsMap{
@@ -179,7 +189,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			query := &metadata.Query{}
+			query := &metadata.Query{Measurement: sql_expr.Doris}
 			f := NewQueryFactory(context.Background(), query).WithTableFieldsMap(tt.tableFieldsMap)
 			got, err := f.unionSelectList(tt.selectFields, nil, nil, tables)
 			if tt.errContains != "" {
@@ -191,4 +201,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestQueryFactoryUnionSelectListAllowsHDFSSelectAll(t *testing.T) {
+	query := &metadata.Query{
+		Measurement: "hdfs",
+	}
+	tables := []string{"`db_b`.hdfs", "`db_a`.hdfs"}
+	tableFieldsMap := TableFieldsMap{
+		"`db_b`.hdfs": {"path": {FieldType: "text"}},
+		"`db_a`.hdfs": {"path": {FieldType: "text"}},
+	}
+
+	f := NewQueryFactory(context.Background(), query).WithTableFieldsMap(tableFieldsMap)
+	got, err := f.unionSelectList([]string{"*"}, nil, nil, tables)
+
+	require.NoError(t, err)
+	assert.Equal(t, selectAll, got)
 }

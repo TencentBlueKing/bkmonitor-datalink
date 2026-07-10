@@ -59,12 +59,13 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	// 开始解析
 	parser.Query().Accept(stmt)
 
+	sql := stmt.String()
 	err := stmt.Error()
 	if err != nil {
 		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
 	}
 
-	return stmt.String(), nil
+	return sql, nil
 }
 
 func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {

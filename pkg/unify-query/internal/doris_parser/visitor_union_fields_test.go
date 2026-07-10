@@ -131,6 +131,11 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			groupSQL:  "path",
 			expected:  "`log`, `path`",
 		},
+		{
+			name:      "算术乘法不是 wildcard",
+			selectSQL: "a * b AS value",
+			expected:  "`a`, `b`",
+		},
 	}
 
 	for _, tt := range tests {
@@ -145,4 +150,16 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			assert.Equal(t, tt.expected, stmt.unionSelectList())
 		})
 	}
+}
+
+func TestStatementUnionSelectListRejectsMultiTableWildcard(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_b`.doris", "`db_a`.doris"},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "SELECT *")
 }

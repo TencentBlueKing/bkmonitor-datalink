@@ -81,7 +81,11 @@ type QueryFactory struct {
 	timeField string
 
 	expr sql_expr.SQLExpr
+
+	tableFieldsMap TableFieldsMap
 }
+
+type TableFieldsMap map[string]metadata.FieldsMap
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
@@ -127,6 +131,11 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 
 func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	f.expr.WithFieldsMap(m)
+	return f
+}
+
+func (f *QueryFactory) WithTableFieldsMap(m TableFieldsMap) *QueryFactory {
+	f.tableFieldsMap = m
 	return f
 }
 
@@ -470,12 +479,119 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 // 这里从已渲染表达式中收集外层真正依赖的源字段，让内层 UNION 子查询只投影这些列。
 // 顶层 wildcard 仍回退为 *，避免改变 raw/明细查询语义；COUNT(*) 位于函数参数内，
 // 不会被当成 wildcard 展开，也不会给 UNION 分支增加字段依赖。
+type unionProjection struct {
+	selectAll bool
+	fields    []string
+}
+
 func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
+	projection := collectUnionProjection(selectFields, groupFields, orderFields)
+	if projection.selectAll {
+		return selectAll
+	}
+	return strings.Join(projection.fields, ", ")
+}
+
+func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []string, tables []string) (string, error) {
+	projection := collectUnionProjection(selectFields, groupFields, orderFields)
+	if projection.selectAll {
+		if len(f.tableFieldsMap) > 0 {
+			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields or aggregate dependencies")
+		}
+		return selectAll, nil
+	}
+	if err := validateUnionProjectionFields(tables, projection.fields, f.tableFieldsMap); err != nil {
+		return "", err
+	}
+	return strings.Join(projection.fields, ", "), nil
+}
+
+func validateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	for _, field := range fields {
+		name := unquoteUnionField(field)
+		var base metadata.FieldOption
+		var baseTable string
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			fieldOption := fieldsMap.Field(name)
+			if !fieldOption.Existed() {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+			}
+			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
+				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field, table, fieldOption.FieldType)
+			}
+			if base.Existed() && !compatibleUnionFieldTypes(base.FieldType, fieldOption.FieldType) {
+				return fmt.Errorf(
+					"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+					field, baseTable, base.FieldType, table, fieldOption.FieldType,
+				)
+			}
+			if !base.Existed() {
+				base = fieldOption
+				baseTable = table
+			}
+		}
+	}
+	return nil
+}
+
+func unquoteUnionField(field string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+}
+
+func isUnsupportedUnionFieldType(fieldType string) bool {
+	switch normalizeUnionFieldType(fieldType) {
+	case "json", "jsonb":
+		return true
+	default:
+		return false
+	}
+}
+
+func compatibleUnionFieldTypes(left, right string) bool {
+	return normalizeUnionFieldType(left) == normalizeUnionFieldType(right)
+}
+
+func normalizeUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return "array:" + normalizeUnionFieldType(t[len("array<"):len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return "array:" + normalizeUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	t = strings.TrimSpace(t)
+	switch t {
+	case "char", "varchar", "string", "text":
+		return "string"
+	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
+		return "integer"
+	case "float", "double", "decimal", "decimalv3":
+		return "number"
+	case "bool", "boolean":
+		return "boolean"
+	case "date", "datetime", "timestamp":
+		return "time"
+	default:
+		return t
+	}
+}
+
+func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
 	allParts := [][]string{selectFields, groupFields, orderFields}
 	for _, parts := range allParts {
 		for _, part := range parts {
 			if hasTopLevelUnionWildcard(part) {
-				return selectAll
+				return unionProjection{selectAll: true}
 			}
 		}
 	}
@@ -509,9 +625,9 @@ func collectUnionSelectFields(selectFields, groupFields, orderFields []string) s
 	}
 
 	if len(fields) == 0 {
-		return selectAll
+		return unionProjection{selectAll: true}
 	}
-	return strings.Join(fields, ", ")
+	return unionProjection{fields: fields}
 }
 
 func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]struct{}) []string {
@@ -530,8 +646,9 @@ func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]stru
 }
 
 // collectUnionColumnsFromSQLPart 不是完整 SQL parser，只处理 bksql 已生成的表达式片段。
-// 它会跳过字符串字面量、SQL keyword、函数名和 AS 后的 alias，同时保留未反引号 root，
-// 例如 CAST(resource['bk.instance.id'] AS STRING) 里的 resource，或自定义 TimeField.Name。
+// 它会跳过字符串字面量、未反引号 SQL keyword、函数名和 AS 后的 alias，同时保留
+// 未反引号 root，例如 CAST(resource['bk.instance.id'] AS STRING) 里的 resource。
+// dotted path 只收 root，避免把对象 key 或路径段误投影为原表列。
 func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}) []string {
 	fields := make([]string, 0)
 	for idx := 0; idx < len(part); idx++ {
@@ -548,7 +665,7 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 			end += idx + 1
 			name := part[idx+1 : end]
 			idx = end
-			if shouldSkipUnionColumnName(part, start, name, ignoreNames) {
+			if shouldSkipUnionColumnName(part, start, name, ignoreNames, true) {
 				continue
 			}
 			fields = append(fields, fmt.Sprintf("`%s`", name))
@@ -565,7 +682,10 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		}
 		name := part[start:idx]
 		idx--
-		if shouldSkipUnionColumnName(part, start, name, ignoreNames) {
+		if previousNonSpaceUnionByte(part, start) == '.' {
+			continue
+		}
+		if shouldSkipUnionColumnName(part, start, name, ignoreNames, false) {
 			continue
 		}
 		// 标识符后紧跟 '(' 时是函数名；函数参数会继续被扫描。
@@ -578,14 +698,14 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 	return fields
 }
 
-func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames map[string]struct{}) bool {
+func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {
 	if name == "" {
 		return true
 	}
 	if _, ok := ignoreNames[name]; ok {
 		return true
 	}
-	if isUnionSQLKeyword(name) {
+	if !quoted && isUnionSQLKeyword(name) {
 		return true
 	}
 	if previousUnionTokenIsAS(part, start) {
@@ -608,6 +728,15 @@ func previousUnionTokenIsAS(part string, start int) bool {
 
 func nextNonSpaceUnionByte(part string, start int) byte {
 	for idx := start; idx < len(part); idx++ {
+		if part[idx] != ' ' {
+			return part[idx]
+		}
+	}
+	return 0
+}
+
+func previousNonSpaceUnionByte(part string, start int) byte {
+	for idx := start - 1; idx >= 0; idx-- {
 		if part[idx] != ' ' {
 			return part[idx]
 		}
@@ -639,13 +768,33 @@ func isUnionSQLKeyword(name string) bool {
 func collectSQLAliases(parts []string) map[string]struct{} {
 	aliases := make(map[string]struct{})
 	for _, part := range parts {
-		upper := strings.ToUpper(part)
+		depth := 0
 		for idx := 0; idx < len(part); idx++ {
-			asIdx := strings.Index(upper[idx:], " AS ")
-			if asIdx < 0 {
-				break
+			switch part[idx] {
+			case '\'':
+				idx = skipSingleQuotedUnionString(part, idx)
+				continue
+			case '`':
+				end := strings.IndexByte(part[idx+1:], '`')
+				if end < 0 {
+					return aliases
+				}
+				idx += end + 1
+				continue
+			case '(':
+				depth++
+				continue
+			case ')':
+				if depth > 0 {
+					depth--
+				}
+				continue
 			}
-			idx += asIdx + len(" AS ")
+			if depth > 0 || !isUnionASClauseAt(part, idx) {
+				continue
+			}
+
+			idx += len(" AS ")
 			for idx < len(part) && part[idx] == ' ' {
 				idx++
 			}
@@ -675,6 +824,10 @@ func collectSQLAliases(parts []string) map[string]struct{} {
 		}
 	}
 	return aliases
+}
+
+func isUnionASClauseAt(s string, idx int) bool {
+	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
 func skipSingleQuotedUnionString(s string, start int) int {
@@ -712,12 +865,18 @@ func hasTopLevelUnionWildcard(s string) bool {
 				depth--
 			}
 		case '*':
-			if depth == 0 {
+			if depth == 0 && isUnionWildcardToken(s, idx) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func isUnionWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceUnionByte(s, idx)
+	next := nextNonSpaceUnionByte(s, idx+1)
+	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
@@ -760,12 +919,16 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 	if len(f.Tables()) > 0 {
 		var table string
-		if len(f.Tables()) == 1 {
-			table = f.Tables()[0]
+		tables := f.Tables()
+		if len(tables) == 1 {
+			table = tables[0]
 		} else {
-			stmts := make([]string, 0, len(f.Tables()))
-			selectList := collectUnionSelectFields(selectFields, groupFields, orderFields)
-			for _, t := range f.Tables() {
+			stmts := make([]string, 0, len(tables))
+			selectList, err := f.unionSelectList(selectFields, groupFields, orderFields, tables)
+			if err != nil {
+				return "", err
+			}
+			for _, t := range tables {
 				// 显式投影可以让 current/his Doris 表字段不完全一致时仍能完成 UNION ALL。
 				s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
 				if whereString != "" {

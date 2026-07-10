@@ -1,9 +1,13 @@
 package bksql
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestCollectUnionSelectFields(t *testing.T) {
@@ -54,11 +58,108 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			selectFields: []string{"HISTOGRAM(`value`, customTimeField) AS `_value_`"},
 			expected:     "`value`, `customTimeField`",
 		},
+		{
+			name:         "算术乘法不是 wildcard",
+			selectFields: []string{"a * b AS value"},
+			expected:     "`a`, `b`",
+		},
+		{
+			name:         "dotted 引用只收集 root 字段",
+			selectFields: []string{"resource.bk.instance AS resource_instance", "`path`"},
+			expected:     "`resource`, `path`",
+		},
+		{
+			name:         "反引号 keyword 字段保留为真实字段",
+			selectFields: []string{"`time`, `path`"},
+			expected:     "`time`, `path`",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, collectUnionSelectFields(tt.selectFields, tt.groupFields, tt.orderFields))
+		})
+	}
+}
+
+func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
+	tables := []string{"`db_b`.doris", "`db_a`.doris"}
+
+	tests := []struct {
+		name           string
+		selectFields   []string
+		tableFieldsMap TableFieldsMap
+		expected       string
+		errContains    string
+	}{
+		{
+			name:         "字段存在且类型兼容",
+			selectFields: []string{"`path`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+			},
+			expected: "`path`",
+		},
+		{
+			name:         "数组类型等价写法兼容",
+			selectFields: []string{"`events`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"events": {FieldType: "ARRAY<TEXT>"}},
+				"`db_a`.doris": {"events": {FieldType: "TEXT ARRAY"}},
+			},
+			expected: "`events`",
+		},
+		{
+			name:         "缺失字段返回明确错误",
+			selectFields: []string{"`path`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			errContains: "missing",
+		},
+		{
+			name:         "类型不兼容返回明确错误",
+			selectFields: []string{"`path`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"path": {FieldType: "bigint"}},
+			},
+			errContains: "type mismatch",
+		},
+		{
+			name:         "JSON 类型不自动投影",
+			selectFields: []string{"`payload`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"payload": {FieldType: "json"}},
+				"`db_a`.doris": {"payload": {FieldType: "json"}},
+			},
+			errContains: "unsupported type",
+		},
+		{
+			name:         "multi table SELECT star 不再静默生成 DB-side union",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"path": {FieldType: "text"}},
+			},
+			errContains: "SELECT *",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := &metadata.Query{}
+			f := NewQueryFactory(context.Background(), query).WithTableFieldsMap(tt.tableFieldsMap)
+			got, err := f.unionSelectList(tt.selectFields, nil, nil, tables)
+			if tt.errContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }

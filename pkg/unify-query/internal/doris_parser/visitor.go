@@ -278,7 +278,7 @@ func hasTopLevelWildcard(s string) bool {
 				depth--
 			}
 		case '*':
-			if depth == 0 {
+			if depth == 0 && isWildcardToken(s, idx) {
 				return true
 			}
 		}
@@ -286,10 +286,19 @@ func hasTopLevelWildcard(s string) bool {
 	return false
 }
 
+func isWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceByte(s, idx)
+	next := nextNonSpaceByte(s, idx+1)
+	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
+}
+
 func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
 
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
+		if len(v.Tables) > 1 {
+			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
+		}
 		return Star
 	}
 

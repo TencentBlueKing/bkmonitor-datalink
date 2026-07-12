@@ -36,7 +36,6 @@ require (
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/jinzhu/gorm v1.9.16
 	github.com/josephburnett/jd v1.7.1
-	github.com/mattn/go-sqlite3 v1.14.0
 	github.com/minio/highwayhash v1.0.2
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/panjf2000/ants/v2 v2.10.0

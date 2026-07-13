@@ -415,6 +415,14 @@ func hasTopLevelWildcard(s string) bool {
 		return true
 	}
 
+	return scanTopLevelWildcard(s, isWildcardToken)
+}
+
+func hasTopLevelQualifiedWildcard(s string) bool {
+	return scanTopLevelWildcard(s, isQualifiedWildcardToken)
+}
+
+func scanTopLevelWildcard(s string, match func(string, int) bool) bool {
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -439,7 +447,7 @@ func hasTopLevelWildcard(s string) bool {
 				return true
 			}
 		case '*':
-			if depth == 0 && isWildcardToken(s, idx) {
+			if depth == 0 && match(s, idx) {
 				return true
 			}
 		}
@@ -498,11 +506,26 @@ func isDistinctStarExpression(s string) bool {
 func isWildcardToken(s string, idx int) bool {
 	prev := previousNonSpaceByte(s, idx)
 	next := nextNonSpaceByte(s, idx+1)
-	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
+	return (prev == 0 || prev == ',') && (next == 0 || next == ',')
+}
+
+func isQualifiedWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceByte(s, idx)
+	next := nextNonSpaceByte(s, idx+1)
+	return prev == '.' && (next == 0 || next == ',')
 }
 
 func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
+
+	if hasTopLevelQualifiedWildcard(selectSQL) {
+		// 多表 UNION 会把 FROM 改写成 combined_data 子查询，原始表别名不再存在。
+		// 因此只有 plain * 可以按公共字段展开，t.* 这类 qualified wildcard 继续要求显式字段。
+		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
+			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
+		}
+		return Star
+	}
 
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
 		if len(v.Tables) > 1 && v.RejectSelectAllUnion {

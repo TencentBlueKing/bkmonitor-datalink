@@ -483,9 +483,10 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 // COUNT(*) 位于函数参数内，不会被当成 wildcard 展开；如果没有任何真实字段依赖，
 // UNION 分支只需投影常量，外层 COUNT 仍按行数聚合。
 type unionProjection struct {
-	selectAll bool
-	dummy     bool
-	fields    []unionProjectionField
+	selectAll          bool
+	qualifiedSelectAll bool
+	dummy              bool
+	fields             []unionProjectionField
 }
 
 type unionProjectionField struct {
@@ -509,6 +510,10 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	projection := collectUnionProjection(selectFields, groupFields, orderFields)
 	switch {
 	case projection.selectAll:
+		// Doris 多表 UNION 会改写 FROM，qualified wildcard 依赖的原始表别名无法保留。
+		if projection.qualifiedSelectAll && f.expr.Type() == sql_expr.Doris && len(tables) > 1 {
+			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
+		}
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
 			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
 			if err != nil {
@@ -534,9 +539,14 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
 	selectAll := false
+	qualifiedSelectAll := false
 	allParts := [][]string{selectFields, groupFields, orderFields}
 	for _, parts := range allParts {
 		for _, part := range parts {
+			if hasTopLevelQualifiedUnionWildcard(part) {
+				qualifiedSelectAll = true
+				break
+			}
 			if hasTopLevelUnionWildcard(part) {
 				selectAll = true
 				break
@@ -575,8 +585,8 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		fields = append(fields, field)
 	}
 
-	if selectAll {
-		return unionProjection{selectAll: true, fields: fields}
+	if selectAll || qualifiedSelectAll {
+		return unionProjection{selectAll: true, qualifiedSelectAll: qualifiedSelectAll, fields: fields}
 	}
 	if len(fields) == 0 {
 		return unionProjection{dummy: true}
@@ -967,6 +977,14 @@ func hasTopLevelUnionWildcard(s string) bool {
 		return true
 	}
 
+	return scanTopLevelUnionWildcard(s, isUnionWildcardToken)
+}
+
+func hasTopLevelQualifiedUnionWildcard(s string) bool {
+	return scanTopLevelUnionWildcard(s, isUnionQualifiedWildcardToken)
+}
+
+func scanTopLevelUnionWildcard(s string, match func(string, int) bool) bool {
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -987,7 +1005,7 @@ func hasTopLevelUnionWildcard(s string) bool {
 				depth--
 			}
 		case '*':
-			if depth == 0 && isUnionWildcardToken(s, idx) {
+			if depth == 0 && match(s, idx) {
 				return true
 			}
 		}
@@ -1010,7 +1028,13 @@ func isUnionDistinctStarExpression(s string) bool {
 func isUnionWildcardToken(s string, idx int) bool {
 	prev := previousNonSpaceUnionByte(s, idx)
 	next := nextNonSpaceUnionByte(s, idx+1)
-	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
+	return (prev == 0 || prev == ',') && (next == 0 || next == ',')
+}
+
+func isUnionQualifiedWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceUnionByte(s, idx)
+	next := nextNonSpaceUnionByte(s, idx+1)
+	return prev == '.' && (next == 0 || next == ',')
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {

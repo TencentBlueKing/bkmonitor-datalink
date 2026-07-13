@@ -243,6 +243,23 @@ func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "text"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "t.*"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "SELECT *")
+}
+
 func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 	stmt := &Statement{
 		Tables: []string{"`db_his`.doris", "`db_current`.doris"},

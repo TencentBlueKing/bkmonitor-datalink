@@ -100,6 +100,11 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			selectFields: []string{"DISTINCT(*)"},
 			expected:     selectAll,
 		},
+		{
+			name:         "qualified wildcard 保守保留 select all",
+			selectFields: []string{"t.*"},
+			expected:     selectAll,
+		},
 	}
 
 	for _, tt := range tests {
@@ -266,6 +271,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
 			},
 			errContains: "missing",
+		},
+		{
+			name:         "multi table qualified wildcard 返回明确错误",
+			selectFields: []string{"t.*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"path": {FieldType: "text"}},
+				"`db_a`.doris": {"path": {FieldType: "text"}},
+			},
+			errContains: "SELECT *",
 		},
 		{
 			name:         "无真实字段依赖时使用常量投影",

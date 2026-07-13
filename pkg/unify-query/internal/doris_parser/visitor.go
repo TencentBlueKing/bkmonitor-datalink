@@ -12,6 +12,8 @@ package doris_parser
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
@@ -25,6 +27,7 @@ import (
 const (
 	Star                 = "*"
 	unionDummyProjection = "1"
+	maxDorisDecimalWidth = 38
 )
 
 const (
@@ -121,6 +124,11 @@ type UnionProjectionField struct {
 type unionProjectionField struct {
 	field        string
 	validateName string
+}
+
+type selectAllUnionField struct {
+	projection unionProjectionField
+	fieldType  string
 }
 
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
@@ -369,11 +377,11 @@ func isIdentifierPartOfNumericLiteral(s string, start int) bool {
 func isSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
-		"DATE", "DATETIME", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
-		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
+		"DATE", "DATETIME", "DAY", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
+		"FROM", "GROUP", "HOUR", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
 		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
-		"NOT", "NULL", "OR", "ORDER", "REGEXP", "SELECT", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP",
-		"TRUE", "VARCHAR", "WHEN", "WHERE":
+		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "SECOND", "SELECT",
+		"STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "YEAR":
 		return true
 	default:
 		return false
@@ -409,6 +417,14 @@ func hasTopLevelWildcard(s string) bool {
 		return true
 	}
 
+	return scanTopLevelWildcard(s, isWildcardToken, true)
+}
+
+func hasTopLevelQualifiedWildcard(s string) bool {
+	return scanTopLevelWildcard(s, isQualifiedWildcardToken, false)
+}
+
+func scanTopLevelWildcard(s string, match func(string, int) bool, matchDistinct bool) bool {
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -429,11 +445,11 @@ func hasTopLevelWildcard(s string) bool {
 				depth--
 			}
 		default:
-			if depth == 0 && isDistinctStarAt(s, idx) {
+			if matchDistinct && depth == 0 && isDistinctStarAt(s, idx) {
 				return true
 			}
 		case '*':
-			if depth == 0 && isWildcardToken(s, idx) {
+			if depth == 0 && match(s, idx) {
 				return true
 			}
 		}
@@ -492,14 +508,52 @@ func isDistinctStarExpression(s string) bool {
 func isWildcardToken(s string, idx int) bool {
 	prev := previousNonSpaceByte(s, idx)
 	next := nextNonSpaceByte(s, idx+1)
-	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
+	return (prev == 0 || prev == ',') && (next == 0 || next == ',')
+}
+
+func isQualifiedWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceByte(s, idx)
+	next := nextNonSpaceByte(s, idx+1)
+	return prev == '.' && (next == 0 || next == ',')
 }
 
 func (v *Statement) unionSelectList() string {
 	selectSQL := v.ItemString(SelectItem)
 
+	if hasTopLevelQualifiedWildcard(selectSQL) {
+		// 多表 UNION 会把 FROM 改写成 combined_data 子查询，原始表别名不再存在。
+		// 因此只有 plain * 可以按公共字段展开，t.* 这类 qualified wildcard 继续要求显式字段。
+		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
+			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
+		}
+		return Star
+	}
+
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
 		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
+			fields, err := ExpandSelectAllUnionFields(v.Tables, v.TableFieldsMap)
+			if err != nil {
+				v.errNode = append(v.errNode, err.Error())
+				return Star
+			}
+			if len(fields) > 0 {
+				aliases := v.collectSelectAliases()
+				for alias := range collectAliasesFromSQL(selectSQL) {
+					addAlias(aliases, alias)
+				}
+				projectionFields := collectUnionProjectionFields(selectSQL, nil)
+				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+				if err := validateUnionProjectionFields(v.Tables, projectionFields, v.TableFieldsMap); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+					return Star
+				}
+				if err := rejectSelectAllExtraProjectionFields(fields, projectionFields); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+					return Star
+				}
+				return strings.Join(fields, ", ")
+			}
 			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
 		}
 		return Star
@@ -507,9 +561,9 @@ func (v *Statement) unionSelectList() string {
 
 	// 多张 Doris 表合并时不能无条件 SELECT *：
 	// 历史表和当前表可能存在字段漂移，Doris 要求 UNION ALL 两侧列数一致。
-	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段。
-	// 顶层 SELECT * 仍会被识别出来并在多表场景返回明确错误；COUNT(*) 不是顶层
-	// wildcard，不会被展开。若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
+	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；顶层 SELECT *
+	// 在有表结构时会先转换成公共字段投影。COUNT(*) 不是顶层 wildcard，不会被展开。
+	// 若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
 	aliases := v.collectSelectAliases()
 	for alias := range collectAliasesFromSQL(selectSQL) {
 		addAlias(aliases, alias)
@@ -563,6 +617,199 @@ func ValidateUnionProjectionFieldNames(tables []string, fields []UnionProjection
 	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
 }
 
+// ExpandSelectAllUnionFields converts SELECT * for Doris multi-table UNION into
+// a deterministic explicit projection over fields shared by every table.
+func ExpandSelectAllUnionFields(tables []string, tableFieldsMap TableFieldsMap) ([]string, error) {
+	fields, err := collectSelectAllUnionProjectionFields(tables, tableFieldsMap)
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	if err := validateUnionProjectionFields(tables, fields, tableFieldsMap); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.field)
+	}
+	return names, nil
+}
+
+func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap TableFieldsMap) ([]unionProjectionField, error) {
+	if len(tables) == 0 || len(tableFieldsMap) == 0 {
+		return nil, nil
+	}
+
+	common := make(map[string]selectAllUnionField)
+	for idx, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return nil, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if idx == 0 {
+			for name, option := range fieldsMap {
+				name = strings.TrimSpace(name)
+				if name == "" || !option.Existed() || isUnsupportedUnionFieldType(option.FieldType) {
+					continue
+				}
+				key := strings.ToLower(name)
+				if _, ok := common[key]; ok {
+					continue
+				}
+				common[key] = selectAllUnionField{
+					projection: unionProjectionField{
+						field:        selectAllUnionProjectionField(name, option.FieldType),
+						validateName: name,
+					},
+					fieldType: option.FieldType,
+				}
+			}
+			continue
+		}
+
+		for key, field := range common {
+			option := fieldsMap.Field(field.projection.validateName)
+			safeType, compatible := safeUnionFieldType(field.fieldType, option.FieldType)
+			if !option.Existed() ||
+				isUnsupportedUnionFieldType(option.FieldType) ||
+				!compatible {
+				delete(common, key)
+				continue
+			}
+			field.fieldType = safeType
+			field.projection.field = selectAllUnionProjectionField(field.projection.validateName, safeType)
+			common[key] = field
+		}
+	}
+
+	if len(common) == 0 {
+		return nil, fmt.Errorf("doris multi-table union SELECT * has no common fields")
+	}
+
+	keys := make([]string, 0, len(common))
+	for key := range common {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	fields := make([]unionProjectionField, 0, len(keys))
+	for _, key := range keys {
+		fields = append(fields, common[key].projection)
+	}
+	return fields, nil
+}
+
+func selectAllUnionProjectionField(field string, fieldType string) string {
+	field = unquoteUnionField(strings.TrimSpace(field))
+	if !strings.Contains(field, ".") {
+		return quoteUnionField(field)
+	}
+	return fmt.Sprintf("CAST(%s AS %s) AS `%s`", dorisObjectFieldExpression(field), dorisCastType(fieldType), field)
+}
+
+func dorisObjectFieldExpression(field string) string {
+	parts := strings.Split(field, ".")
+	if len(parts) == 0 {
+		return field
+	}
+
+	mapFieldSet := map[string]struct{}{
+		"resource":   {},
+		"attributes": {},
+	}
+
+	var builder strings.Builder
+	sep := ""
+	for idx, part := range parts {
+		switch idx {
+		case 0:
+			sep = "['"
+		case len(parts) - 1:
+			sep = "']"
+		}
+
+		builder.WriteString(part)
+		builder.WriteString(sep)
+		if _, ok := mapFieldSet[part]; ok {
+			sep = "."
+		} else if sep != "." {
+			sep = "']['"
+		}
+	}
+	return builder.String()
+}
+
+func dorisCastType(fieldType string) string {
+	fieldType = strings.ToUpper(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(fieldType, "ARRAY<") && strings.HasSuffix(fieldType, ">") {
+		return strings.TrimSuffix(strings.TrimPrefix(fieldType, "ARRAY<"), ">") + " ARRAY"
+	}
+	if fieldType == "" {
+		return "STRING"
+	}
+	return fieldType
+}
+
+func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionProjectionField) error {
+	seen := make(map[string]struct{}, len(fields)*2)
+	for _, field := range fields {
+		addSelectAllProjectionOutputName(seen, field)
+	}
+	for _, field := range extraFields {
+		if selectAllProjectionOutputNameExists(seen, field.field) {
+			continue
+		}
+		return fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field.field)
+	}
+	return nil
+}
+
+func addSelectAllProjectionOutputName(seen map[string]struct{}, field string) {
+	seen[field] = struct{}{}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		seen[key] = struct{}{}
+	}
+	upperField := strings.ToUpper(field)
+	idx := strings.LastIndex(upperField, " AS `")
+	if idx < 0 {
+		return
+	}
+	alias := field[idx+len(" AS "):]
+	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
+		seen[alias] = struct{}{}
+		if key := normalizedSelectAllProjectionName(alias); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+}
+
+func selectAllProjectionOutputNameExists(seen map[string]struct{}, field string) bool {
+	if _, ok := seen[field]; ok {
+		return true
+	}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		_, ok := seen[key]
+		return ok
+	}
+	return false
+}
+
+func normalizedSelectAllProjectionName(field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	if strings.HasPrefix(field, "`") && strings.HasSuffix(field, "`") {
+		field = unquoteUnionField(field)
+	}
+	if strings.ContainsAny(field, " ()") {
+		return ""
+	}
+	return strings.ToLower(field)
+}
+
 func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
 	if len(tableFieldsMap) == 0 {
 		return nil
@@ -578,6 +825,12 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 			continue
 		}
 		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionField(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		var base metadata.FieldOption
 		var baseTable string
 		for _, table := range tables {
@@ -607,6 +860,99 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 	return nil
 }
 
+// validateRootObjectUnionField 校验直接投影对象 root 的场景。
+//
+// 例如 SELECT dimensions 时，schema 往往只有 dimensions.xxx leaf，没有
+// dimensions root 字段。这里按完整 leaf 集合比较，避免随机选中某个 leaf 后
+// 把两张完全相同的对象 schema 误判为类型不兼容。
+func validateRootObjectUnionField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	var baseTable string
+	var baseFields map[string]rootObjectUnionField
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return false, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() {
+			return false, nil
+		}
+		fields := rootObjectUnionFields(fieldsMap, rootName)
+		if len(fields) == 0 {
+			if baseFields == nil {
+				return false, nil
+			}
+			return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+		}
+		if baseFields == nil {
+			baseFields = fields
+			baseTable = table
+			continue
+		}
+		if err := validateRootObjectUnionFields(baseTable, baseFields, table, fields); err != nil {
+			return true, err
+		}
+	}
+	return baseFields != nil, nil
+}
+
+type rootObjectUnionField struct {
+	name   string
+	option metadata.FieldOption
+}
+
+func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[string]rootObjectUnionField {
+	prefix := rootName + "."
+	fields := make(map[string]rootObjectUnionField)
+	for fieldName, option := range fieldsMap {
+		if !option.Existed() || len(fieldName) <= len(prefix) || !strings.EqualFold(fieldName[:len(prefix)], prefix) {
+			continue
+		}
+		fields[strings.ToLower(fieldName)] = rootObjectUnionField{name: fieldName, option: option}
+	}
+	return fields
+}
+
+func validateRootObjectUnionFields(
+	baseTable string,
+	baseFields map[string]rootObjectUnionField,
+	table string,
+	fields map[string]rootObjectUnionField,
+) error {
+	for key, baseField := range baseFields {
+		fieldOption, ok := fields[key]
+		if !ok {
+			return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(baseField.name), table)
+		}
+		if isUnsupportedUnionFieldType(fieldOption.option.FieldType) {
+			return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", quoteUnionField(fieldOption.name), table, fieldOption.option.FieldType)
+		}
+		if !compatibleUnionFieldTypes(baseField.option.FieldType, fieldOption.option.FieldType) {
+			return fmt.Errorf(
+				"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+				quoteUnionField(fieldOption.name), baseTable, baseField.option.FieldType, table, fieldOption.option.FieldType,
+			)
+		}
+	}
+	for key, fieldOption := range fields {
+		if _, ok := baseFields[key]; ok {
+			continue
+		}
+		return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(fieldOption.name), baseTable)
+	}
+	return nil
+}
+
+// unionFieldOption 解析 UNION 投影字段对应的 schema。
+//
+// 对象字段表达式渲染后会使用 root 列，例如 dimensions['pipelineName'] 会投影为
+// `dimensions`，而 schema 里通常只有 dimensions.pipelineName 这样的 leaf 字段。
+// validateName 用于传递已知 leaf；直接投影 root 对象时，会先按完整 leaf 集合校验，
+// 再进入这里的兜底逻辑。
 func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
 	fieldOption := fieldsMap.Field(validateName)
 	if fieldOption.Existed() {
@@ -622,8 +968,18 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 		return metadata.FieldOption{}, false
 	}
 
+	// 兼容只传 root 对象名的旧调用方：选择固定顺序的 leaf，避免依赖 Go map
+	// 的随机遍历顺序导致同一份 schema 偶发类型误判。
 	prefix := rootName + "."
-	for fieldName, option := range fieldsMap {
+	fieldNames := make([]string, 0, len(fieldsMap))
+	for fieldName := range fieldsMap {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Slice(fieldNames, func(i, j int) bool {
+		return strings.ToLower(fieldNames[i]) < strings.ToLower(fieldNames[j])
+	})
+	for _, fieldName := range fieldNames {
+		option := fieldsMap[fieldName]
 		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
 			return option, true
 		}
@@ -633,6 +989,11 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 
 func unquoteUnionField(field string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+}
+
+func quoteUnionField(field string) string {
+	field = unquoteUnionField(strings.TrimSpace(field))
+	return fmt.Sprintf("`%s`", field)
 }
 
 func isUnsupportedUnionFieldType(fieldType string) bool {
@@ -645,7 +1006,137 @@ func isUnsupportedUnionFieldType(fieldType string) bool {
 }
 
 func compatibleUnionFieldTypes(left, right string) bool {
-	return normalizeUnionFieldType(left) == normalizeUnionFieldType(right)
+	_, ok := safeUnionFieldType(left, right)
+	return ok
+}
+
+func safeUnionFieldType(left, right string) (string, bool) {
+	normalized := normalizeUnionFieldType(left)
+	if normalized != normalizeUnionFieldType(right) {
+		return "", false
+	}
+	return safeNormalizedUnionFieldType(normalized, left, right)
+}
+
+func safeNormalizedUnionFieldType(normalized, left, right string) (string, bool) {
+	if strings.HasPrefix(normalized, "array:") {
+		fieldType, ok := safeNormalizedUnionFieldType(strings.TrimPrefix(normalized, "array:"), left, right)
+		if !ok {
+			return "", false
+		}
+		return fieldType + " ARRAY", true
+	}
+
+	switch normalized {
+	case "string":
+		return "TEXT", true
+	case "integer":
+		if baseUnionFieldType(left) == "largeint" || baseUnionFieldType(right) == "largeint" {
+			return "LARGEINT", true
+		}
+		return "BIGINT", true
+	case "decimal":
+		return safeDecimalUnionFieldType(left, right)
+	case "number":
+		return "DOUBLE", true
+	case "boolean":
+		return "BOOLEAN", true
+	case "time":
+		return "DATETIME", true
+	default:
+		return dorisCastType(left), true
+	}
+}
+
+func baseUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return baseUnionFieldType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return baseUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	return strings.TrimSpace(t)
+}
+
+type decimalUnionFieldSpec struct {
+	kind      string
+	precision int
+	scale     int
+	hasParams bool
+}
+
+func safeDecimalUnionFieldType(left, right string) (string, bool) {
+	leftSpec, leftOK := decimalUnionFieldSpecFromType(left)
+	rightSpec, rightOK := decimalUnionFieldSpecFromType(right)
+	if !leftOK || !rightOK {
+		return dorisCastType(left), true
+	}
+	if leftSpec.hasParams && rightSpec.hasParams {
+		kind := "DECIMAL"
+		if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+			kind = "DECIMALV3"
+		}
+		scale := max(leftSpec.scale, rightSpec.scale)
+		integerDigits := max(leftSpec.precision-leftSpec.scale, rightSpec.precision-rightSpec.scale)
+		precision := integerDigits + scale
+		if precision > maxDorisDecimalWidth {
+			return "", false
+		}
+		return fmt.Sprintf("%s(%d,%d)", kind, precision, scale), true
+	}
+	if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+		return dorisCastType(left), true
+	}
+	if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+		return "DECIMALV3", true
+	}
+	return "DECIMAL", true
+}
+
+func decimalUnionFieldSpecFromType(fieldType string) (decimalUnionFieldSpec, bool) {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return decimalUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return decimalUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+	if base != "decimal" && base != "decimalv2" && base != "decimalv3" {
+		return decimalUnionFieldSpec{}, false
+	}
+
+	spec := decimalUnionFieldSpec{kind: base}
+	if params == "" {
+		return spec, true
+	}
+
+	parts := strings.Split(params, ",")
+	precision, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return spec, true
+	}
+	scale := 0
+	if len(parts) > 1 {
+		scale, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return spec, true
+		}
+	}
+	spec.precision = precision
+	spec.scale = scale
+	spec.hasParams = true
+	return spec, true
 }
 
 func normalizeUnionFieldType(fieldType string) string {
@@ -665,11 +1156,13 @@ func normalizeUnionFieldType(fieldType string) string {
 		return "string"
 	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
 		return "integer"
-	case "float", "double", "decimal", "decimalv3":
+	case "decimal", "decimalv2", "decimalv3":
+		return "decimal"
+	case "float", "double":
 		return "number"
 	case "bool", "boolean":
 		return "boolean"
-	case "date", "datetime", "timestamp":
+	case "date", "datev1", "datev2", "datetime", "datetimev1", "datetimev2", "timestamp":
 		return "time"
 	default:
 		return t

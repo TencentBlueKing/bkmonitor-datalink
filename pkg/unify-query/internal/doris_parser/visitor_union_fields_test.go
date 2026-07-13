@@ -69,6 +69,11 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
+		{
+			name:     "TIMESTAMPDIFF 时间单位不当作字段",
+			sql:      "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days",
+			expected: []string{"`start_time`", "`end_time`"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -212,12 +217,177 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 	}
 }
 
-func TestStatementUnionSelectListRejectsMultiTableWildcard(t *testing.T) {
+func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
 		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+				"path":                    {FieldType: "text"},
+				"value":                   {FieldType: "bigint"},
+				"status":                  {FieldType: "text"},
+				"extra":                   {FieldType: "bigint"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "double"},
+				"dimensions.only_current": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+				"value":                   {FieldType: "int"},
+				"status":                  {FieldType: "bigint"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `value` AS `_value_`"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`, `value`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListExpandsDistinctStar(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "DISTINCT(*)"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListUsesSafeCommonCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "bigint"},
+			},
+		},
 		nodeMap: map[string]Node{
 			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListPreservesDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(20,4)"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(30,8)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListSkipsUnsafeDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,18)"},
+				"path":              {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,0)"},
+				"path":              {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsExpandedObjectLeafDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dimensions.pipelineName`"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListRejectsSelectAllWithObjectDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, dimensions['pipelineName'] AS pipeline_name"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "cannot be combined with field dependency `dimensions`")
+}
+
+func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "text"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "t.*"},
 		},
 	}
 
@@ -266,6 +436,96 @@ func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
 	}
 
 	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	for i := 0; i < 1000; i++ {
+		assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+		assert.NoError(t, stmt.Error())
+	}
+}
+
+func TestStatementUnionSelectListRejectsRootObjectLeafMismatch(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "double"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "field `dimensions.retry_count` type mismatch")
+}
+
+func TestStatementUnionSelectListAllowsDorisV2TimeTypes(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"event_date": {FieldType: "DATE"},
+				"event_time": {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"event_date": {FieldType: "DATEV2"},
+				"event_time": {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "event_date, event_time"},
+		},
+	}
+
+	assert.Equal(t, "`event_date`, `event_time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsTimestampdiffTimeUnit(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"start_time": {FieldType: "DATETIME"},
+				"end_time":   {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"start_time": {FieldType: "DATETIMEV2"},
+				"end_time":   {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days"},
+		},
+	}
+
+	assert.Equal(t, "`start_time`, `end_time`", stmt.unionSelectList())
 	assert.NoError(t, stmt.Error())
 }
 

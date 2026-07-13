@@ -479,13 +479,14 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 //
 // 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
 // 这里从已渲染表达式中收集外层真正依赖的源字段，让内层 UNION 子查询只投影这些列。
-// 顶层 wildcard 仍保留为 *，让调用方拒绝多表 schema 漂移场景的 raw 明细查询。
+// 顶层 wildcard 会在 Doris 多表场景中按表结构转换成公共字段显式投影。
 // COUNT(*) 位于函数参数内，不会被当成 wildcard 展开；如果没有任何真实字段依赖，
 // UNION 分支只需投影常量，外层 COUNT 仍按行数聚合。
 type unionProjection struct {
-	selectAll bool
-	dummy     bool
-	fields    []unionProjectionField
+	selectAll          bool
+	qualifiedSelectAll bool
+	dummy              bool
+	fields             []unionProjectionField
 }
 
 type unionProjectionField struct {
@@ -510,7 +511,22 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	switch {
 	case projection.selectAll:
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
-			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields or aggregate dependencies")
+			if projection.qualifiedSelectAll {
+				return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
+			}
+			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
+			if err != nil {
+				return "", err
+			}
+			if err := doris_parser.ValidateUnionProjectionFieldNames(tables, toDorisUnionProjectionFields(projection.fields), f.tableFieldsMap); err != nil {
+				return "", err
+			}
+			if field := firstMissingUnionProjectionField(fields, unionProjectionFieldNames(projection.fields)); field != "" {
+				return "", fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field)
+			}
+			if len(fields) > 0 {
+				return strings.Join(fields, ", "), nil
+			}
 		}
 		return selectAll, nil
 	case projection.dummy:
@@ -523,11 +539,18 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 }
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
+	selectAll := false
+	qualifiedSelectAll := false
 	allParts := [][]string{selectFields, groupFields, orderFields}
 	for _, parts := range allParts {
 		for _, part := range parts {
+			if hasTopLevelQualifiedUnionWildcard(part) {
+				qualifiedSelectAll = true
+				break
+			}
 			if hasTopLevelUnionWildcard(part) {
-				return unionProjection{selectAll: true}
+				selectAll = true
+				break
 			}
 		}
 	}
@@ -563,6 +586,9 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		fields = append(fields, field)
 	}
 
+	if selectAll || qualifiedSelectAll {
+		return unionProjection{selectAll: true, qualifiedSelectAll: qualifiedSelectAll, fields: fields}
+	}
 	if len(fields) == 0 {
 		return unionProjection{dummy: true}
 	}
@@ -584,6 +610,64 @@ func unionProjectionFieldNames(fields []unionProjectionField) []string {
 		names = append(names, field.field)
 	}
 	return names
+}
+
+func firstMissingUnionProjectionField(fields []string, extraFields []string) string {
+	seen := make(map[string]struct{}, len(fields)*2)
+	for _, field := range fields {
+		addUnionProjectionOutputName(seen, field)
+	}
+	for _, field := range extraFields {
+		if unionProjectionOutputNameExists(seen, field) {
+			continue
+		}
+		return field
+	}
+	return ""
+}
+
+func addUnionProjectionOutputName(seen map[string]struct{}, field string) {
+	seen[field] = struct{}{}
+	if key := normalizedUnionProjectionName(field); key != "" {
+		seen[key] = struct{}{}
+	}
+	upperField := strings.ToUpper(field)
+	idx := strings.LastIndex(upperField, " AS `")
+	if idx < 0 {
+		return
+	}
+	alias := field[idx+len(" AS "):]
+	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
+		seen[alias] = struct{}{}
+		if key := normalizedUnionProjectionName(alias); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+}
+
+func unionProjectionOutputNameExists(seen map[string]struct{}, field string) bool {
+	if _, ok := seen[field]; ok {
+		return true
+	}
+	if key := normalizedUnionProjectionName(field); key != "" {
+		_, ok := seen[key]
+		return ok
+	}
+	return false
+}
+
+func normalizedUnionProjectionName(field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	if strings.HasPrefix(field, "`") && strings.HasSuffix(field, "`") {
+		field = strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+	}
+	if strings.ContainsAny(field, " ()") {
+		return ""
+	}
+	return strings.ToLower(field)
 }
 
 func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {
@@ -636,6 +720,9 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 			end += idx + 1
 			name := part[idx+1 : end]
 			idx = end
+			if isUnionQualifiedWildcardRoot(part, idx+1) {
+				continue
+			}
 			if shouldSkipUnionColumnName(part, start, name, ignoreNames, true) {
 				continue
 			}
@@ -670,12 +757,29 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		if nextNonSpaceUnionByte(part, idx+1) == '(' {
 			continue
 		}
+		if isUnionQualifiedWildcardRoot(part, idx+1) {
+			continue
+		}
 		fields = append(fields, unionProjectionField{
 			field:        fmt.Sprintf("`%s`", name),
 			validateName: name + collectUnionObjectPathSuffix(part, idx+1),
 		})
 	}
 	return fields
+}
+
+func isUnionQualifiedWildcardRoot(part string, start int) bool {
+	for start < len(part) && part[start] == ' ' {
+		start++
+	}
+	if start >= len(part) || part[start] != '.' {
+		return false
+	}
+	start++
+	for start < len(part) && part[start] == ' ' {
+		start++
+	}
+	return start < len(part) && part[start] == '*'
 }
 
 func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {
@@ -937,6 +1041,14 @@ func hasTopLevelUnionWildcard(s string) bool {
 		return true
 	}
 
+	return scanTopLevelUnionWildcard(s, isUnionWildcardToken)
+}
+
+func hasTopLevelQualifiedUnionWildcard(s string) bool {
+	return scanTopLevelUnionWildcard(s, isUnionQualifiedWildcardToken)
+}
+
+func scanTopLevelUnionWildcard(s string, match func(string, int) bool) bool {
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -957,7 +1069,7 @@ func hasTopLevelUnionWildcard(s string) bool {
 				depth--
 			}
 		case '*':
-			if depth == 0 && isUnionWildcardToken(s, idx) {
+			if depth == 0 && match(s, idx) {
 				return true
 			}
 		}
@@ -980,7 +1092,13 @@ func isUnionDistinctStarExpression(s string) bool {
 func isUnionWildcardToken(s string, idx int) bool {
 	prev := previousNonSpaceUnionByte(s, idx)
 	next := nextNonSpaceUnionByte(s, idx+1)
-	return (prev == 0 || prev == ',' || prev == '.') && (next == 0 || next == ',')
+	return (prev == 0 || prev == ',') && (next == 0 || next == ',')
+}
+
+func isUnionQualifiedWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceUnionByte(s, idx)
+	next := nextNonSpaceUnionByte(s, idx+1)
+	return prev == '.' && (next == 0 || next == ',')
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {

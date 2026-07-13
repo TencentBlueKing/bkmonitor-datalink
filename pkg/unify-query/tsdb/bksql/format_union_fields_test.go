@@ -100,6 +100,11 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			selectFields: []string{"DISTINCT(*)"},
 			expected:     selectAll,
 		},
+		{
+			name:         "qualified wildcard 保守保留 select all",
+			selectFields: []string{"t.*"},
+			expected:     selectAll,
+		},
 	}
 
 	for _, tt := range tests {
@@ -117,7 +122,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 		selectFields   []string
 		tableFieldsMap TableFieldsMap
 		expected       string
-		errContains    string
+		expectedErr    string
 	}{
 		{
 			name:         "字段存在且类型兼容",
@@ -144,7 +149,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"path": {FieldType: "text"}},
 				"`db_a`.doris": {"log": {FieldType: "text"}},
 			},
-			errContains: "missing",
+			expectedErr: "doris multi-table union field `path` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "对象 root 投影允许 leaf schema 校验",
@@ -182,7 +187,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 					"resource.retry_count": {FieldType: "int"},
 				},
 			},
-			errContains: "missing",
+			expectedErr: "doris multi-table union field `resource` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "类型不兼容返回明确错误",
@@ -191,7 +196,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"path": {FieldType: "text"}},
 				"`db_a`.doris": {"path": {FieldType: "bigint"}},
 			},
-			errContains: "type mismatch",
+			expectedErr: "doris multi-table union field `path` type mismatch: table `db_b`.doris has text, table `db_a`.doris has bigint",
 		},
 		{
 			name:         "JSON 类型不自动投影",
@@ -200,16 +205,177 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"payload": {FieldType: "json"}},
 				"`db_a`.doris": {"payload": {FieldType: "json"}},
 			},
-			errContains: "unsupported type",
+			expectedErr: "doris multi-table union field `payload` in table `db_b`.doris has unsupported type json",
 		},
 		{
-			name:         "multi table SELECT star 不再静默生成 DB-side union",
+			name:         "multi table SELECT star 嵌套字段按完整字段名取交集",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{
-				"`db_b`.doris": {"path": {FieldType: "text"}},
-				"`db_a`.doris": {"path": {FieldType: "text"}},
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "double"},
+					"dimensions.only_current": {FieldType: "varchar(128)"},
+				},
 			},
-			errContains: "SELECT *",
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`",
+		},
+		{
+			name:         "multi table SELECT star 嵌套字段使用安全公共 cast 类型",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "bigint"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`",
+		},
+		{
+			name:         "multi table SELECT star 嵌套 decimal 字段保持精确 cast 类型",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.amount": {FieldType: "decimal(20,4)"},
+				},
+				"`db_a`.doris": {
+					"dimensions.amount": {FieldType: "decimal(30,8)"},
+				},
+			},
+			expected: "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`",
+		},
+		{
+			name:         "multi table SELECT star 跳过超过 Doris precision 上限的 decimal 字段",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.amount": {FieldType: "decimal(38,18)"},
+					"path":              {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.amount": {FieldType: "decimal(38,0)"},
+					"path":              {FieldType: "varchar(128)"},
+				},
+			},
+			expected: "`path`",
+		},
+		{
+			name:         "multi table SELECT star 转换成公共字段投影",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+					"path":                    {FieldType: "text"},
+					"status":                  {FieldType: "text"},
+					"extra":                   {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "double"},
+					"dimensions.only_current": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+					"status":                  {FieldType: "bigint"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
+		},
+		{
+			name:         "multi table SELECT star 字段依赖按大小写不敏感匹配",
+			selectFields: []string{"*", "`dtEventTimeStamp` AS `_timestamp_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dteventtimestamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"dteventtimestamp": {FieldType: "int"},
+				},
+			},
+			expected: "`dteventtimestamp`",
+		},
+		{
+			name:         "multi table SELECT star 保留显式依赖字段",
+			selectFields: []string{"*", "`value` AS `_value_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":  {FieldType: "text"},
+					"value": {FieldType: "bigint"},
+					"extra": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"path":  {FieldType: "varchar(128)"},
+					"value": {FieldType: "int"},
+				},
+			},
+			expected: "`path`, `value`",
+		},
+		{
+			name:         "multi table SELECT star 显式依赖字段不参与交集剔除",
+			selectFields: []string{"*", "`value` AS `_value_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":  {FieldType: "text"},
+					"value": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+			},
+			// `*` 可按 schema 交集保留 `path`，但外层显式依赖的 `value`
+			// 不能被静默丢弃；db_a 缺少该字段时必须返回明确错误。
+			expectedErr: "doris multi-table union field `value` is missing from table `db_a`.doris",
+		},
+		{
+			name:         "multi table SELECT star 拒绝额外对象依赖字段",
+			selectFields: []string{"*", "CAST(dimensions['pipelineName'] AS TEXT) AS `pipeline_name`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"path":                    {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+				},
+			},
+			expectedErr: "doris multi-table union SELECT * cannot be combined with field dependency `dimensions`; use explicit fields",
+		},
+		{
+			name:         "multi table SELECT star 允许已展开的嵌套 leaf alias 依赖",
+			selectFields: []string{"*", "`dimensions.pipelineName`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"path":                    {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
+		},
+		{
+			name:         "multi table qualified wildcard 返回明确错误",
+			selectFields: []string{"t.*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "text"},
+					"extra":  {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"path":   {FieldType: "varchar(128)"},
+					"status": {FieldType: "bigint"},
+					"other":  {FieldType: "text"},
+				},
+			},
+			expectedErr: "doris multi-table union does not support SELECT *; use explicit fields",
 		},
 		{
 			name:         "无真实字段依赖时使用常量投影",
@@ -227,9 +393,9 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			query := &metadata.Query{Measurement: sql_expr.Doris}
 			f := NewQueryFactory(context.Background(), query).WithTableFieldsMap(tt.tableFieldsMap)
 			got, err := f.unionSelectList(tt.selectFields, nil, nil, tables)
-			if tt.errContains != "" {
+			if tt.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errContains)
+				assert.EqualError(t, err, tt.expectedErr)
 				return
 			}
 			require.NoError(t, err)

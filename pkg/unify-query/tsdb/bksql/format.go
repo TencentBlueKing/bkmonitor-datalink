@@ -510,10 +510,6 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	projection := collectUnionProjection(selectFields, groupFields, orderFields)
 	switch {
 	case projection.selectAll:
-		// Doris 多表 UNION 会改写 FROM，qualified wildcard 依赖的原始表别名无法保留。
-		if projection.qualifiedSelectAll && f.expr.Type() == sql_expr.Doris && len(tables) > 1 {
-			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
-		}
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
 			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
 			if err != nil {
@@ -676,6 +672,9 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 			end += idx + 1
 			name := part[idx+1 : end]
 			idx = end
+			if isUnionQualifiedWildcardRoot(part, idx+1) {
+				continue
+			}
 			if shouldSkipUnionColumnName(part, start, name, ignoreNames, true) {
 				continue
 			}
@@ -710,12 +709,29 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		if nextNonSpaceUnionByte(part, idx+1) == '(' {
 			continue
 		}
+		if isUnionQualifiedWildcardRoot(part, idx+1) {
+			continue
+		}
 		fields = append(fields, unionProjectionField{
 			field:        fmt.Sprintf("`%s`", name),
 			validateName: name + collectUnionObjectPathSuffix(part, idx+1),
 		})
 	}
 	return fields
+}
+
+func isUnionQualifiedWildcardRoot(part string, start int) bool {
+	for start < len(part) && part[start] == ' ' {
+		start++
+	}
+	if start >= len(part) || part[start] != '.' {
+		return false
+	}
+	start++
+	for start < len(part) && part[start] == ' ' {
+		start++
+	}
+	return start < len(part) && part[start] == '*'
 }
 
 func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {

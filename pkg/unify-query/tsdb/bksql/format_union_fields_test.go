@@ -273,13 +273,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			errContains: "missing",
 		},
 		{
-			name:         "multi table qualified wildcard 返回明确错误",
+			name:         "multi table qualified wildcard 按公共字段投影",
 			selectFields: []string{"t.*"},
 			tableFieldsMap: TableFieldsMap{
-				"`db_b`.doris": {"path": {FieldType: "text"}},
-				"`db_a`.doris": {"path": {FieldType: "text"}},
+				"`db_b`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "text"},
+					"extra":  {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"path":   {FieldType: "varchar(128)"},
+					"status": {FieldType: "bigint"},
+					"other":  {FieldType: "text"},
+				},
 			},
-			errContains: "SELECT *",
+			expected: "`path`",
 		},
 		{
 			name:         "无真实字段依赖时使用常量投影",

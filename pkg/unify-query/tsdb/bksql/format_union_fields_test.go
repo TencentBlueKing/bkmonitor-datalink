@@ -267,6 +267,34 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "`path`",
 		},
 		{
+			name:         "multi table SELECT star 嵌套 datetime 字段保留小数秒精度",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.time": {FieldType: "datetimev2(3)"},
+				},
+				"`db_a`.doris": {
+					"dimensions.time": {FieldType: "datetimev2(6)"},
+				},
+			},
+			expected: "CAST(dimensions['time'] AS DATETIME(6)) AS `dimensions.time`",
+		},
+		{
+			name:         "multi table SELECT star 不合并大小写不同的对象 leaf",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":             {FieldType: "text"},
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"path":             {FieldType: "varchar(128)"},
+					"resource.traceid": {FieldType: "varchar(128)"},
+				},
+			},
+			expected: "`path`",
+		},
+		{
 			name:         "multi table SELECT star 转换成公共字段投影",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{

@@ -654,7 +654,7 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 				if name == "" || !option.Existed() || isUnsupportedUnionFieldType(option.FieldType) {
 					continue
 				}
-				key := strings.ToLower(name)
+				key := selectAllUnionFieldKey(name)
 				if _, ok := common[key]; ok {
 					continue
 				}
@@ -670,7 +670,7 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 		}
 
 		for key, field := range common {
-			option := fieldsMap.Field(field.projection.validateName)
+			option := selectAllUnionFieldOption(fieldsMap, field.projection.validateName)
 			safeType, compatible := safeUnionFieldType(field.fieldType, option.FieldType)
 			if !option.Existed() ||
 				isUnsupportedUnionFieldType(option.FieldType) ||
@@ -699,6 +699,22 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 		fields = append(fields, common[key].projection)
 	}
 	return fields, nil
+}
+
+func selectAllUnionFieldKey(name string) string {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if strings.Contains(name, ".") {
+		return name
+	}
+	return strings.ToLower(name)
+}
+
+func selectAllUnionFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if strings.Contains(name, ".") {
+		return fieldsMap[name]
+	}
+	return fieldsMap.Field(name)
 }
 
 func selectAllUnionProjectionField(field string, fieldType string) string {
@@ -1042,7 +1058,7 @@ func safeNormalizedUnionFieldType(normalized, left, right string) (string, bool)
 	case "boolean":
 		return "BOOLEAN", true
 	case "time":
-		return "DATETIME", true
+		return safeTimeUnionFieldType(left, right)
 	default:
 		return dorisCastType(left), true
 	}
@@ -1060,6 +1076,62 @@ func baseUnionFieldType(fieldType string) string {
 		t = t[:idx]
 	}
 	return strings.TrimSpace(t)
+}
+
+type timeUnionFieldSpec struct {
+	kind      string
+	precision int
+}
+
+func safeTimeUnionFieldType(left, right string) (string, bool) {
+	leftSpec := timeUnionFieldSpecFromType(left)
+	rightSpec := timeUnionFieldSpecFromType(right)
+	if leftSpec.kind == "date" && rightSpec.kind == "date" {
+		return "DATE", true
+	}
+	precision := max(leftSpec.precision, rightSpec.precision)
+	if precision == 0 {
+		return "DATETIME", true
+	}
+	return fmt.Sprintf("DATETIME(%d)", precision), true
+}
+
+func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return timeUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return timeUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+
+	switch base {
+	case "date", "datev1", "datev2":
+		return timeUnionFieldSpec{kind: "date"}
+	case "datetime", "datetimev1", "datetimev2", "timestamp":
+		spec := timeUnionFieldSpec{kind: "datetime"}
+		if params == "" {
+			return spec
+		}
+		precision, err := strconv.Atoi(strings.TrimSpace(strings.Split(params, ",")[0]))
+		if err != nil || precision < 0 {
+			return spec
+		}
+		if precision > 6 {
+			precision = 6
+		}
+		spec.precision = precision
+		return spec
+	default:
+		return timeUnionFieldSpec{kind: base}
+	}
 }
 
 type decimalUnionFieldSpec struct {

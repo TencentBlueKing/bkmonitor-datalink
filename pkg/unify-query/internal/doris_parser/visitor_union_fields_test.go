@@ -332,6 +332,50 @@ func TestStatementUnionSelectListSkipsUnsafeDecimalCastType(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListPreservesDatetimePrecisionForObjectLeaf(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.time": {FieldType: "datetimev2(3)"},
+			},
+			"`db_a`.doris": {
+				"dimensions.time": {FieldType: "datetimev2(6)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['time'] AS DATETIME(6)) AS `dimensions.time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListDoesNotMergeObjectLeafWithDifferentCase(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"path":             {FieldType: "text"},
+				"resource.TraceID": {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"path":             {FieldType: "varchar(128)"},
+				"resource.traceid": {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
 func TestStatementUnionSelectListAllowsExpandedObjectLeafDependency(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},

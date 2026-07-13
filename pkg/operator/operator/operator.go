@@ -81,9 +81,10 @@ type Operator struct {
 	statefulSetSecretMap    map[string]struct{}
 	statefulSetSecretMut    sync.Mutex
 
-	dw           dataidwatcher.Watcher
-	discoversMut sync.RWMutex
-	discovers    map[string]discover.Discover
+	dw                  dataidwatcher.Watcher
+	discoversMut        sync.RWMutex
+	discovers           map[string]discover.Discover
+	monitorReconcileMut sync.Mutex
 
 	objectsController *objectsref.ObjectsController
 
@@ -91,8 +92,10 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 
-	promSdConfigsBytes        map[SecretKey][]byte           // 无并发读写
-	prevResourceScrapeConfigs map[string]resourceScrapConfig // 无并发读写
+	promSdConfigsMut          sync.Mutex
+	promSdReconcileMut        sync.Mutex
+	promSdConfigsBytes        map[SecretKey][]byte
+	prevResourceScrapeConfigs map[string]resourceScrapConfig
 }
 
 func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -496,6 +499,21 @@ func (c *Operator) addOrUpdateDiscover(discover discover.Discover) error {
 	return nil
 }
 
+// addDiscoverIfAbsent 仅在 discover 尚未注册时启动并添加。
+func (c *Operator) addDiscoverIfAbsent(discover discover.Discover) (bool, error) {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	if _, ok := c.discovers[discover.Name()]; ok {
+		return false, nil
+	}
+	if err := discover.Start(); err != nil {
+		return false, err
+	}
+	c.discovers[discover.Name()] = discover
+	return true, nil
+}
+
 // deleteDiscoverByName 删除 discover
 func (c *Operator) deleteDiscoverByName(name string) {
 	c.discoversMut.Lock()
@@ -569,6 +587,7 @@ func (c *Operator) handleDataIDNotify() {
 			start := time.Now()
 			count++
 			c.reloadAllDiscovers()
+			c.recoverDataIDDependentDiscovers()
 			logger.Infof("reload discovers, count=%d, take: %v", count, time.Since(start))
 		}
 	}

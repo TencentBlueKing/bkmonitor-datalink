@@ -111,6 +111,13 @@ type Statement struct {
 
 type TableFieldsMap map[string]metadata.FieldsMap
 
+// UnionProjectionField carries the physical field used by inner UNION branches
+// and the exact schema field that should be validated for compatibility.
+type UnionProjectionField struct {
+	Field        string
+	ValidateName string
+}
+
 type unionProjectionField struct {
 	field        string
 	validateName string
@@ -536,6 +543,19 @@ func ValidateUnionProjectionFields(tables []string, fields []string, tableFields
 		projectionFields = append(projectionFields, unionProjectionField{
 			field:        field,
 			validateName: unquoteUnionField(field),
+		})
+	}
+	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
+}
+
+// ValidateUnionProjectionFieldNames validates UNION projections when the SQL
+// projection root differs from the schema leaf that the outer query reads.
+func ValidateUnionProjectionFieldNames(tables []string, fields []UnionProjectionField, tableFieldsMap TableFieldsMap) error {
+	projectionFields := make([]unionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		projectionFields = append(projectionFields, unionProjectionField{
+			field:        field.Field,
+			validateName: field.ValidateName,
 		})
 	}
 	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)

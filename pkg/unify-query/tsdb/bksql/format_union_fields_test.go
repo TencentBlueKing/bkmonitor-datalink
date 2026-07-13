@@ -150,6 +150,35 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "`dimensions`",
 		},
 		{
+			name:         "对象表达式按请求 leaf 校验而不是任意 root 前缀",
+			selectFields: []string{"CAST(resource['bk.instance.id'] AS STRING) AS `resource_id`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"resource.bk.instance.id": {FieldType: "text"},
+					"resource.retry_count":    {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"resource.bk.instance.id": {FieldType: "varchar(128)"},
+					"resource.retry_count":    {FieldType: "double"},
+				},
+			},
+			expected: "`resource`",
+		},
+		{
+			name:         "对象表达式缺失请求 leaf 时返回错误",
+			selectFields: []string{"CAST(resource['bk.instance.id'] AS STRING) AS `resource_id`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"resource.bk.instance.id": {FieldType: "text"},
+					"resource.retry_count":    {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"resource.retry_count": {FieldType: "int"},
+				},
+			},
+			errContains: "missing",
+		},
+		{
 			name:         "类型不兼容返回明确错误",
 			selectFields: []string{"`path`"},
 			tableFieldsMap: TableFieldsMap{

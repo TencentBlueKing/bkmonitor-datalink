@@ -485,7 +485,12 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 type unionProjection struct {
 	selectAll bool
 	dummy     bool
-	fields    []string
+	fields    []unionProjectionField
+}
+
+type unionProjectionField struct {
+	field        string
+	validateName string
 }
 
 func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
@@ -496,7 +501,7 @@ func collectUnionSelectFields(selectFields, groupFields, orderFields []string) s
 	case projection.dummy:
 		return unionDummyProjection
 	default:
-		return strings.Join(projection.fields, ", ")
+		return strings.Join(unionProjectionFieldNames(projection.fields), ", ")
 	}
 }
 
@@ -511,10 +516,10 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	case projection.dummy:
 		return unionDummyProjection, nil
 	}
-	if err := doris_parser.ValidateUnionProjectionFields(tables, projection.fields, f.tableFieldsMap); err != nil {
+	if err := doris_parser.ValidateUnionProjectionFieldNames(tables, toDorisUnionProjectionFields(projection.fields), f.tableFieldsMap); err != nil {
 		return "", err
 	}
-	return strings.Join(projection.fields, ", "), nil
+	return strings.Join(unionProjectionFieldNames(projection.fields), ", "), nil
 }
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
@@ -529,29 +534,32 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 
 	aliases := collectSQLAliases(selectFields)
 	seen := make(map[string]struct{})
-	fields := make([]string, 0)
+	fields := make([]unionProjectionField, 0)
 
 	for _, field := range collectUnionColumnsFromSQLParts(selectFields, nil) {
-		if _, ok := seen[field]; ok {
+		key := unionProjectionFieldKey(field)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[field] = struct{}{}
+		seen[key] = struct{}{}
 		fields = append(fields, field)
 	}
 
 	for _, field := range collectUnionColumnsFromSQLParts(groupFields, aliases) {
-		if _, ok := seen[field]; ok {
+		key := unionProjectionFieldKey(field)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[field] = struct{}{}
+		seen[key] = struct{}{}
 		fields = append(fields, field)
 	}
 
 	for _, field := range collectUnionColumnsFromSQLParts(orderFields, aliases) {
-		if _, ok := seen[field]; ok {
+		key := unionProjectionFieldKey(field)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[field] = struct{}{}
+		seen[key] = struct{}{}
 		fields = append(fields, field)
 	}
 
@@ -561,15 +569,44 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 	return unionProjection{fields: fields}
 }
 
-func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]struct{}) []string {
-	fields := make([]string, 0)
+func unionProjectionFieldKey(field unionProjectionField) string {
+	return field.field + "\x00" + field.validateName
+}
+
+func unionProjectionFieldNames(fields []unionProjectionField) []string {
+	names := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field.field]; ok {
+			continue
+		}
+		seen[field.field] = struct{}{}
+		names = append(names, field.field)
+	}
+	return names
+}
+
+func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {
+	result := make([]doris_parser.UnionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		result = append(result, doris_parser.UnionProjectionField{
+			Field:        field.field,
+			ValidateName: field.validateName,
+		})
+	}
+	return result
+}
+
+func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]struct{}) []unionProjectionField {
+	fields := make([]unionProjectionField, 0)
 	seen := make(map[string]struct{})
 	for _, part := range parts {
 		for _, field := range collectUnionColumnsFromSQLPart(part, ignoreNames) {
-			if _, ok := seen[field]; ok {
+			key := unionProjectionFieldKey(field)
+			if _, ok := seen[key]; ok {
 				continue
 			}
-			seen[field] = struct{}{}
+			seen[key] = struct{}{}
 			fields = append(fields, field)
 		}
 	}
@@ -580,8 +617,8 @@ func collectUnionColumnsFromSQLParts(parts []string, ignoreNames map[string]stru
 // 它会跳过字符串字面量、未反引号 SQL keyword、函数名和 AS 后的 alias，同时保留
 // 未反引号 root，例如 CAST(resource['bk.instance.id'] AS STRING) 里的 resource。
 // dotted path 只收 root，避免把对象 key 或路径段误投影为原表列。
-func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}) []string {
-	fields := make([]string, 0)
+func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}) []unionProjectionField {
+	fields := make([]unionProjectionField, 0)
 	for idx := 0; idx < len(part); idx++ {
 		switch part[idx] {
 		case '\'':
@@ -602,7 +639,10 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 			if shouldSkipUnionColumnName(part, start, name, ignoreNames, true) {
 				continue
 			}
-			fields = append(fields, fmt.Sprintf("`%s`", name))
+			fields = append(fields, unionProjectionField{
+				field:        fmt.Sprintf("`%s`", name),
+				validateName: name + collectUnionObjectPathSuffix(part, idx+1),
+			})
 			continue
 		}
 
@@ -630,7 +670,10 @@ func collectUnionColumnsFromSQLPart(part string, ignoreNames map[string]struct{}
 		if nextNonSpaceUnionByte(part, idx+1) == '(' {
 			continue
 		}
-		fields = append(fields, fmt.Sprintf("`%s`", name))
+		fields = append(fields, unionProjectionField{
+			field:        fmt.Sprintf("`%s`", name),
+			validateName: name + collectUnionObjectPathSuffix(part, idx+1),
+		})
 	}
 	return fields
 }
@@ -639,7 +682,7 @@ func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames 
 	if name == "" {
 		return true
 	}
-	if _, ok := ignoreNames[name]; ok {
+	if unionIgnoreNamesContains(ignoreNames, name) {
 		return true
 	}
 	if !quoted && isUnionSQLKeyword(name) {
@@ -649,6 +692,92 @@ func shouldSkipUnionColumnName(part string, start int, name string, ignoreNames 
 		return true
 	}
 	return false
+}
+
+func unionIgnoreNamesContains(ignoreNames map[string]struct{}, name string) bool {
+	if len(ignoreNames) == 0 {
+		return false
+	}
+	if _, ok := ignoreNames[name]; ok {
+		return true
+	}
+	_, ok := ignoreNames[strings.ToLower(name)]
+	return ok
+}
+
+func collectUnionObjectPathSuffix(part string, start int) string {
+	var parts []string
+	for idx := start; idx < len(part); {
+		for idx < len(part) && part[idx] == ' ' {
+			idx++
+		}
+		if idx >= len(part) {
+			break
+		}
+		switch part[idx] {
+		case '.':
+			idx++
+			for idx < len(part) && part[idx] == ' ' {
+				idx++
+			}
+			partStart := idx
+			if idx >= len(part) || !isUnionIdentifierStart(part[idx]) {
+				return strings.Join(parts, "")
+			}
+			for idx < len(part) && isUnionIdentifierPart(part[idx]) {
+				idx++
+			}
+			parts = append(parts, "."+part[partStart:idx])
+		case '[':
+			pathPart, next, ok := scanUnionBracketObjectPathPart(part, idx)
+			if !ok {
+				return strings.Join(parts, "")
+			}
+			if pathPart != "" {
+				parts = append(parts, "."+pathPart)
+			}
+			idx = next
+		default:
+			return strings.Join(parts, "")
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func scanUnionBracketObjectPathPart(part string, start int) (string, int, bool) {
+	idx := start + 1
+	for idx < len(part) && part[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(part) {
+		return "", idx, false
+	}
+
+	var pathPart string
+	switch part[idx] {
+	case '\'', '"', '`':
+		quote := part[idx]
+		end := skipQuotedUnionString(part, idx, quote)
+		if end <= idx || end >= len(part) {
+			return "", end, false
+		}
+		pathPart = part[idx+1 : end]
+		idx = end + 1
+	default:
+		partStart := idx
+		for idx < len(part) && isUnionIdentifierPart(part[idx]) {
+			idx++
+		}
+		pathPart = part[partStart:idx]
+	}
+
+	for idx < len(part) && part[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(part) || part[idx] != ']' {
+		return "", idx, false
+	}
+	return pathPart, idx + 1, true
 }
 
 func previousUnionTokenIsAS(part string, start int) bool {

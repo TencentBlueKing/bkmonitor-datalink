@@ -27,6 +27,7 @@ import (
 const (
 	Star                 = "*"
 	unionDummyProjection = "1"
+	maxDorisDecimalWidth = 38
 )
 
 const (
@@ -752,9 +753,9 @@ func dorisCastType(fieldType string) string {
 }
 
 func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionProjectionField) error {
-	seen := make(map[string]struct{}, len(fields))
+	seen := make(map[string]struct{}, len(fields)*2)
 	for _, field := range fields {
-		seen[field] = struct{}{}
+		addSelectAllProjectionOutputName(seen, field)
 	}
 	for _, field := range extraFields {
 		if _, ok := seen[field.field]; !ok {
@@ -762,6 +763,19 @@ func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionPr
 		}
 	}
 	return nil
+}
+
+func addSelectAllProjectionOutputName(seen map[string]struct{}, field string) {
+	seen[field] = struct{}{}
+	upperField := strings.ToUpper(field)
+	idx := strings.LastIndex(upperField, " AS `")
+	if idx < 0 {
+		return
+	}
+	alias := field[idx+len(" AS "):]
+	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
+		seen[alias] = struct{}{}
+	}
 }
 
 func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
@@ -860,32 +874,36 @@ func safeUnionFieldType(left, right string) (string, bool) {
 	if normalized != normalizeUnionFieldType(right) {
 		return "", false
 	}
-	return safeNormalizedUnionFieldType(normalized, left, right), true
+	return safeNormalizedUnionFieldType(normalized, left, right)
 }
 
-func safeNormalizedUnionFieldType(normalized, left, right string) string {
+func safeNormalizedUnionFieldType(normalized, left, right string) (string, bool) {
 	if strings.HasPrefix(normalized, "array:") {
-		return safeNormalizedUnionFieldType(strings.TrimPrefix(normalized, "array:"), left, right) + " ARRAY"
+		fieldType, ok := safeNormalizedUnionFieldType(strings.TrimPrefix(normalized, "array:"), left, right)
+		if !ok {
+			return "", false
+		}
+		return fieldType + " ARRAY", true
 	}
 
 	switch normalized {
 	case "string":
-		return "TEXT"
+		return "TEXT", true
 	case "integer":
 		if baseUnionFieldType(left) == "largeint" || baseUnionFieldType(right) == "largeint" {
-			return "LARGEINT"
+			return "LARGEINT", true
 		}
-		return "BIGINT"
+		return "BIGINT", true
 	case "decimal":
 		return safeDecimalUnionFieldType(left, right)
 	case "number":
-		return "DOUBLE"
+		return "DOUBLE", true
 	case "boolean":
-		return "BOOLEAN"
+		return "BOOLEAN", true
 	case "time":
-		return "DATETIME"
+		return "DATETIME", true
 	default:
-		return dorisCastType(left)
+		return dorisCastType(left), true
 	}
 }
 
@@ -910,11 +928,11 @@ type decimalUnionFieldSpec struct {
 	hasParams bool
 }
 
-func safeDecimalUnionFieldType(left, right string) string {
+func safeDecimalUnionFieldType(left, right string) (string, bool) {
 	leftSpec, leftOK := decimalUnionFieldSpecFromType(left)
 	rightSpec, rightOK := decimalUnionFieldSpecFromType(right)
 	if !leftOK || !rightOK {
-		return dorisCastType(left)
+		return dorisCastType(left), true
 	}
 	if leftSpec.hasParams && rightSpec.hasParams {
 		kind := "DECIMAL"
@@ -923,15 +941,19 @@ func safeDecimalUnionFieldType(left, right string) string {
 		}
 		scale := max(leftSpec.scale, rightSpec.scale)
 		integerDigits := max(leftSpec.precision-leftSpec.scale, rightSpec.precision-rightSpec.scale)
-		return fmt.Sprintf("%s(%d,%d)", kind, integerDigits+scale, scale)
+		precision := integerDigits + scale
+		if precision > maxDorisDecimalWidth {
+			return "", false
+		}
+		return fmt.Sprintf("%s(%d,%d)", kind, precision, scale), true
 	}
 	if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
-		return dorisCastType(left)
+		return dorisCastType(left), true
 	}
 	if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
-		return "DECIMALV3"
+		return "DECIMALV3", true
 	}
-	return "DECIMAL"
+	return "DECIMAL", true
 }
 
 func decimalUnionFieldSpecFromType(fieldType string) (decimalUnionFieldSpec, bool) {

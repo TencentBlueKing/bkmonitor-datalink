@@ -304,6 +304,52 @@ func TestStatementUnionSelectListPreservesDecimalCastType(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListSkipsUnsafeDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,18)"},
+				"path":              {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,0)"},
+				"path":              {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsExpandedObjectLeafDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dimensions.pipelineName`"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
 func TestStatementUnionSelectListRejectsSelectAllWithObjectDependency(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},

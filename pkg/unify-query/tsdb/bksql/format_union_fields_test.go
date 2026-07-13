@@ -252,6 +252,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`",
 		},
 		{
+			name:         "multi table SELECT star 跳过超过 Doris precision 上限的 decimal 字段",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.amount": {FieldType: "decimal(38,18)"},
+					"path":              {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.amount": {FieldType: "decimal(38,0)"},
+					"path":              {FieldType: "varchar(128)"},
+				},
+			},
+			expected: "`path`",
+		},
+		{
 			name:         "multi table SELECT star 转换成公共字段投影",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{
@@ -316,6 +331,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				},
 			},
 			expectedErr: "doris multi-table union SELECT * cannot be combined with field dependency `dimensions`; use explicit fields",
+		},
+		{
+			name:         "multi table SELECT star 允许已展开的嵌套 leaf alias 依赖",
+			selectFields: []string{"*", "`dimensions.pipelineName`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"path":                    {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
 		},
 		{
 			name:         "multi table qualified wildcard 按公共字段投影",

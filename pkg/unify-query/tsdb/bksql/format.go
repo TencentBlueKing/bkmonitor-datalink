@@ -610,9 +610,9 @@ func unionProjectionFieldNames(fields []unionProjectionField) []string {
 }
 
 func firstMissingUnionProjectionField(fields []string, extraFields []string) string {
-	seen := make(map[string]struct{}, len(fields))
+	seen := make(map[string]struct{}, len(fields)*2)
 	for _, field := range fields {
-		seen[field] = struct{}{}
+		addUnionProjectionOutputName(seen, field)
 	}
 	for _, field := range extraFields {
 		if _, ok := seen[field]; !ok {
@@ -620,6 +620,19 @@ func firstMissingUnionProjectionField(fields []string, extraFields []string) str
 		}
 	}
 	return ""
+}
+
+func addUnionProjectionOutputName(seen map[string]struct{}, field string) {
+	seen[field] = struct{}{}
+	upperField := strings.ToUpper(field)
+	idx := strings.LastIndex(upperField, " AS `")
+	if idx < 0 {
+		return
+	}
+	alias := field[idx+len(" AS "):]
+	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
+		seen[alias] = struct{}{}
+	}
 }
 
 func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {

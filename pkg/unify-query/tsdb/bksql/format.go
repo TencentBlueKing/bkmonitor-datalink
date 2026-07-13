@@ -830,7 +830,8 @@ func isUnionSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
 		"DATE", "DATETIME", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
-		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_PHRASE",
+		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
+		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
 		"NOT", "NULL", "OR", "ORDER", "REGEXP", "SELECT", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP",
 		"TRUE", "VARCHAR", "WHEN", "WHERE":
 		return true

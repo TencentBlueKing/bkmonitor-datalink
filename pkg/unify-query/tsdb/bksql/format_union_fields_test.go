@@ -90,6 +90,12 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			expected:     "`time`, `path`",
 		},
 		{
+			name:         "Doris match 操作符不当作字段",
+			selectFields: []string{"`log` MATCH_ANY 'x' AS matched"},
+			orderFields:  []string{"`message` MATCH_PHRASE_EDGE 'y' DESC", "`path` MATCH_PHRASE_PREFIX 'z' DESC", "`trace_id` MATCH_REGEXP '.*' DESC"},
+			expected:     "`log`, `message`, `path`, `trace_id`",
+		},
+		{
 			name:         "DISTINCT star 按 wildcard 处理",
 			selectFields: []string{"DISTINCT(*)"},
 			expected:     selectAll,

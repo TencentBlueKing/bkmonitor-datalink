@@ -64,6 +64,11 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			sql:      "`time`, `path`",
 			expected: []string{"`time`", "`path`"},
 		},
+		{
+			name:     "Doris match 操作符不当作字段",
+			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*'",
+			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -262,6 +267,28 @@ func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
 
 	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
 	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListValidatesQuotedObjectLeaf(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.retry_count": {FieldType: "int"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`dimensions`['pipelineName'], COUNT(*) AS c"},
+			GroupItem:  &unionSelectTestNode{value: "`dimensions`['pipelineName']"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "missing from table `db_current`.doris")
 }
 
 func TestStatementSubQueryUnionInheritsTableSchema(t *testing.T) {

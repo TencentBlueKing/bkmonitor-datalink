@@ -242,7 +242,7 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
 	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
 	if needFieldMap(query) {
-		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
+		fieldsMap, tableFieldsMap, err := i.queryFieldMaps(ctx, query, start, end)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +254,7 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 				keepColumns = append(keepColumns, k)
 			}
 		}
-		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
+		f.WithFieldsMap(fieldsMap).WithTableFieldsMap(tableFieldsMap).WithKeepColumns(keepColumns)
 	}
 
 	return f, nil
@@ -270,10 +270,15 @@ func (i *Instance) Table(query *metadata.Query) string {
 
 // QueryFieldMap 查询字段映射
 func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
+	fieldsMap, _, err := i.queryFieldMaps(ctx, query, start, end)
+	return fieldsMap, err
+}
+
+func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, TableFieldsMap, error) {
 	var err error
 
 	if query == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	defer func() {
@@ -294,10 +299,11 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 
 	if len(dbs) == 0 {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return nil, err
+		return nil, nil, err
 	}
 
 	fieldsMap := make(metadata.FieldsMap)
+	tableFieldsMap := make(TableFieldsMap)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
@@ -312,8 +318,10 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 		if err != nil {
 			continue
 		}
+		normalized := normalizeFieldsMap(res, query.FieldAlias)
+		tableFieldsMap[table] = normalized
 
-		for k, v := range res {
+		for k, v := range normalized {
 			if k == "" || v.FieldType == "" {
 				continue
 			}
@@ -322,17 +330,27 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 				continue
 			}
 
-			v.AliasName = query.FieldAlias.AliasName(k)
-			v.FieldName = k
-			ks := strings.Split(k, ".")
-			v.OriginField = ks[0]
-			v.TokenizeOnChars = make([]string, 0)
-
 			fieldsMap[k] = v
 		}
 	}
 
-	return fieldsMap, nil
+	return fieldsMap, tableFieldsMap, nil
+}
+
+func normalizeFieldsMap(fieldsMap metadata.FieldsMap, fieldAlias metadata.FieldAlias) metadata.FieldsMap {
+	normalized := make(metadata.FieldsMap, len(fieldsMap))
+	for k, v := range fieldsMap {
+		if k == "" || v.FieldType == "" {
+			continue
+		}
+		v.AliasName = fieldAlias.AliasName(k)
+		v.FieldName = k
+		ks := strings.Split(k, ".")
+		v.OriginField = ks[0]
+		v.TokenizeOnChars = make([]string, 0)
+		normalized[k] = v
+	}
+	return normalized
 }
 
 // QueryRawData 直接查询原始返回

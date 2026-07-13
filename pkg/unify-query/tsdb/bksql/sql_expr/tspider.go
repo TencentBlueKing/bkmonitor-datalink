@@ -9,6 +9,13 @@
 
 package sql_expr
 
+import (
+	"context"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+)
+
 // TSpider 标识 BKData TSpider 存储。表名侧 Measurement 常为空（无 db.measurement 后缀），
 // 用户 SQL 解析与 Doris 共用同一套语法处理。
 const TSpider = "tspider"
@@ -22,4 +29,33 @@ var _ SQLExpr = (*TSpiderSQLExpr)(nil)
 
 func (t *TSpiderSQLExpr) Type() string {
 	return TSpider
+}
+
+func (t *TSpiderSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
+	t.DorisSQLExpr.WithInternalFields(timeField, valueField)
+	return t
+}
+
+func (t *TSpiderSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	t.DorisSQLExpr.WithFieldAlias(fieldAlias)
+	return t
+}
+
+func (t *TSpiderSQLExpr) WithEncode(fn func(string) string) SQLExpr {
+	t.DorisSQLExpr.WithEncode(fn)
+	return t
+}
+
+func (t *TSpiderSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
+	t.DorisSQLExpr.WithFieldsMap(fieldsMap)
+	return t
+}
+
+func (t *TSpiderSQLExpr) WithKeepColumns(cols []string) SQLExpr {
+	t.DorisSQLExpr.WithKeepColumns(cols)
+	return t
+}
+
+func (t *TSpiderSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (string, error) {
+	return t.DorisSQLExpr.parserSQL(ctx, q, tables, where, offset, limit, tableFieldsMap, false)
 }

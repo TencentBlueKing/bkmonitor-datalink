@@ -998,7 +998,9 @@ func TestInstance_bkSql(t *testing.T) {
 		end   time.Time
 		query *metadata.Query
 
-		expected string
+		tableFieldsMap bksql.TableFieldsMap
+		expected       string
+		errContains    string
 	}{
 		{
 			name: "namespace in and aggregate count",
@@ -1548,7 +1550,58 @@ ORDER BY
 			},
 			start:    time.UnixMilli(1758607200000),
 			end:      time.UnixMilli(1758610800000),
-			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) AS combined_data GROUP BY `path` LIMIT 100",
+			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) UNION ALL SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) AS combined_data GROUP BY `path` LIMIT 100",
+		},
+		{
+			name: "用户 SQL 多表 union 提前校验缺失字段",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: []string{
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his",
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				},
+				Measurement: sql_expr.Doris,
+				SQL: `SELECT
+  path,
+  COUNT(*) AS c
+GROUP BY
+  path`,
+			},
+			start: time.UnixMilli(1758607200000),
+			end:   time.UnixMilli(1758610800000),
+			tableFieldsMap: bksql.TableFieldsMap{
+				"`100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris": {
+					"log": {FieldType: sql_expr.DorisTypeText},
+				},
+				"`100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris": {
+					"path": {FieldType: sql_expr.DorisTypeString},
+				},
+			},
+			errContains: "missing from table `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris",
+		},
+		{
+			name: "regexp extract aggregate with sql and union table",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: []string{
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his",
+				},
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionContains,
+							Value:         []string{"login success"},
+						},
+					},
+				},
+				SQL: "SELECT COUNT(DISTINCT(regexp_extract(log, 'openid:(\\\\d+)', 1))) AS openid",
+			},
+			start:    time.UnixMilli(1783526400000),
+			end:      time.UnixMilli(1783612799000),
+			expected: "SELECT COUNT(DISTINCT(regexp_extract(`log`, 'openid:(\\\\d+)', 1))) AS openid FROM (SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris WHERE (`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709' AND `log` MATCH_PHRASE 'login success') UNION ALL SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709' AND `log` MATCH_PHRASE 'login success')) AS combined_data LIMIT 100",
 		},
 		{
 			name: "object field eq and aggregate with sql and union table",
@@ -1577,7 +1630,7 @@ ORDER BY
 			},
 			start:    time.UnixMilli(1758607200000),
 			end:      time.UnixMilli(1758610800000),
-			expected: "SELECT `path`, COUNT(*) AS `_value_` FROM (SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL UNION ALL SELECT * FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) AS combined_data GROUP BY `path` LIMIT 100",
+			expected: "SELECT `path`, COUNT(*) AS `_value_` FROM (SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL UNION ALL SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE `dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) AS combined_data GROUP BY `path` LIMIT 100",
 		},
 	}
 
@@ -1607,8 +1660,12 @@ ORDER BY
 				"trace_id":         {FieldType: sql_expr.DorisTypeString},
 			}
 
-			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithTableFieldsMap(c.tableFieldsMap).WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
+			if c.errContains != "" {
+				assert.ErrorContains(t, err, c.errContains)
+				return
+			}
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
 		})

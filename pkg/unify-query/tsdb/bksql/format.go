@@ -511,6 +511,9 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	switch {
 	case projection.selectAll:
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
+			if projection.qualifiedSelectAll {
+				return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
+			}
 			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
 			if err != nil {
 				return "", err
@@ -615,15 +618,19 @@ func firstMissingUnionProjectionField(fields []string, extraFields []string) str
 		addUnionProjectionOutputName(seen, field)
 	}
 	for _, field := range extraFields {
-		if _, ok := seen[field]; !ok {
-			return field
+		if unionProjectionOutputNameExists(seen, field) {
+			continue
 		}
+		return field
 	}
 	return ""
 }
 
 func addUnionProjectionOutputName(seen map[string]struct{}, field string) {
 	seen[field] = struct{}{}
+	if key := normalizedUnionProjectionName(field); key != "" {
+		seen[key] = struct{}{}
+	}
 	upperField := strings.ToUpper(field)
 	idx := strings.LastIndex(upperField, " AS `")
 	if idx < 0 {
@@ -632,7 +639,35 @@ func addUnionProjectionOutputName(seen map[string]struct{}, field string) {
 	alias := field[idx+len(" AS "):]
 	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
 		seen[alias] = struct{}{}
+		if key := normalizedUnionProjectionName(alias); key != "" {
+			seen[key] = struct{}{}
+		}
 	}
+}
+
+func unionProjectionOutputNameExists(seen map[string]struct{}, field string) bool {
+	if _, ok := seen[field]; ok {
+		return true
+	}
+	if key := normalizedUnionProjectionName(field); key != "" {
+		_, ok := seen[key]
+		return ok
+	}
+	return false
+}
+
+func normalizedUnionProjectionName(field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	if strings.HasPrefix(field, "`") && strings.HasSuffix(field, "`") {
+		field = strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+	}
+	if strings.ContainsAny(field, " ()") {
+		return ""
+	}
+	return strings.ToLower(field)
 }
 
 func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {

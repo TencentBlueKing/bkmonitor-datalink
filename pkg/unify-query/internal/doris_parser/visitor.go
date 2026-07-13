@@ -758,15 +758,19 @@ func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionPr
 		addSelectAllProjectionOutputName(seen, field)
 	}
 	for _, field := range extraFields {
-		if _, ok := seen[field.field]; !ok {
-			return fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field.field)
+		if selectAllProjectionOutputNameExists(seen, field.field) {
+			continue
 		}
+		return fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field.field)
 	}
 	return nil
 }
 
 func addSelectAllProjectionOutputName(seen map[string]struct{}, field string) {
 	seen[field] = struct{}{}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		seen[key] = struct{}{}
+	}
 	upperField := strings.ToUpper(field)
 	idx := strings.LastIndex(upperField, " AS `")
 	if idx < 0 {
@@ -775,7 +779,35 @@ func addSelectAllProjectionOutputName(seen map[string]struct{}, field string) {
 	alias := field[idx+len(" AS "):]
 	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
 		seen[alias] = struct{}{}
+		if key := normalizedSelectAllProjectionName(alias); key != "" {
+			seen[key] = struct{}{}
+		}
 	}
+}
+
+func selectAllProjectionOutputNameExists(seen map[string]struct{}, field string) bool {
+	if _, ok := seen[field]; ok {
+		return true
+	}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		_, ok := seen[key]
+		return ok
+	}
+	return false
+}
+
+func normalizedSelectAllProjectionName(field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	if strings.HasPrefix(field, "`") && strings.HasSuffix(field, "`") {
+		field = unquoteUnionField(field)
+	}
+	if strings.ContainsAny(field, " ()") {
+		return ""
+	}
+	return strings.ToLower(field)
 }
 
 func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {

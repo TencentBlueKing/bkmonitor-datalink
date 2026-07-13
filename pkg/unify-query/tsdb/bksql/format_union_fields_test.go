@@ -288,6 +288,19 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
 		},
 		{
+			name:         "multi table SELECT star 字段依赖按大小写不敏感匹配",
+			selectFields: []string{"*", "`dtEventTimeStamp` AS `_timestamp_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dteventtimestamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"dteventtimestamp": {FieldType: "int"},
+				},
+			},
+			expected: "`dteventtimestamp`",
+		},
+		{
 			name:         "multi table SELECT star 保留显式依赖字段",
 			selectFields: []string{"*", "`value` AS `_value_`"},
 			tableFieldsMap: TableFieldsMap{
@@ -348,7 +361,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
 		},
 		{
-			name:         "multi table qualified wildcard 按公共字段投影",
+			name:         "multi table qualified wildcard 返回明确错误",
 			selectFields: []string{"t.*"},
 			tableFieldsMap: TableFieldsMap{
 				"`db_b`.doris": {
@@ -362,7 +375,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 					"other":  {FieldType: "text"},
 				},
 			},
-			expected: "`path`",
+			expectedErr: "doris multi-table union does not support SELECT *; use explicit fields",
 		},
 		{
 			name:         "无真实字段依赖时使用常量投影",

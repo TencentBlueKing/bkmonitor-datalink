@@ -31,34 +31,48 @@ type RewriteResult struct {
 
 // Rewrite 将 Python/Doris 搜索语义下的基础正则，改写成 ES regexp 整值匹配语义。
 func Rewrite(pattern string) RewriteResult {
+	return rewrite(pattern, false)
+}
+
+// RewriteForQueryString 在 Rewrite 基础上兼容 query_string 字段正则的方括号短语写法。
+func RewriteForQueryString(pattern string) RewriteResult {
+	return rewrite(pattern, true)
+}
+
+func rewrite(pattern string, keepBracketPhrase bool) RewriteResult {
 	if inner, ok := extractNegativeLookahead(pattern); ok {
 		return RewriteResult{
-			Pattern:  rewritePositivePattern(inner),
+			Pattern:  rewritePositivePattern(inner, false),
 			Negative: true,
 		}
 	}
 
-	return RewriteResult{Pattern: rewritePositivePattern(pattern)}
+	return RewriteResult{Pattern: rewritePositivePattern(pattern, keepBracketPhrase)}
 }
 
 // rewritePositivePattern 将正向 regexp 改写为 ES 整值匹配下的等价 pattern。
-func rewritePositivePattern(pattern string) string {
+func rewritePositivePattern(pattern string, keepBracketPhrase bool) string {
 	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
 		rewritten := make([]string, 0, len(alternatives))
 		for _, alternative := range alternatives {
-			rewritten = append(rewritten, rewriteSinglePattern(alternative))
+			rewritten = append(rewritten, rewriteSinglePattern(alternative, keepBracketPhrase))
 		}
 		return "(" + strings.Join(rewritten, "|") + ")"
 	}
 
-	return rewriteSinglePattern(pattern)
+	return rewriteSinglePattern(pattern, keepBracketPhrase)
 }
 
 // rewriteSinglePattern 改写不含顶层 | 的单个正则分支。
 // 未显式锚定的分支会补齐 .* 以模拟历史包含匹配；^/$ 锚点会被转换成 ES 整值匹配下的前缀/后缀约束。
-func rewriteSinglePattern(pattern string) string {
+func rewriteSinglePattern(pattern string, keepBracketPhrase bool) string {
 	if isExplicitContains(pattern) {
 		return pattern
+	}
+	if keepBracketPhrase {
+		if rewritten, ok := rewriteBracketPhrasePattern(pattern); ok {
+			return rewritten
+		}
 	}
 
 	hasPrefix := hasUnescapedPrefixAnchor(pattern)
@@ -174,6 +188,142 @@ func hasUnescapedSuffixAnchor(pattern string) bool {
 // isExplicitContains 判断表达式是否已经显式写成 .*foo.* 这类包含匹配。
 func isExplicitContains(pattern string) bool {
 	return hasUnescapedPrefixLiteral(pattern, ".*") && hasUnescapedSuffixLiteral(pattern, ".*")
+}
+
+// rewriteBracketPhrasePattern 递归处理透明分组里的方括号短语，例如 (([Page Error])|foo)。
+func rewriteBracketPhrasePattern(pattern string) (string, bool) {
+	if isLikelyBracketPhrase(pattern) {
+		return pattern, true
+	}
+
+	if alternatives, ok := splitTopLevelAlternation(pattern); ok {
+		hasBracketPhrase := false
+		rewritten := make([]string, 0, len(alternatives))
+		for _, alternative := range alternatives {
+			if rewrittenAlternative, ok := rewriteBracketPhrasePattern(alternative); ok {
+				hasBracketPhrase = true
+				rewritten = append(rewritten, rewrittenAlternative)
+				continue
+			}
+			rewritten = append(rewritten, rewriteSinglePattern(alternative, true))
+		}
+		if !hasBracketPhrase {
+			return "", false
+		}
+		return strings.Join(rewritten, "|"), true
+	}
+
+	inner, ok := trimOuterParens(pattern)
+	if !ok {
+		return "", false
+	}
+	rewrittenInner, ok := rewriteBracketPhrasePattern(inner)
+	if !ok {
+		return "", false
+	}
+	return "(" + rewrittenInner + ")", true
+}
+
+// isLikelyBracketPhrase 判断表达式是否像误写成字符类的方括号短语，例如 [Page Error]。
+func isLikelyBracketPhrase(pattern string) bool {
+	body, ok := standaloneCharClassBody(pattern)
+	trimmedBody := strings.TrimSpace(body)
+	if !ok || trimmedBody == "" || strings.HasPrefix(trimmedBody, "^") {
+		return false
+	}
+
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\\', '-', '|', '^', '[', ']', '(', ')':
+			return false
+		}
+	}
+
+	longTokens := 0
+	for _, token := range strings.Fields(body) {
+		if runeCountGreaterThanOne(token) {
+			longTokens++
+		}
+	}
+	return longTokens >= 2
+}
+
+func runeCountGreaterThanOne(s string) bool {
+	count := 0
+	for range s {
+		count++
+		if count > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func trimOuterParens(pattern string) (string, bool) {
+	if len(pattern) < 2 || pattern[0] != '(' || pattern[len(pattern)-1] != ')' {
+		return "", false
+	}
+
+	escaped := false
+	bracketDepth := 0
+	parenDepth := 0
+	for i := 0; i < len(pattern); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch pattern[i] {
+		case '\\':
+			escaped = true
+		case '[':
+			if bracketDepth == 0 {
+				bracketDepth = 1
+			}
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 {
+				parenDepth--
+				if parenDepth < 0 || (parenDepth == 0 && i != len(pattern)-1) {
+					return "", false
+				}
+			}
+		}
+	}
+	if parenDepth != 0 || bracketDepth != 0 {
+		return "", false
+	}
+	return pattern[1 : len(pattern)-1], true
+}
+
+func standaloneCharClassBody(pattern string) (string, bool) {
+	if !strings.HasPrefix(pattern, "[") {
+		return "", false
+	}
+
+	escaped := false
+	for i := 1; i < len(pattern); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch pattern[i] {
+		case '\\':
+			escaped = true
+		case ']':
+			if i != len(pattern)-1 {
+				return "", false
+			}
+			return pattern[1:i], true
+		}
+	}
+	return "", false
 }
 
 // addContainsPrefix 在缺少前置 .* 时补齐包含匹配前缀。

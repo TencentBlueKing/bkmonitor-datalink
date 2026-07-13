@@ -641,7 +641,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = wildcardQueryForField(field, value, fieldOption, cv.Boost)
 		}
 	case *RegexpNode:
-		rewrite := esregexpcompat.Rewrite(value)
+		rewrite := esregexpcompat.RewriteForQueryString(value)
 		value = rewrite.Pattern
 		// ES regexp 是 term-level 查询，不会像 match/match_phrase 一样走 analyzer；
 		// 因此 text + lowercase/analyzed 字段需要在 UQ 侧按字段大小写语义归一化 pattern。

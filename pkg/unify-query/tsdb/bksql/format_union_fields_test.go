@@ -224,6 +224,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`",
 		},
 		{
+			name:         "multi table SELECT star 嵌套字段使用安全公共 cast 类型",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "bigint"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`",
+		},
+		{
 			name:         "multi table SELECT star 转换成公共字段投影",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{

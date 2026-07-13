@@ -415,14 +415,14 @@ func hasTopLevelWildcard(s string) bool {
 		return true
 	}
 
-	return scanTopLevelWildcard(s, isWildcardToken)
+	return scanTopLevelWildcard(s, isWildcardToken, true)
 }
 
 func hasTopLevelQualifiedWildcard(s string) bool {
-	return scanTopLevelWildcard(s, isQualifiedWildcardToken)
+	return scanTopLevelWildcard(s, isQualifiedWildcardToken, false)
 }
 
-func scanTopLevelWildcard(s string, match func(string, int) bool) bool {
+func scanTopLevelWildcard(s string, match func(string, int) bool, matchDistinct bool) bool {
 	depth := 0
 	for idx := 0; idx < len(s); idx++ {
 		switch s[idx] {
@@ -443,7 +443,7 @@ func scanTopLevelWildcard(s string, match func(string, int) bool) bool {
 				depth--
 			}
 		default:
-			if depth == 0 && isDistinctStarAt(s, idx) {
+			if matchDistinct && depth == 0 && isDistinctStarAt(s, idx) {
 				return true
 			}
 		case '*':
@@ -666,11 +666,16 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 
 		for key, field := range common {
 			option := fieldsMap.Field(field.projection.validateName)
+			safeType, compatible := safeUnionFieldType(field.fieldType, option.FieldType)
 			if !option.Existed() ||
 				isUnsupportedUnionFieldType(option.FieldType) ||
-				!compatibleUnionFieldTypes(field.fieldType, option.FieldType) {
+				!compatible {
 				delete(common, key)
+				continue
 			}
+			field.fieldType = safeType
+			field.projection.field = selectAllUnionProjectionField(field.projection.validateName, safeType)
+			common[key] = field
 		}
 	}
 
@@ -844,7 +849,54 @@ func isUnsupportedUnionFieldType(fieldType string) bool {
 }
 
 func compatibleUnionFieldTypes(left, right string) bool {
-	return normalizeUnionFieldType(left) == normalizeUnionFieldType(right)
+	_, ok := safeUnionFieldType(left, right)
+	return ok
+}
+
+func safeUnionFieldType(left, right string) (string, bool) {
+	normalized := normalizeUnionFieldType(left)
+	if normalized != normalizeUnionFieldType(right) {
+		return "", false
+	}
+	return safeNormalizedUnionFieldType(normalized, left, right), true
+}
+
+func safeNormalizedUnionFieldType(normalized, left, right string) string {
+	if strings.HasPrefix(normalized, "array:") {
+		return safeNormalizedUnionFieldType(strings.TrimPrefix(normalized, "array:"), left, right) + " ARRAY"
+	}
+
+	switch normalized {
+	case "string":
+		return "TEXT"
+	case "integer":
+		if baseUnionFieldType(left) == "largeint" || baseUnionFieldType(right) == "largeint" {
+			return "LARGEINT"
+		}
+		return "BIGINT"
+	case "number":
+		return "DOUBLE"
+	case "boolean":
+		return "BOOLEAN"
+	case "time":
+		return "DATETIME"
+	default:
+		return dorisCastType(left)
+	}
+}
+
+func baseUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return baseUnionFieldType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return baseUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	return strings.TrimSpace(t)
 }
 
 func normalizeUnionFieldType(fieldType string) string {

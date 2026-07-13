@@ -243,6 +243,46 @@ func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListExpandsDistinctStar(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "DISTINCT(*)"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListUsesSafeCommonCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "bigint"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
 func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},

@@ -203,13 +203,69 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			errContains: "unsupported type",
 		},
 		{
-			name:         "multi table SELECT star 不再静默生成 DB-side union",
+			name:         "multi table SELECT star 嵌套字段按完整字段名取交集",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{
-				"`db_b`.doris": {"path": {FieldType: "text"}},
-				"`db_a`.doris": {"path": {FieldType: "text"}},
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "double"},
+					"dimensions.only_current": {FieldType: "varchar(128)"},
+				},
 			},
-			errContains: "SELECT *",
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`",
+		},
+		{
+			name:         "multi table SELECT star 转换成公共字段投影",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+					"path":                    {FieldType: "text"},
+					"status":                  {FieldType: "text"},
+					"extra":                   {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"dimensions.retry_count":  {FieldType: "double"},
+					"dimensions.only_current": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+					"status":                  {FieldType: "bigint"},
+				},
+			},
+			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
+		},
+		{
+			name:         "multi table SELECT star 保留显式依赖字段",
+			selectFields: []string{"*", "`value` AS `_value_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":  {FieldType: "text"},
+					"value": {FieldType: "bigint"},
+					"extra": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"path":  {FieldType: "varchar(128)"},
+					"value": {FieldType: "int"},
+				},
+			},
+			expected: "`path`, `value`",
+		},
+		{
+			name:         "multi table SELECT star 显式依赖缺失时报错",
+			selectFields: []string{"*", "`value` AS `_value_`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"path":  {FieldType: "text"},
+					"value": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+			},
+			errContains: "missing",
 		},
 		{
 			name:         "无真实字段依赖时使用常量投影",

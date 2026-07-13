@@ -479,7 +479,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 //
 // 普通聚合路径不经过 Doris SQL visitor，也需要在多 DB 合并时避免 SELECT *。
 // 这里从已渲染表达式中收集外层真正依赖的源字段，让内层 UNION 子查询只投影这些列。
-// 顶层 wildcard 仍保留为 *，让调用方拒绝多表 schema 漂移场景的 raw 明细查询。
+// 顶层 wildcard 会在 Doris 多表场景中按表结构转换成公共字段显式投影。
 // COUNT(*) 位于函数参数内，不会被当成 wildcard 展开；如果没有任何真实字段依赖，
 // UNION 分支只需投影常量，外层 COUNT 仍按行数聚合。
 type unionProjection struct {
@@ -510,7 +510,17 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 	switch {
 	case projection.selectAll:
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
-			return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields or aggregate dependencies")
+			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
+			if err != nil {
+				return "", err
+			}
+			if err := doris_parser.ValidateUnionProjectionFieldNames(tables, toDorisUnionProjectionFields(projection.fields), f.tableFieldsMap); err != nil {
+				return "", err
+			}
+			fields = appendMissingUnionProjectionFields(fields, unionProjectionFieldNames(projection.fields))
+			if len(fields) > 0 {
+				return strings.Join(fields, ", "), nil
+			}
 		}
 		return selectAll, nil
 	case projection.dummy:
@@ -523,11 +533,13 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 }
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
+	selectAll := false
 	allParts := [][]string{selectFields, groupFields, orderFields}
 	for _, parts := range allParts {
 		for _, part := range parts {
 			if hasTopLevelUnionWildcard(part) {
-				return unionProjection{selectAll: true}
+				selectAll = true
+				break
 			}
 		}
 	}
@@ -563,6 +575,9 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		fields = append(fields, field)
 	}
 
+	if selectAll {
+		return unionProjection{selectAll: true, fields: fields}
+	}
 	if len(fields) == 0 {
 		return unionProjection{dummy: true}
 	}
@@ -584,6 +599,21 @@ func unionProjectionFieldNames(fields []unionProjectionField) []string {
 		names = append(names, field.field)
 	}
 	return names
+}
+
+func appendMissingUnionProjectionFields(fields []string, extraFields []string) []string {
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		seen[field] = struct{}{}
+	}
+	for _, field := range extraFields {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
+	}
+	return fields
 }
 
 func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {

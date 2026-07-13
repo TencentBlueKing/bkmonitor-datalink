@@ -212,17 +212,35 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 	}
 }
 
-func TestStatementUnionSelectListRejectsMultiTableWildcard(t *testing.T) {
+func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
 		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+				"path":                    {FieldType: "text"},
+				"value":                   {FieldType: "bigint"},
+				"status":                  {FieldType: "text"},
+				"extra":                   {FieldType: "bigint"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "double"},
+				"dimensions.only_current": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+				"value":                   {FieldType: "int"},
+				"status":                  {FieldType: "bigint"},
+			},
+		},
 		nodeMap: map[string]Node{
-			SelectItem: &unionSelectTestNode{value: "*"},
+			SelectItem: &unionSelectTestNode{value: "*, `value` AS `_value_`"},
 		},
 	}
 
-	assert.Equal(t, Star, stmt.unionSelectList())
-	assert.ErrorContains(t, stmt.Error(), "SELECT *")
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`, `value`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
 }
 
 func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {

@@ -122,7 +122,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 		selectFields   []string
 		tableFieldsMap TableFieldsMap
 		expected       string
-		errContains    string
+		expectedErr    string
 	}{
 		{
 			name:         "字段存在且类型兼容",
@@ -149,7 +149,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"path": {FieldType: "text"}},
 				"`db_a`.doris": {"log": {FieldType: "text"}},
 			},
-			errContains: "missing",
+			expectedErr: "doris multi-table union field `path` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "对象 root 投影允许 leaf schema 校验",
@@ -187,7 +187,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 					"resource.retry_count": {FieldType: "int"},
 				},
 			},
-			errContains: "missing",
+			expectedErr: "doris multi-table union field `resource` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "类型不兼容返回明确错误",
@@ -196,7 +196,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"path": {FieldType: "text"}},
 				"`db_a`.doris": {"path": {FieldType: "bigint"}},
 			},
-			errContains: "type mismatch",
+			expectedErr: "doris multi-table union field `path` type mismatch: table `db_b`.doris has text, table `db_a`.doris has bigint",
 		},
 		{
 			name:         "JSON 类型不自动投影",
@@ -205,7 +205,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_b`.doris": {"payload": {FieldType: "json"}},
 				"`db_a`.doris": {"payload": {FieldType: "json"}},
 			},
-			errContains: "unsupported type",
+			expectedErr: "doris multi-table union field `payload` in table `db_b`.doris has unsupported type json",
 		},
 		{
 			name:         "multi table SELECT star 嵌套字段按完整字段名取交集",
@@ -261,7 +261,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "`path`, `value`",
 		},
 		{
-			name:         "multi table SELECT star 显式依赖缺失时报错",
+			name:         "multi table SELECT star 显式依赖字段不参与交集剔除",
 			selectFields: []string{"*", "`value` AS `_value_`"},
 			tableFieldsMap: TableFieldsMap{
 				"`db_b`.doris": {
@@ -270,7 +270,9 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				},
 				"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
 			},
-			errContains: "missing",
+			// `*` 可按 schema 交集保留 `path`，但外层显式依赖的 `value`
+			// 不能被静默丢弃；db_a 缺少该字段时必须返回明确错误。
+			expectedErr: "doris multi-table union field `value` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "multi table qualified wildcard 按公共字段投影",
@@ -305,9 +307,9 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			query := &metadata.Query{Measurement: sql_expr.Doris}
 			f := NewQueryFactory(context.Background(), query).WithTableFieldsMap(tt.tableFieldsMap)
 			got, err := f.unionSelectList(tt.selectFields, nil, nil, tables)
-			if tt.errContains != "" {
+			if tt.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errContains)
+				assert.EqualError(t, err, tt.expectedErr)
 				return
 			}
 			require.NoError(t, err)

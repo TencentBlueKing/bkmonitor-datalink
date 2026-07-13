@@ -239,6 +239,19 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`",
 		},
 		{
+			name:         "multi table SELECT star 嵌套 decimal 字段保持精确 cast 类型",
+			selectFields: []string{"*"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.amount": {FieldType: "decimal(20,4)"},
+				},
+				"`db_a`.doris": {
+					"dimensions.amount": {FieldType: "decimal(30,8)"},
+				},
+			},
+			expected: "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`",
+		},
+		{
 			name:         "multi table SELECT star 转换成公共字段投影",
 			selectFields: []string{"*"},
 			tableFieldsMap: TableFieldsMap{
@@ -288,6 +301,21 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			// `*` 可按 schema 交集保留 `path`，但外层显式依赖的 `value`
 			// 不能被静默丢弃；db_a 缺少该字段时必须返回明确错误。
 			expectedErr: "doris multi-table union field `value` is missing from table `db_a`.doris",
+		},
+		{
+			name:         "multi table SELECT star 拒绝额外对象依赖字段",
+			selectFields: []string{"*", "CAST(dimensions['pipelineName'] AS TEXT) AS `pipeline_name`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"path":                    {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar(128)"},
+					"path":                    {FieldType: "varchar(128)"},
+				},
+			},
+			expectedErr: "doris multi-table union SELECT * cannot be combined with field dependency `dimensions`; use explicit fields",
 		},
 		{
 			name:         "multi table qualified wildcard 按公共字段投影",

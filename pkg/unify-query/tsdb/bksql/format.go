@@ -518,7 +518,9 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 			if err := doris_parser.ValidateUnionProjectionFieldNames(tables, toDorisUnionProjectionFields(projection.fields), f.tableFieldsMap); err != nil {
 				return "", err
 			}
-			fields = appendMissingUnionProjectionFields(fields, unionProjectionFieldNames(projection.fields))
+			if field := firstMissingUnionProjectionField(fields, unionProjectionFieldNames(projection.fields)); field != "" {
+				return "", fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field)
+			}
 			if len(fields) > 0 {
 				return strings.Join(fields, ", "), nil
 			}
@@ -607,19 +609,17 @@ func unionProjectionFieldNames(fields []unionProjectionField) []string {
 	return names
 }
 
-func appendMissingUnionProjectionFields(fields []string, extraFields []string) []string {
+func firstMissingUnionProjectionField(fields []string, extraFields []string) string {
 	seen := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
 		seen[field] = struct{}{}
 	}
 	for _, field := range extraFields {
-		if _, ok := seen[field]; ok {
-			continue
+		if _, ok := seen[field]; !ok {
+			return field
 		}
-		seen[field] = struct{}{}
-		fields = append(fields, field)
 	}
-	return fields
+	return ""
 }
 
 func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.UnionProjectionField {

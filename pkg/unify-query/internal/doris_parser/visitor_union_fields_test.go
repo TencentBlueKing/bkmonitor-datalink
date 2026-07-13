@@ -283,6 +283,50 @@ func TestStatementUnionSelectListUsesSafeCommonCastType(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListPreservesDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(20,4)"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(30,8)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListRejectsSelectAllWithObjectDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, dimensions['pipelineName'] AS pipeline_name"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "cannot be combined with field dependency `dimensions`")
+}
+
 func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},

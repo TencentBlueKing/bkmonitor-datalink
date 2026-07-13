@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
@@ -546,7 +547,10 @@ func (v *Statement) unionSelectList() string {
 					v.errNode = append(v.errNode, err.Error())
 					return Star
 				}
-				fields = appendMissingUnionFieldNames(fields, projectionFields)
+				if err := rejectSelectAllExtraProjectionFields(fields, projectionFields); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+					return Star
+				}
 				return strings.Join(fields, ", ")
 			}
 			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
@@ -747,19 +751,17 @@ func dorisCastType(fieldType string) string {
 	return fieldType
 }
 
-func appendMissingUnionFieldNames(fields []string, extraFields []unionProjectionField) []string {
+func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionProjectionField) error {
 	seen := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
 		seen[field] = struct{}{}
 	}
 	for _, field := range extraFields {
-		if _, ok := seen[field.field]; ok {
-			continue
+		if _, ok := seen[field.field]; !ok {
+			return fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field.field)
 		}
-		seen[field.field] = struct{}{}
-		fields = append(fields, field.field)
 	}
-	return fields
+	return nil
 }
 
 func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
@@ -874,6 +876,8 @@ func safeNormalizedUnionFieldType(normalized, left, right string) string {
 			return "LARGEINT"
 		}
 		return "BIGINT"
+	case "decimal":
+		return safeDecimalUnionFieldType(left, right)
 	case "number":
 		return "DOUBLE"
 	case "boolean":
@@ -899,6 +903,79 @@ func baseUnionFieldType(fieldType string) string {
 	return strings.TrimSpace(t)
 }
 
+type decimalUnionFieldSpec struct {
+	kind      string
+	precision int
+	scale     int
+	hasParams bool
+}
+
+func safeDecimalUnionFieldType(left, right string) string {
+	leftSpec, leftOK := decimalUnionFieldSpecFromType(left)
+	rightSpec, rightOK := decimalUnionFieldSpecFromType(right)
+	if !leftOK || !rightOK {
+		return dorisCastType(left)
+	}
+	if leftSpec.hasParams && rightSpec.hasParams {
+		kind := "DECIMAL"
+		if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+			kind = "DECIMALV3"
+		}
+		scale := max(leftSpec.scale, rightSpec.scale)
+		integerDigits := max(leftSpec.precision-leftSpec.scale, rightSpec.precision-rightSpec.scale)
+		return fmt.Sprintf("%s(%d,%d)", kind, integerDigits+scale, scale)
+	}
+	if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+		return dorisCastType(left)
+	}
+	if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+		return "DECIMALV3"
+	}
+	return "DECIMAL"
+}
+
+func decimalUnionFieldSpecFromType(fieldType string) (decimalUnionFieldSpec, bool) {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return decimalUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return decimalUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+	if base != "decimal" && base != "decimalv2" && base != "decimalv3" {
+		return decimalUnionFieldSpec{}, false
+	}
+
+	spec := decimalUnionFieldSpec{kind: base}
+	if params == "" {
+		return spec, true
+	}
+
+	parts := strings.Split(params, ",")
+	precision, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return spec, true
+	}
+	scale := 0
+	if len(parts) > 1 {
+		scale, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return spec, true
+		}
+	}
+	spec.precision = precision
+	spec.scale = scale
+	spec.hasParams = true
+	return spec, true
+}
+
 func normalizeUnionFieldType(fieldType string) string {
 	t := strings.ToLower(strings.TrimSpace(fieldType))
 	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
@@ -916,7 +993,9 @@ func normalizeUnionFieldType(fieldType string) string {
 		return "string"
 	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
 		return "integer"
-	case "float", "double", "decimal", "decimalv3":
+	case "decimal", "decimalv2", "decimalv3":
+		return "decimal"
+	case "float", "double":
 		return "number"
 	case "bool", "boolean":
 		return "boolean"

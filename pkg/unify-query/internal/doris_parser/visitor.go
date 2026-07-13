@@ -377,11 +377,11 @@ func isIdentifierPartOfNumericLiteral(s string, start int) bool {
 func isSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
-		"DATE", "DATETIME", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
-		"FROM", "GROUP", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
+		"DATE", "DATETIME", "DAY", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
+		"FROM", "GROUP", "HOUR", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
 		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
-		"NOT", "NULL", "OR", "ORDER", "REGEXP", "SELECT", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP",
-		"TRUE", "VARCHAR", "WHEN", "WHERE":
+		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "SECOND", "SELECT",
+		"STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "YEAR":
 		return true
 	default:
 		return false
@@ -825,6 +825,12 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 			continue
 		}
 		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionField(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		var base metadata.FieldOption
 		var baseTable string
 		for _, table := range tables {
@@ -854,6 +860,99 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 	return nil
 }
 
+// validateRootObjectUnionField 校验直接投影对象 root 的场景。
+//
+// 例如 SELECT dimensions 时，schema 往往只有 dimensions.xxx leaf，没有
+// dimensions root 字段。这里按完整 leaf 集合比较，避免随机选中某个 leaf 后
+// 把两张完全相同的对象 schema 误判为类型不兼容。
+func validateRootObjectUnionField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	var baseTable string
+	var baseFields map[string]rootObjectUnionField
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return false, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() {
+			return false, nil
+		}
+		fields := rootObjectUnionFields(fieldsMap, rootName)
+		if len(fields) == 0 {
+			if baseFields == nil {
+				return false, nil
+			}
+			return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+		}
+		if baseFields == nil {
+			baseFields = fields
+			baseTable = table
+			continue
+		}
+		if err := validateRootObjectUnionFields(baseTable, baseFields, table, fields); err != nil {
+			return true, err
+		}
+	}
+	return baseFields != nil, nil
+}
+
+type rootObjectUnionField struct {
+	name   string
+	option metadata.FieldOption
+}
+
+func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[string]rootObjectUnionField {
+	prefix := rootName + "."
+	fields := make(map[string]rootObjectUnionField)
+	for fieldName, option := range fieldsMap {
+		if !option.Existed() || len(fieldName) <= len(prefix) || !strings.EqualFold(fieldName[:len(prefix)], prefix) {
+			continue
+		}
+		fields[strings.ToLower(fieldName)] = rootObjectUnionField{name: fieldName, option: option}
+	}
+	return fields
+}
+
+func validateRootObjectUnionFields(
+	baseTable string,
+	baseFields map[string]rootObjectUnionField,
+	table string,
+	fields map[string]rootObjectUnionField,
+) error {
+	for key, baseField := range baseFields {
+		fieldOption, ok := fields[key]
+		if !ok {
+			return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(baseField.name), table)
+		}
+		if isUnsupportedUnionFieldType(fieldOption.option.FieldType) {
+			return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", quoteUnionField(fieldOption.name), table, fieldOption.option.FieldType)
+		}
+		if !compatibleUnionFieldTypes(baseField.option.FieldType, fieldOption.option.FieldType) {
+			return fmt.Errorf(
+				"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+				quoteUnionField(fieldOption.name), baseTable, baseField.option.FieldType, table, fieldOption.option.FieldType,
+			)
+		}
+	}
+	for key, fieldOption := range fields {
+		if _, ok := baseFields[key]; ok {
+			continue
+		}
+		return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(fieldOption.name), baseTable)
+	}
+	return nil
+}
+
+// unionFieldOption 解析 UNION 投影字段对应的 schema。
+//
+// 对象字段表达式渲染后会使用 root 列，例如 dimensions['pipelineName'] 会投影为
+// `dimensions`，而 schema 里通常只有 dimensions.pipelineName 这样的 leaf 字段。
+// validateName 用于传递已知 leaf；直接投影 root 对象时，会先按完整 leaf 集合校验，
+// 再进入这里的兜底逻辑。
 func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
 	fieldOption := fieldsMap.Field(validateName)
 	if fieldOption.Existed() {
@@ -869,8 +968,18 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 		return metadata.FieldOption{}, false
 	}
 
+	// 兼容只传 root 对象名的旧调用方：选择固定顺序的 leaf，避免依赖 Go map
+	// 的随机遍历顺序导致同一份 schema 偶发类型误判。
 	prefix := rootName + "."
-	for fieldName, option := range fieldsMap {
+	fieldNames := make([]string, 0, len(fieldsMap))
+	for fieldName := range fieldsMap {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Slice(fieldNames, func(i, j int) bool {
+		return strings.ToLower(fieldNames[i]) < strings.ToLower(fieldNames[j])
+	})
+	for _, fieldName := range fieldNames {
+		option := fieldsMap[fieldName]
 		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
 			return option, true
 		}
@@ -1053,7 +1162,7 @@ func normalizeUnionFieldType(fieldType string) string {
 		return "number"
 	case "bool", "boolean":
 		return "boolean"
-	case "date", "datetime", "timestamp":
+	case "date", "datev1", "datev2", "datetime", "datetimev1", "datetimev2", "timestamp":
 		return "time"
 	default:
 		return t

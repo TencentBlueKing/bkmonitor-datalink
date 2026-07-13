@@ -69,6 +69,11 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
+		{
+			name:     "TIMESTAMPDIFF 时间单位不当作字段",
+			sql:      "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days",
+			expected: []string{"`start_time`", "`end_time`"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -431,6 +436,96 @@ func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
 	}
 
 	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	for i := 0; i < 1000; i++ {
+		assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+		assert.NoError(t, stmt.Error())
+	}
+}
+
+func TestStatementUnionSelectListRejectsRootObjectLeafMismatch(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "double"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "field `dimensions.retry_count` type mismatch")
+}
+
+func TestStatementUnionSelectListAllowsDorisV2TimeTypes(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"event_date": {FieldType: "DATE"},
+				"event_time": {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"event_date": {FieldType: "DATEV2"},
+				"event_time": {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "event_date, event_time"},
+		},
+	}
+
+	assert.Equal(t, "`event_date`, `event_time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsTimestampdiffTimeUnit(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"start_time": {FieldType: "DATETIME"},
+				"end_time":   {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"start_time": {FieldType: "DATETIMEV2"},
+				"end_time":   {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days"},
+		},
+	}
+
+	assert.Equal(t, "`start_time`, `end_time`", stmt.unionSelectList())
 	assert.NoError(t, stmt.Error())
 }
 

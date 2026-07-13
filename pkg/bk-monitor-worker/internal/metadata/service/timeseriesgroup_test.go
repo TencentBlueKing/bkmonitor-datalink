@@ -138,7 +138,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.ElementsMatch(t, []string{"d1", "d2", "target"}, tagListA)
 }
 
-func TestTimeSeriesGroupSvc_UpdateMetricsWhitelistModeSkipsMetricAndRtFieldManagement(t *testing.T) {
+func TestTimeSeriesGroupSvc_UpdateMetricsWhitelistModeSkipsRefresh(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 
@@ -207,7 +207,5 @@ func TestTimeSeriesGroupSvc_UpdateMetricsWhitelistModeSkipsMetricAndRtFieldManag
 
 	var scope customreport.TimeSeriesScope
 	err = customreport.NewTimeSeriesScopeQuerySet(db).GroupIDEq(tsm.TimeSeriesGroupID).ScopeNameEq("default").One(&scope)
-	require.NoError(t, err)
-	assert.Contains(t, scope.DimensionConfig, "endpoint")
-	assert.Contains(t, scope.DimensionConfig, "target")
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }

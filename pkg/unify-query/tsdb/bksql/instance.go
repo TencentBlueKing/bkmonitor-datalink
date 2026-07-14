@@ -225,8 +225,11 @@ func needFieldMap(query *metadata.Query) bool {
 	if query == nil {
 		return false
 	}
+	if isTSpiderQuery(query) {
+		return true
+	}
 	switch query.Measurement {
-	case sql_expr.Doris, sql_expr.HDFS, sql_expr.TSpider:
+	case sql_expr.Doris, sql_expr.HDFS:
 		return true
 	case "":
 		return query.StorageType == metadata.BkSqlStorageType && query.SQL != ""
@@ -239,8 +242,8 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
-	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
+	// Doris / HDFS 均需获取字段表结构；TSpider 与 Doris 共用 SQL 表达式，也需要 FieldsMap，
+	// 否则 dimTransform 会将未知列变为 NULL。
 	if needFieldMap(query) {
 		fieldsMap, tableFieldsMap, err := i.queryFieldMaps(ctx, query, start, end)
 		if err != nil {

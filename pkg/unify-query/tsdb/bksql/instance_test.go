@@ -125,8 +125,9 @@ func TestInstance_TSpider(t *testing.T) {
 
 	mock.BkSQL.Set(map[string]any{
 		// tspider
-		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
-		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":          `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
+		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`":             `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":                      `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
+		"SHOW CREATE TABLE `100656_dwd_clouddev_process_monitor_statistics`": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"process_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"user_id","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"err_count","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
 	})
 
 	end := time.UnixMilli(1730118889181)
@@ -137,7 +138,6 @@ func TestInstance_TSpider(t *testing.T) {
 		start        time.Time
 		end          time.Time
 		fieldMap     bool
-		initNilFM    bool
 		initFieldMap bool
 		wantUserSQL  string
 	}{
@@ -148,15 +148,22 @@ func TestInstance_TSpider(t *testing.T) {
 			},
 			fieldMap: true,
 		},
-		"InitQueryFactory_NoUserSQL_FieldMapNil": {
+		"InitQueryFactory_PromQLSingleSegment_FieldMapAndSQL": {
 			query: &metadata.Query{
 				StorageType: metadata.BkSqlStorageType,
-				DB:          "132_lol_new_login_queue_login_1min",
+				DB:          "100656_dwd_clouddev_process_monitor_statistics",
 				Measurement: "",
-				Field:       "login_rate",
+				Field:       "err_count",
 				SQL:         "",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "sum",
+						Dimensions: []string{"process_name", "user_id"},
+						Window:     time.Minute,
+					},
+				},
 			},
-			initNilFM: true,
+			initFieldMap: true,
 		},
 		"InitQueryFactory_PromQLMeasurement_FieldMap": {
 			query: &metadata.Query{
@@ -198,11 +205,6 @@ func TestInstance_TSpider(t *testing.T) {
 				assert.Equal(t, "bigint(20)", fieldsMap["dtEventTimeStamp"].FieldType)
 				assert.Equal(t, "double", fieldsMap["login_rate"].FieldType)
 				assert.Equal(t, 8, len(fieldsMap))
-			case c.initNilFM:
-				fact, err := ins.InitQueryFactory(ctx, c.query, s, e)
-				assert.Nil(t, err)
-				assert.NotNil(t, fact)
-				assert.Nil(t, fact.FieldMap())
 			case c.initFieldMap:
 				fact, err := ins.InitQueryFactory(ctx, c.query, s, e)
 				assert.Nil(t, err)
@@ -210,8 +212,14 @@ func TestInstance_TSpider(t *testing.T) {
 				fm := fact.FieldMap()
 				assert.NotEmpty(t, fm)
 				assert.Equal(t, "bigint(20)", fm["dtEventTimeStamp"].FieldType)
-				assert.Equal(t, "varchar(64)", fm["namespace"].FieldType)
-				assert.Equal(t, "double", fm["login_rate"].FieldType)
+				if _, ok := fm["err_count"]; ok {
+					assert.Equal(t, "text", fm["process_name"].FieldType)
+					assert.Equal(t, "text", fm["user_id"].FieldType)
+					assert.Equal(t, "double", fm["err_count"].FieldType)
+				} else {
+					assert.Equal(t, "varchar(64)", fm["namespace"].FieldType)
+					assert.Equal(t, "double", fm["login_rate"].FieldType)
+				}
 			case c.wantUserSQL != "":
 				fact, err := ins.InitQueryFactory(ctx, c.query, s, e)
 				assert.Nil(t, err)
@@ -1063,6 +1071,22 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
 		},
 		{
+			name: "tspider single segment aggregate sum by process and user",
+			query: &metadata.Query{
+				StorageType: metadata.BkSqlStorageType,
+				DB:          "100656_dwd_clouddev_process_monitor_statistics",
+				Field:       "err_count",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "sum",
+						Dimensions: []string{"process_name", "user_id"},
+						Window:     time.Minute,
+					},
+				},
+			},
+			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
+		},
+		{
 			name: "conditions with or",
 			query: &metadata.Query{
 				DB:    "132_lol_new_login_queue_login_1min",
@@ -1686,10 +1710,13 @@ GROUP BY
 				"origin_field":     {AliasName: "alias_field", FieldType: sql_expr.DorisTypeText},
 				"path":             {FieldType: sql_expr.DorisTypeString},
 				"namespace":        {FieldType: sql_expr.DorisTypeString},
+				"process_name":     {FieldType: sql_expr.DorisTypeText},
+				"user_id":          {FieldType: sql_expr.DorisTypeText},
 				"ip":               {FieldType: sql_expr.DorisTypeString},
 				"thedate":          {FieldType: sql_expr.DorisTypeString},
 				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeDate},
 				"login_rate":       {FieldType: sql_expr.DorisTypeInt},
+				"err_count":        {FieldType: sql_expr.DorisTypeDouble},
 				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},
 				"iterationIndex":   {FieldType: sql_expr.DorisTypeBigInt},
 				"value":            {FieldType: sql_expr.DorisTypeInt},

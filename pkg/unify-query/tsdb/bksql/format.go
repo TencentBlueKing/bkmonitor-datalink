@@ -106,11 +106,7 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		f.timeField = dtEventTimeStamp
 	}
 
-	exprKey := query.Measurement
-	// TSpider 表多为单段 table_id，Measurement 为空；用户自定义 SQL 仍需走 Doris 同源解析，且不能改写 Measurement（否则表名会多出 .tspider）
-	if exprKey == "" && query.SQL != "" && query.StorageType == metadata.BkSqlStorageType {
-		exprKey = sql_expr.TSpider
-	}
+	exprKey := querySQLExprKey(query)
 
 	f.expr = sql_expr.NewSQLExpr(exprKey).
 		WithInternalFields(f.timeField, query.Field).
@@ -118,6 +114,26 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		WithFieldAlias(query.FieldAlias)
 
 	return f
+}
+
+func querySQLExprKey(query *metadata.Query) string {
+	if query == nil {
+		return ""
+	}
+	if isTSpiderQuery(query) {
+		return sql_expr.TSpider
+	}
+	return query.Measurement
+}
+
+func isTSpiderQuery(query *metadata.Query) bool {
+	if query == nil {
+		return false
+	}
+	if query.Measurement == sql_expr.TSpider {
+		return true
+	}
+	return query.StorageType == metadata.BkSqlStorageType && query.Measurement == ""
 }
 
 func formatPhysicalTableName(db, measurement string) string {

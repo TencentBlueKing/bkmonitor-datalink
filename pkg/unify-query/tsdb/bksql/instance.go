@@ -225,6 +225,9 @@ func needFieldMap(query *metadata.Query) bool {
 	if query == nil {
 		return false
 	}
+	if isTSpiderQuery(query) {
+		return true
+	}
 	switch query.Measurement {
 	case sql_expr.Doris, sql_expr.HDFS:
 		return true
@@ -239,8 +242,8 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
-	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
+	// Doris / HDFS 均需获取字段表结构；TSpider 与 Doris 共用 SQL 表达式，也需要 FieldsMap，
+	// 否则 dimTransform 会将未知列变为 NULL。
 	if needFieldMap(query) {
 		fieldsMap, tableFieldsMap, err := i.queryFieldMaps(ctx, query, start, end)
 		if err != nil {
@@ -261,11 +264,7 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) Table(query *metadata.Query) string {
-	table := fmt.Sprintf("`%s`", query.DB)
-	if query.Measurement != "" {
-		table += "." + query.Measurement
-	}
-	return table
+	return formatPhysicalTableName(query.DB, query.Measurement)
 }
 
 // QueryFieldMap 查询字段映射
@@ -304,18 +303,22 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 	fieldsMap := make(metadata.FieldsMap)
 	tableFieldsMap := make(TableFieldsMap)
+	needTSpiderFieldMap := isTSpiderQuery(query)
+	var (
+		fieldMapTables  []string
+		lastFieldMapErr error
+	)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
 		db := dbs[idx]
-		table := fmt.Sprintf("`%s`", db)
-		if f.query.Measurement != "" {
-			table += "." + f.query.Measurement
-		}
+		table := formatPhysicalTableName(db, f.query.Measurement)
+		fieldMapTables = append(fieldMapTables, table)
 
 		sql := f.expr.DescribeTableSQL(table)
 		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))
 		if err != nil {
+			lastFieldMapErr = err
 			continue
 		}
 		normalized := normalizeFieldsMap(res, query.FieldAlias)
@@ -332,6 +335,16 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 			fieldsMap[k] = v
 		}
+	}
+
+	if needTSpiderFieldMap && len(fieldsMap) == 0 {
+		tableNames := strings.Join(fieldMapTables, ", ")
+		if lastFieldMapErr != nil {
+			err = fmt.Errorf("query tspider field map failed for %s: %w", tableNames, lastFieldMapErr)
+			return nil, nil, err
+		}
+		err = fmt.Errorf("query tspider field map empty for %s", tableNames)
+		return nil, nil, err
 	}
 
 	return fieldsMap, tableFieldsMap, nil

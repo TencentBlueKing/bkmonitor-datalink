@@ -294,7 +294,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 	start := time.Unix(1741795260, 0)
 	end := time.Unix(1741796260, 0)
 
-	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
+	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
 
 	t.Run("without_fields_map", func(t *testing.T) {
 		tests := []struct {

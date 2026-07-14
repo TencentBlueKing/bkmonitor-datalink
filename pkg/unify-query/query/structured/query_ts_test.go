@@ -682,7 +682,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				SQL:           "SELECT dtEventTimeStamp, gseIndex FROM `2_bklog_unit_test` WHERE gseIndex > 0 LIMIT 20",
 			},
-			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test` WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
+			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test` WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
 		},
 		{
 			// 无用户 SQL：走 buildSQL 路径，SELECT 中包含内置字段 _value_ / _timestamp_
@@ -706,7 +706,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				SQL:           "SELECT count(*) FROM 2_bklog_unit_test LIMIT 1",
 			},
-			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test` WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
+			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test` WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
 		},
 		{
 			// Doris：反引号库表 + count，时间条件以 AND 追加

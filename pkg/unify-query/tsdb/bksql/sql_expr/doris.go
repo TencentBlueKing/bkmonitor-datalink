@@ -82,6 +82,14 @@ type DorisSQLExpr struct {
 	// 而是直接使用 = / != 进行精确匹配。适用于 TSpider 等不支持全文检索的存储。
 	forceEq bool
 
+	// disableShardKeyTimeBucket 为 true 时，分钟级时间聚合也使用 timeField。
+	// TSpider 表没有 Doris 的 __shard_key__ 字段，需要走该兼容路径。
+	disableShardKeyTimeBucket bool
+
+	// disableTimeBucketCast 为 true 时，timeField 时间桶不生成 CAST(... AS INT)。
+	// TSpider 的 MySQL 语法检查不兼容该 CAST 写法。
+	disableTimeBucketCast bool
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -244,11 +252,13 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			timeZoneOffset *= -1
 		}
 
-		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
+		// Doris 按分钟聚合时优先使用 __shard_key__，TSpider 等不具备该字段的存储使用 timeField。
 		var timeField string
-		if int64(window.Seconds())%60 == 0 {
+		if !d.disableShardKeyTimeBucket && int64(window.Seconds())%60 == 0 {
 			windowMinutes := int(window.Minutes())
 			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh2, timeZoneOffset/6e4)
+		} else if d.disableTimeBucketCast {
+			timeField = fmt.Sprintf(`(FLOOR((%s %s %d) / %d) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		} else {
 			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		}

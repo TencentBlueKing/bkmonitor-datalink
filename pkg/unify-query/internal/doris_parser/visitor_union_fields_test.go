@@ -66,7 +66,7 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 		},
 		{
 			name:     "Doris 谓词操作符不当作字段",
-			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err'",
+			sql:      "`log` MATCH 'err', `message` MATCH_ANY 'x', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err', path LIKE '%!_%' ESCAPE '!'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
 		{
@@ -484,6 +484,24 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			nodeMap: map[string]Node{
 				SelectItem: &unionSelectTestNode{value: "`path`"},
 				WhereItem:  &unionSelectTestNode{value: "`log` RLIKE 'err'"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE MATCH 和 ESCAPE 不当作字段",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`log` MATCH 'err' AND `path` LIKE '%!_%' ESCAPE '!'"},
 			},
 			expected: "`path`",
 		},

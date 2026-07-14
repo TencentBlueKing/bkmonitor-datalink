@@ -277,7 +277,7 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 					"dimensions.time": {FieldType: "datetimev2(6)"},
 				},
 			},
-			expected: "CAST(dimensions['time'] AS DATETIME(6)) AS `dimensions.time`",
+			expected: "CAST(dimensions['time'] AS DATETIMEV2(6)) AS `dimensions.time`",
 		},
 		{
 			name:         "multi table SELECT star 不合并大小写不同的对象 leaf",
@@ -293,6 +293,32 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				},
 			},
 			expected: "`path`",
+		},
+		{
+			name:         "对象表达式按大小写精确校验请求 leaf",
+			selectFields: []string{"CAST(resource['TraceID'] AS STRING) AS `trace_id`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"resource.traceid": {FieldType: "varchar(128)"},
+				},
+			},
+			expectedErr: "doris multi-table union field `resource` is missing from table `db_a`.doris",
+		},
+		{
+			name:         "对象 root 投影按大小写精确校验 leaf 集合",
+			selectFields: []string{"`resource`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_a`.doris": {
+					"resource.traceid": {FieldType: "varchar(128)"},
+				},
+			},
+			expectedErr: "doris multi-table union field `resource.TraceID` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "multi table SELECT star 转换成公共字段投影",

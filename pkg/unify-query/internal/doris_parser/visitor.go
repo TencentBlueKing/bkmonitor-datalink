@@ -928,7 +928,7 @@ func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[st
 		if !option.Existed() || len(fieldName) <= len(prefix) || !strings.EqualFold(fieldName[:len(prefix)], prefix) {
 			continue
 		}
-		fields[strings.ToLower(fieldName)] = rootObjectUnionField{name: fieldName, option: option}
+		fields[fieldName] = rootObjectUnionField{name: fieldName, option: option}
 	}
 	return fields
 }
@@ -970,14 +970,14 @@ func validateRootObjectUnionFields(
 // validateName 用于传递已知 leaf；直接投影 root 对象时，会先按完整 leaf 集合校验，
 // 再进入这里的兜底逻辑。
 func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
-	fieldOption := fieldsMap.Field(validateName)
+	fieldOption := exactObjectLeafOrFieldOption(fieldsMap, validateName)
 	if fieldOption.Existed() {
 		return fieldOption, true
 	}
 
 	rootName := unquoteUnionField(field)
 	if validateName != rootName {
-		fieldOption = fieldsMap.Field(rootName)
+		fieldOption = exactObjectLeafOrFieldOption(fieldsMap, rootName)
 		if fieldOption.Existed() {
 			return fieldOption, true
 		}
@@ -1001,6 +1001,14 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 		}
 	}
 	return metadata.FieldOption{}, false
+}
+
+func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if strings.Contains(name, ".") {
+		return fieldsMap[name]
+	}
+	return fieldsMap.Field(name)
 }
 
 func unquoteUnionField(field string) string {
@@ -1081,6 +1089,7 @@ func baseUnionFieldType(fieldType string) string {
 type timeUnionFieldSpec struct {
 	kind      string
 	precision int
+	isV2      bool
 }
 
 func safeTimeUnionFieldType(left, right string) (string, bool) {
@@ -1090,10 +1099,14 @@ func safeTimeUnionFieldType(left, right string) (string, bool) {
 		return "DATE", true
 	}
 	precision := max(leftSpec.precision, rightSpec.precision)
-	if precision == 0 {
-		return "DATETIME", true
+	typeName := "DATETIME"
+	if leftSpec.isV2 || rightSpec.isV2 {
+		typeName = "DATETIMEV2"
 	}
-	return fmt.Sprintf("DATETIME(%d)", precision), true
+	if precision == 0 {
+		return typeName, true
+	}
+	return fmt.Sprintf("%s(%d)", typeName, precision), true
 }
 
 func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
@@ -1116,7 +1129,7 @@ func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
 	case "date", "datev1", "datev2":
 		return timeUnionFieldSpec{kind: "date"}
 	case "datetime", "datetimev1", "datetimev2", "timestamp":
-		spec := timeUnionFieldSpec{kind: "datetime"}
+		spec := timeUnionFieldSpec{kind: "datetime", isV2: base == "datetimev2"}
 		if params == "" {
 			return spec
 		}

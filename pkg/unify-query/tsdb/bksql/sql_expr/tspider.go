@@ -11,6 +11,7 @@ package sql_expr
 
 import (
 	"context"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -54,6 +55,10 @@ func (t *TSpiderSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 func (t *TSpiderSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	t.DorisSQLExpr.WithKeepColumns(cols)
 	return t
+}
+
+func (t *TSpiderSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
+	return t.DefaultSQLExpr.ParserRangeTime(timeField, start, end)
 }
 
 func (t *TSpiderSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (string, error) {

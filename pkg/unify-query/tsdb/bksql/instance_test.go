@@ -128,6 +128,7 @@ func TestInstance_TSpider(t *testing.T) {
 		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`":             `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":                      `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
 		"SHOW CREATE TABLE `100656_dwd_clouddev_process_monitor_statistics`": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"process_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"user_id","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"err_count","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
+		"SHOW CREATE TABLE `empty_tspider_field_map`":                        `{"result":true,"message":"成功","code":"00","data":{"list":[]},"errors":null}`,
 	})
 
 	end := time.UnixMilli(1730118889181)
@@ -140,6 +141,7 @@ func TestInstance_TSpider(t *testing.T) {
 		fieldMap     bool
 		initFieldMap bool
 		wantUserSQL  string
+		wantErr      string
 	}{
 		"ShowCreateTable_QueryFieldMap": {
 			query: &metadata.Query{
@@ -175,6 +177,14 @@ func TestInstance_TSpider(t *testing.T) {
 			},
 			initFieldMap: true,
 		},
+		"InitQueryFactory_TSpiderEmptyFieldMap_Error": {
+			query: &metadata.Query{
+				StorageType: metadata.BkSqlStorageType,
+				DB:          "empty_tspider_field_map",
+				Field:       "login_rate",
+			},
+			wantErr: "query tspider field map empty for `empty_tspider_field_map`",
+		},
 		"InitQueryFactory_UserSQL_FieldMapAndSQL": {
 			query: &metadata.Query{
 				StorageType: metadata.BkSqlStorageType,
@@ -185,7 +195,7 @@ func TestInstance_TSpider(t *testing.T) {
 			},
 			start:       time.Unix(1741795260, 0),
 			end:         time.Unix(1741796260, 0),
-			wantUserSQL: "SELECT `dsname`, SUM(`bot_num`) AS total FROM `36_game_bot_num_5min_stat` WHERE `game_id` = 1 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') GROUP BY `dsname` ORDER BY `total` DESC LIMIT 50",
+			wantUserSQL: "SELECT `dsname`, SUM(`bot_num`) AS total FROM `36_game_bot_num_5min_stat` WHERE `game_id` = 1 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') GROUP BY `dsname` ORDER BY `total` DESC LIMIT 50",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -196,6 +206,9 @@ func TestInstance_TSpider(t *testing.T) {
 				e = end
 			}
 			switch {
+			case c.wantErr != "":
+				_, err := ins.InitQueryFactory(ctx, c.query, s, e)
+				assert.ErrorContains(t, err, c.wantErr)
 			case c.fieldMap:
 				fieldsMap, err := ins.QueryFieldMap(ctx, c.query, s, e)
 				assert.Nil(t, err)
@@ -1068,7 +1081,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
 		},
 		{
 			name: "tspider single segment aggregate sum by process and user",
@@ -1084,7 +1097,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
+			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
 		},
 		{
 			name: "conditions with or",

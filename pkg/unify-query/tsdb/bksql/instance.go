@@ -303,15 +303,22 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 	fieldsMap := make(metadata.FieldsMap)
 	tableFieldsMap := make(TableFieldsMap)
+	needTSpiderFieldMap := isTSpiderQuery(query)
+	var (
+		fieldMapTables  []string
+		lastFieldMapErr error
+	)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
 		db := dbs[idx]
 		table := formatPhysicalTableName(db, f.query.Measurement)
+		fieldMapTables = append(fieldMapTables, table)
 
 		sql := f.expr.DescribeTableSQL(table)
 		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))
 		if err != nil {
+			lastFieldMapErr = err
 			continue
 		}
 		normalized := normalizeFieldsMap(res, query.FieldAlias)
@@ -328,6 +335,16 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 			fieldsMap[k] = v
 		}
+	}
+
+	if needTSpiderFieldMap && len(fieldsMap) == 0 {
+		tableNames := strings.Join(fieldMapTables, ", ")
+		if lastFieldMapErr != nil {
+			err = fmt.Errorf("query tspider field map failed for %s: %w", tableNames, lastFieldMapErr)
+			return nil, nil, err
+		}
+		err = fmt.Errorf("query tspider field map empty for %s", tableNames)
+		return nil, nil, err
 	}
 
 	return fieldsMap, tableFieldsMap, nil

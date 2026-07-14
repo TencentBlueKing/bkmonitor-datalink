@@ -544,9 +544,11 @@ func (v *Statement) unionSelectList() string {
 				projectionFields := collectUnionProjectionFields(selectSQL, nil)
 				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
-				validationFields := append([]unionProjectionField{}, projectionFields...)
-				validationFields = append(validationFields, collectUnionProjectionFields(v.ItemString(WhereItem), nil)...)
-				if err := validateUnionProjectionFields(v.Tables, validationFields, v.TableFieldsMap); err != nil {
+				if err := validateUnionProjectionFields(v.Tables, projectionFields, v.TableFieldsMap); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+					return Star
+				}
+				if err := validateUnionWhereFields(v.Tables, collectUnionProjectionFields(v.ItemString(WhereItem), nil), v.TableFieldsMap); err != nil {
 					v.errNode = append(v.errNode, err.Error())
 					return Star
 				}
@@ -575,7 +577,7 @@ func (v *Statement) unionSelectList() string {
 	fields = append(fields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
 	whereFields := collectUnionProjectionFields(v.ItemString(WhereItem), nil)
 	if len(fields) == 0 {
-		if err := validateUnionProjectionFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
+		if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
 			v.errNode = append(v.errNode, err.Error())
 		}
 		if len(v.Tables) > 1 {
@@ -593,9 +595,10 @@ func (v *Statement) unionSelectList() string {
 		seen[field.field] = struct{}{}
 		result = append(result, field.field)
 	}
-	validationFields := append([]unionProjectionField{}, fields...)
-	validationFields = append(validationFields, whereFields...)
-	if err := validateUnionProjectionFields(v.Tables, validationFields, v.TableFieldsMap); err != nil {
+	if err := validateUnionProjectionFields(v.Tables, fields, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
 		v.errNode = append(v.errNode, err.Error())
 	}
 	return strings.Join(result, ", ")
@@ -884,6 +887,40 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 	return nil
 }
 
+func validateUnionWhereFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		key := field.field + "\x00" + name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionFieldPresence(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			if _, existed := unionFieldOption(fieldsMap, field.field, name); !existed {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field.field, table)
+			}
+		}
+	}
+	return nil
+}
+
 // validateRootObjectUnionField 校验直接投影对象 root 的场景。
 //
 // 例如 SELECT dimensions 时，schema 往往只有 dimensions.xxx leaf，没有
@@ -922,6 +959,25 @@ func validateRootObjectUnionField(tables []string, field string, validateName st
 		}
 	}
 	return baseFields != nil, nil
+}
+
+func validateRootObjectUnionFieldPresence(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return true, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() || len(rootObjectUnionFields(fieldsMap, rootName)) > 0 {
+			continue
+		}
+		return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+	}
+	return true, nil
 }
 
 type rootObjectUnionField struct {

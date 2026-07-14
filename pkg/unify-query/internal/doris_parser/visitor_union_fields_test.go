@@ -482,6 +482,58 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			},
 			expected: "`path`",
 		},
+		{
+			name: "WHERE 字段缺失时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path":      {FieldType: "text"},
+					"new_field": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`new_field` = 'x'"},
+			},
+			expected:    "`path`",
+			errContains: "field `new_field` is missing from table `db_his`.doris",
+		},
+		{
+			name: "WHERE-only 字段类型不同但未投影时允许",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`status` IS NOT NULL"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "只有 WHERE 字段类型不同但未投影时允许",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"status": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"status": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "COUNT(*) AS c"},
+				WhereItem:  &unionSelectTestNode{value: "`status` IS NOT NULL"},
+			},
+			expected: unionDummyProjection,
+		},
 	}
 
 	for _, tt := range tests {

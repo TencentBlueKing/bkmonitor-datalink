@@ -104,6 +104,7 @@ func NewSQLExpr(key string) SQLExpr {
 				ignoreFieldSet:            set.New[string](),
 				forceEq:                   true,
 				disableShardKeyTimeBucket: true,
+				disableTimeBucketCast:     true,
 			},
 		}
 	default:

@@ -1081,7 +1081,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
 		},
 		{
 			name: "tspider single segment aggregate sum by process and user",
@@ -1097,7 +1097,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
+			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
 		},
 		{
 			name: "conditions with or",

@@ -668,7 +668,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		return ns, as
 	}
 
-	ns = s
+	ns = normalizeDorisFieldName(s)
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
@@ -726,6 +726,18 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
 	return ns, as
+}
+
+func normalizeDorisFieldName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' {
+		return s
+	}
+	name := s[1 : len(s)-1]
+	if strings.Contains(name, "`") {
+		return s
+	}
+	return name
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

@@ -66,7 +66,7 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 		},
 		{
 			name:     "Doris 谓词操作符不当作字段",
-			sql:      "`log` MATCH 'err', `message` MATCH_ANY 'x', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err', path LIKE '%!_%' ESCAPE '!'",
+			sql:      "`log` MATCH 'err', `message` MATCH_ANY 'x', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err', path LIKE '%!_%' ESCAPE '!', log = 'a' XOR path = 'b'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
 		{

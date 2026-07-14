@@ -120,6 +120,14 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	return f
 }
 
+func formatPhysicalTableName(db, measurement string) string {
+	table := fmt.Sprintf("`%s`", db)
+	if measurement != "" && measurement != sql_expr.TSpider {
+		table += "." + measurement
+	}
+	return table
+}
+
 func (f *QueryFactory) WithMaxLimit(maxLimit int) *QueryFactory {
 	f.maxLimit = maxLimit
 	return f
@@ -432,11 +440,7 @@ func (f *QueryFactory) Tables() []string {
 	// 改成倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
 		db := dbs[idx]
-		table := fmt.Sprintf("`%s`", db)
-		if f.query.Measurement != "" {
-			table += "." + f.query.Measurement
-		}
-		tables = append(tables, table)
+		tables = append(tables, formatPhysicalTableName(db, f.query.Measurement))
 	}
 
 	return tables

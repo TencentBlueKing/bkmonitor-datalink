@@ -261,11 +261,7 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) Table(query *metadata.Query) string {
-	table := fmt.Sprintf("`%s`", query.DB)
-	if query.Measurement != "" {
-		table += "." + query.Measurement
-	}
-	return table
+	return formatPhysicalTableName(query.DB, query.Measurement)
 }
 
 // QueryFieldMap 查询字段映射
@@ -308,10 +304,7 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
 		db := dbs[idx]
-		table := fmt.Sprintf("`%s`", db)
-		if f.query.Measurement != "" {
-			table += "." + f.query.Measurement
-		}
+		table := formatPhysicalTableName(db, f.query.Measurement)
 
 		sql := f.expr.DescribeTableSQL(table)
 		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))

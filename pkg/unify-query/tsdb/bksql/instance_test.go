@@ -125,9 +125,8 @@ func TestInstance_TSpider(t *testing.T) {
 
 	mock.BkSQL.Set(map[string]any{
 		// tspider
-		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`":         `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
-		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`.tspider": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
-		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":                  `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
+		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":          `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
 	})
 
 	end := time.UnixMilli(1730118889181)
@@ -1046,6 +1045,22 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND `namespace` IN ('bgp2-new', 'gz100') GROUP BY `namespace`, (FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0)",
+		},
+		{
+			name: "tspider aggregate count uses unsuffixed table and time field bucket",
+			query: &metadata.Query{
+				DB:          "132_lol_new_login_queue_login_1min",
+				Measurement: sql_expr.TSpider,
+				Field:       "login_rate",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"namespace"},
+						Window:     time.Minute,
+					},
+				},
+			},
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 60000) AS INT) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
 		},
 		{
 			name: "conditions with or",

@@ -1003,9 +1003,8 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 	return metadata.FieldOption{}, false
 }
 
-// exactObjectLeafOrFieldOption keeps object leaf names case-sensitive because
-// Doris variant/map keys are case-sensitive. Top-level physical columns still
-// use FieldsMap.Field for the historical case-insensitive match.
+// 对象 leaf 对应 Doris variant/map key，必须区分大小写；顶层物理列仍沿用
+// FieldsMap.Field 的历史大小写不敏感匹配。
 func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
 	name = unquoteUnionField(strings.TrimSpace(name))
 	if strings.Contains(name, ".") {
@@ -1112,6 +1111,8 @@ func safeTimeUnionFieldType(left, right string) (string, bool) {
 	return fmt.Sprintf("%s(%d)", typeName, precision), true
 }
 
+// timeUnionFieldSpecFromType 提取 Doris 时间类型的基础类型和小数秒精度。
+// DATETIMEV2 需要单独标记，避免多表 UNION 的对象 leaf cast 退化成 DATETIME 后丢失精度。
 func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
 	t := strings.ToLower(strings.TrimSpace(fieldType))
 	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {

@@ -47,6 +47,11 @@ func metricKey(fieldName, fieldScope string) string {
 
 // BulkRefreshTSMetrics 更新或创建时序指标数据
 func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
+	if !isAutoDiscovery {
+		logger.Infof("BulkRefreshTSMetrics: group_id [%v] table_id [%s] is whitelist mode, skip managing TimeSeriesMetric", groupId, tableId)
+		return false, nil
+	}
+
 	// 当 metricInfoList 为空时，可能是上游异常、限流或拉取失败，跳过更新操作以避免误将所有指标标记为不活跃
 	if len(metricInfoList) == 0 {
 		logger.Warnf("BulkRefreshTSMetrics: metricInfoList is empty for group_id [%v], skip update to avoid marking all metrics as inactive due to potential upstream issues", groupId)

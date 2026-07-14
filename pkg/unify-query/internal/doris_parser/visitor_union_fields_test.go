@@ -65,7 +65,7 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			expected: []string{"`time`", "`path`"},
 		},
 		{
-			name:     "Doris predicate 操作符不当作字段",
+			name:     "Doris 谓词操作符不当作字段",
 			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
@@ -448,7 +448,7 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 		errContains    string
 	}{
 		{
-			name: "missing projection field",
+			name: "投影字段缺失时报错",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {
 					"log": {FieldType: "text"},
@@ -465,7 +465,7 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			errContains: "missing from table `db_his`.doris",
 		},
 		{
-			name: "where predicate operator is not a field",
+			name: "WHERE 谓词操作符不当作字段",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {
 					"log":  {FieldType: "text"},

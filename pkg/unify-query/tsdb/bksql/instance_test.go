@@ -1580,6 +1580,33 @@ GROUP BY
 			errContains: "missing from table `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris",
 		},
 		{
+			name: "用户 SQL 多表 union 提前校验 WHERE 缺失字段",
+			query: &metadata.Query{
+				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				DBs: []string{
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his",
+					"100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				},
+				Measurement: sql_expr.Doris,
+				SQL: `SELECT
+  path
+WHERE
+  trace_id = 'x'`,
+			},
+			start: time.UnixMilli(1758607200000),
+			end:   time.UnixMilli(1758610800000),
+			tableFieldsMap: bksql.TableFieldsMap{
+				"`100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris": {
+					"path": {FieldType: sql_expr.DorisTypeString},
+				},
+				"`100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris": {
+					"path":     {FieldType: sql_expr.DorisTypeString},
+					"trace_id": {FieldType: sql_expr.DorisTypeString},
+				},
+			},
+			errContains: "field `trace_id` is missing from table `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris",
+		},
+		{
 			name: "regexp extract aggregate with sql and union table",
 			query: &metadata.Query{
 				DB: "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",

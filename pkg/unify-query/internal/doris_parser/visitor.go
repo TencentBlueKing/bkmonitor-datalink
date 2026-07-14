@@ -544,7 +544,9 @@ func (v *Statement) unionSelectList() string {
 				projectionFields := collectUnionProjectionFields(selectSQL, nil)
 				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
-				if err := validateUnionProjectionFields(v.Tables, projectionFields, v.TableFieldsMap); err != nil {
+				validationFields := append([]unionProjectionField{}, projectionFields...)
+				validationFields = append(validationFields, collectUnionProjectionFields(v.ItemString(WhereItem), nil)...)
+				if err := validateUnionProjectionFields(v.Tables, validationFields, v.TableFieldsMap); err != nil {
 					v.errNode = append(v.errNode, err.Error())
 					return Star
 				}
@@ -571,7 +573,11 @@ func (v *Statement) unionSelectList() string {
 	fields := collectUnionProjectionFields(selectSQL, nil)
 	fields = append(fields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 	fields = append(fields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+	whereFields := collectUnionProjectionFields(v.ItemString(WhereItem), nil)
 	if len(fields) == 0 {
+		if err := validateUnionProjectionFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
+			v.errNode = append(v.errNode, err.Error())
+		}
 		if len(v.Tables) > 1 {
 			return unionDummyProjection
 		}
@@ -587,7 +593,9 @@ func (v *Statement) unionSelectList() string {
 		seen[field.field] = struct{}{}
 		result = append(result, field.field)
 	}
-	if err := validateUnionProjectionFields(v.Tables, fields, v.TableFieldsMap); err != nil {
+	validationFields := append([]unionProjectionField{}, fields...)
+	validationFields = append(validationFields, whereFields...)
+	if err := validateUnionProjectionFields(v.Tables, validationFields, v.TableFieldsMap); err != nil {
 		v.errNode = append(v.errNode, err.Error())
 	}
 	return strings.Join(result, ", ")
@@ -703,16 +711,16 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 
 func selectAllUnionFieldKey(name string) string {
 	name = unquoteUnionField(strings.TrimSpace(name))
-	if strings.Contains(name, ".") {
-		return name
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return strings.ToLower(root) + "." + leaf
 	}
 	return strings.ToLower(name)
 }
 
 func selectAllUnionFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
 	name = unquoteUnionField(strings.TrimSpace(name))
-	if strings.Contains(name, ".") {
-		return fieldsMap[name]
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
 	}
 	return fieldsMap.Field(name)
 }
@@ -922,13 +930,13 @@ type rootObjectUnionField struct {
 }
 
 func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[string]rootObjectUnionField {
-	prefix := rootName + "."
 	fields := make(map[string]rootObjectUnionField)
 	for fieldName, option := range fieldsMap {
-		if !option.Existed() || len(fieldName) <= len(prefix) || !strings.EqualFold(fieldName[:len(prefix)], prefix) {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if !option.Existed() || !ok || !strings.EqualFold(root, rootName) {
 			continue
 		}
-		fields[fieldName] = rootObjectUnionField{name: fieldName, option: option}
+		fields[strings.ToLower(root)+"."+leaf] = rootObjectUnionField{name: fieldName, option: option}
 	}
 	return fields
 }
@@ -986,7 +994,6 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 
 	// 兼容只传 root 对象名的旧调用方：选择固定顺序的 leaf，避免依赖 Go map
 	// 的随机遍历顺序导致同一份 schema 偶发类型误判。
-	prefix := rootName + "."
 	fieldNames := make([]string, 0, len(fieldsMap))
 	for fieldName := range fieldsMap {
 		fieldNames = append(fieldNames, fieldName)
@@ -996,7 +1003,8 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 	})
 	for _, fieldName := range fieldNames {
 		option := fieldsMap[fieldName]
-		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
+		fieldRoot, _, ok := splitObjectUnionFieldName(fieldName)
+		if ok && strings.EqualFold(fieldRoot, rootName) && option.Existed() {
 			return option, true
 		}
 	}
@@ -1007,10 +1015,29 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 // FieldsMap.Field 的历史大小写不敏感匹配。
 func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
 	name = unquoteUnionField(strings.TrimSpace(name))
-	if strings.Contains(name, ".") {
-		return fieldsMap[name]
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
 	}
 	return fieldsMap.Field(name)
+}
+
+func exactObjectLeafOption(fieldsMap metadata.FieldsMap, rootName string, leafName string) metadata.FieldOption {
+	for fieldName, option := range fieldsMap {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if option.Existed() && ok && strings.EqualFold(root, rootName) && leaf == leafName {
+			return option
+		}
+	}
+	return metadata.FieldOption{}
+}
+
+func splitObjectUnionFieldName(name string) (string, string, bool) {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	idx := strings.IndexByte(name, '.')
+	if idx <= 0 || idx >= len(name)-1 {
+		return "", "", false
+	}
+	return name[:idx], name[idx+1:], true
 }
 
 func unquoteUnionField(field string) string {

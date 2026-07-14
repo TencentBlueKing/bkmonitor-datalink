@@ -461,26 +461,62 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 }
 
 func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
-	stmt := &Statement{
-		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
-		TableFieldsMap: TableFieldsMap{
-			"`db_his`.doris": {
-				"dimensions.pipelineName": {FieldType: "text"},
-				"dimensions.retry_count":  {FieldType: "int"},
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		selectSQL      string
+		groupSQL       string
+		expected       string
+	}{
+		{
+			name: "requested leaf",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_current`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar"},
+					"dimensions.retry_count":  {FieldType: "double"},
+				},
 			},
-			"`db_current`.doris": {
-				"dimensions.pipelineName": {FieldType: "varchar"},
-				"dimensions.retry_count":  {FieldType: "double"},
-			},
+			selectSQL: "dimensions['pipelineName'], COUNT(*) AS c",
+			groupSQL:  "dimensions['pipelineName']",
+			expected:  "`dimensions`",
 		},
-		nodeMap: map[string]Node{
-			SelectItem: &unionSelectTestNode{value: "dimensions['pipelineName'], COUNT(*) AS c"},
-			GroupItem:  &unionSelectTestNode{value: "dimensions['pipelineName']"},
+		{
+			name: "requested leaf keeps root case-insensitive",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+			},
+			selectSQL: "Resource['TraceID']",
+			expected:  "`Resource`",
 		},
 	}
 
-	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
-	assert.NoError(t, stmt.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodeMap := map[string]Node{
+				SelectItem: &unionSelectTestNode{value: tt.selectSQL},
+			}
+			if tt.groupSQL != "" {
+				nodeMap[GroupItem] = &unionSelectTestNode{value: tt.groupSQL}
+			}
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap:        nodeMap,
+			}
+
+			assert.Equal(t, tt.expected, stmt.unionSelectList())
+			assert.NoError(t, stmt.Error())
+		})
+	}
 }
 
 func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *testing.T) {
@@ -507,24 +543,55 @@ func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *t
 	}
 }
 
-func TestStatementUnionSelectListRejectsRootObjectLeafCaseMismatch(t *testing.T) {
-	stmt := &Statement{
-		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
-		TableFieldsMap: TableFieldsMap{
-			"`db_his`.doris": {
-				"resource.TraceID": {FieldType: "text"},
+func TestStatementUnionSelectListValidatesRootObjectLeafCase(t *testing.T) {
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		errContains    string
+	}{
+		{
+			name: "rejects leaf case mismatch",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"resource.traceid": {FieldType: "text"},
+				},
 			},
-			"`db_current`.doris": {
-				"resource.traceid": {FieldType: "text"},
-			},
+			errContains: "field `resource.TraceID` is missing from table `db_current`.doris",
 		},
-		nodeMap: map[string]Node{
-			SelectItem: &unionSelectTestNode{value: "resource"},
+		{
+			name: "allows root case difference",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"Resource.TraceID": {FieldType: "text"},
+				},
+			},
 		},
 	}
 
-	assert.Equal(t, "`resource`", stmt.unionSelectList())
-	assert.ErrorContains(t, stmt.Error(), "field `resource.TraceID` is missing from table `db_current`.doris")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap: map[string]Node{
+					SelectItem: &unionSelectTestNode{value: "resource"},
+				},
+			}
+
+			assert.Equal(t, "`resource`", stmt.unionSelectList())
+			if tt.errContains != "" {
+				assert.ErrorContains(t, stmt.Error(), tt.errContains)
+				return
+			}
+			assert.NoError(t, stmt.Error())
+		})
+	}
 }
 
 func TestStatementUnionSelectListRejectsRootObjectLeafMismatch(t *testing.T) {

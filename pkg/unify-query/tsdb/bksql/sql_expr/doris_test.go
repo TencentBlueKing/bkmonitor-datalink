@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -1040,4 +1041,107 @@ func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
 		}
 		assert.Equal(t, "COUNT(`log`) AS `"+Value+"`", valueExpr)
 	})
+}
+
+func TestTSpiderSQLExpr_ParserAggregatesAndOrders_UsesFieldsMapAndTimeField(t *testing.T) {
+	encode := func(s string) string { return "`" + s + "`" }
+	fieldsMap := metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+		"suc_rate":         {FieldType: DorisTypeDouble},
+		"err_cnt":          {FieldType: DorisTypeDouble},
+		"err_count":        {FieldType: DorisTypeDouble},
+		"process_name":     {FieldType: DorisTypeText},
+		"user_id":          {FieldType: DorisTypeText},
+	}
+
+	t.Run("avg uses real value field and dtEventTimeStamp bucket", func(t *testing.T) {
+		expr := NewSQLExpr(TSpider).
+			WithInternalFields("dtEventTimeStamp", "suc_rate").
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "avg", Window: time.Minute}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+
+		got := strings.Join(selectFields, ", ")
+		assert.Contains(t, got, "AVG(`suc_rate`) AS `"+Value+"`")
+		assert.Contains(t, got, "dtEventTimeStamp")
+		assert.NotContains(t, got, "AVG(NULL)")
+		assert.NotContains(t, got, ShardKey)
+	})
+
+	t.Run("sum by dimension uses real fields and dtEventTimeStamp bucket", func(t *testing.T) {
+		expr := NewSQLExpr(TSpider).
+			WithInternalFields("dtEventTimeStamp", "err_cnt").
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+
+		selectFields, groupByFields, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "sum", Dimensions: []string{"user_id"}, Window: time.Minute}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+
+		gotSelect := strings.Join(selectFields, ", ")
+		gotGroupBy := strings.Join(groupByFields, ", ")
+		assert.Contains(t, gotSelect, "`user_id`")
+		assert.Contains(t, gotSelect, "SUM(`err_cnt`) AS `"+Value+"`")
+		assert.Contains(t, gotSelect, "dtEventTimeStamp")
+		assert.Contains(t, gotGroupBy, "`user_id`")
+		assert.NotContains(t, gotSelect, "NULL AS user_id")
+		assert.NotContains(t, gotSelect, "SUM(NULL)")
+		assert.NotContains(t, gotSelect, ShardKey)
+	})
+
+	t.Run("sum by process_name and user_id matches promql trace regression", func(t *testing.T) {
+		expr := NewSQLExpr(TSpider).
+			WithInternalFields("dtEventTimeStamp", "err_count").
+			WithFieldsMap(fieldsMap).
+			WithEncode(encode)
+
+		selectFields, groupByFields, _, _, _, err := expr.ParserAggregatesAndOrders(
+			nil,
+			metadata.Aggregates{{Name: "sum", Dimensions: []string{"process_name", "user_id"}, Window: time.Minute}},
+			metadata.Orders{},
+		)
+		assert.NoError(t, err)
+
+		gotSelect := strings.Join(selectFields, ", ")
+		gotGroupBy := strings.Join(groupByFields, ", ")
+		assert.Contains(t, gotSelect, "`process_name`")
+		assert.Contains(t, gotSelect, "`user_id`")
+		assert.Contains(t, gotSelect, "SUM(`err_count`) AS `"+Value+"`")
+		assert.Contains(t, gotSelect, "dtEventTimeStamp")
+		assert.Contains(t, gotGroupBy, "`process_name`")
+		assert.Contains(t, gotGroupBy, "`user_id`")
+		assert.NotContains(t, gotSelect, "NULL AS process_name")
+		assert.NotContains(t, gotSelect, "NULL AS user_id")
+		assert.NotContains(t, gotSelect, "SUM(NULL)")
+		assert.NotContains(t, gotSelect, ShardKey)
+	})
+}
+
+func TestDorisSQLExpr_ParserAggregatesAndOrders_UsesShardKeyForMinuteBucket(t *testing.T) {
+	expr := NewSQLExpr(Doris).
+		WithInternalFields("dtEventTimeStamp", "login_rate").
+		WithFieldsMap(metadata.FieldsMap{
+			"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+			"login_rate":       {FieldType: DorisTypeDouble},
+		}).
+		WithEncode(func(s string) string { return "`" + s + "`" })
+
+	selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(
+		nil,
+		metadata.Aggregates{{Name: "count", Window: time.Minute}},
+		metadata.Orders{},
+	)
+	assert.NoError(t, err)
+
+	got := strings.Join(selectFields, ", ")
+	assert.Contains(t, got, ShardKey)
 }

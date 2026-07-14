@@ -117,28 +117,30 @@ func TestInstance_ShowCreateTable_HDFS(t *testing.T) {
 	assert.False(t, fieldsMap["dteventtimestamp"].IsAnalyzed)
 }
 
-// TestInstance_TSpider 覆盖 TSpider 相关路径：SHOW CREATE 字段解析、InitQueryFactory 是否拉表结构、用户 SQL 下的 FieldsMap 与生成 SQL。
-// TSpider 使用 "Field" 作为字段名标识，Measurement 为空；SHOW CREATE 与 pkg/unify-query/mock/handler.go 中 mockBKBaseHandler 内 TSpider 表项保持一致（Set 为合并写入）。
+// TestInstance_TSpider 覆盖 TSpider 相关路径：SHOW CREATE 字段解析、PromQL 聚合路径拉表结构、用户 SQL 下的 FieldsMap 与生成 SQL。
+// TSpider 使用 "Field" 作为字段名标识；SHOW CREATE 与 pkg/unify-query/mock/handler.go 中 mockBKBaseHandler 内 TSpider 表项保持一致（Set 为合并写入）。
 func TestInstance_TSpider(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
 	mock.BkSQL.Set(map[string]any{
 		// tspider
-		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
-		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":          `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
+		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`":         `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`.tspider": `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"MUL","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"flow_id","Type":"bigint(20)","Null":"YES","Key":"MUL","Default":null,"Extra":""},{"Field":"flow_name","Type":"text","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"namespace","Type":"varchar(64)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"login_rate","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SHOW CREATE TABLE `36_game_bot_num_5min_stat`":                  `{"result":true,"message":"成功","code":"00","data":{"list":[{"Field":"thedate","Type":"int(11)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint(20)","Null":"NO","Key":"","Default":null,"Extra":""},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"dsname","Type":"varchar(128)","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"bot_num","Type":"double","Null":"YES","Key":"","Default":null,"Extra":""},{"Field":"game_id","Type":"bigint(20)","Null":"YES","Key":"","Default":null,"Extra":""}]},"errors":null}`,
 	})
 
 	end := time.UnixMilli(1730118889181)
 	start := time.UnixMilli(1730118589181)
 
 	for name, c := range map[string]struct {
-		query       *metadata.Query
-		start       time.Time
-		end         time.Time
-		fieldMap    bool
-		initNilFM   bool
-		wantUserSQL string
+		query        *metadata.Query
+		start        time.Time
+		end          time.Time
+		fieldMap     bool
+		initNilFM    bool
+		initFieldMap bool
+		wantUserSQL  string
 	}{
 		"ShowCreateTable_QueryFieldMap": {
 			query: &metadata.Query{
@@ -156,6 +158,16 @@ func TestInstance_TSpider(t *testing.T) {
 				SQL:         "",
 			},
 			initNilFM: true,
+		},
+		"InitQueryFactory_PromQLMeasurement_FieldMap": {
+			query: &metadata.Query{
+				StorageType: metadata.BkSqlStorageType,
+				DB:          "132_lol_new_login_queue_login_1min",
+				Measurement: sql_expr.TSpider,
+				Field:       "login_rate",
+				SQL:         "",
+			},
+			initFieldMap: true,
 		},
 		"InitQueryFactory_UserSQL_FieldMapAndSQL": {
 			query: &metadata.Query{
@@ -192,6 +204,15 @@ func TestInstance_TSpider(t *testing.T) {
 				assert.Nil(t, err)
 				assert.NotNil(t, fact)
 				assert.Nil(t, fact.FieldMap())
+			case c.initFieldMap:
+				fact, err := ins.InitQueryFactory(ctx, c.query, s, e)
+				assert.Nil(t, err)
+				assert.NotNil(t, fact)
+				fm := fact.FieldMap()
+				assert.NotEmpty(t, fm)
+				assert.Equal(t, "bigint(20)", fm["dtEventTimeStamp"].FieldType)
+				assert.Equal(t, "varchar(64)", fm["namespace"].FieldType)
+				assert.Equal(t, "double", fm["login_rate"].FieldType)
 			case c.wantUserSQL != "":
 				fact, err := ins.InitQueryFactory(ctx, c.query, s, e)
 				assert.Nil(t, err)

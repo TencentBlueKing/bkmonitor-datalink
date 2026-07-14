@@ -226,7 +226,7 @@ func needFieldMap(query *metadata.Query) bool {
 		return false
 	}
 	switch query.Measurement {
-	case sql_expr.Doris, sql_expr.HDFS:
+	case sql_expr.Doris, sql_expr.HDFS, sql_expr.TSpider:
 		return true
 	case "":
 		return query.StorageType == metadata.BkSqlStorageType && query.SQL != ""

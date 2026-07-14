@@ -65,8 +65,8 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			expected: []string{"`time`", "`path`"},
 		},
 		{
-			name:     "Doris match 操作符不当作字段",
-			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*'",
+			name:     "Doris predicate 操作符不当作字段",
+			sql:      "`log` MATCH_ANY 'x', `message` MATCH_PHRASE_EDGE 'y', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err'",
 			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
 		},
 		{
@@ -440,24 +440,66 @@ func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T
 }
 
 func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
-	stmt := &Statement{
-		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
-		TableFieldsMap: TableFieldsMap{
-			"`db_his`.doris": {
-				"log": {FieldType: "text"},
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		nodeMap        map[string]Node
+		expected       string
+		errContains    string
+	}{
+		{
+			name: "missing projection field",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path": {FieldType: "text"},
+				},
 			},
-			"`db_current`.doris": {
-				"path": {FieldType: "text"},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`, COUNT(*) AS c"},
+				GroupItem:  &unionSelectTestNode{value: "`path`"},
 			},
+			expected:    "`path`",
+			errContains: "missing from table `db_his`.doris",
 		},
-		nodeMap: map[string]Node{
-			SelectItem: &unionSelectTestNode{value: "`path`, COUNT(*) AS c"},
-			GroupItem:  &unionSelectTestNode{value: "`path`"},
+		{
+			name: "where predicate operator is not a field",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`log` RLIKE 'err'"},
+			},
+			expected: "`path`",
 		},
 	}
 
-	assert.Equal(t, "`path`", stmt.unionSelectList())
-	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap:        tt.nodeMap,
+			}
+
+			assert.Equal(t, tt.expected, stmt.unionSelectList())
+			if tt.errContains != "" {
+				assert.ErrorContains(t, stmt.Error(), tt.errContains)
+				return
+			}
+			assert.NoError(t, stmt.Error())
+		})
+	}
 }
 
 func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {

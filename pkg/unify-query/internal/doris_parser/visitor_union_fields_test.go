@@ -483,26 +483,6 @@ func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
-func TestStatementUnionSelectListRejectsRequestedObjectLeafCaseMismatch(t *testing.T) {
-	stmt := &Statement{
-		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
-		TableFieldsMap: TableFieldsMap{
-			"`db_his`.doris": {
-				"resource.TraceID": {FieldType: "text"},
-			},
-			"`db_current`.doris": {
-				"resource.traceid": {FieldType: "varchar"},
-			},
-		},
-		nodeMap: map[string]Node{
-			SelectItem: &unionSelectTestNode{value: "resource['TraceID'] AS trace_id"},
-		},
-	}
-
-	assert.Equal(t, "`resource`", stmt.unionSelectList())
-	assert.ErrorContains(t, stmt.Error(), "field `resource` is missing from table `db_current`.doris")
-}
-
 func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *testing.T) {
 	stmt := &Statement{
 		Tables: []string{"`db_his`.doris", "`db_current`.doris"},

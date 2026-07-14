@@ -1353,11 +1353,36 @@ func isASClauseAt(s string, idx int) bool {
 	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
+func joinWhereConditions(conditions ...string) string {
+	list := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		condition = strings.TrimSpace(condition)
+		if condition != "" {
+			list = append(list, condition)
+		}
+	}
+	return strings.Join(list, " AND ")
+}
+
 func (v *Statement) String() string {
 	var result []string
+	var renderedWhere string
+	var whereRendered bool
+	renderWhere := func() string {
+		if !whereRendered {
+			renderedWhere = v.ItemString(WhereItem)
+			whereRendered = true
+		}
+		return renderedWhere
+	}
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
-		res := v.ItemString(name)
+		res := ""
+		if name == WhereItem && whereRendered {
+			res = renderedWhere
+		} else {
+			res = v.ItemString(name)
+		}
 		key := name
 
 		switch name {
@@ -1379,11 +1404,12 @@ func (v *Statement) String() string {
 				} else {
 					stmts := make([]string, 0, len(v.Tables))
 					selectList := v.unionSelectList()
+					where := joinWhereConditions(renderWhere(), v.Where)
 					for _, t := range v.Tables {
 						// 多表合并时将时间/查询条件下推到每张物理表，同时用显式投影规避表结构不一致。
 						s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
-						if v.Where != "" {
-							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
+						if where != "" {
+							s = fmt.Sprintf("%s WHERE %s", s, where)
 						}
 						stmts = append(stmts, s)
 					}
@@ -2092,7 +2118,7 @@ func (v *FieldNode) String() string {
 			// 都应保留原名并加反引号，不走 fieldMap 转换（否则会被映射为 Null）。
 			result = fmt.Sprintf("`%s`", key)
 		} else {
-			originField, as := v.Encode(result)
+			originField, as := v.Encode(key)
 			if v.exprType == selectCtxType && as != "" && v.as == nil {
 				v.as = &StringNode{Name: as}
 			}

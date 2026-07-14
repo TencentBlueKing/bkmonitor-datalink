@@ -1003,6 +1003,9 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 	return metadata.FieldOption{}, false
 }
 
+// exactObjectLeafOrFieldOption keeps object leaf names case-sensitive because
+// Doris variant/map keys are case-sensitive. Top-level physical columns still
+// use FieldsMap.Field for the historical case-insensitive match.
 func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
 	name = unquoteUnionField(strings.TrimSpace(name))
 	if strings.Contains(name, ".") {

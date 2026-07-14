@@ -74,6 +74,11 @@ func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
 			sql:      "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days",
 			expected: []string{"`start_time`", "`end_time`"},
 		},
+		{
+			name:     "Doris 当前时间和 INTERVAL 字面量不当作字段",
+			sql:      "dtEventTime >= CURRENT_DATE - INTERVAL 1 DAY AND update_time < CURRENT_TIMESTAMP",
+			expected: []string{"`dtEventTime`", "`update_time`"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -479,6 +484,24 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			nodeMap: map[string]Node{
 				SelectItem: &unionSelectTestNode{value: "`path`"},
 				WhereItem:  &unionSelectTestNode{value: "`log` RLIKE 'err'"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE 当前时间和 INTERVAL 字面量不当作字段",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dtEventTime": {FieldType: "datetime"},
+					"path":        {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"dtEventTime": {FieldType: "datetime"},
+					"path":        {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`dtEventTime` >= CURRENT_DATE - INTERVAL 1 DAY"},
 			},
 			expected: "`path`",
 		},

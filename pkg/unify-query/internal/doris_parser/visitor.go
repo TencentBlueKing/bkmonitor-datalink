@@ -377,11 +377,12 @@ func isIdentifierPartOfNumericLiteral(s string, start int) bool {
 func isSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
-		"DATE", "DATETIME", "DAY", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
-		"FROM", "GROUP", "HOUR", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
+		"CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DATE", "DATETIME", "DAY",
+		"DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM", "GROUP", "HOUR",
+		"IN", "INT", "INTEGER", "INTERVAL", "IS", "LIKE", "LIMIT", "LOCALTIME", "LOCALTIMESTAMP", "MATCH_ALL", "MATCH_ANY",
 		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
 		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "RLIKE", "SECOND", "SELECT",
-		"STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "YEAR":
+		"SESSION_USER", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "YEAR":
 		return true
 	default:
 		return false

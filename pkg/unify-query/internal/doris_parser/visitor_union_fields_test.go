@@ -644,3 +644,17 @@ func TestStatementSubQueryUnionInheritsTableSchema(t *testing.T) {
 	_ = stmt.String()
 	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
 }
+
+func TestStatementMultiTableUnionWrapsWhereFragments(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		Where:  "`dtEventTimeStamp` >= 1",
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`log`"},
+			WhereItem:  &unionSelectTestNode{value: "`log` = 'a' OR `log` = 'b'"},
+		},
+	}
+
+	expected := "SELECT `log` FROM (SELECT `log` FROM `db_his`.doris WHERE (`log` = 'a' OR `log` = 'b') AND (`dtEventTimeStamp` >= 1) UNION ALL SELECT `log` FROM `db_current`.doris WHERE (`log` = 'a' OR `log` = 'b') AND (`dtEventTimeStamp` >= 1)) AS combined_data"
+	assert.Equal(t, expected, stmt.String())
+}

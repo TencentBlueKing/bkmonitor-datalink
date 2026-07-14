@@ -1378,7 +1378,51 @@ func joinWhereConditions(conditions ...string) string {
 			list = append(list, condition)
 		}
 	}
+	if len(list) <= 1 {
+		return strings.Join(list, "")
+	}
+	for i, condition := range list {
+		list[i] = parenthesizedWhereCondition(condition)
+	}
 	return strings.Join(list, " AND ")
+}
+
+func parenthesizedWhereCondition(condition string) string {
+	if isParenthesizedWhereCondition(condition) {
+		return condition
+	}
+	return fmt.Sprintf("(%s)", condition)
+}
+
+func isParenthesizedWhereCondition(condition string) bool {
+	if len(condition) < 2 || condition[0] != '(' || condition[len(condition)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	inString := false
+	for i := 0; i < len(condition); i++ {
+		switch condition[i] {
+		case '\'':
+			if inString && i+1 < len(condition) && condition[i+1] == '\'' {
+				i++
+				continue
+			}
+			inString = !inString
+		case '(':
+			if !inString {
+				depth++
+			}
+		case ')':
+			if !inString {
+				depth--
+				if depth == 0 && i != len(condition)-1 {
+					return false
+				}
+			}
+		}
+	}
+	return depth == 0 && !inString
 }
 
 func (v *Statement) String() string {

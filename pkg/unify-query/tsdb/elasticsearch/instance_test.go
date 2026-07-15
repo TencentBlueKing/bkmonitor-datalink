@@ -1671,7 +1671,14 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 		badIndex  = "bad_index"
 		goodIndex = "good_index"
 	)
-	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)))
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		mock.EsUrl+"/"+alias,
+		httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{
+			"%s":{"aliases":{"%s":{"filter":{"term":{"tenant_id":"123"}},"search_routing":"1"}}},
+			"%s":{"aliases":{"%s":{"filter":{"term":{"tenant_id":"123"}},"search_routing":"1"}}}
+		}`, badIndex, alias, goodIndex, alias)),
+	)
 
 	var retryCalled bool
 	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"/_search", httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{
@@ -1690,10 +1697,15 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 				}
 			]
 		},
-		"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
 	}`, badIndex)))
-	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_count", httpmock.NewStringResponder(http.StatusOK, `{"count":0,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0}}`))
-	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+goodIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusOK, `{
+		"took":1,
+		"timed_out":false,
+		"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+		"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+	}`))
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 		retryCalled = true
 		return httpmock.NewStringResponse(http.StatusOK, `{
 			"took":1,
@@ -1740,6 +1752,93 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 	assert.NotNil(t, res.Aggregations)
 }
 
+func TestInstanceEsQueryMissingMappingMultiEmptyIndexFallback(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const (
+		alias      = "test_alias_multi"
+		badIndex1  = "bad_index_multi_1"
+		badIndex2  = "bad_index_multi_2"
+		goodIndex  = "good_index_multi"
+		failedBody = `{"type":"query_shard_exception","reason":"No mapping found for [svrname] in order to sort on"}`
+	)
+	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{},"%s":{}}`, badIndex1, badIndex2, goodIndex)))
+
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"/_search", httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{
+		"took":1,
+		"timed_out":false,
+		"_shards":{
+			"total":3,
+			"successful":1,
+			"skipped":0,
+			"failed":2,
+			"failures":[
+				{"shard":0,"index":"%s","reason":%s},
+				{"shard":0,"index":"%s","reason":%s}
+			]
+		},
+		"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+	}`, badIndex1, failedBody, badIndex2, failedBody)))
+
+	var emptyCheckCalled, retryCalled int
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex1+"%2C"+badIndex2+"/_search", func(r *http.Request) (*http.Response, error) {
+		emptyCheckCalled++
+		return httpmock.NewStringResponse(http.StatusOK, `{
+			"took":1,
+			"timed_out":false,
+			"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+		}`), nil
+	})
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex1+"%2C-"+badIndex2+"/_search", func(r *http.Request) (*http.Response, error) {
+		retryCalled++
+		return httpmock.NewStringResponse(http.StatusOK, `{
+			"took":1,
+			"timed_out":false,
+			"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]},
+			"aggregations":{"_value":{"value":1}}
+		}`), nil
+	})
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:          alias,
+		Field:       "svrname",
+		TimeField:   metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "millisecond"},
+		StorageType: metadata.ElasticsearchStorageType,
+		Orders:      metadata.Orders{{Name: "svrname", Ast: false}},
+		Aggregates:  metadata.Aggregates{{Name: Count, Field: "dtEventTimeStamp"}},
+	}
+	fact := NewFormatFactory(ctx).
+		WithQuery(query.Field, query.TimeField, time.UnixMilli(1784013830711), time.UnixMilli(1784014730711), function.Millisecond, 0).
+		WithFieldMap(metadata.FieldsMap{
+			"svrname":          {FieldType: "keyword"},
+			"dtEventTimeStamp": {FieldType: TimeFieldTypeTime},
+		}).
+		WithOrders(query.Orders)
+
+	res, err := inst.esQuery(ctx, &queryOption{
+		indexes: []string{alias},
+		start:   time.UnixMilli(1784013830711),
+		end:     time.UnixMilli(1784014730711),
+		query:   query,
+		conn:    inst.connect,
+	}, fact)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, emptyCheckCalled)
+	assert.Equal(t, 1, retryCalled)
+}
+
 func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorWhenIndexHasData(t *testing.T) {
 	mock.Init()
 	metadata.InitMetadata()
@@ -1769,10 +1868,15 @@ func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorWhenIndexHasData
 				}
 			]
 		},
-		"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
 	}`, badIndex)))
-	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_count", httpmock.NewStringResponder(http.StatusOK, `{"count":3,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0}}`))
-	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+goodIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusOK, `{
+		"took":1,
+		"timed_out":false,
+		"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+		"hits":{"total":{"value":3,"relation":"eq"},"hits":[]}
+	}`))
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 		retryCalled = true
 		return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
 	})
@@ -1839,17 +1943,39 @@ func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorOnGuardFailures(
 			},
 		},
 		{
-			name:      "count fails",
-			alias:     "test_alias_count_fails",
-			badIndex:  "bad_count_fails",
-			goodIndex: "good_count_fails",
+			name:      "empty check fails",
+			alias:     "test_alias_empty_check_fails",
+			badIndex:  "bad_empty_check_fails",
+			goodIndex: "good_empty_check_fails",
 			registerFallback: func(alias, badIndex, goodIndex string, retryCalled *bool, indexGetCalled *bool) {
 				httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, func(r *http.Request) (*http.Response, error) {
 					*indexGetCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)), nil
 				})
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_count", httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":{"reason":"count failed"}}`))
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+goodIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":{"reason":"empty check failed"}}`))
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+					*retryCalled = true
+					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
+				})
+			},
+		},
+		{
+			name:      "empty check shard failure",
+			alias:     "test_alias_empty_check_shard_failure",
+			badIndex:  "bad_empty_check_shard_failure",
+			goodIndex: "good_empty_check_shard_failure",
+			registerFallback: func(alias, badIndex, goodIndex string, retryCalled *bool, indexGetCalled *bool) {
+				httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, func(r *http.Request) (*http.Response, error) {
+					*indexGetCalled = true
+					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)), nil
+				})
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusOK, `{
+					"took":1,
+					"timed_out":false,
+					"_shards":{"total":2,"successful":1,"skipped":0,"failed":1},
+					"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+				}`))
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 					*retryCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
 				})
@@ -1865,8 +1991,13 @@ func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorOnGuardFailures(
 					*indexGetCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{}}`, badIndex)), nil
 				})
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_count", httpmock.NewStringResponder(http.StatusOK, `{"count":0,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0}}`))
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+goodIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusOK, `{
+					"took":1,
+					"timed_out":false,
+					"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+					"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+				}`))
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 					*retryCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
 				})
@@ -1883,7 +2014,7 @@ func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorOnGuardFailures(
 					*indexGetCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)), nil
 				})
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+goodIndex+"/_search", func(r *http.Request) (*http.Response, error) {
+				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 					*retryCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
 				})

@@ -527,44 +527,29 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, false
 	}
 
-	failedIndexSet := makeStringSet(failedIndexes)
-	emptyIndexSet := make(map[string]struct{}, len(failedIndexes))
-	countByIndex := make(map[string]int64, len(failedIndexes))
-	for _, index := range failedIndexes {
-		count, countErr := client.Count(index).Query(countQuery).Do(ctx)
-		if countErr != nil {
-			span.Set("fallback_error", fmt.Sprintf("count %s: %v", index, countErr))
-			return nil, false
-		}
-		countByIndex[index] = count
-		if count != 0 {
-			span.Set("fallback_error", fmt.Sprintf("non_empty_index: %s count=%d", index, count))
-			return nil, false
-		}
-		emptyIndexSet[index] = struct{}{}
-	}
-
-	retryIndexes := make([]string, 0, len(physicalIndexes))
-	for _, index := range physicalIndexes {
-		if _, failed := failedIndexSet[index]; failed {
-			if _, empty := emptyIndexSet[index]; empty {
-				continue
-			}
-		}
-		retryIndexes = append(retryIndexes, index)
-	}
-	if len(retryIndexes) == 0 {
+	remainingPhysicalIndexes := excludeStrings(physicalIndexes, failedIndexes)
+	if len(remainingPhysicalIndexes) == 0 {
 		span.Set("fallback_error", "empty_retry_indexes")
 		return nil, false
 	}
 
-	emptyIndexes := sortedStringSetKeys(emptyIndexSet)
+	matchedDocs, checkErr := searchExactTotalHits(ctx, client, failedIndexes, countQuery)
+	if checkErr != nil {
+		span.Set("fallback_error", fmt.Sprintf("empty_check: %v", checkErr))
+		return nil, false
+	}
+	if matchedDocs != 0 {
+		span.Set("fallback_error", fmt.Sprintf("non_empty_indexes: count=%d", matchedDocs))
+		return nil, false
+	}
+
+	retryIndexes := appendExcludedIndexExpressions(qo.indexes, failedIndexes)
 	span.Set("fallback_retry_indexes", retryIndexes)
 
 	log.Warnf(
 		ctx,
-		"es missing mapping fallback triggered field: %s, failed_indexes: %+v, empty_indexes: %+v, retry_indexes: %+v, count: %s",
-		field, failedIndexes, emptyIndexes, retryIndexes, marshalFallbackCount(countByIndex),
+		"es missing mapping fallback triggered field: %s, failed_indexes: %+v, retry_indexes: %+v, matched_docs: %d",
+		field, failedIndexes, retryIndexes, matchedDocs,
 	)
 
 	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(source).Do(ctx)
@@ -573,6 +558,40 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, false
 	}
 	return retryRes, true
+}
+
+func searchExactTotalHits(ctx context.Context, client *elastic.Client, indexes []string, query elastic.Query) (int64, error) {
+	res, err := client.Search().
+		Index(indexes...).
+		Query(query).
+		Size(0).
+		TrackTotalHits(true).
+		Do(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if res == nil {
+		return 0, fmt.Errorf("empty response")
+	}
+	if res.TimedOut {
+		return 0, fmt.Errorf("timed out")
+	}
+	if res.Shards == nil {
+		return 0, fmt.Errorf("shards info is nil")
+	}
+	if res.Shards.Failed != 0 {
+		return 0, fmt.Errorf(
+			"shards failed: total=%d successful=%d failed=%d",
+			res.Shards.Total, res.Shards.Successful, res.Shards.Failed,
+		)
+	}
+	if res.Hits == nil || res.Hits.TotalHits == nil {
+		return 0, fmt.Errorf("total hits is nil")
+	}
+	if res.Hits.TotalHits.Relation != "eq" {
+		return 0, fmt.Errorf("total hits is not exact: relation=%s value=%d", res.Hits.TotalHits.Relation, res.Hits.TotalHits.Value)
+	}
+	return res.Hits.TotalHits.Value, nil
 }
 
 func canFallbackMissingMappingQuery(query *metadata.Query) bool {
@@ -660,6 +679,26 @@ func makeStringSet(values []string) map[string]struct{} {
 	return set
 }
 
+func excludeStrings(values []string, excluded []string) []string {
+	excludedSet := makeStringSet(excluded)
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := excludedSet[value]; ok {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered
+}
+
+func appendExcludedIndexExpressions(indexes []string, excluded []string) []string {
+	result := append([]string{}, indexes...)
+	for _, index := range excluded {
+		result = append(result, "-"+index)
+	}
+	return result
+}
+
 func sortedStringSetKeys(set map[string]struct{}) []string {
 	values := make([]string, 0, len(set))
 	for value := range set {
@@ -667,14 +706,6 @@ func sortedStringSetKeys(set map[string]struct{}) []string {
 	}
 	sort.Strings(values)
 	return values
-}
-
-func marshalFallbackCount(countByIndex map[string]int64) string {
-	countJson, err := json.Marshal(countByIndex)
-	if err != nil {
-		return fmt.Sprintf("%+v", countByIndex)
-	}
-	return string(countJson)
 }
 
 func esQueryIndexes(qo *queryOption) []string {

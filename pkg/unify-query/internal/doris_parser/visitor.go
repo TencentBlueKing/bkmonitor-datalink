@@ -117,13 +117,15 @@ type TableFieldsMap map[string]metadata.FieldsMap
 // UnionProjectionField carries the physical field used by inner UNION branches
 // and the exact schema field that should be validated for compatibility.
 type UnionProjectionField struct {
-	Field        string
-	ValidateName string
+	Field           string
+	ValidateName    string
+	RequirePhysical bool
 }
 
 type unionProjectionField struct {
-	field        string
-	validateName string
+	field           string
+	validateName    string
+	requirePhysical bool
 }
 
 type selectAllUnionField struct {
@@ -617,7 +619,7 @@ func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependen
 	projection := collectUnionProjectionFields(selectSQL, nil)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
-	projection = appendMinuteBucketUnionDependencies(projection)
+	projection = appendMinuteBucketUnionDependencies(v.Tables, projection, v.TableFieldsMap)
 
 	return unionDependencyFields{
 		projection: projection,
@@ -625,7 +627,7 @@ func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependen
 	}
 }
 
-func appendMinuteBucketUnionDependencies(fields []unionProjectionField) []unionProjectionField {
+func appendMinuteBucketUnionDependencies(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) []unionProjectionField {
 	seen := make(map[string]struct{}, len(fields)+1)
 	for _, field := range fields {
 		seen[minuteBucketUnionDependencyKey(field)] = struct{}{}
@@ -633,12 +635,13 @@ func appendMinuteBucketUnionDependencies(fields []unionProjectionField) []unionP
 
 	result := fields
 	for _, field := range fields {
-		if !IsMinutePlatformField(field.validateName) {
+		if !IsVirtualMinutePlatformField(tables, field.validateName, tableFieldsMap) {
 			continue
 		}
 		dependency := unionProjectionField{
-			field:        quoteUnionField("dtEventTimeStamp"),
-			validateName: "dtEventTimeStamp",
+			field:           quoteUnionField("dtEventTimeStamp"),
+			validateName:    "dtEventTimeStamp",
+			requirePhysical: true,
 		}
 		key := minuteBucketUnionDependencyKey(dependency)
 		if _, ok := seen[key]; ok {
@@ -651,7 +654,14 @@ func appendMinuteBucketUnionDependencies(fields []unionProjectionField) []unionP
 }
 
 func minuteBucketUnionDependencyKey(field unionProjectionField) string {
-	return field.field + "\x00" + field.validateName
+	return unionProjectionDependencyKey(field.field, field.validateName, field.requirePhysical)
+}
+
+func unionProjectionDependencyKey(field string, validateName string, requirePhysical bool) string {
+	if requirePhysical {
+		return field + "\x00" + validateName + "\x00physical"
+	}
+	return field + "\x00" + validateName
 }
 
 func unionProjectionFieldNames(fields []unionProjectionField) []string {
@@ -684,8 +694,9 @@ func ValidateUnionProjectionFieldNames(tables []string, fields []UnionProjection
 	projectionFields := make([]unionProjectionField, 0, len(fields))
 	for _, field := range fields {
 		projectionFields = append(projectionFields, unionProjectionField{
-			field:        field.Field,
-			validateName: field.ValidateName,
+			field:           field.Field,
+			validateName:    field.ValidateName,
+			requirePhysical: field.RequirePhysical,
 		})
 	}
 	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
@@ -695,8 +706,9 @@ func fromUnionProjectionFields(fields []unionProjectionField) []UnionProjectionF
 	result := make([]UnionProjectionField, 0, len(fields))
 	for _, field := range fields {
 		result = append(result, UnionProjectionField{
-			Field:        field.field,
-			ValidateName: field.validateName,
+			Field:           field.field,
+			ValidateName:    field.validateName,
+			RequirePhysical: field.requirePhysical,
 		})
 	}
 	return result
@@ -756,7 +768,7 @@ func appendBuiltinPlatformSelectAllDependencies(tables []string, fields []string
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
 		if err != nil {
 			return nil, err
 		}
@@ -968,14 +980,14 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
 		if err != nil {
 			return err
 		}
 		if skipBuiltin {
 			continue
 		}
-		key := field.field + "\x00" + name
+		key := unionProjectionDependencyKey(field.field, name, field.requirePhysical)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -1025,14 +1037,14 @@ func validateUnionWhereFields(tables []string, fields []unionProjectionField, ta
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
 		if err != nil {
 			return err
 		}
 		if skipBuiltin {
 			continue
 		}
-		key := field.field + "\x00" + name
+		key := unionProjectionDependencyKey(field.field, name, field.requirePhysical)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -1241,12 +1253,16 @@ func quoteUnionField(field string) string {
 }
 
 func IsBuiltinPlatformField(field string) bool {
+	return IsFixedBuiltinPlatformField(field) || IsMinutePlatformField(field)
+}
+
+func IsFixedBuiltinPlatformField(field string) bool {
 	normalized := strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
 	switch normalized {
 	case "dteventtimestamp", "dteventtime", "localtime", "thedate":
 		return true
 	default:
-		return IsMinutePlatformField(normalized)
+		return false
 	}
 }
 
@@ -1267,9 +1283,38 @@ func IsMinutePlatformField(field string) bool {
 	return true
 }
 
-func shouldSkipBuiltinPlatformField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+func IsVirtualMinutePlatformField(tables []string, field string, tableFieldsMap TableFieldsMap) bool {
+	if !IsMinutePlatformField(field) {
+		return false
+	}
+	// Doris 字段解析会先匹配真实 schema 字段；只有 schema 中完全没有
+	// minuteX 时，它才是计算平台虚拟时间桶，需要补充 dtEventTimeStamp 依赖。
+	return !anyUnionTableHasField(tables, field, tableFieldsMap)
+}
+
+func anyUnionTableHasField(tables []string, field string, tableFieldsMap TableFieldsMap) bool {
+	if len(tables) == 0 || len(tableFieldsMap) == 0 {
+		return false
+	}
+	field = unquoteUnionField(strings.TrimSpace(field))
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			continue
+		}
+		if exactObjectLeafOrFieldOption(fieldsMap, field).Existed() {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldSkipBuiltinPlatformField(tables []string, field string, validateName string, requirePhysical bool, tableFieldsMap TableFieldsMap) (bool, error) {
 	if !IsBuiltinPlatformField(validateName) {
 		return false, nil
+	}
+	if IsFixedBuiltinPlatformField(validateName) && !requirePhysical {
+		return true, nil
 	}
 	for _, table := range tables {
 		fieldsMap, ok := tableFieldsMap[table]

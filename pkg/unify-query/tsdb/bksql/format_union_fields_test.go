@@ -167,6 +167,33 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "`minute1`, `dtEventTimeStamp`",
 		},
 		{
+			name:         "真实 minuteX 可与缺失物理 schema 的 dtEventTimeStamp 一起投影",
+			selectFields: []string{"`minute1`", "`dtEventTimeStamp`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"minute1":          {FieldType: "bigint"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name:         "真实 minuteX 可与无物理 schema 的 dtEventTimestamp 一起投影",
+			selectFields: []string{"`minute1`", "`dtEventTimestamp`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimestamp`",
+		},
+		{
 			name:         "计算平台 minuteX 缺少时间字段依赖时报错",
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			tableFieldsMap: TableFieldsMap{

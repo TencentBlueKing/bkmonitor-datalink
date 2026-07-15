@@ -578,6 +578,39 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			expected: "`minute1`, `dtEventTimeStamp`",
 		},
 		{
+			name: "真实 minuteX 可与缺失物理 schema 的 dtEventTimeStamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1":          {FieldType: "bigint"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "真实 minuteX 可与无物理 schema 的 dtEventTimestamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`"},
+			},
+			expected: "`minute1`, `dtEventTimestamp`",
+		},
+		{
 			name: "计算平台 minuteX 缺少时间字段依赖时报错",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {

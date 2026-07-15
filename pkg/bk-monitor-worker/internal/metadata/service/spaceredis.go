@@ -10,6 +10,7 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -566,31 +567,16 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	return dataLabelTableIdMap, nil
 }
 
-// 提取具备VM、ES、InfluxDB链路的结果表
-func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
+// refineTableIds 只保留当前租户具备 AccessVMRecord 或 ESStorage 链路的结果表。
+// AccessVMRecord 需要兼容 default_storage 为 influxdb 的指标表。
+func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
-	// 过滤写入 influxdb 的结果表
-	var influxdbStorageList []storage.InfluxdbStorage
-	qs := storage.NewInfluxdbStorageQuerySet(db).Select(storage.InfluxdbStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.InfluxdbStorage
 
-			qsTemp := qs.TableIDIn(chunkTableIdList...)
-			if err := qsTemp.All(&tempList); err != nil {
-				return nil, err
-			}
-			influxdbStorageList = append(influxdbStorageList, tempList...)
-		}
-	} else {
-		if err := qs.All(&influxdbStorageList); err != nil {
-			return nil, err
-		}
-	}
-
-	// 过滤写入 vm 的结果表
+	// 过滤具备指标查询链路的结果表。
 	var vmRecordList []storage.AccessVMRecord
-	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId)
+	qs2 := storage.NewAccessVMRecordQuerySet(db).
+		Select(storage.AccessVMRecordDBSchema.ResultTableId).
+		BkTenantIdEq(bkTenantId)
 	if len(tableIdList) != 0 {
 		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 			var tempList []storage.AccessVMRecord
@@ -608,7 +594,9 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 
 	// 过滤写入 ES 的结果表
 	var esStorageList []storage.ESStorage
-	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
+	qs3 := storage.NewESStorageQuerySet(db).
+		Select(storage.ESStorageDBSchema.TableID).
+		BkTenantIDEq(bkTenantId)
 	if len(tableIdList) != 0 {
 		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 			var tempList []storage.ESStorage
@@ -626,9 +614,6 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 
 	// 合并所有表 ID
 	var tableIds []string
-	for _, i := range influxdbStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
@@ -641,22 +626,23 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	return tableIds, nil
 }
 
-// PushTableIdDetail 推送结果表的详细信息
-func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
+// composeMetricTableIdDetail 只组装 AccessVMRecord 指标 payload；不合并 RecordRule，
+// 也不直接写 Redis，这两步统一由 PushTableIdDetail 编排。
+func (s *SpacePusher) composeMetricTableIdDetail(
+	bkTenantId string,
+	tableIdList []string,
+	clusterMap map[uint]storage.ClusterInfo,
+) (map[string]map[string]any, error) {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 
-	if len(tableIdList) == 0 {
-		logger.Infof("PushTableIdDetail: table_id_list is empty, query all table_id")
-	}
-
-	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(bkTenantId, tableIdList)
-	logger.Infof("PushTableIdDetail: get table info for influxdb and vm:%s", tableIdDetail)
+	tableIdDetail, err := s.getTableInfoForAccessVMRecord(bkTenantId, tableIdList, clusterMap)
+	logger.Infof("PushTableIdDetail: got table info from access vm records, tenant [%s], count [%d]", bkTenantId, len(tableIdDetail))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(tableIdDetail) == 0 {
-		logger.Infof("PushTableIdDetail: not found table from influxdb or vm")
-		return nil
+		logger.Infof("PushTableIdDetail: not found table from access vm records")
+		return map[string]map[string]any{}, nil
 	}
 	var tableIds []string
 	for tableId := range tableIdDetail {
@@ -671,7 +657,7 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		resulttable.ResultTableDBSchema.DataLabel,
 		resulttable.ResultTableDBSchema.Labels,
 	).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&rtList); err != nil {
-		return err
+		return nil, err
 	}
 	tableIdRtMap := make(map[string]resulttable.ResultTable)
 	for _, rt := range rtList {
@@ -680,7 +666,7 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 
 	var dsrtList []resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&dsrtList); err != nil {
-		return err
+		return nil, err
 	}
 	tableIdDataIdMap := make(map[string]uint)
 	for _, dsrt := range dsrtList {
@@ -691,336 +677,52 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	measurementTypeMap, err := s.getMeasurementTypeByTableId(bkTenantId, tableIds, rtList, tableIdDataIdMap)
 	if err != nil {
 		logger.Errorf("PushTableIdDetail: get measurement type by table id failed, err: %s", err.Error())
-		return err
+		return nil, err
 	}
 	// 再追加上结果表的指标数据、集群 ID、类型
-	tableIdClusterIdMap, err := s.getTableIdClusterId(bkTenantId, tableIds)
+	tableIdClusterIdMap, err := s.getTableIdClusterId(bkTenantId, tableIds, tableIdDataIdMap)
 	if err != nil {
 		logger.Errorf("PushTableIdDetail: get table id cluster id failed, err: %s", err.Error())
-		return err
+		return nil, err
 	}
 	tableIdFields, err := s.composeTableIdFields(bkTenantId, tableIds)
 	if err != nil {
 		logger.Errorf("PushTableIdDetail: compose table id fields failed, err: %s", err.Error())
-		return err
-	}
-	recordRuleTableIdDetail, err := s.composeRecordRuleTableIdDetail(bkTenantId)
-	if err != nil {
-		logger.Errorf("PushTableIdDetail: compose record rule table id detail failed, err: %s", err.Error())
-		return err
-	}
-	for tableId, detail := range recordRuleTableIdDetail {
-		tableIdDetail[tableId] = detail
+		return nil, err
 	}
 
-	client := redis.GetStorageRedisInstance()
-	// 推送数据
-	rtDetailKey := cfg.ResultTableDetailKey
 	for tableId, detail := range tableIdDetail {
-		if recordRuleDetail, ok := recordRuleTableIdDetail[tableId]; ok {
-			detail = recordRuleDetail
-		} else {
-			var ok bool
-			// fields
-			detail["fields"], ok = tableIdFields[tableId]
-			if !ok {
-				detail["fields"] = []string{}
-			}
-
-			// data_label
-			rt, ok := tableIdRtMap[tableId]
-			if !ok {
-				detail["data_label"] = ""
-				detail["labels"] = map[string]any{}
-			} else {
-				detail["data_label"] = rt.DataLabel
-				detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
-			}
-			detail["measurement_type"] = measurementTypeMap[tableId]
-			detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
-			detail["bk_data_id"] = tableIdDataIdMap[tableId]
+		var ok bool
+		// fields
+		detail["fields"], ok = tableIdFields[tableId]
+		if !ok {
+			detail["fields"] = []string{}
 		}
+
+		// data_label
+		rt, ok := tableIdRtMap[tableId]
+		if !ok {
+			detail["data_label"] = ""
+			detail["labels"] = map[string]any{}
+		} else {
+			detail["data_label"] = rt.DataLabel
+			detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
+		}
+		detail["measurement_type"] = measurementTypeMap[tableId]
+		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
+		detail["bk_data_id"] = tableIdDataIdMap[tableId]
 
 		// 添加结果表的指标数量
 		metadataMetrics.RtMetricNum(tableId, float64(getTableDetailMetricNum(detail["fields"])))
 
-		// 多租户模式下，需要加上租户ID后缀
-		var redisKey string
-		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s", tableId, bkTenantId)
-		} else {
-			redisKey = tableId
-		}
-		detailStr, err := jsonx.MarshalString(detail)
-		if err != nil {
-			logger.Errorf("PushTableIdDetail:marshal result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
-			return err
-		}
-
-		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
-		logger.Infof("PushTableIdDetail:start push and publish redis result_table_detail, table_id[%s],channel_name->[%s],channel_key->[%s]", tableId, cfg.ResultTableDetailChannel, tableId)
-		isSuccess, err := client.HSetWithCompareAndPublish(rtDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
-		if err != nil {
-			logger.Errorf("PushTableIdDetail:push and publish redis result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
-			return err
-		}
-		logger.Infof("PushTableIdDetail:push redis result_table_detail success, table_id->[%s],isSuccess->[%v]", tableId, isSuccess)
 	}
 
-	logger.Info("PushTableIdDetail:push redis result_table_detail")
-	return nil
-}
-
-// PushEsTableIdDetail compose the es table id detail
-// NOTE: ESStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
-// 同时透传 bkTenantId 用于关联 ResultTable/Option/别名等租户维度数据以及补充 redis key 的租户后缀
-func (s *SpacePusher) PushEsTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
-	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
-	db := mysql.GetDBSession().DB
-
-	// 获取数据
-	var esStorageList []storage.ESStorage
-	esQuerySet := storage.NewESStorageQuerySet(db).Select(
-		storage.ESStorageDBSchema.TableID,
-		storage.ESStorageDBSchema.StorageClusterID,
-		storage.ESStorageDBSchema.SourceType,
-		storage.ESStorageDBSchema.IndexSet,
-	)
-
-	// 如果过滤结果表存在，则添加过滤条件
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.ESStorage
-			if err := esQuerySet.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
-				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", chunkTableIdList, err)
-				return err
-			}
-			esStorageList = append(esStorageList, tempList...)
-		}
-	} else {
-		if err := esQuerySet.All(&esStorageList); err != nil {
-			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, %s", err)
-			return err
-		}
-	}
-
-	// 查询es结果表的 option
-	var tidList []string
-	for _, es := range esStorageList {
-		tidList = append(tidList, es.TableID)
-	}
-	// 组装结果表对应的选项
-	tidOptionMap := s.composeEsTableIdOptions(bkTenantId, tidList)
-
-	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
-	if err != nil {
-		logger.Errorf("PushEsTableIdDetail: failed to get field alias map, error: %s", err)
-	}
-
-	// 组装数据
-	client := redis.GetStorageRedisInstance()
-	wg := &sync.WaitGroup{}
-	// 因为每个处理任务完全独立，可以并发执行
-	ch := make(chan struct{}, 50)
-	wg.Add(len(esStorageList))
-	for _, es := range esStorageList {
-		// 获取 option 数据
-		options, ok := tidOptionMap[es.TableID]
-		if !ok {
-			options = make(map[string]any)
-		}
-		ch <- struct{}{}
-		go func(es storage.ESStorage, options map[string]any, wg *sync.WaitGroup, ch chan struct{}) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-
-			tableId := es.TableID
-
-			sourceType := es.SourceType
-			indexSet := es.IndexSet
-			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
-
-			var fieldAliasSettings map[string]string
-			if fieldAliasMap != nil {
-				fieldAliasSettings = fieldAliasMap[tableId]
-			}
-
-			composedTableId, detailStr, err := s.composeEsTableIdDetail(bkTenantId, tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
-			if err != nil {
-				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
-				return
-			}
-			// 多租户模式下，redis key 需要补充租户ID后缀
-			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
-			// 推送数据
-			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
-			if err != nil {
-				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
-				return
-			}
-			logger.Infof("PushEsTableIdDetail:push es table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
-		}(es, options, wg, ch)
-	}
-	wg.Wait()
-	logger.Infof("PushEsTableIdDetail:push es table id detail success, table_id_list [%v]", tableIdList)
-	return nil
-}
-
-// PushDorisTableIdDetail  推送Doris结果表详情路由
-// NOTE: DorisStorage 表无 bk_tenant_id 字段(table_id 为主键), 因此必须由调用方按租户传入已过滤的 tableIdList,
-// 同时透传 bkTenantId 用于关联 ResultTable/别名等租户维度数据以及补充 redis key 的租户后缀
-func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
-	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data, bk_tenant_id [%s], table_id_list [%v]", bkTenantId, tableIdList)
-	db := mysql.GetDBSession().DB
-
-	// 获取数据
-	var dorisStorageList []storage.DorisStorage
-	dorisQuerySet := storage.NewDorisStorageQuerySet(db).Select(
-		storage.DorisStorageDBSchema.TableID,
-		storage.DorisStorageDBSchema.BkbaseTableID,
-		storage.DorisStorageDBSchema.OriginTableId,
-	)
-
-	// 如果过滤结果表存在，则添加过滤条件
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.DorisStorage
-			if err := dorisQuerySet.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
-				logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", chunkTableIdList, err)
-				return err
-			}
-			dorisStorageList = append(dorisStorageList, tempList...)
-		}
-	} else {
-		if err := dorisQuerySet.All(&dorisStorageList); err != nil {
-			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, %s", err)
-			return err
-		}
-	}
-
-	var tidList []string
-	for _, doris := range dorisStorageList {
-		tidList = append(tidList, doris.TableID)
-	}
-
-	rtMetaMap, err := s.getResultTableDetailMetaMap(bkTenantId, tidList)
-	if err != nil {
-		logger.Errorf("PushDorisTableIdDetail: failed to get result table metadata map, error: %s", err)
-		return err
-	}
-
-	originTableIdSet := make(map[string]struct{})
-	for _, doris := range dorisStorageList {
-		if doris.OriginTableId != "" {
-			originTableIdSet[doris.OriginTableId] = struct{}{}
-		}
-	}
-	originTableIdList := make([]string, 0, len(originTableIdSet))
-	for tableId := range originTableIdSet {
-		originTableIdList = append(originTableIdList, tableId)
-	}
-	originDorisMap, err := s.getDorisStorageMap(originTableIdList)
-	if err != nil {
-		logger.Errorf("PushDorisTableIdDetail: failed to get origin doris storage map, error: %s", err)
-		return err
-	}
-
-	// 获取查询别名映射关系
-	fieldAliasMap, err := s.getFieldAliasMap(bkTenantId, tidList)
-	if err != nil {
-		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
-	}
-
-	// 组装数据
-	client := redis.GetStorageRedisInstance()
-	wg := &sync.WaitGroup{}
-	// 因为每个处理任务完全独立，可以并发执行
-	ch := make(chan struct{}, 50)
-	wg.Add(len(dorisStorageList))
-	for _, doris := range dorisStorageList {
-		ch <- struct{}{}
-		go func(doris storage.DorisStorage, wg *sync.WaitGroup, ch chan struct{}) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-
-			tableId := doris.TableID
-			bkbaseTableId := doris.BkbaseTableID
-
-			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s],origin_table_id->[%s]", tableId, bkbaseTableId, doris.OriginTableId)
-
-			var fieldAliasSettings map[string]string
-			if fieldAliasMap != nil {
-				fieldAliasSettings = fieldAliasMap[tableId]
-			}
-
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, fieldAliasSettings)
-			if err != nil {
-				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
-				return
-			}
-			// 多租户模式下，redis key 需要补充租户ID后缀
-			redisKey := composeTenantRedisKey(composedTableId, bkTenantId)
-			// 推送数据
-			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", redisKey, cfg.ResultTableDetailChannel, redisKey, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
-			if err != nil {
-				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
-				return
-			}
-			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
-		}(doris, wg, ch)
-	}
-	wg.Wait()
-	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
-	return nil
-}
-
-// composeEsTableIdOptions 组装 es
-func (s *SpacePusher) composeEsTableIdOptions(bkTenantId string, tableIdList []string) map[string]map[string]any {
-	db := mysql.GetDBSession().DB
-	// 分批获取结果表的option
-	tidOptionMap := make(map[string]map[string]any)
-	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []resulttable.ResultTableOption
-		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的 option
-		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).BkTenantIdEq(bkTenantId).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
-			logger.Errorf("query result table option error, error: %s", err)
-			continue
-		}
-		for _, option := range tempList {
-			tidOption, ok := tidOptionMap[option.TableID]
-
-			var opValue any
-			opValue, err := option.InterfaceValue()
-			if err != nil {
-				logger.Errorf("unmarshal result table option value error, table_id: %s, option_value: %s, error: %s", option.TableID, option.Value, err)
-				opValue = make(map[string]any)
-			}
-			// 如果已经存在，则追加数据
-			if ok {
-				tidOption[option.Name] = opValue
-				tidOptionMap[option.TableID] = tidOption
-			} else {
-				// 否则，直接赋值
-				tidOptionMap[option.TableID] = map[string]any{option.Name: opValue}
-			}
-		}
-	}
-	return tidOptionMap
+	return tableIdDetail, nil
 }
 
 // getFieldAliasMap 构建字段别名映射map
 func (s *SpacePusher) getFieldAliasMap(bkTenantId string, tableIDList []string) (map[string]map[string]string, error) {
-	logger.Infof("getFieldAliasMap: try to get field alias map, bk_tenant_id->[%s], table_id_list->[%v]", bkTenantId, tableIDList)
+	logger.Infof("getFieldAliasMap: try to get field alias map, bk_tenant_id->[%s], table_count->[%d]", bkTenantId, len(tableIDList))
 
 	db := mysql.GetDBSession().DB
 
@@ -1069,13 +771,8 @@ func (s *SpacePusher) getFieldAliasMap(bkTenantId string, tableIDList []string) 
 		fieldAliasMap[tableID][queryAlias] = fieldPath
 	}
 
-	logger.Infof("getFieldAliasMap: Field alias map generated: %+v", fieldAliasMap)
+	logger.Infof("getFieldAliasMap: field alias map generated, bk_tenant_id->[%s], table_count->[%d], alias_record_count->[%d]", bkTenantId, len(fieldAliasMap), len(aliasRecords))
 	return fieldAliasMap, nil
-}
-
-type resultTableDetailMeta struct {
-	DataLabel string
-	Labels    map[string]any
 }
 
 func resultTableDataLabel(dataLabel *string) string {
@@ -1085,66 +782,12 @@ func resultTableDataLabel(dataLabel *string) string {
 	return *dataLabel
 }
 
-func (s *SpacePusher) getResultTableDetailMetaMap(bkTenantId string, tableIDList []string) (map[string]resultTableDetailMeta, error) {
-	db := mysql.GetDBSession().DB
-	metaMap := make(map[string]resultTableDetailMeta)
-	if len(tableIDList) == 0 {
-		return metaMap, nil
-	}
-
-	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
-		var resultTables []resulttable.ResultTable
-		// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
-		if err := resulttable.NewResultTableQuerySet(db).Select(
-			resulttable.ResultTableDBSchema.TableId,
-			resulttable.ResultTableDBSchema.DataLabel,
-			resulttable.ResultTableDBSchema.Labels,
-		).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIDList...).All(&resultTables); err != nil {
-			return nil, err
-		}
-
-		for _, rt := range resultTables {
-			metaMap[rt.TableId] = resultTableDetailMeta{
-				DataLabel: resultTableDataLabel(rt.DataLabel),
-				Labels:    normalizeResultTableLabels(rt.TableId, rt.Labels),
-			}
-		}
-	}
-
-	return metaMap, nil
-}
-
 // composeTenantRedisKey 在多租户模式下为 redis key 补充租户ID后缀
 func composeTenantRedisKey(redisKey, bkTenantId string) string {
 	if cfg.EnableMultiTenantMode {
 		return fmt.Sprintf("%s|%s", redisKey, bkTenantId)
 	}
 	return redisKey
-}
-
-func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]storage.DorisStorage, error) {
-	db := mysql.GetDBSession().DB
-	dorisMap := make(map[string]storage.DorisStorage)
-	if len(tableIDList) == 0 {
-		return dorisMap, nil
-	}
-
-	for _, chunkTableIDList := range slicex.ChunkSlice(tableIDList, 0) {
-		var dorisStorageList []storage.DorisStorage
-		if err := storage.NewDorisStorageQuerySet(db).Select(
-			storage.DorisStorageDBSchema.TableID,
-			storage.DorisStorageDBSchema.BkbaseTableID,
-			storage.DorisStorageDBSchema.OriginTableId,
-		).TableIDIn(chunkTableIDList...).All(&dorisStorageList); err != nil {
-			return nil, err
-		}
-
-		for _, doris := range dorisStorageList {
-			dorisMap[doris.TableID] = doris
-		}
-	}
-
-	return dorisMap, nil
 }
 
 func normalizeResultTableLabels(tableId string, labels json.RawMessage) map[string]any {
@@ -1225,7 +868,11 @@ func parseRecordRuleMetricValues(ruleMetrics string) ([]string, error) {
 	return metrics, nil
 }
 
-func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[string]map[string]any, error) {
+// composeRecordRuleTableIdDetail 使用租户刷新入口预加载的 ClusterInfo 组装 RecordRule。
+// 引用的集群缺失或不是 VM 时仍保留规则路由，只让兼容字段 storage_name 为空。
+func (s *SpacePusher) composeRecordRuleTableIdDetail(
+	bkTenantId string, clusterMap map[uint]storage.ClusterInfo,
+) (map[string]map[string]any, error) {
 	logger.Infof("composeRecordRuleTableIdDetail:start to compose record rule table detail, bk_tenant_id [%s]", bkTenantId)
 
 	db := mysql.GetDBSession().DB
@@ -1237,30 +884,24 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[str
 		return nil, err
 	}
 
-	var vmClusterList []storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(db).
-		Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).
-		ClusterTypeEq(models.StorageTypeVM).
-		All(&vmClusterList); err != nil {
-		return nil, err
-	}
-	vmClusterIdNameMap := make(map[int]string)
-	for _, cluster := range vmClusterList {
-		vmClusterIdNameMap[int(cluster.ClusterID)] = cluster.ClusterName
-	}
-
 	tableIdDetail := make(map[string]map[string]any, len(recordRuleList))
 	for _, recordRule := range recordRuleList {
 		fields, err := parseRecordRuleMetricValues(recordRule.RuleMetrics)
 		if err != nil {
 			return nil, err
 		}
+		storageName := ""
+		if recordRule.VmClusterId > 0 {
+			if cluster, exists := clusterMap[uint(recordRule.VmClusterId)]; exists && cluster.ClusterType == models.StorageTypeVM {
+				storageName = cluster.ClusterName
+			}
+		}
 
 		tableIdDetail[recordRule.TableId] = map[string]any{
 			"vm_rt":            recordRule.DstVmTableId,
 			"storage_id":       recordRule.VmClusterId,
 			"cluster_name":     "",
-			"storage_name":     vmClusterIdNameMap[recordRule.VmClusterId],
+			"storage_name":     storageName,
 			"db":               "",
 			"measurement":      "",
 			"tags_key":         []string{},
@@ -1277,201 +918,49 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(bkTenantId string) (map[str
 	return tableIdDetail, nil
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, options map[string]any, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
-	logger.Infof("compose es table id detail, bk_tenant_id [%s], table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", bkTenantId, tableId, options, storageClusterId, sourceType, indexSet)
+// getTableInfoForAccessVMRecord 仅从 AccessVMRecord 组装指标查询路由。
+// 同时兼容 default_storage 为 influxdb 的结果表；ClusterInfo 由租户刷新入口预加载。
+func (s *SpacePusher) getTableInfoForAccessVMRecord(
+	bkTenantId string,
+	tableIdList []string,
+	clusterMap map[uint]storage.ClusterInfo,
+) (map[string]map[string]any, error) {
+	logger.Debugf("get table info from access vm records, table_id_list->[%s]", tableIdList)
+	if len(tableIdList) == 0 {
+		return map[string]map[string]any{}, nil
+	}
 
-	// 获取历史存储集群记录
 	db := mysql.GetDBSession().DB
-
-	// 若该RT是虚拟RT,则使用其关联的真实RT去查询存储集群记录信息
-	var storageIns storage.ESStorage
-	realTableId := tableId
-	if err := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.OriginTableId).TableIDEq(tableId).One(&storageIns); err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get origin table_id for table_id [%s], error: %v", tableId, err)
-		return tableId, "", err
-	}
-
-	if storageIns.OriginTableId != "" {
-		logger.Infof("composeEsTableIdDetail: origin table_id [%s] found for table_id [%s]", storageIns.OriginTableId, tableId)
-		realTableId = storageIns.OriginTableId
-	}
-
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
-	if err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
-		return "", "", err
-	}
-
-	// 按租户过滤, 避免 table_id 在不同租户下重复时取到其他租户的元数据
-	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(
-		resulttable.ResultTableDBSchema.DataLabel,
-		resulttable.ResultTableDBSchema.Labels,
-	).BkTenantIdEq(bkTenantId).TableIdEq(tableId).One(&rt); err != nil {
-		return tableId, "", err
-	}
-
-	if fieldAliasSettings == nil {
-		fieldAliasSettings = make(map[string]string)
-	}
-
-	// 组装数据
-	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type":            models.StorageTypeES,
-		"storage_id":              storageClusterId,
-		"db":                      indexSet,
-		"measurement":             models.TSGroupDefaultMeasurement,
-		"source_type":             sourceType,
-		"options":                 options,
-		"storage_cluster_records": clusterRecords,
-		"data_label":              rt.DataLabel,
-		"labels":                  normalizeResultTableLabels(tableId, rt.Labels),
-		"field_alias":             fieldAliasSettings, // 添加字段别名
-	})
-	if err != nil {
-		return tableId, "", err
-	}
-
-	parts := strings.Split(tableId, ".")
-
-	if len(parts) == 1 {
-		// 如果长度为 1，补充 `.__default__`
-		logger.Infof("composeEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
-		tableId = fmt.Sprintf("%s.__default__", tableId)
-	} else if len(parts) != 2 {
-		// 如果长度不是 2，记录错误日志并返回
-		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
-		logger.Errorf("composeEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
-		return tableId, "", err
-	}
-	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
-
-	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
-	return tableId, detailStr, err
-}
-
-func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, fieldAliasSettings map[string]string) (string, string, error) {
-	tableId := doris.TableID
-	bkbaseTableId := doris.BkbaseTableID
-	if bkbaseTableId == "" && doris.OriginTableId != "" {
-		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
-			bkbaseTableId = originDoris.BkbaseTableID
-		}
-	}
-	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s], origin_table_id [%s]", tableId, bkbaseTableId, doris.OriginTableId)
-
-	if fieldAliasSettings == nil {
-		fieldAliasSettings = make(map[string]string)
-	}
-	if rtMeta.Labels == nil {
-		rtMeta.Labels = make(map[string]any)
-	}
-
-	// 组装数据
-	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type": models.StorageTypeBkSql,
-		"db":           bkbaseTableId,
-		"measurement":  models.DorisMeasurement,
-		"data_label":   rtMeta.DataLabel,
-		"labels":       rtMeta.Labels,
-		"field_alias":  fieldAliasSettings, // 添加字段别名
-	})
-	if err != nil {
-		return tableId, "", err
-	}
-
-	parts := strings.Split(tableId, ".")
-
-	if len(parts) == 1 {
-		// 如果长度为 1，补充 `.__default__`
-		logger.Infof("composeDorisTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
-		tableId = fmt.Sprintf("%s.__default__", tableId)
-	} else if len(parts) != 2 {
-		// 如果长度不是 2，记录错误日志并返回
-		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
-		logger.Errorf("composeDorisTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
-		return tableId, "", err
-	}
-	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
-
-	logger.Infof("composeDorisTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
-	return tableId, detailStr, err
-}
-
-type InfluxdbTableData struct {
-	InfluxdbProxyStorageId uint     `json:"influxdb_proxy_storage_id"`
-	Database               string   `json:"database"`
-	RealTableName          string   `json:"real_table_name"`
-	TagsKey                []string `json:"tags_key"`
-}
-
-// 获取influxdb 和 vm的结果表
-func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdList []string) (map[string]map[string]any, error) {
-	logger.Debugf("start to push table_id detail data, table_id_list->[%s]", tableIdList)
-	db := mysql.GetDBSession().DB
-
-	var influxdbStorageList []storage.InfluxdbStorage
-	if len(tableIdList) != 0 {
-		// 如果结果表存在，则过滤指定的结果表
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.InfluxdbStorage
-			if err := storage.NewInfluxdbStorageQuerySet(db).BkTenantIdEq(bkTenantId).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
-				return nil, err
-			}
-			influxdbStorageList = append(influxdbStorageList, tempList...)
-		}
-	} else {
-		if err := storage.NewInfluxdbStorageQuerySet(db).BkTenantIdEq(bkTenantId).All(&influxdbStorageList); err != nil {
-			return nil, err
-		}
-	}
-
-	influxdbTableMap := make(map[string]InfluxdbTableData)
-	for _, i := range influxdbStorageList {
-		tagsKey := make([]string, 0)
-		if i.PartitionTag != "" {
-			tagsKey = strings.Split(i.PartitionTag, ",")
-		}
-		influxdbTableMap[i.TableID] = InfluxdbTableData{
-			InfluxdbProxyStorageId: i.InfluxdbProxyStorageId,
-			Database:               i.Database,
-			RealTableName:          i.RealTableName,
-			TagsKey:                tagsKey,
-		}
-	}
-	// 获取vm集群名信息
-	var vmCLusterList []storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(db).Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).ClusterTypeEq(models.StorageTypeVM).All(&vmCLusterList); err != nil {
+	var vmRecordList []storage.AccessVMRecord
+	if err := storage.NewAccessVMRecordQuerySet(db).
+		Select(
+			storage.AccessVMRecordDBSchema.ResultTableId,
+			storage.AccessVMRecordDBSchema.VmClusterId,
+			storage.AccessVMRecordDBSchema.VmResultTableId,
+		).
+		BkTenantIdEq(bkTenantId).
+		ResultTableIdIn(tableIdList...).
+		All(&vmRecordList); err != nil {
 		return nil, err
 	}
-	vmClusterIdNameMap := make(map[uint]string)
-	for _, c := range vmCLusterList {
-		vmClusterIdNameMap[c.ClusterID] = c.ClusterName
-	}
 
-	var vmRecordList []storage.AccessVMRecord
-	if len(tableIdList) != 0 {
-		// 如果结果表存在，则过滤指定的结果表
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.AccessVMRecord
-			if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId).BkTenantIdEq(bkTenantId).ResultTableIdIn(chunkTableIdList...).All(&tempList); err != nil {
-				return nil, err
-			}
-			vmRecordList = append(vmRecordList, tempList...)
-		}
-	} else {
-		if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId).BkTenantIdEq(bkTenantId).All(&vmRecordList); err != nil {
-			return nil, err
-		}
-	}
-	vmTableMap := make(map[string]map[string]any)
+	vmTableIDSet := make(map[string]struct{})
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]any{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
+		if record.ResultTableId != "" {
+			vmTableIDSet[record.ResultTableId] = struct{}{}
+		}
 	}
-
 	var rtCmdbLevelOptionList []resulttable.ResultTableOption
-	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).NameEq(models.CmdbLevelVmrt).All(&rtCmdbLevelOptionList); err != nil {
-		logger.Errorf("getTableInfoForInfluxdbAndVm: get cmdb level vm rt option error:%s", err.Error())
+	vmTableIDs := sortedTableIDSet(vmTableIDSet)
+	if len(vmTableIDs) > 0 {
+		if err := resulttable.NewResultTableOptionQuerySet(db).
+			Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).
+			BkTenantIdEq(bkTenantId).
+			NameEq(models.CmdbLevelVmrt).
+			TableIDIn(vmTableIDs...).
+			All(&rtCmdbLevelOptionList); err != nil {
+			logger.Errorf("getTableInfoForAccessVMRecord: get cmdb level vm rt option error:%s", err.Error())
+		}
 	}
 
 	cmdbLevelVmrtMap := make(map[string]string)
@@ -1479,54 +968,26 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(bkTenantId string, tableIdLis
 		cmdbLevelVmrtMap[option.TableID] = option.Value
 	}
 
-	// 获取proxy关联的集群信息
-	var influxdbProxyStorageList []storage.InfluxdbProxyStorage
-	if err := storage.NewInfluxdbProxyStorageQuerySet(db).Select(storage.InfluxdbProxyStorageDBSchema.ID, storage.InfluxdbProxyStorageDBSchema.ProxyClusterId, storage.InfluxdbProxyStorageDBSchema.InstanceClusterName).All(&influxdbProxyStorageList); err != nil {
-		return nil, err
-	}
-	storageClusterMap := make(map[uint]storage.InfluxdbProxyStorage)
-	for _, p := range influxdbProxyStorageList {
-		storageClusterMap[p.ID] = p
-	}
-
-	tableIdInfo := make(map[string]map[string]any)
-
-	for tableId, detail := range influxdbTableMap {
-		storageCluster := storageClusterMap[detail.InfluxdbProxyStorageId]
-
-		tableIdInfo[tableId] = map[string]any{
-			"storage_id":   storageCluster.ProxyClusterId,
-			"storage_name": "",
-			"cluster_name": storageCluster.InstanceClusterName,
-			"db":           detail.Database,
-			"measurement":  detail.RealTableName,
-			"vm_rt":        "",
-			"tags_key":     detail.TagsKey,
-			"storage_type": models.StorageTypeInfluxdb,
+	tableIdInfo := make(map[string]map[string]any, len(vmRecordList))
+	for _, record := range vmRecordList {
+		storageName := ""
+		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
+			storageName = cluster.ClusterName
 		}
-	}
-
-	// 处理 vm 的数据信息
-	for tableId, detail := range vmTableMap {
-		// 如果存在 cmdb_level_vm_rt 的 option，则添加到 detail 中
-		if cmdbLevelVmrt, ok := cmdbLevelVmrtMap[tableId]; ok {
-			logger.Infof("getTableInfoForInfluxdbAndVm: found cmdb_level_vm_rt for table_id %s, value: %s", tableId, cmdbLevelVmrt)
-			detail["cmdb_level_vm_rt"] = cmdbLevelVmrt
-		} else {
-			detail["cmdb_level_vm_rt"] = ""
+		cmdbLevelVmrt := cmdbLevelVmrtMap[record.ResultTableId]
+		if cmdbLevelVmrt != "" {
+			logger.Infof("getTableInfoForAccessVMRecord: found cmdb_level_vm_rt for table_id %s, value: %s", record.ResultTableId, cmdbLevelVmrt)
 		}
-		if _, ok := tableIdInfo[tableId]; ok {
-			tableIdInfo[tableId]["vm_rt"] = detail["vm_rt"]
-			tableIdInfo[tableId]["storage_name"] = detail["storage_name"]
-			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
-			tableIdInfo[tableId]["cmdb_level_vm_rt"] = detail["cmdb_level_vm_rt"]
-		} else {
-			detail["cluster_name"] = ""
-			detail["db"] = ""
-			detail["measurement"] = ""
-			detail["tags_key"] = []string{}
-			tableIdInfo[tableId] = detail
-			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
+		tableIdInfo[record.ResultTableId] = map[string]any{
+			"vm_rt":            record.VmResultTableId,
+			"storage_name":     storageName,
+			"storage_id":       record.VmClusterId,
+			"cmdb_level_vm_rt": cmdbLevelVmrt,
+			"cluster_name":     "",
+			"db":               "",
+			"measurement":      "",
+			"tags_key":         []string{},
+			"storage_type":     models.StorageTypeVM,
 		}
 	}
 	return tableIdInfo, nil
@@ -1576,7 +1037,9 @@ func (s *SpacePusher) getMeasurementTypeByTableId(bkTenantId string, tableIdList
 
 	// 获取到对应的类型
 	measurementTypeMap := make(map[string]string)
-	tableIdCutterMap, err := NewResultTableSvc(nil).GetTableIdCutter(bkTenantId, tableIdList)
+	tableIdCutterMap, err := NewResultTableSvc(nil).GetTableIdCutter(
+		bkTenantId, tableIdList, tableDataIdMap,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1940,22 +1403,24 @@ func (s *SpacePusher) batchQueryTsMetrics(db *gorm.DB, groupIdList []uint, filte
 	return tsmList, nil
 }
 
-// 获取结果表对应的集群 ID
-func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) (map[string]string, error) {
+// getTableIdClusterId 根据已加载的 table_id -> data_id 映射获取结果表对应的集群 ID。
+// BCS 集群和 binding_bcs_cluster_id 仍在当前批次查询，只复用 DataSourceResultTable 结果。
+func (s *SpacePusher) getTableIdClusterId(
+	bkTenantId string,
+	tableIds []string,
+	tableIdDataIdMap map[string]uint,
+) (map[string]string, error) {
 	if len(tableIds) == 0 {
 		return make(map[string]string), nil
 	}
 	db := mysql.GetDBSession().DB
 
-	// 根据BCS集群使用的数据源 ID，获取结果表与集群的映射关系
-	// 获取结果表对应的数据源 ID
-	var dsrtList []resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId, resulttable.DataSourceResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).TableIdIn(tableIds...).All(&dsrtList); err != nil {
-		return nil, err
-	}
+	// 根据 BCS 集群使用的数据源 ID，获取结果表与集群的映射关系。
 	var dataIds []uint
-	for _, dsrt := range dsrtList {
-		dataIds = append(dataIds, dsrt.BkDataId)
+	for _, tableId := range tableIds {
+		if dataId, ok := tableIdDataIdMap[tableId]; ok {
+			dataIds = append(dataIds, dataId)
+		}
 	}
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
@@ -1981,8 +1446,10 @@ func (s *SpacePusher) getTableIdClusterId(bkTenantId string, tableIds []string) 
 	}
 	// 组装结果表到集群的信息
 	tableIdClusterIdMap := make(map[string]string)
-	for _, dsrt := range dsrtList {
-		tableIdClusterIdMap[dsrt.TableId] = dataIdClusterIdMap[dsrt.BkDataId]
+	for _, tableId := range tableIds {
+		if dataId, ok := tableIdDataIdMap[tableId]; ok {
+			tableIdClusterIdMap[tableId] = dataIdClusterIdMap[dataId]
+		}
 	}
 
 	// 补充特殊配置，ResultTableOption中的binding_bcs_cluster_id
@@ -2799,9 +2266,8 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 	for tableId := range tableIdDataId {
 		tableIds = append(tableIds, tableId)
 	}
-	// 提取具备VM、ES、InfluxDB的链路结果表
-	tableIds, err = s.refineTableIds(tableIds)
-	// 再一次过滤，过滤到有链路的结果表，并且写入 influxdb&vm&es 的数据
+	// 只保留当前租户具备 AccessVMRecord 或 ESStorage 查询链路的结果表。
+	tableIds, err = s.refineTableIds(bkTenantId, tableIds)
 	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
 	for _, tableId := range tableIds {
@@ -3334,8 +2800,8 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 	for _, dsrt := range dsrtList {
 		tableIds = append(tableIds, dsrt.TableId)
 	}
-	// 过滤仅写入influxdb和vm的数据
-	tableIds, err = s.refineTableIds(tableIds)
+	// 只保留当前租户具备查询链路的结果表。
+	tableIds, err = s.refineTableIds(bkTenantId, tableIds)
 	if err != nil {
 		return nil, err
 	}
@@ -3392,7 +2858,7 @@ func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId st
 	}
 
 	tableIds := mapx.GetMapKeys(tableIdDataIdMap)
-	tableIds, err = s.refineTableIds(tableIds)
+	tableIds, err = s.refineTableIds(bkTenantId, tableIds)
 	if err != nil {
 		return nil, err
 	}
@@ -3521,8 +2987,8 @@ func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId 
 		return dataValues, nil
 	}
 	tableIds := mapx.GetMapKeys(tableIdDataIdMap)
-	// 提取仅包含写入 influxdb 和 vm 的结果表
-	tableIds, err = s.refineTableIds(tableIds)
+	// 只保留当前租户具备查询链路的结果表。
+	tableIds, err = s.refineTableIds(bkTenantId, tableIds)
 	if err != nil {
 		return nil, err
 	}
@@ -3732,50 +3198,101 @@ func (s *SpaceRedisClearer) ClearDataLabelToRt() {
 // ClearRtDetail 清理结果表详情
 func (s *SpaceRedisClearer) ClearRtDetail() {
 	logger.Info("start to clear rt detail")
-	// 获取redis中所有的rt_id
-	fields, err := s.redisClient.HKeys(cfg.ResultTableDetailKey)
-	if err != nil {
-		logger.Errorf("clear rt detail, get redis key error, %s", err)
-		return
+	// 先完成一次 Redis HSCAN 遍历，再读取 DB 白名单。HSCAN 并非一致性快照，
+	// 但在正常的“先提交 DB、后写 Redis”刷新顺序下，这样能缩小合法新 field 被误删的竞态窗口。
+	// HSCAN 取代 HKEYS，限制大 hash 的单次执行时间和单次响应；这里仍会累计全部
+	// redisFields，后续 validFields 也会全量驻留，因此整体峰值内存不是常量级。
+	redisFields := make([]string, 0)
+	var cursor uint64
+	for {
+		fields, nextCursor, err := s.redisClient.HScanFields(
+			cfg.ResultTableDetailKey, cursor, int64(cfg.DefaultDBFilterSize),
+		)
+		if err != nil {
+			logger.Errorf("clear rt detail, scan redis fields error, %s", err)
+			return
+		}
+		redisFields = append(redisFields, fields...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
 	}
-	// 获取真实存在的rt_id
-	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.BkTenantId).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+
+	validFields := make(map[string]struct{})
+	if err := loadResultTableDetailFields(s.dbClient, validFields); err != nil {
 		logger.Errorf("clear rt detail, get rt list error, %s", err)
 		return
 	}
-	var rtIdList []string
-	for _, rt := range rtList {
-		reformattedTableId := reformatTableId(rt.TableId)
-		// 多租户模式下，需要加上租户ID后缀
-		if cfg.EnableMultiTenantMode {
-			rtIdList = append(rtIdList, fmt.Sprintf("%s|%s", rt.TableId, rt.BkTenantId))
-			if reformattedTableId != rt.TableId {
-				rtIdList = append(rtIdList, fmt.Sprintf("%s|%s", reformattedTableId, rt.BkTenantId))
-			}
-		} else {
-			rtIdList = append(rtIdList, rt.TableId)
-			if reformattedTableId != rt.TableId {
-				rtIdList = append(rtIdList, reformattedTableId)
+
+	// HDEL 每批最多 DefaultDBFilterSize 个参数，限制单条命令大小和阻塞时间。
+	// HSCAN 可能返回重复 field，重复 HDEL 是幂等的；deletedCount 统计的是提交的候选数，
+	// 不是 Redis 实际删除的唯一 field 数。
+	deleteBatch := make([]string, 0, cfg.DefaultDBFilterSize)
+	deletedCount := 0
+	flushDeleteBatch := func() error {
+		if len(deleteBatch) == 0 {
+			return nil
+		}
+		if err := s.redisClient.HDel(cfg.ResultTableDetailKey, deleteBatch...); err != nil {
+			return err
+		}
+		deletedCount += len(deleteBatch)
+		deleteBatch = deleteBatch[:0]
+		return nil
+	}
+	for _, field := range redisFields {
+		if _, exists := validFields[field]; exists {
+			continue
+		}
+		deleteBatch = append(deleteBatch, field)
+		if len(deleteBatch) == cfg.DefaultDBFilterSize {
+			if err := flushDeleteBatch(); err != nil {
+				logger.Errorf("clear rt detail, delete redis key error, %s", err)
+				return
 			}
 		}
 	}
-	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
-	fieldSet := slicex.StringList2Set(fields)
-	rtIdSet := slicex.StringList2Set(rtIdList)
-	diff := fieldSet.Difference(rtIdSet)
-	// 如果长度相同，则直接返回
-	if diff.Cardinality() == 0 {
-		logger.Info("rt detail, redis key is equal db records")
-		return
-	}
-	// 批量删除
-	needDeleteRtIdList := slicex.StringSet2List(diff)
-	logger.Info("start to delete rt detail, rt_id_list: %v", needDeleteRtIdList)
-	if err := s.redisClient.HDel(cfg.ResultTableDetailKey, needDeleteRtIdList...); err != nil {
+	if err := flushDeleteBatch(); err != nil {
 		logger.Errorf("clear rt detail, delete redis key error, %s", err)
 		return
 	}
+	if deletedCount == 0 {
+		logger.Info("rt detail, redis key is equal db records")
+		return
+	}
+	logger.Infof("clear rt detail success, deleted_count: %d", deletedCount)
+}
 
-	logger.Info("clear rt detail success")
+// loadResultTableDetailFields 流式读取 RT 的必要列，只有启用且未删除的记录
+// 进入 Redis field 白名单。
+func loadResultTableDetailFields(
+	db *gorm.DB,
+	validFields map[string]struct{},
+) error {
+	rows, err := db.Table(resulttable.ResultTable{}.TableName()).
+		Select("table_id, bk_tenant_id, is_deleted, is_enable").
+		Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tableID string
+		var tenantID sql.NullString
+		var isDeleted, isEnable bool
+		if err := rows.Scan(&tableID, &tenantID, &isDeleted, &isEnable); err != nil {
+			return err
+		}
+		if isDeleted || !isEnable {
+			continue
+		}
+		validFields[composeTenantRedisKey(tableID, tenantID.String)] = struct{}{}
+		reformattedTableID := reformatTableId(tableID)
+		if reformattedTableID != tableID {
+			validFields[composeTenantRedisKey(reformattedTableID, tenantID.String)] = struct{}{}
+		}
+	}
+	return rows.Err()
 }

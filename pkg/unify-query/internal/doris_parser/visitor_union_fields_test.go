@@ -148,7 +148,7 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			selectSQL: "`minute1`, COUNT(*) AS log_count",
 			groupSQL:  "`minute1`",
 			orderSQL:  "`minute1` DESC",
-			expected:  "`minute1`",
+			expected:  "`minute1`, `dtEventTimeStamp`",
 		},
 		{
 			name:      "纯 COUNT star 多表 union 使用常量投影",
@@ -559,10 +559,29 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			errContains: "field `new_field` is missing from table `db_his`.doris",
 		},
 		{
-			name: "计算平台 minuteX 内置字段不要求出现在物理表结构",
+			name: "计算平台 minuteX 内置字段会补充时间字段依赖",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {
-					"log": {FieldType: "text"},
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "计算平台 minuteX 缺少时间字段依赖时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dtEventTimeStamp": {FieldType: "bigint"},
 				},
 				"`db_current`.doris": {
 					"log": {FieldType: "text"},
@@ -571,9 +590,9 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			nodeMap: map[string]Node{
 				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
 				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
-				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
 			},
-			expected: "`minute1`",
+			expected:    "`minute1`, `dtEventTimeStamp`",
+			errContains: "field `dtEventTimeStamp` is missing from table `db_current`.doris",
 		},
 		{
 			name: "计算平台固定内置字段不要求出现在物理表结构",

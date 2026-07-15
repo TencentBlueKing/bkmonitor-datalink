@@ -617,11 +617,41 @@ func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependen
 	projection := collectUnionProjectionFields(selectSQL, nil)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+	projection = appendMinuteBucketUnionDependencies(projection)
 
 	return unionDependencyFields{
 		projection: projection,
 		where:      collectUnionProjectionFields(v.ItemString(WhereItem), nil),
 	}
+}
+
+func appendMinuteBucketUnionDependencies(fields []unionProjectionField) []unionProjectionField {
+	seen := make(map[string]struct{}, len(fields)+1)
+	for _, field := range fields {
+		seen[minuteBucketUnionDependencyKey(field)] = struct{}{}
+	}
+
+	result := fields
+	for _, field := range fields {
+		if !IsMinutePlatformField(field.validateName) {
+			continue
+		}
+		dependency := unionProjectionField{
+			field:        quoteUnionField("dtEventTimeStamp"),
+			validateName: "dtEventTimeStamp",
+		}
+		key := minuteBucketUnionDependencyKey(dependency)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, dependency)
+	}
+	return result
+}
+
+func minuteBucketUnionDependencyKey(field unionProjectionField) string {
+	return field.field + "\x00" + field.validateName
 }
 
 func unionProjectionFieldNames(fields []unionProjectionField) []string {
@@ -1211,25 +1241,30 @@ func quoteUnionField(field string) string {
 }
 
 func IsBuiltinPlatformField(field string) bool {
-	field = strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
-	switch field {
+	normalized := strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
+	switch normalized {
 	case "dteventtimestamp", "dteventtime", "localtime", "thedate":
 		return true
 	default:
-		if !strings.HasPrefix(field, "minute") {
-			return false
-		}
-		suffix := strings.TrimPrefix(field, "minute")
-		if suffix == "" {
-			return false
-		}
-		for _, ch := range suffix {
-			if ch < '0' || ch > '9' {
-				return false
-			}
-		}
-		return true
+		return IsMinutePlatformField(normalized)
 	}
+}
+
+func IsMinutePlatformField(field string) bool {
+	field = strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
+	if !strings.HasPrefix(field, "minute") {
+		return false
+	}
+	suffix := strings.TrimPrefix(field, "minute")
+	if suffix == "" {
+		return false
+	}
+	for _, ch := range suffix {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func shouldSkipBuiltinPlatformField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {

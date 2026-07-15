@@ -61,7 +61,7 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			groupFields:  []string{"`minute1`"},
 			orderFields:  []string{"`minute1` DESC"},
-			expected:     "`minute1`",
+			expected:     "`minute1`, `dtEventTimeStamp`",
 		},
 		{
 			name:         "CAST 对象字段表达式收集未加反引号 root",
@@ -152,13 +152,28 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expectedErr: "doris multi-table union field `path` is missing from table `db_a`.doris",
 		},
 		{
-			name:         "计算平台 minuteX 内置字段缺失物理表结构时允许",
+			name:         "计算平台 minuteX 内置字段会补充时间字段依赖",
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			tableFieldsMap: TableFieldsMap{
-				"`db_b`.doris": {"log": {FieldType: "text"}},
+				"`db_b`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name:         "计算平台 minuteX 缺少时间字段依赖时报错",
+			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"dtEventTimeStamp": {FieldType: "bigint"}},
 				"`db_a`.doris": {"log": {FieldType: "text"}},
 			},
-			expected: "`minute1`",
+			expectedErr: "doris multi-table union field `dtEventTimeStamp` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "计算平台固定内置字段缺失物理表结构时允许",

@@ -609,6 +609,7 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		seen[key] = struct{}{}
 		fields = append(fields, field)
 	}
+	fields = appendMinuteBucketUnionProjectionDependencies(fields, seen)
 
 	if selectAll || qualifiedSelectAll {
 		return unionProjection{selectAll: true, qualifiedSelectAll: qualifiedSelectAll, fields: fields}
@@ -617,6 +618,29 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		return unionProjection{dummy: true}
 	}
 	return unionProjection{fields: fields}
+}
+
+func appendMinuteBucketUnionProjectionDependencies(
+	fields []unionProjectionField,
+	seen map[string]struct{},
+) []unionProjectionField {
+	result := fields
+	for _, field := range fields {
+		if !doris_parser.IsMinutePlatformField(field.validateName) {
+			continue
+		}
+		dependency := unionProjectionField{
+			field:        "`dtEventTimeStamp`",
+			validateName: "dtEventTimeStamp",
+		}
+		key := unionProjectionFieldKey(dependency)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, dependency)
+	}
+	return result
 }
 
 func unionProjectionFieldKey(field unionProjectionField) string {

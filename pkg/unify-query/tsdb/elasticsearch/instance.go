@@ -297,8 +297,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 		source.SortBy(fs)
 	}
+	var countQuery elastic.Query
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+		countQuery = esQuery
 		source.Query(esQuery)
 	}
 	sources := fact.Source(qb.Source)
@@ -401,6 +403,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}()
 
 	recordESQueryShards(ctx, span, qo, res)
+	if fallbackRes, ok := i.tryFallbackEmptyMissingMappingIndexes(ctx, span, client, qo, source, countQuery, err, res); ok {
+		res = fallbackRes
+		err = nil
+		recordESQueryShards(ctx, span, qo, res)
+	}
 	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err
 	}
@@ -422,6 +429,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 const (
 	esShardFailureSampleLimit     = 3
 	esShardFailureReasonMaxLength = 512
+	esMissingMappingReasonPrefix  = "No mapping found for ["
+	esMissingMappingReasonSuffix  = "] in order to sort on"
 )
 
 type esShardFailureSample struct {
@@ -429,6 +438,11 @@ type esShardFailureSample struct {
 	Index  string `json:"index"`
 	Status string `json:"status,omitempty"`
 	Reason string `json:"reason,omitempty"`
+}
+
+type esMissingMappingFailure struct {
+	Index string
+	Field string
 }
 
 func recordESQueryShards(ctx context.Context, span *trace.Span, qo *queryOption, res *elastic.SearchResult) {
@@ -467,6 +481,200 @@ func recordESQueryShards(ctx context.Context, span *trace.Span, qo *queryOption,
 		"es query shard abnormal index: %+v, timed_out: %v, shards_total: %d, shards_successful: %d, shards_failed: %d, shards_skipped: %d, failures_count: %d, failures_sample: %s",
 		esQueryIndexes(qo), res.TimedOut, res.Shards.Total, res.Shards.Successful, res.Shards.Failed, res.Shards.Skipped, failuresCount, failuresSampleJson,
 	)
+}
+
+func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
+	ctx context.Context,
+	span *trace.Span,
+	client *elastic.Client,
+	qo *queryOption,
+	source *elastic.SearchSource,
+	countQuery elastic.Query,
+	queryErr error,
+	res *elastic.SearchResult,
+) (*elastic.SearchResult, bool) {
+	if client == nil || qo == nil || qo.query == nil || source == nil || countQuery == nil {
+		return nil, false
+	}
+	if !canFallbackMissingMappingQuery(qo.query) {
+		return nil, false
+	}
+
+	failures := missingMappingSortFailures(queryErr, res)
+	if len(failures) == 0 {
+		return nil, false
+	}
+
+	field := failures[0].Field
+	failedIndexes := dedupeMissingMappingFailureIndexes(failures)
+	span.Set("fallback_reason", "missing_mapping_empty_index")
+	span.Set("fallback_field", field)
+	span.Set("fallback_failed_indexes", failedIndexes)
+
+	indices, err := client.IndexGet(qo.indexes...).Do(ctx)
+	if err != nil {
+		span.Set("fallback_error", fmt.Sprintf("index_get: %v", err))
+		return nil, false
+	}
+
+	physicalIndexes := make([]string, 0, len(indices))
+	for index := range indices {
+		physicalIndexes = append(physicalIndexes, index)
+	}
+	sort.Strings(physicalIndexes)
+	if len(physicalIndexes) == 0 {
+		span.Set("fallback_error", "empty_resolved_indexes")
+		return nil, false
+	}
+
+	failedIndexSet := makeStringSet(failedIndexes)
+	emptyIndexSet := make(map[string]struct{}, len(failedIndexes))
+	countByIndex := make(map[string]int64, len(failedIndexes))
+	for _, index := range failedIndexes {
+		count, countErr := client.Count(index).Query(countQuery).Do(ctx)
+		if countErr != nil {
+			span.Set("fallback_error", fmt.Sprintf("count %s: %v", index, countErr))
+			return nil, false
+		}
+		countByIndex[index] = count
+		if count != 0 {
+			span.Set("fallback_error", fmt.Sprintf("non_empty_index: %s count=%d", index, count))
+			return nil, false
+		}
+		emptyIndexSet[index] = struct{}{}
+	}
+
+	retryIndexes := make([]string, 0, len(physicalIndexes))
+	for _, index := range physicalIndexes {
+		if _, failed := failedIndexSet[index]; failed {
+			if _, empty := emptyIndexSet[index]; empty {
+				continue
+			}
+		}
+		retryIndexes = append(retryIndexes, index)
+	}
+	if len(retryIndexes) == 0 {
+		span.Set("fallback_error", "empty_retry_indexes")
+		return nil, false
+	}
+
+	emptyIndexes := sortedStringSetKeys(emptyIndexSet)
+	span.Set("fallback_retry_indexes", retryIndexes)
+
+	log.Warnf(
+		ctx,
+		"es missing mapping fallback triggered field: %s, failed_indexes: %+v, empty_indexes: %+v, retry_indexes: %+v, count: %s",
+		field, failedIndexes, emptyIndexes, retryIndexes, marshalFallbackCount(countByIndex),
+	)
+
+	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(source).Do(ctx)
+	if retryErr != nil {
+		span.Set("fallback_error", fmt.Sprintf("retry: %v", retryErr))
+		return nil, false
+	}
+	return retryRes, true
+}
+
+func canFallbackMissingMappingQuery(query *metadata.Query) bool {
+	if query == nil {
+		return false
+	}
+	if query.Scroll != "" {
+		return false
+	}
+	if query.ResultTableOption == nil {
+		return true
+	}
+	if query.ResultTableOption.ScrollID != "" {
+		return false
+	}
+	return len(query.ResultTableOption.SearchAfter) == 0
+}
+
+func missingMappingSortFailures(err error, res *elastic.SearchResult) []esMissingMappingFailure {
+	shardFailures, extractedErr := extractESResult(err, res)
+	failures := make([]esMissingMappingFailure, 0, len(shardFailures))
+	for _, failure := range shardFailures {
+		if failure == nil || failure.Index == "" || failure.Reason == nil {
+			continue
+		}
+		failures = appendMissingMappingFailure(failures, failure.Index, failure.Reason)
+	}
+
+	var esErr *elastic.Error
+	if errors.As(extractedErr, &esErr) && esErr != nil && esErr.Details != nil {
+		for _, failedShard := range esErr.Details.FailedShards {
+			index, _ := failedShard[IndexField].(string)
+			reason, _ := failedShard[ReasonField].(map[string]any)
+			failures = appendMissingMappingFailure(failures, index, reason)
+		}
+	}
+	return failures
+}
+
+func appendMissingMappingFailure(failures []esMissingMappingFailure, index string, reason map[string]any) []esMissingMappingFailure {
+	if index == "" || reason == nil {
+		return failures
+	}
+	reasonMsg, _ := extractReasonAndType(reason, true)
+	if reasonMsg == "" {
+		reasonMsg, _ = extractReasonAndType(reason, false)
+	}
+	field, ok := missingMappingSortField(reasonMsg)
+	if !ok {
+		return failures
+	}
+	return append(failures, esMissingMappingFailure{
+		Index: index,
+		Field: field,
+	})
+}
+
+func missingMappingSortField(reason string) (string, bool) {
+	if !strings.HasPrefix(reason, esMissingMappingReasonPrefix) || !strings.HasSuffix(reason, esMissingMappingReasonSuffix) {
+		return "", false
+	}
+	field := strings.TrimSuffix(strings.TrimPrefix(reason, esMissingMappingReasonPrefix), esMissingMappingReasonSuffix)
+	if field == "" {
+		return "", false
+	}
+	return field, true
+}
+
+func dedupeMissingMappingFailureIndexes(failures []esMissingMappingFailure) []string {
+	indexSet := make(map[string]struct{}, len(failures))
+	for _, failure := range failures {
+		if failure.Index == "" {
+			continue
+		}
+		indexSet[failure.Index] = struct{}{}
+	}
+	return sortedStringSetKeys(indexSet)
+}
+
+func makeStringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+func sortedStringSetKeys(set map[string]struct{}) []string {
+	values := make([]string, 0, len(set))
+	for value := range set {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func marshalFallbackCount(countByIndex map[string]int64) string {
+	countJson, err := json.Marshal(countByIndex)
+	if err != nil {
+		return fmt.Sprintf("%+v", countByIndex)
+	}
+	return string(countJson)
 }
 
 func esQueryIndexes(qo *queryOption) []string {

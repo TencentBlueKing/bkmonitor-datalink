@@ -534,7 +534,11 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 			if projection.qualifiedSelectAll {
 				return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
 			}
-			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
+			fields, err := doris_parser.ExpandSelectAllUnionFieldsWithDependencies(
+				tables,
+				f.tableFieldsMap,
+				toDorisUnionProjectionFields(projection.fields),
+			)
 			if err != nil {
 				return "", err
 			}

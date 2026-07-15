@@ -131,6 +131,11 @@ type selectAllUnionField struct {
 	fieldType  string
 }
 
+type unionDependencyFields struct {
+	projection []unionProjectionField
+	where      []unionProjectionField
+}
+
 // collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
 //
 // 多表 UNION 的内层投影必须保留外层表达式依赖的源字段，例如
@@ -532,34 +537,12 @@ func (v *Statement) unionSelectList() string {
 
 	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
 		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
-			fields, err := ExpandSelectAllUnionFields(v.Tables, v.TableFieldsMap)
+			selectList, err := v.expandSelectAllUnionSelectList(selectSQL)
 			if err != nil {
 				v.errNode = append(v.errNode, err.Error())
 				return Star
 			}
-			if len(fields) > 0 {
-				aliases := v.collectSelectAliases()
-				for alias := range collectAliasesFromSQL(selectSQL) {
-					addAlias(aliases, alias)
-				}
-				projectionFields := collectUnionProjectionFields(selectSQL, nil)
-				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
-				projectionFields = append(projectionFields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
-				if err := validateUnionProjectionFields(v.Tables, projectionFields, v.TableFieldsMap); err != nil {
-					v.errNode = append(v.errNode, err.Error())
-					return Star
-				}
-				if err := validateUnionWhereFields(v.Tables, collectUnionProjectionFields(v.ItemString(WhereItem), nil), v.TableFieldsMap); err != nil {
-					v.errNode = append(v.errNode, err.Error())
-					return Star
-				}
-				if err := rejectSelectAllExtraProjectionFields(fields, projectionFields); err != nil {
-					v.errNode = append(v.errNode, err.Error())
-					return Star
-				}
-				return strings.Join(fields, ", ")
-			}
-			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
+			return selectList
 		}
 		return Star
 	}
@@ -569,16 +552,9 @@ func (v *Statement) unionSelectList() string {
 	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；顶层 SELECT *
 	// 在有表结构时会先转换成公共字段投影。COUNT(*) 不是顶层 wildcard，不会被展开。
 	// 若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
-	aliases := v.collectSelectAliases()
-	for alias := range collectAliasesFromSQL(selectSQL) {
-		addAlias(aliases, alias)
-	}
-	fields := collectUnionProjectionFields(selectSQL, nil)
-	fields = append(fields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
-	fields = append(fields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
-	whereFields := collectUnionProjectionFields(v.ItemString(WhereItem), nil)
-	if len(fields) == 0 {
-		if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
+	dependencies := v.collectUnionDependencyFields(selectSQL)
+	if len(dependencies.projection) == 0 {
+		if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
 			v.errNode = append(v.errNode, err.Error())
 		}
 		if len(v.Tables) > 1 {
@@ -587,6 +563,68 @@ func (v *Statement) unionSelectList() string {
 		return Star
 	}
 
+	if err := validateUnionProjectionFields(v.Tables, dependencies.projection, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	return strings.Join(unionProjectionFieldNames(dependencies.projection), ", ")
+}
+
+func (v *Statement) expandSelectAllUnionSelectList(selectSQL string) (string, error) {
+	fields, err := ExpandSelectAllUnionFields(v.Tables, v.TableFieldsMap)
+	if err != nil {
+		return "", err
+	}
+
+	dependencies := v.collectUnionDependencyFields(selectSQL)
+	if err := validateUnionProjectionFields(v.Tables, dependencies.projection, v.TableFieldsMap); err != nil {
+		return "", err
+	}
+	if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
+		return "", err
+	}
+
+	// SELECT * 只展开物理 schema 交集；计算平台虚拟内置字段不在物理
+	// schema 中，但外层显式依赖它们时，内层 UNION 仍必须投影这些字段。
+	fields, err = appendBuiltinPlatformSelectAllDependencies(
+		v.Tables,
+		fields,
+		fromUnionProjectionFields(dependencies.projection),
+		v.TableFieldsMap,
+	)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) == 0 {
+		return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
+	}
+	if err := rejectSelectAllExtraProjectionFields(fields, dependencies.projection); err != nil {
+		return "", err
+	}
+	return strings.Join(fields, ", "), nil
+}
+
+func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependencyFields {
+	aliases := v.collectSelectAliases()
+	for alias := range collectAliasesFromSQL(selectSQL) {
+		addAlias(aliases, alias)
+	}
+
+	// GROUP/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
+	// 需要投影的源字段，收集依赖时必须跳过。
+	projection := collectUnionProjectionFields(selectSQL, nil)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+
+	return unionDependencyFields{
+		projection: projection,
+		where:      collectUnionProjectionFields(v.ItemString(WhereItem), nil),
+	}
+}
+
+func unionProjectionFieldNames(fields []unionProjectionField) []string {
 	seen := make(map[string]struct{}, len(fields))
 	result := make([]string, 0, len(fields))
 	for _, field := range fields {
@@ -596,13 +634,7 @@ func (v *Statement) unionSelectList() string {
 		seen[field.field] = struct{}{}
 		result = append(result, field.field)
 	}
-	if err := validateUnionProjectionFields(v.Tables, fields, v.TableFieldsMap); err != nil {
-		v.errNode = append(v.errNode, err.Error())
-	}
-	if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
-		v.errNode = append(v.errNode, err.Error())
-	}
-	return strings.Join(result, ", ")
+	return result
 }
 
 func ValidateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
@@ -629,6 +661,28 @@ func ValidateUnionProjectionFieldNames(tables []string, fields []UnionProjection
 	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
 }
 
+func fromUnionProjectionFields(fields []unionProjectionField) []UnionProjectionField {
+	result := make([]UnionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		result = append(result, UnionProjectionField{
+			Field:        field.field,
+			ValidateName: field.validateName,
+		})
+	}
+	return result
+}
+
+// ExpandSelectAllUnionFieldsWithDependencies converts SELECT * into common
+// physical fields and keeps explicit virtual platform field dependencies that
+// are intentionally absent from every physical table schema.
+func ExpandSelectAllUnionFieldsWithDependencies(tables []string, tableFieldsMap TableFieldsMap, dependencies []UnionProjectionField) ([]string, error) {
+	fields, err := ExpandSelectAllUnionFields(tables, tableFieldsMap)
+	if err != nil {
+		return nil, err
+	}
+	return appendBuiltinPlatformSelectAllDependencies(tables, fields, dependencies, tableFieldsMap)
+}
+
 // ExpandSelectAllUnionFields converts SELECT * for Doris multi-table UNION into
 // a deterministic explicit projection over fields shared by every table.
 func ExpandSelectAllUnionFields(tables []string, tableFieldsMap TableFieldsMap) ([]string, error) {
@@ -647,6 +701,42 @@ func ExpandSelectAllUnionFields(tables []string, tableFieldsMap TableFieldsMap) 
 		names = append(names, field.field)
 	}
 	return names, nil
+}
+
+func appendBuiltinPlatformSelectAllDependencies(tables []string, fields []string, dependencies []UnionProjectionField, tableFieldsMap TableFieldsMap) ([]string, error) {
+	if len(dependencies) == 0 {
+		return fields, nil
+	}
+
+	seen := make(map[string]struct{}, (len(fields)+len(dependencies))*2)
+	for _, field := range fields {
+		addSelectAllProjectionOutputName(seen, field)
+	}
+
+	result := append([]string(nil), fields...)
+	for _, dependency := range dependencies {
+		field := unionProjectionField{
+			field:        dependency.Field,
+			validateName: dependency.ValidateName,
+		}
+		if selectAllProjectionOutputNameExists(seen, field.field) {
+			continue
+		}
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
+		if err != nil {
+			return nil, err
+		}
+		if !skipBuiltin {
+			continue
+		}
+		result = append(result, field.field)
+		addSelectAllProjectionOutputName(seen, field.field)
+	}
+	return result, nil
 }
 
 func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap TableFieldsMap) ([]unionProjectionField, error) {

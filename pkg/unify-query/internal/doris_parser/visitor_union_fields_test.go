@@ -253,6 +253,23 @@ func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	assert.NoError(t, stmt.Error())
 }
 
+func TestStatementUnionSelectListExpandsWildcardWithBuiltinPlatformDependencies(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"log": {FieldType: "text"}},
+			"`db_a`.doris": {"log": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dtEventTimeStamp` AS `_timestamp_`, `minute1`"},
+		},
+	}
+
+	assert.Equal(t, "`log`, `dtEventTimeStamp`, `minute1`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
 func TestStatementUnionSelectListExpandsDistinctStar(t *testing.T) {
 	stmt := &Statement{
 		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},

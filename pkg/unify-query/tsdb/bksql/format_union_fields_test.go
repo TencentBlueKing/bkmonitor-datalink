@@ -369,6 +369,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
 		},
 		{
+			name:         "multi table SELECT star 追加缺失物理 schema 的计算平台内置字段依赖",
+			selectFields: []string{"*", "`dtEventTimeStamp` AS `_timestamp_`", "`minute1`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"log": {FieldType: "text"}},
+				"`db_a`.doris": {"log": {FieldType: "varchar(128)"}},
+			},
+			expected: "`log`, `dtEventTimeStamp`, `minute1`",
+		},
+		{
 			name:         "multi table SELECT star 字段依赖按大小写不敏感匹配",
 			selectFields: []string{"*", "`dtEventTimeStamp` AS `_timestamp_`"},
 			tableFieldsMap: TableFieldsMap{

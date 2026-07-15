@@ -848,7 +848,11 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		if IsBuiltinTimeAggregationField(name) {
+		skipBuiltin, err := shouldSkipBuiltinTimeAggregationField(tables, field.field, name, tableFieldsMap)
+		if err != nil {
+			return err
+		}
+		if skipBuiltin {
 			continue
 		}
 		key := field.field + "\x00" + name
@@ -901,7 +905,11 @@ func validateUnionWhereFields(tables []string, fields []unionProjectionField, ta
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		if IsBuiltinTimeAggregationField(name) {
+		skipBuiltin, err := shouldSkipBuiltinTimeAggregationField(tables, field.field, name, tableFieldsMap)
+		if err != nil {
+			return err
+		}
+		if skipBuiltin {
 			continue
 		}
 		key := field.field + "\x00" + name
@@ -1134,6 +1142,22 @@ func IsBuiltinTimeAggregationField(field string) bool {
 		return true
 	}
 	return false
+}
+
+func shouldSkipBuiltinTimeAggregationField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	if !IsBuiltinTimeAggregationField(validateName) {
+		return false, nil
+	}
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return false, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if _, existed := unionFieldOption(fieldsMap, field, validateName); existed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func isUnsupportedUnionFieldType(fieldType string) bool {

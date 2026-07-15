@@ -161,6 +161,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expected: "`minute1`",
 		},
 		{
+			name:         "疑似内置时间聚合字段若是真实字段仍校验缺失",
+			selectFields: []string{"`year2024`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"year2024": {FieldType: "bigint"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			expectedErr: "doris multi-table union field `year2024` is missing from table `db_a`.doris",
+		},
+		{
 			name:         "对象 root 投影允许 leaf schema 校验",
 			selectFields: []string{"`dimensions`"},
 			tableFieldsMap: TableFieldsMap{

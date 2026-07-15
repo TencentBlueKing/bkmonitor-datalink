@@ -559,6 +559,41 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			expected: "`minute1`",
 		},
 		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":      {FieldType: "text"},
+					"year2024": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`year2024`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`year2024`"},
+			},
+			expected:    "`year2024`",
+			errContains: "field `year2024` is missing from table `db_his`.doris",
+		},
+		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验类型",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"day1": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"day1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` type mismatch",
+		},
+		{
 			name: "WHERE 内置时间聚合字段不要求出现在物理表结构",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {

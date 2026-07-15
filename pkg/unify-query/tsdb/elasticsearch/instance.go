@@ -402,10 +402,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}()
 
 	recordESQueryShards(ctx, span, qo, res)
-	if fallbackRes, ok := i.tryFallbackEmptyMissingMappingIndexes(ctx, span, client, qo, source, countQuery, err, res); ok {
+	if fallbackRes, retryIndexes, ok := i.tryFallbackEmptyMissingMappingIndexes(ctx, span, client, qo, source, countQuery, err, res); ok {
 		res = fallbackRes
 		err = nil
-		recordESQueryShardsWithPrefix(ctx, span, qo, res, "fallback_retry_")
+		retryQo := *qo
+		retryQo.indexes = retryIndexes
+		recordESQueryShardsWithPrefix(ctx, span, &retryQo, res, "fallback_retry_")
 	}
 	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err

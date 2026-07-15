@@ -91,7 +91,8 @@ func recordESQueryShardsWithPrefix(ctx context.Context, span *trace.Span, qo *qu
 // tryFallbackEmptyMissingMappingIndexes 处理按新增字段排序时，只有旧空索引缺
 // mapping 导致 ES 查询失败的场景。这个 fallback 刻意保持较窄的适用范围：只重试
 // 普通 search 请求，先在原始 alias/pattern 语义下证明失败索引为空，再排除这些
-// 失败物理索引重试一次。
+// 失败物理索引重试一次。这个流程依赖失败索引是历史只读索引：空检查和 retry
+// 之间如果仍有新文档写入失败索引，retry 排除该索引会带来静默漏查风险。
 func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	ctx context.Context,
 	span *trace.Span,
@@ -101,17 +102,17 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	countQuery elastic.Query,
 	queryErr error,
 	res *elastic.SearchResult,
-) (*elastic.SearchResult, bool) {
+) (*elastic.SearchResult, []string, bool) {
 	if client == nil || qo == nil || qo.query == nil || source == nil || countQuery == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if !canFallbackMissingMappingQuery(qo.query) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	failures := missingMappingSortFailures(queryErr, res)
 	if len(failures) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 
 	field := failures[0].Field
@@ -123,7 +124,7 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	indices, err := client.IndexGet(qo.indexes...).Do(ctx)
 	if err != nil {
 		span.Set("fallback_error", fmt.Sprintf("index_get: %v", err))
-		return nil, false
+		return nil, nil, false
 	}
 
 	physicalIndexes := make([]string, 0, len(indices))
@@ -133,7 +134,7 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	sort.Strings(physicalIndexes)
 	if len(physicalIndexes) == 0 {
 		span.Set("fallback_error", "empty_resolved_indexes")
-		return nil, false
+		return nil, nil, false
 	}
 
 	remainingPhysicalIndexes := excludeStrings(physicalIndexes, failedIndexes)
@@ -141,23 +142,24 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		// 所有解析出的物理索引都失败时保留原错误。此时没有健康分片结果可保留，
 		// 如果重试一个空 target，反而可能掩盖真实的 mapping 问题。
 		span.Set("fallback_error", "empty_retry_indexes")
-		return nil, false
+		return nil, nil, false
 	}
 
 	// 空检查必须通过原始 alias/pattern target，才能继续保留 alias filter 和
-	// search_routing。通过排除健康物理索引把请求收窄到失败索引，同时不绕过
-	// alias 语义，例如：tenant_alias,-good_index_1,-good_index_2。
+	// search_routing。通过 _index terms 把请求收窄到失败索引，避免在 alias 指向
+	// 大量健康历史索引时让 URL 随健康索引数量线性增长。
 	// ES 文档：alias filter/search_routing 会影响 alias 查询语义；
 	// https://www.elastic.co/guide/en/elasticsearch/reference/7.17/aliases.html
-	checkIndexes := appendExcludedIndexExpressions(qo.indexes, remainingPhysicalIndexes)
-	matchedDocs, checkErr := searchExactTotalHits(ctx, client, checkIndexes, countQuery)
+	checkIndexes := append([]string{}, qo.indexes...)
+	checkQuery := filterQueryByIndexes(countQuery, failedIndexes)
+	matchedDocs, checkErr := searchExactTotalHits(ctx, client, checkIndexes, checkQuery)
 	if checkErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("empty_check: %v", checkErr))
-		return nil, false
+		return nil, nil, false
 	}
 	if matchedDocs != 0 {
 		span.Set("fallback_error", fmt.Sprintf("non_empty_indexes: count=%d", matchedDocs))
-		return nil, false
+		return nil, nil, false
 	}
 
 	// retry 同样保留原始 target，以延续 alias/routing 语义；只排除实际报告缺
@@ -176,9 +178,9 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(source).Do(ctx)
 	if retryErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("retry: %v", retryErr))
-		return nil, false
+		return nil, nil, false
 	}
-	return retryRes, true
+	return retryRes, retryIndexes, true
 }
 
 // searchExactTotalHits 使用 size:0 search，而不是 CountService。调用方必须先
@@ -216,6 +218,13 @@ func searchExactTotalHits(ctx context.Context, client *elastic.Client, indexes [
 		return 0, fmt.Errorf("total hits is not exact: relation=%s value=%d", res.Hits.TotalHits.Relation, res.Hits.TotalHits.Value)
 	}
 	return res.Hits.TotalHits.Value, nil
+}
+
+func filterQueryByIndexes(query elastic.Query, indexes []string) elastic.Query {
+	return elastic.NewBoolQuery().Filter(
+		query,
+		elastic.NewTermsQueryFromStrings("_index", indexes...),
+	)
 }
 
 // canFallbackMissingMappingQuery 避免重试游标类请求，因为它们的翻页状态绑定在

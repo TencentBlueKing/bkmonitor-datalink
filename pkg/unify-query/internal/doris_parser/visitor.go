@@ -848,6 +848,9 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
+		if IsBuiltinTimeAggregationField(name) {
+			continue
+		}
 		key := field.field + "\x00" + name
 		if _, ok := seen[key]; ok {
 			continue
@@ -897,6 +900,9 @@ func validateUnionWhereFields(tables []string, fields []unionProjectionField, ta
 		name := field.validateName
 		if name == "" {
 			name = unquoteUnionField(field.field)
+		}
+		if IsBuiltinTimeAggregationField(name) {
+			continue
 		}
 		key := field.field + "\x00" + name
 		if _, ok := seen[key]; ok {
@@ -1104,6 +1110,30 @@ func unquoteUnionField(field string) string {
 func quoteUnionField(field string) string {
 	field = unquoteUnionField(strings.TrimSpace(field))
 	return fmt.Sprintf("`%s`", field)
+}
+
+func IsBuiltinTimeAggregationField(field string) bool {
+	field = strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
+	if field == "" {
+		return false
+	}
+
+	for _, prefix := range []string{"second", "minute", "hour", "day", "week", "month", "year"} {
+		if !strings.HasPrefix(field, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(field, prefix)
+		if suffix == "" {
+			return false
+		}
+		for _, ch := range suffix {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func isUnsupportedUnionFieldType(fieldType string) bool {

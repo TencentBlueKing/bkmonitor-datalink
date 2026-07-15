@@ -542,6 +542,39 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			errContains: "field `new_field` is missing from table `db_his`.doris",
 		},
 		{
+			name: "内置时间聚合字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
+			},
+			expected: "`minute1`",
+		},
+		{
+			name: "WHERE 内置时间聚合字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`minute1` >= '202607142052'"},
+			},
+			expected: "`path`",
+		},
+		{
 			name: "WHERE-only 字段类型不同但未投影时允许",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {

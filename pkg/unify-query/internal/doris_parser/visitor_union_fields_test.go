@@ -542,7 +542,7 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			errContains: "field `new_field` is missing from table `db_his`.doris",
 		},
 		{
-			name: "内置时间聚合字段不要求出现在物理表结构",
+			name: "计算平台 minuteX 内置字段不要求出现在物理表结构",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {
 					"log": {FieldType: "text"},
@@ -557,6 +557,22 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
 			},
 			expected: "`minute1`",
+		},
+		{
+			name: "计算平台固定内置字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`"},
+				OrderItem:  &unionSelectTestNode{value: "`dtEventTimeStamp` DESC"},
+			},
+			expected: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`",
 		},
 		{
 			name: "疑似内置时间聚合字段若是真实字段仍校验缺失",
@@ -594,7 +610,24 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			errContains: "field `day1` type mismatch",
 		},
 		{
-			name: "WHERE 内置时间聚合字段不要求出现在物理表结构",
+			name: "未支持的时间聚合字段缺失时仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` is missing from table `db_his`.doris",
+		},
+		{
+			name: "WHERE 计算平台内置字段不要求出现在物理表结构",
 			tableFieldsMap: TableFieldsMap{
 				"`db_his`.doris": {
 					"path": {FieldType: "text"},
@@ -605,7 +638,7 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			},
 			nodeMap: map[string]Node{
 				SelectItem: &unionSelectTestNode{value: "`path`"},
-				WhereItem:  &unionSelectTestNode{value: "`minute1` >= '202607142052'"},
+				WhereItem:  &unionSelectTestNode{value: "`minute1` >= '202607142052' AND dtEventTimeStamp > 1 AND localTime != ''"},
 			},
 			expected: "`path`",
 		},

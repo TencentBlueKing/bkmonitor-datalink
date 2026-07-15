@@ -152,13 +152,22 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 			expectedErr: "doris multi-table union field `path` is missing from table `db_a`.doris",
 		},
 		{
-			name:         "内置时间聚合字段缺失物理表结构时允许",
+			name:         "计算平台 minuteX 内置字段缺失物理表结构时允许",
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			tableFieldsMap: TableFieldsMap{
 				"`db_b`.doris": {"log": {FieldType: "text"}},
 				"`db_a`.doris": {"log": {FieldType: "text"}},
 			},
 			expected: "`minute1`",
+		},
+		{
+			name:         "计算平台固定内置字段缺失物理表结构时允许",
+			selectFields: []string{"`dtEventTimeStamp`", "`dtEventTime`", "`localTime`", "`thedate`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"log": {FieldType: "text"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			expected: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`",
 		},
 		{
 			name:         "疑似内置时间聚合字段若是真实字段仍校验缺失",

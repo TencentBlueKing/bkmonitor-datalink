@@ -848,7 +848,7 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		skipBuiltin, err := shouldSkipBuiltinTimeAggregationField(tables, field.field, name, tableFieldsMap)
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
 		if err != nil {
 			return err
 		}
@@ -905,7 +905,7 @@ func validateUnionWhereFields(tables []string, fields []unionProjectionField, ta
 		if name == "" {
 			name = unquoteUnionField(field.field)
 		}
-		skipBuiltin, err := shouldSkipBuiltinTimeAggregationField(tables, field.field, name, tableFieldsMap)
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, tableFieldsMap)
 		if err != nil {
 			return err
 		}
@@ -1120,17 +1120,16 @@ func quoteUnionField(field string) string {
 	return fmt.Sprintf("`%s`", field)
 }
 
-func IsBuiltinTimeAggregationField(field string) bool {
+func IsBuiltinPlatformField(field string) bool {
 	field = strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
-	if field == "" {
-		return false
-	}
-
-	for _, prefix := range []string{"second", "minute", "hour", "day", "week", "month", "year"} {
-		if !strings.HasPrefix(field, prefix) {
-			continue
+	switch field {
+	case "dteventtimestamp", "dteventtime", "localtime", "thedate":
+		return true
+	default:
+		if !strings.HasPrefix(field, "minute") {
+			return false
 		}
-		suffix := strings.TrimPrefix(field, prefix)
+		suffix := strings.TrimPrefix(field, "minute")
 		if suffix == "" {
 			return false
 		}
@@ -1141,11 +1140,10 @@ func IsBuiltinTimeAggregationField(field string) bool {
 		}
 		return true
 	}
-	return false
 }
 
-func shouldSkipBuiltinTimeAggregationField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
-	if !IsBuiltinTimeAggregationField(validateName) {
+func shouldSkipBuiltinPlatformField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	if !IsBuiltinPlatformField(validateName) {
 		return false, nil
 	}
 	for _, table := range tables {

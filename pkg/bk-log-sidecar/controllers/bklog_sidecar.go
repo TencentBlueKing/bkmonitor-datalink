@@ -21,17 +21,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 const SubscribeRetryInterval = 5 * time.Second
@@ -43,12 +43,20 @@ const SubscribeRetryInterval = 5 * time.Second
 type BkLogSidecar struct {
 	sync.RWMutex
 	runtime                define.Runtime
-	kubeClient             cache.Cache
+	kubeClient             client.Reader
+	reloadAgentFn          func() error
 	containerCache         sync.Map
 	currentNodeInfo        corev1.Node
 	actualBkLogConfigCache sync.Map
 	log                    logr.Logger
 	stopCh                 chan struct{}
+}
+
+func (s *BkLogSidecar) reloadAgent() error {
+	if s.reloadAgentFn != nil {
+		return s.reloadAgentFn()
+	}
+	return s.reloadBkunifylogbeat()
 }
 
 // NewBkLogSidecar new BkLogSidecar
@@ -158,7 +166,7 @@ func (s *BkLogSidecar) generateActualBkLogConfig() {
 	}
 	s.deleteInvalidConfig()
 	s.writeConfig()
-	utils.CheckErrorFn(s.reloadBkunifylogbeat(), func(err error) {
+	utils.CheckErrorFn(s.reloadAgent(), func(err error) {
 		s.log.Error(err, "generate bkLogConfig then reload agent failed")
 	})
 }
@@ -281,7 +289,7 @@ func (s *BkLogSidecar) startActionHandler(event *define.ContainerEvent) {
 		s.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
 	}
 	s.writeConfig()
-	utils.CheckErrorFn(s.reloadBkunifylogbeat(), func(err error) {
+	utils.CheckErrorFn(s.reloadAgent(), func(err error) {
 		s.log.Error(err, "handler event reload agent failed")
 	})
 	s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
@@ -296,7 +304,7 @@ func (s *BkLogSidecar) destroyActionHandler(event *define.ContainerEvent) {
 			utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
 				s.containerCache.Delete(containerId)
 				if s.deleteContainerConfig(castContainer(containerInfo)) {
-					utils.CheckErrorFn(s.reloadBkunifylogbeat(), func(err error) {
+					utils.CheckErrorFn(s.reloadAgent(), func(err error) {
 						s.log.Error(err, "handler event reload agent failed")
 					})
 				}
@@ -319,7 +327,7 @@ func (s *BkLogSidecar) stopActionHandler(event *define.ContainerEvent) {
 
 		utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
 			if s.deleteContainerConfig(container) {
-				utils.CheckErrorFn(s.reloadBkunifylogbeat(), func(err error) {
+				utils.CheckErrorFn(s.reloadAgent(), func(err error) {
 					s.log.Error(err, "handler event reload agent failed")
 				})
 			}

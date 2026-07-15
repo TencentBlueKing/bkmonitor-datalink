@@ -51,7 +51,7 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if utils.NotNil(err) {
 		if errors.IsNotFound(err) {
 			r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name)
-			utils.CheckErrorFn(r.BkLogSidecar.reloadBkunifylogbeat(), func(err error) {
+			utils.CheckErrorFn(r.BkLogSidecar.reloadAgent(), func(err error) {
 				log.Error(err, "bklogconfig delete then reload agent failed")
 			})
 

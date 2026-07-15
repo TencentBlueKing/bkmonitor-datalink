@@ -1,0 +1,248 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 日志平台 (BlueKing - Log) available.
+// Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package controllers
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/go-logr/logr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+)
+
+type stubReader struct {
+	getFn  func(context.Context, client.ObjectKey, client.Object) error
+	listFn func(context.Context, client.ObjectList) error
+}
+
+func (r *stubReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	if r.getFn == nil {
+		return nil
+	}
+	return r.getFn(ctx, key, obj)
+}
+
+func (r *stubReader) List(ctx context.Context, list client.ObjectList, _ ...client.ListOption) error {
+	if r.listFn == nil {
+		return nil
+	}
+	return r.listFn(ctx, list)
+}
+
+type stubRuntime struct {
+	containersFn func(context.Context) ([]define.SimpleContainer, error)
+	inspectFn    func(context.Context, string) (define.Container, error)
+	subscribeFn  func(context.Context) (<-chan *define.ContainerEvent, <-chan error)
+	runtimeType  define.RuntimeType
+}
+
+func (r *stubRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
+	if r.containersFn == nil {
+		return nil, nil
+	}
+	return r.containersFn(ctx)
+}
+
+func (r *stubRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
+	if r.inspectFn == nil {
+		return define.Container{}, nil
+	}
+	return r.inspectFn(ctx, containerID)
+}
+
+func (r *stubRuntime) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+	if r.subscribeFn == nil {
+		return nil, nil
+	}
+	return r.subscribeFn(ctx)
+}
+
+func (r *stubRuntime) Type() define.RuntimeType {
+	if r.runtimeType == "" {
+		return define.RuntimeTypeContainerd
+	}
+	return r.runtimeType
+}
+
+func newCharacterizationSidecar(t *testing.T, runtime define.Runtime, reader client.Reader) *BkLogSidecar {
+	t.Helper()
+
+	oldConfigPath := config.BkunifylogbeatConfig
+	oldPIDFile := config.BkunifylogbeatPidFile
+	config.BkunifylogbeatConfig = t.TempDir()
+	config.BkunifylogbeatPidFile = filepath.Join(t.TempDir(), "missing.pid")
+	t.Cleanup(func() {
+		config.BkunifylogbeatConfig = oldConfigPath
+		config.BkunifylogbeatPidFile = oldPIDFile
+	})
+
+	return &BkLogSidecar{
+		runtime:       runtime,
+		kubeClient:    reader,
+		reloadAgentFn: func() error { return nil },
+		log:           logr.Discard(),
+		stopCh:        make(chan struct{}),
+	}
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+}
+
+func TestStartRunsInitialGenerationBeforeRuntimeSubscriptionIsReady(t *testing.T) {
+	initialGenerationStarted := make(chan struct{})
+	releaseSubscription := make(chan struct{})
+	subscriptionReady := make(chan struct{})
+	var listCalls atomic.Int32
+
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			if listCalls.Add(1) == 2 {
+				close(initialGenerationStarted)
+			}
+			return nil, nil
+		},
+		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+			<-releaseSubscription
+			close(subscriptionReady)
+			return nil, nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(sidecar.Stop) }
+	t.Cleanup(stop)
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+
+	waitForSignal(t, initialGenerationStarted, "initial configuration generation")
+	select {
+	case <-subscriptionReady:
+		t.Fatal("runtime subscription unexpectedly became ready before initial generation")
+	default:
+	}
+
+	close(releaseSubscription)
+	waitForSignal(t, subscriptionReady, "runtime subscription")
+	require.NoError(t, <-startDone)
+	stop()
+}
+
+func TestGenerateDeletesExistingConfigWhenContainerDiscoveryFails(t *testing.T) {
+	discoveryErr := errors.New("runtime list unavailable")
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			return nil, discoveryErr
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	existingConfig := filepath.Join(config.BkunifylogbeatConfig, "existing.conf")
+	require.NoError(t, os.WriteFile(existingConfig, []byte("existing"), 0o600))
+
+	sidecar.generateActualBkLogConfig()
+
+	_, err := os.Stat(existingConfig)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestMatchBkLogConfigsTreatsPodReadFailureAsNoMatch(t *testing.T) {
+	podReadErr := errors.New("pod cache unavailable")
+	reader := &stubReader{
+		getFn: func(context.Context, client.ObjectKey, client.Object) error {
+			return podReadErr
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, reader)
+	container := &define.Container{
+		ID: "container-1",
+		Labels: map[string]string{
+			config.ContainerLabelK8sPodNamespace: "default",
+			config.ContainerLabelK8sPodName:      "pod-1",
+		},
+	}
+
+	matched, pod := sidecar.matchBklogConfigs(container)
+
+	assert.Empty(t, matched)
+	assert.Equal(t, corev1.Pod{}, *pod)
+}
+
+func TestReconcileReturnsSuccessWhenReloadFailsForDeletedConfig(t *testing.T) {
+	scheme := k8sruntime.NewScheme()
+	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	reloadErr := errors.New("reload unavailable")
+	var reloadCalls atomic.Int32
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return reloadErr
+	}
+	reconciler := &BkLogConfigReconciler{
+		Client:       kubeClient,
+		Scheme:       scheme,
+		BkLogSidecar: sidecar,
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "missing"},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, int32(1), reloadCalls.Load())
+}
+
+func TestCacheRefreshDoesNotReloadConfiguration(t *testing.T) {
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			return []define.SimpleContainer{{ID: "container-1"}}, nil
+		},
+		inspectFn: func(_ context.Context, containerID string) (define.Container, error) {
+			return define.Container{ID: containerID}, nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	var reloadCalls atomic.Int32
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return nil
+	}
+
+	sidecar.cacheContainer()
+
+	_, ok := sidecar.containerCache.Load("container-1")
+	assert.True(t, ok)
+	assert.Equal(t, int32(0), reloadCalls.Load())
+}

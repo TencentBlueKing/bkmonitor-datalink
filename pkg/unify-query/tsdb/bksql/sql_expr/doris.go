@@ -293,7 +293,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			selectFields = append(selectFields, SelectAll)
 		}
 
-		if valueField != "" {
+		if valueField != "" && valueField != metadata.Null {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
 		}
 		if d.timeField != "" {
@@ -321,7 +321,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			orderField = order.Name
 		}
 
-		orderField, _ = d.dimTransform(orderField)
+		orderField = d.orderFieldTransform(orderField)
+		if orderField == "" {
+			continue
+		}
 
 		// 移除重复的排序字段
 		if orderNameSet.Existed(orderField) {
@@ -337,6 +340,19 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
+}
+
+func (d *DorisSQLExpr) orderFieldTransform(field string) string {
+	transformed, _ := d.dimTransform(field)
+	if transformed != metadata.Null {
+		return transformed
+	}
+
+	if field == d.timeField || d.fieldAlias.OriginField(field) != "" {
+		return fmt.Sprintf("`%s`", normalizeDorisFieldName(field))
+	}
+
+	return ""
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {

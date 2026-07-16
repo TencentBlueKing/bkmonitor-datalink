@@ -160,6 +160,13 @@ func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 	return f
 }
 
+// WithShardKeyTimeBucket 透传 Doris 时间分桶开关；关闭后分钟级聚合使用 timeField，
+// 用于兼容字段表中没有 __shard_key__ 的 Doris 表。
+func (f *QueryFactory) WithShardKeyTimeBucket(enabled bool) *QueryFactory {
+	f.expr.WithShardKeyTimeBucket(enabled)
+	return f
+}
+
 func (f *QueryFactory) WithTableFieldsMap(m TableFieldsMap) *QueryFactory {
 	f.tableFieldsMap = m
 	return f

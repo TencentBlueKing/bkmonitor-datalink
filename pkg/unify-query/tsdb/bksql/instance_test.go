@@ -1770,6 +1770,7 @@ WHERE
 				"ip":               {FieldType: sql_expr.DorisTypeString},
 				"thedate":          {FieldType: sql_expr.DorisTypeString},
 				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeDate},
+				sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
 				"login_rate":       {FieldType: sql_expr.DorisTypeInt},
 				"err_count":        {FieldType: sql_expr.DorisTypeDouble},
 				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestQueryClusterName(t *testing.T) {
@@ -24,4 +25,52 @@ func TestQueryClusterName(t *testing.T) {
 		ClusterName: "route_cluster",
 		StorageName: "storage_cluster",
 	}))
+}
+
+func TestShouldDisableShardKeyTimeBucket(t *testing.T) {
+	query := &metadata.Query{Measurement: sql_expr.Doris}
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+	}, nil, "dtEventTimeStamp"))
+
+	assert.True(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+	}, nil, "dtEventTimeStamp"))
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
+		sql_expr.ShardKey: {FieldType: sql_expr.DorisTypeBigInt},
+	}, nil, "dtEventTimeStamp"))
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(&metadata.Query{Measurement: sql_expr.TSpider}, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+	}, nil, "dtEventTimeStamp"))
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+	}, TableFieldsMap{
+		"`db_current`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+		"`db_history`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+	}, "dtEventTimeStamp"))
+
+	assert.True(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+	}, TableFieldsMap{
+		"`db_current`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+		"`db_history`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		},
+	}, "dtEventTimeStamp"))
 }

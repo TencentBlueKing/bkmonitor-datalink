@@ -57,6 +57,9 @@ type SQLExpr interface {
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr
+	// WithShardKeyTimeBucket 控制 Doris 分钟级时间聚合是否可以使用 __shard_key__ 构造时间桶。
+	// enabled=true 保留 Doris 默认优化；enabled=false 强制回退到 timeField，兼容无 __shard_key__ 的表。
+	WithShardKeyTimeBucket(enabled bool) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -149,6 +152,10 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 
 func (d *DefaultSQLExpr) WithFieldsMap(fieldMap metadata.FieldsMap) SQLExpr {
 	d.fieldMap = fieldMap
+	return d
+}
+
+func (d *DefaultSQLExpr) WithShardKeyTimeBucket(enabled bool) SQLExpr {
 	return d
 }
 

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -1085,5 +1086,44 @@ func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
 			}
 		}
 		assert.Equal(t, "COUNT(`log`) AS `"+Value+"`", valueExpr)
+	})
+}
+
+func TestDorisSQLExpr_ParserAggregatesAndOrders_ShardKeyTimeBucketFallback(t *testing.T) {
+	encode := func(s string) string { return "`" + s + "`" }
+	aggregates := metadata.Aggregates{{
+		Name:   "count",
+		Window: 24 * time.Minute,
+	}}
+
+	t.Run("use shard key when field exists", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
+			WithFieldsMap(metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+				ShardKey:           {FieldType: DorisTypeBigInt},
+			}).
+			WithEncode(encode)
+
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(nil, aggregates, metadata.Orders{})
+		assert.NoError(t, err)
+		assert.Contains(t, strings.Join(selectFields, ", "), "FLOOR(__shard_key__ / 1000)")
+	})
+
+	t.Run("fall back to time field when shard key bucket is disabled", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
+			WithFieldsMap(metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+			}).
+			WithShardKeyTimeBucket(false).
+			WithEncode(encode)
+
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(nil, aggregates, metadata.Orders{})
+		assert.NoError(t, err)
+
+		sql := strings.Join(selectFields, ", ")
+		assert.NotContains(t, sql, ShardKey)
+		assert.Contains(t, sql, "FLOOR(dtEventTimeStamp + 0)")
 	})
 }

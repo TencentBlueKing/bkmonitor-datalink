@@ -215,7 +215,7 @@ func recordRouteSeriesFilterSamples(name string, reasonCount map[string]float64)
 
 func isForwardRangeBucketFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case Sum, Count, Min, Max:
+	case Sum, Count, Min, Max, Avg, Mean:
 		return true
 	default:
 		return false

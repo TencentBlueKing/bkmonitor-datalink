@@ -583,12 +583,36 @@ func TestMergeSeriesSetFiltersSingleRouteHistogramSeries(t *testing.T) {
 }
 
 func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
-	testCases := map[string]string{
-		"avg":           function.Avg,
-		"mean":          function.Mean,
-		"avg_over_time": function.AvgOT,
+	testCases := map[string]struct {
+		fn           string
+		sampleTime   time.Time
+		routeStart   time.Time
+		routeEnd     time.Time
+		expectedTime time.Time
+	}{
+		"avg bucket overlaps route start": {
+			fn:           function.Avg,
+			sampleTime:   time.Unix(0, 0),
+			routeStart:   time.Unix(120, 0),
+			routeEnd:     time.Unix(300, 0),
+			expectedTime: time.Unix(0, 0),
+		},
+		"mean bucket overlaps route start": {
+			fn:           function.Mean,
+			sampleTime:   time.Unix(0, 0),
+			routeStart:   time.Unix(120, 0),
+			routeEnd:     time.Unix(300, 0),
+			expectedTime: time.Unix(0, 0),
+		},
+		"avg_over_time histogram is preserved": {
+			fn:           function.AvgOT,
+			sampleTime:   time.Unix(120, 0),
+			routeStart:   time.Unix(100, 0),
+			routeEnd:     time.Unix(200, 0),
+			expectedTime: time.Unix(120, 0),
+		},
 	}
-	for name, fn := range testCases {
+	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			h := &histogram.Histogram{
 				Count:         1,
@@ -602,22 +626,22 @@ func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
 			}
 			series := storage.NewListSeries(
 				labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
-				[]tsdbutil.Sample{histSample{t: time.Unix(120, 0).UnixMilli(), h: h}},
+				[]tsdbutil.Sample{histSample{t: tc.sampleTime.UnixMilli(), h: h}},
 			)
 			routeSet := function.NewTimeRangeSeriesSet(
 				newSingleSeriesSet(series),
-				time.Unix(100, 0),
-				time.Unix(200, 0),
+				tc.routeStart,
+				tc.routeEnd,
 			)
 			assert.True(t, routeSet.Next())
 			routeSeries := routeSet.At()
 
-			mergedSeries := function.NewMergeSeriesSetWithFuncAndSortByStep(fn, time.Minute)(routeSeries)
+			mergedSeries := function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, 5*time.Minute)(routeSeries)
 
 			it := mergedSeries.Iterator(nil)
 			assert.Equal(t, chunkenc.ValHistogram, it.Next())
 			ts, got := it.AtHistogram()
-			assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+			assert.Equal(t, tc.expectedTime.UnixMilli(), ts)
 			assert.Equal(t, h, got)
 			assert.Equal(t, chunkenc.ValNone, it.Next())
 			assert.NoError(t, it.Err())

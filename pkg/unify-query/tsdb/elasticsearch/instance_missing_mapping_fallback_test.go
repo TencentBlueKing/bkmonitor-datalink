@@ -231,6 +231,192 @@ func TestInstanceEsQueryMissingMappingMultiEmptyIndexFallback(t *testing.T) {
 	assert.Equal(t, 1, retryCalled)
 }
 
+func TestInstanceEsQueryMissingMappingFallbackCoversAllMissingSortFields(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const (
+		alias           = "test_alias_multi_missing_fields"
+		hostIndex       = "bad_index_missing_host"
+		containerIndex  = "bad_index_missing_container"
+		goodIndex       = "good_index_multi_missing_fields"
+		hostReason      = `{"type":"query_shard_exception","reason":"No mapping found for [host] in order to sort on"}`
+		containerReason = `{"type":"query_shard_exception","reason":"No mapping found for [container_name] in order to sort on"}`
+	)
+	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{},"%s":{}}`, hostIndex, containerIndex, goodIndex)))
+
+	var emptyCheckCalled, retryCalled int
+	aliasSearchCalls := 0
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"/_search", func(r *http.Request) (*http.Response, error) {
+		aliasSearchCalls++
+		if aliasSearchCalls == 1 {
+			return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{
+				"took":1,
+				"timed_out":false,
+				"_shards":{
+					"total":3,
+					"successful":1,
+					"skipped":0,
+					"failed":2,
+					"failures":[
+						{"shard":0,"index":"%s","reason":%s},
+						{"shard":0,"index":"%s","reason":%s}
+					]
+				},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+			}`, hostIndex, hostReason, containerIndex, containerReason)), nil
+		}
+		if aliasSearchCalls == 3 {
+			retryCalled++
+			assertSearchBodySortHasUnmappedTypes(t, r, map[string]string{
+				"host":           "keyword",
+				"container_name": "keyword",
+			})
+			return httpmock.NewStringResponse(http.StatusOK, `{
+				"took":1,
+				"timed_out":false,
+				"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]},
+				"aggregations":{"_value":{"value":1}}
+			}`), nil
+		}
+		emptyCheckCalled++
+		assertSearchBodyFiltersIndexes(t, r, hostIndex, containerIndex)
+		return httpmock.NewStringResponse(http.StatusOK, `{
+			"took":1,
+			"timed_out":false,
+			"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+		}`), nil
+	})
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:          alias,
+		Field:       "host",
+		TimeField:   metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "millisecond"},
+		StorageType: metadata.ElasticsearchStorageType,
+		Orders: metadata.Orders{
+			{Name: "host", Ast: false},
+			{Name: "container_name", Ast: false},
+		},
+		Aggregates: metadata.Aggregates{{Name: Count, Field: "dtEventTimeStamp"}},
+	}
+	fact := NewFormatFactory(ctx).
+		WithQuery(query.Field, query.TimeField, time.UnixMilli(1784013830711), time.UnixMilli(1784014730711), function.Millisecond, 0).
+		WithFieldMap(metadata.FieldsMap{
+			"host":             {FieldType: "keyword"},
+			"container_name":   {FieldType: "keyword"},
+			"dtEventTimeStamp": {FieldType: TimeFieldTypeTime},
+		}).
+		WithOrders(query.Orders)
+
+	res, err := inst.esQuery(ctx, &queryOption{
+		indexes: []string{alias},
+		start:   time.UnixMilli(1784013830711),
+		end:     time.UnixMilli(1784014730711),
+		query:   query,
+		conn:    inst.connect,
+	}, fact)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, emptyCheckCalled)
+	assert.Equal(t, 1, retryCalled)
+}
+
+func TestInstanceEsQueryMissingMappingFallbackAllowsAllEmptyMissingMappingIndexes(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const (
+		alias    = "test_alias_all_empty_missing_mapping"
+		badIndex = "bad_index_all_empty_missing_mapping"
+	)
+	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{"%s":{}}`, badIndex)))
+
+	var emptyCheckCalled, retryCalled int
+	aliasSearchCalls := 0
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"/_search", func(r *http.Request) (*http.Response, error) {
+		aliasSearchCalls++
+		if aliasSearchCalls == 1 {
+			return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{
+				"took":1,
+				"timed_out":false,
+				"_shards":{
+					"total":1,
+					"successful":0,
+					"skipped":0,
+					"failed":1,
+					"failures":[{"shard":0,"index":"%s","reason":{"type":"query_shard_exception","reason":"No mapping found for [svrname] in order to sort on"}}]
+				},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+			}`, badIndex)), nil
+		}
+		if aliasSearchCalls == 3 {
+			retryCalled++
+			assertSearchBodySortHasUnmappedType(t, r, "svrname", "keyword")
+			return httpmock.NewStringResponse(http.StatusOK, `{
+				"took":1,
+				"timed_out":false,
+				"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]},
+				"aggregations":{"_value":{"value":0}}
+			}`), nil
+		}
+		emptyCheckCalled++
+		assertSearchBodyFiltersIndexes(t, r, badIndex)
+		return httpmock.NewStringResponse(http.StatusOK, `{
+			"took":1,
+			"timed_out":false,
+			"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+		}`), nil
+	})
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:          alias,
+		Field:       "svrname",
+		TimeField:   metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "millisecond"},
+		StorageType: metadata.ElasticsearchStorageType,
+		Orders:      metadata.Orders{{Name: "svrname", Ast: false}},
+		Aggregates:  metadata.Aggregates{{Name: Count, Field: "dtEventTimeStamp"}},
+	}
+	fact := NewFormatFactory(ctx).
+		WithQuery(query.Field, query.TimeField, time.UnixMilli(1784013830711), time.UnixMilli(1784014730711), function.Millisecond, 0).
+		WithFieldMap(metadata.FieldsMap{
+			"svrname":          {FieldType: "keyword"},
+			"dtEventTimeStamp": {FieldType: TimeFieldTypeTime},
+		}).
+		WithOrders(query.Orders)
+
+	res, err := inst.esQuery(ctx, &queryOption{
+		indexes: []string{alias},
+		start:   time.UnixMilli(1784013830711),
+		end:     time.UnixMilli(1784014730711),
+		query:   query,
+		conn:    inst.connect,
+	}, fact)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, emptyCheckCalled)
+	assert.Equal(t, 1, retryCalled)
+}
+
 func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorOnMixedShardFailures(t *testing.T) {
 	mock.Init()
 	metadata.InitMetadata()
@@ -554,28 +740,6 @@ func TestInstanceEsQueryMissingMappingFallbackKeepsOriginalErrorOnGuardFailures(
 					*indexGetCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)), nil
 				})
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
-					*retryCalled = true
-					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
-				})
-			},
-		},
-		{
-			name:      "empty retry indexes",
-			alias:     "test_alias_empty_retry_indexes",
-			badIndex:  "bad_empty_retry_indexes",
-			goodIndex: "good_empty_retry_indexes",
-			registerFallback: func(alias, badIndex, goodIndex string, retryCalled *bool, indexGetCalled *bool) {
-				httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, func(r *http.Request) (*http.Response, error) {
-					*indexGetCalled = true
-					return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{"%s":{}}`, badIndex)), nil
-				})
-				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+badIndex+"/_search", httpmock.NewStringResponder(http.StatusOK, `{
-					"took":1,
-					"timed_out":false,
-					"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
-					"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
-				}`))
 				httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"%2C-"+badIndex+"/_search", func(r *http.Request) (*http.Response, error) {
 					*retryCalled = true
 					return httpmock.NewStringResponse(http.StatusOK, `{}`), nil
@@ -1023,12 +1187,19 @@ func assertSearchBodyFiltersIndexes(t *testing.T, r *http.Request, indexes ...st
 
 func assertSearchBodySortHasUnmappedType(t *testing.T, r *http.Request, field, unmappedType string) {
 	t.Helper()
+	assertSearchBodySortHasUnmappedTypes(t, r, map[string]string{field: unmappedType})
+}
+
+func assertSearchBodySortHasUnmappedTypes(t *testing.T, r *http.Request, unmappedTypes map[string]string) {
+	t.Helper()
 	var body any
 	require.NoError(t, stdjson.NewDecoder(r.Body).Decode(&body))
 	bodyBytes, err := stdjson.Marshal(body)
 	require.NoError(t, err)
 	bodyString := string(bodyBytes)
-	assert.Contains(t, bodyString, `"`+field+`":{"order":`)
-	assert.Contains(t, bodyString, `"unmapped_type":"`+unmappedType+`"`)
+	for field, unmappedType := range unmappedTypes {
+		assert.Contains(t, bodyString, `"`+field+`":{"order":`)
+		assert.Contains(t, bodyString, `"unmapped_type":"`+unmappedType+`"`)
+	}
 	assert.NotContains(t, r.URL.EscapedPath(), "%2C-")
 }

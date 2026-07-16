@@ -115,10 +115,10 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, nil, false
 	}
 
-	field := failures[0].Field
 	failedIndexes := dedupeMissingMappingFailureIndexes(failures)
+	failedFields := dedupeMissingMappingFailureFields(failures)
 	span.Set("fallback_reason", "missing_mapping_empty_index")
-	span.Set("fallback_field", field)
+	span.Set("fallback_fields", failedFields)
 	span.Set("fallback_failed_indexes", failedIndexes)
 
 	physicalIndexes, err := resolvePhysicalIndexes(ctx, span, client, qo)
@@ -128,14 +128,6 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	}
 	if len(physicalIndexes) == 0 {
 		span.Set("fallback_error", "empty_resolved_indexes")
-		return nil, nil, false
-	}
-
-	remainingPhysicalIndexes := excludeStrings(physicalIndexes, failedIndexes)
-	if len(remainingPhysicalIndexes) == 0 {
-		// 所有解析出的物理索引都失败时保留原错误。此时没有健康分片结果可保留，
-		// 如果重试一个空 target，反而可能掩盖真实的 mapping 问题。
-		span.Set("fallback_error", "empty_retry_indexes")
 		return nil, nil, false
 	}
 
@@ -156,16 +148,20 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, nil, false
 	}
 
-	unmappedType := fact.GetFieldType(field)
-	if unmappedType == "" {
-		span.Set("fallback_error", fmt.Sprintf("empty_unmapped_type: field=%s", field))
-		return nil, nil, false
+	forceUnmappedTypes := make(map[string]string, len(failedFields))
+	for _, field := range failedFields {
+		unmappedType := fact.GetFieldType(field)
+		if unmappedType == "" {
+			span.Set("fallback_error", fmt.Sprintf("empty_unmapped_type: field=%s", field))
+			return nil, nil, false
+		}
+		forceUnmappedTypes[field] = unmappedType
 	}
 
 	// retry 保留原始 target，以延续 alias/routing 语义；通过 unmapped_type 让旧空索引
 	// 不再因为排序字段缺 mapping 失败，避免 URL 随失败索引数量增长。
 	retryIndexes := append([]string{}, qo.indexes...)
-	retrySource, _, retryBody, buildErr := buildESQuerySource(ctx, qo.query, fact, map[string]string{field: unmappedType})
+	retrySource, _, retryBody, buildErr := buildESQuerySource(ctx, qo.query, fact, forceUnmappedTypes)
 	if buildErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("build_retry_source: %v", buildErr))
 		return nil, nil, false
@@ -175,8 +171,8 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 
 	log.Warnf(
 		ctx,
-		"es missing mapping fallback triggered field: %s, failed_indexes: %+v, retry_indexes: %+v, matched_docs: %d",
-		field, failedIndexes, retryIndexes, matchedDocs,
+		"es missing mapping fallback triggered fields: %+v, failed_indexes: %+v, retry_indexes: %+v, matched_docs: %d",
+		failedFields, failedIndexes, retryIndexes, matchedDocs,
 	)
 
 	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(retrySource).Do(ctx)
@@ -339,24 +335,15 @@ func dedupeMissingMappingFailureIndexes(failures []esMissingMappingFailure) []st
 	return sortedStringSetKeys(indexSet)
 }
 
-func makeStringSet(values []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		set[value] = struct{}{}
-	}
-	return set
-}
-
-func excludeStrings(values []string, excluded []string) []string {
-	excludedSet := makeStringSet(excluded)
-	filtered := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := excludedSet[value]; ok {
+func dedupeMissingMappingFailureFields(failures []esMissingMappingFailure) []string {
+	fieldSet := make(map[string]struct{}, len(failures))
+	for _, failure := range failures {
+		if failure.Field == "" {
 			continue
 		}
-		filtered = append(filtered, value)
+		fieldSet[failure.Field] = struct{}{}
 	}
-	return filtered
+	return sortedStringSetKeys(fieldSet)
 }
 
 func sortedStringSetKeys(set map[string]struct{}) []string {

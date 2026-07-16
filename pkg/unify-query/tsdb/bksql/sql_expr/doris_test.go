@@ -1111,13 +1111,13 @@ func TestDorisSQLExpr_ParserAggregatesAndOrders_ShardKeyTimeBucketFallback(t *te
 	})
 
 	t.Run("fall back to time field when shard key bucket is disabled", func(t *testing.T) {
-		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
-			WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr)
+		expr.WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
 			WithFieldsMap(metadata.FieldsMap{
 				"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
 			}).
-			WithShardKeyTimeBucket(false).
 			WithEncode(encode)
+		expr.WithShardKeyTimeBucket(false)
 
 		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(nil, aggregates, metadata.Orders{})
 		assert.NoError(t, err)

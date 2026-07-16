@@ -238,29 +238,48 @@ func needFieldMap(query *metadata.Query) bool {
 	}
 }
 
+func queryPhysicalTables(query *metadata.Query) []string {
+	if query == nil {
+		return nil
+	}
+
+	dbs := query.DBs
+	if len(dbs) == 0 && query.DB != "" {
+		dbs = []string{query.DB}
+	}
+
+	tables := make([]string, 0, len(dbs))
+	for _, db := range dbs {
+		if db == "" {
+			continue
+		}
+		tables = append(tables, formatPhysicalTableName(db, query.Measurement))
+	}
+	return tables
+}
+
 func shouldDisableShardKeyTimeBucket(query *metadata.Query, fieldsMap metadata.FieldsMap, tableFieldsMap TableFieldsMap, timeField string) bool {
 	if query == nil || query.Measurement != sql_expr.Doris {
 		return false
 	}
 
-	// 多表查询时 fieldsMap 是所有物理表字段的合并结果；只看合并字段会漏掉
-	// “其中一张表缺 __shard_key__” 的场景，因此优先逐表判断。
-	hasTrustedTableFieldMap := false
-	for _, tableFields := range tableFieldsMap {
-		if !tableFields.Field(timeField).Existed() {
-			continue
+	tables := queryPhysicalTables(query)
+	if len(tables) > 0 {
+		for _, table := range tables {
+			tableFields, ok := tableFieldsMap[table]
+			if !ok {
+				// 无法证明该物理表包含 __shard_key__ 时，不启用 shard key 时间桶优化。
+				return true
+			}
+			if !tableFields.Field(sql_expr.ShardKey).Existed() {
+				return true
+			}
 		}
-		hasTrustedTableFieldMap = true
-		if !tableFields.Field(sql_expr.ShardKey).Existed() {
-			return true
-		}
-	}
-	if hasTrustedTableFieldMap {
 		return false
 	}
 
-	// 只有字段表已经可信到能证明 timeField 存在时，才用它判断 __shard_key__ 缺失；
-	// 避免字段表为空或不完整时误关 Doris 原有的 shard key 时间分桶优化。
+	// 没有逐表信息时退回合并字段表判断；只有字段表能证明 timeField 存在时，
+	// 才用它判断 __shard_key__ 缺失，避免字段表为空或不完整时误判。
 	if !fieldsMap.Field(timeField).Existed() {
 		return false
 	}

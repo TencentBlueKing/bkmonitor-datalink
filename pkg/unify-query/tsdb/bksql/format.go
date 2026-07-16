@@ -89,6 +89,10 @@ type QueryFactory struct {
 
 type TableFieldsMap = doris_parser.TableFieldsMap
 
+type shardKeyTimeBucketExpr interface {
+	WithShardKeyTimeBucket(enabled bool) sql_expr.SQLExpr
+}
+
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
 		ctx:          ctx,
@@ -161,9 +165,11 @@ func (f *QueryFactory) WithFieldsMap(m metadata.FieldsMap) *QueryFactory {
 }
 
 // WithShardKeyTimeBucket 透传 Doris 时间分桶开关；关闭后分钟级聚合使用 timeField，
-// 用于兼容字段表中没有 __shard_key__ 的 Doris 表。
+// 用于兼容字段结构缺失或没有 __shard_key__ 的 Doris 物理表。
 func (f *QueryFactory) WithShardKeyTimeBucket(enabled bool) *QueryFactory {
-	f.expr.WithShardKeyTimeBucket(enabled)
+	if expr, ok := f.expr.(shardKeyTimeBucketExpr); ok {
+		expr.WithShardKeyTimeBucket(enabled)
+	}
 	return f
 }
 

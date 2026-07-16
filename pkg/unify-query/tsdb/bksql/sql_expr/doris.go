@@ -83,7 +83,7 @@ type DorisSQLExpr struct {
 	forceEq bool
 
 	// disableShardKeyTimeBucket 为 true 时，分钟级时间聚合也使用 timeField。
-	// TSpider 以及字段表中没有 __shard_key__ 的 Doris 表，需要走该兼容路径。
+	// TSpider 以及字段结构不完整或没有 __shard_key__ 的 Doris 表，需要走该兼容路径。
 	disableShardKeyTimeBucket bool
 
 	// disableTimeBucketCast 为 true 时，timeField 时间桶不生成 CAST(... AS INT)。

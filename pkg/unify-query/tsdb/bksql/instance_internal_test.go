@@ -28,6 +28,49 @@ func TestQueryClusterName(t *testing.T) {
 }
 
 func TestShouldDisableShardKeyTimeBucket(t *testing.T) {
+	query := &metadata.Query{
+		Measurement: sql_expr.Doris,
+		DBs:         []string{"db_current", "db_history"},
+	}
+	fieldsMap := metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+	}
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(query, fieldsMap, TableFieldsMap{
+		"`db_current`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+		"`db_history`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+	}, "dtEventTimeStamp"))
+
+	assert.True(t, shouldDisableShardKeyTimeBucket(query, fieldsMap, TableFieldsMap{
+		"`db_current`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+		"`db_history`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+		},
+	}, "dtEventTimeStamp"))
+
+	assert.True(t, shouldDisableShardKeyTimeBucket(query, fieldsMap, TableFieldsMap{
+		"`db_current`.doris": {
+			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
+		},
+	}, "dtEventTimeStamp"))
+
+	assert.False(t, shouldDisableShardKeyTimeBucket(&metadata.Query{Measurement: sql_expr.TSpider}, metadata.FieldsMap{
+		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+	}, nil, "dtEventTimeStamp"))
+}
+
+func TestShouldDisableShardKeyTimeBucketFallbackFieldsMap(t *testing.T) {
 	query := &metadata.Query{Measurement: sql_expr.Doris}
 
 	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
@@ -42,35 +85,4 @@ func TestShouldDisableShardKeyTimeBucket(t *testing.T) {
 	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
 		sql_expr.ShardKey: {FieldType: sql_expr.DorisTypeBigInt},
 	}, nil, "dtEventTimeStamp"))
-
-	assert.False(t, shouldDisableShardKeyTimeBucket(&metadata.Query{Measurement: sql_expr.TSpider}, metadata.FieldsMap{
-		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-	}, nil, "dtEventTimeStamp"))
-
-	assert.False(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
-		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-	}, TableFieldsMap{
-		"`db_current`.doris": {
-			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-		},
-		"`db_history`.doris": {
-			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-		},
-	}, "dtEventTimeStamp"))
-
-	assert.True(t, shouldDisableShardKeyTimeBucket(query, metadata.FieldsMap{
-		"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-		sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-	}, TableFieldsMap{
-		"`db_current`.doris": {
-			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-			sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-		},
-		"`db_history`.doris": {
-			"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
-		},
-	}, "dtEventTimeStamp"))
 }

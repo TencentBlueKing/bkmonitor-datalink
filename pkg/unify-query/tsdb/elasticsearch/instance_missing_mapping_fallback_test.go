@@ -332,6 +332,102 @@ func TestInstanceEsQueryMissingMappingFallbackCoversAllMissingSortFields(t *test
 	assert.Equal(t, 1, retryCalled)
 }
 
+func TestInstanceEsQueryMissingMappingFallbackCoversUnreportedSortFields(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const (
+		alias     = "test_alias_unreported_missing_sort_fields"
+		badIndex  = "bad_index_unreported_missing_sort_fields"
+		goodIndex = "good_index_unreported_missing_sort_fields"
+	)
+	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/"+alias, httpmock.NewStringResponder(http.StatusOK, fmt.Sprintf(`{"%s":{},"%s":{}}`, badIndex, goodIndex)))
+
+	var emptyCheckCalled, retryCalled int
+	aliasSearchCalls := 0
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+alias+"/_search", func(r *http.Request) (*http.Response, error) {
+		aliasSearchCalls++
+		if aliasSearchCalls == 1 {
+			return httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf(`{
+				"took":1,
+				"timed_out":false,
+				"_shards":{
+					"total":2,
+					"successful":1,
+					"skipped":0,
+					"failed":1,
+					"failures":[
+						{"shard":0,"index":"%s","reason":{"type":"query_shard_exception","reason":"No mapping found for [host] in order to sort on"}}
+					]
+				},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+			}`, badIndex)), nil
+		}
+		if aliasSearchCalls == 3 {
+			retryCalled++
+			assertSearchBodySortHasUnmappedTypes(t, r, map[string]string{
+				"host":           "keyword",
+				"container_name": "keyword",
+			})
+			return httpmock.NewStringResponse(http.StatusOK, `{
+				"took":1,
+				"timed_out":false,
+				"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},
+				"hits":{"total":{"value":0,"relation":"eq"},"hits":[]},
+				"aggregations":{"_value":{"value":1}}
+			}`), nil
+		}
+		emptyCheckCalled++
+		assertSearchBodyFiltersIndexes(t, r, badIndex)
+		return httpmock.NewStringResponse(http.StatusOK, `{
+			"took":1,
+			"timed_out":false,
+			"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},
+			"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}
+		}`), nil
+	})
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	query := &metadata.Query{
+		DB:          alias,
+		Field:       "host",
+		TimeField:   metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "millisecond"},
+		StorageType: metadata.ElasticsearchStorageType,
+		Orders: metadata.Orders{
+			{Name: "host", Ast: false},
+			{Name: "container_name", Ast: false},
+		},
+		Aggregates: metadata.Aggregates{{Name: Count, Field: "dtEventTimeStamp"}},
+	}
+	fact := NewFormatFactory(ctx).
+		WithQuery(query.Field, query.TimeField, time.UnixMilli(1784013830711), time.UnixMilli(1784014730711), function.Millisecond, 0).
+		WithFieldMap(metadata.FieldsMap{
+			"host":             {FieldType: "keyword"},
+			"container_name":   {FieldType: "keyword"},
+			"dtEventTimeStamp": {FieldType: TimeFieldTypeTime},
+		}).
+		WithOrders(query.Orders)
+
+	res, err := inst.esQuery(ctx, &queryOption{
+		indexes: []string{alias},
+		start:   time.UnixMilli(1784013830711),
+		end:     time.UnixMilli(1784014730711),
+		query:   query,
+		conn:    inst.connect,
+	}, fact)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, emptyCheckCalled)
+	assert.Equal(t, 1, retryCalled)
+}
+
 func TestInstanceEsQueryMissingMappingFallbackAllowsAllEmptyMissingMappingIndexes(t *testing.T) {
 	mock.Init()
 	metadata.InitMetadata()

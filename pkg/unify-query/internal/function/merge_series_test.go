@@ -877,6 +877,38 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(3, time.Unix(0, 0)),
 			},
 		},
+		"单条 windowed plain avg bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Avg,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(0, 0)),
+			},
+		},
+		"单条 windowed plain mean bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Mean,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(0, 0)),
+			},
+		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
 			fn: function.Avg,
 			routes: []routeSeries{

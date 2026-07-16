@@ -148,14 +148,12 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, nil, false
 	}
 
-	forceUnmappedTypes := make(map[string]string, len(failedFields))
+	forceUnmappedTypes := buildForceUnmappedTypesForSortFields(fact)
 	for _, field := range failedFields {
-		unmappedType := fact.GetFieldType(field)
-		if unmappedType == "" {
+		if forceUnmappedTypes[field] == "" {
 			span.Set("fallback_error", fmt.Sprintf("empty_unmapped_type: field=%s", field))
 			return nil, nil, false
 		}
-		forceUnmappedTypes[field] = unmappedType
 	}
 
 	// retry 保留原始 target，以延续 alias/routing 语义；通过 unmapped_type 让旧空索引
@@ -191,6 +189,24 @@ func cloneFormatFactoryWithoutAggInfo(fact *FormatFactory) *FormatFactory {
 	cloned := *fact
 	cloned.aggInfoList = make(aggInfoList, 0)
 	return &cloned
+}
+
+func buildForceUnmappedTypesForSortFields(fact *FormatFactory) map[string]string {
+	forceUnmappedTypes := make(map[string]string)
+	if fact == nil {
+		return forceUnmappedTypes
+	}
+	for _, order := range fact.Orders() {
+		unmappedType := order.UnmappedType
+		if unmappedType == "" {
+			unmappedType = fact.GetFieldType(order.Name)
+		}
+		if unmappedType == "" {
+			continue
+		}
+		forceUnmappedTypes[order.Name] = unmappedType
+	}
+	return forceUnmappedTypes
 }
 
 func resolvePhysicalIndexes(ctx context.Context, span *trace.Span, client *elastic.Client, qo *queryOption) ([]string, error) {

@@ -34,6 +34,11 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			return nil
 		}
 		name = strings.ToLower(name)
+		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
+		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
+			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
+		}
+
 		if len(series) == 1 {
 			if tr, ok := series[0].(SeriesTimeRange); ok {
 				start, end := tr.TimeRange()
@@ -42,11 +47,6 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 				}
 			}
 			return series[0]
-		}
-
-		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
-		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
-			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
 		}
 
 		return mergeSeriesSetWithFunc(name, step, series)

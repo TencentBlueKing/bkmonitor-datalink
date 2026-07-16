@@ -191,6 +191,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	var (
 		window         time.Duration
 		timeZoneOffset int64
+		// valueProjected 标记 SELECT 中是否真的生成了 `_value_`，避免 raw 查询跳过 NULL 投影后仍按 `_value` 排序。
 		valueProjected bool
 	)
 

@@ -38,7 +38,7 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			if tr, ok := series[0].(SeriesTimeRange); ok {
 				start, end := tr.TimeRange()
 				if start < end {
-					return newRouteRangeFilteredSeries(name, step, series[0], start, end, false)
+					return newRouteRangeFilteredSeries(name, step, series[0], start, end)
 				}
 			}
 			return series[0]
@@ -191,9 +191,14 @@ func routeRangeFilterReason(name string, stepMs, t, start, end int64) (bool, str
 	return true, ""
 }
 
-func routeTimestampFilterReason(name string, stepMs, t, start, end int64, useBackwardRange bool) (bool, string) {
-	if !useBackwardRange && isBackwardRangeBucketFunc(name) {
-		stepMs = 0
+// routeIteratorFilterReason 用在 merge 前的 per-route wrapper。
+// backward range bucket 需要保留与 route 有交集的样本，并兼容单路 routeStart 首个 evaluation bucket。
+func routeIteratorFilterReason(name string, stepMs, t, start, end int64) (bool, string) {
+	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
+		if t == start {
+			return true, ""
+		}
+		return rangeOverlapFilterReason(t-stepMs, t, start, end)
 	}
 	return routeRangeFilterReason(name, stepMs, t, start, end)
 }
@@ -263,15 +268,14 @@ func newSampleSeries(template storage.Series, samples []prompb.Sample) storage.S
 // newRouteRangeFilteredSeries 按 route 生效范围裁剪样本，同时保持底层 iterator 的样本类型，
 // 避免 native histogram 被转换或丢弃。
 func newRouteRangeFilteredSeries(
-	name string, step time.Duration, series storage.Series, start, end int64, useBackwardRange bool,
+	name string, step time.Duration, series storage.Series, start, end int64,
 ) storage.Series {
 	return &routeRangeFilteredSeries{
-		Series:           series,
-		name:             name,
-		stepMs:           step.Milliseconds(),
-		start:            start,
-		end:              end,
-		useBackwardRange: useBackwardRange,
+		Series: series,
+		name:   name,
+		stepMs: step.Milliseconds(),
+		start:  start,
+		end:    end,
 	}
 }
 
@@ -354,26 +358,24 @@ func (s *routeRangeFilterSeriesSet) At() storage.Series {
 	if start >= end {
 		return series
 	}
-	return newRouteRangeFilteredSeries(s.name, s.step, series, start, end, false)
+	return newRouteRangeFilteredSeries(s.name, s.step, series, start, end)
 }
 
 type routeRangeFilteredSeries struct {
 	storage.Series
-	name             string
-	stepMs           int64
-	start            int64
-	end              int64
-	useBackwardRange bool
+	name   string
+	stepMs int64
+	start  int64
+	end    int64
 }
 
 func (s *routeRangeFilteredSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
 	return &routeRangeFilterIterator{
-		it:               s.Series.Iterator(iterator),
-		name:             s.name,
-		stepMs:           s.stepMs,
-		start:            s.start,
-		end:              s.end,
-		useBackwardRange: s.useBackwardRange,
+		it:     s.Series.Iterator(iterator),
+		name:   s.name,
+		stepMs: s.stepMs,
+		start:  s.start,
+		end:    s.end,
 	}
 }
 
@@ -565,12 +567,13 @@ func (it *seriesIterator) Err() error {
 }
 
 type routeRangeFilterIterator struct {
-	it               chunkenc.Iterator
-	name             string
-	stepMs           int64
-	start            int64
-	end              int64
-	useBackwardRange bool
+	it          chunkenc.Iterator
+	name        string
+	stepMs      int64
+	start       int64
+	end         int64
+	reasonCount map[string]float64
+	recorded    bool
 }
 
 func (it *routeRangeFilterIterator) AtHistogram() (int64, *histogram.Histogram) {
@@ -598,22 +601,37 @@ func (it *routeRangeFilterIterator) Seek(t int64) chunkenc.ValueType {
 }
 
 func (it *routeRangeFilterIterator) Err() error {
+	it.recordFilteredSamples()
 	return it.it.Err()
 }
 
 func (it *routeRangeFilterIterator) advance(valueType chunkenc.ValueType) chunkenc.ValueType {
 	for valueType != chunkenc.ValNone {
 		t := it.sampleTimestamp(valueType)
-		if ok, reason := routeTimestampFilterReason(
-			it.name, it.stepMs, t, it.start, it.end, it.useBackwardRange,
-		); ok {
+		if ok, reason := routeIteratorFilterReason(it.name, it.stepMs, t, it.start, it.end); ok {
 			return valueType
 		} else {
-			metric.RouteSeriesFilterSamplesAdd(context.Background(), it.name, reason, 1)
+			it.countFilterReason(reason)
 		}
 		valueType = it.it.Next()
 	}
+	it.recordFilteredSamples()
 	return chunkenc.ValNone
+}
+
+func (it *routeRangeFilterIterator) countFilterReason(reason string) {
+	if it.reasonCount == nil {
+		it.reasonCount = make(map[string]float64)
+	}
+	it.reasonCount[reason]++
+}
+
+func (it *routeRangeFilterIterator) recordFilteredSamples() {
+	if it.recorded {
+		return
+	}
+	it.recorded = true
+	recordRouteSeriesFilterSamples(it.name, it.reasonCount)
 }
 
 func (it *routeRangeFilterIterator) sampleTimestamp(valueType chunkenc.ValueType) int64 {

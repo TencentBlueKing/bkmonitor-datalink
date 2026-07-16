@@ -708,10 +708,11 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		fn       string
-		step     time.Duration
-		routes   []routeSeries
-		expected []prompb.Sample
+		fn                   string
+		step                 time.Duration
+		routes               []routeSeries
+		wrapRouteRangeFilter bool
+		expected             []prompb.Sample
 	}{
 		"sum 不应重复累计同 storage 回切窗口查回的完整 SelectHints 样本": {
 			// 场景：storage 路由发生 A -> B -> A 回切。
@@ -842,8 +843,9 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			},
 		},
 		"sum_over_time 在 route 切换点按向后 range window 过滤": {
-			fn:   function.SumOT,
-			step: 5 * time.Minute,
+			fn:                   function.SumOT,
+			step:                 5 * time.Minute,
+			wrapRouteRangeFilter: true,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
@@ -865,8 +867,9 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			},
 		},
 		"count_over_time 在 route 切换点按向后 range window 过滤": {
-			fn:   function.CountOT,
-			step: 5 * time.Minute,
+			fn:                   function.CountOT,
+			step:                 5 * time.Minute,
+			wrapRouteRangeFilter: true,
 			routes: []routeSeries{
 				{
 					samples: []prompb.Sample{
@@ -1120,10 +1123,13 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				} else if !route.raw {
 					routeSet = function.NewTimeRangeSeriesSet(routeSet, route.start, route.end)
 				}
+				if tc.wrapRouteRangeFilter {
+					routeSet = function.NewRouteRangeFilterSeriesSet(routeSet, tc.fn, tc.step)
+				}
 				sets = append(sets, routeSet)
 			}
 
-			if len(sets) == 1 {
+			if len(sets) == 1 && !tc.wrapRouteRangeFilter {
 				sets[0] = function.NewRouteRangeFilterSeriesSet(sets[0], tc.fn, tc.step)
 			}
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step))
@@ -1243,13 +1249,14 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		fn              string
-		routes          []routeSeries
-		withRange       bool
-		step            time.Duration
-		withoutStep     bool
-		expected        float64
-		expectedSamples []prompb.Sample
+		fn                   string
+		routes               []routeSeries
+		withRange            bool
+		wrapRouteRangeFilter bool
+		step                 time.Duration
+		withoutStep          bool
+		expected             float64
+		expectedSamples      []prompb.Sample
 	}{
 		"avg 按路由覆盖时长加权": {
 			// 时间轴：
@@ -1345,7 +1352,8 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 					end:   bucketEnd,
 				},
 			},
-			withRange: true,
+			withRange:            true,
+			wrapRouteRangeFilter: true,
 			expectedSamples: []prompb.Sample{
 				sample(21.2, bucketEnd),
 			},
@@ -1537,6 +1545,10 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			step := tc.step
+			if step == 0 && !tc.withoutStep {
+				step = bucketStep
+			}
 			sets := make([]storage.SeriesSet, 0, len(tc.routes))
 			for _, route := range tc.routes {
 				samples := route.samples
@@ -1562,13 +1574,12 @@ func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {
 				if route.zeroRange {
 					routeSet = function.NewZeroTimeRangeSeriesSet(routeSet)
 				}
+				if tc.wrapRouteRangeFilter {
+					routeSet = function.NewRouteRangeFilterSeriesSet(routeSet, tc.fn, step)
+				}
 				sets = append(sets, routeSet)
 			}
 
-			step := tc.step
-			if step == 0 && !tc.withoutStep {
-				step = bucketStep
-			}
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, step))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)

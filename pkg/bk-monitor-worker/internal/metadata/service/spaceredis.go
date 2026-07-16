@@ -925,7 +925,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	tableIdList []string,
 	clusterMap map[uint]storage.ClusterInfo,
 ) (map[string]map[string]any, error) {
-	logger.Debugf("get table info from access vm records, table_id_list->[%s]", tableIdList)
+logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
 	if len(tableIdList) == 0 {
 		return map[string]map[string]any{}, nil
 	}

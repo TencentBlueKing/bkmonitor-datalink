@@ -542,6 +542,148 @@ func TestMergeSeriesSetPreservesSingleHistogramSeries(t *testing.T) {
 	assert.NoError(t, set.Err())
 }
 
+func TestMergeSeriesSetFiltersSingleRouteHistogramSeries(t *testing.T) {
+	h := &histogram.Histogram{
+		Count:         1,
+		Sum:           3.14,
+		ZeroThreshold: 1e-128,
+		Schema:        0,
+		PositiveSpans: []histogram.Span{
+			{Offset: 0, Length: 1},
+		},
+		PositiveBuckets: []int64{1},
+	}
+	series := storage.NewListSeries(
+		labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
+		[]tsdbutil.Sample{
+			histSample{t: time.Unix(90, 0).UnixMilli(), h: h},
+			histSample{t: time.Unix(120, 0).UnixMilli(), h: h},
+		},
+	)
+	routeSet := function.NewTimeRangeSeriesSet(
+		newSingleSeriesSet(series),
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{function.NewRouteRangeFilterSeriesSet(routeSet, function.Sum, 0)},
+		function.NewMergeSeriesSetWithFuncAndSort(function.Sum),
+	)
+	assert.True(t, set.Next())
+	mergedSeries := set.At()
+
+	it := mergedSeries.Iterator(nil)
+	assert.Equal(t, chunkenc.ValHistogram, it.Next())
+	ts, got := it.AtHistogram()
+	assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+	assert.Equal(t, h, got)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+	assert.False(t, set.Next())
+	assert.NoError(t, set.Err())
+}
+
+func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
+	testCases := map[string]struct {
+		fn           string
+		sampleTime   time.Time
+		routeStart   time.Time
+		routeEnd     time.Time
+		expectedTime time.Time
+	}{
+		"avg bucket overlaps route start": {
+			fn:           function.Avg,
+			sampleTime:   time.Unix(0, 0),
+			routeStart:   time.Unix(120, 0),
+			routeEnd:     time.Unix(300, 0),
+			expectedTime: time.Unix(0, 0),
+		},
+		"mean bucket overlaps route start": {
+			fn:           function.Mean,
+			sampleTime:   time.Unix(0, 0),
+			routeStart:   time.Unix(120, 0),
+			routeEnd:     time.Unix(300, 0),
+			expectedTime: time.Unix(0, 0),
+		},
+		"avg_over_time histogram is preserved": {
+			fn:           function.AvgOT,
+			sampleTime:   time.Unix(120, 0),
+			routeStart:   time.Unix(100, 0),
+			routeEnd:     time.Unix(200, 0),
+			expectedTime: time.Unix(120, 0),
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			h := &histogram.Histogram{
+				Count:         1,
+				Sum:           3.14,
+				ZeroThreshold: 1e-128,
+				Schema:        0,
+				PositiveSpans: []histogram.Span{
+					{Offset: 0, Length: 1},
+				},
+				PositiveBuckets: []int64{1},
+			}
+			series := storage.NewListSeries(
+				labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
+				[]tsdbutil.Sample{histSample{t: tc.sampleTime.UnixMilli(), h: h}},
+			)
+			routeSet := function.NewTimeRangeSeriesSet(
+				newSingleSeriesSet(series),
+				tc.routeStart,
+				tc.routeEnd,
+			)
+			set := storage.NewMergeSeriesSet(
+				[]storage.SeriesSet{function.NewRouteRangeFilterSeriesSet(routeSet, tc.fn, 5*time.Minute)},
+				function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, 5*time.Minute),
+			)
+			assert.True(t, set.Next())
+			mergedSeries := set.At()
+
+			it := mergedSeries.Iterator(nil)
+			assert.Equal(t, chunkenc.ValHistogram, it.Next())
+			ts, got := it.AtHistogram()
+			assert.Equal(t, tc.expectedTime.UnixMilli(), ts)
+			assert.Equal(t, h, got)
+			assert.Equal(t, chunkenc.ValNone, it.Next())
+			assert.NoError(t, it.Err())
+			assert.False(t, set.Next())
+			assert.NoError(t, set.Err())
+		})
+	}
+}
+
+func TestMergeSeriesSetDoesNotDrainReusableSingleRouteAvgIterator(t *testing.T) {
+	series := newReusableFloatSeries(
+		labels.FromStrings("__name__", "up", "job", "influxdb"),
+		[]prompb.Sample{
+			{Timestamp: time.Unix(120, 0).UnixMilli(), Value: 10},
+		},
+	)
+	routeSet := function.NewTimeRangeSeriesSet(
+		newSingleSeriesSet(series),
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{function.NewRouteRangeFilterSeriesSet(routeSet, function.Avg, time.Minute)},
+		function.NewMergeSeriesSetWithFuncAndSortByStep(function.Avg, time.Minute),
+	)
+	assert.True(t, set.Next())
+	mergedSeries := set.At()
+
+	it := mergedSeries.Iterator(nil)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, v := it.At()
+	assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+	assert.Equal(t, 10.0, v)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+	assert.False(t, set.Next())
+	assert.NoError(t, set.Err())
+}
+
 func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	var (
 		firstS1Start  = time.Unix(100, 0)
@@ -655,7 +797,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(320, 0)),
 			},
 		},
-		"单条 route 保留完整 SelectHints 中的 lookback 样本": {
+		"单条 route 也不暴露路由生效前的 lookback 样本": {
 			fn: function.Sum,
 			routes: []routeSeries{
 				{
@@ -668,7 +810,6 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(90, 0)),
 				sample(7, time.Unix(120, 0)),
 			},
 		},
@@ -838,6 +979,38 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(3, time.Unix(0, 0)),
 			},
 		},
+		"单条 windowed plain avg bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Avg,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(0, 0)),
+			},
+		},
+		"单条 windowed plain mean bucket 跨 route 切换时按 bucket 与 route 相交保留": {
+			fn:   function.Mean,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(0, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(0, 0)),
+			},
+		},
 		"plain avg fallback 也会先过滤 route 生效范围": {
 			fn: function.Avg,
 			routes: []routeSeries{
@@ -934,6 +1107,9 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sets = append(sets, routeSet)
 			}
 
+			if len(sets) == 1 {
+				sets[0] = function.NewRouteRangeFilterSeriesSet(sets[0], tc.fn, tc.step)
+			}
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step))
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
@@ -1352,6 +1528,77 @@ func (s *singleSeriesSet) Err() error {
 }
 
 func (s *singleSeriesSet) Warnings() storage.Warnings {
+	return nil
+}
+
+type reusableFloatSeries struct {
+	lset labels.Labels
+	it   *reusableFloatIterator
+}
+
+func newReusableFloatSeries(lset labels.Labels, samples []prompb.Sample) storage.Series {
+	return &reusableFloatSeries{
+		lset: lset,
+		it: &reusableFloatIterator{
+			samples: samples,
+			idx:     -1,
+		},
+	}
+}
+
+func (s *reusableFloatSeries) Labels() labels.Labels {
+	return s.lset
+}
+
+func (s *reusableFloatSeries) Iterator(chunkenc.Iterator) chunkenc.Iterator {
+	return s.it
+}
+
+type reusableFloatIterator struct {
+	samples []prompb.Sample
+	idx     int
+}
+
+func (it *reusableFloatIterator) At() (int64, float64) {
+	s := it.samples[it.idx]
+	return s.Timestamp, s.Value
+}
+
+func (it *reusableFloatIterator) AtHistogram() (int64, *histogram.Histogram) {
+	return 0, nil
+}
+
+func (it *reusableFloatIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
+	return 0, nil
+}
+
+func (it *reusableFloatIterator) AtT() int64 {
+	if it.idx < 0 || it.idx >= len(it.samples) {
+		return 0
+	}
+	return it.samples[it.idx].Timestamp
+}
+
+func (it *reusableFloatIterator) Next() chunkenc.ValueType {
+	it.idx++
+	if it.idx >= len(it.samples) {
+		return chunkenc.ValNone
+	}
+	return chunkenc.ValFloat
+}
+
+func (it *reusableFloatIterator) Seek(t int64) chunkenc.ValueType {
+	for it.idx+1 < len(it.samples) {
+		if it.samples[it.idx+1].Timestamp >= t {
+			it.idx++
+			return chunkenc.ValFloat
+		}
+		it.idx++
+	}
+	return chunkenc.ValNone
+}
+
+func (it *reusableFloatIterator) Err() error {
 	return nil
 }
 

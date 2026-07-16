@@ -542,6 +542,46 @@ func TestMergeSeriesSetPreservesSingleHistogramSeries(t *testing.T) {
 	assert.NoError(t, set.Err())
 }
 
+func TestMergeSeriesSetFiltersSingleRouteHistogramSeries(t *testing.T) {
+	h := &histogram.Histogram{
+		Count:         1,
+		Sum:           3.14,
+		ZeroThreshold: 1e-128,
+		Schema:        0,
+		PositiveSpans: []histogram.Span{
+			{Offset: 0, Length: 1},
+		},
+		PositiveBuckets: []int64{1},
+	}
+	series := storage.NewListSeries(
+		labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
+		[]tsdbutil.Sample{
+			histSample{t: time.Unix(90, 0).UnixMilli(), h: h},
+			histSample{t: time.Unix(120, 0).UnixMilli(), h: h},
+		},
+	)
+	routeSet := function.NewTimeRangeSeriesSet(
+		newSingleSeriesSet(series),
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	assert.True(t, routeSet.Next())
+	routeSeries := routeSet.At()
+	_, ok := routeSeries.(function.SeriesTimeRange)
+	assert.True(t, ok)
+	mergedSeries := function.NewMergeSeriesSetWithFuncAndSort(function.Sum)(routeSeries)
+
+	it := mergedSeries.Iterator(nil)
+	assert.Equal(t, chunkenc.ValHistogram, it.Next())
+	ts, got := it.AtHistogram()
+	assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+	assert.Equal(t, h, got)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+	assert.False(t, routeSet.Next())
+	assert.NoError(t, routeSet.Err())
+}
+
 func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	var (
 		firstS1Start  = time.Unix(100, 0)
@@ -655,7 +695,7 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(11, time.Unix(320, 0)),
 			},
 		},
-		"单条 route 保留完整 SelectHints 中的 lookback 样本": {
+		"单条 route 也不暴露路由生效前的 lookback 样本": {
 			fn: function.Sum,
 			routes: []routeSeries{
 				{
@@ -668,7 +708,6 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				},
 			},
 			expected: []prompb.Sample{
-				sample(5, time.Unix(90, 0)),
 				sample(7, time.Unix(120, 0)),
 			},
 		},
@@ -934,7 +973,16 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sets = append(sets, routeSet)
 			}
 
-			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step))
+			mergeFunc := function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step)
+			var set storage.SeriesSet
+			if len(sets) == 1 {
+				assert.True(t, sets[0].Next())
+				set = newSingleSeriesSet(mergeFunc(sets[0].At()))
+				assert.False(t, sets[0].Next())
+				assert.NoError(t, sets[0].Err())
+			} else {
+				set = storage.NewMergeSeriesSet(sets, mergeFunc)
+			}
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
 			assert.Equal(t, mock.TimeSeriesList{

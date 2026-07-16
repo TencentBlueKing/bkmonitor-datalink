@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -223,10 +224,13 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			successedPaths.Add(1)
 			switch strategy.wrapKind {
 			case seriesSetWrapValidRouteRange:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
 				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
 			case seriesSetWrapZeroRouteRange:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
 			default:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapNone, mergeFunc)
 				setCh <- currentSet
 			}
 		})

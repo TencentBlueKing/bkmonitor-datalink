@@ -38,7 +38,7 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			if tr, ok := series[0].(SeriesTimeRange); ok {
 				start, end := tr.TimeRange()
 				if start < end {
-					return newRouteRangeFilteredSeries(name, step, series[0], start, end)
+					return newRouteRangeFilteredSeries(name, step, series[0], start, end, true)
 				}
 			}
 			return series[0]
@@ -192,10 +192,18 @@ func routeRangeFilterReason(name string, stepMs, t, start, end int64) (bool, str
 }
 
 // routeIteratorFilterReason 用在 merge 前的 per-route wrapper。
-// backward range bucket 需要保留与 route 有交集的样本，并兼容单路 routeStart 首个 evaluation bucket。
+// backward range bucket 默认只保留与 route 有交集的样本。
 func routeIteratorFilterReason(name string, stepMs, t, start, end int64) (bool, string) {
+	return routeIteratorFilterReasonWithOptions(name, stepMs, t, start, end, false)
+}
+
+// routeStart 边界 bucket 只在整次查询实际只有单路 route 时保留；多路查询中某个 label 只出现在后一路时，
+// NewMergeSeriesSet 可能跳过 merge-time recheck，不能让 [t-step,t) 与当前 route 无交集的 bucket 泄漏。
+func routeIteratorFilterReasonWithOptions(
+	name string, stepMs, t, start, end int64, allowRouteStartBoundaryBucket bool,
+) (bool, string) {
 	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
-		if t == start {
+		if allowRouteStartBoundaryBucket && t == start {
 			return true, ""
 		}
 		return rangeOverlapFilterReason(t-stepMs, t, start, end)
@@ -268,14 +276,15 @@ func newSampleSeries(template storage.Series, samples []prompb.Sample) storage.S
 // newRouteRangeFilteredSeries 按 route 生效范围裁剪样本，同时保持底层 iterator 的样本类型，
 // 避免 native histogram 被转换或丢弃。
 func newRouteRangeFilteredSeries(
-	name string, step time.Duration, series storage.Series, start, end int64,
+	name string, step time.Duration, series storage.Series, start, end int64, allowRouteStartBoundaryBucket bool,
 ) storage.Series {
 	return &routeRangeFilteredSeries{
-		Series: series,
-		name:   name,
-		stepMs: step.Milliseconds(),
-		start:  start,
-		end:    end,
+		Series:                        series,
+		name:                          name,
+		stepMs:                        step.Milliseconds(),
+		start:                         start,
+		end:                           end,
+		allowRouteStartBoundaryBucket: allowRouteStartBoundaryBucket,
 	}
 }
 
@@ -306,16 +315,32 @@ func NewZeroTimeRangeSeriesSet(set storage.SeriesSet) storage.SeriesSet {
 	}
 }
 
-func NewRouteRangeFilterSeriesSet(set storage.SeriesSet, name string, step time.Duration) storage.SeriesSet {
+type routeRangeFilterOption func(*routeRangeFilterSeriesSet)
+
+// WithRouteStartBoundaryBucket 保留 backward range 函数在 routeStart 的首个 evaluation bucket。
+// 这个例外只适用于整次查询只有单路 route 的场景；多路 route 查询应让后续 merge 按 range overlap 决定边界归属。
+func WithRouteStartBoundaryBucket() routeRangeFilterOption {
+	return func(s *routeRangeFilterSeriesSet) {
+		s.allowRouteStartBoundaryBucket = true
+	}
+}
+
+func NewRouteRangeFilterSeriesSet(
+	set storage.SeriesSet, name string, step time.Duration, opts ...routeRangeFilterOption,
+) storage.SeriesSet {
 	if set == nil {
 		return nil
 	}
 
-	return &routeRangeFilterSeriesSet{
+	wrapper := &routeRangeFilterSeriesSet{
 		SeriesSet: set,
 		name:      strings.ToLower(name),
 		step:      step,
 	}
+	for _, opt := range opts {
+		opt(wrapper)
+	}
+	return wrapper
 }
 
 type timeRangeSeriesSet struct {
@@ -346,6 +371,9 @@ type routeRangeFilterSeriesSet struct {
 	storage.SeriesSet
 	name string
 	step time.Duration
+	// allowRouteStartBoundaryBucket 仅用于整次查询只有单路 route 的 backward range 函数。
+	// 多路 route 查询中，某个 label 只出现在后一路时可能绕过 merge-time recheck，不能开启该例外。
+	allowRouteStartBoundaryBucket bool
 }
 
 func (s *routeRangeFilterSeriesSet) At() storage.Series {
@@ -358,7 +386,9 @@ func (s *routeRangeFilterSeriesSet) At() storage.Series {
 	if start >= end {
 		return series
 	}
-	return newRouteRangeFilteredSeries(s.name, s.step, series, start, end)
+	return newRouteRangeFilteredSeries(
+		s.name, s.step, series, start, end, s.allowRouteStartBoundaryBucket,
+	)
 }
 
 type routeRangeFilteredSeries struct {
@@ -367,15 +397,19 @@ type routeRangeFilteredSeries struct {
 	stepMs int64
 	start  int64
 	end    int64
+	// allowRouteStartBoundaryBucket 允许 t == routeStart 的首个 backward evaluation bucket 通过。
+	// 该 bucket 的 [t-step,t) 与当前 route 无交集，只能在确认不存在其他 route 参与时使用。
+	allowRouteStartBoundaryBucket bool
 }
 
 func (s *routeRangeFilteredSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
 	return &routeRangeFilterIterator{
-		it:     s.Series.Iterator(iterator),
-		name:   s.name,
-		stepMs: s.stepMs,
-		start:  s.start,
-		end:    s.end,
+		it:                            s.Series.Iterator(iterator),
+		name:                          s.name,
+		stepMs:                        s.stepMs,
+		start:                         s.start,
+		end:                           s.end,
+		allowRouteStartBoundaryBucket: s.allowRouteStartBoundaryBucket,
 	}
 }
 
@@ -567,13 +601,16 @@ func (it *seriesIterator) Err() error {
 }
 
 type routeRangeFilterIterator struct {
-	it          chunkenc.Iterator
-	name        string
-	stepMs      int64
-	start       int64
-	end         int64
-	reasonCount map[string]float64
-	recorded    bool
+	it     chunkenc.Iterator
+	name   string
+	stepMs int64
+	start  int64
+	end    int64
+	// allowRouteStartBoundaryBucket 只服务单 route 查询的首 bucket 兼容逻辑；
+	// 多 route later-only label 需要保持 false，避免 routeStart lookback bucket 泄漏。
+	allowRouteStartBoundaryBucket bool
+	reasonCount                   map[string]float64
+	recorded                      bool
 }
 
 func (it *routeRangeFilterIterator) AtHistogram() (int64, *histogram.Histogram) {
@@ -608,7 +645,9 @@ func (it *routeRangeFilterIterator) Err() error {
 func (it *routeRangeFilterIterator) advance(valueType chunkenc.ValueType) chunkenc.ValueType {
 	for valueType != chunkenc.ValNone {
 		t := it.sampleTimestamp(valueType)
-		if ok, reason := routeIteratorFilterReason(it.name, it.stepMs, t, it.start, it.end); ok {
+		if ok, reason := routeIteratorFilterReasonWithOptions(
+			it.name, it.stepMs, t, it.start, it.end, it.allowRouteStartBoundaryBucket,
+		); ok {
 			return valueType
 		} else {
 			it.countFilterReason(reason)

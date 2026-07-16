@@ -225,7 +225,15 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			case seriesSetWrapValidRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
 				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
-				setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration)
+				if len(queryList) == 1 {
+					// 单路 route 需要保留 routeStart 的首个 backward range evaluation bucket；
+					// 多路 route 的 later-only label 可能绕过 merge-time recheck，不能开启这个例外。
+					setCh <- function.NewRouteRangeFilterSeriesSet(
+						timeRangeSet, mergeFunc, bucketDuration, function.WithRouteStartBoundaryBucket(),
+					)
+				} else {
+					setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration)
+				}
 			case seriesSetWrapZeroRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)

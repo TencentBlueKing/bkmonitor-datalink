@@ -1130,7 +1130,9 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			}
 
 			if len(sets) == 1 && !tc.wrapRouteRangeFilter {
-				sets[0] = function.NewRouteRangeFilterSeriesSet(sets[0], tc.fn, tc.step)
+				sets[0] = function.NewRouteRangeFilterSeriesSet(
+					sets[0], tc.fn, tc.step, function.WithRouteStartBoundaryBucket(),
+				)
 			}
 			set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(tc.fn, tc.step))
 			ts, err := mock.SeriesSetToTimeSeries(set)
@@ -1216,6 +1218,75 @@ func TestMergeSeriesSetFiltersSingleSourceLabelInMultiRoute(t *testing.T) {
 			},
 			Samples: []prompb.Sample{
 				sample(11, time.Unix(320, 0)),
+			},
+		},
+	}, ts)
+}
+
+func TestMergeSeriesSetFiltersLaterOnlyOverTimeLabelAtRouteStart(t *testing.T) {
+	sample := func(value float64, timestamp time.Time) prompb.Sample {
+		return prompb.Sample{
+			Value:     value,
+			Timestamp: timestamp.UnixMilli(),
+		}
+	}
+
+	firstSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "up"},
+					{Name: "job", Value: "first-route-only"},
+				},
+				Samples: []prompb.Sample{
+					sample(2, time.Unix(120, 0)),
+				},
+			},
+		},
+	})
+	secondSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "up"},
+					{Name: "job", Value: "second-route-only"},
+				},
+				Samples: []prompb.Sample{
+					sample(3, time.Unix(120, 0)),
+				},
+			},
+		},
+	})
+	sets := []storage.SeriesSet{
+		function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(firstSet, time.Unix(0, 0), time.Unix(120, 0)),
+			function.SumOT,
+			5*time.Minute,
+		),
+		function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(secondSet, time.Unix(120, 0), time.Unix(300, 0)),
+			function.SumOT,
+			5*time.Minute,
+		),
+	}
+	set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(function.SumOT, 5*time.Minute))
+
+	ts, err := mock.SeriesSetToTimeSeries(set)
+	assert.Nil(t, err)
+	assert.Equal(t, mock.TimeSeriesList{
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "up"},
+				{Name: "job", Value: "first-route-only"},
+			},
+			Samples: []prompb.Sample{
+				sample(2, time.Unix(120, 0)),
+			},
+		},
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "up"},
+				{Name: "job", Value: "second-route-only"},
 			},
 		},
 	}, ts)

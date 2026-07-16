@@ -34,19 +34,22 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			return nil
 		}
 		name = strings.ToLower(name)
-		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
-		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
-			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
-		}
-
 		if len(series) == 1 {
 			if tr, ok := series[0].(SeriesTimeRange); ok {
 				start, end := tr.TimeRange()
 				if start < end {
+					if IsAvgFunc(name) && step > 0 && !seriesHasHistogram(series[0]) {
+						return mergeAvgSeriesSetWithTimeWeight(name, series, step)
+					}
 					return newRouteRangeFilteredSeries(name, step, series[0], start, end)
 				}
 			}
 			return series[0]
+		}
+
+		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
+		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
+			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
 		}
 
 		return mergeSeriesSetWithFunc(name, step, series)
@@ -324,6 +327,19 @@ func (s *timeRangeSeries) TimeRange() (int64, int64) {
 func hasAnyTimeRange(series ...storage.Series) bool {
 	for _, s := range series {
 		if _, ok := s.(SeriesTimeRange); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func seriesHasHistogram(series storage.Series) bool {
+	if series == nil {
+		return false
+	}
+	it := series.Iterator(nil)
+	for valueType := it.Next(); valueType != chunkenc.ValNone; valueType = it.Next() {
+		if valueType == chunkenc.ValHistogram || valueType == chunkenc.ValFloatHistogram {
 			return true
 		}
 	}

@@ -582,6 +582,51 @@ func TestMergeSeriesSetFiltersSingleRouteHistogramSeries(t *testing.T) {
 	assert.NoError(t, routeSet.Err())
 }
 
+func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
+	testCases := map[string]string{
+		"avg":           function.Avg,
+		"mean":          function.Mean,
+		"avg_over_time": function.AvgOT,
+	}
+	for name, fn := range testCases {
+		t.Run(name, func(t *testing.T) {
+			h := &histogram.Histogram{
+				Count:         1,
+				Sum:           3.14,
+				ZeroThreshold: 1e-128,
+				Schema:        0,
+				PositiveSpans: []histogram.Span{
+					{Offset: 0, Length: 1},
+				},
+				PositiveBuckets: []int64{1},
+			}
+			series := storage.NewListSeries(
+				labels.FromStrings("__name__", "hist_metric", "job", "prometheus"),
+				[]tsdbutil.Sample{histSample{t: time.Unix(120, 0).UnixMilli(), h: h}},
+			)
+			routeSet := function.NewTimeRangeSeriesSet(
+				newSingleSeriesSet(series),
+				time.Unix(100, 0),
+				time.Unix(200, 0),
+			)
+			assert.True(t, routeSet.Next())
+			routeSeries := routeSet.At()
+
+			mergedSeries := function.NewMergeSeriesSetWithFuncAndSortByStep(fn, time.Minute)(routeSeries)
+
+			it := mergedSeries.Iterator(nil)
+			assert.Equal(t, chunkenc.ValHistogram, it.Next())
+			ts, got := it.AtHistogram()
+			assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+			assert.Equal(t, h, got)
+			assert.Equal(t, chunkenc.ValNone, it.Next())
+			assert.NoError(t, it.Err())
+			assert.False(t, routeSet.Next())
+			assert.NoError(t, routeSet.Err())
+		})
+	}
+}
+
 func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	var (
 		firstS1Start  = time.Unix(100, 0)

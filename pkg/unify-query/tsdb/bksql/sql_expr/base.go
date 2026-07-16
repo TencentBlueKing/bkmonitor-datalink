@@ -101,8 +101,10 @@ func NewSQLExpr(key string) SQLExpr {
 	case TSpider:
 		return &TSpiderSQLExpr{
 			DorisSQLExpr: DorisSQLExpr{
-				ignoreFieldSet: set.New[string](),
-				forceEq:        true,
+				ignoreFieldSet:            set.New[string](),
+				forceEq:                   true,
+				disableShardKeyTimeBucket: true,
+				disableTimeBucketCast:     true,
 			},
 		}
 	default:

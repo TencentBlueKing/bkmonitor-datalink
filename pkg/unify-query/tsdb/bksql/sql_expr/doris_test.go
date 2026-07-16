@@ -20,6 +20,52 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+func TestNormalizeDorisFieldName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "完整反引号标识符",
+			input:    "`log`",
+			expected: "log",
+		},
+		{
+			name:     "前后空白",
+			input:    " `serverIp` ",
+			expected: "serverIp",
+		},
+		{
+			name:     "对象访问不剥 root 反引号",
+			input:    "`dimensions`['pipelineName']",
+			expected: "`dimensions`['pipelineName']",
+		},
+		{
+			name:     "包含内部反引号时保持原样",
+			input:    "`a``b`",
+			expected: "`a``b`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, normalizeDorisFieldName(tt.input))
+		})
+	}
+}
+
+func TestDorisSQLExprDimTransformQuotedField(t *testing.T) {
+	expr := NewSQLExpr(Doris).(*DorisSQLExpr)
+	expr.WithFieldsMap(metadata.FieldsMap{
+		"log": {FieldType: DorisTypeText},
+	})
+
+	field, as := expr.dimTransform("`log`")
+	assert.Equal(t, "`log`", field)
+	assert.Empty(t, as)
+}
+
 func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 	tests := []struct {
 		name  string

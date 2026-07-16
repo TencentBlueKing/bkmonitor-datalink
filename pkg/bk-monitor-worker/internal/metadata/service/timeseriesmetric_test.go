@@ -424,6 +424,58 @@ func TestEmptyMetricListSkipsUpdate(t *testing.T) {
 	assert.False(t, metric3.IsActive, "metric3 should remain false (not updated)")
 }
 
+// TestBulkRefreshTSMetricsWhitelistModeSkipsManagement 测试白名单模式下不管理 TimeSeriesMetric
+func TestBulkRefreshTSMetricsWhitelistModeSkipsManagement(t *testing.T) {
+	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
+	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric1",
+			FieldName:      "metric1",
+			TagList:        tagListStr,
+			LastModifyTime: time.Unix(1700000000, 0),
+			IsActive:       true,
+		},
+		{
+			GroupID:        testGroupID,
+			TableID:        "test_is_active.metric2",
+			FieldName:      "metric2",
+			TagList:        tagListStr,
+			LastModifyTime: time.Unix(1700000000, 0),
+			IsActive:       true,
+		},
+	})
+	defer cleanup()
+
+	currTime := time.Now().Unix()
+	metricInfoList := []map[string]any{
+		createMetricInfo("metric1", currTime),
+		createMetricInfo("new_metric", currTime),
+	}
+
+	svc := &TimeSeriesMetricSvc{}
+	needPush, err := svc.BulkRefreshTSMetrics(testTenantID, testGroupID, testTableID, metricInfoList, false)
+	require.NoError(t, err)
+	assert.False(t, needPush)
+
+	db := mysql.GetDBSession().DB
+	var metric1 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric1").One(&metric1)
+	require.NoError(t, err)
+	assert.Equal(t, tagListStr, metric1.TagList)
+	assert.Equal(t, time.Unix(1700000000, 0).Unix(), metric1.LastModifyTime.Unix())
+	assert.True(t, metric1.IsActive)
+
+	var metric2 customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric2").One(&metric2)
+	require.NoError(t, err)
+	assert.True(t, metric2.IsActive)
+
+	var count int64
+	db.Model(&customreport.TimeSeriesMetric{}).Where("group_id = ?", testGroupID).Count(&count)
+	assert.Equal(t, int64(2), count)
+}
+
 // TestBulkRefreshTSMetrics_UpdateScenario 原有的测试用例，保留用于兼容性
 func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	// 初始化数据库连接

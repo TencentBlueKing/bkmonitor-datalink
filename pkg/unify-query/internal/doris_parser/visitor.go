@@ -377,11 +377,12 @@ func isIdentifierPartOfNumericLiteral(s string, start int) bool {
 func isSQLKeyword(name string) bool {
 	switch strings.ToUpper(name) {
 	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
-		"DATE", "DATETIME", "DAY", "DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT",
-		"FROM", "GROUP", "HOUR", "IN", "INT", "INTEGER", "IS", "LIKE", "LIMIT", "MATCH_ALL", "MATCH_ANY",
+		"CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DATE", "DATETIME", "DAY",
+		"DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM", "GROUP", "HOUR",
+		"ESCAPE", "IN", "INT", "INTEGER", "INTERVAL", "IS", "LIKE", "LIMIT", "LOCALTIME", "LOCALTIMESTAMP", "MATCH", "MATCH_ALL", "MATCH_ANY",
 		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
-		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "SECOND", "SELECT",
-		"STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "YEAR":
+		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "RLIKE", "SECOND", "SELECT",
+		"SESSION_USER", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "XOR", "YEAR":
 		return true
 	default:
 		return false
@@ -548,6 +549,10 @@ func (v *Statement) unionSelectList() string {
 					v.errNode = append(v.errNode, err.Error())
 					return Star
 				}
+				if err := validateUnionWhereFields(v.Tables, collectUnionProjectionFields(v.ItemString(WhereItem), nil), v.TableFieldsMap); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+					return Star
+				}
 				if err := rejectSelectAllExtraProjectionFields(fields, projectionFields); err != nil {
 					v.errNode = append(v.errNode, err.Error())
 					return Star
@@ -571,7 +576,11 @@ func (v *Statement) unionSelectList() string {
 	fields := collectUnionProjectionFields(selectSQL, nil)
 	fields = append(fields, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
 	fields = append(fields, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+	whereFields := collectUnionProjectionFields(v.ItemString(WhereItem), nil)
 	if len(fields) == 0 {
+		if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
+			v.errNode = append(v.errNode, err.Error())
+		}
 		if len(v.Tables) > 1 {
 			return unionDummyProjection
 		}
@@ -588,6 +597,9 @@ func (v *Statement) unionSelectList() string {
 		result = append(result, field.field)
 	}
 	if err := validateUnionProjectionFields(v.Tables, fields, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	if err := validateUnionWhereFields(v.Tables, whereFields, v.TableFieldsMap); err != nil {
 		v.errNode = append(v.errNode, err.Error())
 	}
 	return strings.Join(result, ", ")
@@ -654,7 +666,7 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 				if name == "" || !option.Existed() || isUnsupportedUnionFieldType(option.FieldType) {
 					continue
 				}
-				key := strings.ToLower(name)
+				key := selectAllUnionFieldKey(name)
 				if _, ok := common[key]; ok {
 					continue
 				}
@@ -670,7 +682,7 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 		}
 
 		for key, field := range common {
-			option := fieldsMap.Field(field.projection.validateName)
+			option := selectAllUnionFieldOption(fieldsMap, field.projection.validateName)
 			safeType, compatible := safeUnionFieldType(field.fieldType, option.FieldType)
 			if !option.Existed() ||
 				isUnsupportedUnionFieldType(option.FieldType) ||
@@ -699,6 +711,22 @@ func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap Table
 		fields = append(fields, common[key].projection)
 	}
 	return fields, nil
+}
+
+func selectAllUnionFieldKey(name string) string {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return strings.ToLower(root) + "." + leaf
+	}
+	return strings.ToLower(name)
+}
+
+func selectAllUnionFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
+	}
+	return fieldsMap.Field(name)
 }
 
 func selectAllUnionProjectionField(field string, fieldType string) string {
@@ -860,6 +888,40 @@ func validateUnionProjectionFields(tables []string, fields []unionProjectionFiel
 	return nil
 }
 
+func validateUnionWhereFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		key := field.field + "\x00" + name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionFieldPresence(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			if _, existed := unionFieldOption(fieldsMap, field.field, name); !existed {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field.field, table)
+			}
+		}
+	}
+	return nil
+}
+
 // validateRootObjectUnionField 校验直接投影对象 root 的场景。
 //
 // 例如 SELECT dimensions 时，schema 往往只有 dimensions.xxx leaf，没有
@@ -900,19 +962,38 @@ func validateRootObjectUnionField(tables []string, field string, validateName st
 	return baseFields != nil, nil
 }
 
+func validateRootObjectUnionFieldPresence(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return true, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() || len(rootObjectUnionFields(fieldsMap, rootName)) > 0 {
+			continue
+		}
+		return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+	}
+	return true, nil
+}
+
 type rootObjectUnionField struct {
 	name   string
 	option metadata.FieldOption
 }
 
 func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[string]rootObjectUnionField {
-	prefix := rootName + "."
 	fields := make(map[string]rootObjectUnionField)
 	for fieldName, option := range fieldsMap {
-		if !option.Existed() || len(fieldName) <= len(prefix) || !strings.EqualFold(fieldName[:len(prefix)], prefix) {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if !option.Existed() || !ok || !strings.EqualFold(root, rootName) {
 			continue
 		}
-		fields[strings.ToLower(fieldName)] = rootObjectUnionField{name: fieldName, option: option}
+		fields[strings.ToLower(root)+"."+leaf] = rootObjectUnionField{name: fieldName, option: option}
 	}
 	return fields
 }
@@ -954,14 +1035,14 @@ func validateRootObjectUnionFields(
 // validateName 用于传递已知 leaf；直接投影 root 对象时，会先按完整 leaf 集合校验，
 // 再进入这里的兜底逻辑。
 func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
-	fieldOption := fieldsMap.Field(validateName)
+	fieldOption := exactObjectLeafOrFieldOption(fieldsMap, validateName)
 	if fieldOption.Existed() {
 		return fieldOption, true
 	}
 
 	rootName := unquoteUnionField(field)
 	if validateName != rootName {
-		fieldOption = fieldsMap.Field(rootName)
+		fieldOption = exactObjectLeafOrFieldOption(fieldsMap, rootName)
 		if fieldOption.Existed() {
 			return fieldOption, true
 		}
@@ -970,7 +1051,6 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 
 	// 兼容只传 root 对象名的旧调用方：选择固定顺序的 leaf，避免依赖 Go map
 	// 的随机遍历顺序导致同一份 schema 偶发类型误判。
-	prefix := rootName + "."
 	fieldNames := make([]string, 0, len(fieldsMap))
 	for fieldName := range fieldsMap {
 		fieldNames = append(fieldNames, fieldName)
@@ -980,11 +1060,41 @@ func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName s
 	})
 	for _, fieldName := range fieldNames {
 		option := fieldsMap[fieldName]
-		if strings.HasPrefix(fieldName, prefix) && option.Existed() {
+		fieldRoot, _, ok := splitObjectUnionFieldName(fieldName)
+		if ok && strings.EqualFold(fieldRoot, rootName) && option.Existed() {
 			return option, true
 		}
 	}
 	return metadata.FieldOption{}, false
+}
+
+// 对象 leaf 对应 Doris variant/map key，必须区分大小写；顶层物理列仍沿用
+// FieldsMap.Field 的历史大小写不敏感匹配。
+func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
+	}
+	return fieldsMap.Field(name)
+}
+
+func exactObjectLeafOption(fieldsMap metadata.FieldsMap, rootName string, leafName string) metadata.FieldOption {
+	for fieldName, option := range fieldsMap {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if option.Existed() && ok && strings.EqualFold(root, rootName) && leaf == leafName {
+			return option
+		}
+	}
+	return metadata.FieldOption{}
+}
+
+func splitObjectUnionFieldName(name string) (string, string, bool) {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	idx := strings.IndexByte(name, '.')
+	if idx <= 0 || idx >= len(name)-1 {
+		return "", "", false
+	}
+	return name[:idx], name[idx+1:], true
 }
 
 func unquoteUnionField(field string) string {
@@ -1042,7 +1152,7 @@ func safeNormalizedUnionFieldType(normalized, left, right string) (string, bool)
 	case "boolean":
 		return "BOOLEAN", true
 	case "time":
-		return "DATETIME", true
+		return safeTimeUnionFieldType(left, right)
 	default:
 		return dorisCastType(left), true
 	}
@@ -1060,6 +1170,69 @@ func baseUnionFieldType(fieldType string) string {
 		t = t[:idx]
 	}
 	return strings.TrimSpace(t)
+}
+
+type timeUnionFieldSpec struct {
+	kind      string
+	precision int
+	isV2      bool
+}
+
+func safeTimeUnionFieldType(left, right string) (string, bool) {
+	leftSpec := timeUnionFieldSpecFromType(left)
+	rightSpec := timeUnionFieldSpecFromType(right)
+	if leftSpec.kind == "date" && rightSpec.kind == "date" {
+		return "DATE", true
+	}
+	precision := max(leftSpec.precision, rightSpec.precision)
+	typeName := "DATETIME"
+	if leftSpec.isV2 || rightSpec.isV2 {
+		typeName = "DATETIMEV2"
+	}
+	if precision == 0 {
+		return typeName, true
+	}
+	return fmt.Sprintf("%s(%d)", typeName, precision), true
+}
+
+// timeUnionFieldSpecFromType 提取 Doris 时间类型的基础类型和小数秒精度。
+// DATETIMEV2 需要单独标记，避免多表 UNION 的对象 leaf cast 退化成 DATETIME 后丢失精度。
+func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return timeUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return timeUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+
+	switch base {
+	case "date", "datev1", "datev2":
+		return timeUnionFieldSpec{kind: "date"}
+	case "datetime", "datetimev1", "datetimev2", "timestamp":
+		spec := timeUnionFieldSpec{kind: "datetime", isV2: base == "datetimev2"}
+		if params == "" {
+			return spec
+		}
+		precision, err := strconv.Atoi(strings.TrimSpace(strings.Split(params, ",")[0]))
+		if err != nil || precision < 0 {
+			return spec
+		}
+		if precision > 6 {
+			precision = 6
+		}
+		spec.precision = precision
+		return spec
+	default:
+		return timeUnionFieldSpec{kind: base}
+	}
 }
 
 type decimalUnionFieldSpec struct {
@@ -1281,11 +1454,80 @@ func isASClauseAt(s string, idx int) bool {
 	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
+func joinWhereConditions(conditions ...string) string {
+	list := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		condition = strings.TrimSpace(condition)
+		if condition != "" {
+			list = append(list, condition)
+		}
+	}
+	if len(list) <= 1 {
+		return strings.Join(list, "")
+	}
+	for i, condition := range list {
+		list[i] = parenthesizedWhereCondition(condition)
+	}
+	return strings.Join(list, " AND ")
+}
+
+func parenthesizedWhereCondition(condition string) string {
+	if isParenthesizedWhereCondition(condition) {
+		return condition
+	}
+	return fmt.Sprintf("(%s)", condition)
+}
+
+func isParenthesizedWhereCondition(condition string) bool {
+	if len(condition) < 2 || condition[0] != '(' || condition[len(condition)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	inString := false
+	for i := 0; i < len(condition); i++ {
+		switch condition[i] {
+		case '\'':
+			if inString && i+1 < len(condition) && condition[i+1] == '\'' {
+				i++
+				continue
+			}
+			inString = !inString
+		case '(':
+			if !inString {
+				depth++
+			}
+		case ')':
+			if !inString {
+				depth--
+				if depth == 0 && i != len(condition)-1 {
+					return false
+				}
+			}
+		}
+	}
+	return depth == 0 && !inString
+}
+
 func (v *Statement) String() string {
 	var result []string
+	var renderedWhere string
+	var whereRendered bool
+	renderWhere := func() string {
+		if !whereRendered {
+			renderedWhere = v.ItemString(WhereItem)
+			whereRendered = true
+		}
+		return renderedWhere
+	}
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
-		res := v.ItemString(name)
+		res := ""
+		if name == WhereItem && whereRendered {
+			res = renderedWhere
+		} else {
+			res = v.ItemString(name)
+		}
 		key := name
 
 		switch name {
@@ -1307,11 +1549,12 @@ func (v *Statement) String() string {
 				} else {
 					stmts := make([]string, 0, len(v.Tables))
 					selectList := v.unionSelectList()
+					where := joinWhereConditions(renderWhere(), v.Where)
 					for _, t := range v.Tables {
 						// 多表合并时将时间/查询条件下推到每张物理表，同时用显式投影规避表结构不一致。
 						s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
-						if v.Where != "" {
-							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
+						if where != "" {
+							s = fmt.Sprintf("%s WHERE %s", s, where)
 						}
 						stmts = append(stmts, s)
 					}
@@ -2020,7 +2263,7 @@ func (v *FieldNode) String() string {
 			// 都应保留原名并加反引号，不走 fieldMap 转换（否则会被映射为 Null）。
 			result = fmt.Sprintf("`%s`", key)
 		} else {
-			originField, as := v.Encode(result)
+			originField, as := v.Encode(key)
 			if v.exprType == selectCtxType && as != "" && v.as == nil {
 				v.as = &StringNode{Name: as}
 			}

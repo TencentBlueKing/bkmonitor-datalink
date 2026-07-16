@@ -98,20 +98,20 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	span *trace.Span,
 	client *elastic.Client,
 	qo *queryOption,
-	source *elastic.SearchSource,
+	fact *FormatFactory,
 	countQuery elastic.Query,
 	queryErr error,
 	res *elastic.SearchResult,
 ) (*elastic.SearchResult, []string, bool) {
-	if client == nil || qo == nil || qo.query == nil || source == nil || countQuery == nil {
+	if client == nil || qo == nil || qo.query == nil || fact == nil || countQuery == nil {
 		return nil, nil, false
 	}
 	if !canFallbackMissingMappingQuery(qo.query) {
 		return nil, nil, false
 	}
 
-	failures := missingMappingSortFailures(queryErr, res)
-	if len(failures) == 0 {
+	failures, ok := allMissingMappingSortFailures(queryErr, res)
+	if !ok {
 		return nil, nil, false
 	}
 
@@ -121,17 +121,11 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	span.Set("fallback_field", field)
 	span.Set("fallback_failed_indexes", failedIndexes)
 
-	indices, err := client.IndexGet(qo.indexes...).Do(ctx)
+	physicalIndexes, err := resolvePhysicalIndexes(ctx, span, client, qo)
 	if err != nil {
-		span.Set("fallback_error", fmt.Sprintf("index_get: %v", err))
+		span.Set("fallback_error", fmt.Sprintf("resolve_physical_indexes: %v", err))
 		return nil, nil, false
 	}
-
-	physicalIndexes := make([]string, 0, len(indices))
-	for index := range indices {
-		physicalIndexes = append(physicalIndexes, index)
-	}
-	sort.Strings(physicalIndexes)
 	if len(physicalIndexes) == 0 {
 		span.Set("fallback_error", "empty_resolved_indexes")
 		return nil, nil, false
@@ -162,12 +156,22 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, nil, false
 	}
 
-	// retry 同样保留原始 target，以延续 alias/routing 语义；只排除实际报告缺
-	// mapping 的物理索引。ES multi-target 文档说明可以用 "-index" 排除 target，
-	// 且 alias 场景应排除具体物理索引；
-	// https://www.elastic.co/guide/en/elasticsearch/reference/7.17/multi-index.html
-	retryIndexes := appendExcludedIndexExpressions(qo.indexes, failedIndexes)
+	unmappedType := fact.GetFieldType(field)
+	if unmappedType == "" {
+		span.Set("fallback_error", fmt.Sprintf("empty_unmapped_type: field=%s", field))
+		return nil, nil, false
+	}
+
+	// retry 保留原始 target，以延续 alias/routing 语义；通过 unmapped_type 让旧空索引
+	// 不再因为排序字段缺 mapping 失败，避免 URL 随失败索引数量增长。
+	retryIndexes := append([]string{}, qo.indexes...)
+	retrySource, _, retryBody, buildErr := buildESQuerySource(ctx, qo.query, fact, map[string]string{field: unmappedType})
+	if buildErr != nil {
+		span.Set("fallback_error", fmt.Sprintf("build_retry_source: %v", buildErr))
+		return nil, nil, false
+	}
 	span.Set("fallback_retry_indexes", retryIndexes)
+	span.Set("fallback_retry_body", retryBody)
 
 	log.Warnf(
 		ctx,
@@ -175,12 +179,26 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		field, failedIndexes, retryIndexes, matchedDocs,
 	)
 
-	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(source).Do(ctx)
+	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(retrySource).Do(ctx)
 	if retryErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("retry: %v", retryErr))
 		return nil, nil, false
 	}
 	return retryRes, retryIndexes, true
+}
+
+func resolvePhysicalIndexes(ctx context.Context, span *trace.Span, client *elastic.Client, qo *queryOption) ([]string, error) {
+	if len(qo.physicalIndexes) > 0 {
+		physicalIndexes := append([]string{}, qo.physicalIndexes...)
+		sort.Strings(physicalIndexes)
+		return physicalIndexes, nil
+	}
+
+	_, _, physicalIndexes, err := resolveIndexMetadata(ctx, span, client, qo.indexes...)
+	if err != nil {
+		return nil, err
+	}
+	return physicalIndexes, nil
 }
 
 // searchExactTotalHits 使用 size:0 search，而不是 CountService。调用方必须先
@@ -248,9 +266,21 @@ func canFallbackMissingMappingQuery(query *metadata.Query) bool {
 // missingMappingSortFailures 统一提取 SearchResult 和 elastic.Error 中的缺
 // mapping 分片失败。ES 会根据响应状态，把相同的 failed shard details 放在不同路径。
 func missingMappingSortFailures(err error, res *elastic.SearchResult) []esMissingMappingFailure {
+	failures, _ := collectMissingMappingSortFailures(err, res)
+	return failures
+}
+
+func allMissingMappingSortFailures(err error, res *elastic.SearchResult) ([]esMissingMappingFailure, bool) {
+	failures, total := collectMissingMappingSortFailures(err, res)
+	return failures, len(failures) > 0 && len(failures) == total
+}
+
+func collectMissingMappingSortFailures(err error, res *elastic.SearchResult) ([]esMissingMappingFailure, int) {
 	shardFailures, extractedErr := extractESResult(err, res)
 	failures := make([]esMissingMappingFailure, 0, len(shardFailures))
+	total := 0
 	for _, failure := range shardFailures {
+		total++
 		if failure == nil || failure.Index == "" || failure.Reason == nil {
 			continue
 		}
@@ -260,12 +290,13 @@ func missingMappingSortFailures(err error, res *elastic.SearchResult) []esMissin
 	var esErr *elastic.Error
 	if errors.As(extractedErr, &esErr) && esErr != nil && esErr.Details != nil {
 		for _, failedShard := range esErr.Details.FailedShards {
+			total++
 			index, _ := failedShard[IndexField].(string)
 			reason, _ := failedShard[ReasonField].(map[string]any)
 			failures = appendMissingMappingFailure(failures, index, reason)
 		}
 	}
-	return failures
+	return failures, total
 }
 
 func appendMissingMappingFailure(failures []esMissingMappingFailure, index string, reason map[string]any) []esMissingMappingFailure {
@@ -326,18 +357,6 @@ func excludeStrings(values []string, excluded []string) []string {
 		filtered = append(filtered, value)
 	}
 	return filtered
-}
-
-// appendExcludedIndexExpressions 依赖 Elasticsearch multi-target 语法：先保留
-// 原始 alias 或 pattern，再追加具体的 "-index" 排除项。这样可以在移除已知坏物理
-// 索引的同时保留 alias filter/routing。
-// 参考：https://www.elastic.co/guide/en/elasticsearch/reference/7.17/multi-index.html
-func appendExcludedIndexExpressions(indexes []string, excluded []string) []string {
-	result := append([]string{}, indexes...)
-	for _, index := range excluded {
-		result = append(result, "-"+index)
-	}
-	return result
 }
 
 func sortedStringSetKeys(set map[string]struct{}) []string {

@@ -161,7 +161,8 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	// retry 保留原始 target，以延续 alias/routing 语义；通过 unmapped_type 让旧空索引
 	// 不再因为排序字段缺 mapping 失败，避免 URL 随失败索引数量增长。
 	retryIndexes := append([]string{}, qo.indexes...)
-	retrySource, _, retryBody, buildErr := buildESQuerySource(ctx, qo.query, fact, forceUnmappedTypes)
+	retryFact := cloneFormatFactoryWithoutAggInfo(fact)
+	retrySource, _, retryBody, buildErr := buildESQuerySource(ctx, qo.query, retryFact, forceUnmappedTypes)
 	if buildErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("build_retry_source: %v", buildErr))
 		return nil, nil, false
@@ -181,6 +182,15 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 		return nil, nil, false
 	}
 	return retryRes, retryIndexes, true
+}
+
+func cloneFormatFactoryWithoutAggInfo(fact *FormatFactory) *FormatFactory {
+	if fact == nil {
+		return nil
+	}
+	cloned := *fact
+	cloned.aggInfoList = make(aggInfoList, 0)
+	return &cloned
 }
 
 func resolvePhysicalIndexes(ctx context.Context, span *trace.Span, client *elastic.Client, qo *queryOption) ([]string, error) {

@@ -84,7 +84,8 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 				}
 				if aliasSearchCalls == 3 {
 					retryCalled = true
-					assertSearchBodySortHasUnmappedType(t, r, "svrname", "keyword")
+					bodyString := assertSearchBodySortHasUnmappedType(t, r, "svrname", "keyword")
+					assert.Equal(t, 1, strings.Count(bodyString, `"value_count"`))
 					return httpmock.NewStringResponse(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]},"aggregations":{"_value":{"value":1}}}`), nil
 				}
 				aliasEmptyCheckCalled = true
@@ -1185,12 +1186,12 @@ func assertSearchBodyFiltersIndexes(t *testing.T, r *http.Request, indexes ...st
 	}
 }
 
-func assertSearchBodySortHasUnmappedType(t *testing.T, r *http.Request, field, unmappedType string) {
+func assertSearchBodySortHasUnmappedType(t *testing.T, r *http.Request, field, unmappedType string) string {
 	t.Helper()
-	assertSearchBodySortHasUnmappedTypes(t, r, map[string]string{field: unmappedType})
+	return assertSearchBodySortHasUnmappedTypes(t, r, map[string]string{field: unmappedType})
 }
 
-func assertSearchBodySortHasUnmappedTypes(t *testing.T, r *http.Request, unmappedTypes map[string]string) {
+func assertSearchBodySortHasUnmappedTypes(t *testing.T, r *http.Request, unmappedTypes map[string]string) string {
 	t.Helper()
 	var body any
 	require.NoError(t, stdjson.NewDecoder(r.Body).Decode(&body))
@@ -1202,4 +1203,5 @@ func assertSearchBodySortHasUnmappedTypes(t *testing.T, r *http.Request, unmappe
 		assert.Contains(t, bodyString, `"unmapped_type":"`+unmappedType+`"`)
 	}
 	assert.NotContains(t, r.URL.EscapedPath(), "%2C-")
+	return bodyString
 }

@@ -38,7 +38,7 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 			if tr, ok := series[0].(SeriesTimeRange); ok {
 				start, end := tr.TimeRange()
 				if start < end {
-					return newRouteRangeFilteredSeries(name, step, series[0], start, end)
+					return newRouteRangeFilteredSeries(name, step, series[0], start, end, false)
 				}
 			}
 			return series[0]
@@ -191,6 +191,13 @@ func routeRangeFilterReason(name string, stepMs, t, start, end int64) (bool, str
 	return true, ""
 }
 
+func routeTimestampFilterReason(name string, stepMs, t, start, end int64, useBackwardRange bool) (bool, string) {
+	if !useBackwardRange && isBackwardRangeBucketFunc(name) {
+		stepMs = 0
+	}
+	return routeRangeFilterReason(name, stepMs, t, start, end)
+}
+
 func rangeOverlapFilterReason(start, end, otherStart, otherEnd int64) (bool, string) {
 	if start < otherEnd && end > otherStart {
 		return true, ""
@@ -253,20 +260,18 @@ func newSampleSeries(template storage.Series, samples []prompb.Sample) storage.S
 	}
 }
 
-// newRouteRangeFilteredSeries 在同 label 只有单路 routed series 时按 route 生效范围裁剪样本，
-// 同时保持底层 iterator 的样本类型，避免 native histogram 被转换或丢弃。
-func newRouteRangeFilteredSeries(name string, step time.Duration, series storage.Series, start, end int64) storage.Series {
-	return &storage.SeriesEntry{
-		Lset: series.Labels(),
-		SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-			return &routeRangeFilterIterator{
-				it:     series.Iterator(iterator),
-				name:   name,
-				stepMs: step.Milliseconds(),
-				start:  start,
-				end:    end,
-			}
-		},
+// newRouteRangeFilteredSeries 按 route 生效范围裁剪样本，同时保持底层 iterator 的样本类型，
+// 避免 native histogram 被转换或丢弃。
+func newRouteRangeFilteredSeries(
+	name string, step time.Duration, series storage.Series, start, end int64, useBackwardRange bool,
+) storage.Series {
+	return &routeRangeFilteredSeries{
+		Series:           series,
+		name:             name,
+		stepMs:           step.Milliseconds(),
+		start:            start,
+		end:              end,
+		useBackwardRange: useBackwardRange,
 	}
 }
 
@@ -349,7 +354,31 @@ func (s *routeRangeFilterSeriesSet) At() storage.Series {
 	if start >= end {
 		return series
 	}
-	return newRouteRangeFilteredSeries(s.name, s.step, series, start, end)
+	return newRouteRangeFilteredSeries(s.name, s.step, series, start, end, false)
+}
+
+type routeRangeFilteredSeries struct {
+	storage.Series
+	name             string
+	stepMs           int64
+	start            int64
+	end              int64
+	useBackwardRange bool
+}
+
+func (s *routeRangeFilteredSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
+	return &routeRangeFilterIterator{
+		it:               s.Series.Iterator(iterator),
+		name:             s.name,
+		stepMs:           s.stepMs,
+		start:            s.start,
+		end:              s.end,
+		useBackwardRange: s.useBackwardRange,
+	}
+}
+
+func (s *routeRangeFilteredSeries) TimeRange() (int64, int64) {
+	return s.start, s.end
 }
 
 func hasAnyTimeRange(series ...storage.Series) bool {
@@ -536,11 +565,12 @@ func (it *seriesIterator) Err() error {
 }
 
 type routeRangeFilterIterator struct {
-	it     chunkenc.Iterator
-	name   string
-	stepMs int64
-	start  int64
-	end    int64
+	it               chunkenc.Iterator
+	name             string
+	stepMs           int64
+	start            int64
+	end              int64
+	useBackwardRange bool
 }
 
 func (it *routeRangeFilterIterator) AtHistogram() (int64, *histogram.Histogram) {
@@ -574,7 +604,9 @@ func (it *routeRangeFilterIterator) Err() error {
 func (it *routeRangeFilterIterator) advance(valueType chunkenc.ValueType) chunkenc.ValueType {
 	for valueType != chunkenc.ValNone {
 		t := it.sampleTimestamp(valueType)
-		if ok, reason := routeRangeFilterReason(it.name, it.stepMs, t, it.start, it.end); ok {
+		if ok, reason := routeTimestampFilterReason(
+			it.name, it.stepMs, t, it.start, it.end, it.useBackwardRange,
+		); ok {
 			return valueType
 		} else {
 			metric.RouteSeriesFilterSamplesAdd(context.Background(), it.name, reason, 1)

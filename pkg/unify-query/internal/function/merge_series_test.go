@@ -887,6 +887,22 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 				sample(2, time.Unix(120, 0)),
 			},
 		},
+		"单条 sum_over_time 保留 route start 的首个 evaluation bucket": {
+			fn:   function.SumOT,
+			step: 5 * time.Minute,
+			routes: []routeSeries{
+				{
+					samples: []prompb.Sample{
+						sample(3, time.Unix(120, 0)),
+					},
+					start: time.Unix(120, 0),
+					end:   time.Unix(300, 0),
+				},
+			},
+			expected: []prompb.Sample{
+				sample(3, time.Unix(120, 0)),
+			},
+		},
 		"windowed plain sum bucket 跨 route 切换时按 bucket 与 route 相交保留": {
 			fn:   function.Sum,
 			step: 5 * time.Minute,
@@ -1124,6 +1140,79 @@ func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 			}, ts)
 		})
 	}
+}
+
+func TestMergeSeriesSetFiltersSingleSourceLabelInMultiRoute(t *testing.T) {
+	sample := func(value float64, timestamp time.Time) prompb.Sample {
+		return prompb.Sample{
+			Value:     value,
+			Timestamp: timestamp.UnixMilli(),
+		}
+	}
+
+	firstSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "up"},
+					{Name: "job", Value: "first-route-only"},
+				},
+				Samples: []prompb.Sample{
+					sample(5, time.Unix(90, 0)),
+					sample(7, time.Unix(120, 0)),
+				},
+			},
+		},
+	})
+	secondSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "up"},
+					{Name: "job", Value: "second-route-only"},
+				},
+				Samples: []prompb.Sample{
+					sample(11, time.Unix(320, 0)),
+				},
+			},
+		},
+	})
+	sets := []storage.SeriesSet{
+		function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(firstSet, time.Unix(100, 0), time.Unix(200, 0)),
+			function.Sum,
+			0,
+		),
+		function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(secondSet, time.Unix(300, 0), time.Unix(400, 0)),
+			function.Sum,
+			0,
+		),
+	}
+	set := storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(function.Sum, 0))
+
+	ts, err := mock.SeriesSetToTimeSeries(set)
+	assert.Nil(t, err)
+	assert.Equal(t, mock.TimeSeriesList{
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "up"},
+				{Name: "job", Value: "first-route-only"},
+			},
+			Samples: []prompb.Sample{
+				sample(7, time.Unix(120, 0)),
+			},
+		},
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "up"},
+				{Name: "job", Value: "second-route-only"},
+			},
+			Samples: []prompb.Sample{
+				sample(11, time.Unix(320, 0)),
+			},
+		},
+	}, ts)
 }
 
 func TestMergeSeriesSetWithTimeWeightedAvg(t *testing.T) {

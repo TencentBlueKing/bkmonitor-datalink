@@ -163,10 +163,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 		}
 
-		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
-		if len(sets) == 1 {
-			sets[0] = function.NewRouteRangeFilterSeriesSet(sets[0], mergeFunc, bucketDuration)
-		}
 		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
 
@@ -228,7 +224,8 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			switch strategy.wrapKind {
 			case seriesSetWrapValidRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
-				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration)
 			case seriesSetWrapZeroRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)

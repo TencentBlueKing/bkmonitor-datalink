@@ -269,6 +269,46 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' ORDER BY `dtEventTimeStamp` DESC LIMIT 10000",
 		},
+		"Doris 原始查询未投影 _value_ 时应跳过 _value 排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"dtEventTimeStamp": "dtEventTimeStampNanos",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: sql_expr.FieldValue,
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
+		"Doris 原始查询缺失非时间字段别名时应跳过排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: "pod_namespace",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

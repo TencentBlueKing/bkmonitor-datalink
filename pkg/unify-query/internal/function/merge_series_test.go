@@ -651,6 +651,32 @@ func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
 	}
 }
 
+func TestMergeSeriesSetDoesNotDrainReusableSingleRouteAvgIterator(t *testing.T) {
+	series := newReusableFloatSeries(
+		labels.FromStrings("__name__", "up", "job", "influxdb"),
+		[]prompb.Sample{
+			{Timestamp: time.Unix(120, 0).UnixMilli(), Value: 10},
+		},
+	)
+	routeSet := function.NewTimeRangeSeriesSet(
+		newSingleSeriesSet(series),
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	assert.True(t, routeSet.Next())
+	routeSeries := routeSet.At()
+
+	mergedSeries := function.NewMergeSeriesSetWithFuncAndSortByStep(function.Avg, time.Minute)(routeSeries)
+
+	it := mergedSeries.Iterator(nil)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, v := it.At()
+	assert.Equal(t, time.Unix(120, 0).UnixMilli(), ts)
+	assert.Equal(t, 10.0, v)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+}
+
 func TestMergeSeriesSetWithRouteRangeFilter(t *testing.T) {
 	var (
 		firstS1Start  = time.Unix(100, 0)
@@ -1501,6 +1527,77 @@ func (s *singleSeriesSet) Err() error {
 }
 
 func (s *singleSeriesSet) Warnings() storage.Warnings {
+	return nil
+}
+
+type reusableFloatSeries struct {
+	lset labels.Labels
+	it   *reusableFloatIterator
+}
+
+func newReusableFloatSeries(lset labels.Labels, samples []prompb.Sample) storage.Series {
+	return &reusableFloatSeries{
+		lset: lset,
+		it: &reusableFloatIterator{
+			samples: samples,
+			idx:     -1,
+		},
+	}
+}
+
+func (s *reusableFloatSeries) Labels() labels.Labels {
+	return s.lset
+}
+
+func (s *reusableFloatSeries) Iterator(chunkenc.Iterator) chunkenc.Iterator {
+	return s.it
+}
+
+type reusableFloatIterator struct {
+	samples []prompb.Sample
+	idx     int
+}
+
+func (it *reusableFloatIterator) At() (int64, float64) {
+	s := it.samples[it.idx]
+	return s.Timestamp, s.Value
+}
+
+func (it *reusableFloatIterator) AtHistogram() (int64, *histogram.Histogram) {
+	return 0, nil
+}
+
+func (it *reusableFloatIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
+	return 0, nil
+}
+
+func (it *reusableFloatIterator) AtT() int64 {
+	if it.idx < 0 || it.idx >= len(it.samples) {
+		return 0
+	}
+	return it.samples[it.idx].Timestamp
+}
+
+func (it *reusableFloatIterator) Next() chunkenc.ValueType {
+	it.idx++
+	if it.idx >= len(it.samples) {
+		return chunkenc.ValNone
+	}
+	return chunkenc.ValFloat
+}
+
+func (it *reusableFloatIterator) Seek(t int64) chunkenc.ValueType {
+	for it.idx+1 < len(it.samples) {
+		if it.samples[it.idx+1].Timestamp >= t {
+			it.idx++
+			return chunkenc.ValFloat
+		}
+		it.idx++
+	}
+	return chunkenc.ValNone
+}
+
+func (it *reusableFloatIterator) Err() error {
 	return nil
 }
 

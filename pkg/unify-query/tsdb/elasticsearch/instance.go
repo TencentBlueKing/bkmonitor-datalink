@@ -632,7 +632,6 @@ func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, s
 	end = end.In(loc)
 
 	left := end.Unix() - start.Unix()
-	// 超过 6 个月
 
 	span.Set("timezone", loc.String())
 	span.Set("start", start.String())
@@ -642,11 +641,6 @@ func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, s
 	var unit string
 
 	if left > int64(time.Hour.Seconds()*24*14) {
-		halfYear := time.Hour * 24 * 30 * 6
-		if left > int64(halfYear.Seconds()) {
-			start = end.Add(halfYear * -1)
-		}
-
 		unit = "month"
 	} else {
 		unit = "day"

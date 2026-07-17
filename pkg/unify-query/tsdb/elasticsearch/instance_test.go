@@ -119,7 +119,18 @@ func TestInstance_getAlias(t *testing.T) {
 			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
 			sourceType:  structured.BkData,
-			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
+			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
+		},
+		"2y with bklog": {
+			start:       time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			end:         time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC),
+			needAddTime: true,
+			expected: []string{
+				"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*",
+				"db_test_202407*", "db_test_202408*", "db_test_202409*", "db_test_202410*", "db_test_202411*", "db_test_202412*",
+				"db_test_202501*", "db_test_202502*", "db_test_202503*", "db_test_202504*", "db_test_202505*", "db_test_202506*",
+				"db_test_202507*", "db_test_202508*", "db_test_202509*", "db_test_202510*", "db_test_202511*", "db_test_202512*",
+			},
 		},
 		"2m and db": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),

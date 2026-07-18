@@ -63,25 +63,27 @@ func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContaine
 
 // Inspect docker container inspect
 func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
-	containerCh := make(chan container.InspectResponse)
+	type inspectResult struct {
+		container container.InspectResponse
+		err       error
+	}
+	containerCh := make(chan inspectResult, 1)
 	ctx, cancelFunc := context.WithTimeout(ctx, 3*time.Second)
-
-	defer func() {
-		close(containerCh)
-	}()
+	defer cancelFunc()
 
 	go func() {
 		c, err := r.cli.ContainerInspect(ctx, containerID)
-		if utils.NotNil(err) {
-			r.log.Error(err, fmt.Sprintf("docker inspect container info [%s] failed", containerID))
-			cancelFunc()
-			return
-		}
-		containerCh <- c
+		containerCh <- inspectResult{container: c, err: err}
 	}()
 
 	select {
-	case c := <-containerCh:
+	case result := <-containerCh:
+		if result.err != nil {
+			// Preserve the original Docker error so callers can distinguish a
+			// normal container disappearance from a retryable runtime failure.
+			return define.Container{}, fmt.Errorf("docker inspect container info [%s] failed: %w", containerID, result.err)
+		}
+		c := result.container
 		rootPath := define.ContainerRootPath(c)
 
 		var mounts []define.Mount
@@ -103,7 +105,7 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 
 		return containerInfo, nil
 	case <-ctx.Done():
-		return define.Container{}, fmt.Errorf("docker inspect container info [%s] timeout or other error", containerID)
+		return define.Container{}, fmt.Errorf("docker inspect container info [%s] timed out: %w", containerID, ctx.Err())
 	}
 }
 

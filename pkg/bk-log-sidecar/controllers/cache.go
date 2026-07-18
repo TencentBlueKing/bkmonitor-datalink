@@ -12,11 +12,14 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
+	"github.com/docker/docker/errdefs"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func castContainer(c interface{}) *define.Container {
@@ -29,7 +32,9 @@ func (s *BkLogSidecar) periodCacheContainer() {
 	for {
 		select {
 		case <-ticker.C:
-			s.cacheContainer()
+			if err := s.cacheContainer(); err != nil {
+				s.log.Error(err, "periodic container cache refresh failed")
+			}
 		case <-s.stopCh:
 			s.log.Info("stop periodCacheContainer")
 			return
@@ -37,45 +42,60 @@ func (s *BkLogSidecar) periodCacheContainer() {
 	}
 }
 
-func (s *BkLogSidecar) cacheContainer() {
+func (s *BkLogSidecar) cacheContainer() error {
 	s.log.Info("cache container info start")
 	ctx := context.Background()
 	containers, err := s.getRuntime().Containers(ctx)
-	if utils.NotNil(err) {
-		s.log.Error(err, "list container failed")
-		return
+	if err != nil {
+		return fmt.Errorf("list containers: %w", err)
 	}
 
 	for _, container := range containers {
-		containerInfo := s.containerByID(container.ID)
+		containerInfo, err := s.containerByID(container.ID)
+		if err != nil {
+			return err
+		}
 		if containerInfo == nil {
 			continue
 		}
 		s.containerCache.Store(container.ID, containerInfo)
 	}
 	s.log.Info("cache container info end")
+	return nil
 }
 
-func (s *BkLogSidecar) getContainerInfoByID(containerID string) *define.Container {
+func (s *BkLogSidecar) getContainerInfoByID(containerID string) (*define.Container, error) {
 	containerInfo, ok := s.containerCache.Load(containerID)
 	if ok {
-		return castContainer(containerInfo)
-	} else {
-		container := s.containerByID(containerID)
-		if container != nil {
-			s.containerCache.Store(containerID, container)
-			return container
-		}
-		return nil
+		return castContainer(containerInfo), nil
 	}
+
+	container, err := s.containerByID(containerID)
+	if err != nil {
+		return nil, err
+	}
+	if container != nil {
+		s.containerCache.Store(containerID, container)
+	}
+	return container, nil
 }
 
-func (s *BkLogSidecar) containerByID(containerID string) *define.Container {
+func (s *BkLogSidecar) containerByID(containerID string) (*define.Container, error) {
 	ctx := context.Background()
 	container, err := s.getRuntime().Inspect(ctx, containerID)
 	if err != nil {
-		s.log.Info(fmt.Sprintf("get container by id [%s] error: %s", containerID, err))
-		return nil
+		// Containers may disappear between List and Inspect. That race has
+		// already reached its desired state, so retrying the whole snapshot for
+		// a confirmed NotFound would only create unnecessary queue pressure.
+		if isContainerNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("inspect container %s: %w", containerID, err)
 	}
-	return &container
+	return &container, nil
+}
+
+func isContainerNotFound(err error) bool {
+	var dockerNotFound errdefs.ErrNotFound
+	return errors.As(err, &dockerNotFound) || status.Code(err) == codes.NotFound
 }

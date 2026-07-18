@@ -12,6 +12,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,11 +23,17 @@ import (
 	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
+	"github.com/docker/docker/errdefs"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +43,15 @@ import (
 type stubReader struct {
 	getFn  func(context.Context, client.ObjectKey, client.Object) error
 	listFn func(context.Context, client.ObjectList) error
+}
+
+type getErrorClient struct {
+	client.Client
+	err error
+}
+
+func (c *getErrorClient) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return c.err
 }
 
 func (r *stubReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
@@ -57,6 +73,19 @@ type stubRuntime struct {
 	inspectFn    func(context.Context, string) (define.Container, error)
 	subscribeFn  func(context.Context) (<-chan *define.ContainerEvent, <-chan error)
 	runtimeType  define.RuntimeType
+}
+
+type stubLogConfig struct {
+	name    string
+	content []byte
+}
+
+func (c *stubLogConfig) Config() []byte {
+	return c.content
+}
+
+func (c *stubLogConfig) ConfigName() string {
+	return c.name
 }
 
 func (r *stubRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
@@ -159,7 +188,7 @@ func TestStartRunsInitialGenerationBeforeRuntimeSubscriptionIsReady(t *testing.T
 	stop()
 }
 
-func TestGenerateDeletesExistingConfigWhenContainerDiscoveryFails(t *testing.T) {
+func TestGenerateKeepsExistingConfigWhenContainerDiscoveryFails(t *testing.T) {
 	discoveryErr := errors.New("runtime list unavailable")
 	runtime := &stubRuntime{
 		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
@@ -170,13 +199,40 @@ func TestGenerateDeletesExistingConfigWhenContainerDiscoveryFails(t *testing.T) 
 	existingConfig := filepath.Join(config.BkunifylogbeatConfig, "existing.conf")
 	require.NoError(t, os.WriteFile(existingConfig, []byte("existing"), 0o600))
 
-	sidecar.generateActualBkLogConfig()
+	err := sidecar.generateActualBkLogConfig()
 
-	_, err := os.Stat(existingConfig)
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.ErrorIs(t, err, discoveryErr)
+	content, readErr := os.ReadFile(existingConfig)
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("existing"), content)
 }
 
-func TestMatchBkLogConfigsTreatsPodReadFailureAsNoMatch(t *testing.T) {
+func TestGenerateReturnsNodeReadFailure(t *testing.T) {
+	nodeReadErr := errors.New("node cache unavailable")
+	reader := &stubReader{
+		getFn: func(context.Context, client.ObjectKey, client.Object) error {
+			return nodeReadErr
+		},
+		listFn: func(_ context.Context, list client.ObjectList) error {
+			bkLogConfigList := list.(*bluekingv1alpha1.BkLogConfigList)
+			bkLogConfigList.Items = []bluekingv1alpha1.BkLogConfig{{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-config"},
+				Spec: bluekingv1alpha1.BkLogConfigSpec{
+					LogConfigType: config.NodeLogConfig,
+				},
+			}}
+			return nil
+		},
+	}
+	t.Setenv(config.CurrentNodeNameKey, "node-1")
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, reader)
+
+	err := sidecar.generateActualBkLogConfig()
+
+	assert.ErrorIs(t, err, nodeReadErr)
+}
+
+func TestMatchBkLogConfigsReturnsPodReadFailure(t *testing.T) {
 	podReadErr := errors.New("pod cache unavailable")
 	reader := &stubReader{
 		getFn: func(context.Context, client.ObjectKey, client.Object) error {
@@ -192,13 +248,36 @@ func TestMatchBkLogConfigsTreatsPodReadFailureAsNoMatch(t *testing.T) {
 		},
 	}
 
-	matched, pod := sidecar.matchBklogConfigs(container)
+	matched, pod, err := sidecar.matchBklogConfigs(container)
 
+	assert.Empty(t, matched)
+	assert.Equal(t, corev1.Pod{}, *pod)
+	assert.ErrorIs(t, err, podReadErr)
+}
+
+func TestMatchBkLogConfigsTreatsMissingPodAsNoMatch(t *testing.T) {
+	reader := &stubReader{
+		getFn: func(context.Context, client.ObjectKey, client.Object) error {
+			return apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-1")
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, reader)
+	container := &define.Container{
+		ID: "container-1",
+		Labels: map[string]string{
+			config.ContainerLabelK8sPodNamespace: "default",
+			config.ContainerLabelK8sPodName:      "pod-1",
+		},
+	}
+
+	matched, pod, err := sidecar.matchBklogConfigs(container)
+
+	assert.NoError(t, err)
 	assert.Empty(t, matched)
 	assert.Equal(t, corev1.Pod{}, *pod)
 }
 
-func TestReconcileReturnsSuccessWhenReloadFailsForDeletedConfig(t *testing.T) {
+func TestReconcileReturnsErrorWhenReloadFailsForDeletedConfig(t *testing.T) {
 	scheme := k8sruntime.NewScheme()
 	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -219,9 +298,87 @@ func TestReconcileReturnsSuccessWhenReloadFailsForDeletedConfig(t *testing.T) {
 		NamespacedName: types.NamespacedName{Namespace: "default", Name: "missing"},
 	})
 
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, reloadErr)
 	assert.Equal(t, ctrl.Result{}, result)
 	assert.Equal(t, int32(1), reloadCalls.Load())
+}
+
+func TestReconcileReturnsKubernetesReadFailure(t *testing.T) {
+	scheme := k8sruntime.NewScheme()
+	reconcileErr := errors.New("kubernetes cache unavailable")
+	reconciler := &BkLogConfigReconciler{
+		Client: &getErrorClient{
+			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			err:    reconcileErr,
+		},
+		Scheme:       scheme,
+		BkLogSidecar: newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{}),
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "config-1"},
+	})
+
+	assert.ErrorIs(t, err, reconcileErr)
+	assert.Equal(t, ctrl.Result{}, result)
+}
+
+func TestReconcileReturnsConfigurationGenerationFailure(t *testing.T) {
+	scheme := k8sruntime.NewScheme()
+	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))
+	bkLogConfig := &bluekingv1alpha1.BkLogConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "config-1"},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(bkLogConfig).Build()
+	listErr := errors.New("BkLogConfig cache unavailable")
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{
+		listFn: func(context.Context, client.ObjectList) error {
+			return listErr
+		},
+	})
+	reconciler := &BkLogConfigReconciler{
+		Client:       kubeClient,
+		Scheme:       scheme,
+		BkLogSidecar: sidecar,
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "config-1"},
+	})
+
+	assert.ErrorIs(t, err, listErr)
+	assert.Equal(t, ctrl.Result{}, result)
+}
+
+func TestReconcileSucceedsAfterTransientReloadFailureRecovers(t *testing.T) {
+	scheme := k8sruntime.NewScheme()
+	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	reloadErr := errors.New("reload temporarily unavailable")
+	var reloadCalls atomic.Int32
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	sidecar.reloadAgentFn = func() error {
+		if reloadCalls.Add(1) == 1 {
+			return reloadErr
+		}
+		return nil
+	}
+	reconciler := &BkLogConfigReconciler{
+		Client:       kubeClient,
+		Scheme:       scheme,
+		BkLogSidecar: sidecar,
+	}
+	request := ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "missing"},
+	}
+
+	_, firstErr := reconciler.Reconcile(context.Background(), request)
+	secondResult, secondErr := reconciler.Reconcile(context.Background(), request)
+
+	assert.ErrorIs(t, firstErr, reloadErr)
+	assert.NoError(t, secondErr)
+	assert.Equal(t, ctrl.Result{}, secondResult)
+	assert.Equal(t, int32(2), reloadCalls.Load())
 }
 
 func TestCacheRefreshDoesNotReloadConfiguration(t *testing.T) {
@@ -240,9 +397,90 @@ func TestCacheRefreshDoesNotReloadConfiguration(t *testing.T) {
 		return nil
 	}
 
-	sidecar.cacheContainer()
+	require.NoError(t, sidecar.cacheContainer())
 
 	_, ok := sidecar.containerCache.Load("container-1")
 	assert.True(t, ok)
 	assert.Equal(t, int32(0), reloadCalls.Load())
+}
+
+func TestContainerByIDReturnsInspectFailure(t *testing.T) {
+	inspectErr := errors.New("runtime inspect unavailable")
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{
+		inspectFn: func(context.Context, string) (define.Container, error) {
+			return define.Container{}, inspectErr
+		},
+	}, &stubReader{})
+
+	container, err := sidecar.containerByID("container-1")
+
+	assert.Nil(t, container)
+	assert.ErrorIs(t, err, inspectErr)
+}
+
+func TestContainerByIDTreatsRuntimeNotFoundAsNormalDisappearance(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{
+		inspectFn: func(context.Context, string) (define.Container, error) {
+			return define.Container{}, status.Error(codes.NotFound, "container disappeared")
+		},
+	}, &stubReader{})
+
+	container, err := sidecar.containerByID("container-1")
+
+	assert.NoError(t, err)
+	assert.Nil(t, container)
+}
+
+func TestContainerByIDTreatsWrappedDockerNotFoundAsNormalDisappearance(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{
+		inspectFn: func(context.Context, string) (define.Container, error) {
+			dockerNotFound := errdefs.NotFound(errors.New("container disappeared"))
+			return define.Container{}, fmt.Errorf("docker inspect failed: %w", dockerNotFound)
+		},
+	}, &stubReader{})
+
+	container, err := sidecar.containerByID("container-1")
+
+	assert.NoError(t, err)
+	assert.Nil(t, container)
+}
+
+func TestWriteConfigReturnsFileCreationFailure(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(notDirectory, []byte("file"), 0o600))
+	config.BkunifylogbeatConfig = notDirectory
+	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
+	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
+
+	err := sidecar.writeConfig()
+
+	assert.Error(t, err)
+}
+
+func TestDeleteConfigByNameKeepsCacheEntryWhenFileDeletionFails(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(notDirectory, []byte("file"), 0o600))
+	config.BkunifylogbeatConfig = notDirectory
+	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
+	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
+
+	err := sidecar.deleteConfigByName("default", "config")
+
+	assert.Error(t, err)
+	_, ok := sidecar.actualBkLogConfigCache.Load(logConfig.ConfigName())
+	assert.True(t, ok)
+}
+
+func TestDeleteConfigByNameTreatsMissingFileAsDeleted(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
+	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
+
+	err := sidecar.deleteConfigByName("default", "config")
+
+	assert.NoError(t, err)
+	_, ok := sidecar.actualBkLogConfigCache.Load(logConfig.ConfigName())
+	assert.False(t, ok)
 }

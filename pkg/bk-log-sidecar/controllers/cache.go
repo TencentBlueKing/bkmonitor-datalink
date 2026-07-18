@@ -17,9 +17,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/docker/docker/errdefs"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func castContainer(c interface{}) *define.Container {
@@ -87,15 +84,10 @@ func (s *BkLogSidecar) containerByID(containerID string) (*define.Container, err
 		// Containers may disappear between List and Inspect. That race has
 		// already reached its desired state, so retrying the whole snapshot for
 		// a confirmed NotFound would only create unnecessary queue pressure.
-		if isContainerNotFound(err) {
+		if errors.Is(err, define.ErrContainerNotFound) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("inspect container %s: %w", containerID, err)
 	}
 	return &container, nil
-}
-
-func isContainerNotFound(err error) bool {
-	var dockerNotFound errdefs.ErrNotFound
-	return errors.As(err, &dockerNotFound) || status.Code(err) == codes.NotFound
 }

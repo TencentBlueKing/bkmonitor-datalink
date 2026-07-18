@@ -12,14 +12,18 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/errdefs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
@@ -89,6 +93,26 @@ func TestCompareVersionWithVendorSuffix(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestContainerdInspectErrorNormalization(t *testing.T) {
+	notFoundErr := normalizeContainerdInspectError("container-1", status.Error(codes.NotFound, "container disappeared"))
+	assert.ErrorIs(t, notFoundErr, define.ErrContainerNotFound)
+
+	unavailableErr := status.Error(codes.Unavailable, "runtime unavailable")
+	normalizedErr := normalizeContainerdInspectError("container-1", unavailableErr)
+	assert.NotErrorIs(t, normalizedErr, define.ErrContainerNotFound)
+	assert.ErrorIs(t, normalizedErr, unavailableErr)
+}
+
+func TestDockerInspectErrorNormalization(t *testing.T) {
+	notFoundErr := normalizeDockerInspectError("container-1", errdefs.NotFound(errors.New("container disappeared")))
+	assert.ErrorIs(t, notFoundErr, define.ErrContainerNotFound)
+
+	runtimeErr := errors.New("runtime unavailable")
+	normalizedErr := normalizeDockerInspectError("container-1", runtimeErr)
+	assert.NotErrorIs(t, normalizedErr, define.ErrContainerNotFound)
+	assert.ErrorIs(t, normalizedErr, runtimeErr)
 }
 
 // ---------- 2. Interceptor: verify method path rewrite ----------

@@ -23,12 +23,9 @@ import (
 	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/docker/docker/errdefs"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -421,21 +418,7 @@ func TestContainerByIDReturnsInspectFailure(t *testing.T) {
 func TestContainerByIDTreatsRuntimeNotFoundAsNormalDisappearance(t *testing.T) {
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{
 		inspectFn: func(context.Context, string) (define.Container, error) {
-			return define.Container{}, status.Error(codes.NotFound, "container disappeared")
-		},
-	}, &stubReader{})
-
-	container, err := sidecar.containerByID("container-1")
-
-	assert.NoError(t, err)
-	assert.Nil(t, container)
-}
-
-func TestContainerByIDTreatsWrappedDockerNotFoundAsNormalDisappearance(t *testing.T) {
-	sidecar := newCharacterizationSidecar(t, &stubRuntime{
-		inspectFn: func(context.Context, string) (define.Container, error) {
-			dockerNotFound := errdefs.NotFound(errors.New("container disappeared"))
-			return define.Container{}, fmt.Errorf("docker inspect failed: %w", dockerNotFound)
+			return define.Container{}, fmt.Errorf("runtime inspect: %w", define.ErrContainerNotFound)
 		},
 	}, &stubReader{})
 

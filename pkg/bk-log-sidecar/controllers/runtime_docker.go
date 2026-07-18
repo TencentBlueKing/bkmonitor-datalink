@@ -12,6 +12,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -79,9 +81,7 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 	select {
 	case result := <-containerCh:
 		if result.err != nil {
-			// Preserve the original Docker error so callers can distinguish a
-			// normal container disappearance from a retryable runtime failure.
-			return define.Container{}, fmt.Errorf("docker inspect container info [%s] failed: %w", containerID, result.err)
+			return define.Container{}, normalizeDockerInspectError(containerID, result.err)
 		}
 		c := result.container
 		rootPath := define.ContainerRootPath(c)
@@ -107,6 +107,16 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 	case <-ctx.Done():
 		return define.Container{}, fmt.Errorf("docker inspect container info [%s] timed out: %w", containerID, ctx.Err())
 	}
+}
+
+func normalizeDockerInspectError(containerID string, err error) error {
+	var notFound errdefs.ErrNotFound
+	if errors.As(err, &notFound) {
+		// Keep Docker error types inside the Docker adapter so adding another
+		// Runtime never requires changing the common sidecar reconciliation code.
+		return fmt.Errorf("%w: container [%s]: %v", define.ErrContainerNotFound, containerID, err)
+	}
+	return fmt.Errorf("docker inspect container info [%s] failed: %w", containerID, err)
 }
 
 func (r *DockerRuntime) parseEvent(event *events.Message) (*define.ContainerEvent, bool) {

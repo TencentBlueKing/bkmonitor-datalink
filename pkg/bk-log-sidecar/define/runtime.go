@@ -12,7 +12,13 @@ package define
 
 import (
 	"context"
+	"errors"
 )
+
+// ErrContainerNotFound is the runtime-neutral result of inspecting a container
+// that has already disappeared. Runtime implementations must translate their
+// native NotFound errors to this contract before returning from Inspect.
+var ErrContainerNotFound = errors.New("container not found")
 
 type ContainerEventType string
 
@@ -73,7 +79,7 @@ type ContainerEvent struct {
 type Runtime interface {
 	// Containers 获取容器列表
 	Containers(ctx context.Context) ([]SimpleContainer, error)
-	// Inspect 获取容器详情
+	// Inspect 获取容器详情；容器已不存在时返回 ErrContainerNotFound
 	Inspect(ctx context.Context, containerID string) (Container, error)
 	// Subscribe 订阅容器变更事件
 	Subscribe(ctx context.Context) (ch <-chan *ContainerEvent, errs <-chan error)

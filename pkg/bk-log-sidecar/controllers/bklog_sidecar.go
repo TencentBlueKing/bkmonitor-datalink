@@ -13,11 +13,8 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -42,10 +39,11 @@ const SubscribeRetryInterval = 5 * time.Second
 
 // BkLogSidecar BkLogSidecar
 type BkLogSidecar struct {
-	sync.RWMutex
 	runtime                define.Runtime
 	kubeClient             client.Reader
 	reloadAgentFn          func() error
+	configMutationMu       sync.Mutex
+	reloadPending          bool
 	containerCache         sync.Map
 	currentNodeInfo        corev1.Node
 	actualBkLogConfigCache sync.Map
@@ -131,17 +129,37 @@ func (s *BkLogSidecar) initEventHandler() {
 
 // generateActualBkLogConfig will generate all actual bklog config
 func (s *BkLogSidecar) generateActualBkLogConfig() error {
+	// Hold the mutation lock across Build and Apply. Otherwise a container event
+	// could update the live snapshot after discovery but before this full desired
+	// state replaces it, causing the newer event to be lost.
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
+
+	logConfigs, err := s.buildActualBkLogConfigs()
+	if err != nil {
+		return err
+	}
+	desired, err := renderDesiredConfigs(logConfigs)
+	if err != nil {
+		return fmt.Errorf("render desired log configs: %w", err)
+	}
+	return s.applyDesiredConfigsLocked(desired, true, nil)
+}
+
+// buildActualBkLogConfigs discovers the complete desired snapshot without
+// mutating the in-memory cache or any on-disk file.
+func (s *BkLogSidecar) buildActualBkLogConfigs() ([]define.LogConfigType, error) {
 	var logConfigs []define.LogConfigType
 	var err error
 	logConfigs, err = s.allContainerBkLogConfigs(logConfigs)
 	if err != nil {
 		// An incomplete discovery result must never be treated as the desired
 		// state, otherwise valid files could be deleted from a partial snapshot.
-		return fmt.Errorf("build container log configs: %w", err)
+		return nil, fmt.Errorf("build container log configs: %w", err)
 	}
 	allBklogConfigs, err := s.bkLogConfigList()
 	if err != nil {
-		return fmt.Errorf("list BkLogConfigs for node matching: %w", err)
+		return nil, fmt.Errorf("list BkLogConfigs for node matching: %w", err)
 	}
 	// match all node_log_config
 	firstMatchNodeConfig := true
@@ -151,7 +169,7 @@ func (s *BkLogSidecar) generateActualBkLogConfig() error {
 		}
 		if firstMatchNodeConfig {
 			if err := s.refreshNodeInfo(); err != nil {
-				return fmt.Errorf("refresh node info for node log config matching: %w", err)
+				return nil, fmt.Errorf("refresh node info for node log config matching: %w", err)
 			}
 			firstMatchNodeConfig = false
 		}
@@ -175,20 +193,7 @@ func (s *BkLogSidecar) generateActualBkLogConfig() error {
 	if define.Empty(logConfigs) {
 		s.log.Info("not have log config")
 	}
-
-	for _, logConfig := range logConfigs {
-		s.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
-	}
-	if err := s.deleteInvalidConfig(); err != nil {
-		return fmt.Errorf("delete obsolete generated configs: %w", err)
-	}
-	if err := s.writeConfig(); err != nil {
-		return fmt.Errorf("write generated configs: %w", err)
-	}
-	if err := s.reloadAgent(); err != nil {
-		return fmt.Errorf("reload agent after generating configs: %w", err)
-	}
-	return nil
+	return logConfigs, nil
 }
 
 // allContainerBkLogConfigs will match all container log config (std and container log)
@@ -323,16 +328,10 @@ func (s *BkLogSidecar) startActionHandler(event *define.ContainerEvent) {
 		s.log.Info(fmt.Sprintf("container [%s] not match log config", container.ID))
 		return
 	}
-	for _, logConfig := range bkLogConfigs {
-		s.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
-	}
-	if err := s.writeConfig(); err != nil {
-		s.log.Error(err, "write configs for create event failed", "containerID", event.ContainerID)
+	if err := s.upsertActualConfigs(bkLogConfigs); err != nil {
+		s.log.Error(err, "apply configs for create event failed", "containerID", event.ContainerID)
 		return
 	}
-	utils.CheckErrorFn(s.reloadAgent(), func(err error) {
-		s.log.Error(err, "handler event reload agent failed")
-	})
 	s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
 }
 
@@ -344,15 +343,8 @@ func (s *BkLogSidecar) destroyActionHandler(event *define.ContainerEvent) {
 		if ok {
 			utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
 				s.containerCache.Delete(containerId)
-				canReload, err := s.deleteContainerConfig(castContainer(containerInfo))
-				if err != nil {
+				if err := s.deleteContainerConfig(castContainer(containerInfo)); err != nil {
 					s.log.Error(err, "delete configs for container event failed", "containerID", containerId)
-					return
-				}
-				if canReload {
-					utils.CheckErrorFn(s.reloadAgent(), func(err error) {
-						s.log.Error(err, "handler event reload agent failed")
-					})
 				}
 			})
 		}
@@ -376,145 +368,12 @@ func (s *BkLogSidecar) stopActionHandler(event *define.ContainerEvent) {
 		}
 
 		utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
-			canReload, err := s.deleteContainerConfig(container)
-			if err != nil {
+			if err := s.deleteContainerConfig(container); err != nil {
 				s.log.Error(err, "delete configs for stop event failed", "containerID", containerId)
-				return
-			}
-			if canReload {
-				utils.CheckErrorFn(s.reloadAgent(), func(err error) {
-					s.log.Error(err, "handler event reload agent failed")
-				})
 			}
 		})
 		s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
 	}(event.ContainerID)
-}
-
-// deleteConfigByName will by BkLogConfig name to delete all relation actual log config
-func (s *BkLogSidecar) deleteConfigByName(namespace, name string) error {
-	namespacedName := fmt.Sprintf("%s_%s", namespace, name)
-	s.log.Info(fmt.Sprintf("delete config [%s]", namespacedName))
-	var deleteErr error
-	s.actualBkLogConfigCache.Range(func(key, value interface{}) bool {
-		configKey := key.(string)
-		logConfig := value.(define.LogConfigType)
-		if strings.HasSuffix(configKey, namespacedName) {
-			s.log.Info(fmt.Sprintf("config [%s] match -> [%s], so will delete", configKey, namespacedName))
-			if err := s.deleteConfigFile(logConfig); err != nil {
-				deleteErr = err
-				return false
-			}
-			s.actualBkLogConfigCache.Delete(key)
-		}
-		return true
-	})
-	return deleteErr
-}
-
-// deleteContainerConfig will delete all log config for container
-func (s *BkLogSidecar) deleteContainerConfig(container *define.Container) (bool, error) {
-	s.log.Info(fmt.Sprintf("delete config for container [%s]", container.ID))
-	canReload := false
-	var deleteErr error
-	s.actualBkLogConfigCache.Range(func(key, value interface{}) bool {
-		configKey := key.(string)
-		if strings.HasPrefix(configKey, container.ID) {
-			if err := s.deleteConfigFile(value.(define.LogConfigType)); err != nil {
-				deleteErr = err
-				return false
-			}
-			s.actualBkLogConfigCache.Delete(configKey)
-			canReload = true
-		}
-		return true
-	})
-	s.log.Info(fmt.Sprintf("delete container config [%s] complete", container.ID))
-	return canReload, deleteErr
-}
-
-// deleteConfig delete all config
-func (s *BkLogSidecar) deleteConfig() error {
-	var deleteErr error
-	s.actualBkLogConfigCache.Range(func(key, logConfig interface{}) bool {
-		if err := s.deleteConfigFile(logConfig.(define.LogConfigType)); err != nil {
-			deleteErr = err
-			return false
-		}
-		s.actualBkLogConfigCache.Delete(key)
-		return true
-	})
-	return deleteErr
-}
-
-// deleteInValidConfig delete not in sidecar cache config
-func (s *BkLogSidecar) deleteInvalidConfig() error {
-	s.log.Info("delete invalid config")
-	files, err := ioutil.ReadDir(config.BkunifylogbeatConfig)
-	if err != nil {
-		return fmt.Errorf("read config directory %s: %w", config.BkunifylogbeatConfig, err)
-	}
-	for _, file := range files {
-		confKey := strings.ReplaceAll(file.Name(), ".conf", "")
-		_, ok := s.actualBkLogConfigCache.Load(confKey)
-		if ok {
-			s.log.Info(fmt.Sprintf("config [%s] is valid", confKey))
-			continue
-		}
-		err := os.Remove(filepath.Join(config.BkunifylogbeatConfig, file.Name()))
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove obsolete config file %s: %w", file.Name(), err)
-		}
-		s.log.Info(fmt.Sprintf("delete invalid file [%s] success", file.Name()))
-	}
-	s.log.Info("delete invalid complete")
-	return nil
-}
-
-// writeConfig write config to local
-func (s *BkLogSidecar) writeConfig() error {
-	var writeErr error
-	s.actualBkLogConfigCache.Range(func(_, logConfigInterface interface{}) bool {
-		logConfig := logConfigInterface.(define.LogConfigType)
-		writeErr = s.writeConfigFile(logConfig)
-		return writeErr == nil
-	})
-	return writeErr
-}
-
-// writeConfigFile will write log config to file
-func (s *BkLogSidecar) writeConfigFile(logConfig define.LogConfigType) error {
-	configPath := fmt.Sprintf("%s.conf", filepath.Join(config.BkunifylogbeatConfig, logConfig.ConfigName()))
-	fd, err := os.Create(configPath)
-	if err != nil {
-		return fmt.Errorf("create config file %s: %w", configPath, err)
-	}
-	_, err = fd.Write(logConfig.Config())
-	if err != nil {
-		_ = fd.Close()
-		return fmt.Errorf("write config file %s: %w", configPath, err)
-	}
-	if err := fd.Close(); err != nil {
-		return fmt.Errorf("close config file %s: %w", configPath, err)
-	}
-	s.log.Info(fmt.Sprintf("config file [%s] has write success", configPath))
-	return nil
-}
-
-// deleteConfigFile by logConfig to delete actual log config file
-func (s *BkLogSidecar) deleteConfigFile(logConfig define.LogConfigType) error {
-	configPath := fmt.Sprintf("%s.conf", filepath.Join(config.BkunifylogbeatConfig, logConfig.ConfigName()))
-	err := os.Remove(configPath)
-	if os.IsNotExist(err) {
-		// A missing file already represents the requested terminal state; it is
-		// safe to remove the stale cache entry without scheduling another retry.
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("remove config file %s: %w", configPath, err)
-	}
-	s.log.Info(fmt.Sprintf("remove config file [%s] success", configPath))
-	return nil
 }
 
 // bkLogConfigList will get all BkLogConfig from k8s

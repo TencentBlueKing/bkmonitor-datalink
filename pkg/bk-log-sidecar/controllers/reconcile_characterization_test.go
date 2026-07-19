@@ -75,10 +75,11 @@ type stubRuntime struct {
 type stubLogConfig struct {
 	name    string
 	content []byte
+	err     error
 }
 
-func (c *stubLogConfig) Config() []byte {
-	return c.content
+func (c *stubLogConfig) Config() ([]byte, error) {
+	return c.content, c.err
 }
 
 func (c *stubLogConfig) ConfigName() string {
@@ -281,6 +282,13 @@ func TestReconcileReturnsErrorWhenReloadFailsForDeletedConfig(t *testing.T) {
 	reloadErr := errors.New("reload unavailable")
 	var reloadCalls atomic.Int32
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	staleConfig := &stubLogConfig{name: "container_std_default_missing", content: []byte("stale config")}
+	sidecar.actualBkLogConfigCache.Store(staleConfig.ConfigName(), staleConfig)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(config.BkunifylogbeatConfig, staleConfig.ConfigName()+generatedConfigSuffix),
+		staleConfig.content,
+		0o600,
+	))
 	sidecar.reloadAgentFn = func() error {
 		reloadCalls.Add(1)
 		return reloadErr
@@ -333,6 +341,10 @@ func TestReconcileReturnsConfigurationGenerationFailure(t *testing.T) {
 			return listErr
 		},
 	})
+	existingConfig := &stubLogConfig{name: "container_std_default_config-1", content: []byte("last known good")}
+	sidecar.actualBkLogConfigCache.Store(existingConfig.ConfigName(), existingConfig)
+	existingPath := filepath.Join(config.BkunifylogbeatConfig, existingConfig.ConfigName()+generatedConfigSuffix)
+	require.NoError(t, os.WriteFile(existingPath, existingConfig.content, 0o600))
 	reconciler := &BkLogConfigReconciler{
 		Client:       kubeClient,
 		Scheme:       scheme,
@@ -345,6 +357,12 @@ func TestReconcileReturnsConfigurationGenerationFailure(t *testing.T) {
 
 	assert.ErrorIs(t, err, listErr)
 	assert.Equal(t, ctrl.Result{}, result)
+	content, readErr := os.ReadFile(existingPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, existingConfig.content, content)
+	cached, ok := sidecar.actualBkLogConfigCache.Load(existingConfig.ConfigName())
+	require.True(t, ok)
+	assert.Same(t, existingConfig, cached)
 }
 
 func TestReconcileSucceedsAfterTransientReloadFailureRecovers(t *testing.T) {
@@ -354,6 +372,13 @@ func TestReconcileSucceedsAfterTransientReloadFailureRecovers(t *testing.T) {
 	reloadErr := errors.New("reload temporarily unavailable")
 	var reloadCalls atomic.Int32
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	staleConfig := &stubLogConfig{name: "container_std_default_missing", content: []byte("stale config")}
+	sidecar.actualBkLogConfigCache.Store(staleConfig.ConfigName(), staleConfig)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(config.BkunifylogbeatConfig, staleConfig.ConfigName()+generatedConfigSuffix),
+		staleConfig.content,
+		0o600,
+	))
 	sidecar.reloadAgentFn = func() error {
 		if reloadCalls.Add(1) == 1 {
 			return reloadErr
@@ -426,44 +451,4 @@ func TestContainerByIDTreatsRuntimeNotFoundAsNormalDisappearance(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Nil(t, container)
-}
-
-func TestWriteConfigReturnsFileCreationFailure(t *testing.T) {
-	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
-	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
-	require.NoError(t, os.WriteFile(notDirectory, []byte("file"), 0o600))
-	config.BkunifylogbeatConfig = notDirectory
-	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
-	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
-
-	err := sidecar.writeConfig()
-
-	assert.Error(t, err)
-}
-
-func TestDeleteConfigByNameKeepsCacheEntryWhenFileDeletionFails(t *testing.T) {
-	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
-	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
-	require.NoError(t, os.WriteFile(notDirectory, []byte("file"), 0o600))
-	config.BkunifylogbeatConfig = notDirectory
-	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
-	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
-
-	err := sidecar.deleteConfigByName("default", "config")
-
-	assert.Error(t, err)
-	_, ok := sidecar.actualBkLogConfigCache.Load(logConfig.ConfigName())
-	assert.True(t, ok)
-}
-
-func TestDeleteConfigByNameTreatsMissingFileAsDeleted(t *testing.T) {
-	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
-	logConfig := &stubLogConfig{name: "container_std_default_config", content: []byte("config")}
-	sidecar.actualBkLogConfigCache.Store(logConfig.ConfigName(), logConfig)
-
-	err := sidecar.deleteConfigByName("default", "config")
-
-	assert.NoError(t, err)
-	_, ok := sidecar.actualBkLogConfigCache.Load(logConfig.ConfigName())
-	assert.False(t, ok)
 }

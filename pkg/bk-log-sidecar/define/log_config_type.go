@@ -23,7 +23,7 @@ import (
 
 // LogConfigType log config type
 type LogConfigType interface {
-	Config() []byte
+	Config() ([]byte, error)
 	ConfigName() string
 }
 
@@ -51,7 +51,7 @@ type StdOutLogConfig struct {
 }
 
 // Config stdout log config
-func (s *StdOutLogConfig) Config() []byte {
+func (s *StdOutLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -133,9 +133,9 @@ func (s *StdOutLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal stdout log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // stdFilePath stdout file log path
@@ -156,7 +156,7 @@ type ContainerLogConfig struct {
 }
 
 // Config container config
-func (s *ContainerLogConfig) Config() []byte {
+func (s *ContainerLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -245,9 +245,9 @@ func (s *ContainerLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal container log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // ConfigName container log config
@@ -262,7 +262,7 @@ type NodeLogConfig struct {
 }
 
 // Config get node config
-func (s *NodeLogConfig) Config() []byte {
+func (s *NodeLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -304,9 +304,9 @@ func (s *NodeLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal node log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // ConfigName get node config name

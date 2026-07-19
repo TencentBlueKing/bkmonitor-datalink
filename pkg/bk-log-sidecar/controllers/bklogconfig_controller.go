@@ -49,32 +49,19 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	var bkLogConfig bluekingv1alpha1.BkLogConfig
 	err := r.Client.Get(ctx, req.NamespacedName, &bkLogConfig)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// The CR is already absent, which is the desired Kubernetes state. Only
-			// operational cleanup failures should put this key back on the workqueue.
-			if err := r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name); err != nil {
-				return ctrl.Result{}, fmt.Errorf("delete generated config for removed BkLogConfig %s: %w", req.NamespacedName, err)
-			}
-			if err := r.BkLogSidecar.reloadAgent(); err != nil {
-				return ctrl.Result{}, fmt.Errorf("reload agent after removing BkLogConfig %s: %w", req.NamespacedName, err)
-			}
-
-			return ctrl.Result{}, nil
+		if !apierrors.IsNotFound(err) {
+			// Returning the error is intentional: controller-runtime applies
+			// rate-limited backoff and retries this object key. Logging and returning
+			// nil would acknowledge the event and permanently drop this failure.
+			return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 		}
-
-		// Returning the error is intentional: controller-runtime applies
-		// rate-limited backoff and retries this object key. Logging and returning
-		// nil would acknowledge the event and permanently drop this failure.
-		return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 	}
 
-	// This stage keeps the existing delete-then-generate ordering. Errors are
-	// now retryable; atomic replacement is introduced by the Build/Apply stage.
-	if err := r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("delete stale generated config for BkLogConfig %s: %w", req.NamespacedName, err)
-	}
+	// Both create/update and confirmed deletion converge through the same full
+	// Build/Apply path. A failed Build therefore retains the previous working
+	// files instead of deleting this CR's files before regeneration succeeds.
 	if err := r.BkLogSidecar.generateActualBkLogConfig(); err != nil {
-		return ctrl.Result{}, fmt.Errorf("rebuild generated config after BkLogConfig %s changed: %w", req.NamespacedName, err)
+		return ctrl.Result{}, fmt.Errorf("converge generated config after BkLogConfig %s event: %w", req.NamespacedName, err)
 	}
 	return ctrl.Result{}, nil
 }

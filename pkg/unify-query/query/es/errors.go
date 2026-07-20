@@ -12,5 +12,9 @@ package es
 import "errors"
 
 var (
-	ErrNoAliases = errors.New("no aliases found")
+	ErrNoAliases          = errors.New("no aliases found")
+	ErrInvalidTimeRange   = errors.New("invalid query time range")
+	ErrTimeRangeTooLarge  = errors.New("query time range is too large")
+	ErrInvalidDateFormat  = errors.New("invalid es date format")
+	ErrInvalidAliasFormat = errors.New("invalid es alias format")
 )

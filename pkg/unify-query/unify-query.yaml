@@ -43,7 +43,7 @@ influxdb:
   tolerance: 5
 es:
   max_concurrency: 200
-  alias_refresh_period: 1m
+  max_query_time_range: 168h
 http:
   address: 127.0.0.1
   path:

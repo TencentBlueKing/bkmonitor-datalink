@@ -22,18 +22,15 @@ import (
 // setDefaultConfig
 func setDefaultConfig() {
 	viper.SetDefault(MaxConcurrencyConfigPath, 200)
-	viper.SetDefault(AliasRefreshPeriodConfigPath, "1m")
 }
 
 // LoadConfig
 func LoadConfig() {
 
 	MaxConcurrency = viper.GetInt(MaxConcurrencyConfigPath)
-	AliasRefreshPeriod = viper.GetDuration(AliasRefreshPeriodConfigPath)
 
-	log.Debugf(context.TODO(), "reload success new config max concurrency->[%d] alias refresh period->[%s]"+
-		"going to reload the service.",
-		MaxConcurrency, AliasRefreshPeriod)
+	log.Debugf(context.TODO(), "reload success new config max concurrency->[%d], going to reload the service.",
+		MaxConcurrency)
 }
 
 // init

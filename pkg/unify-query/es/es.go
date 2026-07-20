@@ -29,15 +29,15 @@ func init() {
 }
 
 // SearchByStorage 根据存储信息以及查询语句，获取es查询结果
-func SearchByStorage(storageID int, body string, aliases []string) (string, error) {
+func SearchByStorage(ctx context.Context, storageID int, body string, targets []string) (string, error) {
 	storageLock.RLock()
-	defer storageLock.RUnlock()
 	client, ok := storageMap[strconv.Itoa(storageID)]
+	storageLock.RUnlock()
 	if !ok {
-		log.Errorf(context.TODO(), "get storage by id:%d failed", storageID)
+		log.Errorf(ctx, "get storage by id:%d failed", storageID)
 		return "", ErrStorageNotFound
 	}
-	return client.Search(body, aliases...)
+	return client.Search(ctx, body, targets...)
 }
 
 // GetStorageID 根据 tableID 获取 es 集群信息

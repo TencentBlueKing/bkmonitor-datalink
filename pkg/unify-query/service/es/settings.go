@@ -9,14 +9,10 @@
 
 package es
 
-import "time"
-
 const (
-	MaxConcurrencyConfigPath     = "es.max_concurrency"
-	AliasRefreshPeriodConfigPath = "es.alias_refresh_period"
+	MaxConcurrencyConfigPath = "es.max_concurrency"
 )
 
 var (
-	MaxConcurrency     int
-	AliasRefreshPeriod time.Duration
+	MaxConcurrency int
 )

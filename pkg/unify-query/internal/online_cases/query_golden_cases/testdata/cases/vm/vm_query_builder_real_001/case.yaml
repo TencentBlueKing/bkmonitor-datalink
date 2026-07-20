@@ -1,0 +1,28 @@
+id: vm_query_builder_real_001
+storage: vm
+enabled: true
+golden_status: golden_ready
+source:
+  environment: bkop
+  biz_id: "7"
+  sampled_from: bkop_apm_trace_bkmonitor_production
+  sampled_at: "2026-07-20T15:58:04+08:00"
+  source_case: trace_id_redacted/span_handler_query_promql_and_victoria_metrics_query_range
+tags:
+  - vm_query
+  - query_builder
+  - real_online_trace
+  - query_range
+  - promql_api
+  - prefer_storage_vm
+  - single_result_table
+  - rabbitmq
+notes:
+  - 这条样例来自 bkop APM bkmonitor_production 最近 1 小时内的真实 trace。
+  - request.json 保留 UQ 入口 /query/ts/promql 的脱敏请求体。
+  - expect.downstream.json 保留同一条 trace 中 VM 查询 span 观测到的下游查询关键字段。
+files:
+  request: request.json
+  expect_downstream: expect.downstream.json
+  expect_downstream_type: vm_query_sync_payload
+

@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Bk-Scope-Space-Uid": "bksaas__ai-todq-report",
+    "X-Bk-Tenant-Id": "system"
+  },
+  "body": {
+    "promql": "sum(bkmonitor:pushgateway_rabbitmq_cluster:group3:rabbitmq_instance_queue_messages{vhost=\"bkapp-ai-todq-re-2bda\"})",
+    "start": "1784530440",
+    "end": "1784530620",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}
+

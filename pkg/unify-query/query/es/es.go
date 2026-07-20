@@ -11,11 +11,17 @@ package es
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+)
+
+const (
+	consulAliasFormat = "{index}_{time}_read"
+	consulDateFormat  = "20060102"
 )
 
 // Params 查询传入参数
@@ -28,57 +34,88 @@ type Params struct {
 	Start int64
 	// 查询时间终点
 	End int64
-	// 是否模糊匹配，该参数开启时，按旧版get_es_data的查询逻辑进行查询
-	// 开启模糊匹配后，start和end将失效，查询的index将直接传入
-	// 关闭模糊匹配时，查询模块将根据format、index、start、end自动生成一系列查询别名传入到查询请求中
+	// 是否模糊匹配。开启时会根据查询时间生成带日期的索引通配符。
+	// 关闭时根据 format、index、start、end 生成查询别名。
 	FuzzyMatching bool
 }
 
 // Query 查询数据，将结果以json格式返回
-func Query(q *Params) (string, error) {
-	info, err := es.GetStorageID(q.TableID)
-	if err != nil {
-		log.Errorf(context.TODO(), "get storage id by table id:%s failed,error:%s", q.TableID, err)
+func Query(ctx context.Context, q *Params) (string, error) {
+	if err := validateTimeRange(q); err != nil {
 		return "", err
 	}
-	aliases := formatAliases(info, q)
-	if len(aliases) == 0 {
-		log.Errorf(context.TODO(), "no alias found by query:%#v", q)
+
+	info, err := es.GetStorageID(q.TableID)
+	if err != nil {
+		log.Errorf(ctx, "get storage id by table id:%s failed,error:%s", q.TableID, err)
+		return "", err
+	}
+	targets, err := formatQueryTargets(info, q)
+	if err != nil {
+		return "", err
+	}
+	if len(targets) == 0 {
+		log.Errorf(ctx, "no es query target found by query:%#v", q)
 		return "", ErrNoAliases
 	}
-	return es.SearchByStorage(info.StorageID, q.Body, aliases)
+	return es.SearchByStorage(ctx, info.StorageID, q.Body, targets)
 }
 
-// 根据格式处理成对应的alias
-func formatAliases(info *es.TableInfo, q *Params) []string {
-	// 启动模糊匹配时，直接传入index即可
-	if q.FuzzyMatching {
-		log.Debugf(context.TODO(), "query %#v use fuzzy matching", q)
-		return []string{es.ConvertTableIDToFuzzyIndexName(q.TableID)}
+func validateTimeRange(q *Params) error {
+	if q == nil || q.End <= q.Start {
+		return ErrInvalidTimeRange
 	}
-	// 否则根据format规则生成一系列别名查询
-	appendTimeList := make([]string, 0)
+
+	maxTimeRange := maxQueryTimeRange()
 	start := time.Unix(q.Start, 0)
 	end := time.Unix(q.End, 0)
-	temp := start
-	// 去重
-	lastDate := ""
-	for temp.Before(end) {
-		appendTime := temp.Format(info.DateFormat)
-		if lastDate != appendTime {
-			appendTimeList = append(appendTimeList, appendTime)
-			lastDate = appendTime
-		}
-		temp = temp.Add(time.Duration(info.DateStep) * time.Hour)
+	if end.Sub(start) > maxTimeRange {
+		return fmt.Errorf("%w: maximum is %s", ErrTimeRangeTooLarge, maxTimeRange)
 	}
-	result := make([]string, 0)
-	for _, appendTime := range appendTimeList {
-		alias := strings.Replace(info.AliasFormat, "{index}", es.ConvertTableIDToIndexName(q.TableID), -1)
-		alias = strings.Replace(alias, "{time}", appendTime, -1)
-		if es.AliasExist(q.TableID, alias) {
-			result = append(result, alias)
+	return nil
+}
+
+// 根据格式处理成对应的 alias 或索引通配符。
+func formatQueryTargets(info *es.TableInfo, q *Params) ([]string, error) {
+	if info == nil || info.DateFormat != consulDateFormat {
+		return nil, ErrInvalidDateFormat
+	}
+
+	// 3.8 ES 元数据默认按 UTC 创建索引和别名；旧 Consul 协议没有下发自定义时区。
+	start := time.Unix(q.Start, 0).UTC()
+	end := time.Unix(q.End, 0).UTC()
+	appendTimeList := make([]string, 0)
+	appendTimeSet := make(map[string]struct{})
+	startDate := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	endDate := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+	for current := startDate; !current.After(endDate); current = current.AddDate(0, 0, 1) {
+		date := current.Format(info.DateFormat)
+		if _, ok := appendTimeSet[date]; ok {
+			continue
 		}
+		appendTimeSet[date] = struct{}{}
+		appendTimeList = append(appendTimeList, date)
+	}
+
+	result := make([]string, 0)
+	indexName := es.ConvertTableIDToIndexName(q.TableID)
+	if !q.FuzzyMatching && info.AliasFormat != consulAliasFormat {
+		return nil, ErrInvalidAliasFormat
+	}
+	for _, date := range appendTimeList {
+		if q.FuzzyMatching {
+			// 兼容 v1/v2 物理索引，同时用表名前缀边界避免匹配到其他结果表。
+			result = append(result,
+				fmt.Sprintf("%s_%s*", indexName, date),
+				fmt.Sprintf("v2_%s_%s*", indexName, date),
+			)
+			continue
+		}
+		alias := strings.Replace(info.AliasFormat, "{index}", indexName, -1)
+		// Consul 只下发日格式，实际 read alias 可按小时创建，因此日期后保留受限通配符。
+		alias = strings.Replace(alias, "{time}", date+"*", -1)
+		result = append(result, alias)
 	}
 	log.Debugf(context.TODO(), "query %#v get aliases:%v", q, result)
-	return result
+	return result, nil
 }

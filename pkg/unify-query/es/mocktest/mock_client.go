@@ -14,6 +14,7 @@
 package mocktest
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
@@ -88,10 +89,10 @@ func (mr *MockClientMockRecorder) Indices() *gomock.Call {
 }
 
 // Search mocks base method.
-func (m *MockClient) Search(arg0 string, arg1 ...string) (string, error) {
+func (m *MockClient) Search(arg0 context.Context, arg1 string, arg2 ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{arg0}
-	for _, a := range arg1 {
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "Search", varargs...)
@@ -101,8 +102,8 @@ func (m *MockClient) Search(arg0 string, arg1 ...string) (string, error) {
 }
 
 // Search indicates an expected call of Search.
-func (mr *MockClientMockRecorder) Search(arg0 interface{}, arg1 ...interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) Search(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{arg0}, arg1...)
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Search", reflect.TypeOf((*MockClient)(nil).Search), varargs...)
 }

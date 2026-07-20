@@ -11,12 +11,33 @@ package query_golden_cases
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	sensitiveQueryGoldenKeyNames = map[string]struct{}{
+		"access_token":                 {},
+		"app_secret":                   {},
+		"authorization":                {},
+		"bk_ticket":                    {},
+		"bk_token":                     {},
+		"cookie":                       {},
+		"x_bkapi_authorization":        {},
+		"x_bkbase_authorization":       {},
+		"bkdata_authentication_method": {},
+		"bkdata_data_token":            {},
+	}
+
+	sensitiveKeyAssignmentPattern = regexp.MustCompile(`(?im)(?:^|\\?"|['\s,{])(?:access[_-]?token|app[_-]?secret|authorization|bk[_-]?ticket|bk[_-]?token|cookie|x-bkapi-authorization|x-bkbase-authorization|bkdata[_-]?authentication[_-]?method|bkdata[_-]?data[_-]?token)(?:\\?"|['\s])*\s*[:=]`)
+	sensitiveAuthorizationPattern = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`)
+	sensitiveIPv4Pattern          = regexp.MustCompile(`\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`)
 )
 
 type queryGoldenCase struct {
@@ -50,6 +71,67 @@ func TestLocalQueryGoldenCasesDataset(t *testing.T) {
 		t.Skip("set UQ_QUERY_GOLDEN_LOCAL_CASE_DIR to validate local query golden cases")
 	}
 	assertQueryGoldenCasesDataset(t, dir, false)
+}
+
+func TestFindSensitiveQueryGoldenContent(t *testing.T) {
+	ipWhitelist := []*regexp.Regexp{
+		regexp.MustCompile(`^127\.`),
+		regexp.MustCompile(`^192\.168\.`),
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		content     string
+		wantFinding string
+	}{
+		{
+			name:    "clean golden content",
+			path:    "request.json",
+			content: `{"headers":{"X-Bk-Scope-Space-Uid":"bksaas__demo"},"body":{"promql":"sum(a)"}}`,
+		},
+		{
+			name:        "structured sensitive header",
+			path:        "request.json",
+			content:     `{"headers":{"Authorization":"Bearer abcdefghijklmnop"}}`,
+			wantFinding: `headers.Authorization`,
+		},
+		{
+			name:        "sensitive key hidden in log string",
+			path:        "expect.downstream.json",
+			content:     `{"message":"body: {\"bkdata_data_token\":\"abcdefghijklmnop\"}"}`,
+			wantFinding: `sensitive assignment`,
+		},
+		{
+			name:        "non whitelisted ip",
+			path:        "expect.downstream.json",
+			content:     `{"server":"11.166.1.2"}`,
+			wantFinding: `non-whitelisted ip "11.166.1.2"`,
+		},
+		{
+			name:    "whitelisted ip",
+			path:    "expect.downstream.json",
+			content: `{"server":"127.0.0.1"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			findings := findSensitiveQueryGoldenContent(tt.path, tt.content, ipWhitelist)
+			if tt.wantFinding == "" {
+				if len(findings) > 0 {
+					t.Fatalf("unexpected sensitive findings: %s", strings.Join(findings, "\n"))
+				}
+				return
+			}
+			for _, finding := range findings {
+				if strings.Contains(finding, tt.wantFinding) {
+					return
+				}
+			}
+			t.Fatalf("findings %q do not contain %q", findings, tt.wantFinding)
+		})
+	}
 }
 
 func assertQueryGoldenCasesDataset(t *testing.T, root string, requireCases bool) {
@@ -221,7 +303,13 @@ func assertJSONFile(t *testing.T, path string) any {
 func assertNoSensitiveQueryGoldenContent(t *testing.T, caseDir string) {
 	t.Helper()
 
-	err := filepath.WalkDir(caseDir, func(path string, d os.DirEntry, err error) error {
+	ipWhitelist, err := loadSensitiveIPWhitelist()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var findings []string
+	err = filepath.WalkDir(caseDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -232,31 +320,159 @@ func assertNoSensitiveQueryGoldenContent(t *testing.T, caseDir string) {
 		if err != nil {
 			return err
 		}
-		lower := strings.ToLower(string(content))
-		for _, fragment := range []string{
-			"access_token",
-			"app_secret",
-			"authorization",
-			"bk_ticket",
-			"bk_token",
-			"cookie",
-			"x-bkapi-authorization",
-			"x-bkbase-authorization",
-			"bkdata_authentication_method",
-			"bkdata_data_token",
-			"11.166.",
-			"11.157.",
-			"9.166.",
-			"21.230.",
-			"21.212.",
-		} {
-			if strings.Contains(lower, fragment) {
-				t.Fatalf("%s contains sensitive fragment %q", path, fragment)
-			}
-		}
+
+		findings = append(findings, findSensitiveQueryGoldenContent(path, string(content), ipWhitelist)...)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(findings) > 0 {
+		t.Fatalf("query golden case contains sensitive content:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+func findSensitiveQueryGoldenContent(path, content string, ipWhitelist []*regexp.Regexp) []string {
+	var findings []string
+
+	// request/expect 文件通常是 JSON，case.yaml 是 YAML；先按结构化 key 检查，
+	// 能避免单纯字符串包含带来的误判，也能明确指出是哪一个字段没有脱敏。
+	if value, ok := decodeStructuredQueryGoldenContent(path, content); ok {
+		findings = append(findings, findSensitiveStructuredKeys(path, nil, value)...)
+	}
+
+	// 线上日志有时会被作为字符串嵌在 JSON/YAML 里，结构化解析看不到内部字段；
+	// 这里额外检查“敏感 key 后面跟 : 或 =”的赋值形态，避免 token 字段藏在日志原文里。
+	if match := sensitiveKeyAssignmentPattern.FindString(content); match != "" {
+		findings = append(findings, fmt.Sprintf("%s: contains sensitive assignment %q", path, strings.TrimSpace(match)))
+	}
+	if match := sensitiveAuthorizationPattern.FindString(content); match != "" {
+		findings = append(findings, fmt.Sprintf("%s: contains authorization value %q", path, match))
+	}
+	for _, ip := range sensitiveIPv4Pattern.FindAllString(content, -1) {
+		if !isWhitelistedSensitiveIP(ip, ipWhitelist) {
+			findings = append(findings, fmt.Sprintf("%s: contains non-whitelisted ip %q", path, ip))
+		}
+	}
+	return findings
+}
+
+func decodeStructuredQueryGoldenContent(path, content string) (any, bool) {
+	var value any
+	switch filepath.Ext(path) {
+	case ".json":
+		if err := json.Unmarshal([]byte(content), &value); err != nil {
+			return nil, false
+		}
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal([]byte(content), &value); err != nil {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	return value, true
+}
+
+func findSensitiveStructuredKeys(path string, parents []string, value any) []string {
+	switch typed := value.(type) {
+	case map[string]any:
+		var findings []string
+		for key, child := range typed {
+			currentPath := appendFieldPath(parents, key)
+			if _, ok := sensitiveQueryGoldenKeyNames[normalizeSensitiveQueryGoldenKey(key)]; ok {
+				findings = append(findings, fmt.Sprintf("%s: contains sensitive field %q", path, strings.Join(currentPath, ".")))
+			}
+			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
+		}
+		return findings
+	case map[any]any:
+		var findings []string
+		for key, child := range typed {
+			keyText := fmt.Sprint(key)
+			currentPath := appendFieldPath(parents, keyText)
+			if _, ok := sensitiveQueryGoldenKeyNames[normalizeSensitiveQueryGoldenKey(keyText)]; ok {
+				findings = append(findings, fmt.Sprintf("%s: contains sensitive field %q", path, strings.Join(currentPath, ".")))
+			}
+			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
+		}
+		return findings
+	case []any:
+		var findings []string
+		for index, child := range typed {
+			currentPath := appendFieldPath(parents, fmt.Sprintf("[%d]", index))
+			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
+		}
+		return findings
+	default:
+		return nil
+	}
+}
+
+func appendFieldPath(parents []string, field string) []string {
+	next := make([]string, 0, len(parents)+1)
+	next = append(next, parents...)
+	next = append(next, field)
+	return next
+}
+
+func normalizeSensitiveQueryGoldenKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.Trim(key, `"'`)
+	key = strings.ReplaceAll(key, "-", "_")
+	return key
+}
+
+func loadSensitiveIPWhitelist() ([]*regexp.Regexp, error) {
+	path, err := findRepoFile("scripts/pre_commit/sensitive_info_check/ip_white_list.dat")
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var whitelist []*regexp.Regexp
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		pattern, err := regexp.Compile(line)
+		if err != nil {
+			return nil, fmt.Errorf("%s contains invalid ip whitelist pattern %q: %w", path, line, err)
+		}
+		whitelist = append(whitelist, pattern)
+	}
+	return whitelist, nil
+}
+
+func findRepoFile(rel string) (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		candidate := filepath.Join(dir, rel)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("cannot find %s from %s", rel, dir)
+		}
+		dir = parent
+	}
+}
+
+func isWhitelistedSensitiveIP(ip string, whitelist []*regexp.Regexp) bool {
+	for _, pattern := range whitelist {
+		if pattern.MatchString(ip) {
+			return true
+		}
+	}
+	return false
 }

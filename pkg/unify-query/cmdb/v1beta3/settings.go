@@ -10,15 +10,17 @@
 package v1beta3
 
 const (
-	MaxHopsConfigPath              = "cmdb.v1beta3.max_hops"
-	MaxAllowedHopsConfigPath       = "cmdb.v1beta3.max_allowed_hops"
-	DefaultLimitConfigPath         = "cmdb.v1beta3.default_limit"
-	DefaultLookBackDeltaConfigPath = "cmdb.v1beta3.look_back_delta"
+	MaxHopsConfigPath                    = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath             = "cmdb.v1beta3.max_allowed_hops"
+	DefaultLimitConfigPath               = "cmdb.v1beta3.default_limit"
+	DefaultLookBackDeltaConfigPath       = "cmdb.v1beta3.look_back_delta"
+	ActiveEdgeServingRelationsConfigPath = "cmdb.v1beta3.active_edge_serving.relations"
 )
 
 var (
-	DefaultMaxHops       = 2
-	MaxAllowedHops       = 5
-	DefaultLimit         = 100
-	DefaultLookBackDelta = int64(86400000) // 24小时（毫秒）
+	DefaultMaxHops             = 2
+	MaxAllowedHops             = 5
+	DefaultLimit               = 100
+	DefaultLookBackDelta       = int64(86400000) // 24小时（毫秒）
+	ActiveEdgeServingRelations = []string{}
 )

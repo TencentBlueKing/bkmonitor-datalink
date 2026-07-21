@@ -24,11 +24,13 @@ import (
 
 func TestSurrealDBQuerySync(t *testing.T) {
 	tests := []struct {
-		name        string
-		request     QueryRequest
-		provider    SchemaProvider
-		binding     BindingInfo
-		expectedSQL string
+		name                       string
+		request                    QueryRequest
+		provider                   SchemaProvider
+		binding                    BindingInfo
+		activeEdgeServingRelations []string
+		queryMode                  graphQueryMode
+		expectedSQL                string
 	}{
 		{
 			name: "host to module query uses runtime binding schema and bkbase query_sync payload",
@@ -38,6 +40,7 @@ func TestSurrealDBQuerySync(t *testing.T) {
 				SourceType:           ResourceTypeHost,
 				SourceInfo:           map[string]string{"bk_host_id": "38268"},
 				TargetType:           ResourceTypeModule,
+				TargetTypeExplicit:   true,
 				MaxHops:              1,
 				AllowedRelationTypes: []RelationCategory{RelationCategoryStatic},
 				LookBackDelta:        7000000000,
@@ -57,7 +60,9 @@ func TestSurrealDBQuerySync(t *testing.T) {
 					},
 				},
 			),
-			binding: *tableMockBindingInfo(),
+			binding:                    *tableMockBindingInfo(),
+			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
+			queryMode:                  graphQueryModeInstant,
 			expectedSQL: `LET $timestamp = 1776910000000;
 LET $look_back_delta = 7000000000;
 LET $start = 1769910000;
@@ -71,8 +76,7 @@ SELECT {
         entity_id: <string>id,
         entity_data: { bk_host_id: bk_host_id },
         created_at: created_at,
-        updated_at: updated_at,
-        liveness: (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end)
+        updated_at: updated_at
     },
 
     hop1: {
@@ -81,12 +85,10 @@ SELECT {
             relation_type: 'host_module_link',
             relation_category: 'static',
             relation_id: <string>id,
-            relation_liveness: (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms),
             target: {
                 entity_type: 'module',
                 entity_id: <string>out,
-                entity_data: { bk_module_id: out.bk_module_id },
-                liveness: (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end)
+                entity_data: { bk_module_id: out.bk_module_id }
             }
         } FROM host_module_link WHERE in = $parent.id
           AND (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
@@ -98,12 +100,144 @@ WHERE bk_host_id = '38268'
   AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		},
+		{
+			name: "node to pod query uses active edge serving table",
+			request: QueryRequest{
+				SpaceUID:           tableMockSpaceUID,
+				Timestamp:          300000,
+				SourceType:         ResourceTypeNode,
+				TargetType:         ResourceTypePod,
+				TargetTypeExplicit: true,
+				MaxHops:            1,
+			},
+			provider: newTableSchemaProvider(
+				map[ResourceType]tableResourceDefinition{
+					ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
+					ResourceTypePod:  {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
+				},
+				[]RelationSchema{
+					{
+						RelationType: RelationNodeWithPod,
+						Category:     RelationCategoryStatic,
+						FromType:     ResourceTypeNode,
+						ToType:       ResourceTypePod,
+					},
+				},
+			),
+			binding:                    *tableMockBindingInfo(),
+			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
+			queryMode:                  graphQueryModeInstant,
+			expectedSQL: `LET $timestamp = 300000;
+LET $look_back_delta = 86400000;
+LET $start = 0;
+LET $end = 300;
+LET $start_ms = 0;
+LET $end_ms = 300000;
+
+SELECT {
+    root: {
+        entity_type: meta::tb(id),
+        entity_id: <string>id,
+        entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
+        created_at: created_at,
+        updated_at: updated_at
+    },
+
+    hop1: {
+        node_with_pod: (SELECT VALUE {
+                hop: 1,
+                relation_type: 'node_with_pod',
+                relation_category: 'static',
+                relation_id: <string>relation_id,
+                target: {
+                    entity_type: target_type,
+                    entity_id: <string>target_id,
+                    entity_data: target_data
+                }
+            } FROM node_with_pod_active_edge_serving WHERE source_id = $parent.id
+              AND active_period_start_ms <= $end_ms
+              AND active_period_end_ms >= $start_ms)
+    }
+} AS result
+FROM node
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+LIMIT 100;`,
+		},
+		{
+			name: "pod to node query uses active edge serving table in reverse",
+			request: QueryRequest{
+				SpaceUID:           tableMockSpaceUID,
+				Timestamp:          300000,
+				SourceType:         ResourceTypePod,
+				TargetType:         ResourceTypeNode,
+				TargetTypeExplicit: true,
+				MaxHops:            1,
+			},
+			provider: newTableSchemaProvider(
+				map[ResourceType]tableResourceDefinition{
+					ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
+					ResourceTypePod:  {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
+				},
+				[]RelationSchema{{
+					RelationType: RelationNodeWithPod,
+					Category:     RelationCategoryStatic,
+					FromType:     ResourceTypeNode,
+					ToType:       ResourceTypePod,
+				}},
+			),
+			binding:                    *tableMockBindingInfo(),
+			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
+			queryMode:                  graphQueryModeInstant,
+			expectedSQL: `LET $timestamp = 300000;
+LET $look_back_delta = 86400000;
+LET $start = 0;
+LET $end = 300;
+LET $start_ms = 0;
+LET $end_ms = 300000;
+
+SELECT {
+    root: {
+        entity_type: meta::tb(id),
+        entity_id: <string>id,
+        entity_data: { bcs_cluster_id: bcs_cluster_id, namespace: namespace, pod: pod },
+        created_at: created_at,
+        updated_at: updated_at
+    },
+
+    hop1: {
+        node_with_pod: (SELECT VALUE {
+                hop: 1,
+                relation_type: 'node_with_pod',
+                relation_category: 'static',
+                relation_id: <string>relation_id,
+                target: {
+                    entity_type: source_type,
+                    entity_id: <string>source_id,
+                    entity_data: source_data
+                }
+            } FROM node_with_pod_active_edge_serving WHERE target_id = $parent.id
+              AND active_period_start_ms <= $end_ms
+              AND active_period_end_ms >= $start_ms)
+    }
+} AS result
+FROM pod
+WHERE (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+LIMIT 100;`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			oldRelations := ActiveEdgeServingRelations
+			ActiveEdgeServingRelations = append([]string(nil), tt.activeEdgeServingRelations...)
+			t.Cleanup(func() {
+				ActiveEdgeServingRelations = oldRelations
+			})
+
 			req := tt.request
-			sql := NewSurrealQueryBuilderWithSchemaProvider(&req, tt.provider).Build()
+			builder := NewSurrealQueryBuilderWithSchemaProvider(&req, tt.provider)
+			configureBuilderForGraphQueryMode(builder, tt.queryMode)
+			sql := builder.Build()
 			assert.Equal(t, tt.expectedSQL, sql)
 
 			start, end := req.GetQueryRange()

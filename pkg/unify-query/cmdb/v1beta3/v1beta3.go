@@ -570,6 +570,10 @@ func (m *Model) executeOneGraphQueryPath(
 }
 
 func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQueryMode) {
+	if builder == nil {
+		return
+	}
+	builder.queryMode = mode
 	if mode == graphQueryModeInstant {
 		builder.WithoutLivenessProjection()
 	}

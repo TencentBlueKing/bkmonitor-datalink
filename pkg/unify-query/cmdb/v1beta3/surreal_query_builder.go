@@ -52,12 +52,14 @@ func buildEntityDataFields(keys []string, prefix string) string {
 
 // SurrealQueryBuilder 构建 SurrealQL 关联查询
 type SurrealQueryBuilder struct {
-	request         *QueryRequest
-	pathFinder      *PathFinder
-	schemaProvider  SchemaProvider
-	namespace       string
-	transitions     map[int]map[ResourceType]map[pathTransition]struct{}
-	projectLiveness bool
+	request                    *QueryRequest
+	pathFinder                 *PathFinder
+	schemaProvider             SchemaProvider
+	namespace                  string
+	transitions                map[int]map[ResourceType]map[pathTransition]struct{}
+	projectLiveness            bool
+	queryMode                  graphQueryMode
+	activeEdgeServingRelations map[RelationType]struct{}
 }
 
 type pathTransition struct {
@@ -91,14 +93,32 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 
 	pf := NewPathFinder(allOpts...)
 
-	return &SurrealQueryBuilder{
-		request:         request,
-		pathFinder:      pf,
-		schemaProvider:  provider,
-		namespace:       namespace,
-		transitions:     buildPathTransitions(request, pf),
-		projectLiveness: true,
+	servingRelations := make(map[RelationType]struct{})
+	for _, relation := range ActiveEdgeServingRelations {
+		servingRelations[RelationType(relation)] = struct{}{}
 	}
+
+	return &SurrealQueryBuilder{
+		request:                    request,
+		pathFinder:                 pf,
+		schemaProvider:             provider,
+		namespace:                  namespace,
+		transitions:                buildPathTransitions(request, pf),
+		projectLiveness:            true,
+		activeEdgeServingRelations: servingRelations,
+	}
+}
+
+func (b *SurrealQueryBuilder) useActiveEdgeServing(relationType RelationType) bool {
+	if b == nil ||
+		b.queryMode != graphQueryModeInstant ||
+		b.request.MaxHops != 1 ||
+		!b.request.TargetTypeExplicit ||
+		b.request.SourceType == b.request.TargetType {
+		return false
+	}
+	_, ok := b.activeEdgeServingRelations[relationType]
+	return ok
 }
 
 func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvider, path resourcePath) *SurrealQueryBuilder {
@@ -374,6 +394,9 @@ func (b *SurrealQueryBuilder) getRelationsForType(hop int, resourceType Resource
 // buildRelationQuery 构建单个关系的查询
 func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *RelationQueryInfo) string {
 	relationType := rel.Schema.RelationType
+	if b.useActiveEdgeServing(relationType) {
+		return b.buildServingRelationQuery(hop, rel, "$parent.id", sqlIndent2)
+	}
 	relationTable := string(relationType)
 	relationLivenessTable := GetRelationLivenessRecordTableName(relationType)
 	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
@@ -600,6 +623,65 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 		indent, relationTable, rel.WhereField, parentField,
 		indent, relationLivenessTable,
 		indent, targetLivenessTable, targetLivenessIDField, rel.SelectField)
+}
+
+// buildServingRelationQuery reads a pre-joined active edge row while preserving
+// the response shape consumed by SurrealResponseParser. The serving interval is
+// projected as both edge and target liveness because it is their materialized
+// intersection.
+func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQueryInfo, parentRef, indent string) string {
+	relationType := rel.Schema.RelationType
+	table := string(relationType) + "_active_edge_serving"
+	matchField, targetIDField, targetDataField, targetTypeField := "source_id", "target_id", "target_data", "target_type"
+	if rel.WhereField == fieldOut {
+		matchField, targetIDField, targetDataField, targetTypeField = "target_id", "source_id", "source_data", "source_type"
+	}
+
+	keyName := string(relationType) + rel.KeySuffix
+	direction := ""
+	if rel.Schema.Category == RelationCategoryDynamic {
+		direction = fmt.Sprintf("\n%s        direction: '%s',", indent, rel.Direction)
+	}
+	liveness := ""
+	targetLiveness := ""
+	if b.projectLiveness {
+		liveness = fmt.Sprintf("\n%s        relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }],", indent)
+		targetLiveness = fmt.Sprintf(",\n%s            liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]", indent)
+	}
+
+	nested := ""
+	if hop < b.request.MaxHops {
+		nextHop := b.buildNestedHopSelect(hop+1, rel.TargetType, targetIDField)
+		nested = fmt.Sprintf(",\n%s            hop%d: %s", indent, hop+1, nextHop)
+	}
+
+	return fmt.Sprintf(`%s%s: (SELECT VALUE {
+%s        hop: %d,
+%s        relation_type: '%s',
+%s        relation_category: '%s',%s
+%s        relation_id: <string>relation_id,%s
+%s        target: {
+%s            entity_type: %s,
+%s            entity_id: <string>%s,
+%s            entity_data: %s%s%s
+%s        }
+%s    } FROM %s WHERE %s = %s
+%s      AND active_period_start_ms <= $end_ms
+%s      AND active_period_end_ms >= $start_ms)`,
+		indent, keyName,
+		indent, hop,
+		indent, relationType,
+		indent, rel.Schema.Category,
+		direction,
+		indent, liveness,
+		indent,
+		indent, targetTypeField,
+		indent, targetIDField,
+		indent, targetDataField, targetLiveness, nested,
+		indent,
+		indent, table, matchField, parentRef,
+		indent,
+		indent)
 }
 
 // buildWhereClause 构建 WHERE 子句

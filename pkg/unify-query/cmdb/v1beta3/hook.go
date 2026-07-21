@@ -22,6 +22,7 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
+	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
 
 	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
 	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
@@ -35,6 +36,7 @@ func LoadConfig() {
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
+	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
 
 	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)
 	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)

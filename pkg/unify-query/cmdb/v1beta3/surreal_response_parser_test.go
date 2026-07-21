@@ -30,7 +30,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 		graph.AddNode(rootNode)
 
 		hopData := map[string]any{}
-		parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		err := parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		require.NoError(t, err)
 
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
@@ -84,7 +85,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			},
 		}
 
-		parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		err := parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		require.NoError(t, err)
 
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
@@ -565,7 +567,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			},
 		}
 
-		parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		err := parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		require.ErrorContains(t, err, "missing relation_id")
 
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
@@ -580,7 +583,6 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			Adjacency: map[string][]string{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {},
 			},
-			TraversalErrors: []string{"parse relation pod_with_service: missing relation_id"},
 		}, graph)
 	})
 
@@ -603,7 +605,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			},
 		}
 
-		parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		err := parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		require.ErrorContains(t, err, "missing target")
 
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
@@ -618,7 +621,6 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			Adjacency: map[string][]string{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {},
 			},
-			TraversalErrors: []string{"parse relation pod_with_service: missing target"},
 		}, graph)
 	})
 
@@ -646,7 +648,8 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			},
 		}
 
-		parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		err := parser.parseHopRelations(graph, rootNode.ResourceID, hopData)
+		require.ErrorContains(t, err, "parse target: missing entity_id")
 
 		assert.Equal(t, &LivenessGraph{
 			QueryStart: 1000,
@@ -661,7 +664,6 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 			Adjacency: map[string][]string{
 				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {},
 			},
-			TraversalErrors: []string{"parse relation pod_with_service: parse target: missing entity_id"},
 		}, graph)
 	})
 
@@ -891,403 +893,354 @@ func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 }
 
 func TestSurrealResponseParser_Parse(t *testing.T) {
-	t.Run("empty response", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		graphs, err := parser.Parse(nil)
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
+	const (
+		podID     = "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩"
+		podIDTwo  = "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩"
+		serviceID = "service:⟨cluster=c1,namespace=ns1,service=svc1⟩"
+		nodeID    = "node:⟨cluster=c1,node=node1⟩"
+	)
 
-	t.Run("empty array response", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		graphs, err := parser.Parse([]map[string]any{})
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
-
-	t.Run("missing result field", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		graphs, err := parser.Parse([]map[string]any{
-			{"other_field": "value"},
-		})
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
-
-	t.Run("result is not array", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		graphs, err := parser.Parse([]map[string]any{
-			{"result": "not_an_array"},
-		})
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
-
-	t.Run("single record with root only", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								"entity_id":   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-								"entity_type": "pod",
-								"entity_data": map[string]any{
-									"cluster":   "c1",
-									"namespace": "ns1",
-									"pod":       "p1",
-								},
-								"liveness": []any{
-									map[string]any{"period_start": float64(1000), "period_end": float64(2000)},
-								},
-							},
-						},
-					},
-				},
-			},
+	expectedGraph := func(root *NodeLiveness, nodes []*NodeLiveness, edges []*EdgeLiveness) *LivenessGraph {
+		graph := NewLivenessGraph(1000, 2000)
+		graph.RootID = root.ResourceID
+		graph.AddNode(root)
+		for _, node := range nodes {
+			graph.AddNode(node)
 		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(graphs))
-
-		assert.Equal(t, &LivenessGraph{
-			QueryStart: 1000,
-			QueryEnd:   2000,
-			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-			Nodes: map[string]*NodeLiveness{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
-					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ResourceType: ResourceTypePod,
-					Labels:       map[string]string{"cluster": "c1", "namespace": "ns1", "pod": "p1"},
-					RawPeriods:   []*VisiblePeriod{{Start: 1000, End: 2000}},
-				},
-			},
-			Edges: map[string]*EdgeLiveness{},
-			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {},
-			},
-		}, graphs[0])
-	})
-
-	t.Run("single record with hop1", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								"entity_id":   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-								"entity_type": "pod",
-								"entity_data": map[string]any{},
-								"liveness":    []any{},
-							},
-							"hop1": map[string]any{
-								"pod_with_service": []any{
-									map[string]any{
-										"relation_id":       "rel_1",
-										"relation_type":     "pod_with_service",
-										"relation_category": "static",
-										"direction":         "outbound",
-										"relation_liveness": []any{},
-										"target": map[string]any{
-											"entity_id":   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-											"entity_type": "service",
-											"entity_data": map[string]any{},
-											"liveness":    []any{},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+		for _, edge := range edges {
+			graph.AddEdge(edge)
 		}
+		return graph
+	}
 
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(graphs))
-
-		assert.Equal(t, &LivenessGraph{
-			QueryStart: 1000,
-			QueryEnd:   2000,
-			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-			Nodes: map[string]*NodeLiveness{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
-					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ResourceType: ResourceTypePod,
-					Labels:       map[string]string{},
-				},
-				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {
-					ResourceID:   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-					ResourceType: ResourceTypeService,
-					Labels:       map[string]string{},
-				},
-			},
-			Edges: map[string]*EdgeLiveness{
-				"rel_1": {
-					RelationID:   "rel_1",
-					RelationType: RelationType("pod_with_service"),
-					Category:     RelationCategoryStatic,
-					Direction:    DirectionOutbound,
-					FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ToID:         "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-				},
-			},
-			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩":           {"rel_1"},
-				"service:⟨cluster=c1,namespace=ns1,service=svc1⟩": {},
-			},
-		}, graphs[0])
-	})
-
-	t.Run("multiple records create separate graphs", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								"entity_id":   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-								"entity_type": "pod",
-								"entity_data": map[string]any{},
-								"liveness":    []any{},
-							},
-						},
-					},
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								"entity_id":   "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",
-								"entity_type": "pod",
-								"entity_data": map[string]any{},
-								"liveness":    []any{},
-							},
-						},
-					},
-				},
-			},
-		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		require.Equal(t, 2, len(graphs))
-
-		assert.Equal(t, &LivenessGraph{
-			QueryStart: 1000,
-			QueryEnd:   2000,
-			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-			Nodes: map[string]*NodeLiveness{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {
-					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-					ResourceType: ResourceTypePod,
-					Labels:       map[string]string{},
-				},
-			},
-			Edges: map[string]*EdgeLiveness{},
-			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p1⟩": {},
-			},
-		}, graphs[0])
-
-		assert.Equal(t, &LivenessGraph{
-			QueryStart: 1000,
-			QueryEnd:   2000,
-			RootID:     "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",
-			Nodes: map[string]*NodeLiveness{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p2⟩": {
-					ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",
-					ResourceType: ResourceTypePod,
-					Labels:       map[string]string{},
-				},
-			},
-			Edges: map[string]*EdgeLiveness{},
-			Adjacency: map[string][]string{
-				"pod:⟨cluster=c1,namespace=ns1,pod=p2⟩": {},
-			},
-		}, graphs[1])
-	})
-
-	t.Run("invalid root adds error to graph", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								// Missing entity_id
-								"entity_type": "pod",
-								"entity_data": map[string]any{},
-								"liveness":    []any{},
-							},
-						},
-					},
-				},
-			},
-		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(graphs))
-
-		assert.Equal(t, &LivenessGraph{
-			QueryStart:      1000,
-			QueryEnd:        2000,
-			Nodes:           map[string]*NodeLiveness{},
-			Edges:           map[string]*EdgeLiveness{},
-			Adjacency:       map[string][]string{},
-			TraversalErrors: []string{"parse root: missing entity_id"},
-		}, graphs[0])
-	})
-
-	t.Run("record without result field skipped", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"other": "data",
-					},
-				},
-			},
-		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
-
-	t.Run("record without root field skipped", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"hop1": map[string]any{}, // No root
-						},
-					},
-				},
-			},
-		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		assert.Equal(t, ([]*LivenessGraph)(nil), graphs)
-	})
-
-	t.Run("multiple hops (hop1, hop2, hop3)", func(t *testing.T) {
-		parser := NewSurrealResponseParser(1000, 2000)
-		response := []map[string]any{
-			{
-				"result": []any{
-					map[string]any{
-						"result": map[string]any{
-							"root": map[string]any{
-								"entity_id":   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-								"entity_type": "pod",
-								"entity_data": map[string]any{},
-								"liveness":    []any{},
-							},
-							"hop1": map[string]any{
-								"node_with_pod": []any{
-									map[string]any{
-										"relation_id":       "rel_1",
-										"relation_type":     "node_with_pod",
-										"relation_category": "static",
-										"direction":         "inbound",
-										"relation_liveness": []any{},
-										"target": map[string]any{
-											"entity_id":   "node:⟨cluster=c1,node=node1⟩",
-											"entity_type": "node",
-											"entity_data": map[string]any{},
-											"liveness":    []any{},
-										},
-									},
-								},
-							},
-							"hop2": map[string]any{
-								"pod_with_service": []any{
-									map[string]any{
-										"relation_id":       "rel_2",
-										"relation_type":     "pod_with_service",
-										"relation_category": "static",
-										"direction":         "outbound",
-										"relation_liveness": []any{},
-										"target": map[string]any{
-											"entity_id":   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-											"entity_type": "service",
-											"entity_data": map[string]any{},
-											"liveness":    []any{},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-
-		graphs, err := parser.Parse(response)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(graphs))
-
-		graph := graphs[0]
-		assert.Equal(t, int64(1000), graph.QueryStart)
-		assert.Equal(t, int64(2000), graph.QueryEnd)
-		assert.Equal(t, 3, len(graph.Nodes))
-		assert.Equal(t, 2, len(graph.Edges))
-
-		// Check nodes
-		assert.Equal(t, &NodeLiveness{
-			ResourceID:   "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+	rootOnlyGraph := expectedGraph(
+		&NodeLiveness{
+			ResourceID:   podID,
 			ResourceType: ResourceTypePod,
-			Labels:       map[string]string{},
-		}, graph.Nodes["pod:⟨cluster=c1,namespace=ns1,pod=p1⟩"])
+			Labels:       map[string]string{"cluster": "c1", "namespace": "ns1", "pod": "p1"},
+			RawPeriods:   []*VisiblePeriod{{Start: 1000, End: 2000}},
+		},
+		nil,
+		nil,
+	)
+	hopGraph := expectedGraph(
+		&NodeLiveness{ResourceID: podID, ResourceType: ResourceTypePod, Labels: map[string]string{}},
+		[]*NodeLiveness{
+			{ResourceID: serviceID, ResourceType: ResourceTypeService, Labels: map[string]string{}},
+		},
+		[]*EdgeLiveness{
+			{
+				RelationID:   "rel_1",
+				RelationType: RelationType("pod_with_service"),
+				Category:     RelationCategoryStatic,
+				Direction:    DirectionOutbound,
+				FromID:       podID,
+				ToID:         serviceID,
+			},
+		},
+	)
+	multipleRecordGraphs := []*LivenessGraph{
+		expectedGraph(
+			&NodeLiveness{ResourceID: podID, ResourceType: ResourceTypePod, Labels: map[string]string{}},
+			nil,
+			nil,
+		),
+		expectedGraph(
+			&NodeLiveness{ResourceID: podIDTwo, ResourceType: ResourceTypePod, Labels: map[string]string{}},
+			nil,
+			nil,
+		),
+	}
+	multipleHopGraph := expectedGraph(
+		&NodeLiveness{ResourceID: podID, ResourceType: ResourceTypePod, Labels: map[string]string{}},
+		[]*NodeLiveness{
+			{ResourceID: nodeID, ResourceType: ResourceTypeNode, Labels: map[string]string{}},
+			{ResourceID: serviceID, ResourceType: ResourceTypeService, Labels: map[string]string{}},
+		},
+		[]*EdgeLiveness{
+			{
+				RelationID:   "rel_1",
+				RelationType: RelationType("node_with_pod"),
+				Category:     RelationCategoryStatic,
+				Direction:    DirectionInbound,
+				FromID:       podID,
+				ToID:         nodeID,
+			},
+			{
+				RelationID:   "rel_2",
+				RelationType: RelationType("pod_with_service"),
+				Category:     RelationCategoryStatic,
+				Direction:    DirectionOutbound,
+				FromID:       podID,
+				ToID:         serviceID,
+			},
+		},
+	)
 
-		assert.Equal(t, &NodeLiveness{
-			ResourceID:   "node:⟨cluster=c1,node=node1⟩",
-			ResourceType: ResourceTypeNode,
-			Labels:       map[string]string{},
-		}, graph.Nodes["node:⟨cluster=c1,node=node1⟩"])
+	tests := []struct {
+		name         string
+		responseJSON string
+		want         []*LivenessGraph
+		wantErr      string
+	}{
+		{
+			name:         "empty response",
+			responseJSON: `null`,
+			wantErr:      "expected at least one statement result",
+		},
+		{
+			name:         "empty array response",
+			responseJSON: `[]`,
+			wantErr:      "expected at least one statement result",
+		},
+		{
+			name:         "missing result field",
+			responseJSON: `[{"other_field":"value"}]`,
+			wantErr:      "result: missing field",
+		},
+		{
+			name:         "result is not array",
+			responseJSON: `[{"result":"not_an_array"}]`,
+			wantErr:      "result: expected array",
+		},
+		{
+			name:         "result row is not object",
+			responseJSON: `[{"result":["broken-row"]}]`,
+			wantErr:      "result[0]: expected object",
+		},
+		{
+			name: "hop is not object",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:one",
+									"entity_type": "pod",
+									"entity_data": {"pod": "one"},
+									"liveness": []
+								},
+								"hop1": "broken-hop"
+							}
+						}
+					]
+				}
+			]`,
+			wantErr: "result[0].result.hop1: expected object",
+		},
+		{
+			name: "single record with root only",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+									"entity_type": "pod",
+									"entity_data": {
+										"cluster": "c1",
+										"namespace": "ns1",
+										"pod": "p1"
+									},
+									"liveness": [
+										{"period_start": 1000, "period_end": 2000}
+									]
+								}
+							}
+						}
+					]
+				}
+			]`,
+			want: []*LivenessGraph{rootOnlyGraph},
+		},
+		{
+			name: "single record with hop1",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+									"entity_type": "pod",
+									"entity_data": {},
+									"liveness": []
+								},
+								"hop1": {
+									"pod_with_service": [
+										{
+											"relation_id": "rel_1",
+											"relation_type": "pod_with_service",
+											"relation_category": "static",
+											"direction": "outbound",
+											"relation_liveness": [],
+											"target": {
+												"entity_id": "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
+												"entity_type": "service",
+												"entity_data": {},
+												"liveness": []
+											}
+										}
+									]
+								}
+							}
+						}
+					]
+				}
+			]`,
+			want: []*LivenessGraph{hopGraph},
+		},
+		{
+			name: "multiple records create separate graphs",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+									"entity_type": "pod",
+									"entity_data": {},
+									"liveness": []
+								}
+							}
+						},
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:⟨cluster=c1,namespace=ns1,pod=p2⟩",
+									"entity_type": "pod",
+									"entity_data": {},
+									"liveness": []
+								}
+							}
+						}
+					]
+				}
+			]`,
+			want: multipleRecordGraphs,
+		},
+		{
+			name: "invalid root",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_type": "pod",
+									"entity_data": {},
+									"liveness": []
+								}
+							}
+						}
+					]
+				}
+			]`,
+			wantErr: "result[0].result.root: missing entity_id",
+		},
+		{
+			name:         "record without result field",
+			responseJSON: `[{"result":[{"other":"data"}]}]`,
+			wantErr:      "result[0].result: missing field",
+		},
+		{
+			name:         "record without root field",
+			responseJSON: `[{"result":[{"result":{"hop1":{}}}]}]`,
+			wantErr:      "result[0].result.root: missing field",
+		},
+		{
+			name: "multiple hops",
+			responseJSON: `[
+				{
+					"result": [
+						{
+							"result": {
+								"root": {
+									"entity_id": "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
+									"entity_type": "pod",
+									"entity_data": {},
+									"liveness": []
+								},
+								"hop1": {
+									"node_with_pod": [
+										{
+											"relation_id": "rel_1",
+											"relation_type": "node_with_pod",
+											"relation_category": "static",
+											"direction": "inbound",
+											"relation_liveness": [],
+											"target": {
+												"entity_id": "node:⟨cluster=c1,node=node1⟩",
+												"entity_type": "node",
+												"entity_data": {},
+												"liveness": []
+											}
+										}
+									]
+								},
+								"hop2": {
+									"pod_with_service": [
+										{
+											"relation_id": "rel_2",
+											"relation_type": "pod_with_service",
+											"relation_category": "static",
+											"direction": "outbound",
+											"relation_liveness": [],
+											"target": {
+												"entity_id": "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
+												"entity_type": "service",
+												"entity_data": {},
+												"liveness": []
+											}
+										}
+									]
+								}
+							}
+						}
+					]
+				}
+			]`,
+			want: []*LivenessGraph{multipleHopGraph},
+		},
+	}
 
-		assert.Equal(t, &NodeLiveness{
-			ResourceID:   "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-			ResourceType: ResourceTypeService,
-			Labels:       map[string]string{},
-		}, graph.Nodes["service:⟨cluster=c1,namespace=ns1,service=svc1⟩"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var response []map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tt.responseJSON), &response))
 
-		// Check edges
-		assert.Equal(t, &EdgeLiveness{
-			RelationID:   "rel_1",
-			RelationType: RelationType("node_with_pod"),
-			Category:     RelationCategoryStatic,
-			Direction:    DirectionInbound,
-			FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-			ToID:         "node:⟨cluster=c1,node=node1⟩",
-		}, graph.Edges["rel_1"])
+			parser := NewSurrealResponseParser(1000, 2000)
+			graphs, err := parser.Parse(response)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Nil(t, graphs)
+				return
+			}
+			require.NoError(t, err)
+			assertLivenessGraphsEqual(t, tt.want, graphs)
+		})
+	}
+}
 
-		assert.Equal(t, &EdgeLiveness{
-			RelationID:   "rel_2",
-			RelationType: RelationType("pod_with_service"),
-			Category:     RelationCategoryStatic,
-			Direction:    DirectionOutbound,
-			FromID:       "pod:⟨cluster=c1,namespace=ns1,pod=p1⟩",
-			ToID:         "service:⟨cluster=c1,namespace=ns1,service=svc1⟩",
-		}, graph.Edges["rel_2"])
-
-		// Check adjacency (order-insensitive)
-		assert.Equal(t, 3, len(graph.Adjacency))
-		assert.ElementsMatch(t, []string{"rel_1", "rel_2"}, graph.Adjacency["pod:⟨cluster=c1,namespace=ns1,pod=p1⟩"])
-		assert.Equal(t, []string{}, graph.Adjacency["node:⟨cluster=c1,node=node1⟩"])
-		assert.Equal(t, []string{}, graph.Adjacency["service:⟨cluster=c1,namespace=ns1,service=svc1⟩"])
-	})
+func assertLivenessGraphsEqual(t *testing.T, want, got []*LivenessGraph) {
+	t.Helper()
+	require.Len(t, got, len(want))
+	for index := range want {
+		require.NotNil(t, got[index])
+		assert.Equal(t, want[index].QueryStart, got[index].QueryStart)
+		assert.Equal(t, want[index].QueryEnd, got[index].QueryEnd)
+		assert.Equal(t, want[index].RootID, got[index].RootID)
+		assert.Equal(t, want[index].Nodes, got[index].Nodes)
+		assert.Equal(t, want[index].Edges, got[index].Edges)
+		assert.Equal(t, want[index].TraversalErrors, got[index].TraversalErrors)
+		require.Len(t, got[index].Adjacency, len(want[index].Adjacency))
+		for resourceID, relationIDs := range want[index].Adjacency {
+			assert.ElementsMatch(t, relationIDs, got[index].Adjacency[resourceID])
+		}
+	}
 }
 
 func TestSurrealResponseParser_parseEntity(t *testing.T) {
@@ -1393,6 +1346,17 @@ func TestSurrealResponseParser_parseEntity(t *testing.T) {
 			ResourceType: ResourceType("test"),
 			Labels:       map[string]string{},
 		}, node)
+	})
+
+	t.Run("malformed liveness is rejected", func(t *testing.T) {
+		data := map[string]any{
+			"entity_id":   "test:⟨id=1⟩",
+			"entity_type": "test",
+			"liveness":    "not-an-array",
+		}
+
+		_, err := parser.parseEntity(data)
+		require.ErrorContains(t, err, "liveness: expected array")
 	})
 }
 
@@ -1584,8 +1548,9 @@ func TestSurrealResponseParser_parseRelation(t *testing.T) {
 
 	t.Run("missing target", func(t *testing.T) {
 		data := map[string]any{
-			"relation_id":   "rel_1",
-			"relation_type": "pod_with_service",
+			"relation_id":       "rel_1",
+			"relation_type":     "pod_with_service",
+			"relation_category": "static",
 		}
 
 		_, _, _, err := parser.parseRelation("from_id", "pod_with_service", data)
@@ -1633,7 +1598,7 @@ func TestSurrealResponseParser_parseRelation(t *testing.T) {
 		}
 
 		_, _, nestedHops, err := parser.parseRelation("from_id", "pod_with_service", data)
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "target.hop2: expected object")
 		assert.Equal(t, ([]map[string]any)(nil), nestedHops)
 	})
 }

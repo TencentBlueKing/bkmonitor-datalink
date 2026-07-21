@@ -27,6 +27,7 @@ const (
 	BKBaseSurrealDBTimeoutConfigPath       = "cmdb.v1beta3.surrealdb.bkbase.timeout"
 	BKBaseSurrealDBQueryURLConfigPath      = "cmdb.v1beta3.surrealdb.bkbase.query_url"
 	BindingCacheTTLConfigPath              = "cmdb.v1beta3.binding_cache_ttl"
+	BindingCacheMaxSizeConfigPath          = "cmdb.v1beta3.binding_cache_max_size"
 	BindingRedisKeyConfigPath              = "cmdb.v1beta3.binding_redis_key"
 
 	// PreferStorageSurrealDB 是 bkbase query_sync 的 prefer_storage 固定值
@@ -38,6 +39,7 @@ var (
 	DefaultBKBaseSurrealDBResultTableID = ""
 	DefaultBKBaseSurrealDBTimeout       = 30 * time.Second
 	DefaultBindingCacheTTL              = 5 * time.Minute
+	DefaultBindingCacheMaxSize          = 10000
 	DefaultBindingRedisKey              = "bkmonitorv3:spaces:surrealdb_binding"
 )
 
@@ -46,6 +48,7 @@ var (
 	BKBaseSurrealDBTimeout       time.Duration
 	BKBaseSurrealDBQueryURL      string
 	BindingCacheTTL              time.Duration
+	BindingCacheMaxSize          int
 	BindingRedisKey              string
 )
 
@@ -121,15 +124,14 @@ func (c *BKBaseSurrealDBClient) Execute(ctx context.Context, sql string, start, 
 //
 // 这是新的首选接口 —— 由 Model 在拿到 binding 元信息后调用。
 // spaceUID 仅用于 bkbase 多集群 URL 路由；和 binding.SpaceUID 不强相关。
-func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID string, binding BindingInfo, dsl string, start, end int64) ([]*LivenessGraph, error) {
-	var err error
+func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID string, binding BindingInfo, dsl string, start, end int64) (graphs []*LivenessGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "bkbase-surrealdb-execute")
-	defer span.End(&err)
+	defer endV1Beta3TraceSpan(span, &err)
 
 	span.Set("space-uid", spaceUID)
-	span.Set("result-table-id", binding.Database)
 	span.Set("namespace", binding.Namespace)
 	span.Set("cluster-name", binding.ClusterName)
+	span.Set("binding-enabled", binding.Namespace != "" || binding.Database != "")
 	span.Set("start", start)
 	span.Set("end", end)
 
@@ -137,12 +139,22 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	if rtID == "" {
 		rtID = BKBaseSurrealDBResultTableID
 	}
+	span.Set("result-table-id", rtID)
 
 	finalDSL := dsl
-	if binding.Namespace != "" && binding.Database != "" {
+	if (binding.Namespace == "") != (binding.Database == "") {
+		return nil, fmt.Errorf("binding namespace and database must either both be set or both be empty")
+	}
+	if binding.Namespace != "" {
+		if err := validateBindingIdentifier("namespace", binding.Namespace); err != nil {
+			return nil, err
+		}
+		if err := validateBindingIdentifier("database", binding.Database); err != nil {
+			return nil, err
+		}
 		// BKBase query_sync 只负责把 DSL 发送到 SurrealDB；具体 NS/DB 必须由 UQ 根据
 		// SurrealDBBinding 注入，否则同一个 result_table_id 在多租户场景下会查到错误 database。
-		finalDSL = fmt.Sprintf("USE NS %s DB `%s`;%s", binding.Namespace, binding.Database, dsl)
+		finalDSL = fmt.Sprintf("USE NS `%s` DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
 	span.Set("dsl", finalDSL)
 	span.Set("dsl-bytes", len(finalDSL))
@@ -191,26 +203,26 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		return nil, fmt.Errorf("bkbase request failed: %w", err)
 	}
 
+	span.Set("bkbase-result", resp.Result)
+	span.Set("bkbase-code", resp.Code)
+	span.Set("trace-id", resp.TraceID)
 	if !resp.Result {
 		return nil, fmt.Errorf("bkbase response error: code=%s, message=%s", resp.Code, resp.Message)
 	}
-
-	span.Set("trace-id", resp.TraceID)
-	if resp.Data != nil {
-		span.Set("total-records", resp.Data.TotalRecords)
-		span.Set("bkbase-timetaken", resp.Data.Timetaken)
-		span.Set("response-list-count", len(resp.Data.List))
+	if resp.Data == nil {
+		return nil, fmt.Errorf("parse bkbase response: result=true requires non-null data")
 	}
+
+	span.Set("total-records", resp.Data.TotalRecords)
+	span.Set("bkbase-timetaken", resp.Data.Timetaken)
+	span.Set("response-list-count", len(resp.Data.List))
 
 	// 转换响应格式为标准 SurrealDB 响应格式
 	// BKBase 返回格式: {"data": {"list": [...]}}
 	// 标准格式: [{"result": [...]}]
-	var list []any
-	if resp.Data != nil {
-		list = make([]any, 0, len(resp.Data.List))
-		for _, item := range resp.Data.List {
-			list = append(list, item)
-		}
+	list := make([]any, 0, len(resp.Data.List))
+	for _, item := range resp.Data.List {
+		list = append(list, item)
 	}
 	// parser 只依赖标准 SurrealDB 客户端形态：[{"result": [...]}]。
 	// BKBase query_sync 的 data.list 在这里包一层 result，可以让解析器和单测 mock 共用同一套结构。
@@ -221,7 +233,25 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	}
 
 	parser := NewSurrealResponseParser(start, end)
-	return parser.Parse(rawResponse)
+	graphs, err = parser.Parse(rawResponse)
+	if err != nil {
+		return nil, fmt.Errorf("parse surrealdb response: %w", err)
+	}
+	span.Set("graph-count", len(graphs))
+	return graphs, nil
+}
+
+func validateBindingIdentifier(kind, value string) error {
+	if value == "" {
+		return fmt.Errorf("binding %s cannot be empty", kind)
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return fmt.Errorf("binding %s %q contains invalid identifier character %q", kind, value, r)
+	}
+	return nil
 }
 
 func surrealDBQuerySyncURL(spaceUID string) string {

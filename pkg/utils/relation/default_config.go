@@ -23,7 +23,7 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 		Namespace: NamespaceAll,
 		Name:      "datasource",
 		Fields: []FieldDefinition{
-			{Name: "bk_data_id", Required: true},
+			{Name: "bk_data_id", Required: true, Type: FieldTypeInteger},
 		},
 	},
 	{
@@ -162,28 +162,28 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 		Namespace: NamespaceAll,
 		Name:      "business",
 		Fields: []FieldDefinition{
-			{Name: "bk_biz_id", Required: true},
+			{Name: "bk_biz_id", Required: true, Type: FieldTypeInteger},
 		},
 	},
 	{
 		Namespace: NamespaceAll,
 		Name:      "biz",
 		Fields: []FieldDefinition{
-			{Name: "bk_biz_id", Required: true},
+			{Name: "bk_biz_id", Required: true, Type: FieldTypeInteger},
 		},
 	},
 	{
 		Namespace: NamespaceAll,
 		Name:      "set",
 		Fields: []FieldDefinition{
-			{Name: "bk_set_id", Required: true},
+			{Name: "bk_set_id", Required: true, Type: FieldTypeInteger},
 		},
 	},
 	{
 		Namespace: NamespaceAll,
 		Name:      "module",
 		Fields: []FieldDefinition{
-			{Name: "bk_module_id", Required: true},
+			{Name: "bk_module_id", Required: true, Type: FieldTypeInteger},
 		},
 	},
 	{
@@ -222,7 +222,7 @@ var defaultResourceDefinitions = []*ResourceDefinition{
 		Namespace: NamespaceAll,
 		Name:      "host",
 		Fields: []FieldDefinition{
-			{Name: "bk_host_id", Required: true},
+			{Name: "bk_host_id", Required: true, Type: FieldTypeInteger},
 			{Name: "version", Required: false},
 			{Name: "env_name", Required: false},
 			{Name: "env_type", Required: false},

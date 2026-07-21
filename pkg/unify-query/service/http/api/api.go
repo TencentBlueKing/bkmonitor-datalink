@@ -252,8 +252,9 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 	data.Data = make([]cmdb.RelationMultiResourceResponseData, len(request.QueryList))
 
 	var (
-		sendWg sync.WaitGroup
-		lock   sync.Mutex
+		sendWg           sync.WaitGroup
+		lock             sync.Mutex
+		failedQueryCount int
 	)
 	p, err := ants.NewPool(RelationMaxRouting)
 	if err != nil {
@@ -268,15 +269,20 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
+			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-v1beta3-item")
+			var queryErr error
+			defer querySpan.End(&queryErr)
+			querySpan.Set("query-index", idx)
+			querySpan.Set("requested-source-type", string(qry.SourceType))
+			querySpan.Set("requested-target-type", string(qry.TargetType))
 			d := cmdb.RelationMultiResourceResponseData{
 				Code: http.StatusOK,
 			}
 
 			timestamp := cast.ToString(qry.Timestamp)
-			var queryErr error
 			// v1beta3 默认 HTTP 协议对齐旧 VM relation：底层走 SurrealDB，但响应仍返回 legacy path 字段。
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(
-				ctx,
+				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, timestamp,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
@@ -290,22 +296,37 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 			if d.TargetList == nil {
 				d.TargetList = make(cmdb.Matchers, 0)
 			}
+			querySpan.Set("response-code", d.Code)
+			querySpan.Set("response-path-length", len(d.Path))
+			querySpan.Set("response-target-count", len(d.TargetList))
 
 			lock.Lock()
 			data.Data[idx] = d
+			if queryErr != nil {
+				failedQueryCount++
+			}
 			lock.Unlock()
 		}); submitErr != nil {
 			sendWg.Done()
+			_, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-v1beta3-item")
+			querySpan.Set("query-index", idx)
+			querySpan.Set("failure-stage", "worker-submit")
+			querySpan.End(&submitErr)
 			lock.Lock()
 			data.Data[idx] = cmdb.RelationMultiResourceResponseData{
 				Code:       http.StatusBadRequest,
 				Message:    submitErr.Error(),
 				TargetList: make(cmdb.Matchers, 0),
 			}
+			failedQueryCount++
 			lock.Unlock()
 		}
 	}
 	sendWg.Wait()
+	span.Set("query-count", len(request.QueryList))
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 
 	resp.success(ctx, data)
 }
@@ -357,8 +378,9 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, len(request.QueryList))
 
 	var (
-		sendWg sync.WaitGroup
-		lock   sync.Mutex
+		sendWg           sync.WaitGroup
+		lock             sync.Mutex
+		failedQueryCount int
 	)
 	p, err := ants.NewPool(RelationMaxRouting)
 	if err != nil {
@@ -373,16 +395,21 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
+			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-v1beta3-item")
+			var queryErr error
+			defer querySpan.End(&queryErr)
+			querySpan.Set("query-index", idx)
+			querySpan.Set("requested-source-type", string(qry.SourceType))
+			querySpan.Set("requested-target-type", string(qry.TargetType))
 			d := cmdb.RelationMultiResourceRangeResponseData{
 				Code: http.StatusOK,
 			}
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			var queryErr error
 			// range 默认也保持 VM 兼容响应，target_list 的窗口语义在 v1beta3 model 内部对齐。
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(
-				ctx,
+				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
@@ -400,22 +427,37 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 				d.SourceType = cmdb.Resource(d.Path[0])
 				d.TargetType = cmdb.Resource(d.Path[len(d.Path)-1])
 			}
+			querySpan.Set("response-code", d.Code)
+			querySpan.Set("response-path-length", len(d.Path))
+			querySpan.Set("response-bucket-count", len(d.TargetList))
 
 			lock.Lock()
 			data.Data[idx] = d
+			if queryErr != nil {
+				failedQueryCount++
+			}
 			lock.Unlock()
 		}); submitErr != nil {
 			sendWg.Done()
+			_, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-v1beta3-item")
+			querySpan.Set("query-index", idx)
+			querySpan.Set("failure-stage", "worker-submit")
+			querySpan.End(&submitErr)
 			lock.Lock()
 			data.Data[idx] = cmdb.RelationMultiResourceRangeResponseData{
 				Code:       http.StatusBadRequest,
 				Message:    submitErr.Error(),
 				TargetList: make([]cmdb.MatchersWithTimestamp, 0),
 			}
+			failedQueryCount++
 			lock.Unlock()
 		}
 	}
 	sendWg.Wait()
+	span.Set("query-count", len(request.QueryList))
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 
 	resp.success(ctx, data)
 }

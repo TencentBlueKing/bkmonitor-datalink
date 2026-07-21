@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,34 @@ type mockGraphQueryExecutor struct {
 	start  int64
 	end    int64
 	mu     sync.Mutex
+}
+
+type failingRelationSchemaProvider struct {
+	relation.SchemaProvider
+	listResourceErr error
+	listRelationErr error
+	getResourceErr  error
+}
+
+func (p *failingRelationSchemaProvider) ListResourceDefinitions(namespace string) ([]*relation.ResourceDefinition, error) {
+	if p.listResourceErr != nil {
+		return nil, p.listResourceErr
+	}
+	return p.SchemaProvider.ListResourceDefinitions(namespace)
+}
+
+func (p *failingRelationSchemaProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
+	if p.listRelationErr != nil {
+		return nil, p.listRelationErr
+	}
+	return p.SchemaProvider.ListRelationDefinitions(namespace)
+}
+
+func (p *failingRelationSchemaProvider) GetResourceDefinition(namespace, name string) (*relation.ResourceDefinition, error) {
+	if p.getResourceErr != nil {
+		return nil, p.getResourceErr
+	}
+	return p.SchemaProvider.GetResourceDefinition(namespace, name)
 }
 
 func (m *mockGraphQueryExecutor) Execute(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
@@ -639,6 +668,57 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 	}}}, paths)
 	assert.Contains(t, executor.sql, "entity_data: { custom_id: custom_id }")
 	assert.Contains(t, executor.sql, "entity_data: { target_id: out.target_id }")
+}
+
+func TestQueryLivenessGraphPropagatesSchemaProviderFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *failingRelationSchemaProvider
+		errText  string
+	}{
+		{
+			name: "resource list failure",
+			provider: &failingRelationSchemaProvider{
+				SchemaProvider:  relation.NewDefaultStaticSchemaProvider(),
+				listResourceErr: errors.New("redis resource timeout"),
+			},
+			errText: "redis resource timeout",
+		},
+		{
+			name: "relation list failure",
+			provider: &failingRelationSchemaProvider{
+				SchemaProvider:  relation.NewDefaultStaticSchemaProvider(),
+				listRelationErr: errors.New("redis relation timeout"),
+			},
+			errText: "redis relation timeout",
+		},
+		{
+			name: "resource get failure",
+			provider: &failingRelationSchemaProvider{
+				SchemaProvider: relation.NewDefaultStaticSchemaProvider(),
+				getResourceErr: errors.New("redis decode failure"),
+			},
+			errText: "redis decode failure",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := &mockGraphQueryExecutor{}
+			model, err := NewModel(context.Background(), executor)
+			require.NoError(t, err)
+			model.SetSchemaProvider(NewSchemaProviderFromRelation(tt.provider))
+
+			_, _, _, err = model.QueryLivenessGraph(context.Background(), &QueryRequest{
+				Timestamp:  600000,
+				SourceType: ResourceTypeHost,
+				SourceInfo: map[string]string{"bk_host_id": "38268"},
+			})
+
+			require.ErrorContains(t, err, tt.errText)
+			assert.Empty(t, executor.sqls)
+		})
+	}
 }
 
 func TestQueryLivenessGraphProjectsTargetInfoFields(t *testing.T) {
@@ -1704,19 +1784,40 @@ func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
 		"10m",
 		"test-space",
 		"600",
-		"pod",
-		"node",
-		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
-		cmdb.Matcher{"namespace": "default", "unsafe.field": "ignored"},
+		"system",
+		"host",
+		cmdb.Matcher{"bk_host_id": "38268"},
+		cmdb.Matcher{"env_name": "production"},
 		false,
 		nil,
 	)
 	require.NoError(t, err)
-	assert.Contains(t, executor.sql, "namespace = 'default'")
-	assert.Contains(t, executor.sql, "pod_liveness_record WHERE reference_id = $parent.")
+	assert.Contains(t, executor.sql, "env_name = 'production'")
+	assert.Contains(t, executor.sql, "system_liveness_record WHERE reference_id = $parent.")
 	assert.NotContains(t, executor.sql, ResponseFieldLiveness+":")
 	assert.NotContains(t, executor.sql, ResponseFieldRelationLiveness+":")
-	assert.NotContains(t, executor.sql, "unsafe.field")
+}
+
+func TestQueryResourceMatcherRejectsUnknownSourceExpandInfo(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcher(
+		context.Background(),
+		"10m",
+		"test-space",
+		"600",
+		"system",
+		"host",
+		cmdb.Matcher{"bk_host_id": "38268"},
+		cmdb.Matcher{"unsafe.field": "must-not-be-ignored"},
+		false,
+		nil,
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `unknown source_expand_info field "unsafe.field"`)
+	assert.Empty(t, executor.sql)
 }
 
 func TestQueryResourceMatcherNormalizesSourceMatcherAliases(t *testing.T) {
@@ -1764,7 +1865,150 @@ func TestQueryResourceMatcherInfersOmittedSourceType(t *testing.T) {
 	assert.Equal(t, cmdb.Resource("datasource"), source)
 	assert.Equal(t, cmdb.Matcher{"bk_data_id": "1001"}, matcher)
 	assert.Contains(t, executor.sql, "FROM datasource")
-	assert.Contains(t, executor.sql, "bk_data_id = '1001'")
+	assert.Contains(t, executor.sql, "bk_data_id = 1001")
+}
+
+func TestLegacyQueryResourceMatcherInfersSourceWithExtraLabels(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	source, sourceInfo, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(), "10m", "test-space", "600", "set", "",
+		cmdb.Matcher{"bk_biz_id": "2", "bk_set_id": "3"}, nil, false, nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Resource("biz"), source)
+	assert.Equal(t, cmdb.Matcher{"bk_biz_id": "2"}, sourceInfo)
+	assert.Contains(t, executor.sql, "bk_biz_id = 2")
+	assert.NotContains(t, executor.sql, "bk_set_id =")
+}
+
+func TestLegacyQueryResourceMatcherAllowsPartialPrimaryKeys(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, sourceInfo, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(), "10m", "test-space", "600", "system", "pod",
+		cmdb.Matcher{"namespace": "default", "pod": "nginx"}, nil, false, nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Matcher{"namespace": "default", "pod": "nginx"}, sourceInfo)
+	joinedSQL := strings.Join(executor.sqls, "\n")
+	assert.Contains(t, joinedSQL, "namespace = 'default'")
+	assert.Contains(t, joinedSQL, "pod = 'nginx'")
+	assert.NotContains(t, joinedSQL, "bcs_cluster_id =")
+}
+
+func TestLegacyQueryResourceMatcherUsesOnlyStaticRelationsAndNoSilentRootLimit(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcher(
+		context.Background(), "10m", "test-space", "600", "system", "pod",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx"}, nil, false, nil,
+	)
+
+	require.NoError(t, err)
+	joinedSQL := strings.Join(executor.sqls, "\n")
+	assert.NotContains(t, joinedSQL, "pod_to_system")
+	assert.NotContains(t, joinedSQL, "\nLIMIT 100;")
+}
+
+func TestQueryLivenessGraphQuotesDefinedComplexExpandField(t *testing.T) {
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			"custom": {primaryKeys: []string{"id"}, fields: []string{"id", "kubernetes.io/hostname"}},
+		},
+		nil,
+	)
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(provider)
+
+	_, _, _, err = model.QueryLivenessGraph(context.Background(), &QueryRequest{
+		Timestamp:        600000,
+		SourceType:       "custom",
+		SourceInfo:       map[string]string{"id": "one"},
+		SourceExpandInfo: map[string]string{"kubernetes.io/hostname": "node-1"},
+		TargetInfoShow:   true,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, executor.sql, "entity_data: { id: id, ⟨kubernetes.io/hostname⟩: ⟨kubernetes.io/hostname⟩ }")
+	assert.Contains(t, executor.sql, "⟨kubernetes.io/hostname⟩ = 'node-1'")
+}
+
+func TestEscapeSurrealIdentifier(t *testing.T) {
+	tests := map[string]string{
+		"field_name": "field_name",
+		"field1":     "field1",
+		"1field":     "⟨1field⟩",
+		"123":        "⟨123⟩",
+		"field.name": "⟨field.name⟩",
+		"field⟩name": "⟨field\\⟩name⟩",
+	}
+	for identifier, expected := range tests {
+		t.Run(identifier, func(t *testing.T) {
+			assert.Equal(t, expected, escapeSurrealIdentifier(identifier))
+		})
+	}
+}
+
+func TestQueryLivenessGraphRejectsInvalidTypedPrimaryKey(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, err = model.QueryLivenessGraph(context.Background(), &QueryRequest{
+		Timestamp:  600000,
+		SourceType: ResourceTypeHost,
+		SourceInfo: map[string]string{"bk_host_id": "not-an-integer"},
+	})
+
+	require.ErrorContains(t, err, `invalid integer value "not-an-integer"`)
+	assert.Empty(t, executor.sql)
+}
+
+func TestValidateRangeBucketsIsBoundedAndOverflowSafe(t *testing.T) {
+	previous := MaxRangePoints
+	MaxRangePoints = 3
+	t.Cleanup(func() { MaxRangePoints = previous })
+
+	points, err := validateRangeBuckets(math.MaxInt64-2, math.MaxInt64, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 3, points)
+
+	_, err = validateRangeBuckets(0, 3, 1)
+	require.ErrorContains(t, err, "more than 3 points")
+
+	next, ok := nextRangeBucket(math.MaxInt64-1, math.MaxInt64, 1)
+	assert.True(t, ok)
+	assert.Equal(t, int64(math.MaxInt64), next)
+	_, ok = nextRangeBucket(next, math.MaxInt64, 1)
+	assert.False(t, ok)
+}
+
+func TestQueryResourceMatcherRangeRejectsTooManyPointsBeforeQuery(t *testing.T) {
+	previous := MaxRangePoints
+	MaxRangePoints = 3
+	t.Cleanup(func() { MaxRangePoints = previous })
+	executor := &mockGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = model.QueryResourceMatcherRange(
+		context.Background(), "", "test-space", "1ms", "0", "3", "pod", "node",
+		cmdb.Matcher{"bcs_cluster_id": "c1", "node": "n1"}, nil, false, nil,
+	)
+
+	require.ErrorContains(t, err, "more than 3 points")
+	assert.Empty(t, executor.sqls)
 }
 
 func TestQueryResourceMatcherRangeUsesFullRangeLookback(t *testing.T) {
@@ -2359,6 +2603,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 		responseForSQL   func(sql string) graphQueryResponse
 		expectedMatchers cmdb.Matchers
 		expectedPaths    []resourcePath
+		expectedError    string
 	}{
 		{
 			name: "direct path hit wins",
@@ -2375,7 +2620,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 			}}},
 		},
 		{
-			name: "direct path error continues to next matching path",
+			name: "higher priority path error is not hidden by lower priority hit",
 			responseForSQL: func(sql string) graphQueryResponse {
 				if strings.Contains(sql, "system_to_pod") {
 					return graphQueryResponse{err: errors.New("direct path unavailable")}
@@ -2385,12 +2630,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				}
 				return graphQueryResponse{}
 			},
-			expectedMatchers: cmdb.Matchers{{"pod": "via-container"}},
-			expectedPaths: []resourcePath{{Steps: []resourcePathStep{
-				{ResourceType: "system"},
-				{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
-				{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},
-			}}},
+			expectedError: "direct path unavailable",
 		},
 		{
 			name: "empty direct path continues to next matching path",
@@ -2448,6 +2688,10 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				TargetTypeExplicit: true,
 			})
 
+			if tc.expectedError != "" {
+				require.ErrorContains(t, err, tc.expectedError)
+				return
+			}
 			require.NoError(t, err)
 			assert.NotEmpty(t, executor.sqls)
 			assert.Equal(t, tc.expectedPaths, paths)
@@ -2522,6 +2766,98 @@ func TestQueryLivenessGraphExecutesSingleCandidatePathByPath(t *testing.T) {
 		{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
 	}}}, paths)
 	assert.Equal(t, cmdb.Matchers{{"pod": "direct"}}, matchers)
+}
+
+func sameResourceSequenceSchemaProvider() relation.SchemaProvider {
+	return relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "a_relation", Category: relation.RelationCategoryStatic, FromType: "system", ToType: "pod"},
+			{RelationName: "z_relation", Category: relation.RelationCategoryDynamic, FromType: "system", ToType: "pod", IsDirectional: true},
+		},
+	})
+}
+
+func sameResourceSequenceGraph(targetName string, relationType RelationType, category RelationCategory) *LivenessGraph {
+	graph := NewLivenessGraph(0, 200)
+	source := &NodeLiveness{ResourceID: "system:source", ResourceType: ResourceTypeSystem, Labels: map[string]string{"bk_target_ip": "source"}}
+	graph.RootID = source.ResourceID
+	graph.AddNode(source)
+	if targetName == "" {
+		return graph
+	}
+	target := &NodeLiveness{ResourceID: "pod:" + targetName, ResourceType: ResourceTypePod, Labels: map[string]string{"pod": targetName}}
+	graph.AddNode(target)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   "edge-" + targetName,
+		RelationType: relationType,
+		Category:     category,
+		Direction:    DirectionOutbound,
+		FromID:       source.ResourceID,
+		ToID:         target.ResourceID,
+	})
+	return graph
+}
+
+func TestQueryLivenessGraphKeepsFullRelationPathProvenance(t *testing.T) {
+	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
+		switch {
+		case strings.Contains(sql, "FROM a_relation"):
+			return graphQueryResponse{graphs: []*LivenessGraph{sameResourceSequenceGraph("static", "a_relation", RelationCategoryStatic)}}
+		case strings.Contains(sql, "FROM z_relation"):
+			return graphQueryResponse{graphs: []*LivenessGraph{sameResourceSequenceGraph("dynamic", "z_relation", RelationCategoryDynamic)}}
+		default:
+			return graphQueryResponse{}
+		}
+	}}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(sameResourceSequenceSchemaProvider()))
+
+	graphs, paths, matchers, err := model.QueryLivenessGraph(context.Background(), &QueryRequest{
+		Timestamp:          200,
+		LookBackDelta:      200,
+		SourceType:         ResourceTypeSystem,
+		SourceInfo:         map[string]string{"bk_target_ip": "source"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Matchers{{"pod": "static"}}, matchers)
+	require.Len(t, graphs, 1)
+	assert.Nil(t, graphs[0].GetNode("pod:dynamic"))
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "system"},
+		{ResourceType: "pod", RelationType: "a_relation", Category: "static", Direction: "outbound"},
+	}}}, paths)
+}
+
+func TestQueryLivenessGraphReturnsPathErrorWhenSuccessfulPathOnlyHasRoot(t *testing.T) {
+	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
+		if strings.Contains(sql, "FROM a_relation") {
+			return graphQueryResponse{graphs: []*LivenessGraph{sameResourceSequenceGraph("", "", "")}}
+		}
+		return graphQueryResponse{err: errors.New("dynamic path unavailable")}
+	}}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(sameResourceSequenceSchemaProvider()))
+
+	_, _, matchers, err := model.QueryLivenessGraph(context.Background(), &QueryRequest{
+		Timestamp:          200,
+		LookBackDelta:      200,
+		SourceType:         ResourceTypeSystem,
+		SourceInfo:         map[string]string{"bk_target_ip": "source"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+	})
+
+	require.ErrorContains(t, err, "dynamic path unavailable")
+	assert.Nil(t, matchers)
 }
 
 func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
@@ -2782,6 +3118,28 @@ func TestBKBaseSurrealDBClientConvertsListForParser(t *testing.T) {
 	assert.Equal(t, "node:1", graphs[0].GetNode("node:1").ResourceID)
 }
 
+func TestBKBaseSurrealDBClientRejectsNilDataOnSuccessfulResponse(t *testing.T) {
+	client := &BKBaseSurrealDBClient{curl: &mockBKBaseCurl{response: BKBaseResponse{Result: true}}}
+
+	graphs, err := client.Execute(context.Background(), "SELECT * FROM node", 0, 100)
+
+	require.ErrorContains(t, err, "result=true requires non-null data")
+	assert.Nil(t, graphs)
+}
+
+func TestBKBaseSurrealDBClientRejectsUnsafeBindingIdentifiers(t *testing.T) {
+	mockCurl := &mockBKBaseCurl{response: BKBaseResponse{Result: true, Data: &BKBaseData{}}}
+	client := &BKBaseSurrealDBClient{curl: mockCurl}
+
+	_, err := client.ExecuteWithBinding(context.Background(), "bkcc__2", BindingInfo{
+		Namespace: "safe_ns; REMOVE DATABASE other",
+		Database:  "2_graph",
+	}, "INFO FOR DB;", 0, 100)
+
+	require.ErrorContains(t, err, "invalid identifier character")
+	assert.Empty(t, mockCurl.options.UrlPath, "invalid binding must fail before sending a request")
+}
+
 func TestBKBaseSurrealDBClientUsesOverrideQueryURLAndPayload(t *testing.T) {
 	oldQueryURL := BKBaseSurrealDBQueryURL
 	BKBaseSurrealDBQueryURL = "http://bkapi.example.com/api/bk-base/prod/v4/queryengine/query_sync/"
@@ -2815,7 +3173,7 @@ func TestBKBaseSurrealDBClientUsesOverrideQueryURLAndPayload(t *testing.T) {
 
 	var payload BKBaseSQLPayload
 	require.NoError(t, json.Unmarshal([]byte(sqlPayloadText), &payload))
-	assert.Equal(t, "USE NS mapleleaf_2 DB `2_graph`;INFO FOR DB;", payload.DSL)
+	assert.Equal(t, "USE NS `mapleleaf_2` DB `2_graph`;INFO FOR DB;", payload.DSL)
 	assert.Equal(t, "2_graph", payload.ResultTableID)
 }
 

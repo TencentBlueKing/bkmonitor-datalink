@@ -21,6 +21,7 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxHopsConfigPath, 2)
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
+	viper.SetDefault(MaxRangePointsConfigPath, 11000)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
 
@@ -28,6 +29,7 @@ func setDefaultConfig() {
 	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
 	viper.SetDefault(BKBaseSurrealDBQueryURLConfigPath, "")
 	viper.SetDefault(BindingCacheTTLConfigPath, DefaultBindingCacheTTL)
+	viper.SetDefault(BindingCacheMaxSizeConfigPath, DefaultBindingCacheMaxSize)
 	viper.SetDefault(BindingRedisKeyConfigPath, DefaultBindingRedisKey)
 }
 
@@ -35,6 +37,7 @@ func LoadConfig() {
 	DefaultMaxHops = viper.GetInt(MaxHopsConfigPath)
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
+	MaxRangePoints = viper.GetInt(MaxRangePointsConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
 
@@ -42,6 +45,7 @@ func LoadConfig() {
 	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)
 	BKBaseSurrealDBQueryURL = viper.GetString(BKBaseSurrealDBQueryURLConfigPath)
 	BindingCacheTTL = viper.GetDuration(BindingCacheTTLConfigPath)
+	BindingCacheMaxSize = viper.GetInt(BindingCacheMaxSizeConfigPath)
 	BindingRedisKey = viper.GetString(BindingRedisKeyConfigPath)
 	if BindingRedisKey == "" {
 		BindingRedisKey = DefaultBindingRedisKey

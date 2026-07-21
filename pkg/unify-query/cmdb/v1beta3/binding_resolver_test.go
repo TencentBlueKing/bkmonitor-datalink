@@ -148,6 +148,33 @@ func TestBindingResolverDeletesExpiredCacheEntry(t *testing.T) {
 	assert.Equal(t, 0, resolver.cacheSize())
 }
 
+func TestBindingResolverSweepsExpiredEntriesForOtherKeys(t *testing.T) {
+	resolver := &BindingResolver{cache: map[string]*bindingCacheEntry{
+		"expired-a": {info: &BindingInfo{Name: "a"}, expiry: time.Now().Add(-time.Minute)},
+		"expired-b": {info: &BindingInfo{Name: "b"}, expiry: time.Now().Add(-time.Second)},
+		"active":    {info: &BindingInfo{Name: "active"}, expiry: time.Now().Add(time.Minute)},
+	}}
+
+	resolver.sweepExpiredCache(time.Now())
+
+	assert.Equal(t, 1, resolver.cacheSize())
+	assert.NotNil(t, resolver.lookupCache("active"))
+}
+
+func TestBindingResolverCacheHasMaximumCapacity(t *testing.T) {
+	previousMaxSize := BindingCacheMaxSize
+	BindingCacheMaxSize = 2
+	t.Cleanup(func() { BindingCacheMaxSize = previousMaxSize })
+	resolver := &BindingResolver{cache: make(map[string]*bindingCacheEntry)}
+
+	resolver.storeCache("one", &BindingInfo{Name: "one"})
+	resolver.storeCache("two", &BindingInfo{Name: "two"})
+	resolver.storeCache("three", &BindingInfo{Name: "three"})
+
+	assert.Equal(t, 2, resolver.cacheSize())
+	assert.NotNil(t, resolver.lookupCache("three"))
+}
+
 func contextWithTenantForBindingResolverTest(tenantID string) context.Context {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())

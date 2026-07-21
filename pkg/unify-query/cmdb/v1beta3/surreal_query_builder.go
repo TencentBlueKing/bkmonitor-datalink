@@ -11,7 +11,9 @@ package v1beta3
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,10 +43,11 @@ const (
 func buildEntityDataFields(keys []string, prefix string) string {
 	fields := make([]string, 0, len(keys))
 	for _, key := range keys {
+		identifier := escapeSurrealIdentifier(key)
 		if prefix == "" {
-			fields = append(fields, fmt.Sprintf("%s: %s", key, key))
+			fields = append(fields, fmt.Sprintf("%s: %s", identifier, identifier))
 		} else {
-			fields = append(fields, fmt.Sprintf("%s: %s.%s", key, prefix, key))
+			fields = append(fields, fmt.Sprintf("%s: %s.%s", identifier, prefix, identifier))
 		}
 	}
 	return strings.Join(fields, ", ")
@@ -277,7 +280,11 @@ func (b *SurrealQueryBuilder) buildMainQuery() string {
 	sb.WriteString(fmt.Sprintf("FROM %s\n", b.request.SourceType))
 	sb.WriteString(b.buildWhereClause())
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("LIMIT %d;", b.request.Limit))
+	if b.request.DisableRootLimit {
+		sb.WriteString(";")
+	} else {
+		sb.WriteString(fmt.Sprintf("LIMIT %d;", b.request.Limit))
+	}
 
 	return sb.String()
 }
@@ -707,7 +714,7 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 				continue
 			}
 			v := b.request.SourceInfo[k]
-			conditions = append(conditions, fmt.Sprintf("%s = '%s'", k, escapeSurrealString(v)))
+			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, v)))
 		}
 	}
 
@@ -719,13 +726,8 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		sort.Strings(keys)
 
 		for _, k := range keys {
-			if !isSafeSurrealField(k) {
-				// expand 字段来自调用方可选过滤，不像 SourceInfo 那样强制主键；
-				// 因此这里只允许简单字段名，避免把表达式片段拼进 SurrealQL。
-				continue
-			}
 			v := b.request.SourceExpandInfo[k]
-			conditions = append(conditions, fmt.Sprintf("%s = '%s'", k, escapeSurrealString(v)))
+			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, v)))
 		}
 	}
 
@@ -734,6 +736,45 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 	conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
 
 	return "WHERE " + strings.Join(conditions, "\n  AND ")
+}
+
+func (b *SurrealQueryBuilder) fieldLiteral(field, value string) string {
+	fieldType := ""
+	if provider, ok := b.schemaProvider.(ResourceFieldTypeProvider); ok {
+		fieldType = provider.GetResourceFieldType(b.namespace, b.request.SourceType, field)
+	}
+	literal, ok := typedSurrealLiteral(fieldType, value)
+	if ok {
+		return literal
+	}
+	// Query validation reports malformed typed values before Build. Keep a
+	// safely quoted fallback for direct builder callers.
+	return fmt.Sprintf("'%s'", escapeSurrealString(value))
+}
+
+func typedSurrealLiteral(fieldType, value string) (string, bool) {
+	switch strings.ToLower(fieldType) {
+	case "int", "integer":
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return "", false
+		}
+		return strconv.FormatInt(n, 10), true
+	case "float", "double", "number":
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsInf(n, 0) || math.IsNaN(n) {
+			return "", false
+		}
+		return strconv.FormatFloat(n, 'g', -1, 64), true
+	case "bool", "boolean":
+		n, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", false
+		}
+		return strconv.FormatBool(n), true
+	default:
+		return fmt.Sprintf("'%s'", escapeSurrealString(value)), true
+	}
 }
 
 // escapeSurrealString 转义 SurrealQL 字符串中的特殊字符
@@ -747,11 +788,21 @@ func isSafeSurrealField(field string) bool {
 	if field == "" {
 		return false
 	}
-	for _, r := range field {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+	for index, r := range field {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if isLetter || r == '_' || (index > 0 && r >= '0' && r <= '9') {
 			continue
 		}
 		return false
 	}
 	return true
+}
+
+// escapeSurrealIdentifier keeps simple ASCII identifiers readable. Complex
+// names are wrapped in SurrealQL angle brackets and a closing bracket is escaped.
+func escapeSurrealIdentifier(identifier string) string {
+	if isSafeSurrealField(identifier) {
+		return identifier
+	}
+	return "⟨" + strings.ReplaceAll(identifier, "⟩", `\⟩`) + "⟩"
 }

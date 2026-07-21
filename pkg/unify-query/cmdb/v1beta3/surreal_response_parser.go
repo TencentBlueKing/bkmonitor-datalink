@@ -12,6 +12,8 @@ package v1beta3
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -36,46 +38,50 @@ func (p *SurrealResponseParser) Parse(rawResponse []map[string]any) ([]*Liveness
 	var graphs []*LivenessGraph
 
 	if len(rawResponse) == 0 {
-		return graphs, nil
+		return nil, fmt.Errorf("response: expected at least one statement result")
 	}
 
 	// 获取第一个查询的结果
 	firstResult, ok := rawResponse[0][ResponseFieldResult]
 	if !ok {
-		return graphs, nil
+		return nil, fmt.Errorf("response[0].%s: missing field", ResponseFieldResult)
 	}
 
-	results, ok := firstResult.([]any)
+	results, ok := responseArray(firstResult)
 	if !ok {
-		return graphs, nil
+		return nil, fmt.Errorf("response[0].%s: expected array, got %T", ResponseFieldResult, firstResult)
 	}
 
 	// 遍历每个结果记录，每条记录生成一个独立的 LivenessGraph
-	for _, r := range results {
+	for rowIndex, r := range results {
 		record, ok := r.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("response[0].%s[%d]: expected object, got %T", ResponseFieldResult, rowIndex, r)
 		}
 
 		// 获取 result 字段（包含 root 和 hopN）
-		resultData, ok := record[ResponseFieldResult].(map[string]any)
+		innerResult, exists := record[ResponseFieldResult]
+		if !exists {
+			return nil, fmt.Errorf("response[0].%s[%d].%s: missing field", ResponseFieldResult, rowIndex, ResponseFieldResult)
+		}
+		resultData, ok := innerResult.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("response[0].%s[%d].%s: expected object, got %T", ResponseFieldResult, rowIndex, ResponseFieldResult, innerResult)
 		}
 
 		// 解析 root 节点
-		rootData, ok := resultData[ResponseFieldRoot].(map[string]any)
+		rootValue, exists := resultData[ResponseFieldRoot]
+		if !exists {
+			return nil, fmt.Errorf("response[0].%s[%d].%s.%s: missing field", ResponseFieldResult, rowIndex, ResponseFieldResult, ResponseFieldRoot)
+		}
+		rootData, ok := rootValue.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("response[0].%s[%d].%s.%s: expected object, got %T", ResponseFieldResult, rowIndex, ResponseFieldResult, ResponseFieldRoot, rootValue)
 		}
 
 		rootNode, err := p.parseEntity(rootData)
 		if err != nil {
-			// 创建一个带错误的空图
-			graph := NewLivenessGraph(p.queryStart, p.queryEnd)
-			graph.AddTraversalError(fmt.Sprintf("parse root: %v", err))
-			graphs = append(graphs, graph)
-			continue
+			return nil, fmt.Errorf("response[0].%s[%d].%s.%s: %w", ResponseFieldResult, rowIndex, ResponseFieldResult, ResponseFieldRoot, err)
 		}
 
 		// 为每条记录创建一个新的图
@@ -91,16 +97,32 @@ func (p *SurrealResponseParser) Parse(rawResponse []map[string]any) ([]*Liveness
 
 			hopData, ok := value.(map[string]any)
 			if !ok {
-				continue
+				return nil, fmt.Errorf("response[0].%s[%d].%s.%s: expected object, got %T", ResponseFieldResult, rowIndex, ResponseFieldResult, key, value)
 			}
 
-			p.parseHopRelations(graph, rootNode.ResourceID, hopData)
+			if err := p.parseHopRelationsAt(graph, rootNode.ResourceID, hopData, fmt.Sprintf("response[0].%s[%d].%s.%s", ResponseFieldResult, rowIndex, ResponseFieldResult, key)); err != nil {
+				return nil, err
+			}
 		}
 
 		graphs = append(graphs, graph)
 	}
 
 	return graphs, nil
+}
+
+func responseArray(value any) ([]any, bool) {
+	if result, ok := value.([]any); ok {
+		return result, true
+	}
+	if typed, ok := value.([]map[string]any); ok {
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, item)
+		}
+		return result, true
+	}
+	return nil, false
 }
 
 // parseEntity 解析实体数据为 NodeLiveness
@@ -111,10 +133,17 @@ func (p *SurrealResponseParser) parseEntity(data map[string]any) (*NodeLiveness,
 	}
 
 	entityType, _ := data[ResponseFieldEntityType].(string)
+	if entityType == "" {
+		return nil, fmt.Errorf("missing %s", ResponseFieldEntityType)
+	}
 
 	// 解析 entity_data 为 labels
 	labels := make(map[string]string)
-	if entityData, ok := data[ResponseFieldEntityData].(map[string]any); ok {
+	if entityDataValue, exists := data[ResponseFieldEntityData]; exists {
+		entityData, ok := entityDataValue.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected object, got %T", ResponseFieldEntityData, entityDataValue)
+		}
 		for k, v := range entityData {
 			if s, ok := v.(string); ok {
 				labels[k] = s
@@ -124,8 +153,16 @@ func (p *SurrealResponseParser) parseEntity(data map[string]any) (*NodeLiveness,
 		}
 	}
 
-	// 解析 liveness 时间段
-	rawPeriods := p.parseLivenessPeriods(data[ResponseFieldLiveness])
+	// 解析 liveness 时间段。instant 查询会省略该投影；一旦字段存在，
+	// 其结构必须完整，不能把损坏的 period 静默当成“没有存活数据”。
+	var rawPeriods []*VisiblePeriod
+	if liveness, exists := data[ResponseFieldLiveness]; exists {
+		var err error
+		rawPeriods, err = p.parseLivenessPeriodsStrict(liveness, ResponseFieldLiveness)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &NodeLiveness{
 		ResourceID:   entityID,
@@ -136,23 +173,26 @@ func (p *SurrealResponseParser) parseEntity(data map[string]any) (*NodeLiveness,
 }
 
 // parseHopRelations 解析单跳的所有关系
-func (p *SurrealResponseParser) parseHopRelations(graph *LivenessGraph, fromID string, hopData map[string]any) {
+func (p *SurrealResponseParser) parseHopRelations(graph *LivenessGraph, fromID string, hopData map[string]any) error {
+	return p.parseHopRelationsAt(graph, fromID, hopData, "hop")
+}
+
+func (p *SurrealResponseParser) parseHopRelationsAt(graph *LivenessGraph, fromID string, hopData map[string]any, fieldPath string) error {
 	for relationKey, relationsValue := range hopData {
-		relations, ok := relationsValue.([]any)
+		relations, ok := responseArray(relationsValue)
 		if !ok {
-			continue
+			return fmt.Errorf("%s.%s: expected array, got %T", fieldPath, relationKey, relationsValue)
 		}
 
-		for _, rel := range relations {
+		for relationIndex, rel := range relations {
 			relData, ok := rel.(map[string]any)
 			if !ok {
-				continue
+				return fmt.Errorf("%s.%s[%d]: expected object, got %T", fieldPath, relationKey, relationIndex, rel)
 			}
 
 			edge, targetNode, nestedHops, err := p.parseRelation(fromID, relationKey, relData)
 			if err != nil {
-				graph.AddTraversalError(fmt.Sprintf("parse relation %s: %v", relationKey, err))
-				continue
+				return fmt.Errorf("%s.%s[%d]: %w", fieldPath, relationKey, relationIndex, err)
 			}
 
 			// 添加目标节点（如果不存在）
@@ -164,11 +204,14 @@ func (p *SurrealResponseParser) parseHopRelations(graph *LivenessGraph, fromID s
 			graph.AddEdge(edge)
 
 			// 递归解析嵌套的 hop（hop2, hop3, ...）
-			for _, nestedHop := range nestedHops {
-				p.parseHopRelations(graph, targetNode.ResourceID, nestedHop)
+			for nestedIndex, nestedHop := range nestedHops {
+				if err := p.parseHopRelationsAt(graph, targetNode.ResourceID, nestedHop, fmt.Sprintf("%s.%s[%d].%s[%d]", fieldPath, relationKey, relationIndex, ResponseFieldTarget, nestedIndex)); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	return nil
 }
 
 // parseRelation 解析单个关系
@@ -180,16 +223,33 @@ func (p *SurrealResponseParser) parseRelation(fromID, relationKey string, data m
 	}
 
 	relationType, _ := data[ResponseFieldRelationType].(string)
+	if relationType == "" {
+		return nil, nil, nil, fmt.Errorf("missing %s", ResponseFieldRelationType)
+	}
 	relationCategory, _ := data[ResponseFieldRelationCategory].(string)
+	if relationCategory == "" {
+		return nil, nil, nil, fmt.Errorf("missing %s", ResponseFieldRelationCategory)
+	}
 	direction, _ := data[ResponseFieldDirection].(string)
 
 	// 解析关系的 liveness
-	relationLiveness := p.parseLivenessPeriods(data[ResponseFieldRelationLiveness])
+	var relationLiveness []*VisiblePeriod
+	if liveness, exists := data[ResponseFieldRelationLiveness]; exists {
+		var err error
+		relationLiveness, err = p.parseLivenessPeriodsStrict(liveness, ResponseFieldRelationLiveness)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
 
 	// 解析 target 实体
-	targetData, ok := data[ResponseFieldTarget].(map[string]any)
-	if !ok {
+	targetValue, exists := data[ResponseFieldTarget]
+	if !exists {
 		return nil, nil, nil, fmt.Errorf("missing %s", ResponseFieldTarget)
+	}
+	targetData, ok := targetValue.(map[string]any)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("%s: expected object, got %T", ResponseFieldTarget, targetValue)
 	}
 
 	targetNode, err := p.parseEntity(targetData)
@@ -201,9 +261,11 @@ func (p *SurrealResponseParser) parseRelation(fromID, relationKey string, data m
 	var nestedHops []map[string]any
 	for key, value := range targetData {
 		if strings.HasPrefix(key, ResponseFieldHopPrefix) {
-			if hopData, ok := value.(map[string]any); ok {
-				nestedHops = append(nestedHops, hopData)
+			hopData, ok := value.(map[string]any)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("%s.%s: expected object, got %T", ResponseFieldTarget, key, value)
 			}
+			nestedHops = append(nestedHops, hopData)
 		}
 	}
 
@@ -252,6 +314,46 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 	return periods
 }
 
+func (p *SurrealResponseParser) parseLivenessPeriodsStrict(data any, fieldPath string) ([]*VisiblePeriod, error) {
+	arr, ok := responseArray(data)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected array, got %T", fieldPath, data)
+	}
+	if len(arr) == 0 {
+		return nil, nil
+	}
+	periods := make([]*VisiblePeriod, 0, len(arr))
+	for index, item := range arr {
+		periodData, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d]: expected object, got %T", fieldPath, index, item)
+		}
+		startValue, exists := periodData[FieldPeriodStart]
+		if !exists {
+			return nil, fmt.Errorf("%s[%d].%s: missing field", fieldPath, index, FieldPeriodStart)
+		}
+		endValue, exists := periodData[FieldPeriodEnd]
+		if !exists {
+			return nil, fmt.Errorf("%s[%d].%s: missing field", fieldPath, index, FieldPeriodEnd)
+		}
+		start, ok := p.toInt64Strict(startValue)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d].%s: invalid integer %v", fieldPath, index, FieldPeriodStart, startValue)
+		}
+		end, ok := p.toInt64Strict(endValue)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d].%s: invalid integer %v", fieldPath, index, FieldPeriodEnd, endValue)
+		}
+		start = p.normalizePeriodTimestamp(start)
+		end = p.normalizePeriodTimestamp(end)
+		if start > end {
+			return nil, fmt.Errorf("%s[%d]: period_start must be less than or equal to period_end", fieldPath, index)
+		}
+		periods = append(periods, &VisiblePeriod{Start: start, End: end})
+	}
+	return periods, nil
+}
+
 func (p *SurrealResponseParser) normalizePeriodTimestamp(ts int64) int64 {
 	if p.queryEnd >= 1e12 && ts > 0 && ts < 1e12 {
 		// v1beta3 对外和 range bucket 都使用毫秒时间戳；实体 liveness 查询可能返回秒级 period。
@@ -285,4 +387,26 @@ func (p *SurrealResponseParser) toInt64(v any) int64 {
 		return i
 	}
 	return 0
+}
+
+func (p *SurrealResponseParser) toInt64Strict(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		if math.IsInf(n, 0) || math.IsNaN(n) || n != math.Trunc(n) || n >= float64(math.MaxInt64) || n < float64(math.MinInt64) {
+			return 0, false
+		}
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	case string:
+		i, err := strconv.ParseInt(n, 10, 64)
+		return i, err == nil
+	default:
+		return 0, false
+	}
 }

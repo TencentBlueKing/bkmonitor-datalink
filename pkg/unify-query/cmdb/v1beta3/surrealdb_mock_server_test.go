@@ -34,7 +34,7 @@ const (
 	tableMockNamespace        = "mock_ns"
 	tableMockClusterName      = "mock_surrealdb_cluster"
 	tableMockBindingCacheKey  = ":" + tableMockBizID
-	tableMockUseNSDBStatement = "USE NS " + tableMockNamespace + " DB `" + tableMockDatabase + "`;"
+	tableMockUseNSDBStatement = "USE NS `" + tableMockNamespace + "` DB `" + tableMockDatabase + "`;"
 )
 
 func tableMockBindingInfo() *BindingInfo {

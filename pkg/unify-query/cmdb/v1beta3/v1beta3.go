@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 	ants "github.com/panjf2000/ants/v2"
 )
 
@@ -34,6 +36,11 @@ var (
 // BKBase query_sync 同时打满；path-by-path 的目标是降低单条大 SQL 的复杂度，
 // 不是把压力无上限地转成更多并发请求。
 const defaultPathQueryMaxRouting = 4
+
+// pathQuerySemaphore applies a process-wide cap. The HTTP handler already has
+// request-level concurrency, so a per-request path pool alone can still
+// multiply BKBase pressure by query_list size.
+var pathQuerySemaphore = make(chan struct{}, defaultPathQueryMaxRouting)
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	modelMutex.Lock()
@@ -65,9 +72,20 @@ type GraphQueryExecutorWithBinding interface {
 
 type graphQueryRunner func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error)
 
-var sourceInferencePriority = map[ResourceType]int{
-	ResourceTypeBiz:          0,
-	ResourceType("business"): 1,
+var sourceInferencePriority = buildSourceInferencePriority()
+
+func buildSourceInferencePriority() map[ResourceType]int {
+	priority := map[ResourceType]int{
+		ResourceTypeBiz:          0,
+		ResourceType("business"): 1,
+	}
+	for index, definition := range relation.DefaultResourceDefinitions() {
+		resourceType := ResourceType(definition.Name)
+		if _, exists := priority[resourceType]; !exists {
+			priority[resourceType] = index + 100
+		}
+	}
+	return priority
 }
 
 // Model v2 CMDB 实现，基于 SurrealDB 图查询
@@ -123,7 +141,7 @@ func (m *Model) QueryResourceMatcher(
 	pathResource []cmdb.Resource,
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, resMatchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher")
-	defer span.End(&err)
+	defer endV1Beta3TraceSpan(span, &err)
 
 	span.Set("space-uid", spaceUid)
 	span.Set("timestamp", ts)
@@ -135,32 +153,37 @@ func (m *Model) QueryResourceMatcher(
 
 	timestamp, err := parseTimestamp(ts)
 	if err != nil {
+		span.Set("failure-stage", "timestamp-validation")
 		return "", nil, nil, "", nil, err
 	}
 
 	lbd, err := parseLookBackDelta(lookBackDelta)
 	if err != nil {
+		span.Set("failure-stage", "look-back-delta-validation")
 		return "", nil, nil, "", nil, err
 	}
 
 	req := &QueryRequest{
-		SpaceUID:           spaceUid,
-		Timestamp:          timestamp,
-		SourceType:         FromCMDBResource(source),
-		SourceInfo:         matcherToMap(indexMatcher.Rename()),
-		SourceExpandInfo:   matcherToMap(expandMatcher),
-		TargetType:         FromCMDBResource(target),
-		TargetTypeExplicit: target != "",
-		TargetInfoShow:     expandShow,
-		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(source, target, pathResource),
-		LookBackDelta:      lbd,
-		LookBackDeltaSet:   lookBackDelta != "",
+		SpaceUID:            spaceUid,
+		Timestamp:           timestamp,
+		SourceType:          FromCMDBResource(source),
+		SourceInfo:          matcherToMap(indexMatcher.Rename()),
+		SourceExpandInfo:    matcherToMap(expandMatcher),
+		TargetType:          FromCMDBResource(target),
+		TargetTypeExplicit:  target != "",
+		TargetInfoShow:      expandShow,
+		PathResource:        toResourceTypes(pathResource),
+		MaxHops:             computeMaxHops(source, target, pathResource),
+		LookBackDelta:       lbd,
+		LookBackDeltaSet:    lookBackDelta != "",
+		LegacyCompatibility: true,
+		DisableRootLimit:    true,
 	}
 	req.Normalize()
 
 	_, paths, matchers, err := m.QueryLivenessGraph(ctx, req)
 	if err != nil {
+		span.Set("failure-stage", "graph-query")
 		return "", nil, nil, "", nil, err
 	}
 
@@ -184,7 +207,7 @@ func (m *Model) QueryResourceMatcherRange(
 	pathResource []cmdb.Resource,
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, result []cmdb.MatchersWithTimestamp, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher-range")
-	defer span.End(&err)
+	defer endV1Beta3TraceSpan(span, &err)
 
 	span.Set("space-uid", spaceUid)
 	span.Set("start-ts", startTs)
@@ -195,47 +218,65 @@ func (m *Model) QueryResourceMatcherRange(
 	span.Set("target", target)
 	span.Set("index-matcher", indexMatcher)
 	span.Set("path-resource", pathResource)
+	span.Set("max-range-points", effectiveMaxRangePoints())
 
 	start, err := parseTimestamp(startTs)
 	if err != nil {
+		span.Set("failure-stage", "start-time-validation")
 		return "", nil, nil, "", nil, err
 	}
 	end, err := parseTimestamp(endTs)
 	if err != nil {
+		span.Set("failure-stage", "end-time-validation")
 		return "", nil, nil, "", nil, err
 	}
 	if start > end {
+		span.Set("failure-stage", "range-order-validation")
 		return "", nil, nil, "", nil, fmt.Errorf("start_time must be less than or equal to end_time")
 	}
 
 	lbd, err := parseLookBackDelta(lookBackDelta)
 	if err != nil {
+		span.Set("failure-stage", "look-back-delta-validation")
 		return "", nil, nil, "", nil, err
 	}
 
 	stepMs, err := parseStep(step)
 	if err != nil {
+		span.Set("failure-stage", "step-validation")
 		return "", nil, nil, "", nil, err
 	}
+	points, err := validateRangeBuckets(start, end, stepMs)
+	if err != nil {
+		span.Set("failure-stage", "range-points-validation")
+		return "", nil, nil, "", nil, err
+	}
+	span.Set("range-start", start)
+	span.Set("range-end", end)
+	span.Set("range-step-ms", stepMs)
+	span.Set("range-points", points)
 
 	req := &QueryRequest{
-		SpaceUID:           spaceUid,
-		Timestamp:          end,
-		SourceType:         FromCMDBResource(source),
-		SourceInfo:         matcherToMap(indexMatcher.Rename()),
-		SourceExpandInfo:   matcherToMap(expandMatcher),
-		TargetType:         FromCMDBResource(target),
-		TargetTypeExplicit: target != "",
-		TargetInfoShow:     expandShow,
-		PathResource:       toResourceTypes(pathResource),
-		MaxHops:            computeMaxHops(source, target, pathResource),
-		LookBackDelta:      rangeQueryLookBackDelta(lbd, start, end, stepMs, lookBackDelta != ""),
-		LookBackDeltaSet:   lookBackDelta != "",
+		SpaceUID:            spaceUid,
+		Timestamp:           end,
+		SourceType:          FromCMDBResource(source),
+		SourceInfo:          matcherToMap(indexMatcher.Rename()),
+		SourceExpandInfo:    matcherToMap(expandMatcher),
+		TargetType:          FromCMDBResource(target),
+		TargetTypeExplicit:  target != "",
+		TargetInfoShow:      expandShow,
+		PathResource:        toResourceTypes(pathResource),
+		MaxHops:             computeMaxHops(source, target, pathResource),
+		LookBackDelta:       rangeQueryLookBackDelta(lbd, start, end, stepMs, lookBackDelta != ""),
+		LookBackDeltaSet:    lookBackDelta != "",
+		LegacyCompatibility: true,
+		DisableRootLimit:    true,
 	}
 	req.Normalize()
 
 	graphs, candidatePaths, _, err := m.queryLivenessGraph(ctx, req, graphQueryModeRange, start, end, stepMs)
 	if err != nil {
+		span.Set("failure-stage", "graph-query")
 		return "", nil, nil, "", nil, err
 	}
 
@@ -288,17 +329,55 @@ func (m *Model) queryLivenessGraph(
 	rangeStart, rangeEnd, stepMs int64,
 ) (graphs []*LivenessGraph, paths []resourcePath, matchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-liveness-graph")
-	defer span.End(&err)
+	defer endV1Beta3TraceSpan(span, &err)
+	if req == nil {
+		return nil, nil, nil, fmt.Errorf("query request cannot be nil")
+	}
+
+	span.Set("query-result-mode", string(mode))
+	span.Set("requested-source-type", string(req.SourceType))
+	span.Set("requested-target-type", string(req.TargetType))
+	span.Set("source-info", req.SourceInfo)
+	span.Set("source-expand-info", req.SourceExpandInfo)
+	span.Set("space-uid", req.SpaceUID)
+	span.Set("schema-namespace", req.SchemaNamespace())
+	span.Set("schema-provider", fmt.Sprintf("%T", m.getSchemaProvider()))
+	span.Set("legacy-compatibility", req.LegacyCompatibility)
+	span.Set("root-limit-disabled", req.DisableRootLimit)
+	if mode == graphQueryModeRange {
+		span.Set("range-start", rangeStart)
+		span.Set("range-end", rangeEnd)
+		span.Set("range-step-ms", stepMs)
+	}
 
 	provider := m.getSchemaProvider()
+	if err := validateSchemaProvider(provider, req.SchemaNamespace()); err != nil {
+		span.Set("failure-stage", "schema-validation-before-inference")
+		return nil, nil, nil, err
+	}
+	sourceTypeInferred := false
 	if req.SourceType == "" {
 		sourceType, inferErr := inferSourceTypeFromInfo(req, provider)
 		if inferErr != nil {
+			span.Set("failure-stage", "source-type-inference")
 			return nil, nil, nil, inferErr
 		}
 		req.SourceType = sourceType
+		sourceTypeInferred = true
 	}
 	req.Normalize()
+	span.Set("source-type-inferred", sourceTypeInferred)
+	span.Set("source-type", string(req.SourceType))
+	span.Set("target-type", string(req.TargetType))
+	span.Set("allowed-relation-types", relationCategoryStrings(req.AllowedRelationTypes))
+	span.Set("dynamic-relation-direction", string(req.DynamicRelationDirection))
+	span.Set("root-limit", req.Limit)
+	if req.LegacyCompatibility {
+		originalSourceFieldCount := len(req.SourceInfo)
+		req.SourceInfo = sourcePrimaryKeySubset(req, provider)
+		span.Set("source-info-fields-before-compat-filter", originalSourceFieldCount)
+		span.Set("source-info-fields-after-compat-filter", len(req.SourceInfo))
+	}
 	// 同类型查询有两种不同语义，必须在路径发现前归一化：
 	// 1. target_type 未显式传入时，这是旧接口的信息展示路径，只查 source 自身；
 	// 2. target_type 显式等于 source_type 时，这是自关联查询，只允许一跳直连自关联。
@@ -317,17 +396,15 @@ func (m *Model) queryLivenessGraph(
 	adjustMaxHopsForUnconstrainedPath(req, provider)
 
 	if err := validateQueryResources(req, provider); err != nil {
+		span.Set("failure-stage", "resource-validation")
 		return nil, nil, nil, err
 	}
 
-	span.Set("source-type", req.SourceType)
-	span.Set("target-type", req.TargetType)
 	span.Set("source-info", req.SourceInfo)
 	span.Set("source-expand-info", req.SourceExpandInfo)
 	span.Set("target-info-show", req.TargetInfoShow)
 	span.Set("max-hops", req.MaxHops)
 	span.Set("look-back-delta", req.LookBackDelta)
-	span.Set("space-uid", req.SpaceUID)
 
 	pf := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
@@ -341,9 +418,11 @@ func (m *Model) queryLivenessGraph(
 	} else {
 		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 		if err != nil {
+			span.Set("failure-stage", "path-discovery")
 			return nil, nil, nil, err
 		}
 	}
+	span.Set("candidate-paths-count", len(paths))
 
 	queryStart, queryEnd := req.GetQueryRange()
 	span.Set("query-start", queryStart)
@@ -353,6 +432,7 @@ func (m *Model) queryLivenessGraph(
 		start := time.Now()
 		runner, err := m.newGraphQueryRunner(ctx, req)
 		if err != nil {
+			span.Set("failure-stage", "binding-resolution")
 			elapsed := time.Since(start).Seconds()
 			status := CategorizeError(err)
 			ObserveError(req.SpaceUID, status)
@@ -360,8 +440,6 @@ func (m *Model) queryLivenessGraph(
 			return nil, nil, nil, err
 		}
 		if len(paths) > 0 {
-			span.Set("query-result-mode", string(mode))
-			span.Set("candidate-paths-count", len(paths))
 			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs, runner)
 		}
 		elapsed := time.Since(start).Seconds()
@@ -372,6 +450,7 @@ func (m *Model) queryLivenessGraph(
 		}
 		ObserveQueryDuration(req.SpaceUID, status, elapsed)
 		if err != nil {
+			span.Set("failure-stage", "path-query")
 			return nil, nil, nil, err
 		}
 	}
@@ -409,10 +488,22 @@ func (m *Model) executeGraphQueryPathByPath(
 	mode graphQueryMode,
 	rangeStart, rangeEnd, stepMs int64,
 	runner graphQueryRunner,
-) ([]*LivenessGraph, []resourcePath, error) {
+) (graphs []*LivenessGraph, selectedPaths []resourcePath, err error) {
+	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-graph-paths")
+	defer endV1Beta3TraceSpan(span, &err)
+	span.Set("query-result-mode", string(mode))
+	span.Set("candidate-path-count", len(paths))
+	span.Set("source-type", string(req.SourceType))
+	span.Set("target-type", string(req.TargetType))
+
 	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
 	queryPaths := sortPathsForQuery(paths)
+	pathIdentities := make([]string, 0, len(queryPaths))
+	for _, path := range queryPaths {
+		pathIdentities = append(pathIdentities, resourcePathSortKey(path))
+	}
+	span.Set("candidate-path-identities", pathIdentities)
 
 	// ants pool 大小取 min(path 数量, 默认并发上限)。
 	// path 数量通常不大，但这里仍显式限流，避免多个 relation 请求叠加时放大
@@ -421,6 +512,8 @@ func (m *Model) executeGraphQueryPathByPath(
 	if poolSize > defaultPathQueryMaxRouting {
 		poolSize = defaultPathQueryMaxRouting
 	}
+	span.Set("path-worker-pool-size", poolSize)
+	span.Set("global-path-concurrency-limit", cap(pathQuerySemaphore))
 
 	// 每次调用创建一个独立 pool，生命周期绑定当前 relation 请求。
 	// 这样不会让跨请求的慢 path 占住全局 worker，也便于后续把上限做成配置。
@@ -468,53 +561,114 @@ func (m *Model) executeGraphQueryPathByPath(
 	}
 	workerWg.Wait()
 
-	var graphFragments []*LivenessGraph
-	for _, result := range results {
+	targetHits := make([]bool, len(results))
+	successCount := 0
+	targetHitCount := 0
+	rootGraphCount := 0
+	for idx, result := range results {
 		if result == nil || result.err != nil {
 			continue
 		}
-		graphFragments = append(graphFragments, result.graphs...)
+		successCount++
+		rootGraphCount += len(result.graphs)
+		targetHits[idx] = pathQueryResultHasTarget(result, req, mode, rangeStart, rangeEnd, stepMs)
+		if targetHits[idx] {
+			targetHitCount++
+		}
+	}
+	span.Set("completed-path-count", len(results))
+	span.Set("successful-path-count", successCount)
+	span.Set("failed-path-count", len(pathErrors))
+	span.Set("target-hit-path-count", targetHitCount)
+	span.Set("graph-fragment-count", rootGraphCount)
+
+	// Select from each path's own response before any graph merge. Resource-only
+	// path keys cannot distinguish static A_with_B from dynamic A_to_B, and a
+	// merge would irreversibly mix their targets. A lower-priority path error is
+	// ignorable only after a higher-priority path has produced a target.
+	for idx, result := range results {
+		if result == nil || result.err != nil || !targetHits[idx] {
+			continue
+		}
+		var higherPriorityErrors []error
+		for _, prior := range results[:idx] {
+			if prior != nil && prior.err != nil {
+				higherPriorityErrors = append(higherPriorityErrors, prior.err)
+			}
+		}
+		if len(higherPriorityErrors) > 0 {
+			span.Set("selection-result", "higher-priority-path-error")
+			span.Set("selected-path-index", idx)
+			span.Set("selected-path-identity", resourcePathSortKey(result.path))
+			return nil, nil, errors.Join(higherPriorityErrors...)
+		}
+		ignoredLowerPriorityErrors := 0
+		for _, later := range results[idx+1:] {
+			if later != nil && later.err != nil {
+				ignoredLowerPriorityErrors++
+			}
+		}
+		span.Set("selection-result", "target-hit")
+		span.Set("selected-path-index", idx)
+		span.Set("selected-path-identity", resourcePathSortKey(result.path))
+		span.Set("ignored-lower-priority-error-count", ignoredLowerPriorityErrors)
+		span.Set("selected-graph-count", len(result.graphs))
+		return result.graphs, []resourcePath{result.path}, nil
+	}
+
+	// If no path found a target, every path is material to the empty result.
+	// Surface any failure instead of presenting an uncertain empty target_list
+	// as a successful query.
+	if len(pathErrors) > 0 {
+		span.Set("selection-result", "no-target-with-path-errors")
+		return nil, nil, errors.Join(pathErrors...)
+	}
+
+	var graphFragments []*LivenessGraph
+	for _, result := range results {
+		if result != nil {
+			graphFragments = append(graphFragments, result.graphs...)
+		}
 	}
 	mergedGraphs := mergeLivenessGraphsByRoot(graphFragments)
+	if len(mergedGraphs) > 0 {
+		span.Set("selection-result", "root-only")
+		span.Set("selected-graph-count", len(mergedGraphs))
+		return mergedGraphs, paths, nil
+	}
 
+	// 所有 path 都完成且没有命中 target。保持原始候选 paths 返回，便于调用方
+	// 继续展示“有哪些可走路径”，同时 target_list 为空。
+	span.Set("selection-result", "empty")
+	return nil, paths, nil
+}
+
+func pathQueryResultHasTarget(
+	result *pathQueryResult,
+	req *QueryRequest,
+	mode graphQueryMode,
+	rangeStart, rangeEnd, stepMs int64,
+) bool {
+	if result == nil || req == nil || result.err != nil {
+		return false
+	}
 	if mode == graphQueryModeRange {
-		candidates := resourcePathCandidatesFromRangeTargetGraphs(
-			mergedGraphs,
+		return len(resourcePathCandidatesFromRangeTargetGraphs(
+			result.graphs,
 			req.TargetType,
 			targetExtractionPathResource(req),
 			shouldIncludeRootTarget(req),
 			rangeStart,
 			rangeEnd,
 			stepMs,
-		)
-		if selectedPath, ok := selectResourcePathFromCandidates(queryPaths, candidates); ok {
-			return mergedGraphs, []resourcePath{selectedPath}, nil
-		}
-	} else {
-		candidates := resourcePathCandidatesFromTargetGraphs(
-			mergedGraphs,
-			req.TargetType,
-			targetExtractionPathResource(req),
-			shouldIncludeRootTarget(req),
-		)
-		if selectedPath, ok := selectResourcePathFromCandidates(queryPaths, candidates); ok {
-			return mergedGraphs, []resourcePath{selectedPath}, nil
-		}
+		)) > 0
 	}
-
-	if len(mergedGraphs) > 0 {
-		// 有 root 图但没有命中 target 时，继续返回合并后的图，方便调用方保留
-		// source/root 信息；path 仍保持原始候选集合。
-		return mergedGraphs, paths, nil
-	}
-
-	if len(pathErrors) > 0 {
-		return nil, nil, errors.Join(pathErrors...)
-	}
-
-	// 所有 path 都完成且没有命中 target。保持原始候选 paths 返回，便于调用方
-	// 继续展示“有哪些可走路径”，同时 target_list 为空。
-	return nil, paths, nil
+	return len(resourcePathCandidatesFromTargetGraphs(
+		result.graphs,
+		req.TargetType,
+		targetExtractionPathResource(req),
+		shouldIncludeRootTarget(req),
+	)) > 0
 }
 
 // pathQueryResult 是单条 path 查询的收敛结果。
@@ -536,21 +690,86 @@ func (m *Model) executeOneGraphQueryPath(
 	start, end int64,
 	mode graphQueryMode,
 	runner graphQueryRunner,
-) pathQueryResult {
+) (result pathQueryResult) {
+	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-graph-path")
+	var spanErr error
+	defer endV1Beta3TraceSpan(span, &spanErr)
+	span.Set("path-index", idx)
+	span.Set("path-identity", resourcePathSortKey(path))
+	span.Set("path-resource-types", resourcePathTypeStrings(path))
+	span.Set("path-hop-count", maxInt(0, len(path.Steps)-1))
+	span.Set("query-result-mode", string(mode))
+
+	waitStarted := time.Now()
+	select {
+	case pathQuerySemaphore <- struct{}{}:
+		defer func() { <-pathQuerySemaphore }()
+	case <-ctx.Done():
+		span.Set("semaphore-wait", time.Since(waitStarted))
+		span.Set("path-result", "context-canceled-while-waiting")
+		spanErr = ctx.Err()
+		return pathQueryResult{idx: idx, path: path, err: spanErr}
+	}
+	span.Set("semaphore-wait", time.Since(waitStarted))
+
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
 	sql := builder.Build()
-	graphs, err := runner(ctx, sql, start, end)
-	if err != nil {
-		return pathQueryResult{idx: idx, path: path, err: err}
+	span.Set("surrealql-bytes", len(sql))
+	graphs, runErr := runner(ctx, sql, start, end)
+	if runErr != nil {
+		span.Set("path-result", "query-error")
+		spanErr = runErr
+		return pathQueryResult{idx: idx, path: path, err: runErr}
 	}
-	if err := rejectGraphTraversalErrors(graphs); err != nil {
-		return pathQueryResult{idx: idx, path: path, err: err}
+	if traversalErr := rejectGraphTraversalErrors(graphs); traversalErr != nil {
+		span.Set("path-result", "traversal-error")
+		spanErr = traversalErr
+		return pathQueryResult{idx: idx, path: path, err: traversalErr}
 	}
+	graphCount, nodeCount, edgeCount := livenessGraphStats(graphs)
+	span.Set("path-result", "success")
+	span.Set("graph-count", graphCount)
+	span.Set("node-count", nodeCount)
+	span.Set("edge-count", edgeCount)
 
 	return pathQueryResult{idx: idx, path: path, graphs: graphs}
+}
+
+func resourcePathTypeStrings(path resourcePath) []string {
+	result := make([]string, 0, len(path.Steps))
+	for _, step := range path.Steps {
+		result = append(result, step.ResourceType)
+	}
+	return result
+}
+
+func livenessGraphStats(graphs []*LivenessGraph) (graphCount, nodeCount, edgeCount int) {
+	for _, graph := range graphs {
+		if graph == nil {
+			continue
+		}
+		graphCount++
+		nodeCount += len(graph.Nodes)
+		edgeCount += len(graph.Edges)
+	}
+	return graphCount, nodeCount, edgeCount
+}
+
+func maxInt(left, right int) int {
+	if left >= right {
+		return left
+	}
+	return right
+}
+
+func endV1Beta3TraceSpan(span *trace.Span, err *error) {
+	if err != nil && *err != nil {
+		span.Set("error-category", CategorizeError(*err))
+	}
+	span.End(err)
 }
 
 func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQueryMode) {
@@ -720,10 +939,12 @@ func maxInt64(left, right int64) int64 {
 }
 
 func rangeQueryLookBackDelta(configured, start, end, stepMs int64, explicitlySet bool) int64 {
-	required := end - start
-	if stepMs > 0 {
+	required := saturatingRangeDistance(start, end)
+	if stepMs > 0 && required <= math.MaxInt64-stepMs {
 		// 对齐旧 VM range 的 count_over_time 语义：第一个 bucket 也要能读取 (start-step, start] 窗口内的样本。
 		required += stepMs
+	} else if stepMs > 0 {
+		required = math.MaxInt64
 	}
 	if required < 0 {
 		required = 0
@@ -732,6 +953,65 @@ func rangeQueryLookBackDelta(configured, start, end, stepMs int64, explicitlySet
 		return required
 	}
 	return maxInt64(configured, required)
+}
+
+func validateRangeBuckets(start, end, stepMs int64) (int, error) {
+	if end < start {
+		return 0, fmt.Errorf("start_time must be less than or equal to end_time")
+	}
+	if stepMs <= 0 {
+		return 0, fmt.Errorf("step must be greater than 0")
+	}
+	maxPoints := effectiveMaxRangePoints()
+
+	// Unsigned subtraction is the exact mathematical distance for ordered
+	// int64 endpoints, including ranges that cross zero.
+	distance := uint64(end) - uint64(start)
+	quotient := distance / uint64(stepMs)
+	if quotient >= uint64(maxPoints) {
+		return 0, fmt.Errorf("range query has more than %d points", maxPoints)
+	}
+	return int(quotient) + 1, nil
+}
+
+func effectiveMaxRangePoints() int {
+	if MaxRangePoints > 0 {
+		return MaxRangePoints
+	}
+	return 11000
+}
+
+func relationCategoryStrings(categories []RelationCategory) []string {
+	result := make([]string, 0, len(categories))
+	for _, category := range categories {
+		result = append(result, string(category))
+	}
+	return result
+}
+
+func saturatingRangeDistance(start, end int64) int64 {
+	if end <= start {
+		return 0
+	}
+	distance := uint64(end) - uint64(start)
+	if distance > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(distance)
+}
+
+func saturatingSubInt64(value, delta int64) int64 {
+	if delta > 0 && value < math.MinInt64+delta {
+		return math.MinInt64
+	}
+	return value - delta
+}
+
+func nextRangeBucket(current, end, stepMs int64) (int64, bool) {
+	if current >= end || uint64(end)-uint64(current) < uint64(stepMs) {
+		return 0, false
+	}
+	return current + stepMs, true
 }
 
 func shouldIncludeRootTarget(req *QueryRequest) bool {
@@ -853,6 +1133,11 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 	if len(topCandidates) == 1 {
 		return best.resourceType, nil
 	}
+	if req.LegacyCompatibility {
+		// v1beta1 selected the first resource in its stable, primary-key-count
+		// ordered configuration and ignored labels belonging to other resources.
+		return best.resourceType, nil
+	}
 	if preferred, ok := preferredAliasSourceType(topCandidates); ok {
 		return preferred, nil
 	}
@@ -863,7 +1148,7 @@ func sourceInferenceRank(resourceType ResourceType) int {
 	if rank, ok := sourceInferencePriority[resourceType]; ok {
 		return rank
 	}
-	return 100
+	return 10000
 }
 
 func preferredAliasSourceType(candidates []sourceTypeCandidate) (ResourceType, bool) {
@@ -891,6 +1176,11 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 		provider = GetSchemaProvider()
 	}
 	namespace := req.SchemaNamespace()
+	resources := []ResourceType{req.SourceType, req.TargetType}
+	resources = append(resources, req.PathResource...)
+	if err := validateSchemaProvider(provider, namespace, resources...); err != nil {
+		return err
+	}
 	for _, resourceType := range []ResourceType{req.SourceType, req.TargetType} {
 		if resourceType == "" {
 			return fmt.Errorf("resource type cannot be empty")
@@ -910,6 +1200,23 @@ func validateQueryResources(req *QueryRequest, provider SchemaProvider) error {
 	if err := validateSourceInfoFields(req, provider); err != nil {
 		return err
 	}
+	if err := validateSourceExpandInfoFields(req, provider); err != nil {
+		return err
+	}
+	if err := validateSourceFilterValueTypes(req, provider); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSchemaProvider(provider SchemaProvider, namespace string, resourceTypes ...ResourceType) error {
+	validator, ok := provider.(SchemaProviderValidator)
+	if !ok {
+		return nil
+	}
+	if err := validator.ValidateSchema(namespace, resourceTypes...); err != nil {
+		return fmt.Errorf("schema provider failed: %w", err)
+	}
 	return nil
 }
 
@@ -927,6 +1234,9 @@ func validateSourceInfoFields(req *QueryRequest, provider SchemaProvider) error 
 	if len(primaryKeys) == 0 {
 		return fmt.Errorf("source type %q has no primary keys for source_info", req.SourceType)
 	}
+	if req.LegacyCompatibility {
+		return nil
+	}
 
 	for _, key := range primaryKeys {
 		if _, ok := req.SourceInfo[key]; !ok {
@@ -934,6 +1244,52 @@ func validateSourceInfoFields(req *QueryRequest, provider SchemaProvider) error 
 		}
 	}
 	return nil
+}
+
+func validateSourceExpandInfoFields(req *QueryRequest, provider SchemaProvider) error {
+	if req == nil || len(req.SourceExpandInfo) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{})
+	for _, field := range provider.GetResourceFields(req.SchemaNamespace(), req.SourceType) {
+		allowed[field] = struct{}{}
+	}
+	for field := range req.SourceExpandInfo {
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("unknown source_expand_info field %q for source type %q", field, req.SourceType)
+		}
+	}
+	return nil
+}
+
+func validateSourceFilterValueTypes(req *QueryRequest, provider SchemaProvider) error {
+	typedProvider, ok := provider.(ResourceFieldTypeProvider)
+	if !ok || req == nil {
+		return nil
+	}
+	filters := []map[string]string{req.SourceInfo, req.SourceExpandInfo}
+	for _, filter := range filters {
+		for field, value := range filter {
+			fieldType := typedProvider.GetResourceFieldType(req.SchemaNamespace(), req.SourceType, field)
+			if _, valid := typedSurrealLiteral(fieldType, value); !valid {
+				return fmt.Errorf("invalid %s value %q for field %q", fieldType, value, field)
+			}
+		}
+	}
+	return nil
+}
+
+func sourcePrimaryKeySubset(req *QueryRequest, provider SchemaProvider) map[string]string {
+	if req == nil || len(req.SourceInfo) == 0 || provider == nil {
+		return req.SourceInfo
+	}
+	result := make(map[string]string)
+	for _, key := range provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType) {
+		if value, ok := req.SourceInfo[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func matcherToMap(m cmdb.Matcher) map[string]string {
@@ -1074,6 +1430,9 @@ func buildTargetMatchersTimeSeriesWithOptions(
 	if stepMs <= 0 {
 		return nil
 	}
+	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
+		return nil
+	}
 
 	targetNodes := make(map[string][]*targetPathInfo)
 	for _, g := range graphs {
@@ -1099,7 +1458,7 @@ func buildTargetMatchersTimeSeriesWithOptions(
 
 	var result []cmdb.MatchersWithTimestamp
 
-	for ts := start; ts <= end; ts += stepMs {
+	for ts := start; ; {
 		var activeMatchers cmdb.Matchers
 
 		for _, targetID := range targetIDs {
@@ -1109,7 +1468,7 @@ func buildTargetMatchersTimeSeriesWithOptions(
 			}
 			// 旧 VM range 使用 count_over_time(...[step])，bucket 命中看的是 (ts-step, ts] 窗口内是否有样本，
 			// 不是要求路径上所有节点和边都在 ts 这个精确时间点同时存活。
-			if isAnyTargetPathActiveInWindow(paths, ts-stepMs, ts) {
+			if isAnyTargetPathActiveInWindow(paths, saturatingSubInt64(ts, stepMs), ts) {
 				info := paths[0]
 				matcher := filterTargetMatcher(info.Labels, provider, namespace, targetType, targetInfoShow)
 				activeMatchers = append(activeMatchers, matcher)
@@ -1122,6 +1481,11 @@ func buildTargetMatchersTimeSeriesWithOptions(
 				Matchers:  activeMatchers,
 			})
 		}
+		next, ok := nextRangeBucket(ts, end, stepMs)
+		if !ok {
+			break
+		}
+		ts = next
 	}
 
 	return result
@@ -1249,6 +1613,9 @@ func resourcePathCandidatesFromRangeTargetGraphs(
 	if stepMs <= 0 {
 		return nil
 	}
+	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
+		return nil
+	}
 
 	var candidates [][]ResourceType
 	for _, graph := range graphs {
@@ -1370,10 +1737,15 @@ func resourcePathStepsFromTypes(resources []ResourceType) []resourcePathStep {
 }
 
 func isTargetPathActiveInAnyBucket(path *targetPathInfo, start, end, stepMs int64) bool {
-	for ts := start; ts <= end; ts += stepMs {
-		if isTargetPathActiveInWindow(path, ts-stepMs, ts) {
+	for ts := start; ; {
+		if isTargetPathActiveInWindow(path, saturatingSubInt64(ts, stepMs), ts) {
 			return true
 		}
+		next, ok := nextRangeBucket(ts, end, stepMs)
+		if !ok {
+			break
+		}
+		ts = next
 	}
 	return false
 }

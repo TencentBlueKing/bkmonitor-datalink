@@ -28,6 +28,8 @@ type QueryRequest struct {
 	LookBackDelta            int64              `json:"look_back_delta,omitempty"`            // 回溯时间窗口（毫秒，默认86400000）
 	LookBackDeltaSet         bool               `json:"-"`                                    // look_back_delta 是否由调用方显式传入
 	Limit                    int                `json:"limit,omitempty"`                      // 返回的Root数量限制（默认100）
+	LegacyCompatibility      bool               `json:"-"`                                    // 是否使用旧 Relation API 兼容语义
+	DisableRootLimit         bool               `json:"-"`                                    // 是否取消 root LIMIT（仅供兼容路由使用）
 }
 
 // Normalize 规范化请求参数，填充默认值
@@ -38,7 +40,7 @@ func (r *QueryRequest) Normalize() {
 	if r.MaxHops > MaxAllowedHops {
 		r.MaxHops = MaxAllowedHops
 	}
-	if r.Limit <= 0 {
+	if r.Limit <= 0 && !r.DisableRootLimit {
 		r.Limit = DefaultLimit
 	}
 	if !r.LookBackDeltaSet && r.LookBackDelta <= 0 {
@@ -52,7 +54,11 @@ func (r *QueryRequest) Normalize() {
 		r.TargetType = r.SourceType
 	}
 	if len(r.AllowedRelationTypes) == 0 {
-		r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic}
+		if r.LegacyCompatibility {
+			r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic}
+		} else {
+			r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic}
+		}
 	}
 }
 

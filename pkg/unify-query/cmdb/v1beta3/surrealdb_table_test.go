@@ -48,7 +48,7 @@ func TestSurrealDBQuerySync(t *testing.T) {
 			},
 			provider: newTableSchemaProvider(
 				map[ResourceType]tableResourceDefinition{
-					ResourceTypeHost:   {primaryKeys: []string{"bk_host_id"}},
+					ResourceTypeHost:   {primaryKeys: []string{"bk_host_id"}, fieldTypes: map[string]string{"bk_host_id": "integer"}},
 					ResourceTypeModule: {primaryKeys: []string{"bk_module_id"}},
 				},
 				[]RelationSchema{
@@ -96,7 +96,7 @@ SELECT {
     }
 } AS result
 FROM host
-WHERE bk_host_id = '38268'
+WHERE bk_host_id = 38268
   AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		},
@@ -501,6 +501,11 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 type tableResourceDefinition struct {
 	primaryKeys []string
 	fields      []string
+	fieldTypes  map[string]string
+}
+
+func (p *tableSchemaProvider) GetResourceFieldType(_ string, resourceType ResourceType, field string) string {
+	return p.resources[resourceType].fieldTypes[field]
 }
 
 type tableSchemaProvider struct {

@@ -33,7 +33,15 @@ type FieldDefinition struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Required  bool   `json:"required"`
+	Type      string `json:"type,omitempty"`
 }
+
+const (
+	FieldTypeString  = "string"
+	FieldTypeInteger = "integer"
+	FieldTypeNumber  = "number"
+	FieldTypeBoolean = "boolean"
+)
 
 type ResourceDefinition struct {
 	Namespace string                 `json:"namespace"`

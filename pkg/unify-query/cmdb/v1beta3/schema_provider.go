@@ -10,6 +10,8 @@
 package v1beta3
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +30,18 @@ type SchemaProvider interface {
 	ListResourceTypes(namespace string) []ResourceType
 	// ListRelationSchemas 列出所有关联 Schema
 	ListRelationSchemas(namespace string) []RelationSchema
+}
+
+// ResourceFieldTypeProvider is an optional SchemaProvider extension. Providers
+// that do not expose field types retain the historical string-literal behavior.
+type ResourceFieldTypeProvider interface {
+	GetResourceFieldType(namespace string, resourceType ResourceType, field string) string
+}
+
+// SchemaProviderValidator lets adapters surface backend failures that the
+// legacy, slice-only SchemaProvider interface cannot represent.
+type SchemaProviderValidator interface {
+	ValidateSchema(namespace string, resourceTypes ...ResourceType) error
 }
 
 // v1beta3SchemaProviderAdapter v1beta3 SchemaProvider 适配器
@@ -103,6 +117,25 @@ var relationSchemaOrder = map[RelationType]int{
 	RelationType("apm_service_to_apm_service"): 32,
 }
 
+var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()
+
+func buildDefaultResourceFieldTypes() map[ResourceType]map[string]string {
+	result := make(map[ResourceType]map[string]string)
+	for _, definition := range relation.DefaultResourceDefinitions() {
+		resourceType := ResourceType(definition.Name)
+		for _, field := range definition.Fields {
+			if field.Type == "" {
+				continue
+			}
+			if result[resourceType] == nil {
+				result[resourceType] = make(map[string]string)
+			}
+			result[resourceType][field.Name] = field.Type
+		}
+	}
+	return result
+}
+
 func normalizeSchemaNamespace(namespace string) string {
 	if namespace == "" {
 		return relation.NamespaceAll
@@ -130,10 +163,29 @@ func (a *v1beta3SchemaProviderAdapter) GetResourceFields(namespace string, resou
 	return fields
 }
 
+func (a *v1beta3SchemaProviderAdapter) GetResourceFieldType(namespace string, resourceType ResourceType, fieldName string) string {
+	resourceDef := a.getResourceDefinition(namespace, resourceType)
+	if resourceDef != nil {
+		for _, field := range resourceDef.Fields {
+			if field.Name != fieldName {
+				continue
+			}
+			if field.Type != "" {
+				return field.Type
+			}
+			break
+		}
+	}
+	return defaultResourceFieldTypes[resourceType][fieldName]
+}
+
 func (a *v1beta3SchemaProviderAdapter) ListResourceTypes(namespace string) []ResourceType {
 	ns := normalizeSchemaNamespace(namespace)
 	resourceDefs, err := a.provider.ListResourceDefinitions(ns)
-	if (err != nil || len(resourceDefs) == 0) && ns != relation.NamespaceAll {
+	if err != nil {
+		return nil
+	}
+	if len(resourceDefs) == 0 && ns != relation.NamespaceAll {
 		resourceDefs, err = a.provider.ListResourceDefinitions(relation.NamespaceAll)
 	}
 	if err != nil {
@@ -165,7 +217,7 @@ func (a *v1beta3SchemaProviderAdapter) getResourceDefinition(namespace string, r
 	if err == nil {
 		return resourceDef
 	}
-	if ns != relation.NamespaceAll {
+	if ns != relation.NamespaceAll && errors.Is(err, relation.ErrResourceDefinitionNotFound) {
 		// v1beta3 优先使用 space 专属 schema；未下发专属定义时回退到 __all__，
 		// 保持老静态 relation 配置仍可服务新增 route。
 		resourceDef, err = a.provider.GetResourceDefinition(relation.NamespaceAll, string(resourceType))
@@ -180,7 +232,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	ns := normalizeSchemaNamespace(namespace)
 	definitions, err := a.provider.ListRelationDefinitions(ns)
 	if err != nil {
-		definitions = nil
+		return nil
 	}
 	if len(definitions) == 0 && ns != relation.NamespaceAll {
 		// 空的 space schema 不应让 v1beta3 直接变成无路径；
@@ -218,6 +270,48 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 		return result[i].RelationType < result[j].RelationType
 	})
 	return result
+}
+
+func (a *v1beta3SchemaProviderAdapter) ValidateSchema(namespace string, resourceTypes ...ResourceType) error {
+	ns := normalizeSchemaNamespace(namespace)
+	resourceDefs, err := a.provider.ListResourceDefinitions(ns)
+	if err != nil {
+		return fmt.Errorf("list resource definitions for namespace %q: %w", ns, err)
+	}
+	if len(resourceDefs) == 0 && ns != relation.NamespaceAll {
+		if _, err := a.provider.ListResourceDefinitions(relation.NamespaceAll); err != nil {
+			return fmt.Errorf("list fallback resource definitions: %w", err)
+		}
+	}
+	relationDefs, err := a.provider.ListRelationDefinitions(ns)
+	if err != nil {
+		return fmt.Errorf("list relation definitions for namespace %q: %w", ns, err)
+	}
+	if len(relationDefs) == 0 && ns != relation.NamespaceAll {
+		if _, err := a.provider.ListRelationDefinitions(relation.NamespaceAll); err != nil {
+			return fmt.Errorf("list fallback relation definitions: %w", err)
+		}
+	}
+
+	for _, resourceType := range resourceTypes {
+		if resourceType == "" {
+			continue
+		}
+		_, err := a.provider.GetResourceDefinition(ns, string(resourceType))
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, relation.ErrResourceDefinitionNotFound) {
+			return fmt.Errorf("get resource definition %q from namespace %q: %w", resourceType, ns, err)
+		}
+		if ns == relation.NamespaceAll {
+			continue
+		}
+		if _, fallbackErr := a.provider.GetResourceDefinition(relation.NamespaceAll, string(resourceType)); fallbackErr != nil && !errors.Is(fallbackErr, relation.ErrResourceDefinitionNotFound) {
+			return fmt.Errorf("get fallback resource definition %q: %w", resourceType, fallbackErr)
+		}
+	}
+	return nil
 }
 
 // GetRelationSchema 获取 v1beta3 格式的关联 Schema

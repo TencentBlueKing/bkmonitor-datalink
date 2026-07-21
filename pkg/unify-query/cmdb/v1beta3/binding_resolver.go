@@ -52,6 +52,17 @@ type bindingCacheEntry struct {
 	expiry time.Time
 }
 
+type bindingCacheSweepStats struct {
+	removed int
+	size    int
+}
+
+type bindingCacheStoreStats struct {
+	expiredRemoved int
+	evicted        bool
+	size           int
+}
+
 type bindingRedisLookup func(ctx context.Context, key, field string) (string, error)
 
 type bindingRouteDetail struct {
@@ -88,10 +99,9 @@ func GetBindingResolver() *BindingResolver {
 }
 
 // Resolve 根据 spaceUID 解析到一条 phase=Ok 的 SurrealDBBinding。
-func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*BindingInfo, error) {
-	var err error
+func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (info *BindingInfo, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-binding-resolver")
-	defer span.End(&err)
+	defer endV1Beta3TraceSpan(span, &err)
 
 	span.Set("space-uid", spaceUID)
 
@@ -105,27 +115,36 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (*Bindin
 	// 同一个 bk_biz_id 在不同租户下可能对应不同 SurrealDBBinding；
 	// 缓存键必须带 tenantID，避免命中其它租户的 namespace/database。
 	cacheKey := bindingCacheKey(tenantID, bizID)
+	sweepStats := r.sweepExpiredCache(time.Now())
+	span.Set("cache-expired-removed", sweepStats.removed)
+	span.Set("cache-size", sweepStats.size)
 
 	if info := r.lookupCache(cacheKey); info != nil {
 		ObserveBindingLookup(spaceUID, "hit_cache")
 		span.Set("cache", "hit")
+		span.Set("lookup-result", "hit-cache")
 		return info, nil
 	}
 	span.Set("cache", "miss")
 
-	info, err := r.fetchFromRedis(ctx, tenantID, spaceUID, bizID)
+	info, err = r.fetchFromRedis(ctx, tenantID, spaceUID, bizID)
 	if err != nil {
 		ObserveBindingLookup(spaceUID, "error")
+		span.Set("lookup-result", "error")
 		return nil, err
 	}
 	if info == nil {
 		ObserveBindingLookup(spaceUID, "not_found")
+		span.Set("lookup-result", "not-found")
 		return nil, &BindingLookupError{SpaceUID: spaceUID, Reason: fmt.Sprintf("no usable SurrealDBBinding found for bk_biz_id=%s", bizID)}
 	}
 
-	r.storeCache(cacheKey, info)
-	ObserveBindingCacheSize(r.cacheSize())
+	storeStats := r.storeCache(cacheKey, info)
 	ObserveBindingLookup(spaceUID, "miss_cache")
+	span.Set("lookup-result", "miss-cache")
+	span.Set("cache-expired-removed-on-store", storeStats.expiredRemoved)
+	span.Set("cache-evicted", storeStats.evicted)
+	span.Set("cache-size", storeStats.size)
 	span.Set("binding-name", info.Name)
 	span.Set("binding-database", info.Database)
 	span.Set("binding-namespace", info.Namespace)
@@ -150,23 +169,75 @@ func (r *BindingResolver) lookupCache(cacheKey string) *BindingInfo {
 
 func (r *BindingResolver) deleteExpiredCache(cacheKey string, expiredEntry *bindingCacheEntry) {
 	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
 	if r.cache[cacheKey] == expiredEntry {
 		delete(r.cache, cacheKey)
 	}
+	size := len(r.cache)
+	r.cacheMu.Unlock()
+	ObserveBindingCacheSize(size)
 }
 
-func (r *BindingResolver) storeCache(cacheKey string, info *BindingInfo) {
+func (r *BindingResolver) storeCache(cacheKey string, info *BindingInfo) bindingCacheStoreStats {
 	ttl := BindingCacheTTL
 	if ttl <= 0 {
 		ttl = DefaultBindingCacheTTL
 	}
+	now := time.Now()
 	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
+	if r.cache == nil {
+		r.cache = make(map[string]*bindingCacheEntry)
+	}
+	expiredRemoved := 0
+	for key, entry := range r.cache {
+		if entry == nil || !now.Before(entry.expiry) {
+			delete(r.cache, key)
+			expiredRemoved++
+		}
+	}
+	maxSize := BindingCacheMaxSize
+	if maxSize <= 0 {
+		maxSize = DefaultBindingCacheMaxSize
+	}
+	evicted := false
+	if _, exists := r.cache[cacheKey]; !exists && len(r.cache) >= maxSize {
+		var oldestKey string
+		var oldestExpiry time.Time
+		for key, entry := range r.cache {
+			if entry == nil || oldestKey == "" || entry.expiry.Before(oldestExpiry) {
+				oldestKey = key
+				if entry != nil {
+					oldestExpiry = entry.expiry
+				}
+			}
+		}
+		if oldestKey != "" {
+			delete(r.cache, oldestKey)
+			evicted = true
+		}
+	}
 	r.cache[cacheKey] = &bindingCacheEntry{
 		info:   info,
-		expiry: time.Now().Add(ttl),
+		expiry: now.Add(ttl),
 	}
+	size := len(r.cache)
+	r.cacheMu.Unlock()
+	ObserveBindingCacheSize(size)
+	return bindingCacheStoreStats{expiredRemoved: expiredRemoved, evicted: evicted, size: size}
+}
+
+func (r *BindingResolver) sweepExpiredCache(now time.Time) bindingCacheSweepStats {
+	r.cacheMu.Lock()
+	removed := 0
+	for key, entry := range r.cache {
+		if entry == nil || !now.Before(entry.expiry) {
+			delete(r.cache, key)
+			removed++
+		}
+	}
+	size := len(r.cache)
+	r.cacheMu.Unlock()
+	ObserveBindingCacheSize(size)
+	return bindingCacheSweepStats{removed: removed, size: size}
 }
 
 func bindingCacheKey(tenantID, bizID string) string {
@@ -174,9 +245,7 @@ func bindingCacheKey(tenantID, bizID string) string {
 }
 
 func (r *BindingResolver) cacheSize() int {
-	r.cacheMu.RLock()
-	defer r.cacheMu.RUnlock()
-	return len(r.cache)
+	return r.sweepExpiredCache(time.Now()).size
 }
 
 func defaultBindingRedisLookup(ctx context.Context, key, field string) (string, error) {

@@ -55,6 +55,8 @@ type benchBackend struct {
 	wg sync.WaitGroup
 }
 
+func (b *benchBackend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // Push
 func (b *benchBackend) Push(d define.Payload, killChan chan<- error) {
 	b.wg.Done()

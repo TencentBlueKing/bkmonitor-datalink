@@ -213,6 +213,16 @@ func (g *LivenessGraph) TargetPaths(
 	return g.targetPaths(targetType, pathResource, true, includeRootTargetOptions...)
 }
 
+func (g *LivenessGraph) TargetPathsFromFilteredInstantQuery(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTargetOptions ...bool,
+) []*TargetPath {
+	// instant SurrealQL 已对路径上的 node/relation 逐级做了判活过滤，并且为减少响应体
+	// 不投影 periods。这里不能再要求 periods 有公共交集，否则空投影会把已命中的路径丢弃。
+	return g.targetPaths(targetType, pathResource, false, includeRootTargetOptions...)
+}
+
 func (g *LivenessGraph) TargetPathsForRange(
 	targetType ResourceType,
 	pathResource []ResourceType,

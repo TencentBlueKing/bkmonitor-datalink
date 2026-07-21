@@ -417,7 +417,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			name:                 "instant query returns target from the direct path response",
 			mode:                 graphQueryModeInstant,
 			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":600000}`,
-			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","pod"],"matchers":[{"pod":"pod-1"},{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
 		},
 		{
 			name:                 "range query returns target series from the direct path response",
@@ -426,7 +426,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			rangeEnd:             600000,
 			stepMs:               60000,
 			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":1200000}`,
-			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","pod"],"matchers":[{"pod":"pod-1"},{"pod":"pod-via-system"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"},{"pod":"pod-via-system"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"},{"pod":"pod-via-system"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
 		},
 		{
 			name:        "instant query falls back to indirect path when direct path is empty",
@@ -435,7 +435,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			bkbaseResponseOverrides: map[string]string{
 				"node/pod": tableEmptyBKBaseResponseJSON,
 			},
-			expectedResponseJSON: `{"query_mode":"path-by-path","path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
 		},
 	}
 
@@ -459,7 +459,6 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			graphs, paths, matchers, err := model.queryLivenessGraph(
 				context.Background(),
 				&req,
-				true,
 				tt.mode,
 				tt.rangeStart,
 				tt.rangeEnd,
@@ -468,17 +467,20 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			require.NoError(t, err)
 
 			actualResponse := tablePathSplitQueryResponse{
-				QueryMode:         "path-by-path",
 				Path:              convertResourcePathToResources(paths),
 				Matchers:          matchers,
 				QuerySyncRequests: tablePathSplitQuerySyncRequestSummaries(t, server.Requests()),
 			}
 			if tt.mode == graphQueryModeRange {
+				extractionPathResource := targetExtractionPathResource(&req)
+				if len(paths) > 0 {
+					extractionPathResource = resourcePathTypes(paths[0])
+				}
 				actualResponse.RangeResult = tableRangeResultFromMatchersWithTimestamp(
 					buildTargetMatchersTimeSeriesWithOptions(
 						graphs,
 						req.TargetType,
-						targetExtractionPathResource(&req),
+						extractionPathResource,
 						tt.rangeStart,
 						tt.rangeEnd,
 						tt.stepMs,

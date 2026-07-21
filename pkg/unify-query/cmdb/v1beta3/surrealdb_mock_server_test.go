@@ -116,7 +116,6 @@ func (s *surrealDBMockServer) Requests() []tableQuerySyncRequestRecord {
 }
 
 type tablePathSplitQueryResponse struct {
-	QueryMode         string                             `json:"query_mode"`
 	Path              []string                           `json:"path,omitempty"`
 	Matchers          cmdb.Matchers                      `json:"matchers,omitempty"`
 	RangeResult       []tableMatchersWithTimestampJSON   `json:"range_result,omitempty"`

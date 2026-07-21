@@ -234,7 +234,7 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 	req.Normalize()
 
-	graphs, candidatePaths, _, err := m.queryLivenessGraph(ctx, req, true, graphQueryModeRange, start, end, stepMs)
+	graphs, candidatePaths, _, err := m.queryLivenessGraph(ctx, req, graphQueryModeRange, start, end, stepMs)
 	if err != nil {
 		return "", nil, nil, "", nil, err
 	}
@@ -271,7 +271,7 @@ func (m *Model) QueryResourceMatcherRange(
 
 // QueryLivenessGraph 执行图查询，返回图数据、路径和目标 Matchers
 func (m *Model) QueryLivenessGraph(ctx context.Context, req *QueryRequest) (graphs []*LivenessGraph, paths []resourcePath, matchers cmdb.Matchers, err error) {
-	return m.queryLivenessGraph(ctx, req, true, graphQueryModeInstant, 0, 0, 0)
+	return m.queryLivenessGraph(ctx, req, graphQueryModeInstant, 0, 0, 0)
 }
 
 type graphQueryMode string
@@ -284,7 +284,6 @@ const (
 func (m *Model) queryLivenessGraph(
 	ctx context.Context,
 	req *QueryRequest,
-	splitPaths bool,
 	mode graphQueryMode,
 	rangeStart, rangeEnd, stepMs int64,
 ) (graphs []*LivenessGraph, paths []resourcePath, matchers cmdb.Matchers, err error) {
@@ -360,21 +359,10 @@ func (m *Model) queryLivenessGraph(
 			ObserveQueryDuration(req.SpaceUID, status, elapsed)
 			return nil, nil, nil, err
 		}
-		if shouldSplitQueryByPath(req, paths, splitPaths) {
-			span.Set("query-mode", "path-by-path")
+		if len(paths) > 0 {
 			span.Set("query-result-mode", string(mode))
 			span.Set("candidate-paths-count", len(paths))
 			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs, runner)
-		} else {
-			span.Set("query-mode", "single")
-			builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
-			configureBuilderForGraphQueryMode(builder, mode)
-			if implicitSelfTarget {
-				builder.request.MaxHops = 0
-			}
-			sql := builder.Build()
-			span.Set("query-sql", sql)
-			graphs, err = runner(ctx, sql, queryStart, queryEnd)
 		}
 		elapsed := time.Since(start).Seconds()
 		status := "ok"
@@ -388,10 +376,17 @@ func (m *Model) queryLivenessGraph(
 		}
 	}
 
-	matchers = extractMatchersFromGraphsWithOptions(
+	extractionPathResource := targetExtractionPathResource(req)
+	if selectedPath := resourcePathForInstantQuery(graphs, paths, req); len(selectedPath) > 0 {
+		// path-by-path 会合并所有成功图。target_list 必须限制到最终选中的最高优先级路径，
+		// 与旧 VM 命中第一条路径后停止的语义保持一致。
+		extractionPathResource = selectedPath
+	}
+
+	matchers = extractMatchersFromFilteredInstantGraphsWithOptions(
 		graphs,
 		req.TargetType,
-		targetExtractionPathResource(req),
+		extractionPathResource,
 		provider,
 		req.SchemaNamespace(),
 		req.TargetInfoShow,
@@ -403,17 +398,6 @@ func (m *Model) queryLivenessGraph(
 	span.Set("matchers-count", len(matchers))
 
 	return graphs, paths, matchers, nil
-}
-
-func shouldSplitQueryByPath(req *QueryRequest, paths []resourcePath, enabled bool) bool {
-	// 显式 target 且 source!=target 的关联查询统一走 path-by-path：
-	// 1. 即使只有一条关联路径，也能用该 path 的真实 hop 数生成更短 SurrealQL；
-	// 2. source==target 的自查询包含信息展示 / 自关联两种语义，暂时保持单 SQL，避免拆分后改变含义。
-	return enabled &&
-		req != nil &&
-		req.SourceType != req.TargetType &&
-		req.TargetTypeExplicit &&
-		len(paths) > 0
 }
 
 func (m *Model) executeGraphQueryPathByPath(
@@ -992,6 +976,49 @@ func extractMatchersFromGraphsWithOptions(
 	targetInfoShow bool,
 	includeRootTarget bool,
 ) cmdb.Matchers {
+	return extractMatchersFromGraphsWithOverlapOption(
+		graphs,
+		targetType,
+		pathResource,
+		provider,
+		namespace,
+		targetInfoShow,
+		includeRootTarget,
+		true,
+	)
+}
+
+func extractMatchersFromFilteredInstantGraphsWithOptions(
+	graphs []*LivenessGraph,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	provider SchemaProvider,
+	namespace string,
+	targetInfoShow bool,
+	includeRootTarget bool,
+) cmdb.Matchers {
+	return extractMatchersFromGraphsWithOverlapOption(
+		graphs,
+		targetType,
+		pathResource,
+		provider,
+		namespace,
+		targetInfoShow,
+		includeRootTarget,
+		false,
+	)
+}
+
+func extractMatchersFromGraphsWithOverlapOption(
+	graphs []*LivenessGraph,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	provider SchemaProvider,
+	namespace string,
+	targetInfoShow bool,
+	includeRootTarget bool,
+	requireCommonOverlap bool,
+) cmdb.Matchers {
 	if len(graphs) == 0 {
 		return nil
 	}
@@ -1000,7 +1027,11 @@ func extractMatchersFromGraphsWithOptions(
 	var result cmdb.Matchers
 
 	for _, g := range graphs {
-		for _, path := range g.TargetPaths(targetType, pathResource, includeRootTarget) {
+		paths := g.TargetPathsFromFilteredInstantQuery(targetType, pathResource, includeRootTarget)
+		if requireCommonOverlap {
+			paths = g.TargetPaths(targetType, pathResource, includeRootTarget)
+		}
+		for _, path := range paths {
 			node := path.Target
 			if node == nil {
 				continue
@@ -1247,7 +1278,7 @@ func resourcePathCandidatesFromTargetGraphs(
 ) [][]ResourceType {
 	var candidates [][]ResourceType
 	for _, graph := range graphs {
-		for _, path := range graph.TargetPaths(targetType, pathResource, includeRootTarget) {
+		for _, path := range graph.TargetPathsFromFilteredInstantQuery(targetType, pathResource, includeRootTarget) {
 			if len(path.ResourcePath) == 0 {
 				continue
 			}
@@ -1255,6 +1286,19 @@ func resourcePathCandidatesFromTargetGraphs(
 		}
 	}
 	return candidates
+}
+
+func resourcePathForInstantQuery(graphs []*LivenessGraph, paths []resourcePath, req *QueryRequest) []ResourceType {
+	if req == nil {
+		return nil
+	}
+	candidates := resourcePathCandidatesFromTargetGraphs(
+		graphs,
+		req.TargetType,
+		targetExtractionPathResource(req),
+		shouldIncludeRootTarget(req),
+	)
+	return selectResourcePathCandidate(paths, candidates)
 }
 
 func selectResourcePathFromCandidates(paths []resourcePath, candidates [][]ResourceType) (resourcePath, bool) {

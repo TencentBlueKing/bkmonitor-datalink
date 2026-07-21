@@ -1312,6 +1312,62 @@ func TestQueryResourceMatcherReturnsPathFromMatchedGraph(t *testing.T) {
 	assert.Equal(t, []cmdb.Matcher{{"pod": "pod-1"}}, rangeResult[0].Matchers)
 }
 
+func TestQueryResourceMatcherExtractsInstantTargetWithoutProjectedPeriods(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"node": {"node"},
+			"pod":  {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "node_with_pod", Category: relation.RelationCategoryStatic, FromType: "node", ToType: "pod"},
+		},
+	})
+	graph := NewLivenessGraph(0, 600000)
+	root := &NodeLiveness{
+		ResourceID:   "node:node-1",
+		ResourceType: ResourceTypeNode,
+		Labels:       map[string]string{"node": "node-1"},
+	}
+	target := &NodeLiveness{
+		ResourceID:   "pod:pod-1",
+		ResourceType: ResourceTypePod,
+		Labels:       map[string]string{"pod": "pod-1"},
+	}
+	graph.AddNode(root)
+	graph.AddNode(target)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   "node_with_pod:1",
+		RelationType: RelationNodeWithPod,
+		FromID:       root.ResourceID,
+		ToID:         target.ResourceID,
+	})
+
+	executor := &mockGraphQueryExecutor{graphs: []*LivenessGraph{graph}}
+	model, err := NewModel(ctx, executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, _, path, _, matchers, err := model.QueryResourceMatcher(
+		ctx,
+		"10m",
+		"test-space",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.NotContains(t, executor.sql, ResponseFieldLiveness+":")
+	assert.NotContains(t, executor.sql, ResponseFieldRelationLiveness+":")
+	assert.Equal(t, []string{"node", "pod"}, path)
+	assert.Equal(t, cmdb.Matchers{{"pod": "pod-1"}}, matchers)
+}
+
 func TestQueryResourceMatcherRangeFiltersTargetsBySelectedResourcePath(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
@@ -1396,6 +1452,27 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedResourcePath(t *testin
 	model, err := NewModel(ctx, executor)
 	require.NoError(t, err)
 	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	_, _, instantPath, _, instantMatchers, err := model.QueryResourceMatcher(
+		ctx,
+		"10m",
+		"test-space",
+		"600",
+		"pod",
+		"node",
+		cmdb.Matcher{"node": "node-1"},
+		nil,
+		false,
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node", "pod"}, instantPath)
+	assert.Equal(t, cmdb.Matchers{{"pod": "direct"}}, instantMatchers)
+
+	executor.mu.Lock()
+	executor.sqls = nil
+	executor.mu.Unlock()
 
 	_, _, rangePath, _, rangeResult, err := model.QueryResourceMatcherRange(
 		ctx,
@@ -2095,21 +2172,16 @@ func TestQueryLivenessGraphConstrainsExplicitSameTypeTargetsToSelfRelation(t *te
 				ResourceType: "system",
 				RelationType: "system_to_system",
 				Category:     "dynamic",
-				Direction:    "outbound",
-			},
-		}},
-		{Steps: []resourcePathStep{
-			{ResourceType: "system"},
-			{
-				ResourceType: "system",
-				RelationType: "system_to_system",
-				Category:     "dynamic",
 				Direction:    "inbound",
 			},
 		}},
 	}, paths)
 	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "direct"}}, matchers)
-	assert.NotContains(t, executor.sql, "hop2")
+	require.Len(t, executor.sqls, 2)
+	joinedSQL := strings.Join(executor.sqls, "\n")
+	assert.Contains(t, joinedSQL, "system_to_system_outbound")
+	assert.Contains(t, joinedSQL, "system_to_system_inbound")
+	assert.NotContains(t, joinedSQL, "hop2")
 }
 
 func TestQueryLivenessGraphRejectsTraversalErrors(t *testing.T) {

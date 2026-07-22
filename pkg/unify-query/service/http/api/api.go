@@ -291,6 +291,7 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
+				d.Truncated, d.TruncatedReason = relationTruncationMetadata(queryErr)
 			}
 
 			if d.TargetList == nil {
@@ -407,7 +408,7 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			// range 默认也保持 VM 兼容响应，target_list 的窗口语义在 v1beta3 model 内部对齐。
+			// range 保持 VM 兼容响应，target_list 的窗口语义在 v1beta3 model 内部对齐。
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(
 				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs,
@@ -418,6 +419,7 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
+				d.Truncated, d.TruncatedReason = relationTruncationMetadata(queryErr)
 			}
 
 			if d.TargetList == nil {

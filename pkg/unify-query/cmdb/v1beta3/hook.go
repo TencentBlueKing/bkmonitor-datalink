@@ -22,6 +22,10 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
 	viper.SetDefault(MaxRangePointsConfigPath, 11000)
+	viper.SetDefault(MaxEdgesPerHopConfigPath, 1000)
+	viper.SetDefault(MaxTargetsConfigPath, 5000)
+	viper.SetDefault(MaxResponseBytesConfigPath, 10*1024*1024)
+	viper.SetDefault(RootRecordIDEnabledConfigPath, false)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
 
@@ -38,6 +42,10 @@ func LoadConfig() {
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
 	MaxRangePoints = viper.GetInt(MaxRangePointsConfigPath)
+	MaxEdgesPerHop = viper.GetInt(MaxEdgesPerHopConfigPath)
+	MaxTargets = viper.GetInt(MaxTargetsConfigPath)
+	MaxResponseBytes = viper.GetInt(MaxResponseBytesConfigPath)
+	RootRecordIDEnabled = viper.GetBool(RootRecordIDEnabledConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
 

@@ -107,7 +107,8 @@ SELECT {
             }
         } FROM host_with_module WHERE in = $parent.id
           AND (SELECT * FROM host_with_module_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE)
+          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          LIMIT 1001)
     }
 } AS result
 FROM host

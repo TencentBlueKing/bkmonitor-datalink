@@ -20,6 +20,20 @@ import (
 func TestSurrealResponseParser_parseHopRelations(t *testing.T) {
 	parser := NewSurrealResponseParser(1000, 2000)
 
+	t.Run("rejects edge fan-out above configured limit", func(t *testing.T) {
+		limitedParser := &SurrealResponseParser{queryStart: 1000, queryEnd: 2000, maxEdgesPerHop: 1}
+		graph := NewLivenessGraph(1000, 2000)
+		err := limitedParser.parseHopRelations(graph, "pod:root", map[string]any{
+			"pod_with_service": []any{map[string]any{}, map[string]any{}},
+		})
+
+		require.ErrorContains(t, err, "result limit exceeded")
+		require.ErrorContains(t, err, "maximum is 1")
+		var limitErr *ResultLimitError
+		require.ErrorAs(t, err, &limitErr)
+		assert.Equal(t, "max_edges_per_hop", limitErr.TruncationReason())
+	})
+
 	t.Run("empty hop data", func(t *testing.T) {
 		graph := NewLivenessGraph(1000, 2000)
 		rootNode := &NodeLiveness{
@@ -1446,6 +1460,30 @@ func TestSurrealResponseParser_parseLivenessPeriods(t *testing.T) {
 		periods := parser.parseLivenessPeriods(data)
 		assert.Equal(t, []*VisiblePeriod{{Start: 1000, End: 1500}}, periods)
 	})
+}
+
+func TestMergeVisiblePeriods(t *testing.T) {
+	periods := mergeVisiblePeriods([]*VisiblePeriod{
+		{Start: 31, End: 45},
+		{Start: 10, End: 15},
+		{Start: 16, End: 30},
+		{Start: 40, End: 50},
+		{Start: 60, End: 70},
+	})
+
+	assert.Equal(t, []*VisiblePeriod{{Start: 10, End: 50}, {Start: 60, End: 70}}, periods)
+}
+
+func TestParseLivenessPeriodsMergesAdjacentSecondsAfterMillisecondNormalization(t *testing.T) {
+	parser := NewSurrealResponseParser(0, 1_700_000_000_000)
+
+	periods, err := parser.parseLivenessPeriodsStrict([]any{
+		map[string]any{"period_start": 10, "period_end": 15},
+		map[string]any{"period_start": 16, "period_end": 30},
+	}, "liveness")
+
+	require.NoError(t, err)
+	assert.Equal(t, []*VisiblePeriod{{Start: 10_000, End: 30_000}}, periods)
 }
 
 func TestSurrealResponseParser_toInt64(t *testing.T) {

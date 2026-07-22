@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -21,13 +22,16 @@ import (
 type SurrealResponseParser struct {
 	queryStart int64
 	queryEnd   int64
+	// maxEdgesPerHop 与查询端的“上限加一”策略配合，用于识别单跳边扩散超限。
+	maxEdgesPerHop int
 }
 
 // NewSurrealResponseParser 创建响应解析器
 func NewSurrealResponseParser(queryStart, queryEnd int64) *SurrealResponseParser {
 	return &SurrealResponseParser{
-		queryStart: queryStart,
-		queryEnd:   queryEnd,
+		queryStart:     queryStart,
+		queryEnd:       queryEnd,
+		maxEdgesPerHop: effectiveMaxEdgesPerHop(),
 	}
 }
 
@@ -183,6 +187,15 @@ func (p *SurrealResponseParser) parseHopRelationsAt(graph *LivenessGraph, fromID
 		if !ok {
 			return fmt.Errorf("%s.%s: expected array, got %T", fieldPath, relationKey, relationsValue)
 		}
+		// 查询端会比配置上限多取一条；一旦出现额外记录就返回明确错误，不消费不完整数据。
+		if p.maxEdgesPerHop > 0 && len(relations) > p.maxEdgesPerHop {
+			return &ResultLimitError{
+				Reason: "max_edges_per_hop",
+				Count:  len(relations),
+				Limit:  p.maxEdgesPerHop,
+				Path:   fieldPath + "." + relationKey,
+			}
+		}
 
 		for relationIndex, rel := range relations {
 			relData, ok := rel.(map[string]any)
@@ -290,6 +303,8 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 	}
 
 	periods := make([]*VisiblePeriod, 0, len(arr))
+	// 原始毫秒数据相差 1 毫秒视为连续；若检测到秒转毫秒，则相差 1 秒（1000 毫秒）视为连续。
+	adjacencyGap := int64(1)
 	for _, item := range arr {
 		periodData, ok := item.(map[string]any)
 		if !ok {
@@ -300,8 +315,12 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 		end := p.toInt64(periodData[FieldPeriodEnd])
 		// BKBase HTTP 客户端开启 UseNumber 后会把 JSON 数字保留为 json.Number；
 		// mock / 单测里又常见 int、float64 或 string。先统一成 int64，再按查询窗口判断是否需要秒转毫秒。
-		start = p.normalizePeriodTimestamp(start)
-		end = p.normalizePeriodTimestamp(end)
+		normalizedStart := p.normalizePeriodTimestamp(start)
+		normalizedEnd := p.normalizePeriodTimestamp(end)
+		if normalizedStart != start || normalizedEnd != end {
+			adjacencyGap = 1000
+		}
+		start, end = normalizedStart, normalizedEnd
 
 		if start <= end {
 			periods = append(periods, &VisiblePeriod{
@@ -311,7 +330,7 @@ func (p *SurrealResponseParser) parseLivenessPeriods(data any) []*VisiblePeriod 
 		}
 	}
 
-	return periods
+	return mergeVisiblePeriodsWithGap(periods, adjacencyGap)
 }
 
 func (p *SurrealResponseParser) parseLivenessPeriodsStrict(data any, fieldPath string) ([]*VisiblePeriod, error) {
@@ -323,6 +342,8 @@ func (p *SurrealResponseParser) parseLivenessPeriodsStrict(data any, fieldPath s
 		return nil, nil
 	}
 	periods := make([]*VisiblePeriod, 0, len(arr))
+	// 原始毫秒数据相差 1 毫秒视为连续；若检测到秒转毫秒，则相差 1 秒（1000 毫秒）视为连续。
+	adjacencyGap := int64(1)
 	for index, item := range arr {
 		periodData, ok := item.(map[string]any)
 		if !ok {
@@ -344,14 +365,66 @@ func (p *SurrealResponseParser) parseLivenessPeriodsStrict(data any, fieldPath s
 		if !ok {
 			return nil, fmt.Errorf("%s[%d].%s: invalid integer %v", fieldPath, index, FieldPeriodEnd, endValue)
 		}
-		start = p.normalizePeriodTimestamp(start)
-		end = p.normalizePeriodTimestamp(end)
+		normalizedStart := p.normalizePeriodTimestamp(start)
+		normalizedEnd := p.normalizePeriodTimestamp(end)
+		if normalizedStart != start || normalizedEnd != end {
+			adjacencyGap = 1000
+		}
+		start, end = normalizedStart, normalizedEnd
 		if start > end {
 			return nil, fmt.Errorf("%s[%d]: period_start must be less than or equal to period_end", fieldPath, index)
 		}
 		periods = append(periods, &VisiblePeriod{Start: start, End: end})
 	}
-	return periods, nil
+	return mergeVisiblePeriodsWithGap(periods, adjacencyGap), nil
+}
+
+// mergeVisiblePeriods 合并重叠或首尾相邻的可见时段，默认按毫秒时间戳处理。
+func mergeVisiblePeriods(periods []*VisiblePeriod) []*VisiblePeriod {
+	return mergeVisiblePeriodsWithGap(periods, 1)
+}
+
+// mergeVisiblePeriodsWithGap 在不修改输入切片的前提下排序并合并时段；
+// adjacencyGap 用于兼容不同时间精度下“相邻时段”的间隔定义。
+func mergeVisiblePeriodsWithGap(periods []*VisiblePeriod, adjacencyGap int64) []*VisiblePeriod {
+	if len(periods) == 0 {
+		return nil
+	}
+	sorted := make([]*VisiblePeriod, 0, len(periods))
+	for _, period := range periods {
+		if period == nil || period.Start > period.End {
+			continue
+		}
+		copyPeriod := *period
+		sorted = append(sorted, &copyPeriod)
+	}
+	if len(sorted) == 0 {
+		return nil
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
+		}
+		return sorted[i].End < sorted[j].End
+	})
+
+	merged := make([]*VisiblePeriod, 0, len(sorted))
+	current := sorted[0]
+	for _, next := range sorted[1:] {
+		mergeable := next.Start <= current.End
+		if !mergeable && adjacencyGap > 0 && current.End <= math.MaxInt64-adjacencyGap {
+			mergeable = next.Start <= current.End+adjacencyGap
+		}
+		if mergeable {
+			if next.End > current.End {
+				current.End = next.End
+			}
+			continue
+		}
+		merged = append(merged, current)
+		current = next
+	}
+	return append(merged, current)
 }
 
 func (p *SurrealResponseParser) normalizePeriodTimestamp(ts int64) int64 {

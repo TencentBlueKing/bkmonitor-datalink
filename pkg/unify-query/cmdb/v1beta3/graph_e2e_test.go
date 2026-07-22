@@ -861,8 +861,21 @@ func TestGraphE2E(t *testing.T) {
 
 func stripTargetLivenessFilterSQL(sql string) string {
 	lines := strings.Split(sql, "\n")
-	filtered := lines[:0]
+	// 旧用例只比较目标存活过滤逻辑；先移除新增的边数量保护，使 SQL 仍可按原口径归一化比较。
+	withoutEdgeLimits := lines[:0]
 	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "LIMIT 1001)") {
+			if len(withoutEdgeLimits) > 0 {
+				withoutEdgeLimits[len(withoutEdgeLimits)-1] += strings.TrimPrefix(trimmed, "LIMIT 1001")
+			}
+			continue
+		}
+		withoutEdgeLimits = append(withoutEdgeLimits, line)
+	}
+
+	filtered := withoutEdgeLimits[:0]
+	for _, line := range withoutEdgeLimits {
 		if strings.Contains(line, "AND (SELECT * FROM") &&
 			strings.Contains(line, " WHERE reference_id = $parent.") &&
 			(strings.Contains(line, "$parent.out ") || strings.Contains(line, "$parent.in ")) {

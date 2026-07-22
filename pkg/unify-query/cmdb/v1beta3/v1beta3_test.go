@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1132,6 +1131,49 @@ func TestSurrealQueryBuilderUsesScalarLivenessFilters(t *testing.T) {
 	assert.NotContains(t, sql, "(SELECT count() FROM only")
 }
 
+func TestSurrealQueryBuilderRootRecordIDContract(t *testing.T) {
+	previous := RootRecordIDEnabled
+	RootRecordIDEnabled = true
+	t.Cleanup(func() { RootRecordIDEnabled = previous })
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
+		},
+		nil,
+	)
+
+	t.Run("uses schema primary-key order and keeps non-primary filters", func(t *testing.T) {
+		req := &QueryRequest{
+			Timestamp:        600000,
+			LookBackDelta:    600000,
+			SourceType:       ResourceTypeNode,
+			SourceInfo:       map[string]string{"node": `node⟩\1`, "bcs_cluster_id": "BCS-K8S-00001"},
+			SourceExpandInfo: map[string]string{"region": "east"},
+			Limit:            10,
+		}
+		builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
+
+		assert.Equal(t, `node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\⟩\\1⟩`, builder.buildRootSource())
+		assert.Equal(t,
+			"WHERE region = 'east'\n  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE",
+			builder.buildWhereClause(),
+		)
+		assert.Contains(t, builder.Build(), "FROM node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\\⟩\\\\1⟩\n")
+	})
+
+	t.Run("falls back to table scan when a primary key is missing", func(t *testing.T) {
+		req := &QueryRequest{
+			Timestamp:  600000,
+			SourceType: ResourceTypeNode,
+			SourceInfo: map[string]string{"node": "node-1"},
+		}
+		builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
+
+		assert.Equal(t, "node", builder.buildRootSource())
+		assert.Contains(t, builder.buildWhereClause(), "node = 'node-1'")
+	})
+}
+
 func TestSurrealQueryBuilderCanOmitLivenessProjection(t *testing.T) {
 	req := &QueryRequest{
 		Timestamp:     600000,
@@ -1570,17 +1612,10 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedResourcePath(t *testin
 	)
 
 	require.NoError(t, err)
-	assert.Len(t, executor.sqls, 2)
-	for _, sql := range executor.sqls {
-		if strings.Contains(sql, "node_with_pod") {
-			assert.NotContains(t, sql, "node_with_system")
-			assert.NotContains(t, sql, "system_to_pod")
-			continue
-		}
-		assert.Contains(t, sql, "node_with_system")
-		assert.Contains(t, sql, "system_to_pod")
-		assert.NotContains(t, sql, "node_with_pod")
-	}
+	require.Len(t, executor.sqls, 1)
+	assert.Contains(t, executor.sqls[0], "node_with_pod")
+	assert.NotContains(t, executor.sqls[0], "node_with_system")
+	assert.NotContains(t, executor.sqls[0], "system_to_pod")
 	assert.Equal(t, []string{"node", "pod"}, rangePath)
 	require.NotEmpty(t, rangeResult)
 	assert.Equal(t, []cmdb.Matcher{{"pod": "direct"}}, rangeResult[0].Matchers)
@@ -2011,6 +2046,20 @@ func TestQueryResourceMatcherRangeRejectsTooManyPointsBeforeQuery(t *testing.T) 
 	assert.Empty(t, executor.sqls)
 }
 
+func TestValidateRangeTargetCountsRejectsOversizedBucket(t *testing.T) {
+	previous := MaxTargets
+	MaxTargets = 1
+	t.Cleanup(func() { MaxTargets = previous })
+
+	timestamp, err := validateRangeTargetCounts([]cmdb.MatchersWithTimestamp{
+		{Timestamp: 1000, Matchers: cmdb.Matchers{{"pod": "pod-1"}}},
+		{Timestamp: 2000, Matchers: cmdb.Matchers{{"pod": "pod-1"}, {"pod": "pod-2"}}},
+	})
+
+	require.ErrorContains(t, err, "query returned 2 targets, maximum is 1")
+	assert.Equal(t, int64(2000), timestamp)
+}
+
 func TestQueryResourceMatcherRangeUsesFullRangeLookback(t *testing.T) {
 	executor := &mockGraphQueryExecutor{}
 	model, err := NewModel(context.Background(), executor)
@@ -2421,10 +2470,10 @@ func TestQueryLivenessGraphConstrainsExplicitSameTypeTargetsToSelfRelation(t *te
 		}},
 	}, paths)
 	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "direct"}}, matchers)
-	require.Len(t, executor.sqls, 2)
+	require.Len(t, executor.sqls, 1)
 	joinedSQL := strings.Join(executor.sqls, "\n")
-	assert.Contains(t, joinedSQL, "system_to_system_outbound")
 	assert.Contains(t, joinedSQL, "system_to_system_inbound")
+	assert.NotContains(t, joinedSQL, "system_to_system_outbound")
 	assert.NotContains(t, joinedSQL, "hop2")
 }
 
@@ -2898,7 +2947,7 @@ func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
 	assert.Equal(t, "container", paths[0].Steps[1].ResourceType, "sort should not mutate caller paths")
 }
 
-func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testing.T) {
+func TestQueryLivenessGraphPathByPathStopsAfterFirstTargetHit(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{
@@ -2948,11 +2997,9 @@ func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testi
 			case strings.Contains(sql, "system_to_pod"):
 				return graphQueryResponse{}
 			case strings.Contains(sql, "system_to_container"):
-				time.Sleep(20 * time.Millisecond)
 				return graphQueryResponse{graphs: []*LivenessGraph{hitGraph}}
 			case strings.Contains(sql, "system_to_statefulset"):
-				time.Sleep(200 * time.Millisecond)
-				return graphQueryResponse{}
+				return graphQueryResponse{err: errors.New("lower-priority path must not execute after a target hit")}
 			default:
 				return graphQueryResponse{}
 			}
@@ -2962,7 +3009,6 @@ func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testi
 	require.NoError(t, err)
 	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
 
-	start := time.Now()
 	_, paths, matchers, err := model.QueryLivenessGraph(ctx, &QueryRequest{
 		Timestamp:          200,
 		LookBackDelta:      200,
@@ -2971,10 +3017,12 @@ func TestQueryLivenessGraphPathByPathWaitsForSubmittedLowerPriorityPath(t *testi
 		TargetType:         ResourceTypePod,
 		TargetTypeExplicit: true,
 	})
-	elapsed := time.Since(start)
 
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, elapsed, 180*time.Millisecond)
+	require.Len(t, executor.sqls, 2)
+	assert.Contains(t, executor.sqls[0], "system_to_pod")
+	assert.Contains(t, executor.sqls[1], "system_to_container")
+	assert.NotContains(t, strings.Join(executor.sqls, "\n"), "system_to_statefulset")
 	assert.Equal(t, cmdb.Matchers{{"pod": "target"}}, matchers)
 	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "system"},
@@ -3162,6 +3210,7 @@ func TestBKBaseSurrealDBClientUsesOverrideQueryURLAndPayload(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, curl.Post, mockCurl.method)
 	assert.Equal(t, BKBaseSurrealDBQueryURL, mockCurl.options.UrlPath)
+	assert.Equal(t, int64(effectiveMaxResponseBytes()), mockCurl.options.MaxResponseBytes)
 
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(mockCurl.options.Body, &body))

@@ -100,6 +100,7 @@ func ObserveError(spaceUID, errorKind string) {
 //	dsl_syntax   —— SurrealQL 语法问题（bkbase 能解析但 SurrealDB 拒绝）
 //	parse        —— 响应解析失败（Graph 反序列化）
 //	timeout      —— 请求超时
+//	result_limit —— 查询结果超过安全上限
 //	unknown      —— 未分类
 func CategorizeError(err error) string {
 	if err == nil {
@@ -113,6 +114,8 @@ func CategorizeError(err error) string {
 	switch {
 	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
 		return "timeout"
+	case strings.Contains(msg, "result limit exceeded") || strings.Contains(msg, "response body exceeds maximum size"):
+		return "result_limit"
 	case strings.Contains(msg, "parse") || strings.Contains(msg, "unmarshal"):
 		return "parse"
 	case strings.Contains(msg, "bkbase response error"):

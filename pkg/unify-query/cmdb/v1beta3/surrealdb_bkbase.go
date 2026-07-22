@@ -11,6 +11,7 @@ package v1beta3
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -156,7 +157,9 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		// SurrealDBBinding 注入，否则同一个 result_table_id 在多租户场景下会查到错误 database。
 		finalDSL = fmt.Sprintf("USE NS `%s` DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
-	span.Set("dsl", finalDSL)
+	// DSL 可能包含资源标识等敏感查询条件，Trace 仅记录摘要用于关联排障，不再写入原文。
+	dslHash := sha256.Sum256([]byte(finalDSL))
+	span.Set("dsl-hash", fmt.Sprintf("%x", dslHash))
 	span.Set("dsl-bytes", len(finalDSL))
 
 	sqlPayload := BKBaseSQLPayload{
@@ -193,12 +196,17 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	span.Set("request-url", url)
 
 	var resp BKBaseResponse
-	_, err = c.curl.Request(ctx, curl.Post, curl.Options{
-		UrlPath: url,
-		Headers: metadata.Headers(ctx, dataAPI.Headers(map[string]string{"Content-Type": "application/json"})),
-		Body:    requestBody,
-		Timeout: c.timeout,
+	httpStarted := time.Now()
+	responseBodyBytes, err := c.curl.Request(ctx, curl.Post, curl.Options{
+		UrlPath:          url,
+		Headers:          metadata.Headers(ctx, dataAPI.Headers(map[string]string{"Content-Type": "application/json"})),
+		Body:             requestBody,
+		Timeout:          c.timeout,
+		MaxResponseBytes: int64(effectiveMaxResponseBytes()),
 	}, &resp)
+	httpDuration := time.Since(httpStarted)
+	span.Set("bkbase-http-total-duration", httpDuration)
+	span.Set("response-body-bytes", responseBodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("bkbase request failed: %w", err)
 	}
@@ -215,6 +223,13 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 
 	span.Set("total-records", resp.Data.TotalRecords)
 	span.Set("bkbase-timetaken", resp.Data.Timetaken)
+	// 用客户端总耗时减去 BKBase 返回的服务端耗时，粗略估算网络与协议处理开销。
+	serverDuration := time.Duration(resp.Data.Timetaken * float64(time.Second))
+	networkOverhead := httpDuration - serverDuration
+	if networkOverhead < 0 {
+		networkOverhead = 0
+	}
+	span.Set("bkbase-network-overhead", networkOverhead)
 	span.Set("response-list-count", len(resp.Data.List))
 
 	// 转换响应格式为标准 SurrealDB 响应格式
@@ -232,8 +247,10 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		},
 	}
 
+	parseStarted := time.Now()
 	parser := NewSurrealResponseParser(start, end)
 	graphs, err = parser.Parse(rawResponse)
+	span.Set("surreal-response-parse-duration", time.Since(parseStarted))
 	if err != nil {
 		return nil, fmt.Errorf("parse surrealdb response: %w", err)
 	}

@@ -92,7 +92,8 @@ SELECT {
             }
         } FROM host_module_link WHERE in = $parent.id
           AND (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE)
+          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          LIMIT 1001)
     }
 } AS result
 FROM host
@@ -156,7 +157,8 @@ SELECT {
                 }
             } FROM node_with_pod_active_edge_serving WHERE source_id = $parent.id
               AND active_period_start_ms <= $end_ms
-              AND active_period_end_ms >= $start_ms)
+              AND active_period_end_ms >= $start_ms
+              LIMIT 1001)
     }
 } AS result
 FROM node
@@ -217,7 +219,8 @@ SELECT {
                 }
             } FROM node_with_pod_active_edge_serving WHERE target_id = $parent.id
               AND active_period_start_ms <= $end_ms
-              AND active_period_end_ms >= $start_ms)
+              AND active_period_end_ms >= $start_ms
+              LIMIT 1001)
     }
 } AS result
 FROM pod
@@ -266,6 +269,133 @@ LIMIT 100;`,
 			require.NoError(t, json.Unmarshal([]byte(sqlPayloadText), &payload))
 			assert.Equal(t, tableMockUseNSDBStatement+tt.expectedSQL, payload.DSL)
 			assert.Equal(t, tt.binding.Database, payload.ResultTableID)
+		})
+	}
+}
+
+func TestActiveEdgeServingSurrealQLFallbackContract(t *testing.T) {
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
+			ResourceTypePod:  {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
+		},
+		[]RelationSchema{{
+			RelationType: RelationNodeWithPod,
+			Category:     RelationCategoryStatic,
+			FromType:     ResourceTypeNode,
+			ToType:       ResourceTypePod,
+		}},
+	)
+	req := QueryRequest{
+		Timestamp:          300000,
+		SourceType:         ResourceTypeNode,
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+		MaxHops:            1,
+	}
+	tests := []struct {
+		name             string
+		mode             graphQueryMode
+		servingRelations []string
+		expectedSQL      string
+	}{
+		{
+			name: "instant falls back when relation is not enabled",
+			mode: graphQueryModeInstant,
+			expectedSQL: `LET $timestamp = 300000;
+LET $look_back_delta = 86400000;
+LET $start = 0;
+LET $end = 300;
+LET $start_ms = 0;
+LET $end_ms = 300000;
+
+SELECT {
+    root: {
+        entity_type: meta::tb(id),
+        entity_id: <string>id,
+        entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
+        created_at: created_at,
+        updated_at: updated_at
+    },
+
+    hop1: {
+        node_with_pod: (SELECT VALUE {
+            hop: 1,
+            relation_type: 'node_with_pod',
+            relation_category: 'static',
+            relation_id: <string>id,
+            target: {
+                entity_type: 'pod',
+                entity_id: <string>out,
+                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod }
+            }
+        } FROM node_with_pod WHERE in = $parent.id
+          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          LIMIT 1001)
+    }
+} AS result
+FROM node
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+LIMIT 100;`,
+		},
+		{
+			name:             "range ignores enabled serving relation",
+			mode:             graphQueryModeRange,
+			servingRelations: []string{string(RelationNodeWithPod)},
+			expectedSQL: `LET $timestamp = 300000;
+LET $look_back_delta = 86400000;
+LET $start = 0;
+LET $end = 300;
+LET $start_ms = 0;
+LET $end_ms = 300000;
+
+SELECT {
+    root: {
+        entity_type: meta::tb(id),
+        entity_id: <string>id,
+        entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
+        created_at: created_at,
+        updated_at: updated_at,
+        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end)
+    },
+
+    hop1: {
+        node_with_pod: (SELECT VALUE {
+            hop: 1,
+            relation_type: 'node_with_pod',
+            relation_category: 'static',
+            relation_id: <string>id,
+            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms),
+            target: {
+                entity_type: 'pod',
+                entity_id: <string>out,
+                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
+                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end)
+            }
+        } FROM node_with_pod WHERE in = $parent.id
+          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          LIMIT 1001)
+    }
+} AS result
+FROM node
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+LIMIT 100;`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldRelations := ActiveEdgeServingRelations
+			ActiveEdgeServingRelations = append([]string(nil), tt.servingRelations...)
+			t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
+
+			query := req
+			builder := NewSurrealQueryBuilderWithSchemaProvider(&query, provider)
+			configureBuilderForGraphQueryMode(builder, tt.mode)
+
+			assert.Equal(t, tt.expectedSQL, builder.Build())
 		})
 	}
 }
@@ -412,12 +542,14 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 		stepMs                  int64
 		bkbaseResponseOverrides map[string]string
 		expectedResponseJSON    string
+		expectedRequestCount    int
 	}{
 		{
 			name:                 "instant query returns target from the direct path response",
 			mode:                 graphQueryModeInstant,
 			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":600000}`,
-			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]}]}`,
+			expectedRequestCount: 1,
 		},
 		{
 			name:                 "range query returns target series from the direct path response",
@@ -426,7 +558,8 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			rangeEnd:             600000,
 			stepMs:               60000,
 			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":1200000}`,
-			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]}]}`,
+			expectedRequestCount: 1,
 		},
 		{
 			name:        "instant query falls back to indirect path when direct path is empty",
@@ -436,6 +569,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 				"node/pod": tableEmptyBKBaseResponseJSON,
 			},
 			expectedResponseJSON: `{"path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
+			expectedRequestCount: 2,
 		},
 	}
 
@@ -493,7 +627,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			}
 			assert.JSONEq(t, tt.expectedResponseJSON, encodeTablePathSplitQueryResponseJSON(t, actualResponse))
 
-			require.Len(t, actualResponse.QuerySyncRequests, 2)
+			require.Len(t, actualResponse.QuerySyncRequests, tt.expectedRequestCount)
 		})
 	}
 }

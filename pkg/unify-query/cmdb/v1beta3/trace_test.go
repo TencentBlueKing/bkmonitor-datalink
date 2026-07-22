@@ -101,6 +101,8 @@ func TestBKBaseTraceRecordsParserFailureAsError(t *testing.T) {
 	assert.Equal(t, codes.Error, span.Status().Code)
 	assert.Equal(t, int64(1), traceIntAttribute(t, span, "response-list-count"))
 	assert.Equal(t, "parse", traceStringAttribute(t, span, "error-category"))
+	assert.Len(t, traceStringAttribute(t, span, "dsl-hash"), 64)
+	assert.False(t, traceHasAttribute(span, "dsl"))
 }
 
 func TestQueryValidationTraceIncludesRequestContext(t *testing.T) {
@@ -230,6 +232,15 @@ func traceAttribute(t *testing.T, span sdktrace.ReadOnlySpan, key string) attrib
 	}
 	require.FailNow(t, "trace attribute not found", key)
 	return attribute.Value{}
+}
+
+func traceHasAttribute(span sdktrace.ReadOnlySpan, key string) bool {
+	for _, item := range span.Attributes() {
+		if string(item.Key) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func traceStringAttribute(t *testing.T, span sdktrace.ReadOnlySpan, key string) string {

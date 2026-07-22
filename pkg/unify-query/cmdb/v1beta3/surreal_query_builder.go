@@ -136,9 +136,8 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 	return builder
 }
 
-// WithoutLivenessProjection keeps liveness existence filters but omits liveness
-// payloads from SELECT projections. Instant relation APIs only need target
-// labels, while range APIs still require periods for bucket alignment.
+// WithoutLivenessProjection 保留存活性过滤条件，但不在 SELECT 结果中投影存活时段。
+// 即时关系查询只需要目标标签，范围查询仍需保留时段以完成时间桶对齐。
 func (b *SurrealQueryBuilder) WithoutLivenessProjection() *SurrealQueryBuilder {
 	if b != nil {
 		b.projectLiveness = false
@@ -277,7 +276,7 @@ func (b *SurrealQueryBuilder) buildMainQuery() string {
 	sb.WriteString("\n")
 
 	sb.WriteString("} AS result\n")
-	sb.WriteString(fmt.Sprintf("FROM %s\n", b.request.SourceType))
+	sb.WriteString(fmt.Sprintf("FROM %s\n", b.buildRootSource()))
 	sb.WriteString(b.buildWhereClause())
 	sb.WriteString("\n")
 	if b.request.DisableRootLimit {
@@ -287,6 +286,41 @@ func (b *SurrealQueryBuilder) buildMainQuery() string {
 	}
 
 	return sb.String()
+}
+
+// buildRootSource 优先使用完整主键构造 SurrealDB Record ID，以避免对根资源表做全表扫描；
+// 功能未开启或主键不完整时仍回退为原有的表名查询。
+func (b *SurrealQueryBuilder) buildRootSource() string {
+	if recordID, ok := b.rootRecordID(); ok {
+		return recordID
+	}
+	return string(b.request.SourceType)
+}
+
+// rootRecordID 按 Schema 中声明的主键顺序构造复合 Record ID，确保生成结果稳定且与入参 map 顺序无关。
+func (b *SurrealQueryBuilder) rootRecordID() (string, bool) {
+	if b == nil || b.request == nil || !RootRecordIDEnabled || len(b.request.SourceInfo) == 0 {
+		return "", false
+	}
+	primaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, b.request.SourceType)
+	if len(primaryKeys) == 0 {
+		return "", false
+	}
+	pairs := make([]string, 0, len(primaryKeys))
+	for _, key := range primaryKeys {
+		value, ok := b.request.SourceInfo[key]
+		if !ok {
+			return "", false
+		}
+		pairs = append(pairs, escapeSurrealRecordIDPart(key)+"="+escapeSurrealRecordIDPart(value))
+	}
+	return fmt.Sprintf("%s:⟨%s⟩", b.request.SourceType, strings.Join(pairs, ",")), true
+}
+
+// escapeSurrealRecordIDPart 转义 Record ID 尖括号内容中的反斜杠和结束符，避免破坏 SurrealQL 语法。
+func escapeSurrealRecordIDPart(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return strings.ReplaceAll(value, "⟩", `\⟩`)
 }
 
 // buildRootSelect 构建 Root 实体的 SELECT 结构
@@ -447,7 +481,8 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	return fmt.Sprintf(sqlIndent2+`%s: (SELECT VALUE {%s
         } FROM %s WHERE %s = $parent.id
           AND `+tplRelLivenessFilter+`
-          AND `+tplLivenessFilterRef+`)`,
+          AND `+tplLivenessFilterRef+`
+          LIMIT %d)`,
 		keyName,
 		fieldsBuilder.String(),
 		relationTable,
@@ -455,7 +490,8 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 		relationLivenessTable,
 		targetLivenessTable,
 		targetLivenessIDField,
-		rel.SelectField)
+		rel.SelectField,
+		maxEdgesPerHopQueryLimit())
 }
 
 // buildNestedHopSelect 构建嵌套在 target 内的下一跳查询
@@ -532,7 +568,8 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 	return fmt.Sprintf(sqlIndent5+`%s: (SELECT VALUE {%s
                     } FROM %s WHERE %s = $parent.%s
                       AND `+tplRelLivenessFilter+`
-                      AND `+tplLivenessFilterRef+`)`,
+                      AND `+tplLivenessFilterRef+`
+                      LIMIT %d)`,
 		keyName,
 		fieldsBuilder.String(),
 		relationTable,
@@ -541,7 +578,8 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 		relationLivenessTable,
 		targetLivenessTable,
 		targetLivenessIDField,
-		rel.SelectField)
+		rel.SelectField,
+		maxEdgesPerHopQueryLimit())
 }
 
 // buildDeeperNestedHopSelect 构建更深层嵌套的 hop（hop3+）
@@ -624,18 +662,18 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 	return fmt.Sprintf(`%s%s: (SELECT VALUE {%s
 %s} FROM %s WHERE %s = $parent.%s
 %s  AND `+tplRelLivenessFilter+`
-%s  AND `+tplLivenessFilterRef+`)`,
+%s  AND `+tplLivenessFilterRef+`
+%s  LIMIT %d)`,
 		indent, keyName,
 		fieldsBuilder.String(),
 		indent, relationTable, rel.WhereField, parentField,
 		indent, relationLivenessTable,
-		indent, targetLivenessTable, targetLivenessIDField, rel.SelectField)
+		indent, targetLivenessTable, targetLivenessIDField, rel.SelectField,
+		indent, maxEdgesPerHopQueryLimit())
 }
 
-// buildServingRelationQuery reads a pre-joined active edge row while preserving
-// the response shape consumed by SurrealResponseParser. The serving interval is
-// projected as both edge and target liveness because it is their materialized
-// intersection.
+// buildServingRelationQuery 读取预关联的活跃边数据，并保持 SurrealResponseParser 所需的响应结构。
+// serving 时段是边与目标存活时段的物化交集，因此同时作为二者的存活时段返回。
 func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQueryInfo, parentRef, indent string) string {
 	relationType := rel.Schema.RelationType
 	table := string(relationType) + "_active_edge_serving"
@@ -674,7 +712,8 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 %s        }
 %s    } FROM %s WHERE %s = %s
 %s      AND active_period_start_ms <= $end_ms
-%s      AND active_period_end_ms >= $start_ms)`,
+%s      AND active_period_end_ms >= $start_ms
+%s      LIMIT %d)`,
 		indent, keyName,
 		indent, hop,
 		indent, relationType,
@@ -688,14 +727,16 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 		indent,
 		indent, table, matchField, parentRef,
 		indent,
-		indent)
+		indent,
+		indent, maxEdgesPerHopQueryLimit())
 }
 
 // buildWhereClause 构建 WHERE 子句
 func (b *SurrealQueryBuilder) buildWhereClause() string {
 	var conditions []string
 
-	if len(b.request.SourceInfo) > 0 {
+	_, usesRootRecordID := b.rootRecordID()
+	if len(b.request.SourceInfo) > 0 && !usesRootRecordID {
 		// SourceInfo 已在 validateSourceInfoFields 中要求包含完整主键。
 		// 这里再次只接收主键白名单，是 SQL 拼接层的兜底保护，避免未知字段进入 SurrealQL。
 		allowedFields := make(map[string]bool)
@@ -747,8 +788,7 @@ func (b *SurrealQueryBuilder) fieldLiteral(field, value string) string {
 	if ok {
 		return literal
 	}
-	// Query validation reports malformed typed values before Build. Keep a
-	// safely quoted fallback for direct builder callers.
+	// 正常查询会在 Build 前通过校验拦截非法类型值；直接调用构建器时则回退为安全转义的字符串。
 	return fmt.Sprintf("'%s'", escapeSurrealString(value))
 }
 
@@ -798,8 +838,8 @@ func isSafeSurrealField(field string) bool {
 	return true
 }
 
-// escapeSurrealIdentifier keeps simple ASCII identifiers readable. Complex
-// names are wrapped in SurrealQL angle brackets and a closing bracket is escaped.
+// escapeSurrealIdentifier 保持简单 ASCII 标识符可读；复杂名称使用 SurrealQL 尖括号包裹，
+// 并转义其中的结束符，避免产生非法语句。
 func escapeSurrealIdentifier(identifier string) string {
 	if isSafeSurrealField(identifier) {
 		return identifier

@@ -11,7 +11,6 @@ package v1beta3
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -23,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
-	ants "github.com/panjf2000/ants/v2"
 )
 
 var (
@@ -31,15 +29,12 @@ var (
 	modelMutex   sync.Mutex
 )
 
-// defaultPathQueryMaxRouting 限制单个 relation 请求内最多并发多少条 SurrealDB path。
-// 这里不直接使用 len(paths)，是为了避免一个 source->target 有很多候选路径时把
-// BKBase query_sync 同时打满；path-by-path 的目标是降低单条大 SQL 的复杂度，
-// 不是把压力无上限地转成更多并发请求。
+// defaultPathQueryMaxRouting 限制进程内同时执行的 SurrealDB 查询数。
+// 单个关系查询会按候选路径顺序执行，并发仅来自不同的 query_list 项或独立 HTTP 请求。
 const defaultPathQueryMaxRouting = 4
 
-// pathQuerySemaphore applies a process-wide cap. The HTTP handler already has
-// request-level concurrency, so a per-request path pool alone can still
-// multiply BKBase pressure by query_list size.
+// pathQuerySemaphore 在进程级共享并发额度。HTTP 层本身已支持请求内并发，
+// 因此必须跨请求共享额度，避免 BKBase 压力随 query_list 数量成倍放大。
 var pathQuerySemaphore = make(chan struct{}, defaultPathQueryMaxRouting)
 
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
@@ -111,8 +106,7 @@ func (m *Model) SetResolver(resolver *BindingResolver) {
 	m.resolver = resolver
 }
 
-// SetSchemaProvider injects the schema used by validation, path discovery and
-// SQL generation. Passing nil keeps the current provider unchanged.
+// SetSchemaProvider 注入校验、路径发现和 SQL 生成共用的 Schema；传入 nil 时保持现有配置不变。
 func (m *Model) SetSchemaProvider(provider SchemaProvider) {
 	if provider != nil {
 		m.schemaProviderMu.Lock()
@@ -289,6 +283,7 @@ func (m *Model) QueryResourceMatcherRange(
 		extractionPathResource = selectedPath
 	}
 
+	targetExtractStarted := time.Now()
 	result = buildTargetMatchersTimeSeriesWithOptions(
 		graphs,
 		req.TargetType,
@@ -301,6 +296,12 @@ func (m *Model) QueryResourceMatcherRange(
 		req.TargetInfoShow,
 		shouldIncludeRootTarget(req),
 	)
+	span.Set("target-extract-duration", time.Since(targetExtractStarted))
+	if limitTimestamp, err := validateRangeTargetCounts(result); err != nil {
+		span.Set("failure-stage", "target-limit")
+		span.Set("target-limit-timestamp", limitTimestamp)
+		return "", nil, nil, "", nil, err
+	}
 
 	paths := resourceTypesToPath(selectedPath)
 
@@ -344,6 +345,10 @@ func (m *Model) queryLivenessGraph(
 	span.Set("schema-provider", fmt.Sprintf("%T", m.getSchemaProvider()))
 	span.Set("legacy-compatibility", req.LegacyCompatibility)
 	span.Set("root-limit-disabled", req.DisableRootLimit)
+	span.Set("max-edges-per-hop", effectiveMaxEdgesPerHop())
+	span.Set("max-targets", effectiveMaxTargets())
+	span.Set("max-response-bytes", effectiveMaxResponseBytes())
+	span.Set("root-record-id-enabled", RootRecordIDEnabled)
 	if mode == graphQueryModeRange {
 		span.Set("range-start", rangeStart)
 		span.Set("range-end", rangeEnd)
@@ -413,15 +418,18 @@ func (m *Model) queryLivenessGraph(
 		WithSchemaProvider(provider),
 		WithNamespace(req.SchemaNamespace()),
 	)
+	pathDiscoveryStarted := time.Now()
 	if implicitSelfTarget {
 		paths = []resourcePath{{Steps: []resourcePathStep{{ResourceType: string(req.SourceType)}}}}
 	} else {
 		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 		if err != nil {
+			span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
 			span.Set("failure-stage", "path-discovery")
 			return nil, nil, nil, err
 		}
 	}
+	span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
 	span.Set("candidate-paths-count", len(paths))
 
 	queryStart, queryEnd := req.GetQueryRange()
@@ -430,7 +438,9 @@ func (m *Model) queryLivenessGraph(
 
 	if m.executor != nil {
 		start := time.Now()
+		bindingResolveStarted := time.Now()
 		runner, err := m.newGraphQueryRunner(ctx, req)
+		span.Set("binding-resolve-duration", time.Since(bindingResolveStarted))
 		if err != nil {
 			span.Set("failure-stage", "binding-resolution")
 			elapsed := time.Since(start).Seconds()
@@ -457,11 +467,11 @@ func (m *Model) queryLivenessGraph(
 
 	extractionPathResource := targetExtractionPathResource(req)
 	if selectedPath := resourcePathForInstantQuery(graphs, paths, req); len(selectedPath) > 0 {
-		// path-by-path 会合并所有成功图。target_list 必须限制到最终选中的最高优先级路径，
-		// 与旧 VM 命中第一条路径后停止的语义保持一致。
+		// 目标列表只从最终选中的最高优先级路径提取，与旧 VM 命中第一条路径后停止的语义保持一致。
 		extractionPathResource = selectedPath
 	}
 
+	targetExtractStarted := time.Now()
 	matchers = extractMatchersFromFilteredInstantGraphsWithOptions(
 		graphs,
 		req.TargetType,
@@ -471,12 +481,36 @@ func (m *Model) queryLivenessGraph(
 		req.TargetInfoShow,
 		shouldIncludeRootTarget(req),
 	)
+	span.Set("target-extract-duration", time.Since(targetExtractStarted))
+	if err := validateTargetCount(len(matchers)); err != nil {
+		span.Set("failure-stage", "target-limit")
+		return nil, nil, nil, err
+	}
 
 	span.Set("graphs-count", len(graphs))
 	span.Set("paths-count", len(paths))
 	span.Set("matchers-count", len(matchers))
 
 	return graphs, paths, matchers, nil
+}
+
+// validateTargetCount 校验单个时间点的目标数量，避免响应规模无界增长。
+func validateTargetCount(count int) error {
+	limit := effectiveMaxTargets()
+	if count <= limit {
+		return nil
+	}
+	return &ResultLimitError{Reason: "max_targets", Count: count, Limit: limit}
+}
+
+// validateRangeTargetCounts 逐时间桶校验范围查询结果，并返回首个超限桶的时间戳以便定位。
+func validateRangeTargetCounts(result []cmdb.MatchersWithTimestamp) (int64, error) {
+	for _, bucket := range result {
+		if err := validateTargetCount(len(bucket.Matchers)); err != nil {
+			return bucket.Timestamp, err
+		}
+	}
+	return 0, nil
 }
 
 func (m *Model) executeGraphQueryPathByPath(
@@ -496,7 +530,7 @@ func (m *Model) executeGraphQueryPathByPath(
 	span.Set("source-type", string(req.SourceType))
 	span.Set("target-type", string(req.TargetType))
 
-	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的提交顺序，
+	// 先把执行顺序归一化为“短路径优先”。这只影响 query_sync 的执行顺序，
 	// 不改变 PathFinder 原始 paths；全部未命中时仍返回原始 paths 给调用方。
 	queryPaths := sortPathsForQuery(paths)
 	pathIdentities := make([]string, 0, len(queryPaths))
@@ -505,131 +539,55 @@ func (m *Model) executeGraphQueryPathByPath(
 	}
 	span.Set("candidate-path-identities", pathIdentities)
 
-	// ants pool 大小取 min(path 数量, 默认并发上限)。
-	// path 数量通常不大，但这里仍显式限流，避免多个 relation 请求叠加时放大
-	// BKBase / SurrealDB 压力。
-	poolSize := len(queryPaths)
-	if poolSize > defaultPathQueryMaxRouting {
-		poolSize = defaultPathQueryMaxRouting
-	}
-	span.Set("path-worker-pool-size", poolSize)
 	span.Set("global-path-concurrency-limit", cap(pathQuerySemaphore))
-
-	// 每次调用创建一个独立 pool，生命周期绑定当前 relation 请求。
-	// 这样不会让跨请求的慢 path 占住全局 worker，也便于后续把上限做成配置。
-	p, err := ants.NewPool(poolSize)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer p.Release()
-
-	// resultCh 使用 len(queryPaths) 作为缓冲，保证 worker 发送结果时不会因为
-	// 主协程正在等待其他 path 而阻塞。
-	resultCh := make(chan pathQueryResult, len(queryPaths))
-	var workerWg sync.WaitGroup
-	for idx, path := range queryPaths {
-		// Go 闭包会捕获循环变量；这里复制一份，保证每个 worker 看到自己的
-		// path 和优先级下标。
-		idx := idx
-		path := path
-		workerWg.Add(1)
-		if err := p.Submit(func() {
-			defer workerWg.Done()
-			// 每条 path 只生成并执行自己的 SurrealQL。idx 是排序后的优先级，
-			// 后面会用它做稳定的图合并和响应 path 选择。
-			resultCh <- m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, mode, runner)
-		}); err != nil {
-			workerWg.Done()
-			// Submit 失败也要写入 resultCh，让下面的收敛逻辑能按同一套流程
-			// 处理错误，不会因为少一个结果而一直等待。
-			resultCh <- pathQueryResult{idx: idx, path: path, err: err}
-		}
-	}
-
-	// results 按排序后的 path 下标存放结果。这样即使 goroutine 乱序返回，
-	// 后续合并 LivenessGraph 和选择响应 path 时仍能沿用稳定的 path 优先级。
-	results := make([]*pathQueryResult, len(queryPaths))
-	var pathErrors []error
-	for completed := 0; completed < len(queryPaths); completed++ {
-		// 收到任意一个 path 的结果后，先放回它的优先级槽位。
-		result := <-resultCh
-		results[result.idx] = &result
-		if result.err != nil {
-			pathErrors = append(pathErrors, result.err)
-		}
-
-	}
-	workerWg.Wait()
-
-	targetHits := make([]bool, len(results))
-	successCount := 0
-	targetHitCount := 0
-	rootGraphCount := 0
-	for idx, result := range results {
-		if result == nil || result.err != nil {
-			continue
-		}
-		successCount++
-		rootGraphCount += len(result.graphs)
-		targetHits[idx] = pathQueryResultHasTarget(result, req, mode, rangeStart, rangeEnd, stepMs)
-		if targetHits[idx] {
-			targetHitCount++
-		}
-	}
-	span.Set("completed-path-count", len(results))
-	span.Set("successful-path-count", successCount)
-	span.Set("failed-path-count", len(pathErrors))
-	span.Set("target-hit-path-count", targetHitCount)
-	span.Set("graph-fragment-count", rootGraphCount)
-
-	// Select from each path's own response before any graph merge. Resource-only
-	// path keys cannot distinguish static A_with_B from dynamic A_to_B, and a
-	// merge would irreversibly mix their targets. A lower-priority path error is
-	// ignorable only after a higher-priority path has produced a target.
-	for idx, result := range results {
-		if result == nil || result.err != nil || !targetHits[idx] {
-			continue
-		}
-		var higherPriorityErrors []error
-		for _, prior := range results[:idx] {
-			if prior != nil && prior.err != nil {
-				higherPriorityErrors = append(higherPriorityErrors, prior.err)
-			}
-		}
-		if len(higherPriorityErrors) > 0 {
-			span.Set("selection-result", "higher-priority-path-error")
-			span.Set("selected-path-index", idx)
-			span.Set("selected-path-identity", resourcePathSortKey(result.path))
-			return nil, nil, errors.Join(higherPriorityErrors...)
-		}
-		ignoredLowerPriorityErrors := 0
-		for _, later := range results[idx+1:] {
-			if later != nil && later.err != nil {
-				ignoredLowerPriorityErrors++
-			}
-		}
-		span.Set("selection-result", "target-hit")
-		span.Set("selected-path-index", idx)
-		span.Set("selected-path-identity", resourcePathSortKey(result.path))
-		span.Set("ignored-lower-priority-error-count", ignoredLowerPriorityErrors)
-		span.Set("selected-graph-count", len(result.graphs))
-		return result.graphs, []resourcePath{result.path}, nil
-	}
-
-	// If no path found a target, every path is material to the empty result.
-	// Surface any failure instead of presenting an uncertain empty target_list
-	// as a successful query.
-	if len(pathErrors) > 0 {
-		span.Set("selection-result", "no-target-with-path-errors")
-		return nil, nil, errors.Join(pathErrors...)
-	}
-
 	var graphFragments []*LivenessGraph
-	for _, result := range results {
-		if result != nil {
-			graphFragments = append(graphFragments, result.graphs...)
+	successCount := 0
+	graphFragmentCount := 0
+	var graphFilterDuration time.Duration
+	// 候选路径按优先级串行执行，首条命中目标的路径即可确定最终响应，后续低优先级路径无需再查询。
+	for idx, path := range queryPaths {
+		result := m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, mode, runner)
+		span.Set("completed-path-count", idx+1)
+		if result.err != nil {
+			span.Set("successful-path-count", successCount)
+			span.Set("failed-path-count", 1)
+			span.Set("target-hit-path-count", 0)
+			span.Set("graph-fragment-count", graphFragmentCount)
+			span.Set("selection-result", "path-error")
+			span.Set("failed-path-index", idx)
+			span.Set("failed-path-identity", resourcePathSortKey(path))
+			return nil, nil, result.err
 		}
+
+		successCount++
+		graphFragmentCount += len(result.graphs)
+		graphFilterStarted := time.Now()
+		hasTarget := pathQueryResultHasTarget(&result, req, mode, rangeStart, rangeEnd, stepMs)
+		graphFilterDuration += time.Since(graphFilterStarted)
+		if hasTarget {
+			span.Set("successful-path-count", successCount)
+			span.Set("failed-path-count", 0)
+			span.Set("target-hit-path-count", 1)
+			span.Set("graph-fragment-count", graphFragmentCount)
+			span.Set("graph-filter-duration", graphFilterDuration)
+			span.Set("selection-result", "target-hit")
+			span.Set("selected-path-index", idx)
+			span.Set("selected-path-identity", resourcePathSortKey(path))
+			span.Set("skipped-lower-priority-path-count", len(queryPaths)-idx-1)
+			span.Set("selected-graph-count", len(result.graphs))
+			return result.graphs, []resourcePath{path}, nil
+		}
+
+		// 保留只包含根节点的图数据片段；当所有路径都未命中目标时，仍可合并并返回已找到的根节点，
+		// 以维持原有空结果场景的响应语义。
+		graphFragments = append(graphFragments, result.graphs...)
 	}
+
+	span.Set("successful-path-count", successCount)
+	span.Set("failed-path-count", 0)
+	span.Set("target-hit-path-count", 0)
+	span.Set("graph-fragment-count", graphFragmentCount)
+	span.Set("graph-filter-duration", graphFilterDuration)
 	mergedGraphs := mergeLivenessGraphsByRoot(graphFragments)
 	if len(mergedGraphs) > 0 {
 		span.Set("selection-result", "root-only")
@@ -671,9 +629,8 @@ func pathQueryResultHasTarget(
 	)) > 0
 }
 
-// pathQueryResult 是单条 path 查询的收敛结果。
-// idx 使用排序后的优先级下标，而不是原始 PathFinder 下标；这样图合并和响应 path
-// 选择不受 goroutine 完成顺序影响。
+// pathQueryResult 是单条 path 查询结果。
+// idx 使用排序后的优先级下标，而不是原始 PathFinder 下标。
 type pathQueryResult struct {
 	idx    int
 	path   resourcePath
@@ -714,9 +671,11 @@ func (m *Model) executeOneGraphQueryPath(
 
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
+	buildStarted := time.Now()
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
 	sql := builder.Build()
+	span.Set("surrealql-build-duration", time.Since(buildStarted))
 	span.Set("surrealql-bytes", len(sql))
 	graphs, runErr := runner(ctx, sql, start, end)
 	if runErr != nil {
@@ -783,11 +742,11 @@ func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQ
 }
 
 func sortPathsForQuery(paths []resourcePath) []resourcePath {
-	// 复制一份再排序，避免影响 all-empty 返回时使用的原始 paths。
+	// 复制一份再排序，避免影响“所有路径均未命中”时返回的原始候选路径。
 	sorted := append([]resourcePath(nil), paths...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		// relation 查询会在首个命中 path 后短路。短路径通常生成更小的
-		// SurrealQL，也更接近旧 VM 直连关系优先命中的执行成本；range 拆分也复用同一优先级。
+		// 关系查询会在首条命中路径后短路。短路径通常生成更小的 SurrealQL，
+		// 也更接近旧 VM 优先命中直连关系的执行成本；范围查询拆分同样复用这一优先级。
 		if len(sorted[i].Steps) != len(sorted[j].Steps) {
 			return len(sorted[i].Steps) < len(sorted[j].Steps)
 		}
@@ -809,9 +768,9 @@ func resourcePathSortKey(path resourcePath) string {
 	return strings.Join(parts, "|")
 }
 
-// newGraphQueryRunner 在一次 v1beta3 relation 请求内固定 executor 调用路径。
-// path-by-path 会并发执行多条 SQL；binding 元数据只和 space_uid 相关，提前解析一次
-// 可以避免每条 path 重复访问 binding resolver，同时保证所有 path 使用同一份路由上下文。
+// newGraphQueryRunner 在一次 v1beta3 关系请求内固定查询执行路径。
+// 逐路径查询会依次执行多条 SQL；绑定元数据只和 space_uid 相关，提前解析一次
+// 可以避免每条路径重复访问绑定解析器，同时保证所有路径使用同一份路由上下文。
 func (m *Model) newGraphQueryRunner(ctx context.Context, req *QueryRequest) (graphQueryRunner, error) {
 	if m.resolver != nil {
 		if ex, ok := m.executor.(GraphQueryExecutorWithBinding); ok {
@@ -964,8 +923,7 @@ func validateRangeBuckets(start, end, stepMs int64) (int, error) {
 	}
 	maxPoints := effectiveMaxRangePoints()
 
-	// Unsigned subtraction is the exact mathematical distance for ordered
-	// int64 endpoints, including ranges that cross zero.
+	// 对已排序的 int64 端点做无符号减法可得到精确距离，也能正确处理跨越零点的区间。
 	distance := uint64(end) - uint64(start)
 	quotient := distance / uint64(stepMs)
 	if quotient >= uint64(maxPoints) {
@@ -1134,8 +1092,8 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 		return best.resourceType, nil
 	}
 	if req.LegacyCompatibility {
-		// v1beta1 selected the first resource in its stable, primary-key-count
-		// ordered configuration and ignored labels belonging to other resources.
+		// v1beta1 会按主键数量稳定排序后选择第一个资源，并忽略属于其他资源的标签；
+		// 兼容模式继续保留这一行为。
 		return best.resourceType, nil
 	}
 	if preferred, ok := preferredAliasSourceType(topCandidates); ok {

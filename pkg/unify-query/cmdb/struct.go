@@ -66,6 +66,11 @@ type RelationMultiResourceResponseData struct {
 	TargetList Matchers `json:"target_list"`
 	Path       []string `json:"path"`
 	Message    string   `json:"message"`
+
+	// Truncated 表示响应是否因服务端安全上限而被截断。
+	Truncated bool `json:"truncated,omitempty"`
+	// TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // RelationMultiResourceResponse 请求返回
@@ -104,6 +109,11 @@ type RelationMultiResourceRangeResponseData struct {
 	TargetList []MatchersWithTimestamp `json:"target_list"`
 	Path       []string                `json:"path"`
 	Message    string                  `json:"message"`
+
+	// Truncated 表示响应是否因服务端安全上限而被截断。
+	Truncated bool `json:"truncated,omitempty"`
+	// TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // RelationMultiResourceRangeResponse 请求返回

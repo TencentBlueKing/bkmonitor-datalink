@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_raw_query",
+  "result_tables": [{"table_id": "demo_logs.partition_1"}],
+  "result_table_details": {
+    "demo_logs.partition_1": {
+      "storage_id": 2001,
+      "storage_name": "es_cluster_1",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_1",
+      "db": "golden_logs_index",
+      "table_id": "demo_logs.partition_1",
+      "fields": ["events_total"],
+      "data_label": "demo_logs",
+      "tags_key": ["service", "status"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2001": {"type": "elasticsearch"}}
+}

@@ -1,142 +1,109 @@
-# UQ 线上查询构造 golden 测试集
+# UQ 生产查询 golden 数据集
 
-本目录用于沉淀 unify-query 线上查询样例的“查询构造 golden”。第一阶段只兜 UQ 生成下游查询的行为，不保存最终响应；真实路径测试会用本地 mock 截获下游请求，只校验 UQ 实际生成的 query payload。
+本目录保存从生产历史查询形态中提炼、完成不可逆脱敏的 unify-query（UQ）离线回归数据。测试目标不是下游返回的数据点，而是 UQ 实际生成的全部下游查询请求。
 
-目标链路是：
+每个 case 固定以下关系：
 
 ```text
-UQ 入口请求
-  -> router / query builder / RT 展开 / filter 拼接
-  -> ES DSL / VM query_sync payload / Doris SQL
-  -> 和本地 expect 做 golden 对比
+sanitized request
+  + fixed route fixture
+  + deterministic dependency responses
+  -> real UQ handler / parser / route expansion / query builder
+  -> normalized downstream outputs[]
+  == expect.outputs.json
 ```
 
-它和完整 replay 的区别是：
+因此测试不读取实时路由，不连接真实 BKBase、Elasticsearch、InfluxDB 或查询存储，也不依赖实时日志。
 
-- 查询构造 golden：只比较“生成的下游查询”，轻量，适合 ES / VM / Doris 大批量样例。
-- 完整 replay：还要保存最终 response 和下游 mock，成本高，后续只适合少量端到端 smoke。
+## 当前覆盖
 
-## 目录结构
+数据集当前包含 15 个可执行 case。其中 14 个 case 的 input 与 outputs 均来自可关联的生产历史日志；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
 
-正式兜底 case 放在：
+| 分类 | Case 数 | 已覆盖形态 | Output 来源 |
+| --- | ---: | --- | --- |
+| VictoriaMetrics | 3 | 简单 PromQL、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
+| Elasticsearch | 4 | aggregate/raw × 有无 query_string | 生产日志 |
+| Doris | 3 | aggregate、raw、ES→Doris 时间分段路由 | 生产日志 |
+| TSpider | 2 | aggregate、raw | 生产日志 |
+| HDFS | 2 | aggregate、raw | 生产日志 |
+| InfluxDB HTTP | 1 | aggregate、条件、group by time/fill | handler 回放，暂定 |
+
+其中 `doris_es_segmented_multi_output_001` 用一个逻辑查询和固定的 ES→Doris 时间分段路由生成 4 个下游请求：Doris schema、Doris query、ES index/mapping、ES search。控制测试保持 input 不变，只移除 ES 分段后输出变为 2 个 Doris 请求，证明该“一进多出”来自路由展开和各后端的前置查询，而不是解析器把一个 reference 拆成多个逻辑查询。
+
+`vm_multi_result_table_001` 则覆盖另一个边界：多个兼容的 VM 结果表会合并为一个 BKBase VM 请求，而不是每条路由记录各发一个请求。
+
+生产采样过程、四个时间窗的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
+
+## Case 协议
+
+正式 case 位于：
 
 ```text
-testdata/cases/
-  es/
-  vm/
-  doris/
-```
-
-本地临时采样 case 放在：
-
-```text
-testdata/local_cases/
-```
-
-`local_cases` 已加入 `.gitignore`，用于保存还没有脱敏、归一化或确认稳定的本地样例，不进入仓库。
-
-单个 case 目录形态：
-
-```text
-testdata/cases/vm/vm_query_builder_real_001/
+testdata/cases/<storage>/<case_id>/
   case.yaml
   request.json
-  expect.downstream.json
+  route.json
+  dependencies.json
+  expect.outputs.json
 ```
 
-## 文件职责
+- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签。
+- `request.json`：进入 UQ 的 method、path、保留语义的安全 headers 和 body。
+- `route.json`：空间、结果表、data label、存储类型和时间分段路由 fixture。
+- `dependencies.json`：构造查询所需的最小稳定响应，例如 BKSQL schema、ES mapping 或 InfluxDB 空结果。
+- `expect.outputs.json`：UQ 应生成的全部下游请求。
 
-`case.yaml`
+正式 case 不允许只有 downstream 而没有 input。尚未脱敏或尚不能唯一关联的候选只能放在 `testdata/local_cases/`；该目录已被 `.gitignore` 排除。
 
-描述 case 的来源、状态、分类和期望文件位置。
+## Output 语义
 
-`request.json`
+`outputs[]` 记录查询参数，不记录查询结果：
 
-进入 UQ 的入口请求。只有 `golden_status: golden_ready` 的 case 才必须提供；如果采样时只能拿到下游 query_sync payload，可以先不放 request，并把 case 标记为 `golden_status: captured_downstream`。
+- BKBase VM：`prefer_storage=vm` 和解析后的 query payload。
+- BKSQL：schema 查询、Doris/TSpider/HDFS SQL 和必要的 cluster properties。
+- Elasticsearch：index/mapping 请求和最终 search DSL。
+- InfluxDB：`/query` 的 db、InfluxQL 和稳定控制参数。
 
-`expect.downstream.json`
+比较时会递归解析 JSON，并把并发输出排序为稳定的 multiset：顺序不影响结果，但重复请求的数量必须一致。任何未在 fixture 中声明的外部请求都会使测试失败。
 
-采样阶段捕获到的下游查询期望。不同存储对应不同形态：
+## 路由隔离
 
-- VM：BKBase query_sync 请求里的 `prefer_storage=vm` 和 `sql` JSON payload。
-- ES：最终发给 ES 的 index / DSL。
-- Doris：最终发给 BKBase / Doris 的 SQL。
+回放器只 mock 两类边界：
 
-## case 状态
+1. `route.json` 提供路由和结果表元数据；测试不读取线上路由、Consul、Redis 或数据库。
+2. `dependencies.json` 为外部 I/O 返回继续构造查询所需的最小响应。
 
-`golden_status: captured_downstream`
+入口 handler、PromQL/结构化查询解析、路由展开和各存储 query builder 均执行真实代码。禁止直接注入最终 `metadata.Query` 绕过这些路径。
 
-表示这个 case 已经有真实线上下游查询样本，但还没有补齐 UQ 入口请求。它可以用于沉淀数据和校验 fixture 结构，暂时不能跑真实 UQ query builder golden。
+## 脱敏门禁
 
-`golden_status: golden_ready`
+原始生产日志不会进入仓库。正式 case 必须移除或替换：
 
-表示这个 case 同时具备入口 `request.json` 和 `expect.downstream.json`，可以接入真实 UQ 代码路径做 golden 对比。
+- token、secret、ticket、cookie、Authorization 及同类鉴权字段。
+- 内部 IP、域名、环境名、业务/空间/租户/用户标识。
+- 真实集群、结果表、索引、指标、标签值、应用和工作负载名称。
 
-已提交的 `golden_ready` case 会固定采样时的时间窗口。后续测试复放这条请求时，不使用当前时间，而是验证同一份入口请求是否仍然生成同一份下游查询。
+占位符在单 case 内保持一致，使 request、route 和 output 仍可关联。协议测试会扫描结构化 key、嵌套字符串、URL、IP 和禁止的来源元数据字段。
 
-## 当前测试覆盖
+## 运行测试
 
-当前有两层测试。
-
-第一层是 fixture 协议校验：
+在 `pkg/unify-query` 下执行：
 
 ```bash
-go test ./internal/online_cases/query_golden_cases -run TestQueryGoldenCasesDataset -count=1
+go test ./internal/online_cases/query_golden_cases -count=1
+go test ./service/http -run 'TestOnlineQueryGoldenCases|TestOnlineQueryGoldenSegmentedRouteControlsFanOut|TestCanonicalOnlineQueryGoldenOutputs' -count=1
 ```
 
-它会检查：
+第一条校验 case 协议、来源摘要、storage/output 对应关系和敏感信息；第二条扫描所有 enabled case，经过真实 UQ 路径回放并比较 `outputs[]`。新增 case 不需要在 Go 代码中登记。
 
-- case ID、storage、golden_status、tags、source 是否完整。
-- `expect.downstream.json` 是否存在且是合法 JSON。
-- `golden_ready` case 必须提供合法 `request.json`。
-- VM case 的 expect 中必须包含 `prefer_storage=vm`、`api_type`、PromQL、`result_table_list`。
-- fixture 里没有 token、cookie、authorization、内网 IP 等敏感片段。
+## 采样与扩充
 
-第二层是真实 UQ 代码路径 golden：
+常规扩充按以下循环执行：
 
-```bash
-go test ./service/http -run TestOnlineVMQueryGoldenCaseRealPath -count=1
-```
+1. 按既有分类在一个历史 10 分钟窗口抽取约 20 条候选。
+2. 用窄时间窗和 trace 关联入口与完整下游请求序列，歧义候选丢弃。
+3. 按会影响下游构造的结构特征去重，不因真实标识或字面值不同新增 case。
+4. 切换时间窗继续采样，直到新窗口中的请求均有已有形似 case 覆盖。
+5. 脱敏后加入正式目录，并用真实 handler 校准 `expect.outputs.json`。
 
-当前 `vm_query_builder_real_001` 已经接入这层测试。测试会：
-
-```text
-读取 vm_query_builder_real_001/request.json
-  -> 设置该线上样例对应的本地 router fixture
-  -> 调用真实 /query/ts/promql handler
-  -> 让 promQLToStruct / queryTsToInstanceAndStmt / victoriaMetrics.DirectQueryRange 正常执行
-  -> 用 httpmock 截获发往 BKBase query_sync 的请求
-  -> 取出 prefer_storage 和 sql
-  -> 归一化动态字段
-  -> 对比 expect.downstream.json
-```
-
-这条真实路径可以兜住：
-
-- VM 路由变化。
-- result_table_list 展开变化。
-- VM PromQL / metric_filter_condition 生成变化。
-- cluster_name、start/end/step/nocache 等下游参数变化。
-
-VM 真实路径测试目前是 table-driven 形式。继续补 VM case 时，优先新增：
-
-```text
-testdata/cases/vm/<case_name>/
-  case.yaml
-  request.json
-  expect.downstream.json
-```
-
-然后在 `service/http/online_query_golden_test.go` 的 `cases` 列表里补一项该 case 对应的本地 router fixture 信息，不需要复制新的测试函数。
-
-后续 ES / Doris case 也按同样模式接入真实路径测试；到那时可以把 `service/http` 里的单 case 测试抽成扫描式 `TestOnlineQueryBuilderGoldenCases`。
-
-## case 转正标准
-
-本地 case 进入 `golden_ready` 前需要满足：
-
-1. 有真实 UQ 入口请求 `request.json`。
-2. 有真实或人工确认稳定的 `expect.downstream.json`。
-3. 已脱敏：不包含 token、cookie、authorization、真实用户敏感信息、内网 IP。
-4. 已归一化：时间、trace_id、request_id、耗时等易变字段固定或忽略。
-5. 有代表性：能说明一个查询场景，例如 `query_range`、`prefer_storage_vm`、`result_table_list`、`group_by`、`filter`。
+采样收敛不是永久封口。后续每个查询解析、路由或 query builder 问题的修复，都必须新增能复现该问题的 case；若新日志出现现有形似不能表达的结构，也应继续扩充。

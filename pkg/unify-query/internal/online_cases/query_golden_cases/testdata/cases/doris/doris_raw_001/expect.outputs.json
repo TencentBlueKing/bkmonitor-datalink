@@ -1,0 +1,20 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_raw"},
+      "sql": "SHOW CREATE TABLE `golden_doris_raw_table`.doris"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_raw"},
+      "sql": "SELECT `service`, `events_total` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `golden_doris_raw_table`.doris WHERE `dtEventTimeStamp` >= 1784701776000 AND `dtEventTimeStamp` <= 1784702076000 AND `dtEventTime` >= '2026-07-22 14:29:36' AND `dtEventTime` <= '2026-07-22 14:34:37' AND `thedate` = '20260722' ORDER BY `_timestamp_` ASC LIMIT 10"
+    }
+  }
+]

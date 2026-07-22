@@ -12,321 +12,643 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 const (
-	// onlineVMGoldenCasesRoot 保存正式 VM golden case。
-	// 每个子目录对应一条线上采样 case，目录内包含 request.json 和 expect.downstream.json。
-	onlineVMGoldenCasesRoot = "../../internal/online_cases/query_golden_cases/testdata/cases/vm"
+	onlineQueryGoldenCasesRoot  = "../../internal/online_cases/query_golden_cases/testdata/cases"
+	onlineQueryGoldenESURL      = "http://127.0.0.1:93012"
+	onlineQueryGoldenInfluxHost = "127.0.0.1"
+	onlineQueryGoldenInfluxPort = 12312
 )
 
-// onlineVMGoldenCase 描述一条 VM golden case 在本地测试里需要补齐的路由信息。
-// request.json 只保存用户入口请求；线上 router/metadata 不会在本地自动存在，
-// 所以这里用最小 router fixture 复原“这条线上查询当时应该路由到哪个 VM RT/集群/字段”。
-type onlineVMGoldenCase struct {
-	Name              string
-	SpaceUID          string
-	QuerySource       string
-	TenantID          string
-	TableID           string
-	ResultTableID     string
-	StorageID         int64
-	StorageCluster    string
-	Measurement       string
-	Fields            []string
-	MeasurementType   string
-	DataLabel         string
-	WantResultTableID string
+type onlineQueryGoldenCase struct {
+	ID      string `yaml:"id"`
+	Storage string `yaml:"storage"`
+	Enabled *bool  `yaml:"enabled"`
+	Files   struct {
+		Request      string `yaml:"request"`
+		Route        string `yaml:"route"`
+		Dependencies string `yaml:"dependencies"`
+		ExpectOutput string `yaml:"expect_outputs"`
+	} `yaml:"files"`
+	caseDir string
 }
 
-type onlineVMGoldenHTTPRequest struct {
-	Method  string                 `json:"method"`
-	Path    string                 `json:"path"`
-	Headers map[string]string      `json:"headers"`
-	Body    structured.QueryPromQL `json:"body"`
+type onlineQueryGoldenHTTPRequest struct {
+	Method  string            `json:"method"`
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers"`
+	Body    json.RawMessage   `json:"body"`
 }
 
-type onlineVMGoldenExpect struct {
-	Method  string `json:"method"`
-	URLPath string `json:"url_path"`
-	Body    struct {
-		PreferStorage string                 `json:"prefer_storage"`
-		SQL           onlineVMGoldenQuerySQL `json:"sql"`
-	} `json:"body"`
+type onlineQueryGoldenRoute struct {
+	SpaceUID           string                           `json:"space_uid"`
+	ResultTables       []*ir.SpaceResultTable           `json:"result_tables"`
+	ResultTableDetails map[string]*ir.ResultTableDetail `json:"result_table_details"`
+	DataLabels         map[string]ir.ResultTableList    `json:"data_labels"`
+	Storages           map[string]struct {
+		Type string `json:"type"`
+	} `json:"storages"`
+	MustVMTableIDs []string `json:"must_vm_table_ids"`
 }
 
-type onlineVMGoldenBKBaseRequest struct {
-	PreferStorage string `json:"prefer_storage"`
-	SQL           string `json:"sql"`
+type onlineQueryGoldenDependencies struct {
+	VM struct {
+		ResultType string `json:"result_type"`
+		Result     any    `json:"result"`
+	} `json:"vm"`
+	BKSQL struct {
+		Schema []map[string]any `json:"schema"`
+		Result []map[string]any `json:"result"`
+	} `json:"bksql"`
+	Elasticsearch struct {
+		Mapping json.RawMessage `json:"mapping"`
+		Search  json.RawMessage `json:"search"`
+	} `json:"elasticsearch"`
+	InfluxDB json.RawMessage `json:"influxdb"`
 }
 
-type onlineVMGoldenQuerySQL struct {
-	APIType               string            `json:"api_type"`
-	ClusterName           string            `json:"cluster_name"`
-	APIParams             onlineVMGoldenAPI `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list,omitempty"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
+type onlineQueryGoldenOutput struct {
+	Backend string              `json:"backend"`
+	Method  string              `json:"method"`
+	Path    string              `json:"path"`
+	Query   map[string][]string `json:"query,omitempty"`
+	Body    any                 `json:"body,omitempty"`
 }
 
-type onlineVMGoldenAPI struct {
-	Query   string `json:"query"`
-	Start   int64  `json:"start"`
-	End     int64  `json:"end"`
-	Step    int64  `json:"step"`
-	NoCache int    `json:"nocache"`
+type onlineQueryGoldenRecorder struct {
+	mu      sync.Mutex
+	outputs []onlineQueryGoldenOutput
 }
 
-func TestOnlineVMQueryGoldenCaseRealPath(t *testing.T) {
-	// 新增 VM case 时，优先新增 testdata/cases/vm/<case_name>/ 下的三个文件：
-	// case.yaml、request.json、expect.downstream.json。
-	// 然后在这个 cases 列表里补一项对应的本地 router fixture 信息即可，不需要复制测试函数。
-	cases := []onlineVMGoldenCase{
-		{
-			Name:              "vm_query_builder_real_001",
-			SpaceUID:          "bksaas__ai-todq-report",
-			QuerySource:       "strategy",
-			TenantID:          "system",
-			TableID:           "pushgateway_rabbitmq_cluster.group3",
-			ResultTableID:     "100147_vm_hgateway_rabbitmq_cluster_group3",
-			StorageID:         2,
-			StorageCluster:    "monitor-1",
-			Measurement:       "group3",
-			Fields:            []string{"rabbitmq_instance_queue_messages"},
-			MeasurementType:   "bk_split_measurement",
-			DataLabel:         "pushgateway_rabbitmq_cluster",
-			WantResultTableID: "pushgateway_rabbitmq_cluster.group3",
-		},
-	}
+func (r *onlineQueryGoldenRecorder) add(output onlineQueryGoldenOutput) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.outputs = append(r.outputs, output)
+}
 
-	ctx := metadata.InitHashID(context.Background())
-	mock.Init()
-	promql.MockEngine()
-	influxdb.MockSpaceRouter(ctx)
-	mockOnlineVMGoldenMustVMFeatureFlag(t, ctx, cases)
+func (r *onlineQueryGoldenRecorder) snapshot() []onlineQueryGoldenOutput {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]onlineQueryGoldenOutput(nil), r.outputs...)
+}
+
+func TestOnlineQueryGoldenCases(t *testing.T) {
+	cases := loadOnlineQueryGoldenCases(t)
+	require.NotEmpty(t, cases)
+	setupOnlineQueryGoldenEnvironment(t, cases)
 
 	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			runOnlineVMGoldenCase(t, ctx, tc)
+		t.Run(tc.ID, func(t *testing.T) {
+			runOnlineQueryGoldenCase(t, tc)
 		})
 	}
 }
 
-func runOnlineVMGoldenCase(t *testing.T, ctx context.Context, tc onlineVMGoldenCase) {
+func setupOnlineQueryGoldenEnvironment(t *testing.T, cases []onlineQueryGoldenCase) {
 	t.Helper()
-	// 先补本地路由元数据，再设置用户空间。
-	// HandlerQueryPromQL 内部会根据 metadata.GetUser(ctx).SpaceUID 决定从哪个空间路由表找 RT。
-	addOnlineVMGoldenRouterFixture(t, ctx, tc)
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	promql.MockEngine()
+	influxdb.MockSpaceRouter(ctx)
+	mockOnlineQueryGoldenFeatureFlag(t, ctx, collectOnlineQueryGoldenMustVMTableIDs(t, cases))
+	t.Cleanup(func() {
+		mockOnlineQueryGoldenFeatureFlag(t, ctx, nil)
+	})
+}
+
+func runOnlineQueryGoldenCase(t *testing.T, tc onlineQueryGoldenCase) {
+	t.Helper()
+
+	expected := readOnlineQueryGoldenJSON[[]onlineQueryGoldenOutput](t, tc.caseDir, tc.Files.ExpectOutput)
+	actual := captureOnlineQueryGoldenOutputs(t, tc, nil)
+	require.Equal(t, canonicalOnlineQueryGoldenOutputs(t, expected), canonicalOnlineQueryGoldenOutputs(t, actual))
+}
+
+func captureOnlineQueryGoldenOutputs(
+	t *testing.T, tc onlineQueryGoldenCase, routeOverride *onlineQueryGoldenRoute,
+) []onlineQueryGoldenOutput {
+	t.Helper()
+
+	request := readOnlineQueryGoldenJSON[onlineQueryGoldenHTTPRequest](t, tc.caseDir, tc.Files.Request)
+	route := readOnlineQueryGoldenJSON[onlineQueryGoldenRoute](t, tc.caseDir, tc.Files.Route)
+	if routeOverride != nil {
+		route = *routeOverride
+	}
+	dependencies := readOnlineQueryGoldenJSON[onlineQueryGoldenDependencies](t, tc.caseDir, tc.Files.Dependencies)
+	if tc.Storage == metadata.InfluxDBStorageType {
+		require.NotEmpty(t, dependencies.InfluxDB)
+		require.True(t, json.Valid(dependencies.InfluxDB))
+	}
+
+	ctx := metadata.InitHashID(context.Background())
+	restoreInfluxRouter := useOnlineQueryGoldenInfluxRouter(tc.Storage)
+	defer restoreInfluxRouter()
+	applyOnlineQueryGoldenRoute(t, ctx, route)
 	metadata.SetUser(ctx, &metadata.User{
-		Key:      tc.QuerySource,
-		SpaceUID: tc.SpaceUID,
-		TenantID: tc.TenantID,
+		Key:      request.Headers["Bk-Query-Source"],
+		SpaceUID: request.Headers["X-Bk-Scope-Space-Uid"],
+		TenantID: request.Headers["X-Bk-Tenant-Id"],
 	})
 
-	caseDir := filepath.Join(onlineVMGoldenCasesRoot, tc.Name)
-	// reqCase 是真实入口请求；expect 是这条请求期望生成的下游 VM query_sync payload。
-	reqCase := loadOnlineVMGoldenRequest(t, caseDir)
-	expect := loadOnlineVMGoldenExpect(t, caseDir)
-	require.Equal(t, http.MethodPost, reqCase.Method)
-	require.Equal(t, http.MethodPost, expect.Method)
-	require.Equal(t, "/query/ts/promql", reqCase.Path)
-	require.Equal(t, "vm", expect.Body.PreferStorage)
+	recorder := &onlineQueryGoldenRecorder{}
+	registerOnlineQueryGoldenResponders(t, dependencies, recorder)
+	defer unregisterOnlineQueryGoldenResponders()
 
-	var captured onlineVMGoldenBKBaseRequest
-	// 拦截发往 BKBase query_sync 的 HTTP 请求。
-	// 测试不关心真实下游响应，只关心 UQ 实际构造出的 prefer_storage 和 sql。
-	registerOnlineVMGoldenQuerySyncResponder(t, &captured)
-
-	body, err := json.Marshal(reqCase.Body)
+	req, err := http.NewRequestWithContext(ctx, request.Method, request.Path, bytes.NewReader(request.Body))
 	require.NoError(t, err)
-	req, err := http.NewRequestWithContext(ctx, reqCase.Method, reqCase.Path, bytes.NewReader(body))
-	require.NoError(t, err)
-	for k, v := range reqCase.Headers {
-		req.Header.Set(k, v)
+	for key, value := range request.Headers {
+		req.Header.Set(key, value)
 	}
 
 	gin.SetMode(gin.TestMode)
 	w := &Writer{}
-	HandlerQueryPromQL(&gin.Context{
-		Request: req,
-		Writer:  w,
+	c := &gin.Context{Request: req, Writer: w}
+	switch request.Path {
+	case "/query/ts/promql":
+		HandlerQueryPromQL(c)
+	case "/query/ts":
+		HandlerQueryTs(c)
+	case "/query/ts/raw":
+		HandlerQueryRaw(c)
+	default:
+		t.Fatalf("unsupported golden request path %q", request.Path)
+	}
+
+	assertOnlineQueryGoldenResponseSucceeded(t, w.body())
+	return recorder.snapshot()
+}
+
+func TestOnlineQueryGoldenSegmentedRouteControlsFanOut(t *testing.T) {
+	cases := loadOnlineQueryGoldenCases(t)
+	setupOnlineQueryGoldenEnvironment(t, cases)
+
+	var tc onlineQueryGoldenCase
+	for _, candidate := range cases {
+		if candidate.ID == "doris_es_segmented_multi_output_001" {
+			tc = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, tc.ID)
+
+	route := readOnlineQueryGoldenJSON[onlineQueryGoldenRoute](t, tc.caseDir, tc.Files.Route)
+	removedESSegment := false
+	for _, detail := range route.ResultTableDetails {
+		records := detail.StorageClusterRecords[:0]
+		for _, record := range detail.StorageClusterRecords {
+			if record.StorageType == metadata.ElasticsearchStorageType {
+				removedESSegment = true
+				continue
+			}
+			records = append(records, record)
+		}
+		detail.StorageClusterRecords = records
+	}
+	require.True(t, removedESSegment)
+
+	outputs := captureOnlineQueryGoldenOutputs(t, tc, &route)
+	require.Len(t, outputs, 2)
+	for _, output := range outputs {
+		require.Equal(t, "bkbase", output.Backend)
+	}
+}
+
+func loadOnlineQueryGoldenCases(t *testing.T) []onlineQueryGoldenCase {
+	t.Helper()
+
+	var cases []onlineQueryGoldenCase
+	err := filepath.WalkDir(onlineQueryGoldenCasesRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Name() != "case.yaml" {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var tc onlineQueryGoldenCase
+		if err := yaml.Unmarshal(content, &tc); err != nil {
+			return err
+		}
+		if tc.Enabled != nil && !*tc.Enabled {
+			return nil
+		}
+		tc.caseDir = filepath.Dir(path)
+		cases = append(cases, tc)
+		return nil
 	})
-	require.JSONEq(t, fmt.Sprintf(`{"series":[],"is_partial":false,"result_table_id":["%s"]}`, tc.WantResultTableID), w.body())
-
-	// golden 对比点：
-	// captured 来自 httpmock 截获到的真实下游请求；
-	// expect 来自 expect.downstream.json。
-	// 如果后续有人改了 VM 路由、RT 展开、filter 拼接或 query builder，
-	// 导致最终下发的 query_sync sql 变化，这里会直接失败。
-	require.Equal(t, expect.Body.PreferStorage, captured.PreferStorage)
-	var actualSQL onlineVMGoldenQuerySQL
-	require.NoError(t, json.Unmarshal([]byte(captured.SQL), &actualSQL))
-	require.Equal(t, expect.Body.SQL, actualSQL)
+	require.NoError(t, err)
+	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
+	return cases
 }
 
-func loadOnlineVMGoldenRequest(t *testing.T, caseDir string) onlineVMGoldenHTTPRequest {
+func readOnlineQueryGoldenJSON[T any](t *testing.T, caseDir, name string) T {
 	t.Helper()
-	var req onlineVMGoldenHTTPRequest
-	readOnlineVMGoldenJSON(t, caseDir, "request.json", &req)
-	return req
-}
 
-func loadOnlineVMGoldenExpect(t *testing.T, caseDir string) onlineVMGoldenExpect {
-	t.Helper()
-	var expect onlineVMGoldenExpect
-	readOnlineVMGoldenJSON(t, caseDir, "expect.downstream.json", &expect)
-	return expect
-}
-
-func readOnlineVMGoldenJSON(t *testing.T, caseDir, name string, dst any) {
-	t.Helper()
+	var value T
 	content, err := os.ReadFile(filepath.Join(caseDir, name))
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(content, dst))
+	require.NoError(t, json.Unmarshal(content, &value))
+	return value
 }
 
-func addOnlineVMGoldenRouterFixture(t *testing.T, ctx context.Context, tc onlineVMGoldenCase) {
+func collectOnlineQueryGoldenMustVMTableIDs(t *testing.T, cases []onlineQueryGoldenCase) []string {
 	t.Helper()
+
+	var tableIDs []string
+	for _, tc := range cases {
+		route := readOnlineQueryGoldenJSON[onlineQueryGoldenRoute](t, tc.caseDir, tc.Files.Route)
+		tableIDs = append(tableIDs, route.MustVMTableIDs...)
+	}
+	sort.Strings(tableIDs)
+	return tableIDs
+}
+
+func applyOnlineQueryGoldenRoute(t *testing.T, ctx context.Context, fixture onlineQueryGoldenRoute) {
+	t.Helper()
+
 	router, err := influxdb.GetSpaceTsDbRouter()
 	require.NoError(t, err)
-
-	space := router.GetSpace(ctx, tc.SpaceUID)
-	if space == nil {
-		space = make(ir.Space)
+	space := make(ir.Space, len(fixture.ResultTables))
+	for _, resultTable := range fixture.ResultTables {
+		space[resultTable.TableId] = resultTable
 	}
-	space[tc.TableID] = &ir.SpaceResultTable{
-		TableId: tc.TableID,
+	require.NoError(t, router.Add(ctx, ir.SpaceToResultTableKey, fixture.SpaceUID, &space))
+	for tableID, detail := range fixture.ResultTableDetails {
+		require.NoError(t, router.Add(ctx, ir.ResultTableDetailKey, tableID, detail))
 	}
-	require.NoError(t, router.Add(ctx, ir.SpaceToResultTableKey, tc.SpaceUID, &space))
-
-	// ResultTableDetail 是 query builder 生成 VM expand 的关键来源。
-	// BuildMetadataQuery 会用这里的 VmRt、Fields、MeasurementType 等信息，
-	// 拼出 metric_filter_condition 和 result_table_list。
-	require.NoError(t, router.Add(ctx, ir.ResultTableDetailKey, tc.TableID, &ir.ResultTableDetail{
-		StorageId:       tc.StorageID,
-		StorageName:     tc.StorageCluster,
-		StorageType:     metadata.VictoriaMetricsStorageType,
-		ClusterName:     tc.StorageCluster,
-		TableId:         tc.TableID,
-		Measurement:     tc.Measurement,
-		VmRt:            tc.ResultTableID,
-		Fields:          tc.Fields,
-		MeasurementType: tc.MeasurementType,
-		DataLabel:       tc.DataLabel,
-	}))
-}
-
-func mockOnlineVMGoldenMustVMFeatureFlag(t *testing.T, ctx context.Context, cases []onlineVMGoldenCase) {
-	t.Helper()
-	// must-vm-query 决定这些 table_id 在本地测试里强制走 VM 直查路径。
-	// 这里把 cases 中声明的 table_id 都加入 feature flag，避免新增 case 后还走到 InfluxDB/Prometheus mock 路径。
-	tableIDs := []string{"result_table.vm", "result_table.k8s"}
-	for _, tc := range cases {
-		tableIDs = append(tableIDs, tc.TableID)
+	for dataLabel, resultTables := range fixture.DataLabels {
+		resultTables := resultTables
+		require.NoError(t, router.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &resultTables))
 	}
 
-	mustVMTableIDs, err := json.Marshal(tableIDs)
-	require.NoError(t, err)
-	mustVMQuery, err := json.Marshal(fmt.Sprintf("tableID in %s", string(mustVMTableIDs)))
-	require.NoError(t, err)
-	require.NoError(t, featureFlag.MockFeatureFlag(ctx, `{
-		"bk-data-table-id-auth": {
-			"variations": {
-				"true": true,
-				"false": false
-			},
-			"targeting": [{
-				"query": "spaceUID in [\"bkdata\"]",
-				"percentage": {
-					"false": 100
-				}
-			}],
-			"defaultRule": {
-				"variation": "true"
-			}
-		},
-		"jwt-auth": {
-			"variations": {
-				"true": true,
-				"false": false
-			},
-			"targeting": [],
-			"defaultRule": {
-				"variation": "true"
-			}
-		},
-		"must-vm-query": {
-			"variations": {
-				"true": true,
-				"false": false
-			},
-			"targeting": [
-				{
-					"query": `+string(mustVMQuery)+`,
-					"percentage": {
-						"true": 100,
-						"false": 0
-					}
-				},
-				{
-					"query": "tableID in [\"system.cpu_detail\", \"system.disk\"]",
-					"percentage": {
-						"true": 100,
-						"false": 0
-					}
-				}
-			],
-			"defaultRule": {
-				"variation": "false"
-			}
+	for storageID, fixtureStorage := range fixture.Storages {
+		storage := &tsdb.Storage{Type: fixtureStorage.Type}
+		switch fixtureStorage.Type {
+		case metadata.ElasticsearchStorageType:
+			storage.Address = onlineQueryGoldenESURL
+		case metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType:
+			storage.Address = mock.BkBaseUrl
 		}
-	}`))
+		tsdb.SetStorage(storageID, storage)
+	}
 }
 
-func registerOnlineVMGoldenQuerySyncResponder(t *testing.T, captured *onlineVMGoldenBKBaseRequest) {
+func useOnlineQueryGoldenInfluxRouter(storage string) func() {
+	if storage != metadata.InfluxDBStorageType {
+		return func() {}
+	}
+	influxdb.MockRouterWithHostInfo(ir.HostInfo{
+		"default": &ir.Host{
+			DomainName: onlineQueryGoldenInfluxHost,
+			Port:       onlineQueryGoldenInfluxPort,
+			Protocol:   "http",
+		},
+	})
+	return func() {
+		influxdb.MockRouterWithHostInfo(ir.HostInfo{
+			"default": &ir.Host{DomainName: "127.0.0.1", Port: 12302, Protocol: "http"},
+		})
+	}
+}
+
+func registerOnlineQueryGoldenResponders(
+	t *testing.T, dependencies onlineQueryGoldenDependencies, recorder *onlineQueryGoldenRecorder,
+) {
 	t.Helper()
-	httpmock.RegisterResponder(http.MethodPost, mock.BkBaseUrl, func(r *http.Request) (*http.Response, error) {
-		// vmQuery 发给 BKBase 的 body 外层包含 prefer_storage 和 sql；
-		// sql 本身是再次 JSON 编码后的 VM ParamsQueryRange。
-		content, err := io.ReadAll(r.Body)
+
+	httpmock.RegisterMatcherResponder(
+		http.MethodPost,
+		mock.BkBaseUrl,
+		onlineQueryGoldenRequestMatcher(),
+		func(request *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				return nil, err
+			}
+			normalized, err := normalizeOnlineQueryGoldenBKBaseBody(body)
+			if err != nil {
+				return nil, err
+			}
+			recorder.add(onlineQueryGoldenOutput{
+				Backend: "bkbase",
+				Method:  request.Method,
+				Path:    "/query_sync/",
+				Body:    normalized,
+			})
+
+			sql, _ := normalized["sql"].(string)
+			if _, ok := normalized["sql"].(map[string]any); ok {
+				return onlineQueryGoldenVMResponse(dependencies)
+			}
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SHOW ") ||
+				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "DESC ") {
+				return onlineQueryGoldenBKSQLResponse(dependencies.BKSQL.Schema)
+			}
+			return onlineQueryGoldenBKSQLResponse(dependencies.BKSQL.Result)
+		},
+	)
+
+	httpmock.RegisterResponder(http.MethodHead, onlineQueryGoldenESURL, httpmock.NewStringResponder(http.StatusOK, ""))
+	esURLPattern := "=~^" + regexp.QuoteMeta(onlineQueryGoldenESURL) + "/"
+	httpmock.RegisterResponder(http.MethodGet, esURLPattern, func(request *http.Request) (*http.Response, error) {
+		return onlineQueryGoldenESResponse(request, dependencies, recorder)
+	})
+	httpmock.RegisterResponder(http.MethodPost, esURLPattern, func(request *http.Request) (*http.Response, error) {
+		return onlineQueryGoldenESResponse(request, dependencies, recorder)
+	})
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		fmt.Sprintf("http://%s:%d/query", onlineQueryGoldenInfluxHost, onlineQueryGoldenInfluxPort),
+		func(request *http.Request) (*http.Response, error) {
+			return onlineQueryGoldenInfluxDBResponse(request, dependencies, recorder)
+		},
+	)
+}
+
+func unregisterOnlineQueryGoldenResponders() {
+	httpmock.RegisterMatcherResponder(
+		http.MethodPost, mock.BkBaseUrl, onlineQueryGoldenRequestMatcher(), nil,
+	)
+	httpmock.RegisterResponder(http.MethodHead, onlineQueryGoldenESURL, nil)
+	esURLPattern := "=~^" + regexp.QuoteMeta(onlineQueryGoldenESURL) + "/"
+	httpmock.RegisterResponder(http.MethodGet, esURLPattern, nil)
+	httpmock.RegisterResponder(http.MethodPost, esURLPattern, nil)
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		fmt.Sprintf("http://%s:%d/query", onlineQueryGoldenInfluxHost, onlineQueryGoldenInfluxPort),
+		nil,
+	)
+}
+
+func onlineQueryGoldenRequestMatcher() httpmock.Matcher {
+	return httpmock.NewMatcher("uq-golden-request", func(request *http.Request) bool {
+		return metadata.GetUser(request.Context()).Source == "golden"
+	})
+}
+
+func normalizeOnlineQueryGoldenBKBaseBody(content []byte) (map[string]any, error) {
+	var body map[string]any
+	if err := json.Unmarshal(content, &body); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{
+		"bk_app_code", "bk_username", "bkdata_authentication_method", "bkdata_data_token", "access_token",
+	} {
+		delete(body, key)
+	}
+	if sql, ok := body["sql"].(string); ok {
+		var embedded map[string]any
+		if json.Unmarshal([]byte(sql), &embedded) == nil {
+			body["sql"] = embedded
+		}
+	}
+	return body, nil
+}
+
+func onlineQueryGoldenVMResponse(dependencies onlineQueryGoldenDependencies) (*http.Response, error) {
+	return httpmock.NewJsonResponse(http.StatusOK, map[string]any{
+		"result":  true,
+		"message": "OK",
+		"code":    "00",
+		"data": map[string]any{"list": []any{map[string]any{
+			"status": "success", "isPartial": false,
+			"data": map[string]any{"resultType": dependencies.VM.ResultType, "result": dependencies.VM.Result},
+		}}},
+	})
+}
+
+func onlineQueryGoldenBKSQLResponse(list []map[string]any) (*http.Response, error) {
+	return httpmock.NewJsonResponse(http.StatusOK, map[string]any{
+		"result":  true,
+		"message": "OK",
+		"code":    "00",
+		"data":    map[string]any{"list": list, "totalRecords": len(list)},
+		"errors":  nil,
+	})
+}
+
+func onlineQueryGoldenESResponse(
+	request *http.Request, dependencies onlineQueryGoldenDependencies, recorder *onlineQueryGoldenRecorder,
+) (*http.Response, error) {
+	var body any
+	if request.Body != nil {
+		content, err := io.ReadAll(request.Body)
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal(content, captured); err != nil {
-			return nil, err
-		}
-		return httpmock.NewStringResponse(http.StatusOK, `{
-			"result": true,
-			"message": "OK",
-			"code": "00",
-			"data": {
-				"list": [{
-					"status": "success",
-					"isPartial": false,
-					"data": {
-						"resultType": "matrix",
-						"result": []
-					}
-				}]
+		if len(bytes.TrimSpace(content)) > 0 {
+			if err := json.Unmarshal(content, &body); err != nil {
+				return nil, err
 			}
-		}`), nil
+		}
+	}
+	recorder.add(onlineQueryGoldenOutput{
+		Backend: "elasticsearch",
+		Method:  request.Method,
+		Path:    request.URL.Path,
+		Query:   cloneOnlineQueryGoldenQuery(request.URL.Query()),
+		Body:    body,
 	})
+
+	response := dependencies.Elasticsearch.Search
+	if request.Method == http.MethodGet {
+		response = dependencies.Elasticsearch.Mapping
+	}
+	if len(response) == 0 {
+		response = json.RawMessage(`{}`)
+	}
+	return httpmock.NewBytesResponse(http.StatusOK, response), nil
+}
+
+func onlineQueryGoldenInfluxDBResponse(
+	request *http.Request, dependencies onlineQueryGoldenDependencies, recorder *onlineQueryGoldenRecorder,
+) (*http.Response, error) {
+	recorder.add(onlineQueryGoldenOutput{
+		Backend: "influxdb",
+		Method:  request.Method,
+		Path:    request.URL.Path,
+		Query:   cloneOnlineQueryGoldenQuery(request.URL.Query()),
+	})
+	response := dependencies.InfluxDB
+	if len(response) == 0 {
+		response = json.RawMessage(`{"results":[{}]}`)
+	}
+	var payload any
+	if err := json.Unmarshal(response, &payload); err != nil {
+		return nil, err
+	}
+	return httpmock.NewJsonResponse(http.StatusOK, payload)
+}
+
+func cloneOnlineQueryGoldenQuery(values url.Values) map[string][]string {
+	query := make(map[string][]string, len(values))
+	for key, value := range values {
+		switch key {
+		case "u", "p", "token":
+			continue
+		}
+		query[key] = append([]string(nil), value...)
+		sort.Strings(query[key])
+	}
+	if len(query) == 0 {
+		return nil
+	}
+	return query
+}
+
+func assertOnlineQueryGoldenResponseSucceeded(t *testing.T, content string) {
+	t.Helper()
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &response), content)
+	status, ok := response["status"].(map[string]any)
+	if !ok {
+		return
+	}
+	if code, _ := status["code"].(string); code != "" {
+		t.Fatalf("UQ handler failed: %s", content)
+	}
+}
+
+func canonicalOnlineQueryGoldenOutputs(t *testing.T, outputs []onlineQueryGoldenOutput) []string {
+	t.Helper()
+
+	canonical := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		normalizeOnlineQueryGoldenOutput(&output)
+		content, err := json.Marshal(output)
+		require.NoError(t, err)
+		canonical = append(canonical, string(content))
+	}
+	sort.Strings(canonical)
+	return canonical
+}
+
+func normalizeOnlineQueryGoldenOutput(output *onlineQueryGoldenOutput) {
+	if output.Backend != "bkbase" {
+		return
+	}
+	body, ok := output.Body.(map[string]any)
+	if !ok {
+		return
+	}
+	sql, ok := body["sql"].(map[string]any)
+	if !ok {
+		return
+	}
+	conditions, ok := sql["metric_filter_condition"].(map[string]any)
+	if !ok {
+		return
+	}
+	for reference, value := range conditions {
+		expression, ok := value.(string)
+		if !ok {
+			continue
+		}
+		clauses := strings.Split(expression, " or ")
+		sort.Strings(clauses)
+		conditions[reference] = strings.Join(clauses, " or ")
+	}
+}
+
+func TestCanonicalOnlineQueryGoldenOutputsPreservesMultiplicity(t *testing.T) {
+	output := onlineQueryGoldenOutput{Backend: "bkbase", Method: http.MethodPost, Path: "/query_sync/"}
+	single := canonicalOnlineQueryGoldenOutputs(t, []onlineQueryGoldenOutput{output})
+	duplicates := canonicalOnlineQueryGoldenOutputs(t, []onlineQueryGoldenOutput{output, output})
+
+	require.Equal(t, []string{single[0], single[0]}, duplicates)
+}
+
+func TestCanonicalOnlineQueryGoldenOutputsNormalizesVMRouteConditionOrder(t *testing.T) {
+	output := func(condition string) onlineQueryGoldenOutput {
+		return onlineQueryGoldenOutput{
+			Backend: "bkbase",
+			Method:  http.MethodPost,
+			Path:    "/query_sync/",
+			Body: map[string]any{"sql": map[string]any{
+				"metric_filter_condition": map[string]any{"a": condition},
+			}},
+		}
+	}
+
+	first := canonicalOnlineQueryGoldenOutputs(t, []onlineQueryGoldenOutput{output(`table="a" or table="b"`)})
+	second := canonicalOnlineQueryGoldenOutputs(t, []onlineQueryGoldenOutput{output(`table="b" or table="a"`)})
+	require.Equal(t, first, second)
+}
+
+func mockOnlineQueryGoldenFeatureFlag(t *testing.T, ctx context.Context, tableIDs []string) {
+	t.Helper()
+
+	mustVMTargets := []any{
+		map[string]any{
+			"query":      `tableID in ["result_table.vm", "result_table.k8s"]`,
+			"percentage": map[string]int{"true": 100, "false": 0},
+		},
+		map[string]any{
+			"query":      `tableID in ["system.cpu_detail", "system.disk"]`,
+			"percentage": map[string]int{"true": 100, "false": 0},
+		},
+	}
+	if len(tableIDs) > 0 {
+		mustVMTableIDs, err := json.Marshal(tableIDs)
+		require.NoError(t, err)
+		mustVMTargets = append(mustVMTargets, map[string]any{
+			"query":      fmt.Sprintf("tableID in %s", string(mustVMTableIDs)),
+			"percentage": map[string]int{"true": 100, "false": 0},
+		})
+	}
+
+	flags := map[string]any{
+		"bk-data-table-id-auth": map[string]any{
+			"variations": map[string]bool{"true": true, "false": false},
+			"targeting": []any{map[string]any{
+				"query":      `spaceUID in ["bkdata"]`,
+				"percentage": map[string]int{"false": 100},
+			}},
+			"defaultRule": map[string]string{"variation": "true"},
+		},
+		"jwt-auth": map[string]any{
+			"variations":  map[string]bool{"true": true, "false": false},
+			"targeting":   []any{},
+			"defaultRule": map[string]string{"variation": "true"},
+		},
+		"must-vm-query": map[string]any{
+			"variations":  map[string]bool{"true": true, "false": false},
+			"targeting":   mustVMTargets,
+			"defaultRule": map[string]string{"variation": "false"},
+		},
+	}
+	content, err := json.Marshal(flags)
+	require.NoError(t, err)
+	require.NoError(t, featureFlag.MockFeatureFlag(ctx, string(content)))
 }

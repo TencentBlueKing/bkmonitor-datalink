@@ -12,6 +12,7 @@ package query_golden_cases
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,30 +35,38 @@ var (
 		"bkdata_authentication_method": {},
 		"bkdata_data_token":            {},
 	}
+	sensitiveQueryGoldenSourceKeyNames = map[string]struct{}{
+		"biz_id":       {},
+		"environment":  {},
+		"sampled_from": {},
+		"source_case":  {},
+	}
 
 	sensitiveKeyAssignmentPattern = regexp.MustCompile(`(?im)(?:^|\\?"|['\s,{])(?:access[_-]?token|app[_-]?secret|authorization|bk[_-]?ticket|bk[_-]?token|cookie|x-bkapi-authorization|x-bkbase-authorization|bkdata[_-]?authentication[_-]?method|bkdata[_-]?data[_-]?token)(?:\\?"|['\s])*\s*[:=]`)
 	sensitiveAuthorizationPattern = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`)
 	sensitiveIPv4Pattern          = regexp.MustCompile(`\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`)
+	sensitiveDomainPattern        = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|cn|net|org|io|internal|local|invalid)\b`)
+	queryGoldenFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 type queryGoldenCase struct {
-	ID           string   `yaml:"id"`
-	Storage      string   `yaml:"storage"`
-	Enabled      *bool    `yaml:"enabled"`
-	GoldenStatus string   `yaml:"golden_status"`
-	Tags         []string `yaml:"tags"`
-	Notes        []string `yaml:"notes"`
-	Source       struct {
-		Environment string `yaml:"environment"`
-		BizID       string `yaml:"biz_id"`
-		SampledFrom string `yaml:"sampled_from"`
+	ID             string   `yaml:"id"`
+	Storage        string   `yaml:"storage"`
+	Enabled        *bool    `yaml:"enabled"`
+	ShapeSignature string   `yaml:"shape_signature"`
+	Tags           []string `yaml:"tags"`
+	Notes          []string `yaml:"notes"`
+	Source         struct {
+		Kind        string `yaml:"kind"`
+		OutputsKind string `yaml:"outputs_kind"`
 		SampledAt   string `yaml:"sampled_at"`
-		SourceCase  string `yaml:"source_case"`
+		Fingerprint string `yaml:"fingerprint"`
 	} `yaml:"source"`
 	Files struct {
-		Request            string `yaml:"request"`
-		ExpectDownstream   string `yaml:"expect_downstream"`
-		ExpectDownstreamTy string `yaml:"expect_downstream_type"`
+		Request      string `yaml:"request"`
+		Route        string `yaml:"route"`
+		Dependencies string `yaml:"dependencies"`
+		ExpectOutput string `yaml:"expect_outputs"`
 	} `yaml:"files"`
 }
 
@@ -74,11 +83,6 @@ func TestLocalQueryGoldenCasesDataset(t *testing.T) {
 }
 
 func TestFindSensitiveQueryGoldenContent(t *testing.T) {
-	ipWhitelist := []*regexp.Regexp{
-		regexp.MustCompile(`^127\.`),
-		regexp.MustCompile(`^192\.168\.`),
-	}
-
 	tests := []struct {
 		name        string
 		path        string
@@ -103,21 +107,45 @@ func TestFindSensitiveQueryGoldenContent(t *testing.T) {
 			wantFinding: `sensitive assignment`,
 		},
 		{
-			name:        "non whitelisted ip",
+			name:        "non local ip",
 			path:        "expect.downstream.json",
 			content:     `{"server":"11.166.1.2"}`,
-			wantFinding: `non-whitelisted ip "11.166.1.2"`,
+			wantFinding: `non-local ip "11.166.1.2"`,
 		},
 		{
-			name:    "whitelisted ip",
+			name:    "loopback ip",
 			path:    "expect.downstream.json",
 			content: `{"server":"127.0.0.1"}`,
+		},
+		{
+			name:        "private ip",
+			path:        "expect.downstream.json",
+			content:     `{"server":"192.168.1.10"}`,
+			wantFinding: `non-local ip "192.168.1.10"`,
+		},
+		{
+			name:        "raw source environment metadata",
+			path:        "case.yaml",
+			content:     "source:\n  environment: production-a\n  biz_id: '7'\n",
+			wantFinding: `source.environment`,
+		},
+		{
+			name:        "non local url",
+			path:        "route.json",
+			content:     `{"address":"https://query.internal.invalid/api"}`,
+			wantFinding: `non-local URL host`,
+		},
+		{
+			name:        "bare domain",
+			path:        "route.json",
+			content:     `{"address":"query.internal.invalid"}`,
+			wantFinding: `domain "query.internal.invalid"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			findings := findSensitiveQueryGoldenContent(tt.path, tt.content, ipWhitelist)
+			findings := findSensitiveQueryGoldenContent(tt.path, tt.content)
 			if tt.wantFinding == "" {
 				if len(findings) > 0 {
 					t.Fatalf("unexpected sensitive findings: %s", strings.Join(findings, "\n"))
@@ -146,15 +174,16 @@ func assertQueryGoldenCasesDataset(t *testing.T, root string, requireCases bool)
 	}
 
 	seen := make(map[string]string, len(caseDirs))
+	seenShapes := make(map[string]string, len(caseDirs))
 	for _, caseDir := range caseDirs {
 		t.Run(filepath.Base(caseDir), func(t *testing.T) {
 			tc := loadQueryGoldenCase(t, caseDir)
-			assertQueryGoldenCaseMetadata(t, seen, caseDir, tc)
-			expect := assertJSONFile(t, filepath.Join(caseDir, tc.Files.ExpectDownstream))
+			assertQueryGoldenCaseMetadata(t, seen, seenShapes, caseDir, tc)
+			assertJSONFile(t, filepath.Join(caseDir, tc.Files.Request))
+			assertJSONFile(t, filepath.Join(caseDir, tc.Files.Route))
+			assertJSONFile(t, filepath.Join(caseDir, tc.Files.Dependencies))
+			expect := assertJSONFile(t, filepath.Join(caseDir, tc.Files.ExpectOutput))
 			assertStorageExpect(t, tc, expect)
-			if tc.GoldenStatus == "golden_ready" {
-				assertJSONFile(t, filepath.Join(caseDir, tc.Files.Request))
-			}
 			assertNoSensitiveQueryGoldenContent(t, caseDir)
 		})
 	}
@@ -203,7 +232,7 @@ func loadQueryGoldenCase(t *testing.T, caseDir string) queryGoldenCase {
 	return tc
 }
 
-func assertQueryGoldenCaseMetadata(t *testing.T, seen map[string]string, caseDir string, tc queryGoldenCase) {
+func assertQueryGoldenCaseMetadata(t *testing.T, seen, seenShapes map[string]string, caseDir string, tc queryGoldenCase) {
 	t.Helper()
 
 	if tc.ID == "" {
@@ -213,66 +242,138 @@ func assertQueryGoldenCaseMetadata(t *testing.T, seen map[string]string, caseDir
 		t.Fatalf("duplicate case id %s: %s and %s", tc.ID, previous, caseDir)
 	}
 	seen[tc.ID] = caseDir
+	if tc.ShapeSignature == "" {
+		t.Fatalf("%s: shape_signature is required", tc.ID)
+	}
+	if previous, ok := seenShapes[tc.ShapeSignature]; ok {
+		t.Fatalf("duplicate shape_signature %s: %s and %s", tc.ShapeSignature, previous, caseDir)
+	}
+	seenShapes[tc.ShapeSignature] = caseDir
 
 	switch tc.Storage {
-	case "es", "vm", "doris":
+	case "es", "vm", "doris", "tspider", "hdfs", "influxdb":
 	default:
 		t.Fatalf("%s: unexpected storage %q", tc.ID, tc.Storage)
-	}
-	switch tc.GoldenStatus {
-	case "captured_downstream", "golden_ready":
-	default:
-		t.Fatalf("%s: golden_status = %q, want captured_downstream or golden_ready", tc.ID, tc.GoldenStatus)
 	}
 	if len(tc.Tags) == 0 {
 		t.Fatalf("%s: tags are required", tc.ID)
 	}
-	if tc.GoldenStatus == "captured_downstream" && len(tc.Notes) == 0 {
-		t.Fatalf("%s: captured_downstream case should explain what is still missing", tc.ID)
-	}
-	if tc.Source.Environment == "" || tc.Source.BizID == "" ||
-		tc.Source.SampledFrom == "" || tc.Source.SampledAt == "" {
+	if tc.Source.Kind != "production_log" || tc.Source.SampledAt == "" || tc.Source.Fingerprint == "" {
 		t.Fatalf("%s: source is incomplete: %+v", tc.ID, tc.Source)
 	}
-	if tc.Files.ExpectDownstream == "" || tc.Files.ExpectDownstreamTy == "" {
-		t.Fatalf("%s: files.expect_downstream and files.expect_downstream_type are required", tc.ID)
+	switch tc.Source.OutputsKind {
+	case "production_log":
+	case "handler_replay":
+		if !containsQueryGoldenString(tc.Tags, "provisional_output") {
+			t.Fatalf("%s: handler_replay output should be tagged provisional_output", tc.ID)
+		}
+	default:
+		t.Fatalf("%s: unsupported source.outputs_kind %q", tc.ID, tc.Source.OutputsKind)
 	}
-	if tc.GoldenStatus == "golden_ready" && tc.Files.Request == "" {
-		t.Fatalf("%s: golden_ready case should provide files.request", tc.ID)
+	if !queryGoldenFingerprintPattern.MatchString(tc.Source.Fingerprint) {
+		t.Fatalf("%s: source.fingerprint should be sha256:<64 lowercase hex chars>", tc.ID)
 	}
+	if tc.Files.Request == "" || tc.Files.Route == "" || tc.Files.Dependencies == "" || tc.Files.ExpectOutput == "" {
+		t.Fatalf("%s: request, route, dependencies and expect_outputs files are required", tc.ID)
+	}
+}
+
+func containsQueryGoldenString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func assertStorageExpect(t *testing.T, tc queryGoldenCase, expect any) {
 	t.Helper()
+	outputs, ok := expect.([]any)
+	if !ok || len(outputs) == 0 {
+		t.Fatalf("%s: expect.outputs should be a non-empty JSON array", tc.ID)
+	}
+
+	backendCount := make(map[string]int)
+	for index, output := range outputs {
+		root, ok := output.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: expect.outputs[%d] should be a JSON object", tc.ID, index)
+		}
+		backend, ok := root["backend"].(string)
+		if !ok || backend == "" {
+			t.Fatalf("%s: expect.outputs[%d].backend is required", tc.ID, index)
+		}
+		switch backend {
+		case "bkbase", "elasticsearch", "influxdb":
+		default:
+			t.Fatalf("%s: expect.outputs[%d].backend = %q is unsupported", tc.ID, index, backend)
+		}
+		method, ok := root["method"].(string)
+		if !ok || (method != "GET" && method != "POST") {
+			t.Fatalf("%s: expect.outputs[%d].method = %v, want GET or POST", tc.ID, index, root["method"])
+		}
+		path, ok := root["path"].(string)
+		if !ok || !strings.HasPrefix(path, "/") {
+			t.Fatalf("%s: expect.outputs[%d].path should start with /", tc.ID, index)
+		}
+		backendCount[backend]++
+	}
 
 	switch tc.Storage {
 	case "vm":
-		assertVMDownstreamExpect(t, tc, expect)
+		assertVMDownstreamExpect(t, tc, outputs)
+	case "es":
+		assertExpectedBackend(t, tc.ID, backendCount, "elasticsearch")
+	case "doris", "tspider", "hdfs":
+		assertExpectedBackend(t, tc.ID, backendCount, "bkbase")
+	case "influxdb":
+		assertExpectedBackend(t, tc.ID, backendCount, "influxdb")
 	}
 }
 
-func assertVMDownstreamExpect(t *testing.T, tc queryGoldenCase, expect any) {
+func assertExpectedBackend(t *testing.T, caseID string, backendCount map[string]int, backend string) {
+	t.Helper()
+	if backendCount[backend] == 0 {
+		t.Fatalf("%s: expect.outputs should contain backend %q", caseID, backend)
+	}
+}
+
+func assertVMDownstreamExpect(t *testing.T, tc queryGoldenCase, outputs []any) {
 	t.Helper()
 
-	root, ok := expect.(map[string]any)
-	if !ok {
-		t.Fatalf("%s: expect.downstream should be a JSON object", tc.ID)
+	for _, output := range outputs {
+		root, ok := output.(map[string]any)
+		if !ok || root["backend"] != "bkbase" {
+			continue
+		}
+		body, ok := root["body"].(map[string]any)
+		if !ok || body["prefer_storage"] != "vm" {
+			continue
+		}
+		assertVMQueryBody(t, tc.ID, body)
+		return
 	}
-	body := assertMap(t, tc.ID, "body", root["body"])
+	t.Fatalf("%s: expect.outputs should contain a BKBase VM query", tc.ID)
+}
+
+func assertVMQueryBody(t *testing.T, caseID string, body map[string]any) {
+	t.Helper()
+
 	if got := body["prefer_storage"]; got != "vm" {
-		t.Fatalf("%s: body.prefer_storage = %v, want vm", tc.ID, got)
+		t.Fatalf("%s: body.prefer_storage = %v, want vm", caseID, got)
 	}
-	sql := assertMap(t, tc.ID, "body.sql", body["sql"])
+	sql := assertMap(t, caseID, "body.sql", body["sql"])
 	if got := sql["api_type"]; got != "query_range" && got != "query" {
-		t.Fatalf("%s: body.sql.api_type = %v, want query_range or query", tc.ID, got)
+		t.Fatalf("%s: body.sql.api_type = %v, want query_range or query", caseID, got)
 	}
-	apiParams := assertMap(t, tc.ID, "body.sql.api_params", sql["api_params"])
+	apiParams := assertMap(t, caseID, "body.sql.api_params", sql["api_params"])
 	if query, ok := apiParams["query"].(string); !ok || query == "" {
-		t.Fatalf("%s: body.sql.api_params.query is required", tc.ID)
+		t.Fatalf("%s: body.sql.api_params.query is required", caseID)
 	}
 	resultTables, ok := sql["result_table_list"].([]any)
 	if !ok || len(resultTables) == 0 {
-		t.Fatalf("%s: body.sql.result_table_list is required", tc.ID)
+		t.Fatalf("%s: body.sql.result_table_list is required", caseID)
 	}
 }
 
@@ -303,13 +404,8 @@ func assertJSONFile(t *testing.T, path string) any {
 func assertNoSensitiveQueryGoldenContent(t *testing.T, caseDir string) {
 	t.Helper()
 
-	ipWhitelist, err := loadSensitiveIPWhitelist()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var findings []string
-	err = filepath.WalkDir(caseDir, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(caseDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -321,7 +417,7 @@ func assertNoSensitiveQueryGoldenContent(t *testing.T, caseDir string) {
 			return err
 		}
 
-		findings = append(findings, findSensitiveQueryGoldenContent(path, string(content), ipWhitelist)...)
+		findings = append(findings, findSensitiveQueryGoldenContent(path, string(content))...)
 		return nil
 	})
 	if err != nil {
@@ -332,7 +428,7 @@ func assertNoSensitiveQueryGoldenContent(t *testing.T, caseDir string) {
 	}
 }
 
-func findSensitiveQueryGoldenContent(path, content string, ipWhitelist []*regexp.Regexp) []string {
+func findSensitiveQueryGoldenContent(path, content string) []string {
 	var findings []string
 
 	// request/expect 文件通常是 JSON，case.yaml 是 YAML；先按结构化 key 检查，
@@ -350,9 +446,12 @@ func findSensitiveQueryGoldenContent(path, content string, ipWhitelist []*regexp
 		findings = append(findings, fmt.Sprintf("%s: contains authorization value %q", path, match))
 	}
 	for _, ip := range sensitiveIPv4Pattern.FindAllString(content, -1) {
-		if !isWhitelistedSensitiveIP(ip, ipWhitelist) {
-			findings = append(findings, fmt.Sprintf("%s: contains non-whitelisted ip %q", path, ip))
+		if ip != "127.0.0.1" {
+			findings = append(findings, fmt.Sprintf("%s: contains non-local ip %q", path, ip))
 		}
+	}
+	for _, domain := range sensitiveDomainPattern.FindAllString(content, -1) {
+		findings = append(findings, fmt.Sprintf("%s: contains domain %q", path, domain))
 	}
 	return findings
 }
@@ -383,6 +482,9 @@ func findSensitiveStructuredKeys(path string, parents []string, value any) []str
 			if _, ok := sensitiveQueryGoldenKeyNames[normalizeSensitiveQueryGoldenKey(key)]; ok {
 				findings = append(findings, fmt.Sprintf("%s: contains sensitive field %q", path, strings.Join(currentPath, ".")))
 			}
+			if isSensitiveSourceMetadataKey(parents, key) {
+				findings = append(findings, fmt.Sprintf("%s: contains raw source metadata %q", path, strings.Join(currentPath, ".")))
+			}
 			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
 		}
 		return findings
@@ -394,6 +496,9 @@ func findSensitiveStructuredKeys(path string, parents []string, value any) []str
 			if _, ok := sensitiveQueryGoldenKeyNames[normalizeSensitiveQueryGoldenKey(keyText)]; ok {
 				findings = append(findings, fmt.Sprintf("%s: contains sensitive field %q", path, strings.Join(currentPath, ".")))
 			}
+			if isSensitiveSourceMetadataKey(parents, keyText) {
+				findings = append(findings, fmt.Sprintf("%s: contains raw source metadata %q", path, strings.Join(currentPath, ".")))
+			}
 			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
 		}
 		return findings
@@ -404,8 +509,30 @@ func findSensitiveStructuredKeys(path string, parents []string, value any) []str
 			findings = append(findings, findSensitiveStructuredKeys(path, currentPath, child)...)
 		}
 		return findings
+	case string:
+		if parsed, err := url.Parse(typed); err == nil && parsed.IsAbs() && parsed.Hostname() != "" && !isLocalQueryGoldenHost(parsed.Hostname()) {
+			return []string{fmt.Sprintf("%s: contains non-local URL host %q at %q", path, parsed.Hostname(), strings.Join(parents, "."))}
+		}
+		return nil
 	default:
 		return nil
+	}
+}
+
+func isSensitiveSourceMetadataKey(parents []string, key string) bool {
+	if len(parents) == 0 || normalizeSensitiveQueryGoldenKey(parents[0]) != "source" {
+		return false
+	}
+	_, ok := sensitiveQueryGoldenSourceKeyNames[normalizeSensitiveQueryGoldenKey(key)]
+	return ok
+}
+
+func isLocalQueryGoldenHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -421,58 +548,4 @@ func normalizeSensitiveQueryGoldenKey(key string) string {
 	key = strings.Trim(key, `"'`)
 	key = strings.ReplaceAll(key, "-", "_")
 	return key
-}
-
-func loadSensitiveIPWhitelist() ([]*regexp.Regexp, error) {
-	path, err := findRepoFile("scripts/pre_commit/sensitive_info_check/ip_white_list.dat")
-	if err != nil {
-		return nil, err
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var whitelist []*regexp.Regexp
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		pattern, err := regexp.Compile(line)
-		if err != nil {
-			return nil, fmt.Errorf("%s contains invalid ip whitelist pattern %q: %w", path, line, err)
-		}
-		whitelist = append(whitelist, pattern)
-	}
-	return whitelist, nil
-}
-
-func findRepoFile(rel string) (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	for {
-		candidate := filepath.Join(dir, rel)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("cannot find %s from %s", rel, dir)
-		}
-		dir = parent
-	}
-}
-
-func isWhitelistedSensitiveIP(ip string, whitelist []*regexp.Regexp) bool {
-	for _, pattern := range whitelist {
-		if pattern.MatchString(ip) {
-			return true
-		}
-	}
-	return false
 }

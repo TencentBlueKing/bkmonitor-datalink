@@ -1,0 +1,22 @@
+id: es_aggregate_filter_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/count_over_time/sum_by1/condition1/query_string/output_mapping_search
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:04d417ba4ea3a2d379c391bebbb8836af526e97abae6695307e074c4697ff115
+tags:
+  - query_ts_api
+  - aggregation
+  - condition
+  - query_string
+  - production_shape
+notes:
+  - 生产请求仅保留查询结构，空间、索引、字段、条件值均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

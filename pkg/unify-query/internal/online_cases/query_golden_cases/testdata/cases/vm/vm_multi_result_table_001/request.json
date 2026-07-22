@@ -4,11 +4,11 @@
   "headers": {
     "Content-Type": "application/json",
     "Bk-Query-Source": "golden",
-    "X-Bk-Scope-Space-Uid": "bkcc__golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_multi",
     "X-Bk-Tenant-Id": "tenant_golden"
   },
   "body": {
-    "promql": "bkmonitor:demo_metrics:partition_1:requests_total{cluster=\"cluster_1\", namespace=\"namespace_1\", pod=\"pod_1\", service=\"service_1\", status=\"success\", zone=\"zone_1\"}",
+    "promql": "bkmonitor:demo_multi:requests_total{status=\"success\"}",
     "start": "1784701776",
     "end": "1784702076",
     "step": "60s",

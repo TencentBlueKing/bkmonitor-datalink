@@ -1,28 +1,21 @@
 id: vm_query_builder_real_001
 storage: vm
 enabled: true
-golden_status: golden_ready
+shape_signature: promql_range/vector_selector/eq6/route1/vm_query_range/output1
 source:
-  environment: bkop
-  biz_id: "7"
-  sampled_from: bkop_apm_trace_bkmonitor_production
-  sampled_at: "2026-07-20T15:58:04+08:00"
-  source_case: trace_id_redacted/span_handler_query_promql_and_victoria_metrics_query_range
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:c4532b0aac780ccaf2d4bf65daac040752a0928963aefccf0b3a485bdab53e4b
 tags:
-  - vm_query
-  - query_builder
-  - real_online_trace
-  - query_range
   - promql_api
-  - prefer_storage_vm
+  - query_range
   - single_result_table
-  - rabbitmq
+  - production_shape
 notes:
-  - 这条样例来自 bkop APM bkmonitor_production 最近 1 小时内的真实 trace。
-  - request.json 保留 UQ 入口 /query/ts/promql 的脱敏请求体。
-  - expect.downstream.json 保留同一条 trace 中 VM 查询 span 观测到的下游查询关键字段。
+  - 生产请求只保留结构形态；空间、结果表、指标、标签和集群均已一致替换为占位符。
 files:
   request: request.json
-  expect_downstream: expect.downstream.json
-  expect_downstream_type: vm_query_sync_payload
-
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

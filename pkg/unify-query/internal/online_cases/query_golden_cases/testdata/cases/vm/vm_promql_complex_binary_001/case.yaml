@@ -1,0 +1,26 @@
+id: vm_promql_complex_binary_001
+storage: vm
+enabled: true
+shape_signature: promql_range/aggregate_rate2/binary_div/regex_and_negative_matcher/route1/vm_query_range/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:d56568de5235dcd3c62fdcd6692fce09eda9efa2b406ce7cbe275e9932cf3664
+tags:
+  - promql_api
+  - query_range
+  - aggregate
+  - range_selector
+  - binary_expression
+  - multi_reference
+  - regex_matcher
+  - negative_matcher
+  - production_shape
+notes:
+  - 生产请求只保留 PromQL 语法结构；空间、结果表、指标、标签和值均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

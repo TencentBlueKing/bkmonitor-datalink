@@ -267,6 +267,10 @@ func assertQueryGoldenCaseMetadata(t *testing.T, seen, seenShapes map[string]str
 		if !containsQueryGoldenString(tc.Tags, "provisional_output") {
 			t.Fatalf("%s: handler_replay output should be tagged provisional_output", tc.ID)
 		}
+	case "post_fix_handler_replay":
+		if !containsQueryGoldenString(tc.Tags, "post_fix_expected") {
+			t.Fatalf("%s: post_fix_handler_replay output should be tagged post_fix_expected", tc.ID)
+		}
 	default:
 		t.Fatalf("%s: unsupported source.outputs_kind %q", tc.ID, tc.Source.OutputsKind)
 	}

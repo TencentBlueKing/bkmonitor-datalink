@@ -81,6 +81,12 @@
 
 HDFS 查询日志容易被同名指标误命中，因此先扩大本地候选池，再按 SQL 目标结构固定取 20 条。误命中不计入表中。
 
+## 修复驱动扩充
+
+四窗收敛后又从一条生产问题请求中确认了新的组合形态：PromQL range input 包含 8 个 range selector，经解析形成 8 个 reference；每个 reference 只有 1 条 BKSQL 路由，并分别执行 schema 和 aggregate 查询，最终产生 16 个下游请求。该形态新增 `tspider_promql_multi_reference_001`，不改变前述四窗收敛统计。
+
+这条链路中 BKBase 执行端记录为 HDFS，但 UQ 路由的 `measurement` 为空，实际选择的是 TSpider SQL 表达式；因此 case 按 UQ 待测 builder 归入 TSpider，而不是按 BKBase 内部执行设备归入 HDFS。问题发生时的 aggregate SQL 使用 `_timestamp_` 别名分组；修复合入后，golden expected 改为 `MAX(时间桶表达式)` 并按完整时间桶表达式分组，来源标记为 `post_fix_handler_replay`，不把失败 SQL 当作正确基线。
+
 ## InfluxDB 边界
 
 SLI 显示 InfluxDB HTTP 路径仍有流量，但选定 UQ 日志链路中没有形成可稳定关联的 outbound GET 样本。源码会在 InfluxDB 查询 span 中记录查询参数，但对多个历史窗口的定向检索也没有拿到可用 span，因此不宣称其“生产 output 四窗收敛”。当前数据集保留一条来自生产入口形态的 InfluxDB aggregate case，并通过固定 route fixture 和真实 UQ handler 生成、截获 InfluxQL 请求；其 `source.outputs_kind` 明确标为 `handler_replay`。
@@ -99,6 +105,8 @@ one logical request
 ```
 
 控制测试保持 input 不变，只从 fixture 删除 ES 分段，实际输出随即只剩 Doris schema + query 两条。因此该“一进多出”由路由展开和每个后端的前置查询共同导致，不是解析器重复解析。将这份路由固化在 `route.json` 后，线上路由变化不会改变回放结果。
+
+新增的 PromQL 多 reference case 是另一种一进多出：`1 input × 8 parser references × 1 fixed route × 2 BKSQL stages = 16 outputs`。这里 reference 数由 input 解析结构决定，schema/query 两阶段由 BKSQL builder 决定；固定 route 只有一条，不存在路由分段放大。两类 case 共同把解析展开与路由展开分开验证。
 
 ## 收尾状态
 

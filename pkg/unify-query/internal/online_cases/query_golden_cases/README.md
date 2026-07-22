@@ -17,20 +17,22 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 15 个可执行 case。其中 14 个 case 的 input 与 outputs 均来自可关联的生产历史日志；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
+数据集当前包含 16 个可执行 case。其中 13 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；2 个 TSpider case 的 input 和旧行为来自生产证据，expected outputs 在时间桶分组修复合入后由真实 handler 重新回放；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
 | VictoriaMetrics | 3 | 简单 PromQL、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
 | Elasticsearch | 4 | aggregate/raw × 有无 query_string | 生产日志 |
 | Doris | 3 | aggregate、raw、ES→Doris 时间分段路由 | 生产日志 |
-| TSpider | 2 | aggregate、raw | 生产日志 |
+| TSpider | 3 | aggregate、raw、PromQL 8 reference/16 output | 生产日志 + 修复后 handler 回放 |
 | HDFS | 2 | aggregate、raw | 生产日志 |
 | InfluxDB HTTP | 1 | aggregate、条件、group by time/fill | handler 回放，暂定 |
 
 其中 `doris_es_segmented_multi_output_001` 用一个逻辑查询和固定的 ES→Doris 时间分段路由生成 4 个下游请求：Doris schema、Doris query、ES index/mapping、ES search。控制测试保持 input 不变，只移除 ES 分段后输出变为 2 个 Doris 请求，证明该“一进多出”来自路由展开和各后端的前置查询，而不是解析器把一个 reference 拆成多个逻辑查询。
 
 `vm_multi_result_table_001` 则覆盖另一个边界：多个兼容的 VM 结果表会合并为一个 BKBase VM 请求，而不是每条路由记录各发一个请求。
+
+`tspider_promql_multi_reference_001` 来自后续问题修复：一个 PromQL input 解析出 8 个 reference，固定路由为每个 reference 选择同一个 BKSQL 结果表，每个 reference 再产生 schema + aggregate 两个请求，因此完整 output multiset 为 16 条。该 case 同时锁定 TSpider 时间桶必须按完整表达式分组，不能按 SELECT 别名 `_timestamp_` 分组。
 
 生产采样过程、四个时间窗的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
 
@@ -47,7 +49,7 @@ testdata/cases/<storage>/<case_id>/
   expect.outputs.json
 ```
 
-- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签。
+- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签；问题修复导致 expected output 有意变化时使用 `post_fix_handler_replay`，并带 `post_fix_expected` 标签。
 - `request.json`：进入 UQ 的 method、path、保留语义的安全 headers 和 body。
 - `route.json`：空间、结果表、data label、存储类型和时间分段路由 fixture。
 - `dependencies.json`：构造查询所需的最小稳定响应，例如 BKSQL schema、ES mapping 或 InfluxDB 空结果。
@@ -107,3 +109,5 @@ go test ./service/http -run 'TestOnlineQueryGoldenCases|TestOnlineQueryGoldenSeg
 5. 脱敏后加入正式目录，并用真实 handler 校准 `expect.outputs.json`。
 
 采样收敛不是永久封口。后续每个查询解析、路由或 query builder 问题的修复，都必须新增能复现该问题的 case；若新日志出现现有形似不能表达的结构，也应继续扩充。
+
+修复类 case 不把线上失败输出固化为正确答案。其 input、旧 output 数量和失败形态仍来自生产证据；修复合入后，用相同 input、固定 route/dependencies 回放得到新的 expected outputs，并标记为 `post_fix_handler_replay`。只有单纯缺少可关联生产 output 的 case 才使用 provisional `handler_replay`。

@@ -55,7 +55,7 @@ sanitized input
 
 每个正式 case 必须包含：
 
-- `case.yaml`：ID、分类、形似签名、脱敏采样证明、input/output 来源和文件引用；非直接观测的 output 必须显式标记为 provisional。
+- `case.yaml`：ID、分类、形似签名、脱敏采样证明、input/output 来源和文件引用；普通非直接观测 output 必须显式标记为 provisional，已验证问题修复后的 expected output 必须标记为 post-fix handler replay。
 - `request.json`：HTTP method、path、语义请求头和请求 body。
 - `route.json`：本 case 所需的空间路由、结果表详情、数据标签映射和存储类型。
 - `dependencies.json`：为完成查询构造而返回的最小确定性下游响应，例如 Doris/HDFS/TSpider 字段表或 ES mapping。
@@ -73,6 +73,8 @@ sanitized input
 - InfluxDB：HTTP query 参数中的 db、InfluxQL 和稳定控制参数。
 
 每条正式 case 的同一 input 必须产生 1 个或多个 output。比较时允许并发导致的无语义顺序变化，但必须保留重复请求的数量。
+
+修复类 case 的线上失败 output 只作为问题证据，不能作为正确 golden。修复合入后必须使用相同脱敏 input 和固定 fixture 重新回放 expected outputs，并以独立的修复单测证明该 expected 不是对当前实现的无条件追认。
 
 ## 路由与依赖隔离
 

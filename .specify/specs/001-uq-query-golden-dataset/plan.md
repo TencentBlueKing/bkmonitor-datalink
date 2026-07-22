@@ -13,7 +13,7 @@
 
 - 将 case 拆分为 metadata、request、route、dependencies、expected outputs。
 - 取消正式 `captured_downstream` 状态。
-- 将来源信息收敛为脱敏证明和不可逆摘要，并区分 production_log 与 handler_replay output。
+- 将来源信息收敛为脱敏证明和不可逆摘要，并区分 production_log、provisional handler_replay 与 post-fix handler replay output。
 
 验证：协议测试拒绝缺文件、未知 backend、重复 ID/签名和不安全内容。
 
@@ -30,7 +30,7 @@
 
 - 从唯一关联候选中选择每种新形似的代表。
 - 使用统一占位符脱敏 input、route、dependencies 和 output。
-- 在固定基线回放；直接关联到生产 output 的 case 标记为 `production_log`，只能由 handler 回放得到 output 的 case 必须标记为 provisional，且不计入生产采样收敛。
+- 在固定基线回放；直接关联到生产 output 的 case 标记为 `production_log`，只能由 handler 回放得到 output 的普通 case 必须标记为 provisional，且不计入生产采样收敛；问题修复导致 expected 有意变化时标记为 post-fix handler replay，并保留生产失败形态摘要。
 
 验证：每条正式 case 可单独运行，且断网/无实时路由时结果不变。
 

@@ -1,0 +1,20 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "metric_a", "Type": "double"},
+      {"Field": "metric_b", "Type": "double"},
+      {"Field": "metric_c", "Type": "double"},
+      {"Field": "metric_d", "Type": "double"},
+      {"Field": "metric_e", "Type": "double"},
+      {"Field": "metric_f", "Type": "double"},
+      {"Field": "metric_g", "Type": "double"},
+      {"Field": "time_partition", "Type": "varchar"},
+      {"Field": "location", "Type": "varchar"},
+      {"Field": "workload", "Type": "varchar"}
+    ],
+    "result": []
+  }
+}

@@ -90,6 +90,10 @@ type DorisSQLExpr struct {
 	// TSpider 的 MySQL 语法检查不兼容该 CAST 写法。
 	disableTimeBucketCast bool
 
+	// groupTimeBucketByExpr 为 true 时，使用完整时间桶表达式分组。
+	// TSpider 的语义检查不会将 SELECT 别名识别为 GROUP BY 字段。
+	groupTimeBucketByExpr bool
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -263,8 +267,13 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		}
 
-		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
-		groupByFields = append(groupByFields, TimeStamp)
+		if d.groupTimeBucketByExpr {
+			selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, timeField)
+		} else {
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, TimeStamp)
+		}
 
 		// 只有时间聚合的条件下，才可以使用时间聚合排序
 		dimensionSet.Add(FieldTime)

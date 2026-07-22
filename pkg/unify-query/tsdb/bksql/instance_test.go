@@ -1081,7 +1081,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0)",
 		},
 		{
 			name: "tspider single segment aggregate sum by process and user",
@@ -1097,7 +1097,29 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, _timestamp_",
+			expected: "SELECT `process_name`, `user_id`, SUM(`err_count`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `100656_dwd_clouddev_process_monitor_statistics` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `process_name`, `user_id`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0)",
+		},
+		{
+			name: "tspider hourly aggregate groups by time bucket expression",
+			query: &metadata.Query{
+				StorageType: metadata.BkSqlStorageType,
+				DB:          "100680_alpha_server_perf_data",
+				Field:       "sum_Sub8MsFrames",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "sum",
+						Dimensions: []string{"partition_hour", "datacenter", "deployment"},
+						Window:     time.Hour,
+					},
+				},
+				Orders: metadata.Orders{
+					{Name: "_time", Ast: true},
+				},
+				Size: 2000005,
+			},
+			start:    time.UnixMilli(1776905999999),
+			end:      time.UnixMilli(1784685599999),
+			expected: "SELECT `partition_hour`, `datacenter`, `deployment`, SUM(`sum_Sub8MsFrames`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) AS `_timestamp_` FROM `100680_alpha_server_perf_data` WHERE `dtEventTimeStamp` >= 1776905999999 AND `dtEventTimeStamp` < 1784685599999 AND `dtEventTime` >= '2026-04-23 08:59:59' AND `dtEventTime` <= '2026-07-22 10:00:00' AND `thedate` >= '20260423' AND `thedate` <= '20260722' GROUP BY `partition_hour`, `datacenter`, `deployment`, (FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) ORDER BY `_timestamp_` ASC LIMIT 2000005",
 		},
 		{
 			name: "conditions with or",
@@ -1767,6 +1789,10 @@ WHERE
 				"namespace":        {FieldType: sql_expr.DorisTypeString},
 				"process_name":     {FieldType: sql_expr.DorisTypeText},
 				"user_id":          {FieldType: sql_expr.DorisTypeText},
+				"partition_hour":   {FieldType: sql_expr.DorisTypeText},
+				"datacenter":       {FieldType: sql_expr.DorisTypeText},
+				"deployment":       {FieldType: sql_expr.DorisTypeText},
+				"sum_Sub8MsFrames": {FieldType: sql_expr.DorisTypeDouble},
 				"ip":               {FieldType: sql_expr.DorisTypeString},
 				"thedate":          {FieldType: sql_expr.DorisTypeString},
 				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeDate},

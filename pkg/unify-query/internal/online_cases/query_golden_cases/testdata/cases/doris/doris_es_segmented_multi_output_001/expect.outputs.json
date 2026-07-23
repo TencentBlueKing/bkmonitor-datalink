@@ -1,0 +1,58 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_segmented"},
+      "sql": "SHOW CREATE TABLE `golden_segmented_doris_table`.doris"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_segmented"},
+      "sql": "SELECT `service`, COUNT(`events_total`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `golden_segmented_doris_table`.doris WHERE `dtEventTimeStamp` >= 1784701739999 AND `dtEventTimeStamp` <= 1784702135999 AND `dtEventTime` >= '2026-07-22 14:28:59' AND `dtEventTime` <= '2026-07-22 14:35:36' AND `thedate` = '20260722' AND `status` = 'failed' GROUP BY `service`, _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 2000005"
+    }
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_segmented_logs_index"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_segmented_logs_index/_search",
+    "body": {
+      "aggregations": {
+        "service": {
+          "aggregations": {
+            "dtEventTimeStamp": {
+              "aggregations": {"_value": {"value_count": {"field": "events_total"}}},
+              "date_histogram": {
+                "extended_bounds": {"max": 1784702135999, "min": 1784701739999},
+                "field": "dtEventTimeStamp",
+                "interval": "1m",
+                "min_doc_count": 0,
+                "time_zone": "UTC"
+              }
+            }
+          },
+          "terms": {"field": "service", "missing": " ", "size": 10000}
+        }
+      },
+      "query": {
+        "bool": {
+          "filter": [
+            {"match_phrase": {"status": {"query": "failed"}}},
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701739, "include_lower": true, "include_upper": true, "to": 1784702135}}}
+          ]
+        }
+      },
+      "size": 0
+    }
+  }
+]

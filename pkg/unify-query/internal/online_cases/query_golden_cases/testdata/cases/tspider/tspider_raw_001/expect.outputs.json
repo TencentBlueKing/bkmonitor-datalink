@@ -1,0 +1,18 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "sql": "SHOW CREATE TABLE `golden_tspider_raw_table`"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "sql": "SELECT `service`, `events_total` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `golden_tspider_raw_table` WHERE `dtEventTimeStamp` >= 1784701776000 AND `dtEventTimeStamp` < 1784702076000 AND `dtEventTime` >= '2026-07-22 14:29:36' AND `dtEventTime` <= '2026-07-22 14:34:37' AND `thedate` = '20260722' ORDER BY `_timestamp_` ASC LIMIT 10"
+    }
+  }
+]

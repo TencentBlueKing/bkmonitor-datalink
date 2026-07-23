@@ -1,0 +1,30 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_type": "query_range",
+        "bk_biz_id": "golden",
+        "cluster_name": "vm_cluster_1",
+        "influx_compatible": true,
+        "use_native_or": true,
+        "api_params": {
+          "query": "a",
+          "start": 1784701740,
+          "end": 1784702076,
+          "step": 60,
+          "nocache": 0
+        },
+        "result_table_list": [
+          "vm_rt_demo_metrics_partition_1"
+        ],
+        "metric_filter_condition": {
+          "a": "cluster=\"cluster_1\", namespace=\"namespace_1\", pod=\"pod_1\", service=\"service_1\", status=\"success\", zone=\"zone_1\", result_table_id=\"vm_rt_demo_metrics_partition_1\", __name__=\"requests_total_value\""
+        }
+      }
+    }
+  }
+]

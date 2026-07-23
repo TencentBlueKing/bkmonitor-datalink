@@ -26,3 +26,7 @@ bkcodeai.json
 
 .claude
 .cursor
+
+# unify-query online query golden cases
+pkg/unify-query/internal/online_cases/query_golden_cases/testdata/local_cases/
+pkg/unify-query/internal/online_cases/query_golden_cases/testdata/**/*.local.yaml

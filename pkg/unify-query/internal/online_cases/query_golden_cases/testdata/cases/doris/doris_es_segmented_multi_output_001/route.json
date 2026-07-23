@@ -1,0 +1,44 @@
+{
+  "space_uid": "bkcc__golden_segmented",
+  "result_tables": [{"table_id": "demo_segmented.partition_1"}],
+  "result_table_details": {
+    "demo_segmented.partition_1": {
+      "storage_id": 3201,
+      "storage_name": "doris_storage_alias_segmented",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_segmented",
+      "db": "golden_segmented_doris_table",
+      "table_id": "demo_segmented.partition_1",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_segmented",
+      "tags_key": ["service", "status"],
+      "source_type": "bklog",
+      "storage_cluster_records": [
+        {
+          "storage_id": 3201,
+          "storage_type": "bk_sql",
+          "storage_name": "doris_storage_alias_segmented",
+          "cluster_name": "doris_cluster_segmented",
+          "db": "golden_segmented_doris_table",
+          "measurement": "doris",
+          "enable_time": 1784701920
+        },
+        {
+          "storage_id": 3202,
+          "storage_type": "elasticsearch",
+          "storage_name": "es_cluster_segmented",
+          "cluster_name": "es_cluster_segmented",
+          "db": "golden_segmented_logs_index",
+          "measurement": "__default__",
+          "source_type": "bklog",
+          "enable_time": 1784698000
+        }
+      ]
+    }
+  },
+  "storages": {
+    "3201": {"type": "bk_sql"},
+    "3202": {"type": "elasticsearch"}
+  }
+}

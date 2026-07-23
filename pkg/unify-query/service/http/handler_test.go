@@ -33,8 +33,9 @@ import (
 )
 
 type Writer struct {
-	h http.Header
-	b bytes.Buffer
+	h      http.Header
+	b      bytes.Buffer
+	status int
 }
 
 func (w *Writer) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -53,8 +54,10 @@ func (w *Writer) CloseNotify() <-chan bool {
 }
 
 func (w *Writer) Status() int {
-	// TODO implement me
-	panic("implement me")
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
 }
 
 func (w *Writer) Size() int {
@@ -92,6 +95,7 @@ func (w *Writer) Write(b []byte) (int, error) {
 }
 
 func (w *Writer) WriteHeader(statusCode int) {
+	w.status = statusCode
 	w.h = http.Header{
 		"code": []string{fmt.Sprintf("%d", statusCode)},
 	}

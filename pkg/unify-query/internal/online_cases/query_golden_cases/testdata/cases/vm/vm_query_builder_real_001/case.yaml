@@ -1,0 +1,21 @@
+id: vm_query_builder_real_001
+storage: vm
+enabled: true
+shape_signature: promql_range/vector_selector/eq6/route1/vm_query_range/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:c4532b0aac780ccaf2d4bf65daac040752a0928963aefccf0b3a485bdab53e4b
+tags:
+  - promql_api
+  - query_range
+  - single_result_table
+  - production_shape
+notes:
+  - 生产请求只保留结构形态；空间、结果表、指标、标签和集群均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -1,0 +1,32 @@
+{
+  "space_uid": "bkcc__golden",
+  "result_tables": [
+    {
+      "table_id": "demo_metrics.partition_1"
+    }
+  ],
+  "result_table_details": {
+    "demo_metrics.partition_1": {
+      "storage_id": 1001,
+      "storage_name": "vm_cluster_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_1",
+      "table_id": "demo_metrics.partition_1",
+      "measurement": "partition_1",
+      "vm_rt": "vm_rt_demo_metrics_partition_1",
+      "fields": [
+        "requests_total"
+      ],
+      "measurement_type": "bk_split_measurement",
+      "data_label": "demo_metrics"
+    }
+  },
+  "storages": {
+    "1001": {
+      "type": "victoria_metrics"
+    }
+  },
+  "must_vm_table_ids": [
+    "demo_metrics.partition_1"
+  ]
+}

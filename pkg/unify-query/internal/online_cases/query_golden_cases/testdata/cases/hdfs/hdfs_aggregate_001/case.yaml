@@ -1,0 +1,17 @@
+id: hdfs_aggregate_001
+storage: hdfs
+enabled: true
+shape_signature: query_ts/range/hdfs/schema/count_over_time/sum_by1/condition1/output2
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:d60c4bcd8b6fb10ec71d27bda5678cbb12cac4dfe5f072745a94310bd83856cf
+tags: [query_ts_api, aggregation, schema_query, production_shape]
+notes:
+  - 生产请求仅保留查询结构，空间、物理表、字段、条件值和集群均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

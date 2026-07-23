@@ -86,8 +86,8 @@ func formatQueryTargets(info *es.TableInfo, q *Params) ([]string, error) {
 	end := time.Unix(q.End, 0).UTC()
 	appendTimeList := make([]string, 0)
 	appendTimeSet := make(map[string]struct{})
-	startDate := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
-	endDate := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+	startDate := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location()).Add(-24 * time.Hour)
+	endDate := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location()).Add(24 * time.Hour)
 	for current := startDate; !current.After(endDate); current = current.AddDate(0, 0, 1) {
 		date := current.Format(info.DateFormat)
 		if _, ok := appendTimeSet[date]; ok {

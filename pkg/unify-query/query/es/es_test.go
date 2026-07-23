@@ -50,9 +50,11 @@ func TestSearch(t *testing.T) {
 	body := "{\"size\":5}"
 	startTimeFormat := start.Format("20060102")
 	endTimeFormat := end.Format("20060102")
+	previousTime := fmt.Sprintf("%s_%s*_read", index, start.Add(-24*time.Hour).Format("20060102"))
 	startTime := fmt.Sprintf("%s_%s*_read", index, startTimeFormat)
 	endTime := fmt.Sprintf("%s_%s*_read", index, endTimeFormat)
-	client.EXPECT().Search(gomock.Any(), body, startTime, endTime).Return(`any result`, nil)
+	nextTime := fmt.Sprintf("%s_%s*_read", index, end.Add(24*time.Hour).Format("20060102"))
+	client.EXPECT().Search(gomock.Any(), body, previousTime, startTime, endTime, nextTime).Return(`any result`, nil)
 	stubs := gostub.StubFunc(&es.NewClient, client, nil)
 	defer stubs.Reset()
 

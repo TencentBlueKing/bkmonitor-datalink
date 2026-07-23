@@ -86,7 +86,12 @@ func TestFormatQueryTargetsIncludesCrossBoundaryEnd(t *testing.T) {
 		End:     end.Unix(),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"testbb_ttt_20240101*_read", "testbb_ttt_20240102*_read"}, aliases)
+	assert.Equal(t, []string{
+		"testbb_ttt_20231231*_read",
+		"testbb_ttt_20240101*_read",
+		"testbb_ttt_20240102*_read",
+		"testbb_ttt_20240103*_read",
+	}, aliases)
 
 	fuzzyAliases, err := formatQueryTargets(info, &Params{
 		TableID:       "testbb.ttt",
@@ -96,10 +101,14 @@ func TestFormatQueryTargetsIncludesCrossBoundaryEnd(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{
+		"testbb_ttt_20231231*",
+		"v2_testbb_ttt_20231231*",
 		"testbb_ttt_20240101*",
 		"v2_testbb_ttt_20240101*",
 		"testbb_ttt_20240102*",
 		"v2_testbb_ttt_20240102*",
+		"testbb_ttt_20240103*",
+		"v2_testbb_ttt_20240103*",
 	}, fuzzyAliases)
 }
 

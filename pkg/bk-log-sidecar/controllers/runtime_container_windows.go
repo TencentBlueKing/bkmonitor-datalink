@@ -15,6 +15,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"time"
@@ -27,7 +28,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 func criV1Alpha2Rewriter(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
@@ -35,9 +35,11 @@ func criV1Alpha2Rewriter(ctx context.Context, method string, req, reply interfac
 	return invoker(ctx, method, req, reply, cc, opts...)
 }
 
-func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
+func NewContainerdRuntime(useV1Alpha2 bool) (define.Runtime, error) {
 	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
-	utils.CheckError(err)
+	if err != nil {
+		return nil, fmt.Errorf("create containerd client: %w", err)
+	}
 
 	timeout := time.Second * 10
 	dialOpts := []grpc.DialOption{
@@ -50,7 +52,10 @@ func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
 		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(criV1Alpha2Rewriter))
 	}
 	conn, err := grpc.DialContext(context.Background(), "", dialOpts...)
-	utils.CheckError(err)
+	if err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("dial containerd CRI: %w", err)
+	}
 
 	return &ContainerdRuntime{
 		ContainerdBase: ContainerdBase{
@@ -58,5 +63,5 @@ func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
 			log:              ctrl.Log.WithName("containerd"),
 		},
 		cri: &criClient{client: v1.NewRuntimeServiceClient(conn)},
-	}
+	}, nil
 }

@@ -39,17 +39,22 @@ const SubscribeRetryInterval = 5 * time.Second
 
 // BkLogSidecar BkLogSidecar
 type BkLogSidecar struct {
-	runtime          define.Runtime
-	kubeClient       client.Reader
-	reloadAgentFn    func() error
-	delayCleanFn     func(time.Duration, func())
+	runtime       define.Runtime
+	runtimeMu     sync.Mutex
+	kubeClient    client.Reader
+	reloadAgentFn func() error
+	delayCleanFn  func(time.Duration, func())
+	// configMutationMu 只保护配置快照、磁盘事务与 reload 状态，不包围
+	// Runtime/Kubernetes 查询；外部查询通过 configGeneration 做乐观校验。
 	configMutationMu sync.Mutex
+	configGeneration uint64
 	reloadPending    bool
 	// pendingContainerDeletes 只在 configMutationMu 保护下访问，用于保证容器退出后的
 	// DelayCleanConfig 宽限期不会被并发的全量配置收敛提前裁剪。
 	pendingContainerDeletes map[string]*pendingContainerDeletion
 	pendingDeleteGeneration uint64
 	containerCache          sync.Map
+	nodeInfoMu              sync.RWMutex
 	currentNodeInfo         corev1.Node
 	actualBkLogConfigCache  sync.Map
 	log                     logr.Logger
@@ -93,15 +98,25 @@ func (s *BkLogSidecar) Stop() {
 	close(s.stopCh)
 }
 
-func (s *BkLogSidecar) getRuntime() define.Runtime {
-	if s.runtime == nil {
-		if err := s.refreshNodeInfo(); err != nil {
-			s.log.Error(err, "refresh node info before runtime initialization failed")
-		}
-		s.runtime = NewRuntime(s.currentNodeInfo.Status.NodeInfo.ContainerRuntimeVersion)
+func (s *BkLogSidecar) getRuntime() (define.Runtime, error) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if s.runtime != nil {
+		return s.runtime, nil
 	}
-	return s.runtime
 
+	// Node 缓存暂时不可用时直接返回，让调用方重试；不能再拿空版本创建 Runtime，
+	// 更不能由底层构造函数退出整个 sidecar 进程。
+	if err := s.refreshNodeInfo(); err != nil {
+		return nil, fmt.Errorf("refresh node info before runtime initialization: %w", err)
+	}
+	node := s.currentNodeSnapshot()
+	runtime, err := NewRuntime(node.Status.NodeInfo.ContainerRuntimeVersion)
+	if err != nil {
+		return nil, err
+	}
+	s.runtime = runtime
+	return s.runtime, nil
 }
 
 // initNodeInfo
@@ -110,14 +125,24 @@ func (s *BkLogSidecar) refreshNodeInfo() error {
 	if !utils.StringNotEmpty(nodeName) {
 		return fmt.Errorf("environment variable %s is empty", config.CurrentNodeNameKey)
 	}
+	var node corev1.Node
 	err := s.kubeClient.Get(context.Background(), client.ObjectKey{
 		Name: nodeName,
-	}, &s.currentNodeInfo)
+	}, &node)
 	if err != nil {
 		return fmt.Errorf("get Node %s: %w", nodeName, err)
 	}
-	s.log.Info(fmt.Sprintf("current node info is [%s], labels[%v]", s.currentNodeInfo.Name, s.currentNodeInfo.GetLabels()))
+	s.nodeInfoMu.Lock()
+	s.currentNodeInfo = node
+	s.nodeInfoMu.Unlock()
+	s.log.Info(fmt.Sprintf("current node info is [%s], labels[%v]", node.Name, node.GetLabels()))
 	return nil
+}
+
+func (s *BkLogSidecar) currentNodeSnapshot() corev1.Node {
+	s.nodeInfoMu.RLock()
+	defer s.nodeInfoMu.RUnlock()
+	return *s.currentNodeInfo.DeepCopy()
 }
 
 // initContainerCache init container cache
@@ -155,31 +180,42 @@ func (s *BkLogSidecar) generateActualBkLogConfigForReconcile(
 }
 
 func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(options configGenerationOptions) error {
-	// Hold the mutation lock across Build and Apply. Otherwise a container event
-	// could update the live snapshot after discovery but before this full desired
-	// state replaces it, causing the newer event to be lost.
-	s.configMutationMu.Lock()
-	defer s.configMutationMu.Unlock()
 	if options.forceReload {
+		s.configMutationMu.Lock()
 		// sidecar 重启会丢失内存中的 reloadPending。启动时先恢复该意图，
 		// 即使首次 Build 失败，后续任一成功收敛也仍会补发 reload。
 		s.reloadPending = true
+		s.configMutationMu.Unlock()
 	}
 
-	logConfigs, err := s.buildActualBkLogConfigs()
-	if err != nil {
+	for {
+		// Build 阶段包含 Runtime/Kubernetes I/O，不能持有配置写锁。记录世代后
+		// 在 Apply 前复核；若期间有事件提交了新快照，就基于最新状态重新 Build。
+		generation := s.configSnapshotGeneration()
+		logConfigs, err := s.buildActualBkLogConfigs()
+		if err != nil {
+			return err
+		}
+		desired, err := renderDesiredConfigs(logConfigs)
+		if err != nil {
+			return fmt.Errorf("render desired log configs: %w", err)
+		}
+
+		s.configMutationMu.Lock()
+		if generation != s.configGeneration {
+			s.configMutationMu.Unlock()
+			continue
+		}
+		// Runtime 的全量列表只包含运行中容器。这里显式合并仍处于退出宽限期的配置，
+		// 避免其他 BkLogConfig 的 reconcile 提前结束尾部日志采集。
+		if err := s.preservePendingContainerConfigsLocked(desired, options.reconcile); err != nil {
+			s.configMutationMu.Unlock()
+			return fmt.Errorf("preserve pending container configs: %w", err)
+		}
+		err = s.applyDesiredConfigsLocked(desired, true, nil)
+		s.configMutationMu.Unlock()
 		return err
 	}
-	desired, err := renderDesiredConfigs(logConfigs)
-	if err != nil {
-		return fmt.Errorf("render desired log configs: %w", err)
-	}
-	// Runtime 的全量列表只包含运行中容器。这里显式合并仍处于退出宽限期的配置，
-	// 避免其他 BkLogConfig 的 reconcile 提前结束尾部日志采集。
-	if err := s.preservePendingContainerConfigsLocked(desired, options.reconcile); err != nil {
-		return fmt.Errorf("preserve pending container configs: %w", err)
-	}
-	return s.applyDesiredConfigsLocked(desired, true, nil)
 }
 
 // buildActualBkLogConfigs discovers the complete desired snapshot without
@@ -209,20 +245,21 @@ func (s *BkLogSidecar) buildActualBkLogConfigs() ([]define.LogConfigType, error)
 			}
 			firstMatchNodeConfig = false
 		}
+		node := s.currentNodeSnapshot()
 		// label match
-		if !s.matchLabel(bkLogConfig.Spec.LabelSelector, s.currentNodeInfo.GetLabels()) {
+		if !s.matchLabel(bkLogConfig.Spec.LabelSelector, node.GetLabels()) {
 			s.log.Info("current node not match label")
 			continue
 		}
 		// annotation match
-		if !s.matchAnnotation(bkLogConfig.Spec.AnnotationSelector, s.currentNodeInfo.GetAnnotations()) {
+		if !s.matchAnnotation(bkLogConfig.Spec.AnnotationSelector, node.GetAnnotations()) {
 			s.log.Info("current node not match annotation")
 			continue
 		}
-		s.log.Info(fmt.Sprintf("[%s] log config match node[%s]", bkLogConfig.Name, s.currentNodeInfo.Name))
+		s.log.Info(fmt.Sprintf("[%s] log config match node[%s]", bkLogConfig.Name, node.Name))
 		logConfigs = append(logConfigs, &define.NodeLogConfig{
 			BkLogConfig: bkLogConfig,
-			Node:        &s.currentNodeInfo,
+			Node:        &node,
 		})
 	}
 
@@ -284,11 +321,15 @@ func (s *BkLogSidecar) containerBkLogConfigs(container *define.Container, logCon
 			continue
 		}
 
+		runtime, err := s.getRuntime()
+		if err != nil {
+			return logConfigs, fmt.Errorf("get runtime type for container %s: %w", container.ID, err)
+		}
 		logConfigs = append(logConfigs, &define.StdOutLogConfig{
 			BkLogConfig: bkLogConfig,
 			Container:   container,
 			Pod:         pod,
-			RuntimeType: s.getRuntime().Type(),
+			RuntimeType: runtime.Type(),
 		})
 	}
 	return logConfigs, nil
@@ -297,14 +338,33 @@ func (s *BkLogSidecar) containerBkLogConfigs(container *define.Container, logCon
 // allContainers will all container info
 func (s *BkLogSidecar) allContainers() ([]define.SimpleContainer, error) {
 	ctx := context.Background()
-	return s.getRuntime().Containers(ctx)
+	runtime, err := s.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Containers(ctx)
 }
 
 // subscribeEvent is init listen event handler then handler event
 func (s *BkLogSidecar) subscribeEvent() {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	events, errs := s.getRuntime().Subscribe(ctx)
+	var runtime define.Runtime
+	var err error
+	for {
+		runtime, err = s.getRuntime()
+		if err == nil {
+			break
+		}
+		s.log.Error(err, "runtime initialization failed, retrying", "retryAfter", SubscribeRetryInterval.String())
+		select {
+		case <-time.After(SubscribeRetryInterval):
+		case <-s.stopCh:
+			cancel()
+			return
+		}
+	}
+	events, errs := runtime.Subscribe(ctx)
 
 	go func() {
 		for {
@@ -357,21 +417,41 @@ func (s *BkLogSidecar) startActionHandler(event *define.ContainerEvent) {
 		return
 	}
 
-	var bkLogConfigs []define.LogConfigType
-	bkLogConfigs, err = s.containerBkLogConfigs(container, bkLogConfigs, true)
+	matched, err := s.upsertContainerConfigs(container, true)
 	if err != nil {
-		s.log.Error(err, "build configs for create event failed", "containerID", event.ContainerID)
+		s.log.Error(err, "build or apply configs for create event failed", "containerID", event.ContainerID)
 		return
 	}
-	if define.Empty(bkLogConfigs) {
+	if !matched {
 		s.log.Info(fmt.Sprintf("container [%s] not match log config", container.ID))
 		return
 	}
-	if err := s.upsertActualConfigs(bkLogConfigs); err != nil {
-		s.log.Error(err, "apply configs for create event failed", "containerID", event.ContainerID)
-		return
-	}
 	s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
+}
+
+func (s *BkLogSidecar) upsertContainerConfigs(container *define.Container, isNewContainer bool) (bool, error) {
+	for {
+		generation := s.configSnapshotGeneration()
+		logConfigs, err := s.containerBkLogConfigs(container, nil, isNewContainer)
+		if err != nil {
+			return false, err
+		}
+		if define.Empty(logConfigs) {
+			// 空匹配也必须校验世代，否则可能恰好错过并发新增的 BkLogConfig。
+			if s.isConfigGenerationCurrent(generation) {
+				return false, nil
+			}
+			continue
+		}
+		applied, err := s.upsertActualConfigsIfCurrent(logConfigs, generation)
+		if err != nil {
+			return false, err
+		}
+		if applied {
+			return true, nil
+		}
+		// 并发全量收敛已经提交了更新，旧事件不能覆盖它；重新读取最新资源后再合并。
+	}
 }
 
 // destroyActionHandler handler destroy event

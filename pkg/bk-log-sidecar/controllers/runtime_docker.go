@@ -189,7 +189,7 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 }
 
 // NewDockerRuntime new docker runtime
-func NewDockerRuntime() define.Runtime {
+func NewDockerRuntime() (define.Runtime, error) {
 	var cli *client.Client
 	var err error
 	if len(config.DockerSocket) > 0 {
@@ -197,9 +197,11 @@ func NewDockerRuntime() define.Runtime {
 	} else {
 		cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	}
-	utils.CheckError(err)
+	if err != nil {
+		return nil, fmt.Errorf("create docker client: %w", err)
+	}
 	return &DockerRuntime{
 		log: ctrl.Log.WithName("docker"),
 		cli: cli,
-	}
+	}, nil
 }

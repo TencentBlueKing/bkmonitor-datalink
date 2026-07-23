@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
@@ -93,6 +94,29 @@ func TestCompareVersionWithVendorSuffix(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestNewRuntimeReturnsUnknownVersionError(t *testing.T) {
+	runtime, err := NewRuntime("")
+
+	assert.Nil(t, runtime)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown version")
+}
+
+func TestGetRuntimeReturnsNodeReadFailure(t *testing.T) {
+	nodeReadErr := errors.New("node cache unavailable")
+	t.Setenv("MY_NODE_NAME", "node-1")
+	sidecar := newCharacterizationSidecar(t, nil, &stubReader{
+		getFn: func(context.Context, client.ObjectKey, client.Object) error {
+			return nodeReadErr
+		},
+	})
+
+	runtime, err := sidecar.getRuntime()
+
+	assert.Nil(t, runtime)
+	assert.ErrorIs(t, err, nodeReadErr)
 }
 
 func TestContainerdInspectErrorNormalization(t *testing.T) {

@@ -13,6 +13,7 @@ package define
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
@@ -233,8 +234,18 @@ func (s *ContainerLogConfig) Config() ([]byte, error) {
 			mountMap[k] = v
 		}
 	}
-	for k, v := range mountMap {
-		mounts = append(mounts, Mount{HostPath: ToHostPath(k), ContainerPath: v})
+	// Go map 的遍历顺序不稳定。同一份配置若随机换序，会被 Apply 误判为变更并
+	// 反复落盘、reload，因此先按宿主机路径固定挂载项顺序。
+	mountPaths := make([]string, 0, len(mountMap))
+	for hostPath := range mountMap {
+		mountPaths = append(mountPaths, hostPath)
+	}
+	sort.Strings(mountPaths)
+	for _, hostPath := range mountPaths {
+		mounts = append(mounts, Mount{
+			HostPath:      ToHostPath(hostPath),
+			ContainerPath: mountMap[hostPath],
+		})
 	}
 	if len(mountMap) > 0 {
 		local.Mounts = mounts

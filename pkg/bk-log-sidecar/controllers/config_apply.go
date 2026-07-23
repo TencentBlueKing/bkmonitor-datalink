@@ -71,6 +71,18 @@ func (s *BkLogSidecar) applyDesiredConfigs(desired desiredConfigSet) error {
 	return s.applyDesiredConfigsLocked(desired, true, nil)
 }
 
+func (s *BkLogSidecar) configSnapshotGeneration() uint64 {
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
+	return s.configGeneration
+}
+
+func (s *BkLogSidecar) isConfigGenerationCurrent(generation uint64) bool {
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
+	return generation == s.configGeneration
+}
+
 // applyDesiredConfigsLocked applies a fully rendered snapshot, updates the
 // in-memory cache only after the disk transaction succeeds, and reloads only
 // when disk state changed or an earlier reload is still pending.
@@ -85,6 +97,9 @@ func (s *BkLogSidecar) applyDesiredConfigsLocked(
 	}
 
 	s.replaceActualConfigCache(desired)
+	// 磁盘事务成功后立即推进世代，即使 reload 暂时失败，后续并发 Build 也不能
+	// 再用提交前的旧资源快照覆盖已经落盘的目标状态。
+	s.configGeneration++
 	if changed {
 		s.reloadPending = true
 	}
@@ -120,24 +135,33 @@ func (s *BkLogSidecar) desiredConfigsFromCacheLocked() (desiredConfigSet, error)
 	return renderDesiredConfigs(logConfigs)
 }
 
-func (s *BkLogSidecar) upsertActualConfigs(logConfigs []define.LogConfigType) error {
+func (s *BkLogSidecar) upsertActualConfigsIfCurrent(
+	logConfigs []define.LogConfigType,
+	generation uint64,
+) (bool, error) {
 	additional, err := renderDesiredConfigs(logConfigs)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	s.configMutationMu.Lock()
 	defer s.configMutationMu.Unlock()
+	if generation != s.configGeneration {
+		return false, nil
+	}
 	desired, err := s.desiredConfigsFromCacheLocked()
 	if err != nil {
-		return fmt.Errorf("render current config snapshot: %w", err)
+		return false, fmt.Errorf("render current config snapshot: %w", err)
 	}
 	for name, generated := range additional {
 		desired[name] = generated
 	}
 	// A CREATE event is incremental. It must not prune files absent from the
 	// still-warming in-memory cache during startup.
-	return s.applyDesiredConfigsLocked(desired, false, nil)
+	if err := s.applyDesiredConfigsLocked(desired, false, nil); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // deleteContainerConfig removes a container from a cloned desired snapshot.

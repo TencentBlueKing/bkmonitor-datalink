@@ -137,9 +137,11 @@ func TestUpsertActualConfigsDoesNotPruneFilesMissingFromWarmCache(t *testing.T) 
 		return nil
 	}
 
-	err := sidecar.upsertActualConfigs([]define.LogConfigType{newConfig})
+	generation := sidecar.configSnapshotGeneration()
+	applied, err := sidecar.upsertActualConfigsIfCurrent([]define.LogConfigType{newConfig}, generation)
 
 	assert.NoError(t, err)
+	assert.True(t, applied)
 	assert.Equal(t, int32(1), reloadCalls.Load())
 	previousContent, readErr := os.ReadFile(previousPath)
 	require.NoError(t, readErr)

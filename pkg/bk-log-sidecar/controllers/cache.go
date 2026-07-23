@@ -42,7 +42,11 @@ func (s *BkLogSidecar) periodCacheContainer() {
 func (s *BkLogSidecar) cacheContainer() error {
 	s.log.Info("cache container info start")
 	ctx := context.Background()
-	containers, err := s.getRuntime().Containers(ctx)
+	runtime, err := s.getRuntime()
+	if err != nil {
+		return fmt.Errorf("initialize runtime: %w", err)
+	}
+	containers, err := runtime.Containers(ctx)
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
 	}
@@ -79,7 +83,11 @@ func (s *BkLogSidecar) getContainerInfoByID(containerID string) (*define.Contain
 
 func (s *BkLogSidecar) containerByID(containerID string) (*define.Container, error) {
 	ctx := context.Background()
-	container, err := s.getRuntime().Inspect(ctx, containerID)
+	runtime, err := s.getRuntime()
+	if err != nil {
+		return nil, fmt.Errorf("initialize runtime: %w", err)
+	}
+	container, err := runtime.Inspect(ctx, containerID)
 	if err != nil {
 		// Containers may disappear between List and Inspect. That race has
 		// already reached its desired state, so retrying the whole snapshot for

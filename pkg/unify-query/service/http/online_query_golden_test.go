@@ -131,6 +131,36 @@ func TestOnlineQueryGoldenCases(t *testing.T) {
 	}
 }
 
+func TestOnlineQueryGoldenCasesRejectHandlerFailure(t *testing.T) {
+	cases := loadOnlineQueryGoldenCases(t)
+	setupOnlineQueryGoldenEnvironment(t, cases)
+
+	var tc onlineQueryGoldenCase
+	for _, candidate := range cases {
+		if candidate.ID == "es_aggregate_001" {
+			tc = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, tc.ID)
+
+	request := readOnlineQueryGoldenJSON[onlineQueryGoldenHTTPRequest](t, tc.caseDir, tc.Files.Request)
+	request.Body = json.RawMessage(`"invalid request"`)
+	content, err := json.Marshal(request)
+	require.NoError(t, err)
+	requestPath := filepath.Join(t.TempDir(), "request.json")
+	require.NoError(t, os.WriteFile(requestPath, content, 0o600))
+
+	tc.Files.Request = requestPath
+	tc.Files.Route = filepath.Join(tc.caseDir, tc.Files.Route)
+	tc.Files.Dependencies = filepath.Join(tc.caseDir, tc.Files.Dependencies)
+	tc.caseDir = ""
+
+	outputs, err := captureOnlineQueryGoldenOutputs(t, tc, nil)
+	require.Error(t, err)
+	require.Empty(t, outputs)
+}
+
 func setupOnlineQueryGoldenEnvironment(t *testing.T, cases []onlineQueryGoldenCase) {
 	t.Helper()
 	ctx := metadata.InitHashID(context.Background())
@@ -147,13 +177,14 @@ func runOnlineQueryGoldenCase(t *testing.T, tc onlineQueryGoldenCase) {
 	t.Helper()
 
 	expected := readOnlineQueryGoldenJSON[[]onlineQueryGoldenOutput](t, tc.caseDir, tc.Files.ExpectOutput)
-	actual := captureOnlineQueryGoldenOutputs(t, tc, nil)
+	actual, err := captureOnlineQueryGoldenOutputs(t, tc, nil)
+	require.NoError(t, err)
 	require.Equal(t, canonicalOnlineQueryGoldenOutputs(t, expected), canonicalOnlineQueryGoldenOutputs(t, actual))
 }
 
 func captureOnlineQueryGoldenOutputs(
 	t *testing.T, tc onlineQueryGoldenCase, routeOverride *onlineQueryGoldenRoute,
-) []onlineQueryGoldenOutput {
+) ([]onlineQueryGoldenOutput, error) {
 	t.Helper()
 
 	request := readOnlineQueryGoldenJSON[onlineQueryGoldenHTTPRequest](t, tc.caseDir, tc.Files.Request)
@@ -203,8 +234,8 @@ func captureOnlineQueryGoldenOutputs(
 		t.Fatalf("unsupported golden request path %q", request.Path)
 	}
 
-	assertOnlineQueryGoldenResponseSucceeded(t, w.body())
-	return recorder.snapshot()
+	outputs := recorder.snapshot()
+	return outputs, onlineQueryGoldenResponseError(w.Status(), w.body())
 }
 
 func TestOnlineQueryGoldenSegmentedRouteControlsFanOut(t *testing.T) {
@@ -235,7 +266,8 @@ func TestOnlineQueryGoldenSegmentedRouteControlsFanOut(t *testing.T) {
 	}
 	require.True(t, removedESSegment)
 
-	outputs := captureOnlineQueryGoldenOutputs(t, tc, &route)
+	outputs, err := captureOnlineQueryGoldenOutputs(t, tc, &route)
+	require.NoError(t, err)
 	require.Len(t, outputs, 2)
 	for _, output := range outputs {
 		require.Equal(t, "bkbase", output.Backend)
@@ -533,18 +565,31 @@ func cloneOnlineQueryGoldenQuery(values url.Values) map[string][]string {
 	return query
 }
 
-func assertOnlineQueryGoldenResponseSucceeded(t *testing.T, content string) {
-	t.Helper()
+func onlineQueryGoldenResponseError(statusCode int, content string) error {
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("UQ handler returned HTTP status %d: %s", statusCode, content)
+	}
 
 	var response map[string]any
-	require.NoError(t, json.Unmarshal([]byte(content), &response), content)
+	if err := json.Unmarshal([]byte(content), &response); err != nil {
+		return err
+	}
+	if failure, ok := response["error"]; ok && failure != nil && failure != "" {
+		return fmt.Errorf("UQ handler failed: %s", content)
+	}
 	status, ok := response["status"].(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	if code, _ := status["code"].(string); code != "" {
-		t.Fatalf("UQ handler failed: %s", content)
+		return fmt.Errorf("UQ handler failed: %s", content)
 	}
+	return nil
+}
+
+func TestOnlineQueryGoldenCasesRejectTopLevelError(t *testing.T) {
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, `{"error":"boom"}`))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusBadRequest, `{}`))
 }
 
 func canonicalOnlineQueryGoldenOutputs(t *testing.T, outputs []onlineQueryGoldenOutput) []string {

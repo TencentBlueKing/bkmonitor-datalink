@@ -109,8 +109,8 @@ func TestFindSensitiveQueryGoldenContent(t *testing.T) {
 		{
 			name:        "non local ip",
 			path:        "expect.downstream.json",
-			content:     `{"server":"11.166.1.2"}`,
-			wantFinding: `non-local ip "11.166.1.2"`,
+			content:     `{"server":"192.0.2.1"}`,
+			wantFinding: `non-local ip "192.0.2.1"`,
 		},
 		{
 			name:    "loopback ip",

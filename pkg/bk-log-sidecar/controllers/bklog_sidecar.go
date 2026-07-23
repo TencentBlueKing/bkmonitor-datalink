@@ -39,16 +39,21 @@ const SubscribeRetryInterval = 5 * time.Second
 
 // BkLogSidecar BkLogSidecar
 type BkLogSidecar struct {
-	runtime                define.Runtime
-	kubeClient             client.Reader
-	reloadAgentFn          func() error
-	configMutationMu       sync.Mutex
-	reloadPending          bool
-	containerCache         sync.Map
-	currentNodeInfo        corev1.Node
-	actualBkLogConfigCache sync.Map
-	log                    logr.Logger
-	stopCh                 chan struct{}
+	runtime          define.Runtime
+	kubeClient       client.Reader
+	reloadAgentFn    func() error
+	delayCleanFn     func(time.Duration, func())
+	configMutationMu sync.Mutex
+	reloadPending    bool
+	// pendingContainerDeletes 只在 configMutationMu 保护下访问，用于保证容器退出后的
+	// DelayCleanConfig 宽限期不会被并发的全量配置收敛提前裁剪。
+	pendingContainerDeletes map[string]*pendingContainerDeletion
+	pendingDeleteGeneration uint64
+	containerCache          sync.Map
+	currentNodeInfo         corev1.Node
+	actualBkLogConfigCache  sync.Map
+	log                     logr.Logger
+	stopCh                  chan struct{}
 }
 
 func (s *BkLogSidecar) reloadAgent() error {
@@ -61,9 +66,10 @@ func (s *BkLogSidecar) reloadAgent() error {
 // NewBkLogSidecar new BkLogSidecar
 func NewBkLogSidecar(mgr ctrl.Manager) *BkLogSidecar {
 	bkLogSidecar := &BkLogSidecar{
-		stopCh:     make(chan struct{}),
-		log:        ctrl.Log.WithName("bkLogSidecar"),
-		kubeClient: mgr.GetCache(),
+		stopCh:                  make(chan struct{}),
+		log:                     ctrl.Log.WithName("bkLogSidecar"),
+		kubeClient:              mgr.GetCache(),
+		pendingContainerDeletes: make(map[string]*pendingContainerDeletion),
 	}
 	return bkLogSidecar
 }
@@ -73,7 +79,7 @@ func (s *BkLogSidecar) Start(_ context.Context) error {
 	s.log.Info("start bklog sidecar")
 	s.initContainerCache()
 	s.initEventHandler()
-	if err := s.generateActualBkLogConfig(); err != nil {
+	if err := s.generateActualBkLogConfigOnStartup(); err != nil {
 		// Startup retry is handled by the later convergence stages. Keep the
 		// runnable alive here so the CR reconciler can already recover failures.
 		s.log.Error(err, "initial configuration generation failed")
@@ -129,11 +135,36 @@ func (s *BkLogSidecar) initEventHandler() {
 
 // generateActualBkLogConfig will generate all actual bklog config
 func (s *BkLogSidecar) generateActualBkLogConfig() error {
+	return s.generateActualBkLogConfigWithOptions(configGenerationOptions{})
+}
+
+func (s *BkLogSidecar) generateActualBkLogConfigOnStartup() error {
+	return s.generateActualBkLogConfigWithOptions(configGenerationOptions{forceReload: true})
+}
+
+func (s *BkLogSidecar) generateActualBkLogConfigForReconcile(
+	namespace, name string,
+	current *v1alpha1.BkLogConfig,
+) error {
+	return s.generateActualBkLogConfigWithOptions(configGenerationOptions{
+		reconcile: &bkLogConfigReconcileState{
+			key:     bkLogConfigKey{namespace: namespace, name: name},
+			current: current,
+		},
+	})
+}
+
+func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(options configGenerationOptions) error {
 	// Hold the mutation lock across Build and Apply. Otherwise a container event
 	// could update the live snapshot after discovery but before this full desired
 	// state replaces it, causing the newer event to be lost.
 	s.configMutationMu.Lock()
 	defer s.configMutationMu.Unlock()
+	if options.forceReload {
+		// sidecar 重启会丢失内存中的 reloadPending。启动时先恢复该意图，
+		// 即使首次 Build 失败，后续任一成功收敛也仍会补发 reload。
+		s.reloadPending = true
+	}
 
 	logConfigs, err := s.buildActualBkLogConfigs()
 	if err != nil {
@@ -142,6 +173,11 @@ func (s *BkLogSidecar) generateActualBkLogConfig() error {
 	desired, err := renderDesiredConfigs(logConfigs)
 	if err != nil {
 		return fmt.Errorf("render desired log configs: %w", err)
+	}
+	// Runtime 的全量列表只包含运行中容器。这里显式合并仍处于退出宽限期的配置，
+	// 避免其他 BkLogConfig 的 reconcile 提前结束尾部日志采集。
+	if err := s.preservePendingContainerConfigsLocked(desired, options.reconcile); err != nil {
+		return fmt.Errorf("preserve pending container configs: %w", err)
 	}
 	return s.applyDesiredConfigsLocked(desired, true, nil)
 }
@@ -307,6 +343,9 @@ func (s *BkLogSidecar) eventHandler(event *define.ContainerEvent) {
 // startActionHandler handler start event
 func (s *BkLogSidecar) startActionHandler(event *define.ContainerEvent) {
 	s.log.Info(fmt.Sprintf("start handler [%s] for container [%s]", event.Type, event.ContainerID))
+	// 同一个容器 ID 可能在 stop 后再次收到 start（例如 runtime 事件重放）。
+	// 先取消旧的延迟删除，防止旧定时任务在新配置写入后将其误删。
+	s.cancelPendingContainerDeletion(event.ContainerID)
 
 	container, err := s.getContainerInfoByID(event.ContainerID)
 	if err != nil {
@@ -338,18 +377,11 @@ func (s *BkLogSidecar) startActionHandler(event *define.ContainerEvent) {
 // destroyActionHandler handler destroy event
 func (s *BkLogSidecar) destroyActionHandler(event *define.ContainerEvent) {
 	s.log.Info(fmt.Sprintf("start handler [%s] for container [%s]", event.Type, event.ContainerID))
-	go func(containerId string) {
-		containerInfo, ok := s.containerCache.Load(containerId)
-		if ok {
-			utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
-				s.containerCache.Delete(containerId)
-				if err := s.deleteContainerConfig(castContainer(containerInfo)); err != nil {
-					s.log.Error(err, "delete configs for container event failed", "containerID", containerId)
-				}
-			})
-		}
-		s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
-	}(event.ContainerID)
+	containerInfo, ok := s.containerCache.Load(event.ContainerID)
+	if ok {
+		s.scheduleContainerConfigDeletion(castContainer(containerInfo), true)
+	}
+	s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
 }
 
 // stopActionHandler handler stop event
@@ -367,11 +399,7 @@ func (s *BkLogSidecar) stopActionHandler(event *define.ContainerEvent) {
 			return
 		}
 
-		utils.AfterForFn(time.Duration(config.DelayCleanConfig)*time.Second, func() {
-			if err := s.deleteContainerConfig(container); err != nil {
-				s.log.Error(err, "delete configs for stop event failed", "containerID", containerId)
-			}
-		})
+		s.scheduleContainerConfigDeletion(container, false)
 		s.log.Info(fmt.Sprintf("end handler [%s] for container [%s] done", event.Type, event.ContainerID))
 	}(event.ContainerID)
 }

@@ -48,6 +48,7 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	log.Info(fmt.Sprintf("handler bklogconfig event [%s]", req.Name))
 	var bkLogConfig bluekingv1alpha1.BkLogConfig
 	err := r.Client.Get(ctx, req.NamespacedName, &bkLogConfig)
+	var currentBkLogConfig *bluekingv1alpha1.BkLogConfig
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			// Returning the error is intentional: controller-runtime applies
@@ -55,12 +56,18 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			// nil would acknowledge the event and permanently drop this failure.
 			return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 		}
+	} else {
+		currentBkLogConfig = &bkLogConfig
 	}
 
 	// Both create/update and confirmed deletion converge through the same full
 	// Build/Apply path. A failed Build therefore retains the previous working
 	// files instead of deleting this CR's files before regeneration succeeds.
-	if err := r.BkLogSidecar.generateActualBkLogConfig(); err != nil {
+	if err := r.BkLogSidecar.generateActualBkLogConfigForReconcile(
+		req.Namespace,
+		req.Name,
+		currentBkLogConfig,
+	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("converge generated config after BkLogConfig %s event: %w", req.NamespacedName, err)
 	}
 	return ctrl.Result{}, nil

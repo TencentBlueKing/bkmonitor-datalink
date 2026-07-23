@@ -119,11 +119,14 @@ func newCharacterizationSidecar(t *testing.T, runtime define.Runtime, reader cli
 
 	oldConfigPath := config.BkunifylogbeatConfig
 	oldPIDFile := config.BkunifylogbeatPidFile
+	oldDelayCleanConfig := config.DelayCleanConfig
 	config.BkunifylogbeatConfig = t.TempDir()
 	config.BkunifylogbeatPidFile = filepath.Join(t.TempDir(), "missing.pid")
+	config.DelayCleanConfig = 30
 	t.Cleanup(func() {
 		config.BkunifylogbeatConfig = oldConfigPath
 		config.BkunifylogbeatPidFile = oldPIDFile
+		config.DelayCleanConfig = oldDelayCleanConfig
 	})
 
 	return &BkLogSidecar{
@@ -183,6 +186,61 @@ func TestStartRunsInitialGenerationBeforeRuntimeSubscriptionIsReady(t *testing.T
 	close(releaseSubscription)
 	waitForSignal(t, subscriptionReady, "runtime subscription")
 	require.NoError(t, <-startDone)
+	stop()
+}
+
+func TestStartForcesReloadAndKeepsFailurePending(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(sidecar.Stop) }
+	t.Cleanup(stop)
+	reloadErr := errors.New("reload unavailable during startup")
+	var reloadCalls atomic.Int32
+	sidecar.reloadAgentFn = func() error {
+		if reloadCalls.Add(1) == 1 {
+			return reloadErr
+		}
+		return nil
+	}
+
+	require.NoError(t, sidecar.Start(context.Background()))
+	assert.Equal(t, int32(1), reloadCalls.Load())
+	assert.True(t, sidecar.reloadPending)
+
+	require.NoError(t, sidecar.generateActualBkLogConfig())
+	assert.Equal(t, int32(2), reloadCalls.Load())
+	assert.False(t, sidecar.reloadPending)
+	stop()
+}
+
+func TestStartKeepsForcedReloadPendingWhenInitialBuildFails(t *testing.T) {
+	buildErr := errors.New("runtime list unavailable during startup")
+	var listCalls atomic.Int32
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			if listCalls.Add(1) <= 2 {
+				return nil, buildErr
+			}
+			return nil, nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(sidecar.Stop) }
+	t.Cleanup(stop)
+	var reloadCalls atomic.Int32
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return nil
+	}
+
+	require.NoError(t, sidecar.Start(context.Background()))
+	assert.Equal(t, int32(0), reloadCalls.Load())
+	assert.True(t, sidecar.reloadPending)
+
+	require.NoError(t, sidecar.generateActualBkLogConfig())
+	assert.Equal(t, int32(1), reloadCalls.Load())
+	assert.False(t, sidecar.reloadPending)
 	stop()
 }
 

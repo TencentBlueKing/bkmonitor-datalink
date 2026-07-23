@@ -145,13 +145,17 @@ func (s *BkLogSidecar) upsertActualConfigs(logConfigs []define.LogConfigType) er
 func (s *BkLogSidecar) deleteContainerConfig(container *define.Container) error {
 	s.configMutationMu.Lock()
 	defer s.configMutationMu.Unlock()
+	return s.deleteContainerConfigLocked(container)
+}
+
+func (s *BkLogSidecar) deleteContainerConfigLocked(container *define.Container) error {
 	desired, err := s.desiredConfigsFromCacheLocked()
 	if err != nil {
 		return fmt.Errorf("render current config snapshot: %w", err)
 	}
 	explicitDeletes := make(map[string]struct{})
 	for name := range desired {
-		if strings.HasPrefix(name, container.ID) {
+		if strings.HasPrefix(name, container.ID+"_") {
 			delete(desired, name)
 			explicitDeletes[name] = struct{}{}
 		}

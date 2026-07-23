@@ -1,0 +1,119 @@
+{
+  "space_uid": "bkcc__golden_doris_fanout",
+  "result_tables": [
+    {"table_id": "demo_doris_fanout.partition_1"},
+    {"table_id": "demo_doris_fanout.partition_2"},
+    {"table_id": "demo_doris_fanout.partition_3"},
+    {"table_id": "demo_doris_fanout.partition_4"},
+    {"table_id": "demo_doris_fanout.partition_5"},
+    {"table_id": "demo_doris_fanout.partition_6"},
+    {"table_id": "demo_doris_fanout.partition_7"}
+  ],
+  "result_table_details": {
+    "demo_doris_fanout.partition_1": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_1",
+      "table_id": "demo_doris_fanout.partition_1",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_2": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_2",
+      "table_id": "demo_doris_fanout.partition_2",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_3": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_3",
+      "table_id": "demo_doris_fanout.partition_3",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_4": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_4",
+      "table_id": "demo_doris_fanout.partition_4",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_5": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_5",
+      "table_id": "demo_doris_fanout.partition_5",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_6": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_6",
+      "table_id": "demo_doris_fanout.partition_6",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    },
+    "demo_doris_fanout.partition_7": {
+      "storage_id": 3401,
+      "storage_name": "doris_cluster_fanout",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_fanout",
+      "db": "golden_doris_fanout_7",
+      "table_id": "demo_doris_fanout.partition_7",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_fanout",
+      "tags_key": ["message", "service"],
+      "source_type": "bklog"
+    }
+  },
+  "data_labels": {
+    "demo_doris_fanout": [
+      "demo_doris_fanout.partition_1",
+      "demo_doris_fanout.partition_2",
+      "demo_doris_fanout.partition_3",
+      "demo_doris_fanout.partition_4",
+      "demo_doris_fanout.partition_5",
+      "demo_doris_fanout.partition_6",
+      "demo_doris_fanout.partition_7"
+    ]
+  },
+  "storages": {
+    "3401": {"type": "bk_sql"}
+  }
+}

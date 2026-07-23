@@ -5,8 +5,8 @@
 本记录只保存不可逆的结构统计，不保存原始日志、trace ID、内部路由值或真实查询内容。
 
 - 采样来源：目标生产环境的历史 UQ 日志。
-- 时间范围：4 个互不重叠的历史 10 分钟窗口，记为 W1～W4。
-- 样本规模：对能够稳定关联 input/output 的分类，每个窗口最终取 20 条通过结构判定的可用样本；宽检索误命中只留在本地候选池。InfluxDB 的例外单列在后文，不计入该收敛口径。
+- 时间范围：原有 4 个互不重叠的历史 10 分钟窗口记为 W1～W4；2026-07-23 在 bkte 继续采集 W5（13:25～13:35 UTC）和 W6（13:35～13:45 UTC），两个窗口均已结束且不重叠。
+- 样本规模：对能够稳定关联 input/output 的分类，每个窗口最终取 20 条通过结构判定的可用样本；VM 因 W5 首次出现 instant，range/instant 分层各取 20 条。宽检索误命中只留在本地候选池。InfluxDB 的例外单列在后文，不计入该收敛口径。
 - 去重单位：会改变 UQ 下游请求构造的形似特征，而不是指标名、表名、标签名或字面值。
 - 收尾条件：最后一个窗口中的可用样本全部能由正式 case 的形似覆盖。
 
@@ -80,6 +80,29 @@
 | W4 | 11 | 4 | 5 | 20 | 0 |
 
 HDFS 查询日志容易被同名指标误命中，因此先扩大本地候选池，再按 SQL 目标结构固定取 20 条。误命中不计入表中。
+
+## bkte W5～W6 增量采样
+
+本轮以数据集首次合入提交 `73273428d556b521571df28cd9840d70a4210314` 为 Git 证据下界。运行实例可确认使用不可变镜像摘要，但当前证据无法把该摘要精确映射到 Git commit，因此不把运行时行为声明为某个未验证源码版本；正式 fixture 以已关联生产 input/output 的结构为依据，并在上述 Git 基线执行真实 handler 回放。
+
+| 分类 | W5 候选 | W5 可用 | W5 选取 | W5 新增形似 | W6 候选 | W6 可用 | W6 选取 | W6 新增形似 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| VM（range + instant 分层） | 60 | 50（28 + 22） | 40 | 2 | 60 | 49（28 + 21） | 40 | 0 |
+| Elasticsearch | 30 | 25 | 20 | 1 | 30 | 27 | 20 | 0 |
+| Doris | 30 | 21 | 20 | 1 | 30 | 21 | 20 | 0 |
+| TSpider | 30 | 30 | 20 | 0 | 30 | 28 | 20 | 0 |
+| HDFS | 30 | 30 | 20 | 0 | 30 | 30 | 20 | 0 |
+
+W5 新增并物化了四个生产形似：
+
+- VM：PromQL instant 与结构化 instant，分别由 `vm_promql_instant_001`、`vm_structured_instant_001` 覆盖。结构化 range 使用同一 QueryTs 解析路径，range VM builder 已由既有 PromQL range case 约束；按正交特征覆盖，不再复制其笛卡尔组合。
+- ES：`/query/ts/reference` 的 index/mapping + search 两阶段，由 `es_reference_001` 覆盖。
+- Doris：一个 reference 经七条同存储 data-label 路由生成七条 schema 和七条 query，由 `doris_multi_route_fanout_001` 覆盖。
+- TSpider、HDFS：观察到的 1/2/3/8 reference 放大仍是既有 parser reference、单路由 builder 和 schema/query 两阶段的组合，没有新增构造因素。
+
+W6 再次按相同口径取得每层 20 条可用样本，全部能由正式 case 的正交形似覆盖。W6 还观察到 ES 的 3/5 路由 output 放大、TSpider/HDFS 的多 reference 放大；前者由 ES mapping/search 阶段 case 与同存储 data-label 多路由 case 共同约束，后者由对应单路由 builder 与多 reference case 共同约束。遵循“不枚举全部特征笛卡尔积”的口径，本轮不为这些组合重复增加 fixture。
+
+候选 gate 要求一个入口、一个 handler、入口 2xx、无 error span、output payload 完整。W5/W6 的候选数高于最终选取数；被拒绝的多入口 trace、非 2xx、error span 或 payload 不完整样本只保留在本地缓存，不进入正式目录。
 
 ## 修复驱动扩充
 
@@ -155,6 +178,8 @@ HDFS 查询日志容易被同名指标误命中，因此先扩大本地候选池
 
 SLI 显示 InfluxDB HTTP 路径仍有流量，但选定 UQ 日志链路中没有形成可稳定关联的 outbound GET 样本。源码会在 InfluxDB 查询 span 中记录查询参数，但对多个历史窗口的定向检索也没有拿到可用 span，因此不宣称其“生产 output 四窗收敛”。当前数据集保留一条来自生产入口形态的 InfluxDB aggregate case，并通过固定 route fixture 和真实 UQ handler 生成、截获 InfluxQL 请求；其 `source.outputs_kind` 明确标为 `handler_replay`。
 
+W5 和 W6 又分别定向检索 `influxdb-client-query`、`influxdb-query-select`、`query-info-influxdb-query-select`、`raw-query` 四类 span，仍均为 0。该结果只说明当前 trace 证据链不可用，不解释为无流量或已收敛。
+
 这不影响离线回放能力，但属于采样证据边界：后续一旦日志或 trace 能稳定拿到 InfluxDB outbound 请求，应按同一流程补做 aggregate/raw 四窗核验，若出现新形似则新增 case。
 
 ## 一进多出结论
@@ -174,6 +199,6 @@ one logical request
 
 ## 收尾状态
 
-- VM、ES、Doris、TSpider、HDFS：W4 新增未覆盖形似均为 0，本轮采集收尾。
-- InfluxDB：离线 case 已覆盖，直接生产 output 采样证据尚未达到四窗收敛，边界如上。
+- VM、ES、Doris、TSpider、HDFS：W5 新增形似已物化，W6 每层选取的 20 条可用样本新增未覆盖形似均为 0，本轮采集收尾。
+- InfluxDB：离线 case 已覆盖，直接生产 output 采样证据尚未达到收敛，边界如上。
 - 后续问题修复：不受本轮收尾状态限制，必须新增对应回归 case。

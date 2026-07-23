@@ -226,6 +226,8 @@ func captureOnlineQueryGoldenOutputs(
 		HandlerQueryPromQL(c)
 	case "/query/ts":
 		HandlerQueryTs(c)
+	case "/query/ts/reference":
+		HandlerQueryReference(c)
 	case "/query/ts/raw":
 		HandlerQueryRaw(c)
 	case "/query/ts/info/field_map":

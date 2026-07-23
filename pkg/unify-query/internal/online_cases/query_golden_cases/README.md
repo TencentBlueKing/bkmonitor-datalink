@@ -17,13 +17,13 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 30 个可执行 case。其中 13 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；16 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，另外 14 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
+数据集当前包含 34 个可执行 case。其中 17 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；16 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，另外 14 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
-| VictoriaMetrics | 3 | 简单 PromQL、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
-| Elasticsearch | 14 | aggregate/raw × 有无 query_string、regexp/wildcard/布尔语义、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 |
-| Doris | 7 | aggregate、raw、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度、缺失字段 contains | 生产日志 + 修复后 handler 回放 |
+| VictoriaMetrics | 5 | PromQL range/instant、结构化 instant、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
+| Elasticsearch | 15 | aggregate/raw/reference、query_string 语义、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 |
+| Doris | 8 | aggregate、raw、单 reference 七路由/十四 output、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度、缺失字段 contains | 生产日志 + 修复后 handler 回放 |
 | TSpider | 3 | aggregate、raw、PromQL 8 reference/16 output | 生产日志 + 修复后 handler 回放 |
 | HDFS | 2 | aggregate、raw | 生产日志 |
 | InfluxDB HTTP | 1 | aggregate、条件、group by time/fill | handler 回放，暂定 |
@@ -32,11 +32,17 @@ sanitized request
 
 `vm_multi_result_table_001` 则覆盖另一个边界：多个兼容的 VM 结果表会合并为一个 BKBase VM 请求，而不是每条路由记录各发一个请求。
 
+`vm_promql_instant_001` 和 `vm_structured_instant_001` 分别锁定 PromQL 与结构化入口的 instant 构造：下游 VM `api_type` 为 `query`，使用 `time/timeout` 参数而不是 range 的 `start/end/step`。
+
+`es_reference_001` 让回放器执行真实 `/query/ts/reference` handler，完整记录 index/mapping 与 search 两个 ES 请求，并锁定 reference 模式下的 limit、排序和时间边界。
+
+`doris_multi_route_fanout_001` 固定一个 data label 对应七张 Doris 物理表：`1 input × 1 reference × 7 route branches × 2 BKSQL stages = 14 outputs`。它与跨存储时间分段 case 一起覆盖同存储多 RT 和跨存储分段两种不同的路由放大模式。
+
 `tspider_promql_multi_reference_001` 来自后续问题修复：一个 PromQL input 解析出 8 个 reference，固定路由为每个 reference 选择同一个 BKSQL 结果表，每个 reference 再产生 schema + aggregate 两个请求，因此完整 output multiset 为 16 条。该 case 同时锁定 TSpider 时间桶必须按完整表达式分组，不能按 SELECT 别名 `_timestamp_` 分组。
 
 14 个合并 PR 回溯 case 锁定 ES query_string 的 regexp、wildcard、布尔词项和聚合枚举语义，显式路由字段元数据滞后、多 RT 空索引跳过、data source 别名、`table_id_conditions` 与 field_map，以及 Doris 多物理表 UNION 和缺失字段 contains。它们没有保留原始 trace ID，均在修复前 commit 得到 RED、在当前代码得到 GREEN，因此只计入问题回归覆盖，不改写前述分类采样收敛统计。多数 ES case 为 `1 input × 1 reference × 1 route × 2 stages = 2 outputs`；field_map 只生成 index/mapping 请求，多 RT 跳过 case 只保留有效 RT 的 2 个 outputs。Doris UNION case 生成 2 条 schema 请求和 1 条合并查询，缺失字段 case 生成 1 条 schema 请求和 1 条查询。
 
-生产采样过程、四个时间窗的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
+生产采样过程、W1～W6 的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
 
 ## Case 协议
 

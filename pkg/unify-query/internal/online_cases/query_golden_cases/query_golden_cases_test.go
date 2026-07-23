@@ -258,8 +258,18 @@ func assertQueryGoldenCaseMetadata(t *testing.T, seen, seenShapes map[string]str
 	if len(tc.Tags) == 0 {
 		t.Fatalf("%s: tags are required", tc.ID)
 	}
-	if tc.Source.Kind != "production_log" || tc.Source.SampledAt == "" || tc.Source.Fingerprint == "" {
+	if tc.Source.Kind == "" || tc.Source.SampledAt == "" || tc.Source.Fingerprint == "" {
 		t.Fatalf("%s: source is incomplete: %+v", tc.ID, tc.Source)
+	}
+	switch tc.Source.Kind {
+	case "production_log":
+	case "merged_pr":
+		if tc.Source.OutputsKind != "post_fix_handler_replay" ||
+			!containsQueryGoldenString(tc.Tags, "regression_fix") {
+			t.Fatalf("%s: merged_pr source requires post_fix_handler_replay and regression_fix", tc.ID)
+		}
+	default:
+		t.Fatalf("%s: unsupported source.kind %q", tc.ID, tc.Source.Kind)
 	}
 	switch tc.Source.OutputsKind {
 	case "production_log":

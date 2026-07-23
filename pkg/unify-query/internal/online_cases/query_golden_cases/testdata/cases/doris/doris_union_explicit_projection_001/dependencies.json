@@ -1,0 +1,31 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "bigint"},
+      {"Field": "path", "Type": "varchar(128)"},
+      {"Field": "current_only", "Type": "varchar"}
+    ],
+    "schema_by_sql": {
+      "SHOW CREATE TABLE `golden_projection_current`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "varchar(128)"},
+        {"Field": "current_only", "Type": "varchar"}
+      ],
+      "SHOW CREATE TABLE `golden_projection_history`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "text"},
+        {"Field": "history_only", "Type": "varchar"}
+      ]
+    },
+    "result": []
+  }
+}

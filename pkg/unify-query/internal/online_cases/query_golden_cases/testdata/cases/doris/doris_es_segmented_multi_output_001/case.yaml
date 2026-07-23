@@ -16,6 +16,7 @@ tags:
   - production_shape
 notes:
   - 生产请求只保留单引用跨 ES 与 Doris 时间分段路由的结构形态；空间、结果表、索引、字段和集群均已替换为占位符。
+  - Doris 分段的 storage_name 与 cluster_name 故意不同，expected 必须使用 cluster_name 作为 BKBase properties.cluster_name。
 files:
   request: request.json
   route: route.json

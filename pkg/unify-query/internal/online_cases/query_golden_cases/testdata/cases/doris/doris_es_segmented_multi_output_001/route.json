@@ -4,7 +4,7 @@
   "result_table_details": {
     "demo_segmented.partition_1": {
       "storage_id": 3201,
-      "storage_name": "doris_cluster_segmented",
+      "storage_name": "doris_storage_alias_segmented",
       "storage_type": "bk_sql",
       "cluster_name": "doris_cluster_segmented",
       "db": "golden_segmented_doris_table",
@@ -18,7 +18,7 @@
         {
           "storage_id": 3201,
           "storage_type": "bk_sql",
-          "storage_name": "doris_cluster_segmented",
+          "storage_name": "doris_storage_alias_segmented",
           "cluster_name": "doris_cluster_segmented",
           "db": "golden_segmented_doris_table",
           "measurement": "doris",

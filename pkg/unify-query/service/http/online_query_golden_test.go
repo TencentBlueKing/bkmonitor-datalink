@@ -83,8 +83,9 @@ type onlineQueryGoldenDependencies struct {
 		Result     any    `json:"result"`
 	} `json:"vm"`
 	BKSQL struct {
-		Schema []map[string]any `json:"schema"`
-		Result []map[string]any `json:"result"`
+		Schema      []map[string]any            `json:"schema"`
+		SchemaBySQL map[string][]map[string]any `json:"schema_by_sql"`
+		Result      []map[string]any            `json:"result"`
 	} `json:"bksql"`
 	Elasticsearch struct {
 		Mapping json.RawMessage `json:"mapping"`
@@ -372,7 +373,11 @@ func registerOnlineQueryGoldenResponders(
 			}
 			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SHOW ") ||
 				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "DESC ") {
-				return onlineQueryGoldenBKSQLResponse(dependencies.BKSQL.Schema)
+				schema := dependencies.BKSQL.Schema
+				if matched, ok := dependencies.BKSQL.SchemaBySQL[sql]; ok {
+					schema = matched
+				}
+				return onlineQueryGoldenBKSQLResponse(schema)
 			}
 			return onlineQueryGoldenBKSQLResponse(dependencies.BKSQL.Result)
 		},

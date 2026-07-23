@@ -1,0 +1,37 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "bigint"},
+      {"Field": "path", "Type": "varchar(128)"},
+      {"Field": "status", "Type": "text"},
+      {"Field": "dimensions.retry_count", "Type": "bigint"},
+      {"Field": "current_only", "Type": "varchar"}
+    ],
+    "schema_by_sql": {
+      "SHOW CREATE TABLE `golden_union_current`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "varchar(128)"},
+        {"Field": "status", "Type": "text"},
+        {"Field": "dimensions.retry_count", "Type": "bigint"},
+        {"Field": "current_only", "Type": "varchar"}
+      ],
+      "SHOW CREATE TABLE `golden_union_history`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "text"},
+        {"Field": "status", "Type": "bigint"},
+        {"Field": "dimensions.retry_count", "Type": "int"},
+        {"Field": "history_only", "Type": "varchar"}
+      ]
+    },
+    "result": []
+  }
+}

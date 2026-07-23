@@ -17,13 +17,13 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 16 个可执行 case。其中 13 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；2 个 TSpider case 的 input 和旧行为来自生产证据，expected outputs 在时间桶分组修复合入后由真实 handler 重新回放；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
+数据集当前包含 21 个可执行 case。其中 13 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；7 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，另外 5 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
 | VictoriaMetrics | 3 | 简单 PromQL、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
-| Elasticsearch | 4 | aggregate/raw × 有无 query_string | 生产日志 |
-| Doris | 3 | aggregate、raw、ES→Doris 时间分段路由 | 生产日志 |
+| Elasticsearch | 6 | aggregate/raw × 有无 query_string、大小写不敏感 regexp、方括号短语 regexp | 生产日志 + 修复后 handler 回放 |
+| Doris | 6 | aggregate、raw、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度 | 生产日志 + 修复后 handler 回放 |
 | TSpider | 3 | aggregate、raw、PromQL 8 reference/16 output | 生产日志 + 修复后 handler 回放 |
 | HDFS | 2 | aggregate、raw | 生产日志 |
 | InfluxDB HTTP | 1 | aggregate、条件、group by time/fill | handler 回放，暂定 |
@@ -33,6 +33,8 @@ sanitized request
 `vm_multi_result_table_001` 则覆盖另一个边界：多个兼容的 VM 结果表会合并为一个 BKBase VM 请求，而不是每条路由记录各发一个请求。
 
 `tspider_promql_multi_reference_001` 来自后续问题修复：一个 PromQL input 解析出 8 个 reference，固定路由为每个 reference 选择同一个 BKSQL 结果表，每个 reference 再产生 schema + aggregate 两个请求，因此完整 output multiset 为 16 条。该 case 同时锁定 TSpider 时间桶必须按完整表达式分组，不能按 SELECT 别名 `_timestamp_` 分组。
+
+5 个回溯问题 case 分别锁定 ES query_string regexp 的大小写与方括号补宽，以及 Doris 多物理表 UNION 的显式投影、类型安全交集、对象叶子大小写和 `DATETIMEV2` 精度。ES case 均为 `1 input × 1 reference × 1 route × 2 stages = 2 outputs`；Doris case 均由两条固定物理表路由生成 2 条 schema 请求和 1 条合并查询，共 3 个 outputs。它们没有保留原始 trace ID，因此只计入问题回归覆盖，不改写前述分类采样收敛统计。
 
 生产采样过程、四个时间窗的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
 
@@ -49,10 +51,10 @@ testdata/cases/<storage>/<case_id>/
   expect.outputs.json
 ```
 
-- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签；问题修复导致 expected output 有意变化时使用 `post_fix_handler_replay`，并带 `post_fix_expected` 标签。
+- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.kind=production_log` 表示入口形态来自生产日志或 trace；仅由已合并 PR 的问题描述、测试和修复前回放确认的问题使用 `source.kind=merged_pr`，且必须使用 `post_fix_handler_replay` 并同时带 `post_fix_expected`、`regression_fix`，不能计入生产日志采样收敛。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签。
 - `request.json`：进入 UQ 的 method、path、保留语义的安全 headers 和 body。
 - `route.json`：空间、结果表、data label、存储类型和时间分段路由 fixture。
-- `dependencies.json`：构造查询所需的最小稳定响应，例如 BKSQL schema、ES mapping 或 InfluxDB 空结果。
+- `dependencies.json`：构造查询所需的最小稳定响应，例如 BKSQL schema、ES mapping 或 InfluxDB 空结果。多物理表 BKSQL case 可用 `bksql.schema_by_sql` 按完整 schema SQL 返回不同表结构，未命中时回退到 `bksql.schema`。
 - `expect.outputs.json`：UQ 应生成的全部下游请求。
 
 正式 case 不允许只有 downstream 而没有 input。尚未脱敏或尚不能唯一关联的候选只能放在 `testdata/local_cases/`；该目录已被 `.gitignore` 排除。
@@ -110,4 +112,4 @@ go test ./service/http -run 'TestOnlineQueryGoldenCases|TestOnlineQueryGoldenSeg
 
 采样收敛不是永久封口。后续每个查询解析、路由或 query builder 问题的修复，都必须新增能复现该问题的 case；若新日志出现现有形似不能表达的结构，也应继续扩充。
 
-修复类 case 不把线上失败输出固化为正确答案。其 input、旧 output 数量和失败形态仍来自生产证据；修复合入后，用相同 input、固定 route/dependencies 回放得到新的 expected outputs，并标记为 `post_fix_handler_replay`。只有单纯缺少可关联生产 output 的 case 才使用 provisional `handler_replay`。
+修复类 case 不把失败输出固化为正确答案。问题形态和旧行为必须由 `production_log` 或 `merged_pr` 证据确认：前者可关联生产 input/失败 output，后者只确认 PR 描述、测试和修复前 RED，不声称还原生产入口或完整下游序列。修复合入后，用相同脱敏 input、固定 route/dependencies 回放得到新的 expected outputs，并标记为 `post_fix_handler_replay`、`post_fix_expected`；`merged_pr` 还必须带 `regression_fix`。只有单纯缺少可关联生产 output 的 case 才使用 provisional `handler_replay`。

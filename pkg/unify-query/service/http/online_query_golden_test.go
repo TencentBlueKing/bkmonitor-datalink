@@ -197,6 +197,8 @@ func captureOnlineQueryGoldenOutputs(
 		HandlerQueryTs(c)
 	case "/query/ts/raw":
 		HandlerQueryRaw(c)
+	case "/query/ts/info/field_map":
+		HandlerFieldMap(c)
 	default:
 		t.Fatalf("unsupported golden request path %q", request.Path)
 	}

@@ -1,0 +1,10 @@
+{
+  "elasticsearch": {
+    "mapping": {"golden_es_field_fallback": {"mappings": {"properties": {
+      "dtEventTimeStamp": {"type": "date"},
+      "delayed_metric": {"type": "long"},
+      "service": {"type": "keyword"}
+    }}}},
+    "search": {"took": 1, "timed_out": false, "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}}
+  }
+}

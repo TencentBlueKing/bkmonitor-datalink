@@ -137,7 +137,10 @@ func TestRuntimeSubscriptionLogsRecoveryAfterSubscribeRetry(t *testing.T) {
 		defer close(done)
 		sidecar.subscribeEvent(ctx, ready)
 	}()
-	waitForSignal(t, ready, "runtime subscription recovery")
+	waitForSignal(t, ready, "fallback startup convergence")
+	require.Eventually(t, func() bool {
+		return subscribeCalls.Load() >= 2
+	}, 2*time.Second, 5*time.Millisecond)
 	cancel()
 	waitForSignal(t, done, "runtime subscription observability test shutdown")
 
@@ -156,7 +159,7 @@ func TestRuntimeSubscriptionLogsRecoveryAfterSubscribeRetry(t *testing.T) {
 		observed,
 		"runtime event subscription established",
 	)
-	assert.Equal(t, string(convergenceTriggerStartup), establishedContext["trigger"])
+	assert.Equal(t, string(convergenceTriggerRuntimeReconnect), establishedContext["trigger"])
 	assert.Equal(t, convergenceResultSuccess, establishedContext["result"])
 	assert.Equal(t, "subscribe", establishedContext["stage"])
 	assert.EqualValues(t, 2, establishedContext["subscriptionAttempt"])

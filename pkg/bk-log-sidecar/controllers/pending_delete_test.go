@@ -157,6 +157,33 @@ func TestCancelledPendingCleanupDoesNotDeleteRestartedContainerConfig(t *testing
 	assert.Equal(t, int32(0), reloadCalls.Load())
 }
 
+func TestPendingCleanupIsCancelledWithContainerWorkqueueShutdown(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	pendingConfig := &stubLogConfig{
+		name:    "container-1_std_default_config-1",
+		content: []byte("pending config"),
+	}
+	pendingPath, pendingContent := cacheActualConfig(t, sidecar, pendingConfig)
+
+	sidecar.configMutationMu.Lock()
+	pending, _ := sidecar.ensurePendingContainerDeletionLocked("container-1", true)
+	sidecar.configMutationMu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sidecar.startContainerEventWorker(ctx)
+	sidecar.schedulePendingContainerCleanup("container-1", pending.generation, 50*time.Millisecond)
+	sidecar.shutdownContainerEventQueue()
+	cancel()
+	sidecar.lifecycleWG.Wait()
+
+	// 超过原定 deadline 后文件仍存在，证明延迟任务随 workqueue 一起退出，
+	// 不会在 controller-runtime 已停止后继续修改配置并触发 reload。
+	time.Sleep(100 * time.Millisecond)
+	content, err := os.ReadFile(pendingPath)
+	require.NoError(t, err)
+	assert.Equal(t, pendingContent, content)
+}
+
 func TestReconcileDoesNotKeepPendingConfigForChangedSource(t *testing.T) {
 	scheme := k8sruntime.NewScheme()
 	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))

@@ -215,8 +215,8 @@ func (s *BkLogSidecar) generateActualBkLogConfig() error {
 	return s.generateActualBkLogConfigWithOptions(context.Background(), configGenerationOptions{})
 }
 
-func (s *BkLogSidecar) generateActualBkLogConfigOnStartup() error {
-	return s.generateActualBkLogConfigWithOptions(context.Background(), configGenerationOptions{forceReload: true})
+func (s *BkLogSidecar) generateActualBkLogConfigOnStartup(ctx context.Context) error {
+	return s.generateActualBkLogConfigWithOptions(ctx, configGenerationOptions{forceReload: true})
 }
 
 func (s *BkLogSidecar) generateActualBkLogConfigForPeriodicReconcile(ctx context.Context) error {
@@ -224,10 +224,11 @@ func (s *BkLogSidecar) generateActualBkLogConfigForPeriodicReconcile(ctx context
 }
 
 func (s *BkLogSidecar) generateActualBkLogConfigForReconcile(
+	ctx context.Context,
 	namespace, name string,
 	current *v1alpha1.BkLogConfig,
 ) error {
-	return s.generateActualBkLogConfigWithOptions(context.Background(), configGenerationOptions{
+	return s.generateActualBkLogConfigWithOptions(ctx, configGenerationOptions{
 		reconcile: &bkLogConfigReconcileState{
 			key:     bkLogConfigKey{namespace: namespace, name: name},
 			current: current,

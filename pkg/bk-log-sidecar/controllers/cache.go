@@ -24,8 +24,12 @@ func castContainer(c interface{}) *define.Container {
 }
 
 func (s *BkLogSidecar) cacheContainer() error {
+	return s.cacheContainerWithContext(context.Background())
+}
+
+func (s *BkLogSidecar) cacheContainerWithContext(parent context.Context) error {
 	s.log.Info("cache container info start")
-	ctx, cancel := context.WithTimeout(context.Background(), s.getRuntimeOperationTimeout())
+	ctx, cancel := context.WithTimeout(parent, s.getRuntimeOperationTimeout())
 	defer cancel()
 	runtime, err := s.getRuntimeWithContext(ctx)
 	if err != nil {
@@ -37,7 +41,10 @@ func (s *BkLogSidecar) cacheContainer() error {
 	}
 
 	for _, container := range containers {
-		containerInfo, err := s.containerByID(container.ID)
+		if err := parent.Err(); err != nil {
+			return err
+		}
+		containerInfo, err := s.containerByIDWithContext(parent, container.ID)
 		if err != nil {
 			return err
 		}

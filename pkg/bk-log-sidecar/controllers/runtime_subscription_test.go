@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 )
 
@@ -55,6 +56,59 @@ func TestRuntimeSubscriptionReconnectsWithoutRecursiveStart(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	require.Equal(t, int32(2), subscribeCalls.Load())
 	stop()
+	require.NoError(t, <-startDone)
+}
+
+func TestStartKeepsPeriodicReconcileAvailableWhenSubscriptionCannotStart(t *testing.T) {
+	t.Setenv(config.CurrentNodeNameKey, "node-1")
+	var subscribeCalls atomic.Int32
+	var listCalls atomic.Int32
+	var reloadCalls atomic.Int32
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			listCalls.Add(1)
+			return nil, nil
+		},
+		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
+			subscribeCalls.Add(1)
+			return nil, nil, errors.New("runtime event API unavailable")
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	observed := observeSidecarLogs(sidecar)
+	sidecar.subscribeRetryInterval = time.Hour
+	sidecar.periodicReconcileInterval = 2 * time.Millisecond
+	sidecar.periodicReconcileDelayFn = func(interval time.Duration, _ float64) time.Duration {
+		return interval
+	}
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return nil
+	}
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+
+	require.Eventually(t, func() bool {
+		// 降级启动的 cache + Build 各 List 一次，第三次证明周期补偿没有被
+		// 持续失败的事件订阅一起卡住。
+		return listCalls.Load() >= 3
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, int32(1), subscribeCalls.Load())
+	require.Equal(t, int32(1), reloadCalls.Load())
+	fallbackContext := requireObservedLogContext(
+		t,
+		observed,
+		"initial configuration convergence succeeded without runtime subscription",
+	)
+	require.Equal(t, string(convergenceTriggerStartup), fallbackContext["trigger"])
+	require.Equal(t, convergenceResultSuccess, fallbackContext["result"])
+	require.Equal(t, "fallback_convergence", fallbackContext["stage"])
+	require.Equal(t, false, fallbackContext["eventSubscriptionAvailable"])
+
+	sidecar.Stop()
 	require.NoError(t, <-startDone)
 }
 
@@ -194,6 +248,38 @@ func TestStartStopsPromptlyDuringInitialConvergenceBackoff(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Start did not return after Stop interrupted convergence backoff")
 	}
+}
+
+func TestStartCancellationInterruptsActiveInitialDiscovery(t *testing.T) {
+	scanStarted := make(chan struct{})
+	scanExited := make(chan struct{})
+	var listCalls atomic.Int32
+	runtime := &stubRuntime{
+		containersFn: func(ctx context.Context) ([]define.SimpleContainer, error) {
+			if listCalls.Add(1) == 2 {
+				close(scanStarted)
+				<-ctx.Done()
+				close(scanExited)
+				return nil, ctx.Err()
+			}
+			return nil, nil
+		},
+		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
+			return make(chan *define.ContainerEvent), make(chan error), nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	sidecar.runtimeOperationTimeout = time.Hour
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+	waitForSignal(t, scanStarted, "active initial discovery")
+
+	sidecar.Stop()
+	waitForSignal(t, scanExited, "initial discovery cancellation")
+	require.NoError(t, <-startDone)
 }
 
 func TestNextConvergenceRetryDelayIsCapped(t *testing.T) {

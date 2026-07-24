@@ -19,7 +19,6 @@ import (
 	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 type bkLogConfigKey struct {
@@ -221,21 +220,25 @@ func (s *BkLogSidecar) ensurePendingContainerDeletionLocked(
 }
 
 func (s *BkLogSidecar) schedulePendingContainerCleanup(containerID string, generation uint64, delay time.Duration) {
-	go func() {
-		cleanup := func() {
-			if err := s.finishPendingContainerDeletion(containerID, generation); err != nil {
-				s.log.Error(err, "delete configs for container event failed", "containerID", containerID)
-				// 首次清理仍在 DelayCleanConfig 到期时执行；只有真实失败才交给
-				// workqueue 做限速重试，避免 reload/PID 短暂异常后永久丢失删除动作。
-				s.enqueuePendingContainerCleanup(containerID, generation)
-			}
+	cleanup := func() {
+		if err := s.finishPendingContainerDeletion(containerID, generation); err != nil {
+			s.log.Error(err, "delete configs for container event failed", "containerID", containerID)
+			// 测试接缝直接执行回调时，真实失败仍交给 workqueue 限速重试。
+			s.enqueuePendingContainerCleanup(containerID, generation)
 		}
-		if s.delayCleanFn != nil {
-			s.delayCleanFn(delay, cleanup)
-			return
-		}
-		utils.AfterForFn(delay, cleanup)
-	}()
+	}
+	if s.delayCleanFn != nil {
+		s.delayCleanFn(delay, cleanup)
+		return
+	}
+
+	// 生产路径复用已有 delaying workqueue 管理 DelayCleanConfig，而不是创建
+	// 无法随 controller-runtime Context 退出的独立 timer goroutine。
+	s.getOrCreateContainerEventQueue().AddAfter(containerWorkItem{
+		kind:              containerWorkPendingCleanup,
+		containerID:       containerID,
+		pendingGeneration: generation,
+	}, delay)
 }
 
 func (s *BkLogSidecar) finishPendingContainerDeletion(containerID string, generation uint64) error {

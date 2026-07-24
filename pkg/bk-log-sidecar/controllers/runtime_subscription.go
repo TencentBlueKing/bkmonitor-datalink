@@ -33,7 +33,7 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 		}
 		trigger := runtimeSubscriptionTrigger(initial)
 
-		runtime, err := s.getRuntime()
+		runtime, err := s.getRuntimeWithContext(ctx)
 		if err != nil {
 			subscriptionRecovering = true
 			s.log.Error(err, "runtime initialization failed, retrying",
@@ -63,6 +63,13 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 				"subscriptionAttempt", subscriptionAttempt,
 				"duration", time.Since(subscriptionStartedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
+			if initial && s.tryInitialConvergenceWithoutSubscription(ctx) {
+				// 订阅接口持续不可用时，不能把启动全量收敛和周期补偿也一起
+				// 卡住。先以全量 Build/Apply 恢复采集；订阅后续建立成功时
+				// 会再做一次全量收敛，覆盖这段降级窗口中的事件。
+				close(ready)
+				initial = false
+			}
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
 			}
@@ -150,7 +157,7 @@ func (s *BkLogSidecar) convergeRuntimeSubscription(
 	attempt := 1
 	for {
 		startedAt := time.Now()
-		err := s.convergeAfterRuntimeSubscription(initial)
+		err := s.convergeAfterRuntimeSubscription(ctx, initial)
 		duration := time.Since(startedAt)
 		if err == nil {
 			// 避免在全量收敛期间已经断线时误报首次启动成功。
@@ -197,18 +204,40 @@ func (s *BkLogSidecar) convergeRuntimeSubscription(
 	}
 }
 
-func (s *BkLogSidecar) convergeAfterRuntimeSubscription(initial bool) error {
+func (s *BkLogSidecar) tryInitialConvergenceWithoutSubscription(ctx context.Context) bool {
+	startedAt := time.Now()
+	if err := s.convergeAfterRuntimeSubscription(ctx, true); err != nil {
+		s.log.Error(err, "initial configuration convergence without runtime subscription failed",
+			"trigger", string(convergenceTriggerStartup),
+			"result", convergenceResultFailure,
+			"stage", "fallback_convergence",
+			"duration", time.Since(startedAt).String(),
+			"eventSubscriptionAvailable", false,
+		)
+		return false
+	}
+	s.log.Info("initial configuration convergence succeeded without runtime subscription",
+		"trigger", string(convergenceTriggerStartup),
+		"result", convergenceResultSuccess,
+		"stage", "fallback_convergence",
+		"duration", time.Since(startedAt).String(),
+		"eventSubscriptionAvailable", false,
+	)
+	return true
+}
+
+func (s *BkLogSidecar) convergeAfterRuntimeSubscription(ctx context.Context, initial bool) error {
 	if initial {
-		if err := s.cacheContainer(); err != nil {
+		if err := s.cacheContainerWithContext(ctx); err != nil {
 			s.log.Error(err, "initial container cache refresh failed")
 		}
-		if err := s.generateActualBkLogConfigOnStartup(); err != nil {
+		if err := s.generateActualBkLogConfigOnStartup(ctx); err != nil {
 			return fmt.Errorf("initial configuration generation: %w", err)
 		}
 		return nil
 	}
 
-	if err := s.generateActualBkLogConfig(); err != nil {
+	if err := s.generateActualBkLogConfigWithOptions(ctx, configGenerationOptions{}); err != nil {
 		return fmt.Errorf("configuration convergence after runtime subscription reconnect: %w", err)
 	}
 	return nil

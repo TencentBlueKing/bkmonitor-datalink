@@ -452,6 +452,44 @@ func TestReconcileReturnsConfigurationGenerationFailure(t *testing.T) {
 	assert.Same(t, existingConfig, cached)
 }
 
+func TestReconcileCancellationInterruptsActiveConfigurationBuild(t *testing.T) {
+	scheme := k8sruntime.NewScheme()
+	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))
+	resource := &bluekingv1alpha1.BkLogConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "config-1"},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(resource).Build()
+	buildStarted := make(chan struct{})
+	buildExited := make(chan struct{})
+	reader := &stubReader{
+		listFn: func(ctx context.Context, _ client.ObjectList) error {
+			close(buildStarted)
+			<-ctx.Done()
+			close(buildExited)
+			return ctx.Err()
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, reader)
+	reconciler := &BkLogConfigReconciler{
+		Client:       kubeClient,
+		Scheme:       scheme,
+		BkLogSidecar: sidecar,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reconcileDone := make(chan error, 1)
+	go func() {
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: "default", Name: "config-1"},
+		})
+		reconcileDone <- err
+	}()
+	waitForSignal(t, buildStarted, "active reconcile configuration build")
+	cancel()
+	waitForSignal(t, buildExited, "reconcile configuration build cancellation")
+	require.ErrorIs(t, <-reconcileDone, context.Canceled)
+}
+
 func TestReconcileSucceedsAfterTransientReloadFailureRecovers(t *testing.T) {
 	scheme := k8sruntime.NewScheme()
 	require.NoError(t, bluekingv1alpha1.AddToScheme(scheme))

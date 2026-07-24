@@ -77,6 +77,7 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Build/Apply path. A failed Build therefore retains the previous working
 	// files instead of deleting this CR's files before regeneration succeeds.
 	if err := r.BkLogSidecar.generateActualBkLogConfigForReconcile(
+		ctx,
 		req.Namespace,
 		req.Name,
 		currentBkLogConfig,

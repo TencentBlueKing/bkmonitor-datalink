@@ -42,7 +42,7 @@ sanitized request
 
 14 个合并 PR 回溯 case 锁定 ES query_string 的 regexp、wildcard、布尔词项和聚合枚举语义，显式路由字段元数据滞后、多 RT 空索引跳过、data source 别名、`table_id_conditions` 与 field_map，以及 Doris 多物理表 UNION 和缺失字段 contains。它们没有保留原始 trace ID，均在修复前 commit 得到 RED、在当前代码得到 GREEN，因此只计入问题回归覆盖，不改写前述分类采样收敛统计。多数 ES case 为 `1 input × 1 reference × 1 route × 2 stages = 2 outputs`；field_map 只生成 index/mapping 请求，多 RT 跳过 case 只保留有效 RT 的 2 个 outputs。Doris UNION case 生成 2 条 schema 请求和 1 条合并查询，缺失字段 case 生成 1 条 schema 请求和 1 条查询。
 
-生产采样过程、W1～W6 的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
+生产采样过程、W1～W7 的形似分布和当前边界见 [SAMPLING.md](SAMPLING.md)。
 
 ## Case 协议
 

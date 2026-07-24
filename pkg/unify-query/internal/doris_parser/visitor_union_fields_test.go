@@ -148,7 +148,7 @@ func TestStatementUnionSelectListFallbacks(t *testing.T) {
 			selectSQL: "`minute1`, COUNT(*) AS log_count",
 			groupSQL:  "`minute1`",
 			orderSQL:  "`minute1` DESC",
-			expected:  "`minute1`",
+			expected:  "`minute1`, `dtEventTimeStamp`",
 		},
 		{
 			name:      "纯 COUNT star 多表 union 使用常量投影",
@@ -250,6 +250,23 @@ func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
 	}
 
 	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`, `value`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListExpandsWildcardWithBuiltinPlatformDependencies(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"log": {FieldType: "text"}},
+			"`db_a`.doris": {"log": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dtEventTimeStamp` AS `_timestamp_`, `minute1`"},
+		},
+	}
+
+	assert.Equal(t, "`log`, `dtEventTimeStamp`, `minute1`", stmt.unionSelectList())
 	assert.NoError(t, stmt.Error())
 }
 
@@ -540,6 +557,159 @@ func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
 			},
 			expected:    "`path`",
 			errContains: "field `new_field` is missing from table `db_his`.doris",
+		},
+		{
+			name: "计算平台 minuteX 内置字段会补充时间字段依赖",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "真实 minuteX 可与缺失物理 schema 的 dtEventTimeStamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1":          {FieldType: "bigint"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "真实 minuteX 可与无物理 schema 的 dtEventTimestamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`"},
+			},
+			expected: "`minute1`, `dtEventTimestamp`",
+		},
+		{
+			name: "计算平台 minuteX 缺少时间字段依赖时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+			},
+			expected:    "`minute1`, `dtEventTimeStamp`",
+			errContains: "field `dtEventTimeStamp` is missing from table `db_current`.doris",
+		},
+		{
+			name: "计算平台固定内置字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`"},
+				OrderItem:  &unionSelectTestNode{value: "`dtEventTimeStamp` DESC"},
+			},
+			expected: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`",
+		},
+		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":      {FieldType: "text"},
+					"year2024": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`year2024`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`year2024`"},
+			},
+			expected:    "`year2024`",
+			errContains: "field `year2024` is missing from table `db_his`.doris",
+		},
+		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验类型",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"day1": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"day1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` type mismatch",
+		},
+		{
+			name: "未支持的时间聚合字段缺失时仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` is missing from table `db_his`.doris",
+		},
+		{
+			name: "WHERE 计算平台内置字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`minute1` >= '202607142052' AND dtEventTimeStamp > 1 AND localTime != ''"},
+			},
+			expected: "`path`",
 		},
 		{
 			name: "WHERE-only 字段类型不同但未投影时允许",

@@ -510,8 +510,9 @@ type unionProjection struct {
 }
 
 type unionProjectionField struct {
-	field        string
-	validateName string
+	field           string
+	validateName    string
+	requirePhysical bool
 }
 
 func collectUnionSelectFields(selectFields, groupFields, orderFields []string) string {
@@ -527,14 +528,18 @@ func collectUnionSelectFields(selectFields, groupFields, orderFields []string) s
 }
 
 func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []string, tables []string) (string, error) {
-	projection := collectUnionProjection(selectFields, groupFields, orderFields)
+	projection := collectUnionProjectionWithTableFieldsMap(selectFields, groupFields, orderFields, tables, f.tableFieldsMap)
 	switch {
 	case projection.selectAll:
 		if f.expr.Type() == sql_expr.Doris && len(f.tableFieldsMap) > 0 {
 			if projection.qualifiedSelectAll {
 				return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
 			}
-			fields, err := doris_parser.ExpandSelectAllUnionFields(tables, f.tableFieldsMap)
+			fields, err := doris_parser.ExpandSelectAllUnionFieldsWithDependencies(
+				tables,
+				f.tableFieldsMap,
+				toDorisUnionProjectionFields(projection.fields),
+			)
 			if err != nil {
 				return "", err
 			}
@@ -559,6 +564,16 @@ func (f *QueryFactory) unionSelectList(selectFields, groupFields, orderFields []
 }
 
 func collectUnionProjection(selectFields, groupFields, orderFields []string) unionProjection {
+	return collectUnionProjectionWithTableFieldsMap(selectFields, groupFields, orderFields, nil, nil)
+}
+
+// QueryFactory 已持有 Doris 真实表结构，字段收集时需要沿用 Doris 解析语义：
+// 先识别真实 schema 字段，再把不存在的 minuteX 当作虚拟时间桶。
+func collectUnionProjectionWithTableFieldsMap(
+	selectFields, groupFields, orderFields []string,
+	tables []string,
+	tableFieldsMap TableFieldsMap,
+) unionProjection {
 	selectAll := false
 	qualifiedSelectAll := false
 	allParts := [][]string{selectFields, groupFields, orderFields}
@@ -605,6 +620,7 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		seen[key] = struct{}{}
 		fields = append(fields, field)
 	}
+	fields = appendMinuteBucketUnionProjectionDependencies(tables, fields, seen, tableFieldsMap)
 
 	if selectAll || qualifiedSelectAll {
 		return unionProjection{selectAll: true, qualifiedSelectAll: qualifiedSelectAll, fields: fields}
@@ -613,6 +629,32 @@ func collectUnionProjection(selectFields, groupFields, orderFields []string) uni
 		return unionProjection{dummy: true}
 	}
 	return unionProjection{fields: fields}
+}
+
+func appendMinuteBucketUnionProjectionDependencies(
+	tables []string,
+	fields []unionProjectionField,
+	seen map[string]struct{},
+	tableFieldsMap TableFieldsMap,
+) []unionProjectionField {
+	result := fields
+	for _, field := range fields {
+		if !doris_parser.IsVirtualMinutePlatformField(tables, field.validateName, tableFieldsMap) {
+			continue
+		}
+		dependency := unionProjectionField{
+			field:           "`dtEventTimeStamp`",
+			validateName:    "dtEventTimeStamp",
+			requirePhysical: true,
+		}
+		key := unionProjectionFieldKey(dependency)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, dependency)
+	}
+	return result
 }
 
 func unionProjectionFieldKey(field unionProjectionField) string {
@@ -694,8 +736,9 @@ func toDorisUnionProjectionFields(fields []unionProjectionField) []doris_parser.
 	result := make([]doris_parser.UnionProjectionField, 0, len(fields))
 	for _, field := range fields {
 		result = append(result, doris_parser.UnionProjectionField{
-			Field:        field.field,
-			ValidateName: field.validateName,
+			Field:           field.field,
+			ValidateName:    field.validateName,
+			RequirePhysical: field.requirePhysical,
 		})
 	}
 	return result

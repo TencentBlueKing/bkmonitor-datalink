@@ -22,7 +22,8 @@ import (
 var aliasMap map[string]map[string]bool
 var aliasLock *sync.RWMutex
 
-// AliasExist 判断别名是否存在
+// AliasExist 判断别名是否存在。
+// Deprecated: 查询链路已不再依赖 alias 缓存，仅为兼容旧调用保留。
 func AliasExist(tableID string, alias string) bool {
 	aliasLock.RLock()
 	defer aliasLock.RUnlock()
@@ -36,7 +37,8 @@ func AliasExist(tableID string, alias string) bool {
 	return ok
 }
 
-// RefreshAllAlias 并发刷新整个别名map
+// RefreshAllAlias 并发刷新整个别名 map，会请求实际 ES _alias 接口。
+// Deprecated: 服务不会再调用该方法，仅为兼容旧调用保留。
 func RefreshAllAlias() {
 	type aliasRefreshTarget struct {
 		tableID   string

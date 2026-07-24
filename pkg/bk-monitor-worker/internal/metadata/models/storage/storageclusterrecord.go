@@ -11,10 +11,6 @@ package storage
 
 import (
 	"time"
-
-	"github.com/jinzhu/gorm"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 //go:generate goqueryset -in storageclusterrecord.go -out qs_storageclusterrecord_gen.go
@@ -22,8 +18,14 @@ import (
 // ClusterRecord represents the history of collected storage records.
 // gen:qs
 type ClusterRecord struct {
+	// ID 在 enable_time 相同时作为 DESC 排序的稳定 tie-breaker。
+	ID uint `json:"id" gorm:"column:id;primary_key"`
+
 	// TableID is the name of the result table.
 	TableID string `json:"table_id" gorm:"size:128;index;comment:'采集项结果表名'"`
+
+	// BkTenantID 限定历史分段所属租户，避免同名结果表串用记录。
+	BkTenantID string `json:"bk_tenant_id" gorm:"size:256;default:system;comment:'租户ID'"`
 
 	// ClusterID is the ID of the storage cluster.
 	ClusterID int64 `json:"cluster_id" gorm:"index;comment:'存储集群ID'"`
@@ -40,7 +42,7 @@ type ClusterRecord struct {
 	// CreateTime is the time when the record was created.
 	CreateTime time.Time `json:"create_time" gorm:"autoCreateTime;comment:'创建时间'"`
 
-	// EnableTime is the time when data writing starts.
+	// EnableTime is the time when data writing starts; nil is treated as Unix 0 by route composition.
 	EnableTime *time.Time `json:"enable_time" gorm:"comment:'启用时间'"`
 
 	// DisableTime is the time when data writing stops.
@@ -57,42 +59,4 @@ type ClusterRecord struct {
 // TableName 用于设置表的别名
 func (ClusterRecord) TableName() string {
 	return "metadata_storageclusterrecord"
-}
-
-// ComposeTableIDStorageClusterRecords 组装指定 table_id 的历史存储集群记录
-func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[string]any, error) {
-	logger.Infof("compose_table_id_storage_cluster_records: try to get storage cluster records for table_id->[%s]", tableID)
-
-	var records []ClusterRecord
-	// 查询数据库：过滤 table_id 和 is_deleted，按 create_time 升序排列
-
-	err := NewClusterRecordQuerySet(db).
-		TableIDEq(tableID).      // 过滤 table_id
-		IsDeletedEq(false).      // 过滤 is_deleted = false
-		OrderDescByCreateTime(). // 按 create_time 倒序
-		Select("cluster_id", "enable_time", "is_current").
-		All(&records)
-	if err != nil {
-		logger.Errorf("compose_table_id_storage_cluster_records: failed to query records for table_id->[%s], error: %v", tableID, err)
-		return nil, err
-	}
-
-	// 组装结果集
-	result := make([]map[string]any, 0)
-	for _, record := range records {
-		// 判断 enable_time 是否为 nil，转换为 Unix 时间戳
-		var enableTimestamp int64
-		if record.EnableTime != nil {
-			enableTimestamp = record.EnableTime.Unix()
-		}
-
-		// 追加到结果集合
-		result = append(result, map[string]any{
-			"storage_id":  record.ClusterID,
-			"enable_time": enableTimestamp,
-		})
-	}
-
-	logger.Infof("compose_table_id_storage_cluster_records: get storage cluster records for table_id->[%s] success, records->[%v]", tableID, result)
-	return result, nil
 }

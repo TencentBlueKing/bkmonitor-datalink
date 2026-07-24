@@ -694,7 +694,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				Limit:         10,
 			},
-			wantSQL: "SELECT *, NULL AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_unit_test`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' LIMIT 10",
+			wantSQL: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_unit_test`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' LIMIT 10",
 		},
 		{
 			// 用户自定义 SQL 仅聚合（count），仍追加时间窗口（与带 SELECT 列表的 user sql 一致）

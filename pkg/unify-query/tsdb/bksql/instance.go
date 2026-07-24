@@ -238,6 +238,54 @@ func needFieldMap(query *metadata.Query) bool {
 	}
 }
 
+func queryPhysicalTables(query *metadata.Query) []string {
+	if query == nil {
+		return nil
+	}
+
+	dbs := query.DBs
+	if len(dbs) == 0 && query.DB != "" {
+		dbs = []string{query.DB}
+	}
+
+	tables := make([]string, 0, len(dbs))
+	for _, db := range dbs {
+		if db == "" {
+			continue
+		}
+		tables = append(tables, formatPhysicalTableName(db, query.Measurement))
+	}
+	return tables
+}
+
+func shouldDisableShardKeyTimeBucket(query *metadata.Query, fieldsMap metadata.FieldsMap, tableFieldsMap TableFieldsMap, timeField string) bool {
+	if query == nil || query.Measurement != sql_expr.Doris {
+		return false
+	}
+
+	tables := queryPhysicalTables(query)
+	if len(tables) > 0 {
+		for _, table := range tables {
+			tableFields, ok := tableFieldsMap[table]
+			if !ok {
+				// 无法证明该物理表包含 __shard_key__ 时，不启用 shard key 时间桶优化。
+				return true
+			}
+			if !tableFields.Field(sql_expr.ShardKey).Existed() {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 没有逐表信息时退回合并字段表判断；只有字段表能证明 timeField 存在时，
+	// 才用它判断 __shard_key__ 缺失，避免字段表为空或不完整时误判。
+	if !fieldsMap.Field(timeField).Existed() {
+		return false
+	}
+	return !fieldsMap.Field(sql_expr.ShardKey).Existed()
+}
+
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
@@ -258,6 +306,9 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 			}
 		}
 		f.WithFieldsMap(fieldsMap).WithTableFieldsMap(tableFieldsMap).WithKeepColumns(keepColumns)
+		if shouldDisableShardKeyTimeBucket(query, fieldsMap, tableFieldsMap, f.timeField) {
+			f.WithShardKeyTimeBucket(false)
+		}
 	}
 
 	return f, nil

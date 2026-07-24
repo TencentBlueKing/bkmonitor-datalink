@@ -10,6 +10,7 @@
 package function
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) storage.Series {
@@ -30,11 +33,17 @@ func NewMergeSeriesSetWithFuncAndSortByStep(name string, step time.Duration) fun
 		if len(series) == 0 {
 			return nil
 		}
+		name = strings.ToLower(name)
 		if len(series) == 1 {
+			if tr, ok := series[0].(SeriesTimeRange); ok {
+				start, end := tr.TimeRange()
+				if start < end {
+					return newRouteRangeFilteredSeries(name, step, series[0], start, end, true)
+				}
+			}
 			return series[0]
 		}
 
-		name = strings.ToLower(name)
 		// avg 类函数只要存在 route 有效时间段，就按 bucket 覆盖时长做加权合并；仅用于迁移重叠查询的 route 不参与权重。
 		if IsAvgFunc(name) && step > 0 && hasAnyTimeRange(series...) {
 			return mergeAvgSeriesSetWithTimeWeight(name, series, step)
@@ -53,6 +62,7 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 	aggFunc := seriesAggFunc(name)
 	isRouteRangeFilterEnabled := hasAnyTimeRange(series...)
 	stepMs := step.Milliseconds()
+	filterReasonCount := make(map[string]float64)
 
 	addSample := func(values, counts map[int64]float64, t int64, v float64) {
 		if existing, ok := values[t]; ok {
@@ -75,10 +85,12 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 			t, v := it.At()
 			if isRouteRangeFilterEnabled && ok {
 				if start >= end {
+					filterReasonCount[metric.RouteSeriesFilterZeroRangeCandidate]++
 					addSample(candidateValueMap, candidateCountMap, t, v)
 					continue
 				}
-				if !isSampleInRouteRange(name, stepMs, t, start, end) {
+				if ok, reason := routeRangeFilterReason(name, stepMs, t, start, end); !ok {
+					filterReasonCount[reason]++
 					continue
 				}
 			}
@@ -92,6 +104,7 @@ func mergeSeriesSetWithFunc(name string, step time.Duration, series []storage.Se
 	if isRouteRangeFilterEnabled {
 		mergeCandidateSamples(valueMap, countMap, candidateValueMap, candidateCountMap)
 	}
+	recordRouteSeriesFilterSamples(name, filterReasonCount)
 
 	return newSampleSeries(series[0], buildSortedSeriesSamples(name, valueMap, countMap))
 }
@@ -152,24 +165,74 @@ func buildSortedSeriesSamples(name string, valueMap, countMap map[int64]float64)
 }
 
 func isSampleInRouteRange(name string, stepMs, t, start, end int64) bool {
+	ok, _ := routeRangeFilterReason(name, stepMs, t, start, end)
+	return ok
+}
+
+func routeRangeFilterReason(name string, stepMs, t, start, end int64) (bool, string) {
 	if stepMs > 0 && isForwardRangeBucketFunc(name) {
 		// 这里处理的是存储侧下推后的窗口聚合结果：样本 timestamp 表示 bucket 起点，
 		// route 过滤应判断 bucket [t, t+window) 是否与 route 生效区间相交。
 		// PromQL 原生 *_over_time(range-vector) 的 timestamp 是 evaluation instant，不能复用该 forward bucket 语义。
-		return t < end && t+stepMs > start
+		return rangeOverlapFilterReason(t, t+stepMs, start, end)
 	}
 	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
 		// PromQL *_over_time(range-vector) 的 timestamp 是 evaluation instant，
 		// 实际统计窗口为 [t-window, t)，需要按向后窗口判断与 route 生效区间是否相交。
 		// t == routeStart 时窗口在 routeStart 前结束，与当前 route 无交集，因此这里必须是严格大于。
-		return t > start && t-stepMs < end
+		return rangeOverlapFilterReason(t-stepMs, t, start, end)
 	}
-	return t >= start && t < end
+	if t < start {
+		return false, metric.RouteSeriesFilterBeforeStart
+	}
+	if t >= end {
+		return false, metric.RouteSeriesFilterAfterEnd
+	}
+	return true, ""
+}
+
+// routeIteratorFilterReason 用在 merge 前的 per-route wrapper。
+// backward range bucket 默认只保留与 route 有交集的样本。
+func routeIteratorFilterReason(name string, stepMs, t, start, end int64) (bool, string) {
+	return routeIteratorFilterReasonWithOptions(name, stepMs, t, start, end, false)
+}
+
+// routeStart 边界 bucket 只在整次查询实际只有单路 route 时保留；多路查询中某个 label 只出现在后一路时，
+// NewMergeSeriesSet 可能跳过 merge-time recheck，不能让 [t-step,t) 与当前 route 无交集的 bucket 泄漏。
+func routeIteratorFilterReasonWithOptions(
+	name string, stepMs, t, start, end int64, allowRouteStartBoundaryBucket bool,
+) (bool, string) {
+	if stepMs > 0 && isBackwardRangeBucketFunc(name) {
+		if allowRouteStartBoundaryBucket && t == start {
+			return true, ""
+		}
+		return rangeOverlapFilterReason(t-stepMs, t, start, end)
+	}
+	return routeRangeFilterReason(name, stepMs, t, start, end)
+}
+
+func rangeOverlapFilterReason(start, end, otherStart, otherEnd int64) (bool, string) {
+	if start < otherEnd && end > otherStart {
+		return true, ""
+	}
+	if end <= otherStart {
+		return false, metric.RouteSeriesFilterBeforeStart
+	}
+	if start >= otherEnd {
+		return false, metric.RouteSeriesFilterAfterEnd
+	}
+	return false, metric.RouteSeriesFilterNoOverlap
+}
+
+func recordRouteSeriesFilterSamples(name string, reasonCount map[string]float64) {
+	for reason, count := range reasonCount {
+		metric.RouteSeriesFilterSamplesAdd(context.Background(), name, reason, count)
+	}
 }
 
 func isForwardRangeBucketFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case Sum, Count, Min, Max:
+	case Sum, Count, Min, Max, Avg, Mean:
 		return true
 	default:
 		return false
@@ -210,6 +273,21 @@ func newSampleSeries(template storage.Series, samples []prompb.Sample) storage.S
 	}
 }
 
+// newRouteRangeFilteredSeries 按 route 生效范围裁剪样本，同时保持底层 iterator 的样本类型，
+// 避免 native histogram 被转换或丢弃。
+func newRouteRangeFilteredSeries(
+	name string, step time.Duration, series storage.Series, start, end int64, allowRouteStartBoundaryBucket bool,
+) storage.Series {
+	return &routeRangeFilteredSeries{
+		Series:                        series,
+		name:                          name,
+		stepMs:                        step.Milliseconds(),
+		start:                         start,
+		end:                           end,
+		allowRouteStartBoundaryBucket: allowRouteStartBoundaryBucket,
+	}
+}
+
 // SeriesTimeRange 标记某条 Series 在本次查询中实际覆盖的 route 时间段，单位为毫秒时间戳。
 type SeriesTimeRange interface {
 	TimeRange() (start, end int64)
@@ -237,6 +315,34 @@ func NewZeroTimeRangeSeriesSet(set storage.SeriesSet) storage.SeriesSet {
 	}
 }
 
+type routeRangeFilterOption func(*routeRangeFilterSeriesSet)
+
+// WithRouteStartBoundaryBucket 保留 backward range 函数在 routeStart 的首个 evaluation bucket。
+// 这个例外只适用于整次查询只有单路 route 的场景；多路 route 查询应让后续 merge 按 range overlap 决定边界归属。
+func WithRouteStartBoundaryBucket() routeRangeFilterOption {
+	return func(s *routeRangeFilterSeriesSet) {
+		s.allowRouteStartBoundaryBucket = true
+	}
+}
+
+func NewRouteRangeFilterSeriesSet(
+	set storage.SeriesSet, name string, step time.Duration, opts ...routeRangeFilterOption,
+) storage.SeriesSet {
+	if set == nil {
+		return nil
+	}
+
+	wrapper := &routeRangeFilterSeriesSet{
+		SeriesSet: set,
+		name:      strings.ToLower(name),
+		step:      step,
+	}
+	for _, opt := range opts {
+		opt(wrapper)
+	}
+	return wrapper
+}
+
 type timeRangeSeriesSet struct {
 	storage.SeriesSet
 	start int64
@@ -258,6 +364,56 @@ type timeRangeSeries struct {
 }
 
 func (s *timeRangeSeries) TimeRange() (int64, int64) {
+	return s.start, s.end
+}
+
+type routeRangeFilterSeriesSet struct {
+	storage.SeriesSet
+	name string
+	step time.Duration
+	// allowRouteStartBoundaryBucket 仅用于整次查询只有单路 route 的 backward range 函数。
+	// 多路 route 查询中，某个 label 只出现在后一路时可能绕过 merge-time recheck，不能开启该例外。
+	allowRouteStartBoundaryBucket bool
+}
+
+func (s *routeRangeFilterSeriesSet) At() storage.Series {
+	series := s.SeriesSet.At()
+	tr, ok := series.(SeriesTimeRange)
+	if !ok {
+		return series
+	}
+	start, end := tr.TimeRange()
+	if start >= end {
+		return series
+	}
+	return newRouteRangeFilteredSeries(
+		s.name, s.step, series, start, end, s.allowRouteStartBoundaryBucket,
+	)
+}
+
+type routeRangeFilteredSeries struct {
+	storage.Series
+	name   string
+	stepMs int64
+	start  int64
+	end    int64
+	// allowRouteStartBoundaryBucket 允许 t == routeStart 的首个 backward evaluation bucket 通过。
+	// 该 bucket 的 [t-step,t) 与当前 route 无交集，只能在确认不存在其他 route 参与时使用。
+	allowRouteStartBoundaryBucket bool
+}
+
+func (s *routeRangeFilteredSeries) Iterator(iterator chunkenc.Iterator) chunkenc.Iterator {
+	return &routeRangeFilterIterator{
+		it:                            s.Series.Iterator(iterator),
+		name:                          s.name,
+		stepMs:                        s.stepMs,
+		start:                         s.start,
+		end:                           s.end,
+		allowRouteStartBoundaryBucket: s.allowRouteStartBoundaryBucket,
+	}
+}
+
+func (s *routeRangeFilteredSeries) TimeRange() (int64, int64) {
 	return s.start, s.end
 }
 
@@ -283,6 +439,7 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 	// candidate* 记录仅来自迁移重叠查询的零权重样本；只有有效 route 没有同 timestamp 样本时才兜底补入。
 	candidateValueMap := make(map[int64]float64)
 	candidateCountMap := make(map[int64]float64)
+	filterReasonCount := make(map[string]float64)
 	for _, s := range series {
 		tr, ok := s.(SeriesTimeRange)
 		it := s.Iterator(nil)
@@ -304,6 +461,7 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 			t, v := it.At()
 			// start >= end 表示该路由只有扩展查询范围、没有真实生效区间，不能参与 avg 权重。
 			if start >= end {
+				filterReasonCount[metric.RouteSeriesFilterZeroRangeCandidate]++
 				candidateValueMap[t] += v
 				candidateCountMap[t]++
 				continue
@@ -312,6 +470,8 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 			// 权重取 route 时间段与当前统计窗口的交集时长。
 			weight := overlapDuration(bucketStart, bucketEnd, start, end)
 			if weight <= 0 {
+				_, reason := rangeOverlapFilterReason(bucketStart, bucketEnd, start, end)
+				filterReasonCount[reason]++
 				continue
 			}
 			// 加权平均 = sum(avg * overlap) / sum(overlap)
@@ -341,6 +501,7 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 	sort.Slice(sortedData, func(i, j int) bool {
 		return sortedData[i].Timestamp < sortedData[j].Timestamp
 	})
+	recordRouteSeriesFilterSamples(name, filterReasonCount)
 
 	return &storage.SeriesEntry{
 		Lset: series[0].Labels(),
@@ -437,4 +598,93 @@ func (it *seriesIterator) Seek(t int64) chunkenc.ValueType {
 
 func (it *seriesIterator) Err() error {
 	return it.err
+}
+
+type routeRangeFilterIterator struct {
+	it     chunkenc.Iterator
+	name   string
+	stepMs int64
+	start  int64
+	end    int64
+	// allowRouteStartBoundaryBucket 只服务单 route 查询的首 bucket 兼容逻辑；
+	// 多 route later-only label 需要保持 false，避免 routeStart lookback bucket 泄漏。
+	allowRouteStartBoundaryBucket bool
+	reasonCount                   map[string]float64
+	recorded                      bool
+}
+
+func (it *routeRangeFilterIterator) AtHistogram() (int64, *histogram.Histogram) {
+	return it.it.AtHistogram()
+}
+
+func (it *routeRangeFilterIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
+	return it.it.AtFloatHistogram()
+}
+
+func (it *routeRangeFilterIterator) AtT() int64 {
+	return it.it.AtT()
+}
+
+func (it *routeRangeFilterIterator) At() (int64, float64) {
+	return it.it.At()
+}
+
+func (it *routeRangeFilterIterator) Next() chunkenc.ValueType {
+	return it.advance(it.it.Next())
+}
+
+func (it *routeRangeFilterIterator) Seek(t int64) chunkenc.ValueType {
+	return it.advance(it.it.Seek(t))
+}
+
+func (it *routeRangeFilterIterator) Err() error {
+	it.recordFilteredSamples()
+	return it.it.Err()
+}
+
+func (it *routeRangeFilterIterator) advance(valueType chunkenc.ValueType) chunkenc.ValueType {
+	for valueType != chunkenc.ValNone {
+		t := it.sampleTimestamp(valueType)
+		if ok, reason := routeIteratorFilterReasonWithOptions(
+			it.name, it.stepMs, t, it.start, it.end, it.allowRouteStartBoundaryBucket,
+		); ok {
+			return valueType
+		} else {
+			it.countFilterReason(reason)
+		}
+		valueType = it.it.Next()
+	}
+	it.recordFilteredSamples()
+	return chunkenc.ValNone
+}
+
+func (it *routeRangeFilterIterator) countFilterReason(reason string) {
+	if it.reasonCount == nil {
+		it.reasonCount = make(map[string]float64)
+	}
+	it.reasonCount[reason]++
+}
+
+func (it *routeRangeFilterIterator) recordFilteredSamples() {
+	if it.recorded {
+		return
+	}
+	it.recorded = true
+	recordRouteSeriesFilterSamples(it.name, it.reasonCount)
+}
+
+func (it *routeRangeFilterIterator) sampleTimestamp(valueType chunkenc.ValueType) int64 {
+	switch valueType {
+	case chunkenc.ValFloat:
+		t, _ := it.it.At()
+		return t
+	case chunkenc.ValHistogram:
+		t, _ := it.it.AtHistogram()
+		return t
+	case chunkenc.ValFloatHistogram:
+		t, _ := it.it.AtFloatHistogram()
+		return t
+	default:
+		return it.it.AtT()
+	}
 }

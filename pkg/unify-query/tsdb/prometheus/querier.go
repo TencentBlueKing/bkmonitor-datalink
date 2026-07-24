@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -162,7 +163,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 		}
 
-		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
 		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
 
@@ -223,10 +223,22 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			successedPaths.Add(1)
 			switch strategy.wrapKind {
 			case seriesSetWrapValidRouteRange:
-				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
+				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				if len(queryList) == 1 {
+					// 单路 route 需要保留 routeStart 的首个 backward range evaluation bucket；
+					// 多路 route 的 later-only label 可能绕过 merge-time recheck，不能开启这个例外。
+					setCh <- function.NewRouteRangeFilterSeriesSet(
+						timeRangeSet, mergeFunc, bucketDuration, function.WithRouteStartBoundaryBucket(),
+					)
+				} else {
+					setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration)
+				}
 			case seriesSetWrapZeroRouteRange:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
 			default:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapNone, mergeFunc)
 				setCh <- currentSet
 			}
 		})

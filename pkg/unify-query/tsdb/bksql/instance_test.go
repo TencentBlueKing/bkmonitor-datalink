@@ -1122,6 +1122,22 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT `partition_hour`, `datacenter`, `deployment`, SUM(`sum_Sub8MsFrames`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) AS `_timestamp_` FROM `100680_alpha_server_perf_data` WHERE `dtEventTimeStamp` >= 1776905999999 AND `dtEventTimeStamp` < 1784685599999 AND `dtEventTime` >= '2026-04-23 08:59:59' AND `dtEventTime` <= '2026-07-22 10:00:00' AND `thedate` >= '20260423' AND `thedate` <= '20260722' GROUP BY `partition_hour`, `datacenter`, `deployment`, (FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) ORDER BY `_timestamp_` ASC LIMIT 2000005",
 		},
 		{
+			name: "Doris 分钟聚合使用 __shard_key__ 时间桶",
+			query: &metadata.Query{
+				DB:          "2_bklog_bkunify_query_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "login_rate",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"namespace"},
+						Window:     time.Minute,
+					},
+				},
+			},
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' GROUP BY `namespace`, _timestamp_",
+		},
+		{
 			name: "conditions with or",
 			query: &metadata.Query{
 				DB:    "132_lol_new_login_queue_login_1min",
@@ -1796,6 +1812,7 @@ WHERE
 				"ip":               {FieldType: sql_expr.DorisTypeString},
 				"thedate":          {FieldType: sql_expr.DorisTypeString},
 				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeDate},
+				sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
 				"login_rate":       {FieldType: sql_expr.DorisTypeInt},
 				"err_count":        {FieldType: sql_expr.DorisTypeDouble},
 				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},

@@ -195,6 +195,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	var (
 		window         time.Duration
 		timeZoneOffset int64
+		// valueProjected 标记 SELECT 中是否真的生成了 `_value_`，避免 raw 查询跳过 NULL 投影后仍按 `_value` 排序。
+		valueProjected bool
 	)
 
 	dimensionSet = set.New[string]([]string{FieldValue}...)
@@ -228,10 +230,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+			valueProjected = true
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
+			valueProjected = true
 		}
 
 		if agg.Window > 0 {
@@ -302,8 +306,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			selectFields = append(selectFields, SelectAll)
 		}
 
-		if valueField != "" {
+		if valueField != "" && valueField != metadata.Null {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
+			valueProjected = true
 		}
 		if d.timeField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, TimeStamp))
@@ -323,6 +328,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		var orderField string
 		switch order.Name {
 		case FieldValue:
+			if !valueProjected {
+				continue
+			}
 			orderField = Value
 		case FieldTime:
 			orderField = TimeStamp
@@ -330,7 +338,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			orderField = order.Name
 		}
 
-		orderField, _ = d.dimTransform(orderField)
+		orderField = d.orderFieldTransform(orderField)
+		if orderField == "" {
+			continue
+		}
 
 		// 移除重复的排序字段
 		if orderNameSet.Existed(orderField) {
@@ -346,6 +357,19 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
+}
+
+func (d *DorisSQLExpr) orderFieldTransform(field string) string {
+	transformed, _ := d.dimTransform(field)
+	if transformed != metadata.Null {
+		return transformed
+	}
+
+	if field == d.timeField {
+		return fmt.Sprintf("`%s`", normalizeDorisFieldName(field))
+	}
+
+	return ""
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {

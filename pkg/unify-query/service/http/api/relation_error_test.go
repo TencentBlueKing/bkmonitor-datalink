@@ -9,21 +9,24 @@
 
 package api
 
-const (
-	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
-	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
-	RelationMaxRoutingConfigPath         = "api.relation.max_routing"
+import (
+	"fmt"
+	"testing"
 
-	// V1beta3 SurrealDB 图查询专用路由（与 v1beta1 并存）。
-	RelationV1Beta3MultiResourceConfigPath      = "api.relation.v1beta3.multi_resource"
-	RelationV1Beta3MultiResourceRangeConfigPath = "api.relation.v1beta3.multi_resource_range"
+	"github.com/stretchr/testify/assert"
 )
 
-var (
-	RelationMultiResource      string
-	RelationMultiResourceRange string
-	RelationMaxRouting         int
+type testTruncationError struct{}
 
-	RelationV1Beta3MultiResource      string
-	RelationV1Beta3MultiResourceRange string
-)
+func (testTruncationError) Error() string            { return "limited" }
+func (testTruncationError) TruncationReason() string { return "max_targets" }
+
+func TestRelationTruncationMetadata(t *testing.T) {
+	truncated, reason := relationTruncationMetadata(fmt.Errorf("wrapped: %w", testTruncationError{}))
+	assert.True(t, truncated)
+	assert.Equal(t, "max_targets", reason)
+
+	truncated, reason = relationTruncationMetadata(fmt.Errorf("ordinary error"))
+	assert.False(t, truncated)
+	assert.Empty(t, reason)
+}

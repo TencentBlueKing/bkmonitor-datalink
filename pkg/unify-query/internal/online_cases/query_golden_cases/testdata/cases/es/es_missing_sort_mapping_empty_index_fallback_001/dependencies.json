@@ -1,0 +1,54 @@
+{
+  "elasticsearch": {
+    "mapping": {
+      "golden_logs_legacy": {
+        "aliases": {"golden_logs_alias": {}},
+        "mappings": {"properties": {
+          "dtEventTimeStamp": {"type": "date"},
+          "events_total": {"type": "long"}
+        }}
+      },
+      "golden_logs_current": {
+        "aliases": {"golden_logs_alias": {}},
+        "mappings": {"properties": {
+          "dtEventTimeStamp": {"type": "date"},
+          "events_total": {"type": "long"},
+          "service": {"type": "keyword"}
+        }}
+      }
+    },
+    "search_sequence": [
+      {
+        "took": 1,
+        "timed_out": false,
+        "_shards": {
+          "total": 2,
+          "successful": 1,
+          "skipped": 0,
+          "failed": 1,
+          "failures": [{
+            "shard": 0,
+            "index": "golden_logs_legacy",
+            "reason": {
+              "type": "query_shard_exception",
+              "reason": "No mapping found for [service] in order to sort on"
+            }
+          }]
+        },
+        "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}
+      },
+      {
+        "took": 1,
+        "timed_out": false,
+        "_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+        "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}
+      },
+      {
+        "took": 1,
+        "timed_out": false,
+        "_shards": {"total": 2, "successful": 2, "skipped": 0, "failed": 0},
+        "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}
+      }
+    ]
+  }
+}

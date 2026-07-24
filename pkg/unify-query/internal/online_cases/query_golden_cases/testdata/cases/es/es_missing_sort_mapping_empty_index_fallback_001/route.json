@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_mapping_fallback",
+  "result_tables": [{"table_id": "demo_logs_fallback.partition_1"}],
+  "result_table_details": {
+    "demo_logs_fallback.partition_1": {
+      "storage_id": 2016,
+      "storage_name": "es_cluster_mapping_fallback",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_mapping_fallback",
+      "db": "golden_logs_alias",
+      "table_id": "demo_logs_fallback.partition_1",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_fallback",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2016": {"type": "elasticsearch"}}
+}

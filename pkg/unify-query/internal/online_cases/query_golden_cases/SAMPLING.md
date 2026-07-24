@@ -129,13 +129,14 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 
 ### 最近 90 天已合并 UQ PR 回溯
 
-2026-07-23 按 `mergedAt >= 2026-04-24` 且改动 `pkg/unify-query/` 的口径，从仓库同期 87 个已合并 PR 中筛出 41 个 UQ PR，并逐个检查问题语义、代码路径、原有测试和 golden 覆盖。19 个 PR 涉及 parser、route expansion、query builder 或稳定的下游请求构造，其中 8 个由上一轮 case 覆盖，2 个由已有 case 精确覆盖，该轮为其余 9 个补充 case；另外 22 个只影响响应处理、并发安全、观测、性能、错误契约或测试，不适合用正向 downstream-output golden 表达。2026-07-24，#1403、#1405、#1408 后续合并，按同一口径各补充 1 个回归 case；仍未合并的 #1404、#1407 不入库。
+2026-07-23 按 `mergedAt >= 2026-04-24` 且改动 `pkg/unify-query/` 的口径，从仓库同期 87 个已合并 PR 中筛出 41 个 UQ PR，并逐个检查问题语义、代码路径、原有测试和 golden 覆盖。19 个 PR 涉及 parser、route expansion、query builder 或稳定的下游请求构造，其中 8 个由上一轮 case 覆盖，2 个由已有 case 精确覆盖，该轮为其余 9 个补充 case；另外 22 个只影响响应处理、并发安全、观测、性能、错误契约或测试，不适合用正向 downstream-output golden 表达。2026-07-24，#1403、#1404、#1405、#1408 后续合并，按同一口径各补充 1 个回归 case；仍未合并的 #1407 不入库。
 
 | PR | 查询处理影响 | Golden 处理 |
 | --- | --- | --- |
 | #1413 | TSpider 时间桶错误按 `_timestamp_` 别名分组 | 既有 `tspider_promql_multi_reference_001` 精确覆盖 |
 | #1408 | 任一 Doris 物理表缺失 `__shard_key__` 时仍错误使用该字段构造时间桶 | 新增 `doris_missing_shard_key_time_bucket_001` |
 | #1405 | raw 字段别名被 schema 转换为 `NULL` 后没有回退到原字段 | 新增 `doris_raw_field_alias_fallback_001` |
+| #1404 | ES alias 中旧空索引缺少排序字段 mapping 时查询失败 | 新增 `es_missing_sort_mapping_empty_index_fallback_001` |
 | #1403 | 外层使用平台分钟字段时，Doris UNION 内部投影缺少 `dtEventTimeStamp` | 新增 `doris_union_platform_minute_field_001` |
 | #1400 | Doris 对象叶子大小写与 `DATETIMEV2` 精度 | 既有 `doris_union_object_leaf_precision_case_001` 精确覆盖 |
 | #1401 | TSpider FieldsMap 缺失及错误使用 Doris 时间字段 | 既有 `tspider_promql_multi_reference_001` 精确覆盖 |
@@ -178,7 +179,7 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 | #1298 | BKSQL 结果格式化 | 范围外；属于查询结果后处理 |
 | #1296 | 显式 `table_id_conditions` 被 K8s split-measurement 默认规则误过滤 | 新增 `es_table_id_conditions_k8s_non_split_001` |
 
-2026-07-23 的 9 个新增 case，以及 2026-07-24 为 #1403、#1405、#1408 新增的 3 个 case，其问题形态均来自已合并 PR 的问题描述、回归测试和代码修复，不保留原始 trace ID。每个 case 均使用同一份脱敏 request、固定 route/dependencies，在对应修复 PR 的第一父提交先得到 RED，再在当前代码得到 GREEN；当前 expected 由真实 handler 生成并标记为 `post_fix_handler_replay`。它们的 `source.kind` 均为 `merged_pr`，不声称来自已关联的生产日志或 trace，也不计入 W1～W4 分类采样的 production output 收敛统计。
+2026-07-23 的 9 个新增 case，以及 2026-07-24 为 #1403、#1404、#1405、#1408 新增的 4 个 case，其问题形态均来自已合并 PR 的问题描述、回归测试和代码修复，不保留原始 trace ID。每个 case 均使用同一份脱敏 request、固定 route/dependencies，在对应修复 PR 的第一父提交先得到 RED，再在当前代码得到 GREEN；当前 expected 由真实 handler 生成并标记为 `post_fix_handler_replay`。它们的 `source.kind` 均为 `merged_pr`，不声称来自已关联的生产日志或 trace，也不计入 W1～W4 分类采样的 production output 收敛统计。
 
 历史 RED 的判定点如下：
 
@@ -186,6 +187,7 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 | --- | --- |
 | #1408 | 两张物理表中一张缺少 `__shard_key__`，handler 以多表 UNION 字段缺失返回 HTTP 400；修复后整体回退到 `dtEventTimeStamp` 时间桶 |
 | #1405 | raw 查询生成 `NULL AS _value_` 和 `ORDER BY NULL DESC`，而不是回退使用别名前字段 `dtEventTimeStamp` |
+| #1404 | 首次 search 返回旧空索引缺排序字段 mapping 的 shard failure，handler 直接返回 HTTP 400，没有执行精确空检查和重试 |
 | #1403 | 平台字段 `minute1` 不在物理 schema 中，handler 以多表 UNION 字段缺失返回 HTTP 400，没有生成最终查询 |
 | #1364 | wildcard 值 `ERROR`、`Traceback` 被转成小写 |
 | #1363 | handler 以 `SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS` 结束，没有生成 ES 请求 |

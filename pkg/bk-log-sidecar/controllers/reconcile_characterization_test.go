@@ -68,7 +68,7 @@ func (r *stubReader) List(ctx context.Context, list client.ObjectList, _ ...clie
 type stubRuntime struct {
 	containersFn func(context.Context) ([]define.SimpleContainer, error)
 	inspectFn    func(context.Context, string) (define.Container, error)
-	subscribeFn  func(context.Context) (<-chan *define.ContainerEvent, <-chan error)
+	subscribeFn  func(context.Context) (<-chan *define.ContainerEvent, <-chan error, error)
 	runtimeType  define.RuntimeType
 }
 
@@ -100,9 +100,9 @@ func (r *stubRuntime) Inspect(ctx context.Context, containerID string) (define.C
 	return r.inspectFn(ctx, containerID)
 }
 
-func (r *stubRuntime) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+func (r *stubRuntime) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
 	if r.subscribeFn == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	return r.subscribeFn(ctx)
 }
@@ -147,23 +147,21 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, name string) {
 	}
 }
 
-func TestStartRunsInitialGenerationBeforeRuntimeSubscriptionIsReady(t *testing.T) {
-	initialGenerationStarted := make(chan struct{})
+func TestStartEstablishesSubscriptionBeforeInitialContainerDiscovery(t *testing.T) {
+	containerDiscoveryStarted := make(chan struct{})
+	subscriptionStarted := make(chan struct{})
 	releaseSubscription := make(chan struct{})
-	subscriptionReady := make(chan struct{})
-	var listCalls atomic.Int32
+	var discoveryOnce sync.Once
 
 	runtime := &stubRuntime{
 		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
-			if listCalls.Add(1) == 2 {
-				close(initialGenerationStarted)
-			}
+			discoveryOnce.Do(func() { close(containerDiscoveryStarted) })
 			return nil, nil
 		},
-		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
+			close(subscriptionStarted)
 			<-releaseSubscription
-			close(subscriptionReady)
-			return nil, nil
+			return nil, nil, nil
 		},
 	}
 	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
@@ -176,55 +174,78 @@ func TestStartRunsInitialGenerationBeforeRuntimeSubscriptionIsReady(t *testing.T
 		startDone <- sidecar.Start(context.Background())
 	}()
 
-	waitForSignal(t, initialGenerationStarted, "initial configuration generation")
+	waitForSignal(t, subscriptionStarted, "runtime subscription start")
 	select {
-	case <-subscriptionReady:
-		t.Fatal("runtime subscription unexpectedly became ready before initial generation")
+	case <-containerDiscoveryStarted:
+		t.Fatal("container discovery started before runtime subscription was established")
 	default:
 	}
 
 	close(releaseSubscription)
-	waitForSignal(t, subscriptionReady, "runtime subscription")
-	require.NoError(t, <-startDone)
+	waitForSignal(t, containerDiscoveryStarted, "initial container discovery")
 	stop()
+	require.NoError(t, <-startDone)
 }
 
-func TestStartForcesReloadAndKeepsFailurePending(t *testing.T) {
+func TestStartRetriesForcedReloadUntilSuccess(t *testing.T) {
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	sidecar.convergenceRetryBaseDelay = 50 * time.Millisecond
+	sidecar.convergenceRetryMaxDelay = 50 * time.Millisecond
 	var stopOnce sync.Once
 	stop := func() { stopOnce.Do(sidecar.Stop) }
 	t.Cleanup(stop)
 	reloadErr := errors.New("reload unavailable during startup")
+	firstReloadFailed := make(chan struct{})
 	var reloadCalls atomic.Int32
 	sidecar.reloadAgentFn = func() error {
-		if reloadCalls.Add(1) == 1 {
+		switch reloadCalls.Add(1) {
+		case 1:
+			close(firstReloadFailed)
 			return reloadErr
+		default:
+			return nil
 		}
-		return nil
 	}
 
-	require.NoError(t, sidecar.Start(context.Background()))
-	assert.Equal(t, int32(1), reloadCalls.Load())
-	assert.True(t, sidecar.reloadPending)
-
-	require.NoError(t, sidecar.generateActualBkLogConfig())
-	assert.Equal(t, int32(2), reloadCalls.Load())
-	assert.False(t, sidecar.reloadPending)
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+	waitForSignal(t, firstReloadFailed, "first startup reload failure")
+	require.Eventually(t, func() bool {
+		return isReloadPending(sidecar)
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return reloadCalls.Load() == 2 && !isReloadPending(sidecar)
+	}, 2*time.Second, 5*time.Millisecond)
 	stop()
+	require.NoError(t, <-startDone)
 }
 
-func TestStartKeepsForcedReloadPendingWhenInitialBuildFails(t *testing.T) {
+func TestStartRetriesInitialBuildAndKeepsForcedReloadPending(t *testing.T) {
 	buildErr := errors.New("runtime list unavailable during startup")
+	firstBuildFailed := make(chan struct{})
+	allowBuildRetry := make(chan struct{})
 	var listCalls atomic.Int32
 	runtime := &stubRuntime{
 		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
-			if listCalls.Add(1) <= 2 {
+			switch listCalls.Add(1) {
+			case 1:
 				return nil, buildErr
+			case 2:
+				close(firstBuildFailed)
+				return nil, buildErr
+			case 3:
+				<-allowBuildRetry
+				return nil, nil
+			default:
+				return nil, nil
 			}
-			return nil, nil
 		},
 	}
 	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	sidecar.convergenceRetryBaseDelay = time.Millisecond
+	sidecar.convergenceRetryMaxDelay = time.Millisecond
 	var stopOnce sync.Once
 	stop := func() { stopOnce.Do(sidecar.Stop) }
 	t.Cleanup(stop)
@@ -234,14 +255,22 @@ func TestStartKeepsForcedReloadPendingWhenInitialBuildFails(t *testing.T) {
 		return nil
 	}
 
-	require.NoError(t, sidecar.Start(context.Background()))
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+	waitForSignal(t, firstBuildFailed, "first startup build failure")
+	require.Eventually(t, func() bool {
+		return listCalls.Load() >= 3
+	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, int32(0), reloadCalls.Load())
-	assert.True(t, sidecar.reloadPending)
-
-	require.NoError(t, sidecar.generateActualBkLogConfig())
-	assert.Equal(t, int32(1), reloadCalls.Load())
-	assert.False(t, sidecar.reloadPending)
+	assert.True(t, isReloadPending(sidecar))
+	close(allowBuildRetry)
+	require.Eventually(t, func() bool {
+		return listCalls.Load() >= 4 && reloadCalls.Load() == 1 && !isReloadPending(sidecar)
+	}, 2*time.Second, 5*time.Millisecond)
 	stop()
+	require.NoError(t, <-startDone)
 }
 
 func TestGenerateKeepsExistingConfigWhenContainerDiscoveryFails(t *testing.T) {
@@ -304,7 +333,7 @@ func TestMatchBkLogConfigsReturnsPodReadFailure(t *testing.T) {
 		},
 	}
 
-	matched, pod, err := sidecar.matchBklogConfigs(container)
+	matched, pod, err := sidecar.matchBklogConfigs(context.Background(), container, nil)
 
 	assert.Empty(t, matched)
 	assert.Equal(t, corev1.Pod{}, *pod)
@@ -326,7 +355,7 @@ func TestMatchBkLogConfigsTreatsMissingPodAsNoMatch(t *testing.T) {
 		},
 	}
 
-	matched, pod, err := sidecar.matchBklogConfigs(container)
+	matched, pod, err := sidecar.matchBklogConfigs(context.Background(), container, nil)
 
 	assert.NoError(t, err)
 	assert.Empty(t, matched)

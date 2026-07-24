@@ -33,8 +33,9 @@ type bkLogConfigReconcileState struct {
 }
 
 type configGenerationOptions struct {
-	forceReload bool
-	reconcile   *bkLogConfigReconcileState
+	forceReload            bool
+	refreshDiscoveredState bool
+	reconcile              *bkLogConfigReconcileState
 }
 
 type pendingContainerDeletion struct {
@@ -224,6 +225,9 @@ func (s *BkLogSidecar) schedulePendingContainerCleanup(containerID string, gener
 		cleanup := func() {
 			if err := s.finishPendingContainerDeletion(containerID, generation); err != nil {
 				s.log.Error(err, "delete configs for container event failed", "containerID", containerID)
+				// 首次清理仍在 DelayCleanConfig 到期时执行；只有真实失败才交给
+				// workqueue 做限速重试，避免 reload/PID 短暂异常后永久丢失删除动作。
+				s.enqueuePendingContainerCleanup(containerID, generation)
 			}
 		}
 		if s.delayCleanFn != nil {
@@ -239,7 +243,19 @@ func (s *BkLogSidecar) finishPendingContainerDeletion(containerID string, genera
 	defer s.configMutationMu.Unlock()
 
 	pending, ok := s.pendingContainerDeletes[containerID]
-	if !ok || pending.generation != generation {
+	if !ok {
+		// 文件事务成功但 reload 失败时 pending 已移除，重试项只需基于当前
+		// cache 补发 reload，不能把已经删除的旧容器配置重新合并回来。
+		if !s.reloadPending {
+			return nil
+		}
+		desired, err := s.desiredConfigsFromCacheLocked()
+		if err != nil {
+			return fmt.Errorf("render current config snapshot for pending reload: %w", err)
+		}
+		return s.applyDesiredConfigsLocked(desired, false, nil)
+	}
+	if pending.generation != generation {
 		return nil
 	}
 	if pending.deleteContainerCache {

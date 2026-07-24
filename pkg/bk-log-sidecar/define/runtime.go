@@ -81,8 +81,9 @@ type Runtime interface {
 	Containers(ctx context.Context) ([]SimpleContainer, error)
 	// Inspect 获取容器详情；容器已不存在时返回 ErrContainerNotFound
 	Inspect(ctx context.Context, containerID string) (Container, error)
-	// Subscribe 订阅容器变更事件
-	Subscribe(ctx context.Context) (ch <-chan *ContainerEvent, errs <-chan error)
+	// Subscribe 订阅容器变更事件。只有底层事件流已经建立后才返回 nil error；
+	// 启动失败必须通过 error 同步返回，不能把失败流误报为 ready。
+	Subscribe(ctx context.Context) (ch <-chan *ContainerEvent, errs <-chan error, err error)
 	// Type 获取 runtime 类型
 	Type() RuntimeType
 }

@@ -23,26 +23,11 @@ func castContainer(c interface{}) *define.Container {
 	return c.(*define.Container)
 }
 
-func (s *BkLogSidecar) periodCacheContainer() {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := s.cacheContainer(); err != nil {
-				s.log.Error(err, "periodic container cache refresh failed")
-			}
-		case <-s.stopCh:
-			s.log.Info("stop periodCacheContainer")
-			return
-		}
-	}
-}
-
 func (s *BkLogSidecar) cacheContainer() error {
 	s.log.Info("cache container info start")
-	ctx := context.Background()
-	runtime, err := s.getRuntime()
+	ctx, cancel := context.WithTimeout(context.Background(), s.getRuntimeOperationTimeout())
+	defer cancel()
+	runtime, err := s.getRuntimeWithContext(ctx)
 	if err != nil {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
@@ -66,12 +51,19 @@ func (s *BkLogSidecar) cacheContainer() error {
 }
 
 func (s *BkLogSidecar) getContainerInfoByID(containerID string) (*define.Container, error) {
+	return s.getContainerInfoByIDWithContext(context.Background(), containerID)
+}
+
+func (s *BkLogSidecar) getContainerInfoByIDWithContext(
+	ctx context.Context,
+	containerID string,
+) (*define.Container, error) {
 	containerInfo, ok := s.containerCache.Load(containerID)
 	if ok {
 		return castContainer(containerInfo), nil
 	}
 
-	container, err := s.containerByID(containerID)
+	container, err := s.containerByIDWithContext(ctx, containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +74,16 @@ func (s *BkLogSidecar) getContainerInfoByID(containerID string) (*define.Contain
 }
 
 func (s *BkLogSidecar) containerByID(containerID string) (*define.Container, error) {
-	ctx := context.Background()
-	runtime, err := s.getRuntime()
+	return s.containerByIDWithContext(context.Background(), containerID)
+}
+
+func (s *BkLogSidecar) containerByIDWithContext(
+	parent context.Context,
+	containerID string,
+) (*define.Container, error) {
+	ctx, cancel := context.WithTimeout(parent, s.getRuntimeOperationTimeout())
+	defer cancel()
+	runtime, err := s.getRuntimeWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize runtime: %w", err)
 	}
@@ -98,4 +98,11 @@ func (s *BkLogSidecar) containerByID(containerID string) (*define.Container, err
 		return nil, fmt.Errorf("inspect container %s: %w", containerID, err)
 	}
 	return &container, nil
+}
+
+func (s *BkLogSidecar) getRuntimeOperationTimeout() time.Duration {
+	if s.runtimeOperationTimeout > 0 {
+		return s.runtimeOperationTimeout
+	}
+	return RuntimeOperationTimeout
 }

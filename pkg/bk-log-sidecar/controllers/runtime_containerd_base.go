@@ -40,7 +40,7 @@ func (r *ContainerdBase) Type() define.RuntimeType {
 }
 
 // Subscribe watch container event
-func (r *ContainerdBase) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+func (r *ContainerdBase) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
 	eventChanel := make(chan *define.ContainerEvent)
 	errorChanel := make(chan error)
 
@@ -53,21 +53,49 @@ func (r *ContainerdBase) Subscribe(ctx context.Context) (<-chan *define.Containe
 	}
 
 	events, errors := r.containerdClient.Subscribe(ctx, filterOpts...)
+	// containerd 在 gRPC Subscribe 建立失败时，会在返回前把错误写入
+	// errors channel。这里同步提取该错误，避免公共层误判订阅已经 ready。
+	select {
+	case err, ok := <-errors:
+		if !ok {
+			return nil, nil, fmt.Errorf("containerd subscription closed during startup")
+		}
+		return nil, nil, fmt.Errorf("start containerd event subscription: %w", err)
+	default:
+	}
 
 	r.log.Info("start watch containerd event")
 
 	go func() {
+		defer close(eventChanel)
+		defer close(errorChanel)
 		for {
 			select {
-			case event := <-events:
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
 				containerEvent, ok := r.parseEvent(event)
 				if !ok {
 					continue
 				}
-				eventChanel <- containerEvent
+				// supervisor 重连会取消旧 context；发送也必须可取消，否则旧订阅
+				// 可能永久阻塞在无人接收的 channel 上。
+				select {
+				case eventChanel <- containerEvent:
+				case <-ctx.Done():
+					return
+				}
 				r.log.Info(fmt.Sprintf("event received: %v", containerEvent))
-			case err := <-errors:
-				errorChanel <- err
+			case err, ok := <-errors:
+				if !ok {
+					return
+				}
+				select {
+				case errorChanel <- err:
+				case <-ctx.Done():
+					return
+				}
 				r.log.Error(err, "event receive error")
 			case <-ctx.Done():
 				return
@@ -75,7 +103,7 @@ func (r *ContainerdBase) Subscribe(ctx context.Context) (<-chan *define.Containe
 		}
 	}()
 
-	return eventChanel, errorChanel
+	return eventChanel, errorChanel, nil
 }
 
 // parseEvent parse containerd event to ContainerEvent

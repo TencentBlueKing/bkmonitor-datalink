@@ -13,6 +13,7 @@ package define
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
@@ -23,7 +24,7 @@ import (
 
 // LogConfigType log config type
 type LogConfigType interface {
-	Config() []byte
+	Config() ([]byte, error)
 	ConfigName() string
 }
 
@@ -51,7 +52,7 @@ type StdOutLogConfig struct {
 }
 
 // Config stdout log config
-func (s *StdOutLogConfig) Config() []byte {
+func (s *StdOutLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -133,9 +134,9 @@ func (s *StdOutLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal stdout log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // stdFilePath stdout file log path
@@ -156,7 +157,7 @@ type ContainerLogConfig struct {
 }
 
 // Config container config
-func (s *ContainerLogConfig) Config() []byte {
+func (s *ContainerLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -233,8 +234,18 @@ func (s *ContainerLogConfig) Config() []byte {
 			mountMap[k] = v
 		}
 	}
-	for k, v := range mountMap {
-		mounts = append(mounts, Mount{HostPath: ToHostPath(k), ContainerPath: v})
+	// Go map 的遍历顺序不稳定。同一份配置若随机换序，会被 Apply 误判为变更并
+	// 反复落盘、reload，因此先按宿主机路径固定挂载项顺序。
+	mountPaths := make([]string, 0, len(mountMap))
+	for hostPath := range mountMap {
+		mountPaths = append(mountPaths, hostPath)
+	}
+	sort.Strings(mountPaths)
+	for _, hostPath := range mountPaths {
+		mounts = append(mounts, Mount{
+			HostPath:      ToHostPath(hostPath),
+			ContainerPath: mountMap[hostPath],
+		})
 	}
 	if len(mountMap) > 0 {
 		local.Mounts = mounts
@@ -245,9 +256,9 @@ func (s *ContainerLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal container log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // ConfigName container log config
@@ -262,7 +273,7 @@ type NodeLogConfig struct {
 }
 
 // Config get node config
-func (s *NodeLogConfig) Config() []byte {
+func (s *NodeLogConfig) Config() ([]byte, error) {
 	bkunifylogbeatConfig := &BkunifylogbeatConfig{}
 	extMeta := make(map[string]interface{})
 
@@ -304,9 +315,9 @@ func (s *NodeLogConfig) Config() []byte {
 	bkunifylogbeatConfig.Local = []Local{local}
 	yamlContent, err := bkunifylogbeatConfig.Marshal()
 	if utils.NotNil(err) {
-		return []byte{}
+		return nil, fmt.Errorf("marshal node log config %s: %w", s.ConfigName(), err)
 	}
-	return yamlContent
+	return yamlContent, nil
 }
 
 // ConfigName get node config name

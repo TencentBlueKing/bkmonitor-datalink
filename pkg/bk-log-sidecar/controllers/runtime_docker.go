@@ -12,13 +12,16 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -36,8 +39,9 @@ const (
 
 // DockerRuntime docker runtime
 type DockerRuntime struct {
-	cli *client.Client
-	log logr.Logger
+	cliMu sync.RWMutex
+	cli   *client.Client
+	log   logr.Logger
 }
 
 // Type runtime type
@@ -45,9 +49,21 @@ func (r *DockerRuntime) Type() define.RuntimeType {
 	return define.RuntimeTypeDocker
 }
 
+func (r *DockerRuntime) currentClient() *client.Client {
+	r.cliMu.RLock()
+	defer r.cliMu.RUnlock()
+	return r.cli
+}
+
+func (r *DockerRuntime) replaceClient(cli *client.Client) {
+	r.cliMu.Lock()
+	r.cli = cli
+	r.cliMu.Unlock()
+}
+
 // Containers list of containers
 func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.cli.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
+	containers, err := r.currentClient().ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
 
 	if err != nil {
 		return nil, err
@@ -63,25 +79,26 @@ func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContaine
 
 // Inspect docker container inspect
 func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
-	containerCh := make(chan container.InspectResponse)
+	type inspectResult struct {
+		container container.InspectResponse
+		err       error
+	}
+	containerCh := make(chan inspectResult, 1)
 	ctx, cancelFunc := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelFunc()
 
-	defer func() {
-		close(containerCh)
-	}()
-
+	cli := r.currentClient()
 	go func() {
-		c, err := r.cli.ContainerInspect(ctx, containerID)
-		if utils.NotNil(err) {
-			r.log.Error(err, fmt.Sprintf("docker inspect container info [%s] failed", containerID))
-			cancelFunc()
-			return
-		}
-		containerCh <- c
+		c, err := cli.ContainerInspect(ctx, containerID)
+		containerCh <- inspectResult{container: c, err: err}
 	}()
 
 	select {
-	case c := <-containerCh:
+	case result := <-containerCh:
+		if result.err != nil {
+			return define.Container{}, normalizeDockerInspectError(containerID, result.err)
+		}
+		c := result.container
 		rootPath := define.ContainerRootPath(c)
 
 		var mounts []define.Mount
@@ -103,8 +120,18 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 
 		return containerInfo, nil
 	case <-ctx.Done():
-		return define.Container{}, fmt.Errorf("docker inspect container info [%s] timeout or other error", containerID)
+		return define.Container{}, fmt.Errorf("docker inspect container info [%s] timed out: %w", containerID, ctx.Err())
 	}
+}
+
+func normalizeDockerInspectError(containerID string, err error) error {
+	var notFound errdefs.ErrNotFound
+	if errors.As(err, &notFound) {
+		// Keep Docker error types inside the Docker adapter so adding another
+		// Runtime never requires changing the common sidecar reconciliation code.
+		return fmt.Errorf("%w: container [%s]: %v", define.ErrContainerNotFound, containerID, err)
+	}
+	return fmt.Errorf("docker inspect container info [%s] failed: %w", containerID, err)
 }
 
 func (r *DockerRuntime) parseEvent(event *events.Message) (*define.ContainerEvent, bool) {
@@ -131,7 +158,7 @@ func (r *DockerRuntime) parseEvent(event *events.Message) (*define.ContainerEven
 }
 
 // Subscribe watch docker event
-func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error) {
+func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
 	eventChanel := make(chan *define.ContainerEvent)
 	errorChanel := make(chan error)
 
@@ -142,42 +169,73 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 	filter.Add("event", DockerDieEvent)
 	options := events.ListOptions{Filters: filter}
 
-	events, errors := r.cli.Events(ctx, options)
+	cli := r.currentClient()
+	// Docker SDK 的 Events 只通过异步 errors channel 报启动失败。先执行
+	// 同步 Ping，把 socket/daemon 不可用转换为 Subscribe 的同步 error。
+	if _, err := cli.Ping(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ping docker before event subscription: %w", err)
+	}
+	events, errors := cli.Events(ctx, options)
+	select {
+	case err, ok := <-errors:
+		if !ok {
+			return nil, nil, fmt.Errorf("docker subscription closed during startup")
+		}
+		return nil, nil, fmt.Errorf("start docker event subscription: %w", err)
+	default:
+	}
 
 	r.log.Info("start watch docker event")
 
 	go func() {
+		defer close(eventChanel)
+		defer close(errorChanel)
 		for {
 			select {
-			case event := <-events:
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
 				containerEvent, ok := r.parseEvent(&event)
 				if !ok {
 					continue
 				}
-				eventChanel <- containerEvent
+				select {
+				case eventChanel <- containerEvent:
+				case <-ctx.Done():
+					return
+				}
 				r.log.Info(fmt.Sprintf("event received: %v", containerEvent))
-			case err := <-errors:
+			case err, ok := <-errors:
+				if !ok {
+					return
+				}
 				r.log.Error(err, "event receive error")
 				match, api := utils.ExtractDockerApiVersion(err)
 				if match {
 					cli, err := client.NewClientWithOpts(client.WithHost(config.DockerSocket), client.WithVersion(api))
 					if utils.IsNil(err) {
-						r.cli = cli
-						events, errors = r.cli.Events(ctx, options)
+						// 只更新下一轮订阅要使用的 client；真正的重连统一由
+						// supervisor 管理，避免 adapter 内再创建一条即将被取消的流。
+						r.replaceClient(cli)
 					}
 				}
-				errorChanel <- err
+				select {
+				case errorChanel <- err:
+				case <-ctx.Done():
+					return
+				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	return eventChanel, errorChanel
+	return eventChanel, errorChanel, nil
 }
 
 // NewDockerRuntime new docker runtime
-func NewDockerRuntime() define.Runtime {
+func NewDockerRuntime() (define.Runtime, error) {
 	var cli *client.Client
 	var err error
 	if len(config.DockerSocket) > 0 {
@@ -185,9 +243,11 @@ func NewDockerRuntime() define.Runtime {
 	} else {
 		cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	}
-	utils.CheckError(err)
+	if err != nil {
+		return nil, fmt.Errorf("create docker client: %w", err)
+	}
 	return &DockerRuntime{
 		log: ctrl.Log.WithName("docker"),
 		cli: cli,
-	}
+	}, nil
 }

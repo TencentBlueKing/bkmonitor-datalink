@@ -11,7 +11,15 @@
 // Package config basic config
 package config
 
-import "flag"
+import (
+	"flag"
+	"time"
+)
+
+const (
+	DefaultPeriodicReconcileInterval = 5 * time.Minute
+	DefaultPeriodicReconcileJitter   = 0.2
+)
 
 var (
 	DockerSocket     string
@@ -24,12 +32,14 @@ var (
 	ContainerdAddress   string
 	ContainerdStatePath string
 
-	BkunifylogbeatConfig  string
-	BkunifylogbeatPidFile string
-	HostPath              string
-	DelayCleanConfig      int
-	BkEnv                 string
-	HttpProf              string
+	BkunifylogbeatConfig      string
+	BkunifylogbeatPidFile     string
+	HostPath                  string
+	DelayCleanConfig          int
+	BkEnv                     string
+	HttpProf                  string
+	PeriodicReconcileInterval time.Duration
+	PeriodicReconcileJitter   float64
 )
 
 // FlagInit init flag
@@ -47,4 +57,16 @@ func FlagInit() {
 	flag.IntVar(&DelayCleanConfig, "delay-clean-config", 30, "delay cleaning")
 	flag.StringVar(&BkEnv, "bk-env", "", "bk env label value")
 	flag.StringVar(&HttpProf, "httpprof", "127.0.0.1:16060", "http pprof address")
+	flag.DurationVar(
+		&PeriodicReconcileInterval,
+		"periodic-reconcile-interval",
+		DefaultPeriodicReconcileInterval,
+		"interval for node-wide configuration reconciliation",
+	)
+	flag.Float64Var(
+		&PeriodicReconcileJitter,
+		"periodic-reconcile-jitter",
+		DefaultPeriodicReconcileJitter,
+		"random jitter ratio for node-wide reconciliation, applied as +/- ratio",
+	)
 }

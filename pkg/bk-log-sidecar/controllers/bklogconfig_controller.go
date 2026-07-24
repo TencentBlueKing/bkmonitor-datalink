@@ -14,13 +14,13 @@ import (
 	"context"
 	"fmt"
 
-	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 )
 
 // BkLogConfigReconciler reconciles a BkLogConfig object
@@ -48,21 +48,28 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	log.Info(fmt.Sprintf("handler bklogconfig event [%s]", req.Name))
 	var bkLogConfig bluekingv1alpha1.BkLogConfig
 	err := r.Client.Get(ctx, req.NamespacedName, &bkLogConfig)
-	if utils.NotNil(err) {
-		if errors.IsNotFound(err) {
-			r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name)
-			utils.CheckErrorFn(r.BkLogSidecar.reloadBkunifylogbeat(), func(err error) {
-				log.Error(err, "bklogconfig delete then reload agent failed")
-			})
-
-			return ctrl.Result{}, nil
+	var currentBkLogConfig *bluekingv1alpha1.BkLogConfig
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			// Returning the error is intentional: controller-runtime applies
+			// rate-limited backoff and retries this object key. Logging and returning
+			// nil would acknowledge the event and permanently drop this failure.
+			return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 		}
-		log.Error(err, "is other error")
-		return ctrl.Result{}, nil
+	} else {
+		currentBkLogConfig = &bkLogConfig
 	}
 
-	r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name)
-	r.BkLogSidecar.generateActualBkLogConfig()
+	// Both create/update and confirmed deletion converge through the same full
+	// Build/Apply path. A failed Build therefore retains the previous working
+	// files instead of deleting this CR's files before regeneration succeeds.
+	if err := r.BkLogSidecar.generateActualBkLogConfigForReconcile(
+		req.Namespace,
+		req.Name,
+		currentBkLogConfig,
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("converge generated config after BkLogConfig %s event: %w", req.NamespacedName, err)
+	}
 	return ctrl.Result{}, nil
 }
 

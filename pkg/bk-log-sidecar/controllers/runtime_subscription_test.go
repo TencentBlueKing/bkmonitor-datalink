@@ -80,6 +80,7 @@ func TestRuntimeSubscriptionReconnectTriggersFullConvergence(t *testing.T) {
 		},
 	}
 	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	observed := observeSidecarLogs(sidecar)
 	sidecar.subscribeRetryInterval = time.Millisecond
 	sidecar.convergenceRetryBaseDelay = time.Millisecond
 	sidecar.convergenceRetryMaxDelay = time.Millisecond
@@ -99,6 +100,23 @@ func TestRuntimeSubscriptionReconnectTriggersFullConvergence(t *testing.T) {
 		// 重连后的第一次全量 Build 失败，必须在同一条有效订阅上自动重试。
 		return listCalls.Load() >= initialListCalls+2
 	}, 2*time.Second, 5*time.Millisecond)
+	establishedContext := requireObservedLogContext(
+		t,
+		observed,
+		"runtime event subscription established",
+	)
+	require.Equal(t, string(convergenceTriggerRuntimeReconnect), establishedContext["trigger"])
+	require.EqualValues(t, 1, establishedContext["subscriptionAttempt"])
+	require.Equal(t, true, establishedContext["subscriptionRecovered"])
+
+	convergenceContext := requireObservedLogContext(
+		t,
+		observed,
+		"runtime configuration convergence succeeded",
+	)
+	require.Equal(t, string(convergenceTriggerRuntimeReconnect), convergenceContext["trigger"])
+	require.EqualValues(t, 2, convergenceContext["convergenceAttempt"])
+	require.Equal(t, true, convergenceContext["convergenceRecovered"])
 
 	sidecar.Stop()
 	require.NoError(t, <-startDone)

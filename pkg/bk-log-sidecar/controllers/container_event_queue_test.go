@@ -36,6 +36,7 @@ func TestContainerEventQueueRetriesTransientCreateFailure(t *testing.T) {
 			return define.Container{ID: containerID}, nil
 		},
 	}, &stubReader{})
+	observed := observeSidecarLogs(sidecar)
 	startTestContainerEventWorker(t, sidecar, time.Millisecond)
 
 	sidecar.enqueueContainerEvent(&define.ContainerEvent{
@@ -46,6 +47,15 @@ func TestContainerEventQueueRetriesTransientCreateFailure(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return inspectCalls.Load() == 2 && !hasLatestContainerEvent(sidecar, "container-1")
 	}, 2*time.Second, 5*time.Millisecond)
+	recoveryContext := requireObservedLogContext(
+		t,
+		observed,
+		"container work item recovered after retry",
+	)
+	assert.Equal(t, string(convergenceTriggerContainerCreate), recoveryContext["trigger"])
+	assert.Equal(t, convergenceResultSuccess, recoveryContext["result"])
+	assert.EqualValues(t, 1, recoveryContext["retryCount"])
+	assert.Equal(t, define.ContainerEventCreate, recoveryContext["eventType"])
 }
 
 func TestContainerEventQueueDoesNotRetryConfirmedNotFound(t *testing.T) {

@@ -44,6 +44,15 @@ type backedUpConfig struct {
 	backupPath   string
 }
 
+type configFileApplyResult struct {
+	writtenConfigCount int
+	deletedConfigCount int
+}
+
+func (r configFileApplyResult) changed() bool {
+	return r.writtenConfigCount > 0 || r.deletedConfigCount > 0
+}
+
 func renderDesiredConfigs(logConfigs []define.LogConfigType) (desiredConfigSet, error) {
 	desired := make(desiredConfigSet, len(logConfigs))
 	for _, logConfig := range logConfigs {
@@ -68,7 +77,7 @@ func renderDesiredConfigs(logConfigs []define.LogConfigType) (desiredConfigSet, 
 func (s *BkLogSidecar) applyDesiredConfigs(desired desiredConfigSet) error {
 	s.configMutationMu.Lock()
 	defer s.configMutationMu.Unlock()
-	return s.applyDesiredConfigsLocked(desired, true, nil)
+	return s.applyDesiredConfigsLocked(desired, true, nil, convergenceTriggerDirect)
 }
 
 func (s *BkLogSidecar) configSnapshotGeneration() uint64 {
@@ -90,9 +99,19 @@ func (s *BkLogSidecar) applyDesiredConfigsLocked(
 	desired desiredConfigSet,
 	pruneObsolete bool,
 	explicitDeletes map[string]struct{},
+	trigger convergenceTrigger,
 ) error {
-	changed, err := s.applyDesiredConfigFiles(desired, pruneObsolete, explicitDeletes)
+	reloadPendingBeforeApply := s.reloadPending
+	applyResult, err := s.applyDesiredConfigFiles(desired, pruneObsolete, explicitDeletes)
 	if err != nil {
+		s.log.Error(err, "configuration apply transaction failed",
+			"trigger", string(trigger),
+			"result", convergenceResultFailure,
+			"desiredConfigCount", len(desired),
+			"plannedWrittenConfigCount", applyResult.writtenConfigCount,
+			"plannedDeletedConfigCount", applyResult.deletedConfigCount,
+			"reloadPending", s.reloadPending,
+		)
 		return err
 	}
 
@@ -100,19 +119,46 @@ func (s *BkLogSidecar) applyDesiredConfigsLocked(
 	// 磁盘事务成功后立即推进世代，即使 reload 暂时失败，后续并发 Build 也不能
 	// 再用提交前的旧资源快照覆盖已经落盘的目标状态。
 	s.configGeneration++
-	if changed {
+	if applyResult.changed() {
 		s.reloadPending = true
 	}
 	if !s.reloadPending {
+		// controller-runtime 的 Development logger 默认会输出 V(1)。无差异是周期
+		// 兜底的常态，因此放到默认关闭的 V(2)，只在主动调高详细度时保留证据。
+		s.log.V(2).Info("configuration apply skipped because desired state is unchanged",
+			"trigger", string(trigger),
+			"result", convergenceResultSuccess,
+			"desiredConfigCount", len(desired),
+			"configGeneration", s.configGeneration,
+		)
 		return nil
 	}
 
 	if err := s.reloadAgent(); err != nil {
 		// Keep reloadPending set. A controller-runtime retry with identical file
 		// content must still retry the signal instead of taking the no-diff path.
+		s.log.Error(err, "configuration files applied but agent reload failed",
+			"trigger", string(trigger),
+			"result", convergenceResultFailure,
+			"desiredConfigCount", len(desired),
+			"writtenConfigCount", applyResult.writtenConfigCount,
+			"deletedConfigCount", applyResult.deletedConfigCount,
+			"configGeneration", s.configGeneration,
+			"reloadPending", true,
+			"reloadPendingBeforeApply", reloadPendingBeforeApply,
+		)
 		return fmt.Errorf("reload agent for desired config: %w", err)
 	}
 	s.reloadPending = false
+	s.log.Info("configuration apply completed",
+		"trigger", string(trigger),
+		"result", convergenceResultSuccess,
+		"desiredConfigCount", len(desired),
+		"writtenConfigCount", applyResult.writtenConfigCount,
+		"deletedConfigCount", applyResult.deletedConfigCount,
+		"configGeneration", s.configGeneration,
+		"reloadPendingBeforeApply", reloadPendingBeforeApply,
+	)
 	return nil
 }
 
@@ -158,7 +204,7 @@ func (s *BkLogSidecar) upsertActualConfigsIfCurrent(
 	}
 	// A CREATE event is incremental. It must not prune files absent from the
 	// still-warming in-memory cache during startup.
-	if err := s.applyDesiredConfigsLocked(desired, false, nil); err != nil {
+	if err := s.applyDesiredConfigsLocked(desired, false, nil, convergenceTriggerContainerCreate); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -184,17 +230,17 @@ func (s *BkLogSidecar) deleteContainerConfigLocked(container *define.Container) 
 			explicitDeletes[name] = struct{}{}
 		}
 	}
-	return s.applyDesiredConfigsLocked(desired, false, explicitDeletes)
+	return s.applyDesiredConfigsLocked(desired, false, explicitDeletes, convergenceTriggerContainerCleanup)
 }
 
 func (s *BkLogSidecar) applyDesiredConfigFiles(
 	desired desiredConfigSet,
 	pruneObsolete bool,
 	explicitDeletes map[string]struct{},
-) (bool, error) {
+) (configFileApplyResult, error) {
 	current, err := readCurrentConfigFiles(config.BkunifylogbeatConfig)
 	if err != nil {
-		return false, err
+		return configFileApplyResult{}, err
 	}
 
 	changedNames := make([]string, 0)
@@ -218,8 +264,12 @@ func (s *BkLogSidecar) applyDesiredConfigFiles(
 			}
 		}
 	}
-	if len(changedNames) == 0 && len(obsoleteNames) == 0 {
-		return false, nil
+	result := configFileApplyResult{
+		writtenConfigCount: len(changedNames),
+		deletedConfigCount: len(obsoleteNames),
+	}
+	if !result.changed() {
+		return result, nil
 	}
 	sort.Strings(changedNames)
 	sort.Strings(obsoleteNames)
@@ -229,7 +279,7 @@ func (s *BkLogSidecar) applyDesiredConfigFiles(
 	for _, name := range changedNames {
 		stagedConfig, err := stageConfigFile(config.BkunifylogbeatConfig, name, desired[name].content)
 		if err != nil {
-			return false, err
+			return result, err
 		}
 		staged[name] = stagedConfig
 	}
@@ -249,11 +299,11 @@ func (s *BkLogSidecar) applyDesiredConfigFiles(
 		backupPath, err := reserveBackupPath(config.BkunifylogbeatConfig)
 		if err != nil {
 			rollbackErr := rollbackConfigTransaction(nil, backups)
-			return false, errors.Join(err, rollbackErr)
+			return result, errors.Join(err, rollbackErr)
 		}
 		if err := os.Rename(originalPath, backupPath); err != nil {
 			rollbackErr := rollbackConfigTransaction(nil, backups)
-			return false, errors.Join(fmt.Errorf("backup config file %s: %w", originalPath, err), rollbackErr)
+			return result, errors.Join(fmt.Errorf("backup config file %s: %w", originalPath, err), rollbackErr)
 		}
 		backups = append(backups, backedUpConfig{originalPath: originalPath, backupPath: backupPath})
 	}
@@ -263,7 +313,7 @@ func (s *BkLogSidecar) applyDesiredConfigFiles(
 		candidate := staged[name]
 		if err := os.Rename(candidate.tempPath, candidate.finalPath); err != nil {
 			rollbackErr := rollbackConfigTransaction(installed, backups)
-			return false, errors.Join(fmt.Errorf("install config file %s: %w", candidate.finalPath, err), rollbackErr)
+			return result, errors.Join(fmt.Errorf("install config file %s: %w", candidate.finalPath, err), rollbackErr)
 		}
 		installed = append(installed, candidate.finalPath)
 	}
@@ -276,7 +326,7 @@ func (s *BkLogSidecar) applyDesiredConfigFiles(
 			s.log.Error(err, "remove config transaction backup failed", "path", backup.backupPath)
 		}
 	}
-	return true, nil
+	return result, nil
 }
 
 func readCurrentConfigFiles(dir string) (map[string][]byte, error) {

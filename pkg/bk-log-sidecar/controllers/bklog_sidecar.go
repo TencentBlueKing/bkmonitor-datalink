@@ -200,7 +200,7 @@ func (s *BkLogSidecar) refreshNodeInfoWithContext(ctx context.Context) error {
 	s.nodeInfoMu.Lock()
 	s.currentNodeInfo = node
 	s.nodeInfoMu.Unlock()
-	s.log.Info(fmt.Sprintf("current node info is [%s], labels[%v]", node.Name, node.GetLabels()))
+	s.log.V(2).Info(fmt.Sprintf("current node info is [%s], labels[%v]", node.Name, node.GetLabels()))
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 			s.configMutationMu.Unlock()
 			return fmt.Errorf("preserve pending container configs: %w", err)
 		}
-		err = s.applyDesiredConfigsLocked(desired, true, nil)
+		err = s.applyDesiredConfigsLocked(desired, true, nil, options.trigger())
 		s.configMutationMu.Unlock()
 		return err
 	}
@@ -332,15 +332,15 @@ func (s *BkLogSidecar) buildActualBkLogConfigs(
 		node := s.currentNodeSnapshot()
 		// label match
 		if !s.matchLabel(bkLogConfig.Spec.LabelSelector, node.GetLabels()) {
-			s.log.Info("current node not match label")
+			s.log.V(2).Info("current node not match label")
 			continue
 		}
 		// annotation match
 		if !s.matchAnnotation(bkLogConfig.Spec.AnnotationSelector, node.GetAnnotations()) {
-			s.log.Info("current node not match annotation")
+			s.log.V(2).Info("current node not match annotation")
 			continue
 		}
-		s.log.Info(fmt.Sprintf("[%s] log config match node[%s]", bkLogConfig.Name, node.Name))
+		s.log.V(2).Info(fmt.Sprintf("[%s] log config match node[%s]", bkLogConfig.Name, node.Name))
 		logConfigs = append(logConfigs, &define.NodeLogConfig{
 			BkLogConfig: bkLogConfig,
 			Node:        &node,
@@ -348,7 +348,7 @@ func (s *BkLogSidecar) buildActualBkLogConfigs(
 	}
 
 	if define.Empty(logConfigs) {
-		s.log.Info("not have log config")
+		s.log.V(2).Info("not have log config")
 	}
 	return logConfigs, nil
 }
@@ -365,7 +365,9 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 		return logConfigs, fmt.Errorf("list runtime containers: %w", err)
 	}
 	for i, container := range allContainer {
-		s.log.Info(fmt.Sprintf("container info -> [%d] [%s]", i, container.ID))
+		// 周期全量校准会遍历每个容器。容器与规则的逐项匹配明细只用于深度
+		// 排查，统一放到默认关闭的 V(2)，避免按周期产生 O(容器数×配置数) 日志。
+		s.log.V(2).Info(fmt.Sprintf("container info -> [%d] [%s]", i, container.ID))
 		c, ok := s.containerCache.Load(container.ID)
 		if ok && !refreshContainerInfo {
 			containerInfo := castContainer(c)
@@ -582,7 +584,7 @@ func (s *BkLogSidecar) bkLogConfigList(ctx context.Context) ([]v1alpha1.BkLogCon
 		if bkLogConfig.IsMatchBkEnv() {
 			filteredConfigs = append(filteredConfigs, bkLogConfig)
 		} else {
-			s.log.Info(fmt.Sprintf("resource [%s] without label `%s=\"%s\"`, ignored",
+			s.log.V(2).Info(fmt.Sprintf("resource [%s] without label `%s=\"%s\"`, ignored",
 				bkLogConfig.Name, config.BkEnvLabelName, config.BkEnv))
 		}
 	}
@@ -613,11 +615,11 @@ func (s *BkLogSidecar) matchBklogConfigs(
 
 	containerName, ok := container.Labels[config.ContainerLabelK8sContainerName]
 	if !ok {
-		s.log.Info("container is not k8s container")
+		s.log.V(2).Info("container is not k8s container")
 		return matchBkLogConfigs, &pod, nil
 	}
 
-	s.log.Info(fmt.Sprintf("container name is [%s]", containerName))
+	s.log.V(2).Info(fmt.Sprintf("container name is [%s]", containerName))
 	if utils.IsNetworkPod(containerName) {
 		return matchBkLogConfigs, &pod, nil
 	}
@@ -629,48 +631,48 @@ func (s *BkLogSidecar) matchBklogConfigs(
 		}
 
 		if !s.matchNamespace(&bkLogConfig, &pod) {
-			s.log.Info(fmt.Sprintf("container name is [%s] not match namespace", containerName))
+			s.log.V(2).Info(fmt.Sprintf("container name is [%s] not match namespace", containerName))
 			continue
 		}
 
 		// if set all_container is true direct match
 		if bkLogConfig.Spec.AllContainer {
-			s.log.Info(fmt.Sprintf("[%s] log config match container [%s]", bkLogConfig.Name, containerName))
+			s.log.V(2).Info(fmt.Sprintf("[%s] log config match container [%s]", bkLogConfig.Name, containerName))
 			matchBkLogConfigs = append(matchBkLogConfigs, bkLogConfig)
 			continue
 		}
 
 		// label match
 		if !s.matchLabel(bkLogConfig.Spec.LabelSelector, pod.GetLabels()) {
-			s.log.Info(fmt.Sprintf("container name is [%s] not match label", containerName))
+			s.log.V(2).Info(fmt.Sprintf("container name is [%s] not match label", containerName))
 			continue
 		}
 
 		// annotation match
 		if !s.matchAnnotation(bkLogConfig.Spec.AnnotationSelector, pod.GetAnnotations()) {
-			s.log.Info(fmt.Sprintf("container name is [%s] not match annotation", containerName))
+			s.log.V(2).Info(fmt.Sprintf("container name is [%s] not match annotation", containerName))
 			continue
 		}
 
 		// match container by container_name
 		if !s.matchContainerName(containerName, bkLogConfig.Spec.ContainerNameMatch, bkLogConfig.Spec.ContainerNameExclude) {
-			s.log.Info(fmt.Sprintf("container name is [%s] not match container name", containerName))
+			s.log.V(2).Info(fmt.Sprintf("container name is [%s] not match container name", containerName))
 			continue
 		}
 
 		// match pod by workload config
 		if !s.matchWorkload(&bkLogConfig, &pod) {
-			s.log.Info(fmt.Sprintf("container name is [%s] not match workload", containerName))
+			s.log.V(2).Info(fmt.Sprintf("container name is [%s] not match workload", containerName))
 			continue
 		}
-		s.log.Info(fmt.Sprintf("[%s] log config match container [%s]", bkLogConfig.Name, containerName))
+		s.log.V(2).Info(fmt.Sprintf("[%s] log config match container [%s]", bkLogConfig.Name, containerName))
 		matchBkLogConfigs = append(matchBkLogConfigs, bkLogConfig)
 	}
 	return matchBkLogConfigs, &pod, nil
 }
 
 func (s *BkLogSidecar) matchLabel(matchSelector metav1.LabelSelector, matchLabels map[string]string) bool {
-	s.log.Info(fmt.Sprintf("selector: %v, labels %v", matchSelector, matchLabels))
+	s.log.V(2).Info(fmt.Sprintf("selector: %v, labels %v", matchSelector, matchLabels))
 	selector, err := metav1.LabelSelectorAsSelector(&matchSelector)
 	if utils.NotNil(err) {
 		s.log.Error(err, "selector to label selector failed")
@@ -680,12 +682,12 @@ func (s *BkLogSidecar) matchLabel(matchSelector metav1.LabelSelector, matchLabel
 	if !selector.Matches(labelSet) {
 		return false
 	}
-	s.log.Info(fmt.Sprintf("label match success %v", matchSelector))
+	s.log.V(2).Info(fmt.Sprintf("label match success %v", matchSelector))
 	return true
 }
 
 func (s *BkLogSidecar) matchAnnotation(matchSelector metav1.LabelSelector, matchAnnotations map[string]string) bool {
-	s.log.Info(fmt.Sprintf("selector: %v, annotations %v", matchSelector, matchAnnotations))
+	s.log.V(2).Info(fmt.Sprintf("selector: %v, annotations %v", matchSelector, matchAnnotations))
 	selector, err := metav1.LabelSelectorAsSelector(&matchSelector)
 	if utils.NotNil(err) {
 		s.log.Error(err, "selector to label selector failed")
@@ -695,7 +697,7 @@ func (s *BkLogSidecar) matchAnnotation(matchSelector metav1.LabelSelector, match
 	if !selector.Matches(annotationSet) {
 		return false
 	}
-	s.log.Info(fmt.Sprintf("annotation match success %v", matchSelector))
+	s.log.V(2).Info(fmt.Sprintf("annotation match success %v", matchSelector))
 	return true
 }
 
@@ -707,7 +709,7 @@ func (s *BkLogSidecar) matchNamespace(bkLogConfig *v1alpha1.BkLogConfig, pod *co
 			// 全部不匹配true，否则为false
 			for _, namespace := range bkLogConfig.Spec.NamespaceSelector.ExcludeNames {
 				if pod.Namespace == namespace {
-					s.log.Info(fmt.Sprintf("pod namespace [%s] match exclude namespace [%s]", pod.Namespace, namespace))
+					s.log.V(2).Info(fmt.Sprintf("pod namespace [%s] match exclude namespace [%s]", pod.Namespace, namespace))
 					return false
 				}
 			}
@@ -717,7 +719,7 @@ func (s *BkLogSidecar) matchNamespace(bkLogConfig *v1alpha1.BkLogConfig, pod *co
 			// 有一个匹配上则为true，否则直接false
 			for _, namespace := range bkLogConfig.Spec.NamespaceSelector.MatchNames {
 				if pod.Namespace == namespace {
-					s.log.Info(fmt.Sprintf("pod namespace [%s] match namespace [%s]", pod.Namespace, namespace))
+					s.log.V(2).Info(fmt.Sprintf("pod namespace [%s] match namespace [%s]", pod.Namespace, namespace))
 					return true
 				}
 			}
@@ -728,7 +730,7 @@ func (s *BkLogSidecar) matchNamespace(bkLogConfig *v1alpha1.BkLogConfig, pod *co
 				if pod.Namespace != bkLogConfig.Spec.Namespace {
 					return false
 				}
-				s.log.Info(fmt.Sprintf("pod namespace [%s] match namespace [%s]", pod.Namespace, bkLogConfig.Spec.Namespace))
+				s.log.V(2).Info(fmt.Sprintf("pod namespace [%s] match namespace [%s]", pod.Namespace, bkLogConfig.Spec.Namespace))
 				return true
 			}
 			// 未配置则返回true
@@ -773,7 +775,7 @@ func (s *BkLogSidecar) matchWorkloadName(bkLogConfig *v1alpha1.BkLogConfig, pod 
 
 	for _, name := range names {
 		if r.MatchString(name) {
-			s.log.Info(fmt.Sprintf("workload [%s] match workloadName [%s]", name, bkLogConfig.Spec.WorkloadName))
+			s.log.V(2).Info(fmt.Sprintf("workload [%s] match workloadName [%s]", name, bkLogConfig.Spec.WorkloadName))
 			return true
 		}
 		if name == bkLogConfig.Spec.WorkloadName {
@@ -804,7 +806,7 @@ func (s *BkLogSidecar) matchWorkloadType(bkLogConfig *v1alpha1.BkLogConfig, pod 
 			return true
 		}
 	}
-	s.log.Info(fmt.Sprintf("not match WorkloadType %s", bkLogConfig.Spec.WorkloadType))
+	s.log.V(2).Info(fmt.Sprintf("not match WorkloadType %s", bkLogConfig.Spec.WorkloadType))
 	return false
 }
 
@@ -814,7 +816,7 @@ func (s *BkLogSidecar) matchContainerName(containerName string, containerNameMat
 		for _, excludeName := range containerNameExclude {
 			if excludeName == containerName {
 				// containerName is in containerNameExclude, return false
-				s.log.Info(fmt.Sprintf("container name [%s] is in ExcludeNames, return", excludeName))
+				s.log.V(2).Info(fmt.Sprintf("container name [%s] is in ExcludeNames, return", excludeName))
 				return false
 			}
 		}
@@ -824,7 +826,7 @@ func (s *BkLogSidecar) matchContainerName(containerName string, containerNameMat
 	}
 	for _, matchContainerName := range containerNameMatch {
 		if matchContainerName == containerName {
-			s.log.Info(fmt.Sprintf("container name [%s] match matchContainerName [%s]", containerName, matchContainerName))
+			s.log.V(2).Info(fmt.Sprintf("container name [%s] match matchContainerName [%s]", containerName, matchContainerName))
 			return true
 		}
 	}

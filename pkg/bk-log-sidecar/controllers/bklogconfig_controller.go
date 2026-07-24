@@ -13,6 +13,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,18 +45,30 @@ type BkLogConfigReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.9.2/pkg/reconcile
 func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-	log.Info(fmt.Sprintf("handler bklogconfig event [%s]", req.Name))
+	startedAt := time.Now()
+	logger := log.FromContext(ctx).WithValues(
+		"trigger", string(convergenceTriggerBkLogConfigReconcile),
+		"namespace", req.Namespace,
+		"name", req.Name,
+	)
+	logger.Info("BkLogConfig reconciliation started")
 	var bkLogConfig bluekingv1alpha1.BkLogConfig
 	err := r.Client.Get(ctx, req.NamespacedName, &bkLogConfig)
 	var currentBkLogConfig *bluekingv1alpha1.BkLogConfig
+	action := "upsert"
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			// Returning the error is intentional: controller-runtime applies
 			// rate-limited backoff and retries this object key. Logging and returning
 			// nil would acknowledge the event and permanently drop this failure.
+			logger.Error(err, "BkLogConfig reconciliation failed",
+				"result", convergenceResultFailure,
+				"stage", "get",
+				"duration", time.Since(startedAt).String(),
+			)
 			return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 		}
+		action = "delete"
 	} else {
 		currentBkLogConfig = &bkLogConfig
 	}
@@ -68,8 +81,19 @@ func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		req.Name,
 		currentBkLogConfig,
 	); err != nil {
+		logger.Error(err, "BkLogConfig reconciliation failed",
+			"result", convergenceResultFailure,
+			"action", action,
+			"stage", "converge",
+			"duration", time.Since(startedAt).String(),
+		)
 		return ctrl.Result{}, fmt.Errorf("converge generated config after BkLogConfig %s event: %w", req.NamespacedName, err)
 	}
+	logger.Info("BkLogConfig reconciliation succeeded",
+		"result", convergenceResultSuccess,
+		"action", action,
+		"duration", time.Since(startedAt).String(),
+	)
 	return ctrl.Result{}, nil
 }
 

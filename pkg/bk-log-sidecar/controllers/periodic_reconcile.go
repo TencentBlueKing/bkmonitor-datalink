@@ -22,20 +22,41 @@ import (
 // periodicReconcile 是事件和 CR Reconcile 之外的最后一道节点级兜底。
 // 每轮都复用同一套 Build/Apply；无差异时不会写文件或 reload。
 func (s *BkLogSidecar) periodicReconcile(ctx context.Context) {
+	consecutiveFailures := 0
 	for {
 		delay := s.nextPeriodicReconcileDelay()
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
-			if err := s.generateActualBkLogConfigForPeriodicReconcile(ctx); err != nil {
+			startedAt := time.Now()
+			err := s.generateActualBkLogConfigForPeriodicReconcile(ctx)
+			duration := time.Since(startedAt)
+			if err != nil {
 				if ctx.Err() != nil {
 					s.log.Info("stop periodic node configuration reconciliation")
 					return
 				}
+				consecutiveFailures++
 				// Build/Apply 失败会保留 Last Known Good；周期循环不退出，
 				// 下一轮会重新获取完整状态后继续收敛。
 				s.log.Error(err, "periodic node configuration reconciliation failed",
+					"trigger", string(convergenceTriggerPeriodicReconcile),
+					"result", convergenceResultFailure,
+					"attempt", consecutiveFailures,
+					"duration", duration.String(),
 					"nextBaseInterval", s.nextPeriodicReconcileInterval().String())
+				continue
+			}
+
+			if consecutiveFailures > 0 {
+				s.log.Info("periodic node configuration reconciliation recovered",
+					"trigger", string(convergenceTriggerPeriodicReconcile),
+					"result", convergenceResultSuccess,
+					"duration", duration.String(),
+					"failedAttempts", consecutiveFailures,
+				)
+				consecutiveFailures = 0
+				continue
 			}
 		case <-ctx.Done():
 			if !timer.Stop() {

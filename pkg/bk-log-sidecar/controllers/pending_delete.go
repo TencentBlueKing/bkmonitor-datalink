@@ -253,7 +253,7 @@ func (s *BkLogSidecar) finishPendingContainerDeletion(containerID string, genera
 		if err != nil {
 			return fmt.Errorf("render current config snapshot for pending reload: %w", err)
 		}
-		return s.applyDesiredConfigsLocked(desired, false, nil)
+		return s.applyDesiredConfigsLocked(desired, false, nil, convergenceTriggerContainerCleanup)
 	}
 	if pending.generation != generation {
 		return nil

@@ -12,6 +12,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/util/workqueue"
 
@@ -35,6 +36,13 @@ type containerWorkItem struct {
 	eventType         define.ContainerEventType
 	sequence          uint64
 	pendingGeneration uint64
+}
+
+func (item containerWorkItem) trigger() convergenceTrigger {
+	if item.kind == containerWorkPendingCleanup || item.eventType != define.ContainerEventCreate {
+		return convergenceTriggerContainerCleanup
+	}
+	return convergenceTriggerContainerCreate
 }
 
 func (s *BkLogSidecar) getOrCreateContainerEventQueue() workqueue.RateLimitingInterface {
@@ -124,21 +132,37 @@ func (s *BkLogSidecar) processNextContainerWorkItem(
 
 	// 首次收到的事件仍按 Runtime 顺序执行；只有旧事件的“重试副本”才会在出现
 	// 更新事件后被丢弃，避免 CREATE 重试晚于 STOP/DELETE 而重新写回过期配置。
-	if item.kind == containerWorkEvent && queue.NumRequeues(item) > 0 && !s.isLatestContainerEvent(item) {
+	retryCount := queue.NumRequeues(item)
+	if item.kind == containerWorkEvent && retryCount > 0 && !s.isLatestContainerEvent(item) {
 		queue.Forget(item)
 		s.log.Info("drop stale retried container event",
+			"trigger", string(item.trigger()),
 			"containerID", item.containerID,
 			"eventType", item.eventType,
 			"sequence", item.sequence,
+			"retryCount", retryCount,
 		)
 		return true
 	}
 
+	startedAt := time.Now()
 	err := s.processContainerWorkItem(ctx, item)
+	duration := time.Since(startedAt)
 	if err == nil {
 		queue.Forget(item)
 		if item.kind == containerWorkEvent {
 			s.clearLatestContainerEvent(item)
+		}
+		if retryCount > 0 {
+			s.log.Info("container work item recovered after retry",
+				"trigger", string(item.trigger()),
+				"result", convergenceResultSuccess,
+				"kind", item.kind,
+				"containerID", item.containerID,
+				"eventType", item.eventType,
+				"retryCount", retryCount,
+				"duration", duration.String(),
+			)
 		}
 		return true
 	}
@@ -146,19 +170,25 @@ func (s *BkLogSidecar) processNextContainerWorkItem(
 	if item.kind == containerWorkEvent && !s.isLatestContainerEvent(item) {
 		queue.Forget(item)
 		s.log.Error(err, "drop failed container event superseded by newer event",
+			"trigger", string(item.trigger()),
 			"containerID", item.containerID,
 			"eventType", item.eventType,
 			"sequence", item.sequence,
+			"retryCount", retryCount,
+			"duration", duration.String(),
 		)
 		return true
 	}
 
 	queue.AddRateLimited(item)
 	s.log.Error(err, "container work item failed, retrying with rate limit",
+		"trigger", string(item.trigger()),
+		"result", convergenceResultFailure,
 		"kind", item.kind,
 		"containerID", item.containerID,
 		"eventType", item.eventType,
 		"retryCount", queue.NumRequeues(item),
+		"duration", duration.String(),
 	)
 	return true
 }

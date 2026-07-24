@@ -24,18 +24,29 @@ var errRuntimeSubscriptionClosed = errors.New("runtime event subscription closed
 // 都在消费事件的同时执行一次全量收敛，以覆盖首次启动和断线重连期间的事件空窗。
 func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}) {
 	initial := true
+	subscriptionAttempt := 1
+	subscriptionRecovering := false
+	subscriptionStartedAt := time.Now()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
+		trigger := runtimeSubscriptionTrigger(initial)
 
 		runtime, err := s.getRuntime()
 		if err != nil {
+			subscriptionRecovering = true
 			s.log.Error(err, "runtime initialization failed, retrying",
+				"trigger", string(trigger),
+				"result", convergenceResultFailure,
+				"stage", "runtime_init",
+				"subscriptionAttempt", subscriptionAttempt,
+				"duration", time.Since(subscriptionStartedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
 			}
+			subscriptionAttempt++
 			continue
 		}
 
@@ -43,13 +54,32 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 		events, errs, err := runtime.Subscribe(subscriptionCtx)
 		if err != nil {
 			cancel()
+			subscriptionRecovering = true
 			s.log.Error(err, "runtime event subscription start failed, retrying",
+				"trigger", string(trigger),
+				"result", convergenceResultFailure,
+				"stage", "subscribe",
+				"runtime", runtime.Type(),
+				"subscriptionAttempt", subscriptionAttempt,
+				"duration", time.Since(subscriptionStartedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
 			}
+			subscriptionAttempt++
 			continue
 		}
+		subscriptionEstablishedAt := time.Now()
+		s.log.Info("runtime event subscription established",
+			"trigger", string(trigger),
+			"result", convergenceResultSuccess,
+			"stage", "subscribe",
+			"runtime", runtime.Type(),
+			"initial", initial,
+			"subscriptionAttempt", subscriptionAttempt,
+			"duration", time.Since(subscriptionStartedAt).String(),
+			"subscriptionRecovered", subscriptionRecovering,
+		)
 
 		subscriptionDone := make(chan error, 1)
 		go func() {
@@ -63,7 +93,18 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 				return
 			}
 			s.log.Error(err, "runtime event subscription interrupted during convergence, retrying",
+				"trigger", string(trigger),
+				"result", convergenceResultFailure,
+				"stage", "stream",
+				"runtime", runtime.Type(),
+				"subscriptionAttempt", subscriptionAttempt,
+				"duration", time.Since(subscriptionEstablishedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
+			// 下一轮是同一次启动或重连故障的恢复尝试。attempt 重新统计
+			// 新事件流的建立次数，recovered 则保留“由断流触发”的事实。
+			subscriptionAttempt = 1
+			subscriptionRecovering = true
+			subscriptionStartedAt = time.Now()
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
 			}
@@ -81,7 +122,16 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 			return
 		}
 		s.log.Error(err, "runtime event subscription interrupted, retrying",
+			"trigger", string(runtimeSubscriptionTrigger(initial)),
+			"result", convergenceResultFailure,
+			"stage", "stream",
+			"runtime", runtime.Type(),
+			"subscriptionAttempt", subscriptionAttempt,
+			"duration", time.Since(subscriptionEstablishedAt).String(),
 			"retryAfter", s.runtimeSubscribeRetryInterval().String())
+		subscriptionAttempt = 1
+		subscriptionRecovering = true
+		subscriptionStartedAt = time.Now()
 		if !s.waitRuntimeSubscribeRetry(ctx) {
 			return
 		}
@@ -99,24 +149,35 @@ func (s *BkLogSidecar) convergeRuntimeSubscription(
 	retryDelay := s.convergenceRetryBaseInterval()
 	attempt := 1
 	for {
+		startedAt := time.Now()
 		err := s.convergeAfterRuntimeSubscription(initial)
+		duration := time.Since(startedAt)
 		if err == nil {
 			// 避免在全量收敛期间已经断线时误报首次启动成功。
 			select {
 			case subscriptionErr := <-subscriptionDone:
 				return fmt.Errorf("runtime subscription closed before convergence completed: %w", subscriptionErr)
 			default:
+				trigger := runtimeSubscriptionTrigger(initial)
+				s.log.Info("runtime configuration convergence succeeded",
+					"trigger", string(trigger),
+					"result", convergenceResultSuccess,
+					"stage", "convergence",
+					"convergenceAttempt", attempt,
+					"duration", duration.String(),
+					"convergenceRecovered", attempt > 1,
+				)
 				return nil
 			}
 		}
 
-		trigger := "runtime_reconnect"
-		if initial {
-			trigger = "startup"
-		}
+		trigger := runtimeSubscriptionTrigger(initial)
 		s.log.Error(err, "runtime configuration convergence failed, retrying",
-			"trigger", trigger,
-			"attempt", attempt,
+			"trigger", string(trigger),
+			"result", convergenceResultFailure,
+			"stage", "convergence",
+			"convergenceAttempt", attempt,
+			"duration", duration.String(),
 			"retryAfter", retryDelay.String(),
 		)
 

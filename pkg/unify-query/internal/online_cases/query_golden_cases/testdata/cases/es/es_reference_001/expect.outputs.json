@@ -1,0 +1,69 @@
+[
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_reference_index"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_reference_index/_search",
+    "body": {
+      "aggregations": {
+        "service": {
+          "aggregations": {
+            "_value": {
+              "value_count": {
+                "field": "events_total"
+              }
+            }
+          },
+          "terms": {
+            "field": "service",
+            "missing": " ",
+            "order": [
+              {"_value": "desc"}
+            ],
+            "size": 1000
+          }
+        }
+      },
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "bool": {
+                "must_not": {
+                  "match_phrase": {
+                    "status": {
+                      "query": "ignored"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "range": {
+                "dtEventTimeStamp": {
+                  "format": "epoch_second",
+                  "from": 1784701776,
+                  "include_lower": true,
+                  "include_upper": true,
+                  "to": 1784702076
+                }
+              }
+            }
+          ]
+        }
+      },
+      "size": 0,
+      "sort": [
+        {
+          "events_total": {
+            "order": "desc"
+          }
+        }
+      ]
+    }
+  }
+]

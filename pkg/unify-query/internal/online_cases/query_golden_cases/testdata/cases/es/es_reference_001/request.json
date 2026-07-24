@@ -1,0 +1,39 @@
+{
+  "method": "POST",
+  "path": "/query/ts/reference",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_reference",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_es_reference",
+    "query_list": [{
+      "table_id": "demo_reference.partition_1",
+      "field_name": "events_total",
+      "function": [{
+        "method": "count",
+        "dimensions": ["service"]
+      }],
+      "reference_name": "a",
+      "conditions": {
+        "field_list": [{
+          "field_name": "status",
+          "value": ["ignored"],
+          "op": "ne"
+        }],
+        "condition_list": []
+      },
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "order_by": ["-_value"],
+    "limit": 1000,
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "step": "60s",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

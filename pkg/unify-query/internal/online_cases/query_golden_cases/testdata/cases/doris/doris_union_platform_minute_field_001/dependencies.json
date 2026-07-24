@@ -1,0 +1,25 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "log", "Type": "text"}
+    ],
+    "schema_by_sql": {
+      "SHOW CREATE TABLE `golden_minute_current`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "log", "Type": "text"}
+      ],
+      "SHOW CREATE TABLE `golden_minute_history`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "log", "Type": "text"}
+      ]
+    },
+    "result": []
+  }
+}

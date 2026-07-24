@@ -1,0 +1,26 @@
+{
+  "space_uid": "bkcc__golden_vm_instant",
+  "result_tables": [
+    {"table_id": "demo_vm_instant.partition_1"}
+  ],
+  "result_table_details": {
+    "demo_vm_instant.partition_1": {
+      "storage_id": 1201,
+      "storage_name": "vm_cluster_instant",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_instant",
+      "table_id": "demo_vm_instant.partition_1",
+      "measurement": "partition_1",
+      "vm_rt": "vm_rt_demo_vm_instant_partition_1",
+      "fields": ["requests_total"],
+      "measurement_type": "bk_split_measurement",
+      "data_label": "demo_vm_instant"
+    }
+  },
+  "storages": {
+    "1201": {"type": "victoria_metrics"}
+  },
+  "must_vm_table_ids": [
+    "demo_vm_instant.partition_1"
+  ]
+}

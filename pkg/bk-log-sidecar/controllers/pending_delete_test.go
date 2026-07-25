@@ -110,6 +110,7 @@ func TestFullGenerationStartsGraceBeforeDeleteEventIsProcessed(t *testing.T) {
 		content: []byte("pending config"),
 	}
 	pendingPath, pendingContent := cacheActualConfig(t, sidecar, pendingConfig)
+	sidecar.containerCache.Store("container-1", &define.Container{ID: "container-1"})
 	delayedCleanup := make(chan func(), 1)
 	sidecar.delayCleanFn = func(_ time.Duration, fn func()) {
 		delayedCleanup <- fn
@@ -131,7 +132,137 @@ func TestFullGenerationStartsGraceBeforeDeleteEventIsProcessed(t *testing.T) {
 	cleanup()
 	_, statErr := os.Stat(pendingPath)
 	assert.True(t, os.IsNotExist(statErr))
+	_, cached := sidecar.containerCache.Load("container-1")
+	assert.False(t, cached)
 	assert.Equal(t, int32(1), reloadCalls.Load())
+}
+
+func TestFullGenerationUpgradesStopGraceToCleanContainerCache(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	pendingConfig := &stubLogConfig{
+		name:    "container-1_std_default_config-1",
+		content: []byte("pending config"),
+	}
+	cacheActualConfig(t, sidecar, pendingConfig)
+	sidecar.containerCache.Store("container-1", &define.Container{ID: "container-1"})
+	deadline := time.Now().Add(time.Minute)
+	sidecar.pendingContainerDeletes = map[string]*pendingContainerDeletion{
+		"container-1": {
+			generation:           1,
+			deadline:             deadline,
+			deleteContainerCache: false,
+		},
+	}
+	var cleanupScheduled atomic.Bool
+	sidecar.delayCleanFn = func(_ time.Duration, _ func()) {
+		cleanupScheduled.Store(true)
+	}
+	desired := desiredConfigSet{}
+
+	sidecar.configMutationMu.Lock()
+	err := sidecar.preservePendingContainerConfigsLocked(desired, nil)
+	pending := sidecar.pendingContainerDeletes["container-1"]
+	sidecar.configMutationMu.Unlock()
+
+	require.NoError(t, err)
+	require.NotNil(t, pending)
+	assert.True(t, pending.deleteContainerCache)
+	assert.Equal(t, deadline, pending.deadline)
+	assert.False(t, cleanupScheduled.Load())
+	_, preserved := desired[pendingConfig.ConfigName()]
+	assert.True(t, preserved)
+
+	require.NoError(t, sidecar.finishPendingContainerDeletion("container-1", pending.generation))
+	_, cached := sidecar.containerCache.Load("container-1")
+	assert.False(t, cached)
+}
+
+func TestFullGenerationPrunesOnlyMissingConfigForStillDesiredContainer(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	activeConfig := &stubLogConfig{
+		name:    "container-1_std_default_active",
+		content: []byte("active config"),
+	}
+	staleConfig := &stubLogConfig{
+		name:    "container-1_std_default_stale",
+		content: []byte("stale config"),
+	}
+	activePath, activeContent := cacheActualConfig(t, sidecar, activeConfig)
+	stalePath, _ := cacheActualConfig(t, sidecar, staleConfig)
+	var cleanupScheduled atomic.Bool
+	sidecar.delayCleanFn = func(_ time.Duration, _ func()) {
+		cleanupScheduled.Store(true)
+	}
+	var reloadCalls atomic.Int32
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return nil
+	}
+	desired := desiredConfigSet{
+		activeConfig.ConfigName(): {
+			logConfig: activeConfig,
+			content:   activeContent,
+		},
+	}
+
+	sidecar.configMutationMu.Lock()
+	err := sidecar.preservePendingContainerConfigsLocked(desired, nil)
+	if err == nil {
+		err = sidecar.applyDesiredConfigsLocked(desired, true, nil, convergenceTriggerDirect)
+	}
+	sidecar.configMutationMu.Unlock()
+
+	require.NoError(t, err)
+	content, readErr := os.ReadFile(activePath)
+	require.NoError(t, readErr)
+	assert.Equal(t, activeContent, content)
+	_, statErr := os.Stat(stalePath)
+	assert.True(t, os.IsNotExist(statErr))
+	assert.False(t, cleanupScheduled.Load())
+	_, pending := sidecar.pendingContainerDeletes["container-1"]
+	assert.False(t, pending)
+	assert.Equal(t, int32(1), reloadCalls.Load())
+}
+
+func TestFullGenerationDoesNotRestartExpiredGraceForPartialMismatch(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	activeConfig := &stubLogConfig{
+		name:    "container-1_std_default_active",
+		content: []byte("active config"),
+	}
+	staleConfig := &stubLogConfig{
+		name:    "container-1_std_default_stale",
+		content: []byte("stale config"),
+	}
+	_, activeContent := cacheActualConfig(t, sidecar, activeConfig)
+	cacheActualConfig(t, sidecar, staleConfig)
+	sidecar.pendingContainerDeletes = map[string]*pendingContainerDeletion{
+		"container-1": {
+			generation: 1,
+			deadline:   time.Now().Add(-time.Second),
+		},
+	}
+	var cleanupScheduled atomic.Bool
+	sidecar.delayCleanFn = func(_ time.Duration, _ func()) {
+		cleanupScheduled.Store(true)
+	}
+	desired := desiredConfigSet{
+		activeConfig.ConfigName(): {
+			logConfig: activeConfig,
+			content:   activeContent,
+		},
+	}
+
+	sidecar.configMutationMu.Lock()
+	err := sidecar.preservePendingContainerConfigsLocked(desired, nil)
+	sidecar.configMutationMu.Unlock()
+
+	require.NoError(t, err)
+	_, preserved := desired[staleConfig.ConfigName()]
+	assert.False(t, preserved)
+	assert.False(t, cleanupScheduled.Load())
+	_, pending := sidecar.pendingContainerDeletes["container-1"]
+	assert.False(t, pending)
 }
 
 func TestCancelledPendingCleanupDoesNotDeleteRestartedContainerConfig(t *testing.T) {

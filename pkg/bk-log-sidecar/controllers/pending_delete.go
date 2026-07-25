@@ -51,11 +51,12 @@ func (s *BkLogSidecar) preservePendingContainerConfigsLocked(
 	reconcile *bkLogConfigReconcileState,
 ) error {
 	now := time.Now()
+	desiredContainerIDs := containerIDsInDesired(desired)
 
 	// 如果同一个容器 ID 已重新出现在完整 desired 中，说明它已经重新运行；
 	// 取消旧的延迟删除，避免旧定时器误删新配置。
 	for containerID := range s.pendingContainerDeletes {
-		if desiredContainsContainer(desired, containerID) {
+		if _, ok := desiredContainerIDs[containerID]; ok {
 			delete(s.pendingContainerDeletes, containerID)
 		}
 	}
@@ -75,6 +76,12 @@ func (s *BkLogSidecar) preservePendingContainerConfigsLocked(
 		containerID, ok := containerIDFromLogConfig(logConfig)
 		if !ok {
 			// Node 配置不属于容器退出宽限期，应由 full Apply 正常裁剪。
+			return true
+		}
+		if _, ok := desiredContainerIDs[containerID]; ok {
+			// 容器仍在本轮 desired 中时，只能说明某一条配置已经失配。
+			// 此类配置应立即裁剪，不能提升为整个容器的退出宽限期，
+			// 否则到期清理会把同容器仍然有效的其他配置一并删除。
 			return true
 		}
 		if reconcile != nil && logConfigBelongsTo(logConfig, reconcile.key) &&
@@ -100,15 +107,12 @@ func (s *BkLogSidecar) preservePendingContainerConfigsLocked(
 	}
 
 	for containerID, configs := range candidates {
-		pending, ok := s.pendingContainerDeletes[containerID]
-		if !ok {
-			// 即使 runtime 删除事件尚未来得及处理，全量收敛也先自动建立同样的
-			// 宽限期；这样事件与 CR reconcile 并发时不会产生提前 prune 的窗口。
-			var scheduled bool
-			pending, scheduled = s.ensurePendingContainerDeletionLocked(containerID, false)
-			if scheduled {
-				s.schedulePendingContainerCleanup(containerID, pending.generation, time.Until(pending.deadline))
-			}
+		// 完整 desired 已确认整个容器消失。即使 runtime 删除事件漏报，
+		// 全量收敛也会建立相同宽限期，并在到期后清理 containerCache。
+		// 若 STOP 事件已先建立宽限期，ensure 会升级缓存清理意图但不会重置 deadline。
+		pending, scheduled := s.ensurePendingContainerDeletionLocked(containerID, true)
+		if scheduled {
+			s.schedulePendingContainerCleanup(containerID, pending.generation, time.Until(pending.deadline))
 		}
 		if !now.Before(pending.deadline) {
 			continue
@@ -120,13 +124,14 @@ func (s *BkLogSidecar) preservePendingContainerConfigsLocked(
 	return nil
 }
 
-func desiredContainsContainer(desired desiredConfigSet, containerID string) bool {
+func containerIDsInDesired(desired desiredConfigSet) map[string]struct{} {
+	containerIDs := make(map[string]struct{})
 	for _, generated := range desired {
-		if id, ok := containerIDFromLogConfig(generated.logConfig); ok && id == containerID {
-			return true
+		if containerID, ok := containerIDFromLogConfig(generated.logConfig); ok {
+			containerIDs[containerID] = struct{}{}
 		}
 	}
-	return false
+	return containerIDs
 }
 
 func containerIDFromLogConfig(logConfig define.LogConfigType) (string, bool) {

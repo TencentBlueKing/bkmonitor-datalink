@@ -65,9 +65,11 @@ type BkLogSidecar struct {
 	periodicReconcileInterval time.Duration
 	periodicReconcileJitter   float64
 	periodicReconcileDelayFn  func(time.Duration, float64) time.Duration
-	// configMutationMu 只保护配置快照、磁盘事务与 reload 状态，不包围
+	// configMutationMu 保护配置快照、延迟删除状态、磁盘事务与 reload 状态，不包围
 	// Runtime/Kubernetes 查询；外部查询通过 configGeneration 做乐观校验。
 	configMutationMu sync.Mutex
+	// configGeneration 不仅表示已 Apply 的配置版本，也覆盖会改变下一轮 desired 的
+	// pending 删除与 CREATE 状态，防止旧 Build 覆盖并发到达的容器事件。
 	configGeneration uint64
 	reloadPending    bool
 	// pendingContainerDeletes 只在 configMutationMu 保护下访问，用于保证容器退出后的
@@ -255,11 +257,11 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 		// Build 阶段包含 Runtime/Kubernetes I/O，不能持有配置写锁。记录世代后
 		// 在 Apply 前复核；若期间有事件提交了新快照，就基于最新状态重新 Build。
 		generation := s.configSnapshotGeneration()
-		logConfigs, err := s.buildActualBkLogConfigs(ctx, options)
+		buildResult, err := s.buildActualBkLogConfigs(ctx, options)
 		if err != nil {
 			return err
 		}
-		desired, err := renderDesiredConfigs(logConfigs)
+		desired, err := renderDesiredConfigs(buildResult.logConfigs)
 		if err != nil {
 			return fmt.Errorf("render desired log configs: %w", err)
 		}
@@ -279,9 +281,19 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 			return fmt.Errorf("preserve pending container configs: %w", err)
 		}
 		err = s.applyDesiredConfigsLocked(desired, true, nil, options.trigger())
+		if err == nil {
+			// containerCache 的收敛依据来自独立的 Runtime List 快照，不能只从
+			// 实际生成过配置的容器反推，否则 STOP 清理完成后会永久失去删除线索。
+			s.reconcileContainerCacheLocked(buildResult.discoveredContainerIDs)
+		}
 		s.configMutationMu.Unlock()
 		return err
 	}
+}
+
+type actualConfigBuildResult struct {
+	logConfigs             []define.LogConfigType
+	discoveredContainerIDs map[string]struct{}
 }
 
 // buildActualBkLogConfigs discovers the complete desired snapshot without
@@ -290,14 +302,17 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 func (s *BkLogSidecar) buildActualBkLogConfigs(
 	ctx context.Context,
 	options configGenerationOptions,
-) ([]define.LogConfigType, error) {
-	var logConfigs []define.LogConfigType
+) (actualConfigBuildResult, error) {
+	result := actualConfigBuildResult{}
 	var err error
 	if options.refreshDiscoveredState {
 		// 周期校准必须重新读取 Node；即使当前没有 node_log_config，也要避免
 		// 后续匹配继续使用长期不更新的标签和 annotation。
 		if err := s.refreshNodeInfoWithContext(ctx); err != nil {
-			return nil, fmt.Errorf("refresh node info for periodic reconciliation: %w", err)
+			return actualConfigBuildResult{}, fmt.Errorf(
+				"refresh node info for periodic reconciliation: %w",
+				err,
+			)
 		}
 	}
 	// 一次 Build 只读取一份 BkLogConfig 快照，并同时用于所有容器和 Node。
@@ -305,18 +320,21 @@ func (s *BkLogSidecar) buildActualBkLogConfigs(
 	// 中混入一次 CR 更新前后的两个版本。
 	allBklogConfigs, err := s.bkLogConfigList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list BkLogConfigs for full configuration build: %w", err)
+		return actualConfigBuildResult{}, fmt.Errorf(
+			"list BkLogConfigs for full configuration build: %w",
+			err,
+		)
 	}
-	logConfigs, err = s.allContainerBkLogConfigs(
+	result.logConfigs, result.discoveredContainerIDs, err = s.allContainerBkLogConfigs(
 		ctx,
-		logConfigs,
+		result.logConfigs,
 		options.refreshDiscoveredState,
 		allBklogConfigs,
 	)
 	if err != nil {
 		// An incomplete discovery result must never be treated as the desired
 		// state, otherwise valid files could be deleted from a partial snapshot.
-		return nil, fmt.Errorf("build container log configs: %w", err)
+		return actualConfigBuildResult{}, fmt.Errorf("build container log configs: %w", err)
 	}
 	// match all node_log_config
 	firstMatchNodeConfig := !options.refreshDiscoveredState
@@ -326,7 +344,10 @@ func (s *BkLogSidecar) buildActualBkLogConfigs(
 		}
 		if firstMatchNodeConfig {
 			if err := s.refreshNodeInfoWithContext(ctx); err != nil {
-				return nil, fmt.Errorf("refresh node info for node log config matching: %w", err)
+				return actualConfigBuildResult{}, fmt.Errorf(
+					"refresh node info for node log config matching: %w",
+					err,
+				)
 			}
 			firstMatchNodeConfig = false
 		}
@@ -342,16 +363,16 @@ func (s *BkLogSidecar) buildActualBkLogConfigs(
 			continue
 		}
 		s.log.V(2).Info(fmt.Sprintf("[%s] log config match node[%s]", bkLogConfig.Name, node.Name))
-		logConfigs = append(logConfigs, &define.NodeLogConfig{
+		result.logConfigs = append(result.logConfigs, &define.NodeLogConfig{
 			BkLogConfig: bkLogConfig,
 			Node:        &node,
 		})
 	}
 
-	if define.Empty(logConfigs) {
+	if define.Empty(result.logConfigs) {
 		s.log.V(2).Info("not have log config")
 	}
-	return logConfigs, nil
+	return result, nil
 }
 
 // allContainerBkLogConfigs will match all container log config (std and container log)
@@ -360,12 +381,16 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 	logConfigs []define.LogConfigType,
 	refreshContainerInfo bool,
 	bkLogConfigs []v1alpha1.BkLogConfig,
-) ([]define.LogConfigType, error) {
+) ([]define.LogConfigType, map[string]struct{}, error) {
 	allContainer, err := s.allContainersWithContext(ctx)
 	if err != nil {
-		return logConfigs, fmt.Errorf("list runtime containers: %w", err)
+		return logConfigs, nil, fmt.Errorf("list runtime containers: %w", err)
 	}
+	discoveredContainerIDs := make(map[string]struct{}, len(allContainer))
 	for i, container := range allContainer {
+		if container.ID != "" {
+			discoveredContainerIDs[container.ID] = struct{}{}
+		}
 		// 周期全量校准会遍历每个容器。容器与规则的逐项匹配明细只用于深度
 		// 排查，统一放到默认关闭的 V(2)，避免按周期产生 O(容器数×配置数) 日志。
 		s.log.V(2).Info(fmt.Sprintf("container info -> [%d] [%s]", i, container.ID))
@@ -374,7 +399,7 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 			containerInfo := castContainer(c)
 			logConfigs, err = s.containerBkLogConfigs(ctx, containerInfo, logConfigs, false, bkLogConfigs)
 			if err != nil {
-				return logConfigs, err
+				return logConfigs, discoveredContainerIDs, err
 			}
 			continue
 		}
@@ -382,7 +407,7 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 		// 仍只做一次 Runtime List，避免“先刷新缓存、再全量 Build”的双重扫描。
 		containerInfo, err := s.containerByIDWithContext(ctx, container.ID)
 		if err != nil {
-			return logConfigs, err
+			return logConfigs, discoveredContainerIDs, err
 		}
 		if containerInfo == nil {
 			continue
@@ -390,10 +415,10 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 		s.containerCache.Store(container.ID, containerInfo)
 		logConfigs, err = s.containerBkLogConfigs(ctx, containerInfo, logConfigs, false, bkLogConfigs)
 		if err != nil {
-			return logConfigs, err
+			return logConfigs, discoveredContainerIDs, err
 		}
 	}
-	return logConfigs, nil
+	return logConfigs, discoveredContainerIDs, nil
 }
 
 // containerBkLogConfigs will return single container all relation log config
@@ -482,12 +507,10 @@ func (s *BkLogSidecar) startActionHandler(ctx context.Context, event *define.Con
 		s.log.Info(fmt.Sprintf("container [%s] not exists, do nothing for action [%s].", event.ContainerID, event.Type))
 		return nil
 	}
-	s.containerCache.Store(event.ContainerID, container)
-
 	// 同一个容器 ID 可能在 stop 后再次收到 start（例如 runtime 事件重放）。
-	// 只有确认新容器真实存在后才取消旧的延迟删除；否则一次过期 CREATE
-	// 会让已经安排好的清理失效，并永久残留旧配置。
-	s.cancelPendingContainerDeletion(event.ContainerID)
+	// cache 写入和取消旧删除必须作为一个带世代推进的状态变更提交，否则并发
+	// 全量 Build 可能拿旧 Runtime 快照反向清掉刚启动的容器。
+	s.storeStartedContainer(container)
 
 	matched, err := s.upsertContainerConfigsWithContext(ctx, container, true)
 	if err != nil {

@@ -25,6 +25,7 @@ import (
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
@@ -175,6 +176,100 @@ func TestFullGenerationUpgradesStopGraceToCleanContainerCache(t *testing.T) {
 	require.NoError(t, sidecar.finishPendingContainerDeletion("container-1", pending.generation))
 	_, cached := sidecar.containerCache.Load("container-1")
 	assert.False(t, cached)
+}
+
+func TestFullGenerationPrunesCacheAfterStopCleanupAndMissedDelete(t *testing.T) {
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
+	pendingConfig := &stubLogConfig{
+		name:    "container-1_std_default_config-1",
+		content: []byte("pending config"),
+	}
+	cacheActualConfig(t, sidecar, pendingConfig)
+	sidecar.containerCache.Store("container-1", &define.Container{ID: "container-1"})
+
+	// 模拟只收到 STOP、未收到 DELETE：宽限期到期后配置已经删除，
+	// 但 STOP 语义会暂时保留 containerCache。
+	sidecar.configMutationMu.Lock()
+	pending, _ := sidecar.ensurePendingContainerDeletionLocked("container-1", false)
+	sidecar.configMutationMu.Unlock()
+	require.NoError(t, sidecar.finishPendingContainerDeletion("container-1", pending.generation))
+	_, cachedAfterStopCleanup := sidecar.containerCache.Load("container-1")
+	require.True(t, cachedAfterStopCleanup)
+
+	// 后续全量 Runtime 快照已确认容器不存在，应独立于配置 cache 清理残留。
+	require.NoError(t, sidecar.generateActualBkLogConfig())
+	_, cachedAfterFullGeneration := sidecar.containerCache.Load("container-1")
+	assert.False(t, cachedAfterFullGeneration)
+}
+
+func TestDeleteDuringFullBuildIsNotCancelledByStaleDesired(t *testing.T) {
+	listStarted := make(chan struct{})
+	releaseFirstList := make(chan struct{})
+	var listCalls atomic.Int32
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			if listCalls.Add(1) == 1 {
+				close(listStarted)
+				<-releaseFirstList
+				// 第一次 Build 返回 DELETE 之前取得的旧 Runtime 快照。
+				return []define.SimpleContainer{{ID: "container-1"}}, nil
+			}
+			// 世代冲突后的重试读取 DELETE 之后的最新快照。
+			return nil, nil
+		},
+	}
+	bkLogConfig := testContainerBkLogConfig(1001)
+	reader := &stubReader{
+		getFn: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
+			pod := obj.(*corev1.Pod)
+			*pod = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-1"},
+			}
+			return nil
+		},
+		listFn: func(_ context.Context, list client.ObjectList) error {
+			bkLogConfigs := list.(*bluekingv1alpha1.BkLogConfigList)
+			bkLogConfigs.Items = []bluekingv1alpha1.BkLogConfig{bkLogConfig}
+			return nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, reader)
+	container := testKubernetesContainer()
+	sidecar.containerCache.Store(container.ID, container)
+	activeConfig := &define.StdOutLogConfig{
+		BkLogConfig: bkLogConfig,
+		Container:   container,
+		Pod: &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-1"},
+		},
+		RuntimeType: define.RuntimeTypeContainerd,
+	}
+	activePath, _ := cacheActualConfig(t, sidecar, activeConfig)
+	delayedCleanup := make(chan func(), 1)
+	sidecar.delayCleanFn = func(_ time.Duration, cleanup func()) {
+		delayedCleanup <- cleanup
+	}
+
+	generateDone := make(chan error, 1)
+	go func() {
+		generateDone <- sidecar.generateActualBkLogConfig()
+	}()
+	waitForSignal(t, listStarted, "stale full runtime discovery")
+
+	require.NoError(t, sidecar.destroyActionHandler(&define.ContainerEvent{
+		Type:        define.ContainerEventDelete,
+		ContainerID: container.ID,
+	}))
+	cleanup := <-delayedCleanup
+	close(releaseFirstList)
+	require.NoError(t, <-generateDone)
+
+	cleanup()
+	_, statErr := os.Stat(activePath)
+	assert.True(t, os.IsNotExist(statErr))
+	_, pending := sidecar.pendingContainerDeletes[container.ID]
+	assert.False(t, pending)
+	assert.GreaterOrEqual(t, listCalls.Load(), int32(2))
 }
 
 func TestFullGenerationPrunesOnlyMissingConfigForStillDesiredContainer(t *testing.T) {

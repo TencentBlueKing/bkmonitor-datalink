@@ -151,15 +151,19 @@ func TestPeriodicBuildUsesSingleBkLogConfigSnapshot(t *testing.T) {
 	}
 	sidecar := newCharacterizationSidecar(t, runtime, reader)
 
-	logConfigs, err := sidecar.buildActualBkLogConfigs(
+	buildResult, err := sidecar.buildActualBkLogConfigs(
 		context.Background(),
 		configGenerationOptions{refreshDiscoveredState: true},
 	)
 
 	require.NoError(t, err)
-	require.Len(t, logConfigs, 2)
+	require.Len(t, buildResult.logConfigs, 2)
+	assert.Equal(t, map[string]struct{}{
+		"container-1": {},
+		"container-2": {},
+	}, buildResult.discoveredContainerIDs)
 	assert.Equal(t, int32(1), listCalls.Load())
-	for _, logConfig := range logConfigs {
+	for _, logConfig := range buildResult.logConfigs {
 		stdoutConfig, ok := logConfig.(*define.StdOutLogConfig)
 		require.True(t, ok)
 		assert.Equal(t, int64(1001), stdoutConfig.Spec.DataId)

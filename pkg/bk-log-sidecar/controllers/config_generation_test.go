@@ -135,6 +135,47 @@ func TestFullBuildDoesNotHoldConfigMutationLockDuringRuntimeIO(t *testing.T) {
 	assert.ErrorIs(t, <-generateDone, retryErr)
 }
 
+func TestCreateDuringFullBuildIsNotPrunedByStaleRuntimeSnapshot(t *testing.T) {
+	firstListStarted := make(chan struct{})
+	releaseFirstList := make(chan struct{})
+	var listCalls atomic.Int32
+	container := testKubernetesContainer()
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			if listCalls.Add(1) == 1 {
+				close(firstListStarted)
+				<-releaseFirstList
+				// CREATE 之前取得的旧快照还看不到新容器。
+				return nil, nil
+			}
+			return []define.SimpleContainer{{ID: container.ID}}, nil
+		},
+		inspectFn: func(context.Context, string) (define.Container, error) {
+			return *container, nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	generateDone := make(chan error, 1)
+	go func() {
+		generateDone <- sidecar.generateActualBkLogConfig()
+	}()
+	waitForSignal(t, firstListStarted, "stale full runtime discovery before CREATE")
+
+	// 即使新容器暂时没有匹配任何采集配置，CREATE 也必须推进状态世代，
+	// 让旧 Runtime 快照重试，而不是把刚写入的 containerCache 当残留删除。
+	require.NoError(t, sidecar.startActionHandler(context.Background(), &define.ContainerEvent{
+		Type:        define.ContainerEventCreate,
+		ContainerID: container.ID,
+	}))
+	close(releaseFirstList)
+	require.NoError(t, <-generateDone)
+
+	cached, ok := sidecar.containerCache.Load(container.ID)
+	require.True(t, ok)
+	assert.Equal(t, container.ID, castContainer(cached).ID)
+	assert.GreaterOrEqual(t, listCalls.Load(), int32(2))
+}
+
 func testContainerBkLogConfig(dataID int64) bluekingv1alpha1.BkLogConfig {
 	return bluekingv1alpha1.BkLogConfig{
 		ObjectMeta: metav1.ObjectMeta{

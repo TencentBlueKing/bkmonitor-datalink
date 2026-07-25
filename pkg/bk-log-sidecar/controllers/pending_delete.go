@@ -57,7 +57,7 @@ func (s *BkLogSidecar) preservePendingContainerConfigsLocked(
 	// 取消旧的延迟删除，避免旧定时器误删新配置。
 	for containerID := range s.pendingContainerDeletes {
 		if _, ok := desiredContainerIDs[containerID]; ok {
-			delete(s.pendingContainerDeletes, containerID)
+			s.cancelPendingContainerDeletionLocked(containerID)
 		}
 	}
 
@@ -210,7 +210,12 @@ func (s *BkLogSidecar) ensurePendingContainerDeletionLocked(
 		s.pendingContainerDeletes = make(map[string]*pendingContainerDeletion)
 	}
 	if pending, ok := s.pendingContainerDeletes[containerID]; ok {
-		pending.deleteContainerCache = pending.deleteContainerCache || deleteContainerCache
+		if deleteContainerCache && !pending.deleteContainerCache {
+			pending.deleteContainerCache = true
+			// DELETE 或全量发现可以把既有 STOP 任务升级为连同 cache 一起清理。
+			// 该变化会影响下一轮全量收敛，必须让已经在途的旧 Build 失效。
+			s.configGeneration++
+		}
 		return pending, false
 	}
 
@@ -221,6 +226,8 @@ func (s *BkLogSidecar) ensurePendingContainerDeletionLocked(
 		deleteContainerCache: deleteContainerCache,
 	}
 	s.pendingContainerDeletes[containerID] = pending
+	// pending 会改变全量 desired 的保留集合，因此与磁盘 Apply 一样推进世代。
+	s.configGeneration++
 	return pending, true
 }
 
@@ -291,8 +298,61 @@ func (s *BkLogSidecar) actualConfigCacheContainsContainerLocked(containerID stri
 	return found
 }
 
+// reconcileContainerCacheLocked 使用本轮完整 Runtime List 独立收敛容器缓存。
+// 调用方必须在成功 Apply 后持有 configMutationMu，保证失败 Build/Apply 不会
+// 破坏 Last Known Good，也不会提前删除仍在宽限期内的容器状态。
+func (s *BkLogSidecar) reconcileContainerCacheLocked(discoveredContainerIDs map[string]struct{}) {
+	changed := false
+	s.containerCache.Range(func(key, _ interface{}) bool {
+		containerID, ok := key.(string)
+		if !ok {
+			return true
+		}
+		if _, running := discoveredContainerIDs[containerID]; running {
+			return true
+		}
+		if pending, exists := s.pendingContainerDeletes[containerID]; exists {
+			// STOP 可能先创建“仅删配置”的任务。Runtime 全量快照确认容器
+			// 已消失后升级清理意图，但沿用原 deadline，不能重置尾采宽限期。
+			if !pending.deleteContainerCache {
+				pending.deleteContainerCache = true
+				changed = true
+			}
+			return true
+		}
+
+		// STOP 清理已经完成且 DELETE 漏报时，配置 cache 中不再有任何线索；
+		// 此处直接删除 Runtime 已确认不存在的 containerCache 残留。
+		s.containerCache.Delete(containerID)
+		changed = true
+		return true
+	})
+	if changed {
+		s.configGeneration++
+	}
+}
+
+func (s *BkLogSidecar) storeStartedContainer(container *define.Container) {
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
+
+	s.containerCache.Store(container.ID, container)
+	s.cancelPendingContainerDeletionLocked(container.ID)
+	// 即使容器暂时没有匹配配置，CREATE 也必须让在途 Runtime 快照失效，
+	// 否则旧全量 Build 可能把刚写入的 containerCache 当作残留清掉。
+	s.configGeneration++
+}
+
 func (s *BkLogSidecar) cancelPendingContainerDeletion(containerID string) {
 	s.configMutationMu.Lock()
-	delete(s.pendingContainerDeletes, containerID)
+	s.cancelPendingContainerDeletionLocked(containerID)
 	s.configMutationMu.Unlock()
+}
+
+func (s *BkLogSidecar) cancelPendingContainerDeletionLocked(containerID string) {
+	if _, ok := s.pendingContainerDeletes[containerID]; !ok {
+		return
+	}
+	delete(s.pendingContainerDeletes, containerID)
+	s.configGeneration++
 }

@@ -86,12 +86,6 @@ func (s *BkLogSidecar) configSnapshotGeneration() uint64 {
 	return s.configGeneration
 }
 
-func (s *BkLogSidecar) isConfigGenerationCurrent(generation uint64) bool {
-	s.configMutationMu.Lock()
-	defer s.configMutationMu.Unlock()
-	return generation == s.configGeneration
-}
-
 // applyDesiredConfigsLocked applies a fully rendered snapshot, updates the
 // in-memory cache only after the disk transaction succeeds, and reloads only
 // when disk state changed or an earlier reload is still pending.

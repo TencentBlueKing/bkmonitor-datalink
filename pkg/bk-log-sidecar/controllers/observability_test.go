@@ -129,6 +129,7 @@ func TestRuntimeSubscriptionLogsRecoveryAfterSubscribeRetry(t *testing.T) {
 	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
 	observed := observeSidecarLogs(sidecar)
 	sidecar.subscribeRetryInterval = time.Millisecond
+	sidecar.subscriptionStabilityWindow = time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan struct{})

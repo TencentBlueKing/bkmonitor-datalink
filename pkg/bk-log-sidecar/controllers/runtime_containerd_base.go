@@ -53,8 +53,9 @@ func (r *ContainerdBase) Subscribe(ctx context.Context) (<-chan *define.Containe
 	}
 
 	events, errors := r.containerdClient.Subscribe(ctx, filterOpts...)
-	// containerd 在 gRPC Subscribe 建立失败时，会在返回前把错误写入
-	// errors channel。这里同步提取该错误，避免公共层误判订阅已经 ready。
+	// 部分启动错误会已经出现在 errors channel，这里尽力将其转为
+	// Subscribe 的同步错误以缩短重试路径。但 gRPC 服务端拒绝也可能在
+	// Subscribe 返回后才异步到达，最终的订阅稳定性由公共 supervisor 判定。
 	select {
 	case err, ok := <-errors:
 		if !ok {

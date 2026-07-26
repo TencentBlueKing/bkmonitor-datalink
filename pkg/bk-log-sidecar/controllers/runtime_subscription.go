@@ -20,10 +20,12 @@ import (
 
 var errRuntimeSubscriptionClosed = errors.New("runtime event subscription closed")
 
-// subscribeEvent 作为单一 supervisor 管理 Runtime 订阅生命周期。每次订阅建立后
-// 都在消费事件的同时执行一次全量收敛，以覆盖首次启动和断线重连期间的事件空窗。
+// subscribeEvent 作为单一 supervisor 管理 Runtime 订阅生命周期。首次配置收敛
+// 只执行一次；重连流需要先经过稳定窗口，再做一次差异化全量收敛。containerd
+// 的服务端拒绝会异步出现在 error channel，不能因为 Subscribe 返回 channel 就
+// 立即把订阅标记为 established，更不能在每次失败重试时重复强制 reload。
 func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}) {
-	initial := true
+	initialConverged := false
 	subscriptionAttempt := 1
 	subscriptionRecovering := false
 	subscriptionStartedAt := time.Now()
@@ -31,7 +33,8 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 		if ctx.Err() != nil {
 			return
 		}
-		trigger := runtimeSubscriptionTrigger(initial)
+		initialAttempt := !initialConverged
+		trigger := runtimeSubscriptionTrigger(initialAttempt)
 
 		runtime, err := s.getRuntimeWithContext(ctx)
 		if err != nil {
@@ -63,12 +66,12 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 				"subscriptionAttempt", subscriptionAttempt,
 				"duration", time.Since(subscriptionStartedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
-			if initial && s.tryInitialConvergenceWithoutSubscription(ctx) {
+			if !initialConverged && s.tryInitialConvergenceWithoutSubscription(ctx) {
 				// 订阅接口持续不可用时，不能把启动全量收敛和周期补偿也一起
-				// 卡住。先以全量 Build/Apply 恢复采集；订阅后续建立成功时
-				// 会再做一次全量收敛，覆盖这段降级窗口中的事件。
+				// 卡住。首次成功后立即放行周期补偿，后续订阅重试不再重复
+				// 启动强制 reload。
 				close(ready)
-				initial = false
+				initialConverged = true
 			}
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
@@ -76,51 +79,81 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 			subscriptionAttempt++
 			continue
 		}
-		subscriptionEstablishedAt := time.Now()
-		s.log.Info("runtime event subscription established",
-			"trigger", string(trigger),
-			"result", convergenceResultSuccess,
-			"stage", "subscribe",
-			"runtime", runtime.Type(),
-			"initial", initial,
-			"subscriptionAttempt", subscriptionAttempt,
-			"duration", time.Since(subscriptionStartedAt).String(),
-			"subscriptionRecovered", subscriptionRecovering,
-		)
-
 		subscriptionDone := make(chan error, 1)
 		go func() {
 			subscriptionDone <- s.consumeRuntimeSubscription(subscriptionCtx, events, errs)
 		}()
 
-		err = s.convergeRuntimeSubscription(subscriptionCtx, subscriptionDone, initial)
+		// 首次收敛不依赖事件流继续存活。流如果在 Build/Apply 期间异步失败，
+		// 配置仍然只强制收敛一次，随后 supervisor 单独重试订阅。
+		if !initialConverged {
+			err = s.convergeRuntimeSubscription(ctx, nil, true)
+			if err != nil {
+				cancel()
+				return
+			}
+			close(ready)
+			initialConverged = true
+		}
+
+		err = s.waitRuntimeSubscriptionStability(subscriptionCtx, subscriptionDone)
 		if err != nil {
 			cancel()
 			if ctx.Err() != nil {
 				return
 			}
-			s.log.Error(err, "runtime event subscription interrupted during convergence, retrying",
+			s.log.Error(err, "runtime event subscription failed before becoming stable, retrying",
 				"trigger", string(trigger),
 				"result", convergenceResultFailure,
 				"stage", "stream",
 				"runtime", runtime.Type(),
 				"subscriptionAttempt", subscriptionAttempt,
-				"duration", time.Since(subscriptionEstablishedAt).String(),
+				"duration", time.Since(subscriptionStartedAt).String(),
 				"retryAfter", s.runtimeSubscribeRetryInterval().String())
-			// 下一轮是同一次启动或重连故障的恢复尝试。attempt 重新统计
-			// 新事件流的建立次数，recovered 则保留“由断流触发”的事实。
-			subscriptionAttempt = 1
+			subscriptionAttempt++
 			subscriptionRecovering = true
-			subscriptionStartedAt = time.Now()
 			if !s.waitRuntimeSubscribeRetry(ctx) {
 				return
 			}
 			continue
 		}
 
-		if initial {
-			close(ready)
-			initial = false
+		subscriptionEstablishedAt := time.Now()
+		s.log.Info("runtime event subscription established",
+			"trigger", string(runtimeSubscriptionTrigger(initialAttempt)),
+			"result", convergenceResultSuccess,
+			"stage", "subscribe",
+			"runtime", runtime.Type(),
+			"initial", initialAttempt,
+			"subscriptionAttempt", subscriptionAttempt,
+			"duration", time.Since(subscriptionStartedAt).String(),
+			"subscriptionRecovered", subscriptionRecovering,
+		)
+
+		// 只有经历过订阅故障并真正稳定下来的流才需要补一次全量差异。
+		// 首次配置已经在上方收敛过，健康启动不能再做第二次全量。
+		if subscriptionRecovering {
+			err = s.convergeRuntimeSubscription(subscriptionCtx, subscriptionDone, false)
+			if err != nil {
+				cancel()
+				if ctx.Err() != nil {
+					return
+				}
+				s.log.Error(err, "runtime event subscription interrupted during recovery convergence, retrying",
+					"trigger", string(convergenceTriggerRuntimeReconnect),
+					"result", convergenceResultFailure,
+					"stage", "stream",
+					"runtime", runtime.Type(),
+					"subscriptionAttempt", subscriptionAttempt,
+					"duration", time.Since(subscriptionEstablishedAt).String(),
+					"retryAfter", s.runtimeSubscribeRetryInterval().String())
+				subscriptionAttempt++
+				if !s.waitRuntimeSubscribeRetry(ctx) {
+					return
+				}
+				continue
+			}
+			subscriptionRecovering = false
 		}
 
 		err = <-subscriptionDone
@@ -129,7 +162,7 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 			return
 		}
 		s.log.Error(err, "runtime event subscription interrupted, retrying",
-			"trigger", string(runtimeSubscriptionTrigger(initial)),
+			"trigger", string(convergenceTriggerRuntimeReconnect),
 			"result", convergenceResultFailure,
 			"stage", "stream",
 			"runtime", runtime.Type(),
@@ -145,9 +178,29 @@ func (s *BkLogSidecar) subscribeEvent(ctx context.Context, ready chan<- struct{}
 	}
 }
 
-// convergeRuntimeSubscription 在事件流保持活跃期间完成一次全量收敛。Build/Apply
-// 或 reload 临时失败时使用有最大间隔的指数退避重试；只有真正成功后，调用方
-// 才能把首次启动标记为 ready。订阅断开或进程退出会立即中断等待。
+// waitRuntimeSubscriptionStability filters asynchronous startup failures from
+// containerd. An idle healthy stream has no positive handshake event, so the
+// supervisor uses a short stability window: errors arriving before it expires
+// are subscription-start failures and must not trigger a full convergence.
+func (s *BkLogSidecar) waitRuntimeSubscriptionStability(
+	ctx context.Context,
+	subscriptionDone <-chan error,
+) error {
+	timer := time.NewTimer(s.runtimeSubscriptionStableInterval())
+	defer timer.Stop()
+	select {
+	case err := <-subscriptionDone:
+		return err
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// convergeRuntimeSubscription 使用带最大间隔的指数退避完成一次全量收敛。
+// reconnect 传入 subscriptionDone 时，事件流断开会立即中断等待；首次收敛可传
+// nil，此时只受进程 Context 控制，避免异步订阅失败重复触发强制 reload。
 func (s *BkLogSidecar) convergeRuntimeSubscription(
 	ctx context.Context,
 	subscriptionDone <-chan error,
@@ -274,6 +327,13 @@ func (s *BkLogSidecar) runtimeSubscribeRetryInterval() time.Duration {
 		return s.subscribeRetryInterval
 	}
 	return SubscribeRetryInterval
+}
+
+func (s *BkLogSidecar) runtimeSubscriptionStableInterval() time.Duration {
+	if s.subscriptionStabilityWindow > 0 {
+		return s.subscriptionStabilityWindow
+	}
+	return SubscriptionStabilityWindow
 }
 
 func (s *BkLogSidecar) convergenceRetryBaseInterval() time.Duration {

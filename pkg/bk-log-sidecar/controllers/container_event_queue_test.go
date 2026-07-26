@@ -58,15 +58,18 @@ func TestContainerEventQueueRetriesTransientCreateFailure(t *testing.T) {
 	assert.Equal(t, define.ContainerEventCreate, recoveryContext["eventType"])
 }
 
-func TestContainerEventQueueDoesNotRetryConfirmedNotFound(t *testing.T) {
+func TestContainerEventQueueRetriesCreateNotFoundUntilRuntimeBecomesVisible(t *testing.T) {
 	var inspectCalls atomic.Int32
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{
-		inspectFn: func(context.Context, string) (define.Container, error) {
-			inspectCalls.Add(1)
-			return define.Container{}, fmt.Errorf("inspect: %w", define.ErrContainerNotFound)
+		inspectFn: func(_ context.Context, containerID string) (define.Container, error) {
+			if inspectCalls.Add(1) == 1 {
+				return define.Container{}, fmt.Errorf("inspect: %w", define.ErrContainerNotFound)
+			}
+			return define.Container{ID: containerID}, nil
 		},
 	}, &stubReader{})
-	startTestContainerEventWorker(t, sidecar, time.Millisecond)
+	sidecar.createEventVisibilityWindow = 200 * time.Millisecond
+	startTestContainerEventWorker(t, sidecar, 50*time.Millisecond)
 	sidecar.containerCache.Store("container-1", &define.Container{ID: "container-1"})
 	sidecar.configMutationMu.Lock()
 	sidecar.ensurePendingContainerDeletionLocked("container-1", false)
@@ -77,14 +80,44 @@ func TestContainerEventQueueDoesNotRetryConfirmedNotFound(t *testing.T) {
 		ContainerID: "container-1",
 	})
 
-	require.Eventually(t, func() bool {
-		return inspectCalls.Load() == 1 && !hasLatestContainerEvent(sidecar, "container-1")
-	}, 2*time.Second, 5*time.Millisecond)
-	assert.Never(t, func() bool {
-		return inspectCalls.Load() > 1
-	}, 50*time.Millisecond, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return inspectCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
 	assert.True(t, hasPendingContainerDeletion(sidecar, "container-1"),
-		"过期 CREATE 不应取消已经安排好的容器配置清理")
+		"Runtime 尚不可见时，CREATE 不应提前取消已经安排好的容器配置清理")
+
+	require.Eventually(t, func() bool {
+		return inspectCalls.Load() == 2 &&
+			!hasLatestContainerEvent(sidecar, "container-1") &&
+			!hasPendingContainerCreate(sidecar, "container-1")
+	}, 2*time.Second, 5*time.Millisecond)
+	assert.False(t, hasPendingContainerDeletion(sidecar, "container-1"),
+		"Runtime 确认容器重新可见后，应取消旧容器的延迟删除")
+}
+
+func TestContainerEventQueueStopsRetryingCreateNotFoundAfterVisibilityWindow(t *testing.T) {
+	var inspectCalls atomic.Int32
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{
+		inspectFn: func(context.Context, string) (define.Container, error) {
+			inspectCalls.Add(1)
+			return define.Container{}, fmt.Errorf("inspect: %w", define.ErrContainerNotFound)
+		},
+	}, &stubReader{})
+	sidecar.createEventVisibilityWindow = 10 * time.Millisecond
+	startTestContainerEventWorker(t, sidecar, 2*time.Millisecond)
+
+	sidecar.enqueueContainerEvent(&define.ContainerEvent{
+		Type:        define.ContainerEventCreate,
+		ContainerID: "container-1",
+	})
+
+	require.Eventually(t, func() bool {
+		return inspectCalls.Load() > 1 &&
+			!hasLatestContainerEvent(sidecar, "container-1") &&
+			!hasPendingContainerCreate(sidecar, "container-1")
+	}, 2*time.Second, 5*time.Millisecond)
+	finalInspectCalls := inspectCalls.Load()
+	assert.Never(t, func() bool {
+		return inspectCalls.Load() > finalInspectCalls
+	}, 50*time.Millisecond, 5*time.Millisecond)
 }
 
 func TestContainerEventQueueDropsStaleCreateRetryAfterDelete(t *testing.T) {
@@ -111,7 +144,8 @@ func TestContainerEventQueueDropsStaleCreateRetryAfterDelete(t *testing.T) {
 		ContainerID: "container-1",
 	})
 	require.Eventually(t, func() bool {
-		return !hasLatestContainerEvent(sidecar, "container-1")
+		return !hasLatestContainerEvent(sidecar, "container-1") &&
+			!hasPendingContainerCreate(sidecar, "container-1")
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Never(t, func() bool {
 		return inspectCalls.Load() > 1
@@ -205,5 +239,12 @@ func hasPendingContainerDeletion(sidecar *BkLogSidecar, containerID string) bool
 	sidecar.configMutationMu.Lock()
 	defer sidecar.configMutationMu.Unlock()
 	_, ok := sidecar.pendingContainerDeletes[containerID]
+	return ok
+}
+
+func hasPendingContainerCreate(sidecar *BkLogSidecar, containerID string) bool {
+	sidecar.configMutationMu.Lock()
+	defer sidecar.configMutationMu.Unlock()
+	_, ok := sidecar.pendingContainerCreates[containerID]
 	return ok
 }

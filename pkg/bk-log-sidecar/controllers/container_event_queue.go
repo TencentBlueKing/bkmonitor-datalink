@@ -11,6 +11,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +36,7 @@ type containerWorkItem struct {
 	containerID       string
 	eventType         define.ContainerEventType
 	sequence          uint64
+	createDeadline    time.Time
 	pendingGeneration uint64
 }
 
@@ -95,13 +97,23 @@ func (s *BkLogSidecar) enqueueContainerEvent(event *define.ContainerEvent) {
 		s.latestEventSequence = make(map[string]uint64)
 	}
 	s.latestEventSequence[event.ContainerID] = sequence
+	createDeadline := time.Time{}
+	if event.Type == define.ContainerEventCreate {
+		createDeadline = time.Now().Add(s.containerCreateVisibilityInterval())
+		s.recordPendingContainerCreate(event.ContainerID, sequence, createDeadline)
+	} else {
+		// 新的 STOP/DELETE 不仅使旧 CREATE 重试过期，也必须立即
+		// 移除周期全量所依赖的“新容器”标记。
+		s.clearPendingContainerCreate(event.ContainerID, 0)
+	}
 	s.eventSequenceMu.Unlock()
 
 	s.getOrCreateContainerEventQueue().Add(containerWorkItem{
-		kind:        containerWorkEvent,
-		containerID: event.ContainerID,
-		eventType:   event.Type,
-		sequence:    sequence,
+		kind:           containerWorkEvent,
+		containerID:    event.ContainerID,
+		eventType:      event.Type,
+		sequence:       sequence,
+		createDeadline: createDeadline,
 	})
 }
 
@@ -135,6 +147,9 @@ func (s *BkLogSidecar) processNextContainerWorkItem(
 	retryCount := queue.NumRequeues(item)
 	if item.kind == containerWorkEvent && retryCount > 0 && !s.isLatestContainerEvent(item) {
 		queue.Forget(item)
+		if item.eventType == define.ContainerEventCreate {
+			s.clearPendingContainerCreate(item.containerID, item.sequence)
+		}
 		s.log.Info("drop stale retried container event",
 			"trigger", string(item.trigger()),
 			"containerID", item.containerID,
@@ -151,6 +166,9 @@ func (s *BkLogSidecar) processNextContainerWorkItem(
 	if err == nil {
 		queue.Forget(item)
 		if item.kind == containerWorkEvent {
+			if item.eventType == define.ContainerEventCreate {
+				s.clearPendingContainerCreate(item.containerID, item.sequence)
+			}
 			s.clearLatestContainerEvent(item)
 		}
 		if retryCount > 0 {
@@ -169,12 +187,35 @@ func (s *BkLogSidecar) processNextContainerWorkItem(
 
 	if item.kind == containerWorkEvent && !s.isLatestContainerEvent(item) {
 		queue.Forget(item)
+		if item.eventType == define.ContainerEventCreate {
+			s.clearPendingContainerCreate(item.containerID, item.sequence)
+		}
 		s.log.Error(err, "drop failed container event superseded by newer event",
 			"trigger", string(item.trigger()),
 			"containerID", item.containerID,
 			"eventType", item.eventType,
 			"sequence", item.sequence,
 			"retryCount", retryCount,
+			"duration", duration.String(),
+		)
+		return true
+	}
+
+	if item.kind == containerWorkEvent &&
+		item.eventType == define.ContainerEventCreate &&
+		errors.Is(err, define.ErrContainerNotFound) &&
+		!time.Now().Before(item.createDeadline) {
+		queue.Forget(item)
+		s.clearPendingContainerCreate(item.containerID, item.sequence)
+		s.clearLatestContainerEvent(item)
+		s.log.Error(err, "drop container create event after runtime visibility window expired",
+			"trigger", string(item.trigger()),
+			"result", convergenceResultFailure,
+			"containerID", item.containerID,
+			"eventType", item.eventType,
+			"sequence", item.sequence,
+			"retryCount", retryCount,
+			"visibilityWindow", s.containerCreateVisibilityInterval().String(),
 			"duration", duration.String(),
 		)
 		return true

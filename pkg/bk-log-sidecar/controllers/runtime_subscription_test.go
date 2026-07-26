@@ -112,6 +112,55 @@ func TestStartKeepsPeriodicReconcileAvailableWhenSubscriptionCannotStart(t *test
 	require.NoError(t, <-startDone)
 }
 
+func TestAsyncSubscriptionStartFailuresDoNotRepeatStartupReload(t *testing.T) {
+	var subscribeCalls atomic.Int32
+	var listCalls atomic.Int32
+	var reloadCalls atomic.Int32
+	stableEvents := make(chan *define.ContainerEvent)
+	stableErrors := make(chan error)
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			listCalls.Add(1)
+			return nil, nil
+		},
+		subscribeFn: func(context.Context) (<-chan *define.ContainerEvent, <-chan error, error) {
+			if subscribeCalls.Add(1) <= 3 {
+				// 模拟 containerd gRPC stream 已经返回 channel，但服务端拒绝
+				// 随后才从 Recv/error channel 异步到达的真实行为。
+				errs := make(chan error, 1)
+				errs <- errors.New("containerd subscription rejected asynchronously")
+				return make(chan *define.ContainerEvent), errs, nil
+			}
+			return stableEvents, stableErrors, nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
+	sidecar.subscribeRetryInterval = time.Millisecond
+	sidecar.subscriptionStabilityWindow = 5 * time.Millisecond
+	sidecar.reloadAgentFn = func() error {
+		reloadCalls.Add(1)
+		return nil
+	}
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- sidecar.Start(context.Background())
+	}()
+
+	require.Eventually(t, func() bool {
+		// 首次 cache+Build 各 List 一次；只有第 4 条稳定订阅再做一次
+		// reconnect 差异对账，前三条异步失败流不能触发全量扫描。
+		return subscribeCalls.Load() >= 4 && listCalls.Load() >= 3
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, int32(1), reloadCalls.Load(),
+		"异步订阅启动失败不能重复触发启动强制 reload")
+	require.Equal(t, int32(3), listCalls.Load(),
+		"失败订阅重试期间不能重复执行全量配置收敛")
+
+	sidecar.Stop()
+	require.NoError(t, <-startDone)
+}
+
 func TestRuntimeSubscriptionReconnectTriggersFullConvergence(t *testing.T) {
 	firstErrors := make(chan error, 1)
 	reconnected := make(chan struct{})
@@ -136,6 +185,7 @@ func TestRuntimeSubscriptionReconnectTriggersFullConvergence(t *testing.T) {
 	sidecar := newCharacterizationSidecar(t, runtime, &stubReader{})
 	observed := observeSidecarLogs(sidecar)
 	sidecar.subscribeRetryInterval = time.Millisecond
+	sidecar.subscriptionStabilityWindow = time.Millisecond
 	sidecar.convergenceRetryBaseDelay = time.Millisecond
 	sidecar.convergenceRetryMaxDelay = time.Millisecond
 	startDone := make(chan error, 1)

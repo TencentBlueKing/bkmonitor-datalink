@@ -12,6 +12,7 @@ package controllers
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"errors"
 	"math"
 	"math/big"
 	"time"
@@ -23,9 +24,10 @@ import (
 // 每轮都复用同一套 Build/Apply；无差异时不会写文件或 reload。
 func (s *BkLogSidecar) periodicReconcile(ctx context.Context) {
 	consecutiveFailures := 0
+	snapshotRetryDelay := time.Duration(0)
+	nextDelay := s.nextPeriodicReconcileDelay()
 	for {
-		delay := s.nextPeriodicReconcileDelay()
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(nextDelay)
 		select {
 		case <-timer.C:
 			startedAt := time.Now()
@@ -37,6 +39,22 @@ func (s *BkLogSidecar) periodicReconcile(ctx context.Context) {
 					return
 				}
 				consecutiveFailures++
+				if errors.Is(err, errConfigSnapshotChanged) {
+					// 快照冲突表示系统仍在变化，使用订阅收敛已有的短退避尽快追平；
+					// 不在本轮继续 Build，也不等待完整的周期兜底时间。
+					if snapshotRetryDelay == 0 {
+						snapshotRetryDelay = s.convergenceRetryBaseInterval()
+					} else {
+						snapshotRetryDelay = nextConvergenceRetryDelay(
+							snapshotRetryDelay,
+							s.convergenceRetryMaximumInterval(),
+						)
+					}
+					nextDelay = snapshotRetryDelay
+				} else {
+					snapshotRetryDelay = 0
+					nextDelay = s.nextPeriodicReconcileDelay()
+				}
 				// Build/Apply 失败会保留 Last Known Good；周期循环不退出，
 				// 下一轮会重新获取完整状态后继续收敛。
 				s.log.Error(err, "periodic node configuration reconciliation failed",
@@ -44,10 +62,12 @@ func (s *BkLogSidecar) periodicReconcile(ctx context.Context) {
 					"result", convergenceResultFailure,
 					"attempt", consecutiveFailures,
 					"duration", duration.String(),
-					"nextBaseInterval", s.nextPeriodicReconcileInterval().String())
+					"retryAfter", nextDelay.String())
 				continue
 			}
 
+			snapshotRetryDelay = 0
+			nextDelay = s.nextPeriodicReconcileDelay()
 			if consecutiveFailures > 0 {
 				s.log.Info("periodic node configuration reconciliation recovered",
 					"trigger", string(convergenceTriggerPeriodicReconcile),

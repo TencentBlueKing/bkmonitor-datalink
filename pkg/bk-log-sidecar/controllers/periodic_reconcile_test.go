@@ -235,6 +235,51 @@ func TestPeriodicReconcileFailurePreservesLastKnownGoodAndContinues(t *testing.T
 	assert.Equal(t, int32(1), reloadCalls.Load())
 }
 
+func TestPeriodicReconcileRetriesSnapshotConflictWithShortBackoff(t *testing.T) {
+	t.Setenv(config.CurrentNodeNameKey, "node-1")
+	var sidecar *BkLogSidecar
+	var listCalls atomic.Int32
+	var scheduleCalls atomic.Int32
+	var nodeReads atomic.Int32
+	runtime := &stubRuntime{
+		containersFn: func(context.Context) ([]define.SimpleContainer, error) {
+			call := listCalls.Add(1)
+			if call <= int32(maxImmediateConfigSnapshotRetries+1) {
+				sidecar.configMutationMu.Lock()
+				sidecar.configGeneration++
+				sidecar.configMutationMu.Unlock()
+			}
+			return nil, nil
+		},
+	}
+	sidecar = newCharacterizationSidecar(t, runtime, periodicTestReader(&nodeReads, nil))
+	sidecar.periodicReconcileInterval = time.Hour
+	sidecar.convergenceRetryBaseDelay = 2 * time.Millisecond
+	sidecar.convergenceRetryMaxDelay = 4 * time.Millisecond
+	sidecar.periodicReconcileDelayFn = func(time.Duration, float64) time.Duration {
+		if scheduleCalls.Add(1) == 1 {
+			return 0
+		}
+		return time.Hour
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sidecar.periodicReconcile(ctx)
+	}()
+
+	// 第一轮连续两次冲突后，下一次应使用 2ms 短退避，而不是等待一小时的周期。
+	require.Eventually(t, func() bool {
+		return listCalls.Load() >= int32(maxImmediateConfigSnapshotRetries+2) &&
+			sidecar.configSnapshotGeneration() >= uint64(maxImmediateConfigSnapshotRetries+2)
+	}, 2*time.Second, 5*time.Millisecond)
+	cancel()
+	waitForSignal(t, done, "periodic snapshot conflict recovery")
+	assert.GreaterOrEqual(t, nodeReads.Load(), int32(maxImmediateConfigSnapshotRetries+2))
+}
+
 func TestPeriodicReconcileCancellationInterruptsLongWait(t *testing.T) {
 	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, &stubReader{})
 	sidecar.periodicReconcileInterval = time.Hour

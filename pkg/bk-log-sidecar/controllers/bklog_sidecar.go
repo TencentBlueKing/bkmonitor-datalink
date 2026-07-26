@@ -12,6 +12,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -35,36 +36,45 @@ import (
 
 const (
 	SubscribeRetryInterval       = 5 * time.Second
+	SubscriptionStabilityWindow  = time.Second
+	CreateEventVisibilityWindow  = 10 * time.Second
 	RuntimeOperationTimeout      = 10 * time.Second
 	ConvergenceRetryBaseDelay    = time.Second
 	ConvergenceRetryMaximumDelay = 30 * time.Second
+	// 一次快照冲突通常只是事件与全量 Build 短暂重叠，允许就地合并一次；
+	// 持续冲突则交给外层队列或周期退避，避免在高 churn 节点上忙等。
+	maxImmediateConfigSnapshotRetries = 1
 )
+
+var errConfigSnapshotChanged = errors.New("configuration snapshot changed during build")
 
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 // BkLogSidecar BkLogSidecar
 type BkLogSidecar struct {
-	runtime                   define.Runtime
-	runtimeMu                 sync.Mutex
-	kubeClient                client.Reader
-	reloadAgentFn             func() error
-	delayCleanFn              func(time.Duration, func())
-	eventQueueMu              sync.Mutex
-	eventQueue                workqueue.RateLimitingInterface
-	eventWorkerOnce           sync.Once
-	eventShutdownOnce         sync.Once
-	lifecycleWG               sync.WaitGroup
-	eventSequenceMu           sync.Mutex
-	eventSequence             uint64
-	latestEventSequence       map[string]uint64
-	subscribeRetryInterval    time.Duration
-	runtimeOperationTimeout   time.Duration
-	convergenceRetryBaseDelay time.Duration
-	convergenceRetryMaxDelay  time.Duration
-	periodicReconcileInterval time.Duration
-	periodicReconcileJitter   float64
-	periodicReconcileDelayFn  func(time.Duration, float64) time.Duration
+	runtime                     define.Runtime
+	runtimeMu                   sync.Mutex
+	kubeClient                  client.Reader
+	reloadAgentFn               func() error
+	delayCleanFn                func(time.Duration, func())
+	eventQueueMu                sync.Mutex
+	eventQueue                  workqueue.RateLimitingInterface
+	eventWorkerOnce             sync.Once
+	eventShutdownOnce           sync.Once
+	lifecycleWG                 sync.WaitGroup
+	eventSequenceMu             sync.Mutex
+	eventSequence               uint64
+	latestEventSequence         map[string]uint64
+	subscribeRetryInterval      time.Duration
+	subscriptionStabilityWindow time.Duration
+	createEventVisibilityWindow time.Duration
+	runtimeOperationTimeout     time.Duration
+	convergenceRetryBaseDelay   time.Duration
+	convergenceRetryMaxDelay    time.Duration
+	periodicReconcileInterval   time.Duration
+	periodicReconcileJitter     float64
+	periodicReconcileDelayFn    func(time.Duration, float64) time.Duration
 	// configMutationMu 保护配置快照、延迟删除状态、磁盘事务与 reload 状态，不包围
 	// Runtime/Kubernetes 查询；外部查询通过 configGeneration 做乐观校验。
 	configMutationMu sync.Mutex
@@ -76,6 +86,9 @@ type BkLogSidecar struct {
 	// DelayCleanConfig 宽限期不会被并发的全量配置收敛提前裁剪。
 	pendingContainerDeletes map[string]*pendingContainerDeletion
 	pendingDeleteGeneration uint64
+	// pendingContainerCreates 记录 Runtime CREATE 到 Inspect 最终可见之间的短暂窗口。
+	// 周期全量会据此沿用“新容器从头采集”语义；窗口结束后不再无限放大流量风险。
+	pendingContainerCreates map[string]pendingContainerCreation
 	containerCache          sync.Map
 	nodeInfoMu              sync.RWMutex
 	currentNodeInfo         corev1.Node
@@ -99,6 +112,7 @@ func NewBkLogSidecar(mgr ctrl.Manager) *BkLogSidecar {
 		log:                       ctrl.Log.WithName("bkLogSidecar"),
 		kubeClient:                mgr.GetCache(),
 		pendingContainerDeletes:   make(map[string]*pendingContainerDeletion),
+		pendingContainerCreates:   make(map[string]pendingContainerCreation),
 		periodicReconcileInterval: config.PeriodicReconcileInterval,
 		periodicReconcileJitter:   config.PeriodicReconcileJitter,
 	}
@@ -126,7 +140,7 @@ func (s *BkLogSidecar) Start(ctx context.Context) error {
 	}()
 	select {
 	case <-subscriptionReady:
-		// supervisor 已经在有效订阅期间完成首次全量扫描。
+		// 首次配置已经成功收敛；订阅持续不可用时也可能由降级路径放行。
 	case <-runCtx.Done():
 		return nil
 	case <-s.stopCh:
@@ -250,6 +264,7 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 		s.configMutationMu.Unlock()
 	}
 
+	snapshotRetries := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -270,8 +285,18 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 		}
 
 		s.configMutationMu.Lock()
-		if generation != s.configGeneration {
+		currentGeneration := s.configGeneration
+		if generation != currentGeneration {
 			s.configMutationMu.Unlock()
+			if err := configSnapshotRetryError(
+				"full configuration reconciliation",
+				snapshotRetries,
+				generation,
+				currentGeneration,
+			); err != nil {
+				return err
+			}
+			snapshotRetries++
 			continue
 		}
 		// Runtime 的全量列表只包含运行中容器。这里显式合并仍处于退出宽限期的配置，
@@ -289,6 +314,26 @@ func (s *BkLogSidecar) generateActualBkLogConfigWithOptions(
 		s.configMutationMu.Unlock()
 		return err
 	}
+}
+
+// configSnapshotRetryError 限制单次调用内的乐观重试次数。达到边界后返回
+// 可识别错误，让调用方沿用现有的 workqueue/controller-runtime/周期退避。
+func configSnapshotRetryError(
+	operation string,
+	retryCount int,
+	snapshotGeneration, currentGeneration uint64,
+) error {
+	if retryCount < maxImmediateConfigSnapshotRetries {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: %s exceeded %d immediate retries (snapshot generation %d, current generation %d)",
+		errConfigSnapshotChanged,
+		operation,
+		maxImmediateConfigSnapshotRetries,
+		snapshotGeneration,
+		currentGeneration,
+	)
 }
 
 type actualConfigBuildResult struct {
@@ -395,9 +440,12 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 		// 排查，统一放到默认关闭的 V(2)，避免按周期产生 O(容器数×配置数) 日志。
 		s.log.V(2).Info(fmt.Sprintf("container info -> [%d] [%s]", i, container.ID))
 		c, ok := s.containerCache.Load(container.ID)
+		isNewContainer := s.isPendingContainerCreate(container.ID)
 		if ok && !refreshContainerInfo {
 			containerInfo := castContainer(c)
-			logConfigs, err = s.containerBkLogConfigs(ctx, containerInfo, logConfigs, false, bkLogConfigs)
+			logConfigs, err = s.containerBkLogConfigs(
+				ctx, containerInfo, logConfigs, isNewContainer, bkLogConfigs,
+			)
 			if err != nil {
 				return logConfigs, discoveredContainerIDs, err
 			}
@@ -413,7 +461,9 @@ func (s *BkLogSidecar) allContainerBkLogConfigs(
 			continue
 		}
 		s.containerCache.Store(container.ID, containerInfo)
-		logConfigs, err = s.containerBkLogConfigs(ctx, containerInfo, logConfigs, false, bkLogConfigs)
+		logConfigs, err = s.containerBkLogConfigs(
+			ctx, containerInfo, logConfigs, isNewContainer, bkLogConfigs,
+		)
 		if err != nil {
 			return logConfigs, discoveredContainerIDs, err
 		}
@@ -437,25 +487,31 @@ func (s *BkLogSidecar) containerBkLogConfigs(
 		// 对于新增容器的场景，需要从头开始采集日志文件
 		bkLogConfig.Spec.TailFiles = !isNewContainer // stdout and stderr collect log from beginning
 
+		var logConfig define.LogConfigType
 		if bkLogConfig.IsContainerType() {
-			logConfigs = append(logConfigs, &define.ContainerLogConfig{
+			logConfig = &define.ContainerLogConfig{
 				BkLogConfig: bkLogConfig,
 				Container:   container,
 				Pod:         pod,
-			})
-			continue
+			}
+		} else {
+			runtime, err := s.getRuntimeWithContext(ctx)
+			if err != nil {
+				return logConfigs, fmt.Errorf("get runtime type for container %s: %w", container.ID, err)
+			}
+			logConfig = &define.StdOutLogConfig{
+				BkLogConfig: bkLogConfig,
+				Container:   container,
+				Pod:         pod,
+				RuntimeType: runtime.Type(),
+			}
 		}
-
-		runtime, err := s.getRuntimeWithContext(ctx)
-		if err != nil {
-			return logConfigs, fmt.Errorf("get runtime type for container %s: %w", container.ID, err)
+		if !isNewContainer {
+			// actual cache 与 configGeneration 共同构成乐观快照；若并发
+			// Apply 替换了 cache，外层的世代复核会重新 Build。
+			s.preserveRuntimeTailFiles(logConfig)
 		}
-		logConfigs = append(logConfigs, &define.StdOutLogConfig{
-			BkLogConfig: bkLogConfig,
-			Container:   container,
-			Pod:         pod,
-			RuntimeType: runtime.Type(),
-		})
+		logConfigs = append(logConfigs, logConfig)
 	}
 	return logConfigs, nil
 }
@@ -499,7 +555,7 @@ func (s *BkLogSidecar) startActionHandler(ctx context.Context, event *define.Con
 
 	// CREATE 必须向 Runtime 重新确认，不能直接相信 stop/delete 前留下的 cache；
 	// 否则乱序或重放事件可能取消真实的待删除任务并重新写回旧配置。
-	container, err := s.containerByIDWithContext(ctx, event.ContainerID)
+	container, err := s.inspectContainerWithContext(ctx, event.ContainerID)
 	if err != nil {
 		return fmt.Errorf("get container for create event %s: %w", event.ContainerID, err)
 	}
@@ -533,6 +589,7 @@ func (s *BkLogSidecar) upsertContainerConfigsWithContext(
 	container *define.Container,
 	isNewContainer bool,
 ) (bool, error) {
+	snapshotRetries := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -549,9 +606,19 @@ func (s *BkLogSidecar) upsertContainerConfigsWithContext(
 		}
 		if define.Empty(logConfigs) {
 			// 空匹配也必须校验世代，否则可能恰好错过并发新增的 BkLogConfig。
-			if s.isConfigGenerationCurrent(generation) {
+			currentGeneration := s.configSnapshotGeneration()
+			if generation == currentGeneration {
 				return false, nil
 			}
+			if err := configSnapshotRetryError(
+				"container CREATE configuration upsert",
+				snapshotRetries,
+				generation,
+				currentGeneration,
+			); err != nil {
+				return false, err
+			}
+			snapshotRetries++
 			continue
 		}
 		applied, err := s.upsertActualConfigsIfCurrent(logConfigs, generation)
@@ -562,6 +629,16 @@ func (s *BkLogSidecar) upsertContainerConfigsWithContext(
 			return true, nil
 		}
 		// 并发全量收敛已经提交了更新，旧事件不能覆盖它；重新读取最新资源后再合并。
+		currentGeneration := s.configSnapshotGeneration()
+		if err := configSnapshotRetryError(
+			"container CREATE configuration upsert",
+			snapshotRetries,
+			generation,
+			currentGeneration,
+		); err != nil {
+			return false, err
+		}
+		snapshotRetries++
 	}
 }
 

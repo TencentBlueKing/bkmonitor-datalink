@@ -88,6 +88,26 @@ func (s *BkLogSidecar) containerByIDWithContext(
 	parent context.Context,
 	containerID string,
 ) (*define.Container, error) {
+	container, err := s.inspectContainerWithContext(parent, containerID)
+	if err != nil {
+		// Containers may disappear between List and Inspect. That race has
+		// already reached its desired state, so retrying the whole snapshot for
+		// a confirmed NotFound would only create unnecessary queue pressure.
+		if errors.Is(err, define.ErrContainerNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return container, nil
+}
+
+// inspectContainerWithContext 保留 Runtime 返回的错误链。CREATE 事件需要识别
+// ErrContainerNotFound 并在短窗口内重试；Runtime List 后的常规 Inspect 则仍由
+// containerByIDWithContext 将同一错误视为容器已经消失。
+func (s *BkLogSidecar) inspectContainerWithContext(
+	parent context.Context,
+	containerID string,
+) (*define.Container, error) {
 	ctx, cancel := context.WithTimeout(parent, s.getRuntimeOperationTimeout())
 	defer cancel()
 	runtime, err := s.getRuntimeWithContext(ctx)
@@ -96,12 +116,6 @@ func (s *BkLogSidecar) containerByIDWithContext(
 	}
 	container, err := runtime.Inspect(ctx, containerID)
 	if err != nil {
-		// Containers may disappear between List and Inspect. That race has
-		// already reached its desired state, so retrying the whole snapshot for
-		// a confirmed NotFound would only create unnecessary queue pressure.
-		if errors.Is(err, define.ErrContainerNotFound) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("inspect container %s: %w", containerID, err)
 	}
 	return &container, nil

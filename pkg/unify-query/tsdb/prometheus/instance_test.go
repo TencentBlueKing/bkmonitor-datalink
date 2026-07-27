@@ -175,6 +175,57 @@ func TestMergeBucketDuration(t *testing.T) {
 	}
 }
 
+func TestQueryListAllowRouteStartBoundaryBucketPerSource(t *testing.T) {
+	newQuery := func(tableID string, start, end, queryStart, queryEnd int64) *Query {
+		return &Query{
+			qry: &metadata.Query{
+				DataSource: "bkmonitor",
+				TableID:    tableID,
+				Field:      "value",
+			},
+			start:      time.Unix(start, 0),
+			end:        time.Unix(end, 0),
+			queryStart: time.Unix(queryStart, 0),
+			queryEnd:   time.Unix(queryEnd, 0),
+		}
+	}
+
+	t.Run("同一 reference 的独立 RT 各自保留首 bucket", func(t *testing.T) {
+		first := newQuery("first.rt", 100, 200, 40, 260)
+		second := newQuery("second.rt", 100, 200, 40, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.True(t, queries.allowRouteStartBoundaryBucket(second))
+	})
+
+	t.Run("同一 source 的后续 route 禁用首 bucket 例外", func(t *testing.T) {
+		first := newQuery("shared.rt", 100, 150, 40, 150)
+		second := newQuery("shared.rt", 150, 200, 150, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.False(t, queries.allowRouteStartBoundaryBucket(second))
+	})
+
+	t.Run("同一 source 的 overlap-only 前路由也算相邻 route", func(t *testing.T) {
+		previous := newQuery("shared.rt", 0, 0, 40, 150)
+		current := newQuery("shared.rt", 150, 200, 150, 260)
+		queries := QueryList{previous, current}
+
+		assert.False(t, queries.allowRouteStartBoundaryBucket(current))
+	})
+
+	t.Run("同一 source 的并行完整范围不是相邻时间 route", func(t *testing.T) {
+		first := newQuery("shared.rt", 100, 200, 40, 260)
+		second := newQuery("shared.rt", 100, 200, 40, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.True(t, queries.allowRouteStartBoundaryBucket(second))
+	})
+}
+
 func TestMergeFuncName(t *testing.T) {
 	testCases := map[string]struct {
 		hints    *storage.SelectHints

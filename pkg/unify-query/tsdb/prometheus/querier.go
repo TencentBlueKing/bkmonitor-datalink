@@ -223,9 +223,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
 				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
 				opts := make([]function.RouteRangeFilterOption, 0, 2)
-				if len(queryList) == 1 {
-					// 单路 route 需要保留 routeStart 的首个 backward range evaluation bucket；
-					// 多路 route 的 later-only label 可能绕过 merge-time recheck，不能开启这个例外。
+				if queryList.allowRouteStartBoundaryBucket(query) {
+					// 当前逻辑 source 的 routeStart 前没有相邻时间路由时，保留首个 backward range bucket。
+					// 其他独立 RT 不影响该判定；真正的后续 route 仍不能开启这个例外。
 					opts = append(opts, function.WithRouteStartBoundaryBucket())
 				}
 				if query.endInclusive {

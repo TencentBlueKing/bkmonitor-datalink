@@ -32,6 +32,40 @@ type Query struct {
 
 type QueryList []*Query
 
+// allowRouteStartBoundaryBucket 判断当前 query 的 routeStart 前是否存在同一逻辑数据源的相邻时间路由。
+// 同一个 reference 可能展开成多个独立 RT，不能用 QueryList 总长度判断是否为单路 route。
+func (ql QueryList) allowRouteStartBoundaryBucket(target *Query) bool {
+	if target == nil {
+		return false
+	}
+
+	for _, other := range ql {
+		if other == nil || other == target || !isSameRouteSource(target, other) {
+			continue
+		}
+		if validTimeRange(other.start, other.end) && other.end.Equal(target.start) {
+			return false
+		}
+		if validTimeRange(other.queryStart, other.queryEnd) && other.queryEnd.Equal(target.start) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSameRouteSource(a, b *Query) bool {
+	if a == nil || b == nil || a.qry == nil || b.qry == nil {
+		return true
+	}
+	if a.qry.TableID == "" || b.qry.TableID == "" {
+		// 缺少逻辑 RT 身份时保持保守语义，避免把真实相邻 route 误判为独立 source。
+		return true
+	}
+	return a.qry.DataSource == b.qry.DataSource &&
+		a.qry.TableID == b.qry.TableID &&
+		a.qry.Field == b.qry.Field
+}
+
 func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 	outerAggName := ql.outerAggName()
 	if hints != nil && hints.Func != "" {

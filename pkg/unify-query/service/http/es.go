@@ -12,6 +12,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/gin-gonic/gin"
@@ -79,6 +80,13 @@ func HandleESQueryRequest(c *gin.Context) {
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
+	if req == nil || req.Time == nil || req.Query == nil {
+		err = errors.New("invalid es query request")
+		log.Errorf(ctx, "validate es request failed for->[%s]", err)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
+		c.JSON(400, ErrResponse{err.Error()})
+		return
+	}
 	params := &es.Params{
 		TableID:       req.TableID,
 		Start:         req.Time.Start,
@@ -86,7 +94,7 @@ func HandleESQueryRequest(c *gin.Context) {
 		Body:          req.Query.Body,
 		FuzzyMatching: req.Query.FuzzyMatching,
 	}
-	result, err := es.Query(params)
+	result, err := es.Query(ctx, params)
 	if err != nil {
 		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)

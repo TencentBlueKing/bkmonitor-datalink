@@ -10,7 +10,8 @@
 package es_test
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -34,34 +35,24 @@ type TestSuite struct {
 // TestSearch
 func TestSearch(t *testing.T) {
 	log.InitTestLogger()
+	t.Setenv(inner.MaxQueryTimeRangeEnv, "168h")
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	// mock掉client，模拟真实查询es数据动作
 	client := mocktest.NewMockClient(ctrl)
 
-	// 模拟一个时间和请求，制造假的alias信息
-	start := time.Now().Add(-24 * time.Hour)
-	now := time.Now()
+	// 模拟一个时间和请求，确认查询直接使用按日期生成的 alias。
+	start := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
 	tableID := "testbb.ttt"
 	index := "testbb_ttt"
 	body := "{\"size\":5}"
 	startTimeFormat := start.Format("20060102")
-	nowTimeFormat := now.Format("20060102")
-	startTime := fmt.Sprintf("%s_%s_read", index, startTimeFormat)
-	nowTime := fmt.Sprintf("%s_%s_read", index, nowTimeFormat)
-	aliases := []string{startTime, nowTime}
-	aliasInfo := map[string]*es.AliasInfo{
-		"testbb_ttt_20210407_01": {
-			Aliases: map[string]interface{}{
-				startTime: map[string]interface{}{},
-				nowTime:   map[string]interface{}{},
-			},
-		},
-	}
-	aliasInfoStr, _ := json.Marshal(aliasInfo)
-	client.EXPECT().AliasWithIndex("*"+index+"*").Return(string(aliasInfoStr), nil)
-	client.EXPECT().Search(body, aliases).Return(`any result`, nil)
+	endTimeFormat := end.Format("20060102")
+	startTime := fmt.Sprintf("%s_%s*_read", index, startTimeFormat)
+	endTime := fmt.Sprintf("%s_%s*_read", index, endTimeFormat)
+	client.EXPECT().Search(gomock.Any(), body, startTime, endTime).Return(`any result`, nil)
 	stubs := gostub.StubFunc(&es.NewClient, client, nil)
 	defer stubs.Reset()
 
@@ -85,18 +76,21 @@ func TestSearch(t *testing.T) {
 	assert.Nil(t, err)
 	err = es.ReloadStorage(storages)
 	assert.Nil(t, err)
-	es.RefreshAllAlias()
-	assert.Nil(t, err)
 	q := &inner.Params{
 		TableID: tableID,
 		Body:    body,
 		Start:   start.Unix(),
-		End:     now.Unix(),
+		End:     end.Unix(),
 	}
 
 	// 测试基于假的alias,storage,table信息能否正常返回查询结果
-	result, err := inner.Query(q)
+	result, err := inner.Query(context.Background(), q)
 	assert.Nil(t, err)
 	assert.Equal(t, "any result", result)
 
+	// fuzzy 模式也必须先通过跨度校验，超限请求不能触发 ES 查询。
+	q.FuzzyMatching = true
+	q.End = start.Add(7*24*time.Hour + time.Second).Unix()
+	_, err = inner.Query(context.Background(), q)
+	assert.True(t, errors.Is(err, inner.ErrTimeRangeTooLarge))
 }

@@ -10,7 +10,6 @@
 package http_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -38,27 +37,16 @@ func TestHandleESRequest(t *testing.T) {
 	// mock掉client，模拟真实查询es数据动作
 	client := mocktest.NewMockClient(ctrl)
 
-	// 模拟一个时间和请求，制造假的alias信息
-	start := time.Now().Add(-24 * time.Hour)
-	now := time.Now()
+	// 模拟一个时间和请求，确认 HTTP 请求直接使用按日期生成的 alias。
+	start := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
 	index := "testbb_ttt"
 	body := "{\"size\":5}"
 	startTimeFormat := start.Format("20060102")
-	nowTimeFormat := now.Format("20060102")
-	startTime := fmt.Sprintf("%s_%s_read", index, startTimeFormat)
-	nowTime := fmt.Sprintf("%s_%s_read", index, nowTimeFormat)
-	aliases := []string{startTime, nowTime}
-	aliasInfo := map[string]*es.AliasInfo{
-		"testbb_ttt_20210407_01": {
-			Aliases: map[string]interface{}{
-				startTime: map[string]interface{}{},
-				nowTime:   map[string]interface{}{},
-			},
-		},
-	}
-	aliasInfoStr, _ := json.Marshal(aliasInfo)
-	client.EXPECT().AliasWithIndex("*"+index+"*").Return(string(aliasInfoStr), nil)
-	client.EXPECT().Search(body, aliases).Return(`any result`, nil)
+	endTimeFormat := end.Format("20060102")
+	startTime := fmt.Sprintf("%s_%s*_read", index, startTimeFormat)
+	endTime := fmt.Sprintf("%s_%s*_read", index, endTimeFormat)
+	client.EXPECT().Search(gomock.Any(), body, startTime, endTime).Return(`any result`, nil)
 	stubs := gostub.StubFunc(&es.NewClient, client, nil)
 	defer stubs.Reset()
 
@@ -79,7 +67,6 @@ func TestHandleESRequest(t *testing.T) {
 
 	es.ReloadStorage(storages)
 	es.ReloadTableInfo(infos)
-	es.RefreshAllAlias()
 	g := gin.Default()
 	g.POST("/es_query", servicehttp.HandleESQueryRequest)
 
@@ -88,7 +75,7 @@ func TestHandleESRequest(t *testing.T) {
 		result string
 	}{
 		{
-			data:   `{"table_id":"testbb.ttt","time":{"start":` + strconv.FormatInt(start.Unix(), 10) + `,"end":` + strconv.FormatInt(now.Unix(), 10) + `},"query":{"body":"{\"size\":5}"}}`,
+			data:   `{"table_id":"testbb.ttt","time":{"start":` + strconv.FormatInt(start.Unix(), 10) + `,"end":` + strconv.FormatInt(end.Unix(), 10) + `},"query":{"body":"{\"size\":5}"}}`,
 			result: `any result`,
 		},
 	}
@@ -99,4 +86,35 @@ func TestHandleESRequest(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 		assert.Equal(t, testCase.result, w.Body.String())
 	}
+}
+
+func TestHandleESRequestRejectsInvalidTimeRange(t *testing.T) {
+	log.InitTestLogger()
+	t.Setenv("UNIFY_QUERY_ES_MAX_QUERY_TIME_RANGE", "168h")
+	g := gin.Default()
+	g.POST("/es_query", servicehttp.HandleESQueryRequest)
+
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.Local)
+	end := start.Add(7*24*time.Hour + time.Second)
+	data := `{"table_id":"testbb.ttt","time":{"start":` + strconv.FormatInt(start.Unix(), 10) +
+		`,"end":` + strconv.FormatInt(end.Unix(), 10) + `},"query":{"body":"{}"}}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/es_query", strings.NewReader(data))
+	g.ServeHTTP(w, req)
+
+	assert.Equal(t, 400, w.Code)
+	assert.Contains(t, w.Body.String(), "query time range is too large")
+}
+
+func TestHandleESRequestRejectsMissingFields(t *testing.T) {
+	log.InitTestLogger()
+	g := gin.Default()
+	g.POST("/es_query", servicehttp.HandleESQueryRequest)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/es_query", strings.NewReader(`{"table_id":"testbb.ttt"}`))
+	g.ServeHTTP(w, req)
+
+	assert.Equal(t, 400, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid es query request")
 }

@@ -12,7 +12,6 @@ package es
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/spf13/viper"
 
@@ -162,32 +161,6 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 	return nil
 }
 
-// loopRefreshAliasInfo
-func (s *Service) loopRefreshAliasInfo(ctx context.Context) error {
-	es.RefreshAllAlias()
-	duration := AliasRefreshPeriod
-
-	ticker := time.NewTicker(duration)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Warnf(context.TODO(), "alias refresh exit")
-				return
-			case <-ticker.C:
-				log.Debugf(context.TODO(), "ticker alarm,start refresh alias")
-				es.RefreshAllAlias()
-				log.Debugf(context.TODO(), "refresh alias done")
-			}
-		}
-
-	}()
-	return nil
-}
-
 // Reload
 func (s *Service) Reload(ctx context.Context) {
 	if s.wg == nil {
@@ -213,11 +186,6 @@ func (s *Service) Reload(ctx context.Context) {
 	err = s.loopReloadTableInfo(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload es table info failed for->[%s]", err)
-		return
-	}
-	err = s.loopRefreshAliasInfo(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop refresh es alias info failed for->[%s]", err)
 		return
 	}
 	log.Warnf(context.TODO(), "es service reloaded or start success.")

@@ -1,0 +1,62 @@
+[
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_logs_alias"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_logs_alias/_search",
+    "body": {
+      "_source": {"includes": ["_time", "_value", "service"]},
+      "from": 0,
+      "query": {"bool": {"filter": {"range": {"dtEventTimeStamp": {
+        "format": "epoch_second",
+        "from": 1784701776,
+        "include_lower": true,
+        "include_upper": true,
+        "to": 1784702076
+      }}}}},
+      "size": 10,
+      "sort": [{"service": {"order": "desc"}}]
+    }
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_logs_alias/_search",
+    "body": {
+      "query": {"bool": {"filter": [
+        {"bool": {"filter": {"range": {"dtEventTimeStamp": {
+          "format": "epoch_second",
+          "from": 1784701776,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 1784702076
+        }}}}},
+        {"terms": {"_index": ["golden_logs_legacy"]}}
+      ]}},
+      "size": 0,
+      "track_total_hits": true
+    }
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_logs_alias/_search",
+    "body": {
+      "_source": {"includes": ["_time", "_value", "service"]},
+      "from": 0,
+      "query": {"bool": {"filter": {"range": {"dtEventTimeStamp": {
+        "format": "epoch_second",
+        "from": 1784701776,
+        "include_lower": true,
+        "include_upper": true,
+        "to": 1784702076
+      }}}}},
+      "size": 10,
+      "sort": [{"service": {"order": "desc", "unmapped_type": "keyword"}}]
+    }
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "method": "POST",
+  "path": "/query/ts",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_doris_no_shard",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_doris_no_shard",
+    "query_list": [{
+      "data_source": "bk_log",
+      "table_id": "demo_doris_no_shard",
+      "field_name": "events_total",
+      "function": [{"method": "sum", "dimensions": ["service"]}],
+      "time_aggregation": {"function": "count_over_time", "window": "1m"},
+      "reference_name": "a",
+      "conditions": {
+        "field_list": [{"field_name": "status", "value": ["failed"], "op": "eq"}],
+        "condition_list": []
+      },
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "step": "60s",
+    "timezone": "UTC",
+    "instant": false,
+    "is_merge_db": true
+  }
+}

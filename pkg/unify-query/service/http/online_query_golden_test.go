@@ -88,8 +88,9 @@ type onlineQueryGoldenDependencies struct {
 		Result      []map[string]any            `json:"result"`
 	} `json:"bksql"`
 	Elasticsearch struct {
-		Mapping json.RawMessage `json:"mapping"`
-		Search  json.RawMessage `json:"search"`
+		Mapping        json.RawMessage   `json:"mapping"`
+		Search         json.RawMessage   `json:"search"`
+		SearchSequence []json.RawMessage `json:"search_sequence"`
 	} `json:"elasticsearch"`
 	InfluxDB json.RawMessage `json:"influxdb"`
 }
@@ -226,6 +227,8 @@ func captureOnlineQueryGoldenOutputs(
 		HandlerQueryPromQL(c)
 	case "/query/ts":
 		HandlerQueryTs(c)
+	case "/query/ts/reference":
+		HandlerQueryReference(c)
 	case "/query/ts/raw":
 		HandlerQueryRaw(c)
 	case "/query/ts/info/field_map":
@@ -381,6 +384,23 @@ func registerOnlineQueryGoldenResponders(
 ) {
 	t.Helper()
 
+	var esSearchResponseMu sync.Mutex
+	esSearchResponseIndex := 0
+	nextESSearchResponse := func() (json.RawMessage, error) {
+		esSearchResponseMu.Lock()
+		defer esSearchResponseMu.Unlock()
+
+		if len(dependencies.Elasticsearch.SearchSequence) == 0 {
+			return dependencies.Elasticsearch.Search, nil
+		}
+		if esSearchResponseIndex >= len(dependencies.Elasticsearch.SearchSequence) {
+			return nil, fmt.Errorf("elasticsearch search response sequence exhausted")
+		}
+		response := dependencies.Elasticsearch.SearchSequence[esSearchResponseIndex]
+		esSearchResponseIndex++
+		return response, nil
+	}
+
 	httpmock.RegisterMatcherResponder(
 		http.MethodPost,
 		mock.BkBaseUrl,
@@ -420,10 +440,10 @@ func registerOnlineQueryGoldenResponders(
 	httpmock.RegisterResponder(http.MethodHead, onlineQueryGoldenESURL, httpmock.NewStringResponder(http.StatusOK, ""))
 	esURLPattern := "=~^" + regexp.QuoteMeta(onlineQueryGoldenESURL) + "/"
 	httpmock.RegisterResponder(http.MethodGet, esURLPattern, func(request *http.Request) (*http.Response, error) {
-		return onlineQueryGoldenESResponse(request, dependencies, recorder)
+		return onlineQueryGoldenESResponse(request, dependencies, recorder, nextESSearchResponse)
 	})
 	httpmock.RegisterResponder(http.MethodPost, esURLPattern, func(request *http.Request) (*http.Response, error) {
-		return onlineQueryGoldenESResponse(request, dependencies, recorder)
+		return onlineQueryGoldenESResponse(request, dependencies, recorder, nextESSearchResponse)
 	})
 	httpmock.RegisterResponder(
 		http.MethodGet,
@@ -497,7 +517,10 @@ func onlineQueryGoldenBKSQLResponse(list []map[string]any) (*http.Response, erro
 }
 
 func onlineQueryGoldenESResponse(
-	request *http.Request, dependencies onlineQueryGoldenDependencies, recorder *onlineQueryGoldenRecorder,
+	request *http.Request,
+	dependencies onlineQueryGoldenDependencies,
+	recorder *onlineQueryGoldenRecorder,
+	nextSearchResponse func() (json.RawMessage, error),
 ) (*http.Response, error) {
 	var body any
 	if request.Body != nil {
@@ -522,11 +545,46 @@ func onlineQueryGoldenESResponse(
 	response := dependencies.Elasticsearch.Search
 	if request.Method == http.MethodGet {
 		response = dependencies.Elasticsearch.Mapping
+	} else {
+		var err error
+		response, err = nextSearchResponse()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(response) == 0 {
 		response = json.RawMessage(`{}`)
 	}
 	return httpmock.NewBytesResponse(http.StatusOK, response), nil
+}
+
+func TestOnlineQueryGoldenCasesConsumeESSearchSequence(t *testing.T) {
+	mock.Init()
+
+	var dependencies onlineQueryGoldenDependencies
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"elasticsearch": {
+			"search_sequence": [
+				{"phase": "initial"},
+				{"phase": "empty_check"},
+				{"phase": "retry"}
+			]
+		}
+	}`), &dependencies))
+
+	registerOnlineQueryGoldenResponders(t, dependencies, &onlineQueryGoldenRecorder{})
+	t.Cleanup(unregisterOnlineQueryGoldenResponders)
+
+	for _, phase := range []string{"initial", "empty_check", "retry"} {
+		request, err := http.NewRequest(http.MethodPost, onlineQueryGoldenESURL+"/golden/_search", strings.NewReader(`{}`))
+		require.NoError(t, err)
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		content, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		require.JSONEq(t, fmt.Sprintf(`{"phase":%q}`, phase), string(content))
+	}
 }
 
 func onlineQueryGoldenInfluxDBResponse(

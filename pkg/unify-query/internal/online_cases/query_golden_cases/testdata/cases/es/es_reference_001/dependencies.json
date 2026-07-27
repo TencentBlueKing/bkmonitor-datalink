@@ -1,0 +1,25 @@
+{
+  "elasticsearch": {
+    "mapping": {
+      "golden_reference_index": {
+        "mappings": {
+          "properties": {
+            "dtEventTimeStamp": {"type": "date"},
+            "events_total": {"type": "long"},
+            "service": {"type": "keyword"},
+            "status": {"type": "keyword"}
+          }
+        }
+      }
+    },
+    "search": {
+      "took": 1,
+      "timed_out": false,
+      "hits": {
+        "total": {"value": 0, "relation": "eq"},
+        "hits": []
+      },
+      "aggregations": {}
+    }
+  }
+}

@@ -645,6 +645,39 @@ func TestRouteRangeFilterPreservesTerminalQueryEndSample(t *testing.T) {
 	assert.NoError(t, it.Err())
 }
 
+func TestRouteRangeFilterPreservesTerminalQueryEndForwardBucket(t *testing.T) {
+	// 存储侧 forward bucket 的 timestamp 是 bucket 起点。查询 end 为闭区间时，
+	// 恰好落在 end 上的样本会形成 t == end 的最终 bucket，不能被 route 半开区间误删。
+	seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{{
+			Labels:  []prompb.Label{{Name: "__name__", Value: "bucket_metric"}},
+			Samples: []prompb.Sample{{Timestamp: time.Unix(200, 0).UnixMilli(), Value: 1}},
+		}},
+	})
+	routeSet := function.NewTimeRangeSeriesSet(
+		seriesSet,
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{
+			function.NewRouteRangeFilterSeriesSet(
+				routeSet, function.Sum, time.Minute, function.WithRouteEndInclusive(),
+			),
+		},
+		function.NewMergeSeriesSetWithFuncAndSortByStep(function.Sum, time.Minute),
+	)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	valueType := it.Next()
+	if assert.Equal(t, chunkenc.ValFloat, valueType) {
+		ts, _ := it.At()
+		assert.Equal(t, time.Unix(200, 0).UnixMilli(), ts)
+	}
+	assert.NoError(t, it.Err())
+}
+
 func TestRouteRangeFilterKeepsInternalSwitchExclusiveWithInclusiveTerminalEnd(t *testing.T) {
 	makeRouteSet := func(samples []prompb.Sample, start, end time.Time, opts ...function.RouteRangeFilterOption) storage.SeriesSet {
 		seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{

@@ -180,6 +180,11 @@ func routeRangeFilterReason(name string, stepMs, t, start, end int64) (bool, str
 func routeRangeFilterReasonWithEndOption(
 	name string, stepMs, t, start, end int64, endInclusive bool,
 ) (bool, string) {
+	if endInclusive && t == end {
+		// 查询终点是闭区间。存储侧 forward 聚合可能把恰好位于 queryEnd 的原始点
+		// 归入以 queryEnd 为起点的最终 bucket；它不与 [start,end) 相交，但仍属于本次查询。
+		return true, ""
+	}
 	if stepMs > 0 && isForwardRangeBucketFunc(name) {
 		// 这里处理的是存储侧下推后的窗口聚合结果：样本 timestamp 表示 bucket 起点，
 		// route 过滤应判断 bucket [t, t+window) 是否与 route 生效区间相交。

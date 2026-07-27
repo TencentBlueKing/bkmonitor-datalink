@@ -148,12 +148,15 @@ func (b *BkLogConfig) IsNodeType() bool {
 	return b.Spec.LogConfigType == config.NodeLogConfig
 }
 
-// IsMatchBkEnv 是否匹配对应的环境
-func (b *BkLogConfig) IsMatchBkEnv() bool {
-	// 两种情况
-	// 1. 没有设置 bk-env 参数，则只匹配未设置 bkEnv 标签或 标签值为空的CR
-	// 2. 如果设置了 bk-env 参数，则匹配 bkEnv 标签值相同的CR
-	return b.Labels[config.BkEnvLabelName] == config.BkEnv
+// IsMatchBkEnv 是否匹配任一指定环境
+func (b *BkLogConfig) IsMatchBkEnv(bkEnvs []string) bool {
+	actualBkEnv := b.Labels[config.BkEnvLabelName]
+	for _, bkEnv := range bkEnvs {
+		if actualBkEnv == bkEnv {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

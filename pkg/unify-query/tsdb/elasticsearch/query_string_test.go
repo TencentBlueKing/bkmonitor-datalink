@@ -229,3 +229,50 @@ func TestQsToDsl(t *testing.T) {
 		})
 	}
 }
+
+func TestParserQueryStringMappingAvailability(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	for name, tc := range map[string]struct {
+		fieldsMap metadata.FieldsMap
+		expected  string
+	}{
+		"missing mapping falls back to native query string": {
+			fieldsMap: metadata.FieldsMap{},
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT (message:\"ignored phrase\")"}}`,
+		},
+		"known text field keeps match phrase": {
+			fieldsMap: metadata.FieldsMap{
+				"message": {
+					FieldName:  "message",
+					FieldType:  Text,
+					IsAnalyzed: true,
+				},
+			},
+			expected: `{"bool":{"must_not":{"match_phrase":{"message":{"query":"ignored phrase"}}}}}`,
+		},
+		"known keyword field keeps term": {
+			fieldsMap: metadata.FieldsMap{
+				"message": {
+					FieldName: "message",
+					FieldType: KeyWord,
+				},
+			},
+			expected: `{"bool":{"must_not":{"term":{"message":"ignored phrase"}}}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := NewFormatFactory(ctx).
+				WithFieldMap(tc.fieldsMap).
+				ParserQueryString(ctx, `NOT (message:"ignored phrase")`, false)
+			require.NotNil(t, query)
+			body, err := query.Source()
+			require.NoError(t, err)
+
+			bodyJSON, err := json.Marshal(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(bodyJSON))
+		})
+	}
+}

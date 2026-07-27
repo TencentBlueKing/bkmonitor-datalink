@@ -1,0 +1,25 @@
+id: es_query_string_missing_mapping_phrase_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/aggregate/query_string/not_phrase/mapping_empty/output_index_search
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-27"
+  fingerprint: sha256:2b8bedc9aa5023b1acda0423e998d28147e0ccd3ef2aaa850e44f150e7590187
+tags:
+  - query_ts_api
+  - aggregation
+  - query_string
+  - missing_mapping
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产问题形态仅保留 mapping 为空时否定短语查询被错误降级的结构，所有标识和值均已不可逆替换。
+  - 正确 output 在 mapping 为空时回退原生 query_string，由实际搜索分片按真实 mapping 解析；不保留线上失败 DSL。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

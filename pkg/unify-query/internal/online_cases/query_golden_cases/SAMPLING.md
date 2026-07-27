@@ -87,6 +87,8 @@ HDFS 查询日志容易被同名指标误命中，因此先扩大本地候选池
 
 这条链路中 BKBase 执行端记录为 HDFS，但 UQ 路由的 `measurement` 为空，实际选择的是 TSpider SQL 表达式；因此 case 按 UQ 待测 builder 归入 TSpider，而不是按 BKBase 内部执行设备归入 HDFS。问题发生时的 aggregate SQL 使用 `_timestamp_` 别名分组；修复合入后，golden expected 改为 `MAX(时间桶表达式)` 并按完整时间桶表达式分组，来源标记为 `post_fix_handler_replay`，不把失败 SQL 当作正确基线。
 
+2026-07-27 又从一条可关联的生产问题请求中确认了 ES mapping 元数据暂时为空、search 数据面仍可用的形态。脱敏后的 `es_query_string_missing_mapping_phrase_001` 保留 aggregate query、否定引号短语、空 mapping 依赖和最终 search 两阶段输出。修复前相同 fixture 将短语生成 `term`，修复后回退原生 `query_string`，RED→GREEN 的唯一预期差异位于 search DSL；该问题驱动 case 同样不改变前述四窗收敛统计。
+
 ### 最近 90 天已合并 UQ PR 回溯
 
 2026-07-23 按 `mergedAt >= 2026-04-24` 且改动 `pkg/unify-query/` 的口径，从仓库同期 87 个已合并 PR 中筛出 41 个 UQ PR，并逐个检查问题语义、代码路径、原有测试和 golden 覆盖。19 个 PR 涉及 parser、route expansion、query builder 或稳定的下游请求构造，其中 8 个由上一轮 case 覆盖，2 个由已有 case 精确覆盖，本轮为其余 9 个补充 case；另外 22 个只影响响应处理、并发安全、观测、性能、错误契约或测试，不适合用正向 downstream-output golden 表达。

@@ -1,0 +1,27 @@
+{
+  "space_uid": "bkcc__golden_es_missing_mapping",
+  "result_tables": [
+    {
+      "table_id": "demo_missing_mapping_logs.partition_1"
+    }
+  ],
+  "result_table_details": {
+    "demo_missing_mapping_logs.partition_1": {
+      "storage_id": 2002,
+      "storage_name": "es_cluster_missing_mapping",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_missing_mapping",
+      "db": "golden_missing_mapping_logs",
+      "table_id": "demo_missing_mapping_logs.partition_1",
+      "fields": ["events_total"],
+      "data_label": "demo_missing_mapping_logs",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {
+    "2002": {
+      "type": "elasticsearch"
+    }
+  }
+}

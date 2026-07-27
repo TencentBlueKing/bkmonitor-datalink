@@ -351,6 +351,11 @@ func (s *FormatFactory) queryString(str string, isPrefix bool) elastic.Query {
 }
 
 func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefix bool) elastic.Query {
+	if len(f.fieldsMap) == 0 {
+		// 没有 mapping 时无法可靠区分 text 与 keyword，交由实际 ES 分片按真实 mapping 解析。
+		return f.queryString(q, isPrefix)
+	}
+
 	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
 		FieldsMap: f.fieldsMap,
 	})

@@ -1222,6 +1222,82 @@ func TestRecordESQueryShards(t *testing.T) {
 	})
 }
 
+func TestFieldMapRecordsEmptyGetMappingFallback(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const alias = "test_alias_empty_mapping_observability"
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		mock.EsUrl+"/"+alias,
+		httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":{"reason":"index get unsupported"}}`),
+	)
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		mock.EsUrl+"/"+alias+"/_mapping/",
+		httpmock.NewStringResponder(http.StatusOK, `{}`),
+	)
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	rec := setupESTraceRecorder(t)
+	fieldsMap, physicalIndexes, err := inst.fieldMapWithPhysicalIndexes(ctx, nil, alias)
+	require.NoError(t, err)
+	assert.Empty(t, fieldsMap)
+	assert.Empty(t, physicalIndexes)
+
+	attrs := endedSpanAttrs(t, rec)
+	fallback, ok := esSpanAttrBool(attrs, "index-get-fallback")
+	require.True(t, ok)
+	assert.True(t, fallback)
+	indexGetError, ok := esSpanAttrString(attrs, "index-get-error")
+	require.True(t, ok)
+	assert.Contains(t, indexGetError, "index get unsupported")
+	mappingLength, ok := esSpanAttrInt(attrs, "mapping-length")
+	require.True(t, ok)
+	assert.Equal(t, int64(0), mappingLength)
+	physicalIndexLength, ok := esSpanAttrInt(attrs, "physical-index-length")
+	require.True(t, ok)
+	assert.Equal(t, int64(0), physicalIndexLength)
+	fieldMapLength, ok := esSpanAttrInt(attrs, "field-map-length")
+	require.True(t, ok)
+	assert.Equal(t, int64(0), fieldMapLength)
+}
+
+func TestFieldMapReturnsGetMappingError(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	const alias = "test_alias_get_mapping_error"
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		mock.EsUrl+"/"+alias,
+		httpmock.NewStringResponder(http.StatusInternalServerError, `{"error":{"reason":"index get unsupported"}}`),
+	)
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		mock.EsUrl+"/"+alias+"/_mapping/",
+		httpmock.NewStringResponder(http.StatusBadGateway, `{"error":{"reason":"mapping unavailable"}}`),
+	)
+
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl},
+		Timeout: time.Minute,
+	})
+	require.NoError(t, err)
+
+	_, _, err = inst.fieldMapWithPhysicalIndexes(ctx, nil, alias)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mapping unavailable")
+	assert.NotContains(t, err.Error(), "index get unsupported")
+}
+
 func setupESTraceRecorder(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()

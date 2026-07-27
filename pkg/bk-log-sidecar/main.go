@@ -43,6 +43,13 @@ func init() {
 	config.FlagInit()
 }
 
+// serveHTTPProf 启动可选的 pprof 服务。监听失败只记录错误，不能影响主控制器继续运行。
+func serveHTTPProf(addr string, listenAndServe func(string, http.Handler) error) {
+	if err := listenAndServe(addr, nil); err != nil {
+		setupLog.Error(err, "unable to listen on pprof address", "address", addr)
+	}
+}
+
 func main() {
 	var metricsAddr string
 	var probeAddr string
@@ -102,12 +109,7 @@ func main() {
 	}
 
 	if config.HttpProf != "" {
-		go func() {
-			err = http.ListenAndServe(config.HttpProf, nil)
-			if err != nil {
-				setupLog.Error(err, "unable listen admin address: %s", config.HttpProf)
-			}
-		}()
+		go serveHTTPProf(config.HttpProf, http.ListenAndServe)
 	}
 
 	setupLog.Info("starting manager")

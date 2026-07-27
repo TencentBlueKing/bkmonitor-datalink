@@ -678,6 +678,59 @@ func TestRouteRangeFilterPreservesTerminalQueryEndForwardBucket(t *testing.T) {
 	assert.NoError(t, it.Err())
 }
 
+func TestMergeAvgSeriesSetPreservesInclusiveTerminalForwardBucket(t *testing.T) {
+	makeRouteSet := func(value float64, sampleTime, start, end time.Time, opts ...function.RouteRangeFilterOption) storage.SeriesSet {
+		seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{
+			Timeseries: []*prompb.TimeSeries{{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "bucket_metric"},
+					{Name: "job", Value: "shared"},
+				},
+				Samples: []prompb.Sample{{Timestamp: sampleTime.UnixMilli(), Value: value}},
+			}},
+		})
+		return function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(seriesSet, start, end),
+			function.Avg,
+			time.Minute,
+			opts...,
+		)
+	}
+
+	oldRoute := makeRouteSet(
+		10,
+		time.Unix(100, 0),
+		time.Unix(100, 0),
+		time.Unix(150, 0),
+	)
+	latestRoute := makeRouteSet(
+		20,
+		time.Unix(200, 0),
+		time.Unix(150, 0),
+		time.Unix(200, 0),
+		function.WithRouteEndInclusive(),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{oldRoute, latestRoute},
+		function.NewMergeSeriesSetWithFuncAndSortByStep(function.Avg, time.Minute),
+	)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, value := it.At()
+	assert.Equal(t, time.Unix(100, 0).UnixMilli(), ts)
+	assert.Equal(t, float64(10), value)
+	valueType := it.Next()
+	if assert.Equal(t, chunkenc.ValFloat, valueType) {
+		ts, value = it.At()
+		assert.Equal(t, time.Unix(200, 0).UnixMilli(), ts)
+		assert.Equal(t, float64(20), value)
+	}
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+}
+
 func TestRouteRangeFilterKeepsInternalSwitchExclusiveWithInclusiveTerminalEnd(t *testing.T) {
 	makeRouteSet := func(samples []prompb.Sample, start, end time.Time, opts ...function.RouteRangeFilterOption) storage.SeriesSet {
 		seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{

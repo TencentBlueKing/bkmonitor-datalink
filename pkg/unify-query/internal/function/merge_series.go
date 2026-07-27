@@ -511,6 +511,11 @@ func mergeAvgSeriesSetWithTimeWeight(name string, series []storage.Series, step 
 			bucketStart, bucketEnd := avgBucketRange(name, t, stepMs)
 			// 权重取 route 时间段与当前统计窗口的交集时长。
 			weight := overlapDuration(bucketStart, bucketEnd, start, end)
+			if weight <= 0 && routeEndInclusive(s) && t == end && isForwardRangeBucketFunc(name) {
+				// 查询终点的 forward bucket 只归属于最新 route。虽然它与半开 route 区间
+				// 没有时长交集，但后端按闭区间返回的终点 bucket 仍需以完整 bucket 权重参与合并。
+				weight = stepMs
+			}
 			if weight <= 0 {
 				_, reason := rangeOverlapFilterReason(bucketStart, bucketEnd, start, end)
 				filterReasonCount[reason]++

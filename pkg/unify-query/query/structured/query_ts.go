@@ -906,6 +906,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			if !storageRange.IsZero() {
 				query.RouteStart = storageRange.Start
 				query.RouteEnd = storageRange.End
+				query.RouteEndInclusive = storageRange.EndInclusive
 			}
 			if !storageRange.QueryIsZero() {
 				query.RouteQueryStart = storageRange.QueryStart

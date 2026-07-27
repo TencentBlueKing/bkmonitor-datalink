@@ -49,7 +49,6 @@ func TestMergeBucketDuration(t *testing.T) {
 		name     string
 		queries  QueryList
 		fallback time.Duration
-		rangeSel time.Duration
 		expected time.Duration
 	}{
 		"函数匹配时使用聚合窗口": {
@@ -81,7 +80,7 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: 0,
 		},
-		"hint 中的 avg_over_time 缺少聚合窗口时使用 range selector 宽度": {
+		"hint 中的 avg_over_time 缺少聚合窗口时按原始样本处理": {
 			name: "avg_over_time",
 			queries: QueryList{
 				{
@@ -89,10 +88,9 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			rangeSel: 5 * time.Minute,
-			expected: 5 * time.Minute,
+			expected: 0,
 		},
-		"hint 中的 avg_over_time 缺少 range selector 时使用查询步长": {
+		"hint 中的 avg_over_time 缺少聚合窗口时不使用查询步长": {
 			name: "avg_over_time",
 			queries: QueryList{
 				{
@@ -100,9 +98,9 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			expected: time.Minute,
+			expected: 0,
 		},
-		"hint 中的 sum_over_time 缺少聚合窗口时使用 range selector 宽度": {
+		"hint 中的 sum_over_time 缺少聚合窗口时按原始样本处理": {
 			name: "sum_over_time",
 			queries: QueryList{
 				{
@@ -110,8 +108,7 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			rangeSel: time.Hour,
-			expected: time.Hour,
+			expected: 0,
 		},
 		"hint 使用 avg 别名时仍匹配 avg_over_time 窗口": {
 			name: "avg",
@@ -173,7 +170,7 @@ func TestMergeBucketDuration(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback, tc.rangeSel))
+			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback))
 		})
 	}
 }

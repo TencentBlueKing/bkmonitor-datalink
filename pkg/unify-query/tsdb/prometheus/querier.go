@@ -101,12 +101,13 @@ func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 		}
 
 		queryList = append(queryList, &Query{
-			instance:   instance,
-			qry:        qry,
-			start:      qry.RouteStart,
-			end:        qry.RouteEnd,
-			queryStart: qry.RouteQueryStart,
-			queryEnd:   qry.RouteQueryEnd,
+			instance:     instance,
+			qry:          qry,
+			start:        qry.RouteStart,
+			end:          qry.RouteEnd,
+			endInclusive: qry.RouteEndInclusive,
+			queryStart:   qry.RouteQueryStart,
+			queryEnd:     qry.RouteQueryEnd,
 		})
 	})
 
@@ -144,11 +145,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	referenceName, queryList := q.getQueryList(matchers)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
-	var rangeSelector time.Duration
-	if hints != nil && hints.Range > 0 {
-		rangeSelector = time.Duration(hints.Range) * time.Millisecond
-	}
-	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step, rangeSelector)
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
 	span.Set("merge_func", mergeFunc)
 	span.Set("merge_bucket_duration", bucketDuration)
 
@@ -225,15 +222,16 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			case seriesSetWrapValidRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
 				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				opts := make([]function.RouteRangeFilterOption, 0, 2)
 				if len(queryList) == 1 {
 					// 单路 route 需要保留 routeStart 的首个 backward range evaluation bucket；
 					// 多路 route 的 later-only label 可能绕过 merge-time recheck，不能开启这个例外。
-					setCh <- function.NewRouteRangeFilterSeriesSet(
-						timeRangeSet, mergeFunc, bucketDuration, function.WithRouteStartBoundaryBucket(),
-					)
-				} else {
-					setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration)
+					opts = append(opts, function.WithRouteStartBoundaryBucket())
 				}
+				if query.endInclusive {
+					opts = append(opts, function.WithRouteEndInclusive())
+				}
+				setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration, opts...)
 			case seriesSetWrapZeroRouteRange:
 				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)

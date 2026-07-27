@@ -583,6 +583,117 @@ func TestMergeSeriesSetFiltersSingleRouteHistogramSeries(t *testing.T) {
 	assert.NoError(t, set.Err())
 }
 
+func TestRouteRangeFilterTreatsUnpushedRangeVectorSamplesAsRaw(t *testing.T) {
+	// 未下推的 count_over_time 返回原始样本；SelectHints.Range 只表示 PromQL
+	// 需要额外读取的范围，不能把原始样本当成 backward evaluation bucket。
+	seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{{
+			Labels: []prompb.Label{{Name: "__name__", Value: "raw_metric"}},
+			Samples: []prompb.Sample{
+				{Timestamp: time.Unix(190, 0).UnixMilli(), Value: 1},
+				{Timestamp: time.Unix(210, 0).UnixMilli(), Value: 2},
+			},
+		}},
+	})
+	routeSet := function.NewTimeRangeSeriesSet(
+		seriesSet,
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	// mergeBucketDuration 对未下推的 range-vector 返回 0，让 wrapper 按原始 timestamp 过滤。
+	set := function.NewRouteRangeFilterSeriesSet(routeSet, function.CountOT, 0)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, _ := it.At()
+	assert.Equal(t, time.Unix(190, 0).UnixMilli(), ts)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+}
+
+func TestRouteRangeFilterPreservesTerminalQueryEndSample(t *testing.T) {
+	// 最新 route 的 end 可能是用户查询终点而不是内部切换点。后端按闭区间返回
+	// t == queryEnd 的样本时，最终 evaluation 仍需要这个样本。
+	seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{{
+			Labels:  []prompb.Label{{Name: "__name__", Value: "raw_metric"}},
+			Samples: []prompb.Sample{{Timestamp: time.Unix(200, 0).UnixMilli(), Value: 1}},
+		}},
+	})
+	routeSet := function.NewTimeRangeSeriesSet(
+		seriesSet,
+		time.Unix(100, 0),
+		time.Unix(200, 0),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{
+			function.NewRouteRangeFilterSeriesSet(
+				routeSet, "", 0, function.WithRouteEndInclusive(),
+			),
+		},
+		function.NewMergeSeriesSetWithFuncAndSort(""),
+	)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	valueType := it.Next()
+	if assert.Equal(t, chunkenc.ValFloat, valueType) {
+		ts, _ := it.At()
+		assert.Equal(t, time.Unix(200, 0).UnixMilli(), ts)
+	}
+	assert.NoError(t, it.Err())
+}
+
+func TestRouteRangeFilterKeepsInternalSwitchExclusiveWithInclusiveTerminalEnd(t *testing.T) {
+	makeRouteSet := func(samples []prompb.Sample, start, end time.Time, opts ...function.RouteRangeFilterOption) storage.SeriesSet {
+		seriesSet := remote.FromQueryResult(true, &prompb.QueryResult{
+			Timeseries: []*prompb.TimeSeries{{
+				Labels:  []prompb.Label{{Name: "__name__", Value: "raw_metric"}},
+				Samples: samples,
+			}},
+		})
+		return function.NewRouteRangeFilterSeriesSet(
+			function.NewTimeRangeSeriesSet(seriesSet, start, end),
+			function.Sum,
+			0,
+			opts...,
+		)
+	}
+
+	oldRoute := makeRouteSet(
+		[]prompb.Sample{{Timestamp: time.Unix(150, 0).UnixMilli(), Value: 10}},
+		time.Unix(100, 0),
+		time.Unix(150, 0),
+	)
+	latestRoute := makeRouteSet(
+		[]prompb.Sample{
+			{Timestamp: time.Unix(150, 0).UnixMilli(), Value: 1},
+			{Timestamp: time.Unix(200, 0).UnixMilli(), Value: 2},
+		},
+		time.Unix(150, 0),
+		time.Unix(200, 0),
+		function.WithRouteEndInclusive(),
+	)
+	set := storage.NewMergeSeriesSet(
+		[]storage.SeriesSet{oldRoute, latestRoute},
+		function.NewMergeSeriesSetWithFuncAndSort(function.Sum),
+	)
+
+	assert.True(t, set.Next())
+	it := set.At().Iterator(nil)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, value := it.At()
+	assert.Equal(t, time.Unix(150, 0).UnixMilli(), ts)
+	assert.Equal(t, float64(1), value)
+	assert.Equal(t, chunkenc.ValFloat, it.Next())
+	ts, value = it.At()
+	assert.Equal(t, time.Unix(200, 0).UnixMilli(), ts)
+	assert.Equal(t, float64(2), value)
+	assert.Equal(t, chunkenc.ValNone, it.Next())
+	assert.NoError(t, it.Err())
+}
+
 func TestMergeSeriesSetPreservesSingleRouteHistogramAvgSeries(t *testing.T) {
 	testCases := map[string]struct {
 		fn           string

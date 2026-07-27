@@ -1,0 +1,26 @@
+id: es_query_string_explicit_and_implicit_terms_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/query_string/explicit_and_with_implicit_terms/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:96c0f07468bd5113411b60516b759007b13b7fed204d9f98a81bda725e6e818a
+tags:
+  - query_ts_api
+  - raw
+  - query_string
+  - boolean
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1354 的问题说明与回归测试，未保存原始请求。
+  - 脱敏 query_string 保留显式 AND 链中夹有隐式词项的结构，其余标识和值均已替换。
+  - 修复前隐式词项会落入 should，修复后 expected 必须把全部词项放入 must。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

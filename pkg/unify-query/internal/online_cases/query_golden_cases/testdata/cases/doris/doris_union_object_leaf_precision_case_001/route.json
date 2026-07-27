@@ -1,0 +1,44 @@
+{
+  "space_uid": "bkcc__golden_doris_object",
+  "result_tables": [
+    {"table_id": "demo_doris_object.partition_current"},
+    {"table_id": "demo_doris_object.partition_history"}
+  ],
+  "result_table_details": {
+    "demo_doris_object.partition_current": {
+      "storage_id": 3303,
+      "storage_name": "doris_cluster_object",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_object",
+      "db": "golden_object_current",
+      "table_id": "demo_doris_object.partition_current",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_object",
+      "tags_key": ["path"],
+      "source_type": "bklog"
+    },
+    "demo_doris_object.partition_history": {
+      "storage_id": 3303,
+      "storage_name": "doris_cluster_object",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_object",
+      "db": "golden_object_history",
+      "table_id": "demo_doris_object.partition_history",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_object",
+      "tags_key": ["path"],
+      "source_type": "bklog"
+    }
+  },
+  "data_labels": {
+    "demo_doris_object": [
+      "demo_doris_object.partition_current",
+      "demo_doris_object.partition_history"
+    ]
+  },
+  "storages": {
+    "3303": {"type": "bk_sql"}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "space_uid": "bkcc__golden_hdfs_raw",
+  "result_tables": [{"table_id": "demo_hdfs_raw.partition_1"}],
+  "result_table_details": {
+    "demo_hdfs_raw.partition_1": {
+      "storage_id": 3103,
+      "storage_name": "hdfs_cluster_raw",
+      "storage_type": "bk_sql",
+      "cluster_name": "hdfs_cluster_raw",
+      "db": "golden_hdfs_raw_table",
+      "table_id": "demo_hdfs_raw.partition_1",
+      "measurement": "hdfs",
+      "fields": ["events_total"],
+      "data_label": "demo_hdfs_raw",
+      "tags_key": ["service", "status"],
+      "source_type": "bkdata"
+    }
+  },
+  "storages": {"3103": {"type": "bk_sql"}}
+}

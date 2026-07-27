@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_case_sensitive",
+  "result_tables": [{"table_id": "demo_logs.case_sensitive"}],
+  "result_table_details": {
+    "demo_logs.case_sensitive": {
+      "storage_id": 2203,
+      "storage_name": "es_cluster_case_sensitive",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_case_sensitive",
+      "db": "golden_es_case_sensitive",
+      "table_id": "demo_logs.case_sensitive",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_case_sensitive",
+      "tags_key": ["message"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2203": {"type": "elasticsearch"}}
+}

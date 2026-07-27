@@ -1,0 +1,30 @@
+{
+  "elasticsearch": {
+    "mapping": {
+      "golden_es_case_sensitive": {
+        "settings": {
+          "index": {
+            "version": {"created": "7090099"},
+            "analysis": {
+              "analyzer": {
+                "case_sensitive_log": {
+                  "type": "custom",
+                  "tokenizer": "standard",
+                  "filter": []
+                }
+              }
+            }
+          }
+        },
+        "mappings": {
+          "properties": {
+            "dtEventTimeStamp": {"type": "date"},
+            "events_total": {"type": "long"},
+            "message": {"type": "text", "analyzer": "case_sensitive_log"}
+          }
+        }
+      }
+    },
+    "search": {"took": 1, "timed_out": false, "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}}
+  }
+}

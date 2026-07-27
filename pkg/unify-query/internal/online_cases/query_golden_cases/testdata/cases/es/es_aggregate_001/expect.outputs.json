@@ -1,0 +1,13 @@
+[
+  {"backend": "elasticsearch", "method": "GET", "path": "/golden_logs_index"},
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_logs_index/_search",
+    "body": {
+      "aggregations": {"service": {"aggregations": {"dtEventTimeStamp": {"aggregations": {"_value": {"value_count": {"field": "events_total"}}}, "date_histogram": {"extended_bounds": {"max": 1784702135999, "min": 1784701739999}, "field": "dtEventTimeStamp", "interval": "1m", "min_doc_count": 0, "time_zone": "UTC"}}}, "terms": {"field": "service", "missing": " ", "size": 10000}}},
+      "query": {"bool": {"filter": [{"match_phrase": {"status": {"query": "failed"}}}, {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701739, "include_lower": true, "include_upper": true, "to": 1784702135}}}]}},
+      "size": 0
+    }
+  }
+]

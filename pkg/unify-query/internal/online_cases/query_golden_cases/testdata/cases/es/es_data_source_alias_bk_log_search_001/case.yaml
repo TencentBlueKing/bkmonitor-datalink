@@ -1,0 +1,26 @@
+id: es_data_source_alias_bk_log_search_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/data_source_alias/bk_log_search/normalized_bklog/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:a3f5f644e731eec45e348dd56e83851525f58fd24a2a4c212211409d38fc509e
+tags:
+  - query_ts_api
+  - raw
+  - data_source_alias
+  - bk_log_search
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1316 的问题说明与回归测试，未保存原始请求。
+  - 脱敏请求保留 SaaS data_source_label 使用 bk_log_search、UQ 内部应规范化为 bklog 的结构。
+  - 本用例代表别名规范化形态；bk_data 与 bk_apm 的枚举映射继续由 PR 单元测试兜底。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

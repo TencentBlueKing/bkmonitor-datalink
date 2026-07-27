@@ -1,0 +1,26 @@
+{
+  "elasticsearch": {
+    "mapping": {
+      "golden_logs_index": {
+        "mappings": {
+          "properties": {
+            "dtEventTimeStamp": {"type": "date"},
+            "events_total": {"type": "long"},
+            "message": {"type": "text"},
+            "service": {"type": "keyword"},
+            "status": {"type": "keyword"}
+          }
+        }
+      }
+    },
+    "search": {
+      "took": 1,
+      "timed_out": false,
+      "hits": {
+        "total": {"value": 0, "relation": "eq"},
+        "hits": []
+      },
+      "aggregations": {}
+    }
+  }
+}

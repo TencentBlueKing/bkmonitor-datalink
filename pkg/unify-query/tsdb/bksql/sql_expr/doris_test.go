@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -227,6 +228,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 	tests := []struct {
 		name      string
+		exprType  string
 		condition metadata.AllConditions
 		want      string
 		wantErr   error
@@ -783,9 +785,139 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			},
 			want: "`serverIp` = '127.0.0.1' AND `path` = '/var/host/data/bcs/lib/docker/containers/npc/npc-json.log' AND CAST(__ext['container_id'] AS STRING) = 'npc'",
 		},
+		{
+			name:     "TSpider 分词字段等于使用等号",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"error"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`message` = 'error'",
+		},
+		{
+			name:     "TSpider 分词字段不等于使用不等号",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"debug"},
+						Operator:      metadata.ConditionNotEqual,
+					},
+				},
+			},
+			want: "`message` != 'debug'",
+		},
+		{
+			name:     "TSpider 分词字段包含使用等号组合",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "level",
+						Value:         []string{"error", "warn"},
+						Operator:      metadata.ConditionContains,
+					},
+				},
+			},
+			want: "(`level` = 'error' OR `level` = 'warn')",
+		},
+		{
+			name:     "TSpider 分词字段前缀匹配使用等号",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"err"},
+						Operator:      metadata.ConditionEqual,
+						IsPrefix:      true,
+					},
+				},
+			},
+			want: "`message` = 'err'",
+		},
+		{
+			name:     "TSpider 非分词字段仍使用等号",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"server1"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`host` = 'server1'",
+		},
+		{
+			name:     "TSpider 分词字段通配包含使用 LIKE",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"*err*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`message` LIKE '%err%'",
+		},
+		{
+			name:     "TSpider 分词字段通配不包含使用 NOT LIKE",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"*debug*"},
+						Operator:      metadata.ConditionNotContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`message` NOT LIKE '%debug%'",
+		},
+		{
+			name:     "TSpider 分词字段非通配仍使用等号",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "message",
+						Value:         []string{"error"},
+						Operator:      metadata.ConditionEqual,
+					},
+				},
+			},
+			want: "`message` = 'error'",
+		},
+		{
+			name:     "TSpider 非分词字段通配包含使用 LIKE",
+			exprType: TSpider,
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"*srv*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "`host` LIKE '%srv%'",
+		},
 	}
 
-	e := NewSQLExpr(Doris).WithFieldsMap(metadata.FieldsMap{
+	fieldsMap := metadata.FieldsMap{
 		"object.field":                     {FieldType: DorisTypeString},
 		"object.field.name":                {FieldType: DorisTypeString},
 		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
@@ -804,164 +936,29 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		"cpu_usage":                        {FieldType: DorisTypeInt},
 		"text":                             {FieldType: DorisTypeText, IsAnalyzed: true},
 		"loglevel":                         {FieldType: DorisTypeText, IsAnalyzed: true},
-	})
+		"message":                          {FieldType: DorisTypeText, IsAnalyzed: true},
+		"level":                            {FieldType: DorisTypeText, IsAnalyzed: true},
+		"host":                             {FieldType: DorisTypeString},
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			exprType := tt.exprType
+			if exprType == "" {
+				exprType = Doris
+			}
+			e := NewSQLExpr(exprType).WithFieldsMap(fieldsMap)
+			if exprType == TSpider {
+				e = e.WithEncode(func(s string) string {
+					return "`" + s + "`"
+				})
+			}
+
 			got, err := e.ParserAllConditions(tt.condition)
 			if err != nil {
 				assert.Equal(t, tt.wantErr, err)
 				return
 			}
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// TestTSpiderSQLExpr_ParserAllConditions 验证 TSpider forceEq 模式下 analyzed 字段使用 = / != 而非 MATCH_PHRASE
-func TestTSpiderSQLExpr_ParserAllConditions(t *testing.T) {
-	fieldsMap := metadata.FieldsMap{
-		"message": {FieldType: DorisTypeText, IsAnalyzed: true},
-		"level":   {FieldType: DorisTypeText, IsAnalyzed: true},
-		"host":    {FieldType: DorisTypeString},
-	}
-
-	tests := []struct {
-		name      string
-		condition metadata.AllConditions
-		want      string
-	}{
-		{
-			name: "analyzed field equal uses = instead of MATCH_PHRASE",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"error"},
-						Operator:      metadata.ConditionEqual,
-					},
-				},
-			},
-			want: "`message` = 'error'",
-		},
-		{
-			name: "analyzed field not-equal uses != instead of NOT MATCH_PHRASE",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"debug"},
-						Operator:      metadata.ConditionNotEqual,
-					},
-				},
-			},
-			want: "`message` != 'debug'",
-		},
-		{
-			name: "ConditionContains on analyzed field uses = instead of MATCH_PHRASE",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "level",
-						Value:         []string{"error", "warn"},
-						Operator:      metadata.ConditionContains,
-					},
-				},
-			},
-			want: "(`level` = 'error' OR `level` = 'warn')",
-		},
-		{
-			name: "prefix flag on analyzed field uses = instead of MATCH_PHRASE_PREFIX",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"err"},
-						Operator:      metadata.ConditionEqual,
-						IsPrefix:      true,
-					},
-				},
-			},
-			want: "`message` = 'err'",
-		},
-		{
-			name: "non-analyzed field still uses =",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "host",
-						Value:         []string{"server1"},
-						Operator:      metadata.ConditionEqual,
-					},
-				},
-			},
-			want: "`host` = 'server1'",
-		},
-		{
-			name: "forceEq with IsWildcard on analyzed field uses LIKE instead of =",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"*err*"},
-						Operator:      metadata.ConditionContains,
-						IsWildcard:    true,
-					},
-				},
-			},
-			want: "`message` LIKE '%err%'",
-		},
-		{
-			name: "forceEq with IsWildcard and NotEqual uses NOT LIKE instead of !=",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"*debug*"},
-						Operator:      metadata.ConditionNotContains,
-						IsWildcard:    true,
-					},
-				},
-			},
-			want: "`message` NOT LIKE '%debug%'",
-		},
-		{
-			name: "forceEq without IsWildcard still uses = on analyzed field",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "message",
-						Value:         []string{"error"},
-						Operator:      metadata.ConditionEqual,
-					},
-				},
-			},
-			want: "`message` = 'error'",
-		},
-		{
-			name: "forceEq with IsWildcard on non-analyzed field uses LIKE",
-			condition: metadata.AllConditions{
-				{
-					{
-						DimensionName: "host",
-						Value:         []string{"*srv*"},
-						Operator:      metadata.ConditionContains,
-						IsWildcard:    true,
-					},
-				},
-			},
-			want: "`host` LIKE '%srv%'",
-		},
-	}
-
-	e := NewSQLExpr(TSpider).WithFieldsMap(fieldsMap).WithEncode(func(s string) string {
-		return "`" + s + "`"
-	})
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := e.ParserAllConditions(tt.condition)
-			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -1085,5 +1082,44 @@ func TestDorisSQLExpr_ParserAggregatesAndOrders_ValueFieldIgnore(t *testing.T) {
 			}
 		}
 		assert.Equal(t, "COUNT(`log`) AS `"+Value+"`", valueExpr)
+	})
+}
+
+func TestDorisSQLExpr_ParserAggregatesAndOrders_ShardKeyTimeBucketFallback(t *testing.T) {
+	encode := func(s string) string { return "`" + s + "`" }
+	aggregates := metadata.Aggregates{{
+		Name:   "count",
+		Window: 24 * time.Minute,
+	}}
+
+	t.Run("use shard key when field exists", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr).
+			WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
+			WithFieldsMap(metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+				ShardKey:           {FieldType: DorisTypeBigInt},
+			}).
+			WithEncode(encode)
+
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(nil, aggregates, metadata.Orders{})
+		assert.NoError(t, err)
+		assert.Contains(t, strings.Join(selectFields, ", "), "FLOOR(__shard_key__ / 1000)")
+	})
+
+	t.Run("fall back to time field when shard key bucket is disabled", func(t *testing.T) {
+		expr := NewSQLExpr(Doris).(*DorisSQLExpr)
+		expr.WithInternalFields("dtEventTimeStamp", "dtEventTimeStamp").
+			WithFieldsMap(metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+			}).
+			WithEncode(encode)
+		expr.WithShardKeyTimeBucket(false)
+
+		selectFields, _, _, _, _, err := expr.ParserAggregatesAndOrders(nil, aggregates, metadata.Orders{})
+		assert.NoError(t, err)
+
+		sql := strings.Join(selectFields, ", ")
+		assert.NotContains(t, sql, ShardKey)
+		assert.Contains(t, sql, "FLOOR(dtEventTimeStamp + 0)")
 	})
 }

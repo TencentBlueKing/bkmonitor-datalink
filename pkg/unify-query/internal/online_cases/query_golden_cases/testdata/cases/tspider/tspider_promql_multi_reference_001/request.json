@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__demo",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "(sum(sum_over_time(bkdata:demo_tspider_multi:metric_b[1h])) by (time_partition, location, workload) / (sum(sum_over_time(bkdata:demo_tspider_multi:metric_a[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_b[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_c[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_d[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_e[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_f[1h])) by (time_partition, location, workload) + sum(sum_over_time(bkdata:demo_tspider_multi:metric_g[1h])) by (time_partition, location, workload))) * 100",
+    "start": "1776927600",
+    "end": "1784703600",
+    "step": "1h",
+    "down_sample_range": "2h",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}

@@ -1,0 +1,24 @@
+id: doris_es_segmented_multi_output_001
+storage: doris
+enabled: true
+shape_signature: query_ts/range/reference1/time_segment_route2/es_plus_doris/output4
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:2c74d2fae04698341acddaf0a28dd4c50d58dfc603da86856610119bb079c997
+tags:
+  - query_ts_api
+  - time_segment_route
+  - elasticsearch
+  - doris
+  - multi_output
+  - production_shape
+notes:
+  - 生产请求只保留单引用跨 ES 与 Doris 时间分段路由的结构形态；空间、结果表、索引、字段和集群均已替换为占位符。
+  - Doris 分段的 storage_name 与 cluster_name 故意不同，expected 必须使用 cluster_name 作为 BKBase properties.cluster_name。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -1,0 +1,23 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "__shard_key__", "Type": "bigint"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "double"},
+      {"Field": "service", "Type": "varchar"},
+      {"Field": "status", "Type": "varchar"}
+    ],
+    "result": []
+  },
+  "elasticsearch": {
+    "mapping": {"golden_segmented_logs_index": {"mappings": {"properties": {
+      "dtEventTimeStamp": {"type": "date"},
+      "events_total": {"type": "long"},
+      "service": {"type": "keyword"},
+      "status": {"type": "keyword"}
+    }}}},
+    "search": {"took": 1, "timed_out": false, "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}, "aggregations": {}}
+  }
+}

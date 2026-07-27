@@ -69,19 +69,46 @@ func isSameRouteSource(a, b *Query) bool {
 func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 	outerAggName := ql.outerAggName()
 	if hints != nil && hints.Func != "" {
+		hintFunc := strings.ToLower(hints.Func)
 		// last_over_time 只是为了扩展回看窗口，真实的存储侧窗口聚合仍应决定多路由合并方式。
-		if strings.EqualFold(hints.Func, "last_over_time") {
+		if hintFunc == "last_over_time" {
 			if name := ql.windowedStorageAggName(); name != "" {
 				return name
 			}
 		}
-		if strings.EqualFold(hints.Func, "last_over_time") && function.IsAvgFunc(outerAggName) {
+		if hintFunc == "last_over_time" && function.IsAvgFunc(outerAggName) {
 			return outerAggName
+		}
+		// PromQL *_over_time 下推到存储后，返回的是以窗口起点为 timestamp 的普通聚合 bucket。
+		// 合并和 route 过滤必须使用匹配的存储聚合函数，不能继续按 evaluation instant 的后向窗口处理。
+		if isRangeBucketFunc(hintFunc) {
+			if name := ql.matchedWindowedStorageAggName(hintFunc); name != "" {
+				return name
+			}
 		}
 		return hints.Func
 	}
 
 	return outerAggName
+}
+
+func (ql QueryList) matchedWindowedStorageAggName(hintFunc string) string {
+	for _, query := range ql {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		aggregates := query.qry.Aggregates
+		for i := len(aggregates) - 1; i >= 0; i-- {
+			agg := aggregates[i]
+			if agg.Window <= 0 || !isSameBucketFunc(hintFunc, strings.ToLower(agg.Name)) {
+				continue
+			}
+			if name := storageBucketFuncName(strings.ToLower(agg.Name)); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (ql QueryList) windowedStorageAggName() string {

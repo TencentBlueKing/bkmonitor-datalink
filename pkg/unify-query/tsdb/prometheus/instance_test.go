@@ -243,6 +243,66 @@ func TestMergeFuncName(t *testing.T) {
 			},
 			expected: "max_over_time",
 		},
+		"sum_over_time 下推后使用 forward sum bucket": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Sum,
+		},
+		"avg_over_time 下推后使用 forward avg bucket": {
+			hints: &storage.SelectHints{
+				Func: function.AvgOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Avg, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Avg,
+		},
+		"over_time 没有匹配的下推窗口时保留 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Avg, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.SumOT,
+		},
+		"over_time 下推聚合没有窗口时保留 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			expected: function.SumOT,
+		},
 		"last_over_time 仅用于回看窗口时优先使用下推 avg": {
 			hints: &storage.SelectHints{
 				Func: "last_over_time",
@@ -338,6 +398,61 @@ func TestMergeFuncName(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.queries.mergeFuncName(tc.hints))
 		})
 	}
+}
+
+func TestPushedOverTimeKeepsForwardBucketAtRouteStart(t *testing.T) {
+	previous := &Query{
+		qry: &metadata.Query{
+			DataSource: "bkmonitor",
+			TableID:    "shared.rt",
+			Field:      "value",
+			Aggregates: metadata.Aggregates{
+				{Name: function.Sum, Window: time.Minute},
+			},
+		},
+		start: time.Unix(0, 0),
+		end:   time.Unix(100, 0),
+	}
+	current := &Query{
+		qry:        previous.qry,
+		start:      time.Unix(100, 0),
+		end:        time.Unix(200, 0),
+		queryStart: time.Unix(100, 0),
+		queryEnd:   time.Unix(200, 0),
+	}
+	queries := QueryList{previous, current}
+	mergeFunc := queries.mergeFuncName(&storage.SelectHints{Func: function.SumOT})
+
+	assert.Equal(t, function.Sum, mergeFunc)
+	assert.False(t, queries.allowRouteStartBoundaryBucket(current))
+
+	set := promRemote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "requests_total"},
+				},
+				Samples: []prompb.Sample{
+					{Timestamp: time.Unix(100, 0).UnixMilli(), Value: 42},
+				},
+			},
+		},
+	})
+	set = function.NewTimeRangeSeriesSet(set, current.start, current.end)
+	set = function.NewRouteRangeFilterSeriesSet(set, mergeFunc, time.Minute)
+
+	ts, err := mock.SeriesSetToTimeSeries(set)
+	assert.NoError(t, err)
+	assert.Equal(t, mock.TimeSeriesList{
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "requests_total"},
+			},
+			Samples: []prompb.Sample{
+				{Timestamp: time.Unix(100, 0).UnixMilli(), Value: 42},
+			},
+		},
+	}, ts)
 }
 
 func TestQueryCalcSelectStrategy(t *testing.T) {

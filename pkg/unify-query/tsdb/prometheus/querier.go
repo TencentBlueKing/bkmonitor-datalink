@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -100,12 +101,13 @@ func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 		}
 
 		queryList = append(queryList, &Query{
-			instance:   instance,
-			qry:        qry,
-			start:      qry.RouteStart,
-			end:        qry.RouteEnd,
-			queryStart: qry.RouteQueryStart,
-			queryEnd:   qry.RouteQueryEnd,
+			instance:     instance,
+			qry:          qry,
+			start:        qry.RouteStart,
+			end:          qry.RouteEnd,
+			endInclusive: qry.RouteEndInclusive,
+			queryStart:   qry.RouteQueryStart,
+			queryEnd:     qry.RouteQueryEnd,
 		})
 	})
 
@@ -143,11 +145,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	referenceName, queryList := q.getQueryList(matchers)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
-	var rangeSelector time.Duration
-	if hints != nil && hints.Range > 0 {
-		rangeSelector = time.Duration(hints.Range) * time.Millisecond
-	}
-	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step, rangeSelector)
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
 	span.Set("merge_func", mergeFunc)
 	span.Set("merge_bucket_duration", bucketDuration)
 
@@ -162,7 +160,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 		}
 
-		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
 		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
 
@@ -223,10 +220,23 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			successedPaths.Add(1)
 			switch strategy.wrapKind {
 			case seriesSetWrapValidRouteRange:
-				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
+				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				opts := make([]function.RouteRangeFilterOption, 0, 2)
+				if queryList.allowRouteStartBoundaryBucket(query) {
+					// 当前逻辑 source 的 routeStart 前没有相邻时间路由时，保留首个 backward range bucket。
+					// 其他独立 RT 不影响该判定；真正的后续 route 仍不能开启这个例外。
+					opts = append(opts, function.WithRouteStartBoundaryBucket())
+				}
+				if query.endInclusive {
+					opts = append(opts, function.WithRouteEndInclusive())
+				}
+				setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration, opts...)
 			case seriesSetWrapZeroRouteRange:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
 			default:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapNone, mergeFunc)
 				setCh <- currentSet
 			}
 		})

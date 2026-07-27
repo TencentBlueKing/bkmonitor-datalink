@@ -188,10 +188,11 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
-	RouteStart      time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
-	RouteEnd        time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
-	RouteQueryStart time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
-	RouteQueryEnd   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RouteStart        time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd          time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteEndInclusive bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
+	RouteQueryStart   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd     time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
 
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`

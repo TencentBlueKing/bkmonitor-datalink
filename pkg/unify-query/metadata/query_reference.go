@@ -89,6 +89,9 @@ func (q *Query) StorageUUID() string {
 			l = append(l, fmt.Sprintf("%d", t.UnixNano()))
 		}
 	}
+	if q.RouteEndInclusive {
+		l = append(l, "route-end-inclusive")
+	}
 
 	return strings.Join(l, "|")
 }

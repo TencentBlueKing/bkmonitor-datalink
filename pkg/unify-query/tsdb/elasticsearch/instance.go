@@ -37,6 +37,8 @@ import (
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+const esIndexMetadataErrorMaxLength = 512
+
 type Instance struct {
 	tsdb.DefaultInstance
 
@@ -171,22 +173,27 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
+	span.Set("index-get-fallback", indicesErr != nil)
 	if indicesErr != nil {
+		indexGetError := truncateString(indicesErr.Error(), esIndexMetadataErrorMaxLength)
+		span.Set("index-get-error", indexGetError)
 		// 兼容没有索引接口的情况，例如 bkbase
 		metadata.NewMessage(
 			metadata.MsgQueryES,
-			"索引查询 index 接口异常: %+v",
+			"索引查询 index 接口异常，回退 mapping 接口: aliases=%+v, error=%s",
 			aliases,
+			indexGetError,
 		).Warn(ctx)
 
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
+			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
 			return nil, nil, nil, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
-			).Error(ctx, indicesErr)
+			).Error(ctx, err)
 		}
 
 		for index, r := range res {
@@ -240,15 +247,16 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 	if err != nil {
 		return nil, nil, err
 	}
+	span.Set("mapping-length", len(mappings))
+	span.Set("physical-index-length", len(physicalIndexes))
 
 	iof := NewIndexOptionFormat(fieldAlias)
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
+		span.Set("field-map-length", 0)
 		return iof.FieldsMap(), physicalIndexes, nil
 	}
-
-	span.Set("mapping-length", len(mappings))
 
 	indexes := make([]string, 0)
 	for k := range mappings {

@@ -23,9 +23,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 )
@@ -231,7 +233,7 @@ func TestPeriodicReconcileLogsRecoveryAfterTransientFailure(t *testing.T) {
 	assert.EqualValues(t, 1, recoveryContext["failedAttempts"])
 }
 
-func TestPeriodicReconcileSteadyStateIsSilentWithDefaultDevelopmentLogger(t *testing.T) {
+func TestPeriodicReconcileSteadyStateSuppressesVerboseLogsWithDefaultDevelopmentLogger(t *testing.T) {
 	t.Setenv(config.CurrentNodeNameKey, "node-1")
 	var listCalls atomic.Int32
 	reader := &stubReader{
@@ -271,10 +273,49 @@ func TestPeriodicReconcileSteadyStateIsSilentWithDefaultDevelopmentLogger(t *tes
 	waitForSignal(t, done, "steady periodic reconciliation test shutdown")
 
 	logOutput := output.String()
+	assert.Contains(t, logOutput, "BkLogConfig environment filtering completed")
 	assert.NotContains(t, logOutput, "periodic node configuration reconciliation succeeded")
 	assert.NotContains(t, logOutput, "configuration apply skipped because desired state is unchanged")
 	assert.NotContains(t, logOutput, "current node info")
 	assert.NotContains(t, logOutput, "not have log config")
+}
+
+func TestBkLogConfigListLogsEnvironmentFilterSummary(t *testing.T) {
+	originalBkEnvs := append([]string(nil), config.BkEnvs...)
+	config.BkEnvs = []string{"bkop", ""}
+	t.Cleanup(func() {
+		config.BkEnvs = originalBkEnvs
+	})
+
+	reader := &stubReader{
+		listFn: func(_ context.Context, list client.ObjectList) error {
+			bkLogConfigList := list.(*bluekingv1alpha1.BkLogConfigList)
+			bkLogConfigList.Items = []bluekingv1alpha1.BkLogConfig{
+				{ObjectMeta: metav1.ObjectMeta{
+					Name:   "bkop-config",
+					Labels: map[string]string{config.BkEnvLabelName: "bkop"},
+				}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "default-config"}},
+				{ObjectMeta: metav1.ObjectMeta{
+					Name:   "prod-config",
+					Labels: map[string]string{config.BkEnvLabelName: "prod"},
+				}},
+			}
+			return nil
+		},
+	}
+	sidecar := newCharacterizationSidecar(t, &stubRuntime{}, reader)
+	observed := observeSidecarLogs(sidecar)
+
+	configs, err := sidecar.bkLogConfigList(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+	logContext := requireObservedLogContext(t, observed, "BkLogConfig environment filtering completed")
+	assert.Equal(t, []interface{}{"bkop", ""}, logContext["allowedBkEnvs"])
+	assert.EqualValues(t, 3, logContext["total"])
+	assert.EqualValues(t, 2, logContext["matched"])
+	assert.EqualValues(t, 1, logContext["ignored"])
 }
 
 func observeSidecarLogs(sidecar *BkLogSidecar) *observer.ObservedLogs {

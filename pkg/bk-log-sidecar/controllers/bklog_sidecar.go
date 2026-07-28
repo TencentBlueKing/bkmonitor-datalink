@@ -690,6 +690,14 @@ func (s *BkLogSidecar) bkLogConfigList(ctx context.Context) ([]v1alpha1.BkLogCon
 				bkLogConfig.Labels[config.BkEnvLabelName], config.BkEnvs))
 		}
 	}
+	// 默认日志只记录过滤结果汇总；逐资源明细保留在 V(2)，避免周期全量对账时大量刷屏。
+	s.log.Info(
+		"BkLogConfig environment filtering completed",
+		"allowedBkEnvs", config.BkEnvs,
+		"total", len(bkLogConfigs.Items),
+		"matched", len(filteredConfigs),
+		"ignored", len(bkLogConfigs.Items)-len(filteredConfigs),
+	)
 	return filteredConfigs, err
 }
 

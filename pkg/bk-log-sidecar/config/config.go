@@ -28,7 +28,7 @@ var (
 	BkunifylogbeatPidFile string
 	HostPath              string
 	DelayCleanConfig      int
-	BkEnv                 string
+	BkEnvs                []string
 	HttpProf              string
 )
 
@@ -45,6 +45,20 @@ func FlagInit() {
 	flag.StringVar(&HostPath, "host-path", "/", "host path")
 	flag.StringVar(&DockerApiVersion, "docker-api-version", "1.40", "docker Api version")
 	flag.IntVar(&DelayCleanConfig, "delay-clean-config", 30, "delay cleaning")
-	flag.StringVar(&BkEnv, "bk-env", "", "bk env label value")
+	BkEnvs = []string{""}
+	bkEnvExplicitlySet := false
+	flag.Func("bk-env", "bk env label value; may be specified multiple times", func(value string) error {
+		if !bkEnvExplicitlySet {
+			BkEnvs = BkEnvs[:0]
+			bkEnvExplicitlySet = true
+		}
+		for _, bkEnv := range BkEnvs {
+			if bkEnv == value {
+				return nil
+			}
+		}
+		BkEnvs = append(BkEnvs, value)
+		return nil
+	})
 	flag.StringVar(&HttpProf, "httpprof", "127.0.0.1:16060", "http pprof address")
 }

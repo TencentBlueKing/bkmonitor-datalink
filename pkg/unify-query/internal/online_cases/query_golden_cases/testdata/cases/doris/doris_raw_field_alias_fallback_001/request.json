@@ -1,0 +1,28 @@
+{
+  "method": "POST",
+  "path": "/query/ts/raw",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_doris_alias",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_doris_alias",
+    "query_list": [{
+      "data_source": "bk_log",
+      "table_id": "demo_doris_alias.partition_1",
+      "field_name": "dtEventTimeStamp",
+      "reference_name": "a",
+      "limit": 10000,
+      "from": 0,
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "order_by": ["-dtEventTimeStamp"],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "space_uid": "bkcc__golden_es_table_conditions",
+  "result_tables": [{"table_id": "demo_logs.table_conditions"}],
+  "result_table_details": {
+    "demo_logs.table_conditions": {
+      "storage_id": 2305,
+      "storage_name": "es_cluster_table_conditions",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_table_conditions",
+      "db": "golden_es_table_conditions",
+      "table_id": "demo_logs.table_conditions",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_table_conditions",
+      "tags_key": ["service"],
+      "source_type": "bklog",
+      "labels": {"scene": "k8s", "stream": "file"}
+    }
+  },
+  "storages": {"2305": {"type": "elasticsearch"}}
+}

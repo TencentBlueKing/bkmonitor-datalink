@@ -1,0 +1,13 @@
+[
+  {
+    "backend": "influxdb",
+    "method": "GET",
+    "path": "/query",
+    "query": {
+      "chunk_size": ["20000"],
+      "chunked": ["true"],
+      "db": ["golden_influx_db"],
+      "q": ["SELECT mean(\"cpu_usage_value\") AS _value, \"time\" AS _time FROM cpu_summary_demo WHERE time > 1784701739999000000 and time < 1784702135999000000 AND (status_code='healthy') GROUP BY \"service_name\", time(1m0s) LIMIT 100000005 SLIMIT 100005 TZ('UTC')"]
+    }
+  }
+]

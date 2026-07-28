@@ -1,0 +1,28 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_type": "query",
+        "bk_biz_id": "golden_vm_structured_instant",
+        "cluster_name": "vm_cluster_structured_instant",
+        "influx_compatible": true,
+        "use_native_or": true,
+        "api_params": {
+          "query": "avg by (cluster, namespace, service) (avg_over_time(a[1m] offset -59s999ms))",
+          "time": 1784702076,
+          "timeout": 30
+        },
+        "result_table_list": [
+          "vm_rt_demo_vm_structured_partition_1"
+        ],
+        "metric_filter_condition": {
+          "a": "result_table_id=\"vm_rt_demo_vm_structured_partition_1\", __name__=\"requests_total_value\""
+        }
+      }
+    }
+  }
+]

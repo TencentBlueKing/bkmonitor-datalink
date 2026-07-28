@@ -1,0 +1,29 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_type": "query_range",
+        "bk_biz_id": "golden_vm_complex",
+        "cluster_name": "vm_cluster_complex",
+        "influx_compatible": true,
+        "use_native_or": true,
+        "api_params": {
+          "query": "sum by (service) (rate(a[5m] offset -59s999ms)) / sum by (service) (rate(b[5m] offset -59s999ms))",
+          "start": 1784701740,
+          "end": 1784702076,
+          "step": 60,
+          "nocache": 0
+        },
+        "result_table_list": ["vm_rt_demo_complex_partition_1"],
+        "metric_filter_condition": {
+          "a": "status=~\"5..\", result_table_id=\"vm_rt_demo_complex_partition_1\", __name__=\"requests_total_value\"",
+          "b": "status!=\"success\", result_table_id=\"vm_rt_demo_complex_partition_1\", __name__=\"requests_total_value\""
+        }
+      }
+    }
+  }
+]

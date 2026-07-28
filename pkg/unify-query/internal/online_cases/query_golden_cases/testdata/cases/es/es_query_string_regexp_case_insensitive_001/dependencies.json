@@ -1,0 +1,12 @@
+{
+  "elasticsearch": {
+    "mapping": {"golden_es_regexp_lower": {"mappings": {"properties": {
+      "dtEventTimeStamp": {"type": "date"},
+      "events_total": {"type": "long"},
+      "message": {"type": "text"},
+      "service": {"type": "keyword"},
+      "status": {"type": "keyword"}
+    }}}},
+    "search": {"took": 1, "timed_out": false, "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}}
+  }
+}

@@ -1,0 +1,26 @@
+id: es_missing_sort_mapping_empty_index_fallback_001
+storage: es
+enabled: true
+shape_signature: query_ts_raw/range/es/alias2/sort_missing_mapping/initial_empty_check_retry/output4
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-24"
+  fingerprint: sha256:ab9c538fa9feeb9cf6dca6270505a2f2cd4b59c8dea2f18ada6f8d6876d1a89f
+tags:
+  - query_ts_raw_api
+  - missing_sort_mapping
+  - empty_index_fallback
+  - sequential_dependency
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 回归 ES alias 指向的新旧物理索引中，旧空索引缺少排序字段 mapping 时，UQ 必须先精确判空，再补充 unmapped_type 重试。
+  - 问题形态和旧行为依据已合并 PR #1404 的公开问题说明、回归测试和修复前基线回放，未使用生产日志或 trace。
+  - 请求、路由、物理索引、字段、空间、租户和集群均为离线占位数据，不含真实生产标识。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

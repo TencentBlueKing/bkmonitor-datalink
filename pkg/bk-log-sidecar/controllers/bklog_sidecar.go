@@ -682,11 +682,12 @@ func (s *BkLogSidecar) bkLogConfigList(ctx context.Context) ([]v1alpha1.BkLogCon
 	var filteredConfigs []v1alpha1.BkLogConfig
 	for _, bkLogConfig := range bkLogConfigs.Items {
 		// 过滤 bk-env
-		if bkLogConfig.IsMatchBkEnv() {
+		if bkLogConfig.IsMatchBkEnv(config.BkEnvs) {
 			filteredConfigs = append(filteredConfigs, bkLogConfig)
 		} else {
-			s.log.V(2).Info(fmt.Sprintf("resource [%s] without label `%s=\"%s\"`, ignored",
-				bkLogConfig.Name, config.BkEnvLabelName, config.BkEnv))
+			s.log.V(2).Info(fmt.Sprintf("resource [%s] with label `%s=\"%s\"` not in allowed values %v, ignored",
+				bkLogConfig.Name, config.BkEnvLabelName,
+				bkLogConfig.Labels[config.BkEnvLabelName], config.BkEnvs))
 		}
 	}
 	return filteredConfigs, err

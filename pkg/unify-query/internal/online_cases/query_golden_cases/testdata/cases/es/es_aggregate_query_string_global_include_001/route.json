@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_global_include",
+  "result_tables": [{"table_id": "demo_logs.global_include"}],
+  "result_table_details": {
+    "demo_logs.global_include": {
+      "storage_id": 2202,
+      "storage_name": "es_cluster_global_include",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_global_include",
+      "db": "golden_es_global_include",
+      "table_id": "demo_logs.global_include",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_global_include",
+      "tags_key": ["outcome_code", "response_code", "operation_code"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2202": {"type": "elasticsearch"}}
+}

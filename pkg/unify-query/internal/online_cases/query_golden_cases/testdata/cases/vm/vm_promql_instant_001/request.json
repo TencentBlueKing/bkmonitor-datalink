@@ -1,0 +1,18 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_instant",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "bkmonitor:demo_vm_instant:partition_1:requests_total{cluster=~\"cluster_[12]\", namespace=~\"namespace_.*\", status=\"success\"}",
+    "start": "1784701776",
+    "end": "1784702076",
+    "step": "60s",
+    "look_back_delta": "",
+    "instant": true
+  }
+}

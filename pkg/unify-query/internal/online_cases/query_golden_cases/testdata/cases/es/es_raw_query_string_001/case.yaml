@@ -1,0 +1,17 @@
+id: es_raw_query_string_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/limit10/order_time/query_string/output_index_search
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:66008a34f39376fcac68bf311aec66a2995ba3ba5017c3ecd375e603b09d26b6
+tags: [query_ts_api, raw, query_string, pagination, production_shape]
+notes:
+  - 生产请求仅保留查询结构，空间、索引、字段和检索值均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

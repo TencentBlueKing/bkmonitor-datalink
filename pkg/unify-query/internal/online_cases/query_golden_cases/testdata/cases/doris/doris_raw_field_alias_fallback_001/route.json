@@ -1,0 +1,23 @@
+{
+  "space_uid": "bkcc__golden_doris_alias",
+  "result_tables": [{"table_id": "demo_doris_alias.partition_1"}],
+  "result_table_details": {
+    "demo_doris_alias.partition_1": {
+      "storage_id": 3502,
+      "storage_name": "doris_cluster_alias",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_alias",
+      "db": "golden_doris_alias_table",
+      "table_id": "demo_doris_alias.partition_1",
+      "measurement": "doris",
+      "fields": ["dtEventTimeStamp"],
+      "field_alias": {
+        "dtEventTimeStamp": "dtEventTimeStampNanos"
+      },
+      "data_label": "demo_doris_alias",
+      "tags_key": [],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"3502": {"type": "bk_sql"}}
+}

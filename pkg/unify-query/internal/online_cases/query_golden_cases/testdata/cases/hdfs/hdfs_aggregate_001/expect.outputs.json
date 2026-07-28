@@ -1,0 +1,14 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {"properties": {"cluster_name": "hdfs_cluster_1"}, "sql": "SHOW CREATE TABLE `golden_hdfs_table`.hdfs"}
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {"properties": {"cluster_name": "hdfs_cluster_1"}, "sql": "SELECT `service`, COUNT(`events_total`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `golden_hdfs_table`.hdfs WHERE `dtEventTimeStamp` >= 1784701739999 AND `dtEventTimeStamp` < 1784702135999 AND `dtEventTime` >= '2026-07-22 14:28:59' AND `dtEventTime` <= '2026-07-22 14:35:36' AND `thedate` = '20260722' AND `status` = 'failed' GROUP BY `service`, (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) ORDER BY `_timestamp_` ASC LIMIT 2000005"}
+  }
+]

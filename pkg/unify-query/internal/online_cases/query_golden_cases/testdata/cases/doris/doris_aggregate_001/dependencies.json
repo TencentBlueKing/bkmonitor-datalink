@@ -1,0 +1,14 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "__shard_key__", "Type": "bigint"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "double"},
+      {"Field": "service", "Type": "varchar"},
+      {"Field": "status", "Type": "varchar"}
+    ],
+    "result": []
+  }
+}

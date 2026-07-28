@@ -1,0 +1,40 @@
+{
+  "space_uid": "bkcc__golden_es_empty_index",
+  "result_tables": [
+    {"table_id": "demo_empty_index.valid"},
+    {"table_id": "demo_empty_index.invalid"}
+  ],
+  "result_table_details": {
+    "demo_empty_index.valid": {
+      "storage_id": 2302,
+      "storage_name": "es_cluster_empty_index_valid",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_empty_index_valid",
+      "db": "golden_es_empty_index_valid",
+      "table_id": "demo_empty_index.valid",
+      "fields": ["events_total"],
+      "data_label": "demo_empty_index",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    },
+    "demo_empty_index.invalid": {
+      "storage_id": 2303,
+      "storage_name": "es_cluster_empty_index_invalid",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_empty_index_invalid",
+      "db": "",
+      "table_id": "demo_empty_index.invalid",
+      "fields": ["events_total"],
+      "data_label": "demo_empty_index",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "data_labels": {
+    "demo_empty_index": ["demo_empty_index.valid", "demo_empty_index.invalid"]
+  },
+  "storages": {
+    "2302": {"type": "elasticsearch"},
+    "2303": {"type": "elasticsearch"}
+  }
+}

@@ -13,12 +13,14 @@ package define
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // LogConfigType log config type
@@ -228,6 +230,7 @@ func (s *ContainerLogConfig) Config() []byte {
 	// 全量下发对未命中卷的路径无副作用。
 	if len(s.Container.Mounts) > 0 {
 		mounts := make([]Mount, 0, len(s.Container.Mounts))
+		seen := make(map[Mount]struct{}, len(s.Container.Mounts))
 		for _, mount := range s.Container.Mounts {
 			// 跳过 host_path/container_path 为空的挂载：Docker tmpfs 的 MountPoint.Source 允许为空，
 			// ToHostPath("") 会得到 sidecar 的 host 根路径，最终下发 {host_path: "/", container_path: ...}，
@@ -235,8 +238,22 @@ func (s *ContainerLogConfig) Config() []byte {
 			if mount.HostPath == "" || mount.ContainerPath == "" {
 				continue
 			}
-			mounts = append(mounts, Mount{HostPath: ToHostPath(mount.HostPath), ContainerPath: mount.ContainerPath})
+			m := Mount{HostPath: ToHostPath(mount.HostPath), ContainerPath: mount.ContainerPath}
+			// 去重，避免容器上报重复挂载导致下发冗余。
+			if _, ok := seen[m]; ok {
+				continue
+			}
+			seen[m] = struct{}{}
+			mounts = append(mounts, m)
 		}
+		// 稳定输出：按 container_path、host_path 排序，避免 CRI 多次 inspect 返回顺序不稳定时
+		// 生成的子配置产生无意义 diff、触发 sidecar 无谓 reload。
+		sort.Slice(mounts, func(i, j int) bool {
+			if mounts[i].ContainerPath != mounts[j].ContainerPath {
+				return mounts[i].ContainerPath < mounts[j].ContainerPath
+			}
+			return mounts[i].HostPath < mounts[j].HostPath
+		})
 		// 过滤后可能全为空，仅在存在有效挂载时才下发 mounts，保持无挂载时的原行为。
 		if len(mounts) > 0 {
 			local.Mounts = mounts

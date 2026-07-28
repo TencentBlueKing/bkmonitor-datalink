@@ -55,9 +55,10 @@ func parseContainerConfig(t *testing.T, content []byte) parsedContainerConfig {
 
 // TestContainerLogConfigMounts 验证容器采集配置生成的挂载下发契约：
 // 1. 原始 paths 不被改写；
-// 2. 源路径与软链目标对应的两个挂载都会下发；
+// 2. 容器全量有效挂载都会下发（真实软链跨卷解析归采集器侧，见 beats PR #48，非本测试覆盖范围）；
 // 3. host_path / container_path 为空的挂载会被过滤；
-// 4. 无有效挂载时保持原行为（不下发 mounts）。
+// 4. 重复挂载去重、按 container_path 稳定排序；
+// 5. 无有效挂载时保持原行为（不下发 mounts）。
 func TestContainerLogConfigMounts(t *testing.T) {
 	origHostPath := config.HostPath
 	config.HostPath = "/host"
@@ -65,11 +66,9 @@ func TestContainerLogConfigMounts(t *testing.T) {
 
 	paths := []string{"/data/apphome/logs/*.log"}
 
-	t.Run("原始 paths 不被改写 & 源+软链目标挂载全量下发", func(t *testing.T) {
+	t.Run("全量下发所有有效挂载 & 原始 paths 不被改写", func(t *testing.T) {
 		mounts := []Mount{
-			// 源采集路径所在卷
 			{HostPath: "/data/pvc-src", ContainerPath: "/data/apphome"},
-			// 软链跨卷指向的目标卷
 			{HostPath: "/data/pvc-dst", ContainerPath: "/data/real"},
 		}
 		cfg := newContainerLogConfig(mounts, paths)
@@ -78,10 +77,26 @@ func TestContainerLogConfigMounts(t *testing.T) {
 		// 原始 paths 原样保留
 		assert.Equal(t, paths, parsed.Local[0].Path)
 
-		// 两个挂载都下发，host_path 经 ToHostPath 前缀化
+		// 两个挂载都下发，host_path 经 ToHostPath 前缀化（按 container_path 排序）
 		assert.Equal(t, []Mount{
 			{HostPath: "/host/data/pvc-src", ContainerPath: "/data/apphome"},
 			{HostPath: "/host/data/pvc-dst", ContainerPath: "/data/real"},
+		}, parsed.Local[0].Mounts)
+	})
+
+	t.Run("重复挂载去重且按 container_path 稳定排序", func(t *testing.T) {
+		mounts := []Mount{
+			{HostPath: "/data/pvc-b", ContainerPath: "/data/b"},
+			{HostPath: "/data/pvc-a", ContainerPath: "/data/a"},
+			{HostPath: "/data/pvc-b", ContainerPath: "/data/b"}, // 重复项
+		}
+		cfg := newContainerLogConfig(mounts, paths)
+		parsed := parseContainerConfig(t, cfg.Config())
+
+		// 去重后按 container_path 升序：/data/a 在 /data/b 前
+		assert.Equal(t, []Mount{
+			{HostPath: "/host/data/pvc-a", ContainerPath: "/data/a"},
+			{HostPath: "/host/data/pvc-b", ContainerPath: "/data/b"},
 		}, parsed.Local[0].Mounts)
 	})
 

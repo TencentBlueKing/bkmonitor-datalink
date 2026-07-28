@@ -229,9 +229,18 @@ func (s *ContainerLogConfig) Config() []byte {
 	if len(s.Container.Mounts) > 0 {
 		mounts := make([]Mount, 0, len(s.Container.Mounts))
 		for _, mount := range s.Container.Mounts {
+			// 跳过 host_path/container_path 为空的挂载：Docker tmpfs 的 MountPoint.Source 允许为空，
+			// ToHostPath("") 会得到 sidecar 的 host 根路径，最终下发 {host_path: "/", container_path: ...}，
+			// 采集器会错误切换到宿主机根目录、绕过 rootFs。
+			if mount.HostPath == "" || mount.ContainerPath == "" {
+				continue
+			}
 			mounts = append(mounts, Mount{HostPath: ToHostPath(mount.HostPath), ContainerPath: mount.ContainerPath})
 		}
-		local.Mounts = mounts
+		// 过滤后可能全为空，仅在存在有效挂载时才下发 mounts，保持无挂载时的原行为。
+		if len(mounts) > 0 {
+			local.Mounts = mounts
+		}
 	}
 
 	local.ExtMeta = extMeta

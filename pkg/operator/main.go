@@ -19,5 +19,6 @@ import (
 func main() {
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to run the command: %v\n", err)
+		os.Exit(1)
 	}
 }

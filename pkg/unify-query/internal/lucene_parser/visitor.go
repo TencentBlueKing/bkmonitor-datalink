@@ -437,8 +437,9 @@ func (n *ConditionNode) String() string {
 		value = n.value.String()
 	}
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
+	} else if _, ok := n.value.(*StringNode); ok && !fieldOption.IsAnalyzed {
+		value = normalizeStringConditionValue(value, false)
 	}
 
 	switch op {
@@ -572,8 +573,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
 	}
 
 	if field == "_exists_" {
@@ -593,6 +593,9 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	var fieldOption metadata.FieldOption
 	if n.Option.FieldsMap != nil {
 		fieldOption = n.Option.FieldsMap.Field(field)
+	}
+	if _, ok := n.value.(*StringNode); ok && !n.isQuoted && !fieldOption.IsAnalyzed {
+		value = normalizeStringConditionValue(value, false)
 	}
 
 	if n.op != nil {

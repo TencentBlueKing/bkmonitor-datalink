@@ -75,6 +75,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"term":{"name":"test"}}`,
 		},
 		{
+			name:  "unquoted escaped string",
+			input: `name:bk\-log\-search\-api`,
+			sql:   "`name` = 'bk-log-search-api'",
+			dsl:   `{"term":{"name":"bk-log-search-api"}}`,
+		},
+		{
+			name:  "unquoted escaped backslash",
+			input: `name:hello\\world`,
+			sql:   "`name` = 'hello\\world'",
+			dsl:   `{"term":{"name":"hello\\world"}}`,
+		},
+		{
 			name:  "one word",
 			input: "test",
 			sql:   "`log` MATCH_PHRASE 'test'",

@@ -427,11 +427,7 @@ func conditionNodeLabel(n *ConditionNode, reversed bool) (conditionWalkLabel, bo
 		op = metadata.ConditionRegEqual
 	case *StringNode:
 		op = metadata.ConditionEqual
-		// 转义
-		value = strings.ReplaceAll(value, `\`, ``)
-		if n.isQuoted {
-			value = strings.Trim(value, `"`)
-		}
+		value = normalizeStringConditionValue(value, n.isQuoted)
 	default:
 		return conditionWalkLabel{}, false
 	}
@@ -469,6 +465,24 @@ func reverseConditionOperator(op string) string {
 	default:
 		return op
 	}
+}
+
+func normalizeStringConditionValue(value string, isQuoted bool) string {
+	chars := []rune(value)
+	var builder strings.Builder
+	for i := 0; i < len(chars); i++ {
+		if chars[i] == '\\' && i+1 < len(chars) {
+			builder.WriteRune(chars[i+1])
+			i++
+			continue
+		}
+		builder.WriteRune(chars[i])
+	}
+	value = builder.String()
+	if isQuoted {
+		value = strings.Trim(value, `"`)
+	}
+	return value
 }
 
 func normalizeWildcardConditionValue(value string) string {

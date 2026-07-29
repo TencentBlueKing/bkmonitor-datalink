@@ -438,7 +438,8 @@ func (n *ConditionNode) String() string {
 	}
 	if n.isQuoted {
 		value = normalizeStringConditionValue(value, true)
-	} else if _, ok := n.value.(*StringNode); ok && !fieldOption.IsAnalyzed {
+		value = escapeSQLStringValue(value)
+	} else if _, ok := n.value.(*StringNode); ok {
 		value = normalizeStringConditionValue(value, false)
 		value = escapeSQLStringValue(value)
 	}
@@ -599,7 +600,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	if n.Option.FieldsMap != nil {
 		fieldOption = n.Option.FieldsMap.Field(field)
 	}
-	if _, ok := n.value.(*StringNode); ok && !n.isQuoted && !fieldOption.IsAnalyzed {
+	if _, ok := n.value.(*StringNode); ok && !n.isQuoted {
 		value = normalizeStringConditionValue(value, false)
 	}
 
@@ -663,13 +664,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *StringNode:
 		switch op {
 		case ">":
-			result = elastic.NewRangeQuery(field).Gt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gt(realStringValue(value))
 		case ">=":
-			result = elastic.NewRangeQuery(field).Gte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gte(realStringValue(value))
 		case "<":
-			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lt(realStringValue(value))
 		case "<=":
-			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lte(realStringValue(value))
 		case "!=":
 			notEqual = true
 			if fieldOption.IsAnalyzed {

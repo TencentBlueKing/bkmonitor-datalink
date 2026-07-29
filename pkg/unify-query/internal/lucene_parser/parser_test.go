@@ -170,6 +170,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
 		},
 		{
+			name:  "unquoted escaped string range",
+			input: `name:[foo\-bar TO zoo\-bar]`,
+			sql:   "`name` >= 'foo-bar' AND `name` <= 'zoo-bar'",
+			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":true,"include_upper":true,"to":"zoo-bar"}}}`,
+		},
+		{
+			name:  "unquoted escaped date range",
+			input: `timestamp:[2023\-01\-01 TO 2023\-12\-31]`,
+			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
+		},
+		{
 			name:  "date range query - 1",
 			input: "count:[1 TO 10}",
 			sql:   "`count` >= '1' AND `count` < '10'",

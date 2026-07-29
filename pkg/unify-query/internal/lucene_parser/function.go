@@ -202,10 +202,6 @@ func filterQuery(must []elastic.Query, should []elastic.Query, mustNot []elastic
 	return must, should, mustNot
 }
 
-func realValue(node Node) any {
-	return realStringValue(node.String())
-}
-
 func realStringValue(value string) any {
 	// 判断是否是数字，如果是则返回数字
 	res, err := cast.ToFloat64E(value)

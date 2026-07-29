@@ -408,7 +408,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.String()))
+			value := normalizeStringConditionValue(v.Start.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		if v.End != nil {
 			o := "<"
@@ -416,7 +417,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.String()))
+			value := normalizeStringConditionValue(v.End.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
@@ -618,12 +620,14 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *RangeNode:
 		cq := elastic.NewRangeQuery(field)
 		if cv.Start != nil {
-			cq.From(realValue(cv.Start))
+			value := normalizeStringConditionValue(cv.Start.String(), false)
+			cq.From(realStringValue(value))
 		}
 		cq.IncludeLower(cv.IsIncludeStart)
 
 		if cv.End != nil {
-			cq.To(realValue(cv.End))
+			value := normalizeStringConditionValue(cv.End.String(), false)
+			cq.To(realStringValue(value))
 		}
 		cq.IncludeUpper(cv.IsIncludeEnd)
 		if cv.Boost != "" {

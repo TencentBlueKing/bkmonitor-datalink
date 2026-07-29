@@ -2220,6 +2220,10 @@
                     "description": "Instant 瞬时数据",
                     "type": "boolean"
                 },
+                "is_es_batch": {
+                    "description": "IsESBatch 是否启用 query_raw 的 ES 批量查询",
+                    "type": "boolean"
+                },
                 "is_merge_db": {
                     "description": "IsMergeDB 是否启用合并 db 特性",
                     "type": "boolean"

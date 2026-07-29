@@ -166,6 +166,7 @@
 | `highlight`         | object | 否   | 高亮配置（用于 Elasticsearch 查询）                                                                                                                                                                                                   |
 | `dry_run`           | bool   | 否   | 是否启用 DryRun（仅验证查询，不执行）                                                                                                                                                                                                 |
 | `is_merge_db`       | bool   | 否   | 是否启用合并 db 特性                                                                                                                                                                                                                  |
+| `is_es_batch`       | bool   | 否   | 是否为 `/query/ts/raw` 显式启用 ES 批量查询；缺省或 `false` 保持逐结果表查询，不兼容的成员仍自动回退单查                                                                                                                               |
 
 **查询项参数** (`query_list` 中的元素):
 

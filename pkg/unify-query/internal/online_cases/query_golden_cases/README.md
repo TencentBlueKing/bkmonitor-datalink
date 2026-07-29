@@ -17,12 +17,12 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 39 个可执行 case。其中 17 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；21 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，1 个 ES case 有生产日志和 trace 证据，另外 18 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；1 个 InfluxDB case 只有生产 input 形态，outputs 由固定 fixture 经当前真实 handler 回放得到，标记为暂定覆盖，不计入生产 output 采样收敛。
+数据集当前包含 40 个可执行 case。其中 17 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；21 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，1 个 ES case 有生产日志和 trace 证据，另外 18 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；另有 2 个只有生产 input 形态的 provisional case，分别覆盖 ES 请求级批处理和 InfluxDB aggregate，outputs 由固定 fixture 经当前真实 handler 回放得到，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
 | VictoriaMetrics | 5 | PromQL range/instant、结构化 instant、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
-| Elasticsearch | 17 | aggregate/raw/reference、query_string 语义、整份 mapping 缺失时回退原生 query_string、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、缺排序字段 mapping 的空索引判定与重试、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 |
+| Elasticsearch | 18 | aggregate/raw/reference、请求级开启的显式双 `query_list` 同连接批处理、query_string 语义、整份 mapping 缺失时回退原生 query_string、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、缺排序字段 mapping 的空索引判定与重试、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 + 暂定 handler 回放 |
 | Doris | 11 | aggregate、raw、单 reference 七路由/十四 output、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度、缺失字段 contains、平台分钟字段 UNION 依赖、raw 字段别名回退、缺失 `__shard_key__` 的时间桶回退 | 生产日志 + 修复后 handler 回放 |
 | TSpider | 3 | aggregate、raw、PromQL 8 reference/16 output | 生产日志 + 修复后 handler 回放 |
 | HDFS | 2 | aggregate、raw | 生产日志 |
@@ -35,6 +35,8 @@ sanitized request
 `vm_promql_instant_001` 和 `vm_structured_instant_001` 分别锁定 PromQL 与结构化入口的 instant 构造：下游 VM `api_type` 为 `query`，使用 `time/timeout` 参数而不是 range 的 `start/end/step`。
 
 `es_reference_001` 让回放器执行真实 `/query/ts/reference` handler，完整记录 index/mapping 与 search 两个 ES 请求，并锁定 reference 模式下的 limit、排序和时间边界。
+
+`es_raw_explicit_multi_rt_batch_001` 保留 Trace 查询的两个显式 `query_list` RT、相同 TraceID 条件和顶层 `is_es_batch=true`，固定两个 RT 使用同一实际 ES 连接和各自索引。真实 `/query/ts/raw` handler 先产生 2 条 index/mapping discovery，再把 body 完全一致的两个 search 合为 1 条 `GET /_msearch`：`1 input × 2 explicit query_list × 1 route each = 2 index discovery + 1 batched search = 3 outputs`。该 case 缺少能与生产入口唯一关联的 outbound output，因此标记 `handler_replay` 和 `provisional_output`；既有未携带 `is_es_batch` 的 raw case 继续锁定默认单 `_search` 行为。
 
 `doris_multi_route_fanout_001` 固定一个 data label 对应七张 Doris 物理表：`1 input × 1 reference × 7 route branches × 2 BKSQL stages = 14 outputs`。它与跨存储时间分段 case 一起覆盖同存储多 RT 和跨存储分段两种不同的路由放大模式。
 
@@ -75,6 +77,8 @@ testdata/cases/<storage>/<case_id>/
 - BKSQL：schema 查询、Doris/TSpider/HDFS SQL 和必要的 cluster properties。
 - Elasticsearch：index/mapping 请求和首次查询、fallback 判定、重试等全部 search DSL。
 - InfluxDB：`/query` 的 db、InfluxQL 和稳定控制参数。
+
+Elasticsearch `/_msearch` 使用 NDJSON body；回放器将每个非空 NDJSON 行独立解析为 JSON，并按 header、search body 的线序记录为数组。这样索引仍保留在 msearch header body 中，且不会把 NDJSON 当作单个 JSON 文档。
 
 比较时会递归解析 JSON，并把并发输出排序为稳定的 multiset：顺序不影响结果，但重复请求的数量必须一致。任何未在 fixture 中声明的外部请求都会使测试失败。
 

@@ -83,8 +83,14 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "unquoted escaped backslash",
 			input: `name:hello\\world`,
-			sql:   "`name` = 'hello\\world'",
+			sql:   "`name` = 'hello\\\\world'",
 			dsl:   `{"term":{"name":"hello\\world"}}`,
+		},
+		{
+			name:  "unquoted escaped apostrophe",
+			input: `name:foo\'bar`,
+			sql:   "`name` = 'foo''bar'",
+			dsl:   `{"term":{"name":"foo'bar"}}`,
 		},
 		{
 			name:  "one word",

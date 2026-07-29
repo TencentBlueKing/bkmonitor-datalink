@@ -440,6 +440,7 @@ func (n *ConditionNode) String() string {
 		value = normalizeStringConditionValue(value, true)
 	} else if _, ok := n.value.(*StringNode); ok && !fieldOption.IsAnalyzed {
 		value = normalizeStringConditionValue(value, false)
+		value = escapeSQLStringValue(value)
 	}
 
 	switch op {
@@ -474,6 +475,10 @@ func (n *ConditionNode) String() string {
 	}
 
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func escapeSQLStringValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(value)
 }
 
 // nonEmptyFieldSQL 渲染 SQL/Doris 路径的“字段存在且不为空字符串”条件，用于 NOT field:"" 兼容语义。

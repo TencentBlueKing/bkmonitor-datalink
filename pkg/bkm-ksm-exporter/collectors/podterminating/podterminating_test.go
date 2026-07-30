@@ -1,9 +1,21 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package podterminating
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkm-ksm-exporter/exporter"
 )
 
 type scriptedPodClient struct {
@@ -185,6 +199,108 @@ func TestRecoveryHoldStartsAtFirstSuccessfulPersistence(t *testing.T) {
 	}
 	if expires := persister.snapshots[1].Recovery[0].ExpiresAt; expires != 2_320 {
 		t.Fatalf("expiresAt=%v, want 2320 (full hold from successful retry)", expires)
+	}
+}
+
+func TestDelayedPendingConfirmationRestartsHoldForChangedRecoveryOnly(t *testing.T) {
+	newDimension := Dimension{Namespace: "ns", Pod: "new", Node: "node"}
+	restartDimension := Dimension{Namespace: "ns", Pod: "restart", Node: "node"}
+	existingDimension := Dimension{Namespace: "ns", Pod: "existing", Node: "node"}
+	state := NewState(10*time.Minute, 15*time.Minute)
+	if err := state.Restore(Snapshot{
+		Version: StateVersion,
+		Active:  []Dimension{newDimension},
+		Recovery: []RecoveryDimension{
+			{
+				Dimension: restartDimension,
+				ExpiresAt: 2_000,
+			},
+			{
+				Dimension:            existingDimension,
+				ExpiresAt:            2_000,
+				RestartExtensionUsed: true,
+			},
+		},
+	}, 64, time.Unix(1_000, 0)); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	var serverState string
+	patchCalls := 0
+	getCalls := 0
+	client := &scriptedConfigMapClient{
+		patch: func(
+			_ context.Context,
+			_ string,
+			_ types.PatchType,
+			data []byte,
+			_ metav1.PatchOptions,
+			_ ...string,
+		) (*corev1.ConfigMap, error) {
+			patchCalls++
+			var patch map[string]map[string]string
+			if err := json.Unmarshal(data, &patch); err != nil {
+				return nil, err
+			}
+			serverState = patch["data"][StateDataKey]
+			if patchCalls == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &corev1.ConfigMap{Data: map[string]string{StateDataKey: serverState}}, nil
+		},
+		get: func(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error) {
+			getCalls++
+			if getCalls == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &corev1.ConfigMap{Data: map[string]string{StateDataKey: serverState}}, nil
+		},
+	}
+	store, err := NewStateStore(client, "state", time.Second, HardMaxStateBytes)
+	if err != nil {
+		t.Fatalf("NewStateStore: %v", err)
+	}
+	if err := state.Checkpoint(context.Background(), nil, time.Unix(1_060, 0), store.Save); err == nil {
+		t.Fatal("ambiguous persistence must fail")
+	}
+	pending, ok, err := store.ResolvePending(context.Background())
+	if err != nil {
+		t.Fatalf("ResolvePending: %v", err)
+	}
+	if !ok {
+		t.Fatal("server-side write was not confirmed")
+	}
+	raw, err := MarshalSnapshot(pending)
+	if err != nil {
+		t.Fatalf("MarshalSnapshot: %v", err)
+	}
+	confirmedAt := time.Unix(1_720, 0)
+	if err := state.AcceptPersisted(pending, nil, len(raw), confirmedAt); err != nil {
+		t.Fatalf("AcceptPersisted: %v", err)
+	}
+
+	if err := state.Checkpoint(context.Background(), nil, confirmedAt, store.Save); err != nil {
+		t.Fatalf("Checkpoint after delayed confirmation: %v", err)
+	}
+	persisted, err := UnmarshalSnapshot([]byte(serverState), HardMaxStateBytes)
+	if err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+	if len(persisted.Recovery) != 3 {
+		t.Fatalf("recovery=%#v, want confirmed, restarted, and existing dimensions", persisted.Recovery)
+	}
+	expiries := map[Dimension]float64{}
+	for _, recovery := range persisted.Recovery {
+		expiries[recovery.Dimension] = recovery.ExpiresAt
+	}
+	if expires := expiries[newDimension]; expires != 2_320 {
+		t.Fatalf("new recovery expiresAt=%v, want 2320", expires)
+	}
+	if expires := expiries[restartDimension]; expires != 2_320 {
+		t.Fatalf("restart recovery expiresAt=%v, want 2320", expires)
+	}
+	if expires := expiries[existingDimension]; expires != 2_000 {
+		t.Fatalf("existing recovery expiresAt=%v, want unchanged 2000", expires)
 	}
 }
 
@@ -511,6 +627,107 @@ func (s *runnerStore) ResolvePending(context.Context) (Snapshot, bool, error) {
 	return Snapshot{}, false, nil
 }
 
+func TestRunnerRuntimeFailureRemainsScrapeable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	scrapeNow := time.Now()
+	pod := deletingPod("uid", "ns", "pod", "node", scrapeNow.Add(-30*time.Second), 0)
+	firstWatcher := watch.NewRaceFreeFake()
+	var watchCalls atomic.Int32
+	client := &scriptedPodClient{
+		list: func(_ context.Context, _ metav1.ListOptions) (*corev1.PodList, error) {
+			return &corev1.PodList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "42"},
+				Items:    []corev1.Pod{pod},
+			}, nil
+		},
+		watch: func(_ context.Context, _ metav1.ListOptions) (watch.Interface, error) {
+			if watchCalls.Add(1) == 1 {
+				return firstWatcher, nil
+			}
+			return nil, errors.New("watch failed")
+		},
+	}
+	state := NewState(10*time.Minute, 15*time.Minute)
+	server := exporter.New("127.0.0.1:0")
+	server.Register(NewCollector(state, func() time.Time { return scrapeNow }))
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/metrics before initial checkpoint=%d, want 503", recorder.Code)
+	}
+	runner, err := NewRunner(client, state, &runnerStore{}, RunnerOptions{
+		PageLimit:          1_000,
+		RequestTimeout:     time.Second,
+		CheckpointInterval: 5 * time.Millisecond,
+		RetryInterval:      5 * time.Millisecond,
+		SetReady:           server.SetReady,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Run(ctx)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if watchCalls.Load() == 1 && recorder.Code == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("runner did not complete its initial checkpoint and Watch connection")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	firstWatcher.Stop()
+	deadline = time.Now().Add(time.Second)
+	for state.Snapshot(time.Now()).RefreshSuccess != 0 || watchCalls.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("runner did not report the runtime Watch failure")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("/metrics after runtime failure=%d, want 200", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "pod_terminating_reporter_refresh_success 0") {
+		t.Fatalf("/metrics missing refresh failure:\n%s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `pod_terminating_seconds{namespace="ns",pod="pod",node="node"}`) {
+		t.Fatalf("/metrics hid business rows before staleAfter:\n%s", recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("/readyz after runtime failure=%d, want initialized 200", recorder.Code)
+	}
+
+	scrapeNow = scrapeNow.Add(20 * time.Minute)
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), "pod_terminating_reporter_refresh_success 0") {
+		t.Fatalf("/metrics after staleAfter did not retain health metrics:\n%s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "pod_terminating_seconds{") {
+		t.Fatalf("/metrics retained stale business rows:\n%s", recorder.Body.String())
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
 func TestRunnerRelistsAfterExpiredResourceVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -529,43 +746,18 @@ func TestRunnerRelistsAfterExpiredResourceVersion(t *testing.T) {
 			if call == 1 {
 				watcher.Error(&apierrors.NewResourceExpired("compacted").ErrStatus)
 				watcher.Stop()
+			} else if call == 2 {
+				cancel()
 			}
 			return watcher, nil
 		},
 	}
 	state := NewState(10*time.Minute, 15*time.Minute)
 	store := &runnerStore{}
-	readyCount := 0
 	runner, err := NewRunner(client, state, store, RunnerOptions{
 		PageLimit:          1_000,
 		RequestTimeout:     time.Second,
 		CheckpointInterval: 10 * time.Millisecond,
-		SetReady: func(ready bool) {
-			if !ready {
-				return
-			}
-			readyCount++
-			if readyCount == 2 {
-				go func() {
-					deadline := time.NewTimer(time.Second)
-					defer deadline.Stop()
-					ticker := time.NewTicker(time.Millisecond)
-					defer ticker.Stop()
-					for {
-						select {
-						case <-deadline.C:
-							cancel()
-							return
-						case <-ticker.C:
-							if watchCalls.Load() >= 2 {
-								cancel()
-								return
-							}
-						}
-					}
-				}()
-			}
-		},
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
@@ -714,11 +906,12 @@ func TestRunnerSilentWatchDoesNotRefreshHealthFromCheckpointTicker(t *testing.T)
 	}
 }
 
-func TestRunnerReconnectsSilentWatchAtActivityDeadline(t *testing.T) {
+func TestRunnerReconnectsSilentWatchWithoutResettingReadiness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var watchCalls atomic.Int32
 	var sawNotReady atomic.Bool
+	var sawReady atomic.Bool
 	client := &scriptedPodClient{
 		list: func(_ context.Context, _ metav1.ListOptions) (*corev1.PodList, error) {
 			return &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "42"}}, nil
@@ -744,7 +937,9 @@ func TestRunnerReconnectsSilentWatchAtActivityDeadline(t *testing.T) {
 			SetReady: func(ready bool) {
 				if !ready {
 					sawNotReady.Store(true)
+					return
 				}
+				sawReady.Store(true)
 			},
 		},
 	)
@@ -757,8 +952,11 @@ func TestRunnerReconnectsSilentWatchAtActivityDeadline(t *testing.T) {
 	if watchCalls.Load() < 2 {
 		t.Fatalf("watch calls=%d, silent Watch was not reconnected", watchCalls.Load())
 	}
-	if !sawNotReady.Load() {
-		t.Fatal("silent Watch activity deadline did not make the exporter not ready")
+	if !sawReady.Load() {
+		t.Fatal("initial checkpoint did not open the readiness gate")
+	}
+	if sawNotReady.Load() {
+		t.Fatal("runtime Watch failure reset the startup readiness gate")
 	}
 }
 
@@ -813,14 +1011,19 @@ func TestRunnerWatchConnectionUsesClientDeadline(t *testing.T) {
 		t.Fatalf("watch calls=%d, blocked Watch connection was not retried", watchCalls.Load())
 	}
 	close(readyTransitions)
-	var sawNotReady bool
+	var sawReady, sawNotReady bool
 	for ready := range readyTransitions {
-		if !ready {
+		if ready {
+			sawReady = true
+		} else {
 			sawNotReady = true
 		}
 	}
-	if !sawNotReady {
-		t.Fatal("Watch connection attempt did not make the exporter not ready")
+	if !sawReady {
+		t.Fatal("initial checkpoint did not open the readiness gate")
+	}
+	if sawNotReady {
+		t.Fatal("runtime Watch connection failure reset the startup readiness gate")
 	}
 }
 

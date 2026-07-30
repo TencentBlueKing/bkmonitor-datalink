@@ -9,9 +9,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -70,7 +70,7 @@ func parseOptions(arguments []string) (options, commandAction, error) {
 	var parsed options
 	var showVersion bool
 	flags := flag.NewFlagSet("bkm-ksm-exporter", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+	flags.SetOutput(os.Stderr)
 	flags.StringVar(&parsed.Collector, "collector", collectorHPA, "collector profile: hpa, pod-terminating, or pod-terminating-state-init")
 	flags.StringVar(&parsed.Listen, "listen", ":8080", "metrics HTTP listen address")
 	flags.StringVar(&parsed.Kubeconfig, "kubeconfig", "", "kubeconfig for out-of-cluster runs; empty uses in-cluster config")
@@ -133,6 +133,9 @@ func parseOptions(arguments []string) (options, commandAction, error) {
 func main() {
 	parsed, action, err := parseOptions(os.Args[1:])
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		log.Fatal(err)
 	}
 	switch action {

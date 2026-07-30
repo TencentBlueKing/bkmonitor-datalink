@@ -207,8 +207,10 @@ func (s *State) Checkpoint(
 }
 
 // AcceptPersisted commits a snapshot that a readback proved was written by an
-// earlier ambiguous PATCH. The caller should immediately run Checkpoint again
-// when the current Watch snapshot has changed since that write.
+// earlier ambiguous PATCH. Recovery entries added or extended by that write
+// receive a full local hold from confirmation, when they first become
+// exposable. The caller should immediately run Checkpoint again to persist the
+// rebased deadlines and any newer Watch state.
 func (s *State) AcceptPersisted(
 	snapshot Snapshot,
 	observed map[types.UID]Observation,
@@ -227,12 +229,18 @@ func (s *State) AcceptPersisted(
 		}
 		active[dimension] = observation
 	}
-	recovery := make(map[Dimension]RecoveryDimension, len(snapshot.Recovery))
-	for _, value := range snapshot.Recovery {
-		recovery[value.Dimension] = value
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	recovery := make(map[Dimension]RecoveryDimension, len(snapshot.Recovery))
+	confirmedExpiry := float64(now.UnixNano())/float64(time.Second) + s.recoveryHold.Seconds()
+	for _, value := range snapshot.Recovery {
+		previous, exists := s.recovery[value.Dimension]
+		_, restartExtended := s.restartExtensionCandidates[value.Dimension]
+		if !exists || value.ExpiresAt > previous.ExpiresAt || (restartExtended && value.RestartExtensionUsed) {
+			value.ExpiresAt = max(value.ExpiresAt, confirmedExpiry)
+		}
+		recovery[value.Dimension] = value
+	}
 	s.active = active
 	s.recovery = recovery
 	s.restartExtensionCandidates = make(map[Dimension]struct{})

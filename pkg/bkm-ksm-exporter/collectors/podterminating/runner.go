@@ -26,7 +26,10 @@ type RunnerOptions struct {
 	RequestTimeout     time.Duration
 	CheckpointInterval time.Duration
 	RetryInterval      time.Duration
-	SetReady           func(bool)
+	// SetReady opens the startup readiness gate after the first successful
+	// checkpoint. Runtime collection health is reported by State metrics and
+	// must not close the metrics endpoint.
+	SetReady func(bool)
 }
 
 type Runner struct {
@@ -67,23 +70,21 @@ func NewRunner(client PodClient, state *State, store Persistence, options Runner
 	}, nil
 }
 
-func (r *Runner) setReady(ready bool) {
-	if r.ready == ready {
+func (r *Runner) markReady() {
+	if r.ready {
 		return
 	}
-	r.ready = ready
+	r.ready = true
 	if r.options.SetReady != nil {
-		r.options.SetReady(ready)
+		r.options.SetReady(true)
 	}
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	defer r.setReady(false)
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		r.setReady(false)
 		observed, resourceVersion, err := ListSnapshot(
 			ctx,
 			r.client,
@@ -138,7 +139,7 @@ func (r *Runner) consume(
 			return err
 		}
 		dirty = false
-		r.setReady(true)
+		r.markReady()
 		return nil
 	}
 	_ = checkpoint(time.Now())
@@ -146,7 +147,6 @@ func (r *Runner) consume(
 	timeoutSeconds := watchTimeoutSeconds(r.options.RequestTimeout)
 	activityTimeout := r.options.RequestTimeout + r.options.RetryInterval
 	for {
-		r.setReady(false)
 		watchContext, cancelWatch := context.WithTimeout(ctx, activityTimeout)
 		watcher, err := r.client.Watch(watchContext, metav1.ListOptions{
 			ResourceVersion:     resourceVersion,
@@ -156,11 +156,9 @@ func (r *Runner) consume(
 		if err != nil {
 			cancelWatch()
 			if apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
-				r.setReady(false)
 				return true, err
 			}
 			r.state.MarkFailure()
-			r.setReady(false)
 			if !waitForRetry(ctx, r.options.RetryInterval) {
 				return false, nil
 			}
@@ -168,7 +166,6 @@ func (r *Runner) consume(
 		}
 		if !dirty {
 			r.state.MarkHealthy(time.Now())
-			r.setReady(true)
 		}
 
 		activityTimer := time.NewTimer(activityTimeout)
@@ -183,7 +180,6 @@ func (r *Runner) consume(
 			case event, ok := <-watcher.ResultChan():
 				if !ok {
 					r.state.MarkFailure()
-					r.setReady(false)
 					reconnect = true
 					continue
 				}
@@ -193,12 +189,10 @@ func (r *Runner) consume(
 					stopTimer(activityTimer)
 					watcher.Stop()
 					cancelWatch()
-					r.setReady(false)
 					return true, eventErr
 				}
 				if eventErr != nil {
 					r.state.MarkFailure()
-					r.setReady(false)
 					reconnect = true
 					continue
 				}
@@ -206,7 +200,6 @@ func (r *Runner) consume(
 				if event.Type == watch.Bookmark {
 					if !dirty {
 						r.state.MarkHealthy(time.Now())
-						r.setReady(true)
 					}
 					continue
 				}
@@ -215,13 +208,11 @@ func (r *Runner) consume(
 					stopTimer(activityTimer)
 					watcher.Stop()
 					cancelWatch()
-					r.setReady(false)
 					return true, applyErr
 				}
 				dirty = dirty || changed
 				if !dirty {
 					r.state.MarkHealthy(time.Now())
-					r.setReady(true)
 				}
 			case now := <-ticker.C:
 				if !dirty && !r.state.HasExpiredRecovery(now) {
@@ -230,11 +221,9 @@ func (r *Runner) consume(
 				dirty = true
 				if checkpointErr := checkpoint(now); checkpointErr != nil {
 					r.state.MarkFailure()
-					r.setReady(false)
 				}
 			case <-activityTimer.C:
 				r.state.MarkFailure()
-				r.setReady(false)
 				reconnect = true
 			}
 		}

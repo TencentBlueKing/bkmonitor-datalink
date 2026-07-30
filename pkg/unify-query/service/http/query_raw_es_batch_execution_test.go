@@ -11,6 +11,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"runtime"
 	"sync"
@@ -66,7 +67,9 @@ func TestRawQueryDispatcherPositiveLimit(t *testing.T) {
 	baselineGoroutines := runtime.NumGoroutine()
 	done := make(chan struct{})
 	go func() {
-		rawQueryDispatcher{limit: limit}.run(tasks)
+		dispatcher := newRawQueryDispatcher(limit)
+		defer dispatcher.close()
+		dispatcher.run(tasks)
 		close(done)
 	}()
 
@@ -128,7 +131,9 @@ func TestRawQueryDispatcherReturnsWhenTasksObserveContextCancellation(t *testing
 
 	done := make(chan struct{})
 	go func() {
-		rawQueryDispatcher{limit: limit}.run(tasks)
+		dispatcher := newRawQueryDispatcher(limit)
+		defer dispatcher.close()
+		dispatcher.run(tasks)
 		close(done)
 	}()
 
@@ -166,7 +171,9 @@ func TestRawQueryDispatcherNonPositiveIsUnlimited(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		rawQueryDispatcher{limit: 0}.run(tasks)
+		dispatcher := newRawQueryDispatcher(0)
+		defer dispatcher.close()
+		dispatcher.run(tasks)
 		close(done)
 	}()
 
@@ -349,19 +356,21 @@ func TestExecuteQueryRawWithESBatchSharesLimitAcrossExecutionKinds(t *testing.T)
 		resultCh <- queryResult{total: total, list: list, err: err}
 	}()
 
-	firstKinds := make([]string, 0, limit)
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	for range limit {
 		select {
-		case kind := <-phaseOneStarted:
-			firstKinds = append(firstKinds, kind)
+		case <-phaseOneStarted:
 		case <-timer.C:
 			t.Fatal("mixed preparation and direct execution did not reach the shared limit")
 		}
 	}
-	assert.ElementsMatch(t, []string{"prepare", "direct"}, firstKinds)
 	assert.Equal(t, int32(limit), active.Load())
+	select {
+	case kind := <-phaseOneStarted:
+		t.Fatalf("%s execution exceeded the shared preparation and direct limit", kind)
+	case <-time.After(100 * time.Millisecond):
+	}
 	phaseOneReleaseOnce.Do(func() {
 		close(phaseOneRelease)
 	})
@@ -391,6 +400,209 @@ func TestExecuteQueryRawWithESBatchSharesLimitAcrossExecutionKinds(t *testing.T)
 	assert.EqualValues(t, len(routes), mappingCalls.Load())
 	assert.EqualValues(t, 2, singleSearchCalls.Load())
 	assert.EqualValues(t, 2, batchCalls.Load())
+}
+
+func TestExecuteQueryRawWithESBatchDoesNotBlockHealthyPreGroup(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: "bkcc__2"})
+
+	const (
+		limit           = 4
+		blockedESURL    = "http://127.0.0.1:93014"
+		healthyESURL    = "http://127.0.0.1:93015"
+		blockedStorage  = "query-raw-es-batch-blocked-pre-group"
+		healthyStorage  = "query-raw-es-batch-healthy-pre-group"
+		traceID         = "00000000000000000000000000000042"
+		blockedFirst    = "trace_blocked_first"
+		blockedSecond   = "trace_blocked_second"
+		healthyFirst    = "trace_healthy_first"
+		healthySecond   = "trace_healthy_second"
+		mappingResponse = `{"%s":{"settings":{},"mappings":{"properties":{"start_time":{"type":"date"},"trace_id":{"type":"keyword"}}}}}`
+	)
+	oldLimit := QueryMaxRouting
+	oldSettings := queryRawESBatchSettingsSnapshot.Load()
+	QueryMaxRouting = limit
+	queryRawESBatchSettingsSnapshot.Store(&queryRawESBatchSettings{
+		maxMembers:            16,
+		maxBodyBytes:          1 << 20,
+		maxConcurrentSearches: 4,
+	})
+	t.Cleanup(func() {
+		QueryMaxRouting = oldLimit
+		queryRawESBatchSettingsSnapshot.Store(oldSettings)
+	})
+
+	for storageID, address := range map[string]string{
+		blockedStorage: blockedESURL,
+		healthyStorage: healthyESURL,
+	} {
+		tsdb.SetStorage(storageID, &tsdb.Storage{
+			Type:    metadata.ElasticsearchStorageType,
+			Address: address,
+		})
+	}
+
+	blockedMappingStarted := make(chan struct{}, 2)
+	healthyMappingFinished := make(chan struct{}, 2)
+	blockedRelease := make(chan struct{})
+	var blockedReleaseOnce sync.Once
+	t.Cleanup(func() {
+		blockedReleaseOnce.Do(func() {
+			close(blockedRelease)
+		})
+	})
+
+	for _, index := range []string{blockedFirst, blockedSecond} {
+		index := index
+		httpmock.RegisterResponder(
+			http.MethodGet,
+			blockedESURL+"/"+index,
+			func(*http.Request) (*http.Response, error) {
+				blockedMappingStarted <- struct{}{}
+				<-blockedRelease
+				return httpmock.NewStringResponse(
+					http.StatusOK,
+					fmt.Sprintf(mappingResponse, index),
+				), nil
+			},
+		)
+	}
+	for _, index := range []string{healthyFirst, healthySecond} {
+		index := index
+		httpmock.RegisterResponder(
+			http.MethodGet,
+			healthyESURL+"/"+index,
+			func(*http.Request) (*http.Response, error) {
+				healthyMappingFinished <- struct{}{}
+				return httpmock.NewStringResponse(
+					http.StatusOK,
+					fmt.Sprintf(mappingResponse, index),
+				), nil
+			},
+		)
+	}
+
+	batchResponse := func(firstIndex, secondIndex string) string {
+		return `{"responses":[` +
+			`{"status":200,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"` + firstIndex + `","_id":"first","_source":{"start_time":2,"trace_id":"` + traceID + `"}}]}},` +
+			`{"status":200,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"` + secondIndex + `","_id":"second","_source":{"start_time":1,"trace_id":"` + traceID + `"}}]}}` +
+			`]}`
+	}
+	healthyBatchStarted := make(chan struct{})
+	var (
+		blockedBatchCalls atomic.Int32
+		healthyBatchCalls atomic.Int32
+		singleSearchCalls atomic.Int32
+		healthyBatchOnce  sync.Once
+	)
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		blockedESURL+"/_msearch?max_concurrent_searches=4",
+		func(*http.Request) (*http.Response, error) {
+			blockedBatchCalls.Add(1)
+			return httpmock.NewStringResponse(
+				http.StatusOK,
+				batchResponse(blockedFirst, blockedSecond),
+			), nil
+		},
+	)
+	httpmock.RegisterResponder(
+		http.MethodGet,
+		healthyESURL+"/_msearch?max_concurrent_searches=4",
+		func(*http.Request) (*http.Response, error) {
+			healthyBatchCalls.Add(1)
+			healthyBatchOnce.Do(func() {
+				close(healthyBatchStarted)
+			})
+			return httpmock.NewStringResponse(
+				http.StatusOK,
+				batchResponse(healthyFirst, healthySecond),
+			), nil
+		},
+	)
+	for esURL, indices := range map[string][]string{
+		blockedESURL: {blockedFirst, blockedSecond},
+		healthyESURL: {healthyFirst, healthySecond},
+	} {
+		for _, index := range indices {
+			httpmock.RegisterResponder(
+				http.MethodPost,
+				esURL+"/"+index+"/_search",
+				func(*http.Request) (*http.Response, error) {
+					singleSearchCalls.Add(1)
+					return httpmock.NewStringResponse(
+						http.StatusInternalServerError,
+						`{"error":{"type":"unexpected_single_search"}}`,
+					), nil
+				},
+			)
+		}
+	}
+
+	routes := []rawESBatchIntegrationRoute{
+		{referenceName: "a", tableID: "trace.blocked.first", index: blockedFirst},
+		{referenceName: "b", tableID: "trace.blocked.second", index: blockedSecond},
+		{referenceName: "c", tableID: "trace.healthy.first", index: healthyFirst},
+		{referenceName: "d", tableID: "trace.healthy.second", index: healthySecond},
+	}
+	queryTs := rawESBatchIntegrationQuery(blockedStorage, traceID, routes...)
+	queryTs.IsESBatch = true
+	queryTs.TsDBMap["c"][0].StorageID = healthyStorage
+	queryTs.TsDBMap["d"][0].StorageID = healthyStorage
+
+	type queryResult struct {
+		total int64
+		list  []map[string]any
+		err   error
+	}
+	resultCh := make(chan queryResult, 1)
+	go func() {
+		total, list, _, _, err := queryRawWithInstance(ctx, queryTs)
+		resultCh <- queryResult{total: total, list: list, err: err}
+	}()
+
+	for range 2 {
+		select {
+		case <-blockedMappingStarted:
+		case <-time.After(time.Second):
+			t.Fatal("blocked pre-group mapping did not start")
+		}
+	}
+	for range 2 {
+		select {
+		case <-healthyMappingFinished:
+		case <-time.After(time.Second):
+			t.Fatal("healthy pre-group mapping did not finish")
+		}
+	}
+
+	healthyStartedBeforeBlockedRelease := false
+	select {
+	case <-healthyBatchStarted:
+		healthyStartedBeforeBlockedRelease = true
+	case <-time.After(500 * time.Millisecond):
+	}
+	blockedReleaseOnce.Do(func() {
+		close(blockedRelease)
+	})
+
+	select {
+	case result := <-resultCh:
+		require.NoError(t, result.err)
+		assert.EqualValues(t, len(routes), result.total)
+		assert.Len(t, result.list, len(routes))
+	case <-time.After(3 * time.Second):
+		t.Fatal("query execution did not finish")
+	}
+	require.True(
+		t,
+		healthyStartedBeforeBlockedRelease,
+		"healthy _msearch did not start before the blocked pre-group was released",
+	)
+	assert.EqualValues(t, 1, blockedBatchCalls.Load())
+	assert.EqualValues(t, 1, healthyBatchCalls.Load())
+	assert.Zero(t, singleSearchCalls.Load())
 }
 
 func TestStableRawESBatchQueriesIgnoresRouteInputOrder(t *testing.T) {

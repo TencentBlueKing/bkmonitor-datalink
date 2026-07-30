@@ -8,7 +8,7 @@
 | 目标 Trace 归因 | 已完成 |
 | 脱敏运行负载取证 | 已完成 |
 | 隔离 ES 语义实验 | 已完成 |
-| 功能实现 | 请求级控制与 APM Trace 调用已完成，未提交 |
+| 功能实现 | 请求级控制与 APM Trace 调用已完成，已提交 UQ PR #1424 与 APM PR #11722，未部署 |
 | 本地自动化验证 | 请求级契约、批处理、golden、race 和目标包 vet 已验证 |
 | 测试环境验收 | 待部署后执行 |
 | 目标环境验收 | 待测试环境通过后执行 |
@@ -138,8 +138,9 @@ output 来源升级为 `production_log`。不得把源码形态、本地 handler
 
 ## 5. 本地实现与自动化验证
 
-截至 2026-07-29，本地工作树已把 `_msearch` 路径调整为请求级 `is_es_batch` 控制，并由
-APM `TraceQuery.query_by_trace_ids` 显式启用；代码尚未提交、部署或执行目标环境流量。
+截至 2026-07-30，本地工作树已把 `_msearch` 路径调整为请求级 `is_es_batch` 控制，并由
+APM `TraceQuery.query_by_trace_ids` 显式启用；代码已提交 UQ PR #1424 与 APM PR #11722，
+尚未部署或执行目标环境流量。
 下列证据只能证明本地代码契约，不能外推为目标 ES 集群兼容性或性能收益。
 
 ### 5.1 已通过门禁
@@ -154,6 +155,7 @@ APM `TraceQuery.query_by_trace_ids` 显式启用；代码尚未提交、部署�
 - [x] 同一 fixture 在原逐 RT 路径的两个 `_search` 与一个 `_msearch` 下，严格排序并裁剪后的 list、`total`、options、result table ID 和 status 精确等价；
 - [x] 200 个任务在 `QueryMaxRouting=4` 时使用有界 dispatcher，最大外部 I/O 为 4，取消后不保留 O(N) 等待 goroutine；
 - [x] preparation、普通 single 和 batch 混合执行时共享同一个 `QueryMaxRouting` 上限；
+- [x] 每个 ES 预分组独立协调准备和执行；阻塞预分组不会阻塞健康预分组发出 `_msearch`；
 - [x] `QueryMaxRouting=1` 时 missing-mapping 的首次 child、空检查和单成员 retry 串行完成，最大 inflight 为 1；
 - [x] 请求 context 取消会释放阻塞中的 batch 请求并关闭生产者通道；
 - [x] batching 功能调整前，现有完整 query golden 数据集在原路径下通过；
@@ -167,11 +169,11 @@ APM `TraceQuery.query_by_trace_ids` 显式启用；代码尚未提交、部署�
 
 ```bash
 go test ./query/structured ./metric ./tsdb/elasticsearch -count=1
-go test ./service/http -run 'RawESBatch|QueryRawESBatch|QueryRawCharacterization|TestExecuteQueryRawWithESBatchSharesLimitAcrossExecutionKinds' -count=1
+go test ./service/http -run 'RawESBatch|QueryRawESBatch|QueryRawCharacterization|TestExecuteQueryRawWithESBatch' -count=1
 go test ./internal/online_cases/query_golden_cases -count=1
 go test ./service/http -run 'TestOnlineQueryGoldenCases|TestOnlineQueryGoldenSegmentedRouteControlsFanOut|TestCanonicalOnlineQueryGoldenOutputs' -count=1
 go test -race ./tsdb/elasticsearch -run 'RawBatch|RawQuery|MissingMapping' -count=1
-go test -race ./service/http -run 'RawESBatch|QueryRawESBatch|QueryRawCharacterization|TestExecuteQueryRawWithESBatchSharesLimitAcrossExecutionKinds' -count=1
+go test -race ./service/http -run 'RawESBatch|QueryRawESBatch|QueryRawCharacterization|TestExecuteQueryRawWithESBatch' -count=1
 go vet ./service/http ./tsdb/elasticsearch ./metric ./query/structured
 ```
 

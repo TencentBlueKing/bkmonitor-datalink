@@ -10,9 +10,9 @@
 package featureFlag
 
 const (
-	DataSourceConfigPath = "feature_flag.data_source"
+	StorageSourceConfigPath = "storage.source"
 )
 
 var (
-	DataSource string // "consul" 或 "redis"，默认为 "consul"
+	DataSource string // 与 Storage 共用 storage.source，可选 consul 或 redis
 )

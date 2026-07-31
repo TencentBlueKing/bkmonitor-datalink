@@ -18,11 +18,11 @@ import (
 )
 
 func setDefaultConfig() {
-	viper.SetDefault(DataSourceConfigPath, "consul")
+	viper.SetDefault(StorageSourceConfigPath, "consul")
 }
 
 func LoadConfig() {
-	DataSource = viper.GetString(DataSourceConfigPath)
+	DataSource = viper.GetString(StorageSourceConfigPath)
 	if DataSource != "consul" && DataSource != "redis" {
 		DataSource = "consul" // 默认使用 consul，处理配置异常状况
 	}

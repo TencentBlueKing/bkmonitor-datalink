@@ -7,12 +7,21 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package featureFlag
+package utils
 
-const (
-	DataSourceConfigPath = "feature_flag.data_source"
-)
+import "testing"
 
-var (
-	DataSource string // "consul" 或 "redis"，默认为 "consul"
-)
+func TestHashItDeterministic(t *testing.T) {
+	first := map[string]any{
+		"2": map[string]string{"type": "elasticsearch", "address": "http://es"},
+		"1": map[string]string{"type": "influxdb", "address": "http://influx"},
+	}
+	second := map[string]any{
+		"1": map[string]string{"address": "http://influx", "type": "influxdb"},
+		"2": map[string]string{"address": "http://es", "type": "elasticsearch"},
+	}
+
+	if HashItDeterministic(first) != HashItDeterministic(second) {
+		t.Fatal("equivalent maps must produce the same deterministic hash")
+	}
+}

@@ -12,8 +12,8 @@ package tsdb
 import (
 	"context"
 	"sync"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -23,6 +23,8 @@ type Service struct {
 	cancelFunc context.CancelFunc
 	wg         *sync.WaitGroup
 }
+
+var storageReloadLock sync.Mutex
 
 // Type
 func (s *Service) Type() string {
@@ -75,45 +77,71 @@ func (s *Service) Close() {
 
 // loopReloadStorage
 func (s *Service) loopReloadStorage(ctx context.Context) error {
-	err := s.reloadStorage()
+	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
+	provider := getStorageProvider()
+	watchCh, err := provider.WatchStorageInfo(ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "reload storage failed")
-		return err
+		log.Errorf(context.TODO(), "initial watch storage failed, will retry: %v", err)
 	}
-	ch, err := consul.WatchStorageInfo(ctx)
-	if err != nil {
-		return err
+	if err := s.reloadStorage(); err != nil {
+		log.Errorf(context.TODO(), "initial reload storage failed, will retry: %v", err)
 	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		reconcileTicker := time.NewTicker(time.Minute)
+		defer reconcileTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "prometheus service close success")
+				log.Warnf(context.TODO(), "storage watch loop exit")
 				return
-			case <-ch:
+			case _, ok := <-watchCh:
+				if !ok {
+					log.Warnf(context.TODO(), "storage watch channel closed, continue with periodic reconcile")
+					watchCh = nil
+					continue
+				}
 				log.Debugf(context.TODO(), "get storage info changed notify")
-				err = s.reloadStorage()
-				if err != nil {
-					log.Errorf(context.TODO(), "reload storage failed %v", err)
+				reloadErr := s.reloadStorage()
+				if reloadErr != nil {
+					log.Errorf(context.TODO(), "reload storage failed %v", reloadErr)
+				}
+			case <-reconcileTicker.C:
+				if watchCh == nil {
+					newWatchCh, watchErr := provider.WatchStorageInfo(ctx)
+					if watchErr != nil {
+						log.Errorf(context.TODO(), "retry watch storage failed %v", watchErr)
+					} else {
+						watchCh = newWatchCh
+					}
+				}
+				if reloadErr := s.reloadStorage(); reloadErr != nil {
+					log.Errorf(context.TODO(), "periodic storage reconcile failed %v", reloadErr)
 				}
 			}
 		}
 	}()
+
 	return nil
 }
 
 // reloadStorage 加载 storage 实例
 func (s *Service) reloadStorage() error {
-	consulData, err := consul.GetTsDBStorageInfo()
+	return ReloadStorage(s.ctx)
+}
+
+// ReloadStorage 串行完成配置读取与运行时替换，供 watcher、周期调和和诊断强刷共用。
+func ReloadStorage(ctx context.Context) error {
+	storageReloadLock.Lock()
+	defer storageReloadLock.Unlock()
+
+	// 使用接口多态，根据配置自动选择 Consul 或 Redis
+	provider := getStorageProvider()
+	storageData, err := provider.GetTsDBStorageInfo(ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "get storage info failed %v", err)
-		return err
-	}
-	hash := consul.HashIt(consulData)
-	if hash == inner.StorageMapHash() {
-		log.Debugf(context.TODO(), "storage hash not changed")
 		return err
 	}
 
@@ -137,7 +165,12 @@ func (s *Service) reloadStorage() error {
 			MaxSize:    EsMaxSize,
 		},
 	}
-	err = inner.ReloadTsDBStorage(s.ctx, hash, consulData, options)
+	hash := inner.StorageConfigHash(storageData, options)
+	if hash == inner.StorageMapHash() {
+		log.Debugf(context.TODO(), "storage and query options hash not changed")
+		return nil
+	}
+	err = inner.ReloadTsDBStorage(ctx, storageData, options)
 	if err != nil {
 		log.Errorf(context.TODO(), "reload storage failed %v", err)
 		return err

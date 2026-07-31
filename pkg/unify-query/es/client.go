@@ -11,6 +11,7 @@ package es
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 
@@ -20,7 +21,7 @@ import (
 )
 
 type Client interface {
-	Search(body string, indexNames ...string) (string, error)
+	Search(ctx context.Context, body string, indexNames ...string) (string, error)
 	Aliases() (string, error)
 	AliasWithIndex(index string) (string, error)
 	Indices() (string, error)
@@ -52,20 +53,38 @@ var NewClient = func(info *ESInfo) (Client, error) {
 }
 
 // Search es 接口 _search 代理
-func (c *ESClient) Search(body string, indexNames ...string) (string, error) {
-	c.tokenChan <- 1
+func (c *ESClient) Search(ctx context.Context, body string, indexNames ...string) (string, error) {
+	select {
+	case c.tokenChan <- 1:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	defer func() {
 		<-c.tokenChan
 	}()
 	es := c.client
-	result, err := es.Search(es.Search.WithIndex(indexNames...), es.Search.WithBody(strings.NewReader(body)))
+	result, err := es.Search(
+		es.Search.WithContext(ctx),
+		es.Search.WithIndex(indexNames...),
+		es.Search.WithBody(strings.NewReader(body)),
+		es.Search.WithIgnoreUnavailable(true),
+		es.Search.WithAllowNoIndices(true),
+	)
 	if err != nil {
-		log.Errorf(context.TODO(), "search index:%v,body:%s failed for:%s", indexNames, body, err)
+		log.Errorf(ctx, "search index:%v,body:%s failed for:%s", indexNames, body, err)
 		return "", err
 	}
+	defer result.Body.Close()
+
 	res, err := io.ReadAll(result.Body)
-	log.Debugf(context.TODO(), "search index:%v,body:%s get result:%s", indexNames, body, res)
-	return string(res), err
+	if err != nil {
+		return "", err
+	}
+	if result.IsError() {
+		return "", fmt.Errorf("es search failed: status=%s body=%s", result.Status(), res)
+	}
+	log.Debugf(ctx, "search index:%v,body:%s get result:%s", indexNames, body, res)
+	return string(res), nil
 }
 
 // Aliases 获取 alias
@@ -85,7 +104,8 @@ func (c *ESClient) Aliases() (string, error) {
 	return string(res), err
 }
 
-// AliasWithIndex 通过 index 获取 alias
+// AliasWithIndex 通过 index 获取 alias。
+// Deprecated: 服务查询链路已不再调用该接口。
 func (c *ESClient) AliasWithIndex(index string) (string, error) {
 	c.tokenChan <- 1
 	defer func() {

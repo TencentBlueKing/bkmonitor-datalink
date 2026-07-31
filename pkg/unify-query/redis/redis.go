@@ -20,6 +20,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+var (
+	basePath = "bkmonitorv3:unify-query"
+	dataPath = "data"
+)
+
 var globalInstance *Instance
 
 var lock *sync.RWMutex
@@ -48,18 +53,24 @@ func Client() goRedis.UniversalClient {
 	return client
 }
 
-func SetInstance(ctx context.Context, serviceName string, options *goRedis.UniversalOptions) error {
+func SetInstance(ctx context.Context, kvBasePath, serviceName string, options *goRedis.UniversalOptions) error {
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
+	if kvBasePath != "" {
+		basePath = kvBasePath
+	}
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
+		replaceStorageClient(nil, basePath)
 		err = metadata.NewMessage(
 			metadata.MsgQueryRedis,
 			"创建Redis实例失败",
 		).Error(ctx, err)
+		return err
 	}
-	return err
+	replaceStorageClient(globalInstance.client, basePath)
+	return nil
 }
 
 var ServiceName = func() string {

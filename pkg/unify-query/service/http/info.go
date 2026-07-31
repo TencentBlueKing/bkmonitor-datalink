@@ -20,6 +20,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	tsdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	innerTsdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -266,6 +270,21 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 
 func HandleTsDBPrint(c *gin.Context) {
 	ctx := c.Request.Context()
+	res := ""
+	refresh := c.Query("r")
+
+	if refresh != "" {
+		res += "refresh tsdb storage\n"
+		if err := tsdbService.ReloadStorage(ctx); err != nil {
+			res += fmt.Sprintf("reload tsdb storage err %s\n", err.Error())
+		}
+		res += fmt.Sprintln("-------------------------------")
+	}
+
+	// 从内存中打印存储配置信息
+	res += tsdb.Print() + "\n"
+	res += fmt.Sprintln("-----------------------------------")
+
 	spaceId := c.Query("space_id")
 	tableId := structured.TableID(c.Query("table_id"))
 	fieldName := c.Query("field_name")
@@ -323,5 +342,101 @@ func HandleTsDBPrint(c *gin.Context) {
 			}
 		}
 	}
-	c.String(200, strings.Join(results, "\n\n"))
+	res += strings.Join(results, "\n\n")
+	c.String(200, res)
+}
+
+// HandleStorage 打印存储配置信息，refresh 不为空则强制刷新
+func HandleStorage(c *gin.Context) {
+	ctx := c.Request.Context()
+	res := ""
+	refresh := c.Query("r")
+	source := c.Query("source")
+	configuredSource := tsdbService.StorageSource
+	if configuredSource != "redis" {
+		configuredSource = "consul"
+	}
+	if source == "" {
+		source = configuredSource
+	}
+	if source != "redis" {
+		source = "consul"
+	}
+	if refresh != "" && source != configuredSource {
+		c.String(
+			400,
+			"refresh source %s does not match configured storage source %s",
+			source,
+			configuredSource,
+		)
+		return
+	}
+
+	// 使用接口多态，根据 source 参数自动选择 Consul 或 Redis
+	provider := getStorageInfoProvider(source)
+	storageName := provider.GetStorageName()
+
+	var data map[string]any
+	var err error
+	var fromMemory bool
+
+	if refresh != "" {
+		res += "refresh storage info\n"
+		path := provider.GetStoragePath()
+		res += fmt.Sprintf("%s storage path: %s\n", storageName, path)
+		data, err = provider.GetStorageInfo(ctx)
+		if err != nil {
+			res += fmt.Sprintf("%s get storage info error: %s\n", storageName, err.Error())
+		} else if data == nil {
+			res += fmt.Sprintf("%s get storage info is empty\n", storageName)
+		} else {
+			// 展示完整配置；运行时刷新走与 watcher 相同的串行读取和替换入口。
+			if err = tsdbService.ReloadStorage(ctx); err != nil {
+				res += fmt.Sprintf("reload storage err %s\n", err.Error())
+			}
+		}
+		res += fmt.Sprintln("-------------------------------")
+	} else {
+		// 从内存中获取存储配置
+		// 注意：当 Redis pub 发布配置变更时，tsdb.Service 的 loopReloadStorage 会自动监听并更新内存
+		// 因此这里从内存读取的配置已经是最新的（无需手动 refresh）
+		memoryStorage := innerTsdb.GetAllStorageFromMemory()
+		// 转换为 map[string]any 格式，与 provider.GetStorageInfo(ctx) 的格式保持一致
+		data = make(map[string]any, len(memoryStorage))
+		for k, v := range memoryStorage {
+			data[k] = v
+		}
+		fromMemory = true
+	}
+
+	// 打印存储配置信息
+	if err != nil {
+		res += fmt.Sprintf("get storage info from %s error: %s\n", storageName, err.Error())
+	} else {
+		sourceDesc := "memory"
+		if !fromMemory {
+			sourceDesc = storageName
+		}
+		res += fmt.Sprintf("storage info from %s (count: %d):\n", sourceDesc, len(data))
+		for storageID, value := range data {
+			var address, storageType, username string
+			switch s := value.(type) {
+			case *consul.Storage:
+				address, storageType, username = s.Address, s.Type, s.Username
+			case *redis.Storage:
+				address, storageType, username = s.Address, s.Type, s.Username
+			case *innerTsdb.Storage:
+				// 从内存获取的 *tsdb.Storage
+				address, storageType, username = s.Address, s.Type, s.Username
+			default:
+				res += fmt.Sprintf("  %s: unsupported storage type: %T\n", storageID, value)
+				continue
+			}
+			res += fmt.Sprintf("  %s: address=%s, type=%s, username=%s\n",
+				storageID, address, storageType, username) // 打印存储配置,只打印地址、类型、用户名
+		}
+	}
+	res += fmt.Sprintln("-----------------------------------")
+
+	c.String(200, res)
 }

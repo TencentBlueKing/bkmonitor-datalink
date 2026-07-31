@@ -189,6 +189,12 @@ func (i *Instance) GetDataWithPrefix(prefix string) (api.KVPairs, error) {
 	return result, err
 }
 
+// GetDataWithPrefixContext 获取指定前缀的数据，并允许调用方取消正在进行的 Consul 请求。
+func (i *Instance) GetDataWithPrefixContext(ctx context.Context, prefix string) (api.KVPairs, error) {
+	result, _, err := i.client.KV.List(prefix, (&api.QueryOptions{}).WithContext(ctx))
+	return result, err
+}
+
 // GetData
 func (i *Instance) GetData(path string) (*api.KVPair, error) {
 	result, _, err := i.client.KV.Get(path, nil)

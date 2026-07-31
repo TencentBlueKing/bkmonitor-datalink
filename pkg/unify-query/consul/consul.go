@@ -95,6 +95,11 @@ var GetDataWithPrefix = func(prefix string) (api.KVPairs, error) {
 	return globalInstance.GetDataWithPrefix(prefix)
 }
 
+// GetDataWithPrefixContext 通过前缀获取 KV 列表，并传递取消信号。
+var GetDataWithPrefixContext = func(ctx context.Context, prefix string) (api.KVPairs, error) {
+	return globalInstance.GetDataWithPrefixContext(ctx, prefix)
+}
+
 // GetKVData 通过 path 路径获取 value
 var GetKVData = func(path string) ([]byte, error) {
 	res, err := globalInstance.GetData(path)

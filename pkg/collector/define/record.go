@@ -44,6 +44,7 @@ const (
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
 	SourceLogPush     = "logpush"
+	SourceDatadogRum  = "datadogrum"
 
 	KeyToken        = "X-BK-TOKEN"
 	KeyDataID       = "X-BK-DATA-ID"
@@ -73,6 +74,7 @@ const (
 	RecordBeat           RecordType = "beat"
 	RecordTars           RecordType = "tars"
 	RecordLogPush        RecordType = "logpush"
+	RecordDatadogRum     RecordType = "datadogrum"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型

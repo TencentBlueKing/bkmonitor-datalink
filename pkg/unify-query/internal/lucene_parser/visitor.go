@@ -408,7 +408,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.String()))
+			value := normalizeStringConditionValue(v.Start.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		if v.End != nil {
 			o := "<"
@@ -416,7 +417,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.String()))
+			value := normalizeStringConditionValue(v.End.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
@@ -437,8 +439,11 @@ func (n *ConditionNode) String() string {
 		value = n.value.String()
 	}
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
+		value = escapeSQLStringValue(value)
+	} else if _, ok := n.value.(*StringNode); ok {
+		value = normalizeStringConditionValue(value, false)
+		value = escapeSQLStringValue(value)
 	}
 
 	switch op {
@@ -473,6 +478,10 @@ func (n *ConditionNode) String() string {
 	}
 
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func escapeSQLStringValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(value)
 }
 
 // nonEmptyFieldSQL 渲染 SQL/Doris 路径的“字段存在且不为空字符串”条件，用于 NOT field:"" 兼容语义。
@@ -572,8 +581,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
 	}
 
 	if field == "_exists_" {
@@ -594,6 +602,9 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	if n.Option.FieldsMap != nil {
 		fieldOption = n.Option.FieldsMap.Field(field)
 	}
+	if _, ok := n.value.(*StringNode); ok && !n.isQuoted {
+		value = normalizeStringConditionValue(value, false)
+	}
 
 	if n.op != nil {
 		op = n.op.String()
@@ -609,12 +620,14 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *RangeNode:
 		cq := elastic.NewRangeQuery(field)
 		if cv.Start != nil {
-			cq.From(realValue(cv.Start))
+			value := normalizeStringConditionValue(cv.Start.String(), false)
+			cq.From(realStringValue(value))
 		}
 		cq.IncludeLower(cv.IsIncludeStart)
 
 		if cv.End != nil {
-			cq.To(realValue(cv.End))
+			value := normalizeStringConditionValue(cv.End.String(), false)
+			cq.To(realStringValue(value))
 		}
 		cq.IncludeUpper(cv.IsIncludeEnd)
 		if cv.Boost != "" {
@@ -655,13 +668,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *StringNode:
 		switch op {
 		case ">":
-			result = elastic.NewRangeQuery(field).Gt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gt(realStringValue(value))
 		case ">=":
-			result = elastic.NewRangeQuery(field).Gte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gte(realStringValue(value))
 		case "<":
-			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lt(realStringValue(value))
 		case "<=":
-			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lte(realStringValue(value))
 		case "!=":
 			notEqual = true
 			if fieldOption.IsAnalyzed {

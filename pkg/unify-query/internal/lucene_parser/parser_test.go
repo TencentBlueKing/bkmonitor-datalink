@@ -75,6 +75,42 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"term":{"name":"test"}}`,
 		},
 		{
+			name:  "unquoted escaped string",
+			input: `name:bk\-log\-search\-api`,
+			sql:   "`name` = 'bk-log-search-api'",
+			dsl:   `{"term":{"name":"bk-log-search-api"}}`,
+		},
+		{
+			name:  "unquoted escaped backslash",
+			input: `name:hello\\world`,
+			sql:   "`name` = 'hello\\\\world'",
+			dsl:   `{"term":{"name":"hello\\world"}}`,
+		},
+		{
+			name:  "unquoted escaped apostrophe",
+			input: `name:foo\'bar`,
+			sql:   "`name` = 'foo''bar'",
+			dsl:   `{"term":{"name":"foo'bar"}}`,
+		},
+		{
+			name:  "quoted escaped trailing backslash",
+			input: `name:"foo\\"`,
+			sql:   "`name` = 'foo\\\\'",
+			dsl:   `{"term":{"name":"foo\\"}}`,
+		},
+		{
+			name:  "analyzed unquoted escaped string",
+			input: `log:foo\+bar`,
+			sql:   "`log` MATCH_PHRASE 'foo+bar'",
+			dsl:   `{"match_phrase":{"log":{"query":"foo+bar"}}}`,
+		},
+		{
+			name:  "unquoted escaped range comparison",
+			input: `name:>foo\-bar`,
+			sql:   "`name` > 'foo-bar'",
+			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+		{
 			name:  "one word",
 			input: "test",
 			sql:   "`log` MATCH_PHRASE 'test'",
@@ -130,6 +166,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
+			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
+		},
+		{
+			name:  "unquoted escaped string range",
+			input: `name:[foo\-bar TO zoo\-bar]`,
+			sql:   "`name` >= 'foo-bar' AND `name` <= 'zoo-bar'",
+			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":true,"include_upper":true,"to":"zoo-bar"}}}`,
+		},
+		{
+			name:  "unquoted escaped date range",
+			input: `timestamp:[2023\-01\-01 TO 2023\-12\-31]`,
 			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
 			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
 		},
@@ -582,14 +630,14 @@ func TestLuceneParser(t *testing.T) {
 		"match and time range with quote": {
 			q: "message: test\\ node AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test\\ node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
-			sql: "`message` MATCH_PHRASE 'test\\ node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"match and time range": {
 			q: "message: test\\ node AND datetime: [2020-01-01T00:00:00 TO 2020-12-31T00:00:00]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test\\ node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
-			sql: "`message` MATCH_PHRASE 'test\\ node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
@@ -664,7 +712,7 @@ func TestLuceneParser(t *testing.T) {
 		"转义符号支持": {
 			q:   `reading \"remove\"`,
 			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"reading"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\\\"remove\\\""}}]}}`,
-			sql: "`log` MATCH_PHRASE 'reading' OR `log` MATCH_PHRASE '\\\"remove\\\"'",
+			sql: "`log` MATCH_PHRASE 'reading' OR `log` MATCH_PHRASE '\"remove\"'",
 		},
 		"双引号转义符号支持": {
 			q:   `"(reading \"remove\")"`,
@@ -993,12 +1041,12 @@ func TestLuceneParser(t *testing.T) {
 		"escape_parentheses": {
 			q:   `hello\(world\)`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\(world\\)"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\(world\\)'",
+			sql: "`log` MATCH_PHRASE 'hello(world)'",
 		},
 		"escape_star": {
 			q:   `hello\*world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\*world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\*world'",
+			sql: "`log` MATCH_PHRASE 'hello*world'",
 		},
 		"whitespace_multiple_spaces": {
 			q:   `  hello  world  `,
@@ -1196,22 +1244,22 @@ func TestLuceneParser(t *testing.T) {
 		"escape_question_mark": {
 			q:   `hello\?world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\?world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\?world'",
+			sql: "`log` MATCH_PHRASE 'hello?world'",
 		},
 		"escape_plus_sign": {
 			q:   `hello\+world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\+world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\+world'",
+			sql: "`log` MATCH_PHRASE 'hello+world'",
 		},
 		"escape_minus_sign": {
 			q:   `hello\-world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\-world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\-world'",
+			sql: "`log` MATCH_PHRASE 'hello-world'",
 		},
 		"escape_double_quote": {
 			q:   `hello\"world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\\"world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\\"world'",
+			sql: "`log` MATCH_PHRASE 'hello\"world'",
 		},
 		"escape_double_backslash": {
 			q:   `hello\\world`,
@@ -1996,7 +2044,7 @@ func TestSingleQuoteAdaptation(t *testing.T) {
 		},
 		"single_quote_with_escaped_single": {
 			input: `log: 'it\'s working'`,
-			sql:   "`log` MATCH_PHRASE 'it's working'",
+			sql:   "`log` MATCH_PHRASE 'it''s working'",
 			es:    `{"match_phrase":{"log":{"query":"it's working"}}}`,
 		},
 		"mixed_quotes": {

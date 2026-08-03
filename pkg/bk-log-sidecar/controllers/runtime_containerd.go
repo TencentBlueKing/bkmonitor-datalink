@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
@@ -69,7 +71,7 @@ func (r *ContainerdRuntime) Containers(ctx context.Context) ([]define.SimpleCont
 func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (define.Container, error) {
 	containerStatus, err := r.cri.ContainerStatus(ctx, containerID)
 	if err != nil {
-		return define.Container{}, err
+		return define.Container{}, normalizeContainerdInspectError(containerID, err)
 	}
 
 	var mounts []define.Mount
@@ -108,4 +110,13 @@ func (r *ContainerdRuntime) Inspect(ctx context.Context, containerID string) (de
 		RootPath: rootPath,
 		Mounts:   mounts,
 	}, nil
+}
+
+func normalizeContainerdInspectError(containerID string, err error) error {
+	if status.Code(err) == codes.NotFound {
+		// Keep CRI/gRPC details inside the containerd adapter. The sidecar only
+		// consumes the runtime-neutral ErrContainerNotFound contract.
+		return fmt.Errorf("%w: container [%s]: %v", define.ErrContainerNotFound, containerID, err)
+	}
+	return fmt.Errorf("containerd inspect container [%s] failed: %w", containerID, err)
 }

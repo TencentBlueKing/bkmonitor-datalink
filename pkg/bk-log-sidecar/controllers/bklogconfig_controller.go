@@ -13,14 +13,15 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
-	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	bluekingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
 )
 
 // BkLogConfigReconciler reconciles a BkLogConfig object
@@ -44,25 +45,56 @@ type BkLogConfigReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.9.2/pkg/reconcile
 func (r *BkLogConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-	log.Info(fmt.Sprintf("handler bklogconfig event [%s]", req.Name))
+	startedAt := time.Now()
+	logger := log.FromContext(ctx).WithValues(
+		"trigger", string(convergenceTriggerBkLogConfigReconcile),
+		"namespace", req.Namespace,
+		"name", req.Name,
+	)
+	logger.Info("BkLogConfig reconciliation started")
 	var bkLogConfig bluekingv1alpha1.BkLogConfig
 	err := r.Client.Get(ctx, req.NamespacedName, &bkLogConfig)
-	if utils.NotNil(err) {
-		if errors.IsNotFound(err) {
-			r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name)
-			utils.CheckErrorFn(r.BkLogSidecar.reloadBkunifylogbeat(), func(err error) {
-				log.Error(err, "bklogconfig delete then reload agent failed")
-			})
-
-			return ctrl.Result{}, nil
+	var currentBkLogConfig *bluekingv1alpha1.BkLogConfig
+	action := "upsert"
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			// Returning the error is intentional: controller-runtime applies
+			// rate-limited backoff and retries this object key. Logging and returning
+			// nil would acknowledge the event and permanently drop this failure.
+			logger.Error(err, "BkLogConfig reconciliation failed",
+				"result", convergenceResultFailure,
+				"stage", "get",
+				"duration", time.Since(startedAt).String(),
+			)
+			return ctrl.Result{}, fmt.Errorf("get BkLogConfig %s: %w", req.NamespacedName, err)
 		}
-		log.Error(err, "is other error")
-		return ctrl.Result{}, nil
+		action = "delete"
+	} else {
+		currentBkLogConfig = &bkLogConfig
 	}
 
-	r.BkLogSidecar.deleteConfigByName(req.Namespace, req.Name)
-	r.BkLogSidecar.generateActualBkLogConfig()
+	// Both create/update and confirmed deletion converge through the same full
+	// Build/Apply path. A failed Build therefore retains the previous working
+	// files instead of deleting this CR's files before regeneration succeeds.
+	if err := r.BkLogSidecar.generateActualBkLogConfigForReconcile(
+		ctx,
+		req.Namespace,
+		req.Name,
+		currentBkLogConfig,
+	); err != nil {
+		logger.Error(err, "BkLogConfig reconciliation failed",
+			"result", convergenceResultFailure,
+			"action", action,
+			"stage", "converge",
+			"duration", time.Since(startedAt).String(),
+		)
+		return ctrl.Result{}, fmt.Errorf("converge generated config after BkLogConfig %s event: %w", req.NamespacedName, err)
+	}
+	logger.Info("BkLogConfig reconciliation succeeded",
+		"result", convergenceResultSuccess,
+		"action", action,
+		"duration", time.Since(startedAt).String(),
+	)
 	return ctrl.Result{}, nil
 }
 

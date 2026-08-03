@@ -71,9 +71,11 @@ jobs:
       - name: Set up envtest
         shell: bash
         run: |
-          # 与项目使用的 controller-runtime 0.14 对齐，避免 latest 隐式切换到新的 Go 工具链。
-          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20231023142458-b9f29826ee83
-          echo "KUBEBUILDER_ASSETS=$("$(go env GOPATH)/bin/setup-envtest" use -p path 1.26.1)" >> "$GITHUB_ENV"
+          # 固定到兼容 Go 1.25 的版本，避免 latest 隐式切换到新的 Go 工具链。
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260305142021-f9589b9f2b9d
+          KUBEBUILDER_ASSETS="$("$(go env GOPATH)/bin/setup-envtest" use -p path 1.26.1)"
+          test -x "$KUBEBUILDER_ASSETS/etcd"
+          echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS" >> "$GITHUB_ENV"
 
       - name: Run unit tests
         run: go test -race ./... -count=1

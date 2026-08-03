@@ -141,9 +141,12 @@ func TestRuntimeSubscriptionLogsRecoveryAfterSubscribeRetry(t *testing.T) {
 		sidecar.subscribeEvent(ctx, ready)
 	}()
 	waitForSignal(t, ready, "fallback startup convergence")
+	// 第二次 Subscribe 调用发生在稳定窗口之前；必须等恢复收敛真正完成后再取消，
+	// 否则测试可能自行截断 established/convergence 日志并产生偶发失败。
 	require.Eventually(t, func() bool {
-		return subscribeCalls.Load() >= 2
+		return observed.FilterMessage("runtime configuration convergence succeeded").Len() > 0
 	}, 2*time.Second, 5*time.Millisecond)
+	require.GreaterOrEqual(t, subscribeCalls.Load(), int32(2))
 	cancel()
 	waitForSignal(t, done, "runtime subscription observability test shutdown")
 

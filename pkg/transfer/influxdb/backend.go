@@ -198,6 +198,8 @@ func (b *BulkHandler) Close() error {
 	return b.cli.Close()
 }
 
+func (b *BulkHandler) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // NewBulkBackend
 func NewBulkHandler(rt *config.MetaResultTableConfig, shipper *config.MetaClusterInfo) (*BulkHandler, error) {
 	cluster := shipper.AsInfluxCluster()

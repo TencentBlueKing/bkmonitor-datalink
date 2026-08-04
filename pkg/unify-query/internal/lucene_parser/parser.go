@@ -86,10 +86,11 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	return visitor
 }
 
-// NormalizeBooleanOperators uppercases case-insensitive boolean operators while
-// preserving identical words used as terms or quoted text.
-func NormalizeBooleanOperators(q string) string {
-	lexer := gen.NewLuceneLexer(antlr.NewInputStream(q))
+// NormalizeQueryStringSyntax adapts UQ-compatible query syntax before it is
+// delegated to a native query_string parser.
+func NormalizeQueryStringSyntax(q string) string {
+	normalizedQuery := convertSingleQuotes(q)
+	lexer := gen.NewLuceneLexer(antlr.NewInputStream(normalizedQuery))
 	lexerErrorListener := NewCustomErrorListener()
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
@@ -107,10 +108,10 @@ func NormalizeBooleanOperators(q string) string {
 
 	normalizer := &booleanOperatorNormalizer{
 		BaseLuceneParserListener: &gen.BaseLuceneParserListener{},
-		query:                    []rune(q),
+		query:                    []rune(normalizedQuery),
 	}
 	antlr.ParseTreeWalkerDefault.Walk(normalizer, query)
-	return string(normalizer.query)
+	return strings.TrimRight(string(normalizer.query), " \t\n\r\u3000")
 }
 
 type booleanOperatorNormalizer struct {
@@ -119,13 +120,23 @@ type booleanOperatorNormalizer struct {
 }
 
 func (n *booleanOperatorNormalizer) EnterDisjQuery(ctx *gen.DisjQueryContext) {
-	for _, operator := range ctx.AllOR() {
+	operators := ctx.AllOR()
+	for i, operator := range operators {
+		if i == len(operators)-1 && len(operators) == len(ctx.AllConjQuery()) {
+			n.remove(operator.GetSymbol())
+			continue
+		}
 		n.replace(operator.GetSymbol(), "OR")
 	}
 }
 
 func (n *booleanOperatorNormalizer) EnterConjQuery(ctx *gen.ConjQueryContext) {
-	for _, operator := range ctx.AllAND() {
+	operators := ctx.AllAND()
+	for i, operator := range operators {
+		if i == len(operators)-1 && len(operators) == len(ctx.AllModClause()) {
+			n.remove(operator.GetSymbol())
+			continue
+		}
 		n.replace(operator.GetSymbol(), "AND")
 	}
 }
@@ -143,6 +154,16 @@ func (n *booleanOperatorNormalizer) replace(token antlr.Token, replacement strin
 		return
 	}
 	copy(n.query[start:stop+1], replacementRunes)
+}
+
+func (n *booleanOperatorNormalizer) remove(token antlr.Token) {
+	start, stop := token.GetStart(), token.GetStop()
+	if start < 0 || stop >= len(n.query) {
+		return
+	}
+	for i := start; i <= stop; i++ {
+		n.query[i] = ' '
+	}
 }
 
 // CustomErrorListener captures syntax errors during parsing

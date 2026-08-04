@@ -277,6 +277,11 @@ func TestParserQueryStringMappingAvailability(t *testing.T) {
 			query:     `message:"告警 and 恢复" and level:error`,
 			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"message:\"告警 and 恢复\" AND level:error"}}`,
 		},
+		"missing mapping adapts single quoted phrases before normalizing operators": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:'error and warning' and status:ok`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:\"error and warning\" AND status:ok"}}`,
+		},
 		"missing mapping keeps boolean words used as terms": {
 			fieldsMap: metadata.FieldsMap{},
 			query:     `message:and and level:error`,
@@ -286,6 +291,16 @@ func TestParserQueryStringMappingAvailability(t *testing.T) {
 			fieldsMap: metadata.FieldsMap{},
 			query:     `not client_id:"demo-a" or status:ignored`,
 			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT client_id:\"demo-a\" OR status:ignored"}}`,
+		},
+		"missing mapping drops trailing and": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:error AND status:active AND`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:error AND status:active"}}`,
+		},
+		"missing mapping drops trailing or": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `status:active or`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"status:active"}}`,
 		},
 		"known text field keeps match phrase": {
 			fieldsMap: metadata.FieldsMap{

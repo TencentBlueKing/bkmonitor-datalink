@@ -94,8 +94,10 @@ func GetPodWorkloadType(pod *corev1.Pod, defaultValue string) string {
 // GetWorkloadName get workload name
 func GetWorkloadName(name string, kind string) string {
 	if ToLowerEq(kind, "ReplicaSet") {
-		index := strings.LastIndex(name, "-")
-		return name[:index]
+		// 直接创建的 ReplicaSet 名称可能不包含 Deployment 的 hash 分隔符，此时保留原名。
+		if index := strings.LastIndex(name, "-"); index > 0 {
+			return name[:index]
+		}
 	}
 	return name
 }
@@ -120,14 +122,14 @@ func GetLabels(pod *corev1.Pod) map[string]string {
 		index := strings.Index(labelText, "=")
 		if index == -1 {
 			// 没找到等号，则该行不合法
-			log.Error(nil, "parse label failed, `=` not found: %s", labelsText)
+			log.Info("skip malformed vcluster label", "reason", "separator not found")
 			continue
 		}
 		key := labelText[:index]
 		value := labelText[index+1:]
 		if key == "" || value == "" {
 			// key 或者 value 为空，则该行不合法
-			log.Error(nil, "parse label failed, empty content: key=%s, value=%s", key, value)
+			log.Info("skip malformed vcluster label", "reason", "empty key or value", "key", key)
 			continue
 		}
 
@@ -136,7 +138,7 @@ func GetLabels(pod *corev1.Pod) map[string]string {
 		err := json.Unmarshal([]byte(value), &decodedValue)
 		if err != nil {
 			// 反序列化失败，则该行不合法
-			log.Error(err, "parse label failed, invalid json value: key=%s, value=%s", key, value)
+			log.Error(err, "parse vcluster label failed", "key", key)
 			continue
 		}
 		labels[key] = decodedValue

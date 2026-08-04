@@ -17,12 +17,12 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 40 个可执行 case。其中 17 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；21 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，1 个 ES case 有生产日志和 trace 证据，另外 18 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；另有 2 个只有生产 input 形态的 provisional case，分别覆盖 ES 请求级批处理和 InfluxDB aggregate，outputs 由固定 fixture 经当前真实 handler 回放得到，不计入生产 output 采样收敛。
+数据集当前包含 42 个可执行 case。其中 17 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；23 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，3 个 ES case 有生产日志或 trace 证据，另外 18 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；另有 2 个只有生产 input 形态的 provisional case，分别覆盖 ES 请求级批处理和 InfluxDB aggregate，outputs 由固定 fixture 经当前真实 handler 回放得到，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
 | VictoriaMetrics | 5 | PromQL range/instant、结构化 instant、复杂聚合/区间/二元表达式、多结果表合并 | 生产日志 |
-| Elasticsearch | 18 | aggregate/raw/reference、请求级开启的显式双 `query_list` 同连接批处理、query_string 语义、整份 mapping 缺失时回退原生 query_string、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、缺排序字段 mapping 的空索引判定与重试、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 + 暂定 handler 回放 |
+| Elasticsearch | 20 | aggregate/raw/reference、请求级开启的显式双 `query_list` 同连接批处理、query_string 语义、无引号保留字符转义与转义字符串区间、整份 mapping 缺失时回退原生 query_string、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、缺排序字段 mapping 的空索引判定与重试、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 + 暂定 handler 回放 |
 | Doris | 11 | aggregate、raw、单 reference 七路由/十四 output、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度、缺失字段 contains、平台分钟字段 UNION 依赖、raw 字段别名回退、缺失 `__shard_key__` 的时间桶回退 | 生产日志 + 修复后 handler 回放 |
 | TSpider | 3 | aggregate、raw、PromQL 8 reference/16 output | 生产日志 + 修复后 handler 回放 |
 | HDFS | 2 | aggregate、raw | 生产日志 |

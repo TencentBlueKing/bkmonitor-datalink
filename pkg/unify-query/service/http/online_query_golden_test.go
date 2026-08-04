@@ -529,7 +529,8 @@ func onlineQueryGoldenESResponse(
 			return nil, err
 		}
 		if len(bytes.TrimSpace(content)) > 0 {
-			if err := json.Unmarshal(content, &body); err != nil {
+			body, err = normalizeOnlineQueryGoldenESBody(request.URL.Path, content)
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -543,7 +544,7 @@ func onlineQueryGoldenESResponse(
 	})
 
 	response := dependencies.Elasticsearch.Search
-	if request.Method == http.MethodGet {
+	if request.Method == http.MethodGet && request.URL.Path != "/_msearch" {
 		response = dependencies.Elasticsearch.Mapping
 	} else {
 		var err error
@@ -556,6 +557,31 @@ func onlineQueryGoldenESResponse(
 		response = json.RawMessage(`{}`)
 	}
 	return httpmock.NewBytesResponse(http.StatusOK, response), nil
+}
+
+func normalizeOnlineQueryGoldenESBody(path string, content []byte) (any, error) {
+	if path != "/_msearch" {
+		var body any
+		if err := json.Unmarshal(content, &body); err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
+
+	lines := bytes.Split(content, []byte{'\n'})
+	body := make([]any, 0, len(lines))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var item any
+		if err := json.Unmarshal(line, &item); err != nil {
+			return nil, err
+		}
+		body = append(body, item)
+	}
+	return body, nil
 }
 
 func TestOnlineQueryGoldenCasesConsumeESSearchSequence(t *testing.T) {

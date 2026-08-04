@@ -129,6 +129,25 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 
 2026-07-27 又从一条可关联的生产问题请求中确认了 ES mapping 元数据暂时为空、search 数据面仍可用的形态。脱敏后的 `es_query_string_missing_mapping_phrase_001` 保留 aggregate query、否定引号短语、空 mapping 依赖和最终 search 两阶段输出。修复前相同 fixture 将短语生成 `term`，修复后回退原生 `query_string`，RED→GREEN 的唯一预期差异位于 search DSL；该问题驱动 case 不改变 W1～W7 分类采样收敛统计。
 
+### 请求级 ES 批处理形态扩充
+
+2026-07-29 基于用户提供的生产 Trace 查询页面形态和当前 APM→UQ 源码调用链，新增 `es_raw_explicit_multi_rt_batch_001`。该 case 只保留两个显式 `query_list` RT、相同 TraceID 过滤条件、同一实际 ES 连接和顶层 `is_es_batch=true`；原始 TraceID、应用、空间、结果表、索引和集群均未进入正式数据集。
+
+固定路由下，真实 `/query/ts/raw` handler 生成：
+
+```text
+1 input
+  × 2 explicit query_list
+  × 1 fixed route each
+  -> 2 index/mapping discovery
+  + 1 GET /_msearch
+  = 3 outputs
+```
+
+`/_msearch` 的两个 header 分别保存各 RT 的脱敏索引，两个 search body 完全一致；这证明请求级开启后，符合“同连接且最终查询 body 相同”的显式多 RT 能进入一次批量请求。不同过滤条件会产生不同最终 body，不属于本 case 的合批前提，由批处理语义单测约束。
+
+当前生产证据不能把该入口与唯一 outbound output 完整关联，因此 `source.kind=production_log` 只表示入口形态来源，expected 使用当前真实 handler 回放并标记 `handler_replay`、`provisional_output`。既有 raw case 均未携带 `is_es_batch`，继续保留默认单 `_search` 形态。本次是请求级能力新增覆盖，不改变 W1～W7 的生产 output 收敛统计。
+
 ### 最近 90 天已合并 UQ PR 回溯
 
 2026-07-23 按 `mergedAt >= 2026-04-24` 且改动 `pkg/unify-query/` 的口径，从仓库同期 87 个已合并 PR 中筛出 41 个 UQ PR，并逐个检查问题语义、代码路径、原有测试和 golden 覆盖。19 个 PR 涉及 parser、route expansion、query builder 或稳定的下游请求构造，其中 8 个由上一轮 case 覆盖，2 个由已有 case 精确覆盖，该轮为其余 9 个补充 case；另外 22 个只影响响应处理、并发安全、观测、性能、错误契约或测试，不适合用正向 downstream-output golden 表达。2026-07-24，#1403、#1404、#1405、#1408 后续合并，按同一口径各补充 1 个回归 case。2026-07-27，#1407 和 #1420 后续合并：#1407 只改变查询结果 series 的路由范围过滤，不改变下游请求构造；#1420 的生产问题回归 case 已随修复合入并纳入当前数据集。

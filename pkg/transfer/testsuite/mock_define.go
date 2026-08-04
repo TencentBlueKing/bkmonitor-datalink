@@ -151,6 +151,18 @@ func (mr *MockDataProcessorMockRecorder) Finish(arg0, arg1 interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Finish", reflect.TypeOf((*MockDataProcessor)(nil).Finish), arg0, arg1)
 }
 
+func (m *MockDataProcessor) Index() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Index")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+func (m *MockDataProcessor) SetIndex(arg0 int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetIndex", arg0)
+}
+
 // Process mocks base method.
 func (m *MockDataProcessor) Process(arg0 define.Payload, arg1 chan<- define.Payload, arg2 chan<- error) {
 	m.ctrl.T.Helper()

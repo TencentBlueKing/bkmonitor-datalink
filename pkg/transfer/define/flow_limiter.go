@@ -19,7 +19,10 @@ var totalFlowBytes int
 
 var dataIdFlowBytes int
 
-var globalFlowLimiter = NewFlowLimiter("kafka:global", TotalFlowBytes())
+// Fix: 包级 init 时 viper 还没解析 config,totalFlowBytes==0,
+// 走到 TotalFlowBytes() 的 fallback 分支拿到 128MB/s 写死。
+// 改为可变指针,PostParse 阶段重建可热更新。
+var globalFlowLimiter = NewFlowLimiter("kafka:global", 128*1024*1024)
 
 // TotalFlowBytes 全局最大允许的流量速率
 func TotalFlowBytes() int {
@@ -35,6 +38,17 @@ func DataIdFlowBytes() int {
 		return 1024 * 1024 * 20 // 默认为 20MB/s => 160Mb/s
 	}
 	return dataIdFlowBytes
+}
+
+// SetTotalFlowBytes 供 PostParse / 测试使用的 setter
+func SetTotalFlowBytes(n int) { totalFlowBytes = n }
+
+// SetDataIdFlowBytes 供 PostParse / 测试使用的 setter
+func SetDataIdFlowBytes(n int) { dataIdFlowBytes = n }
+
+// RebuildGlobalFlowLimiter 重建全局流量限速器;PostParse 阶段调用以热更新
+func RebuildGlobalFlowLimiter() {
+	globalFlowLimiter = NewFlowLimiter("kafka:global", TotalFlowBytes())
 }
 
 // LimitRate 限制全局流量速率

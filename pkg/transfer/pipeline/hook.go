@@ -76,8 +76,14 @@ func init() {
 		BulkDefaultMaxConcurrency = conf.GetInt64(ConfKeyPayloadFlushMaxConcurrency)
 
 		BulkGlobalConcurrencySemaphore = utils.NewWeightedSemaphore(BulkDefaultMaxConcurrency)
+		// Fix: PostParse 同步重建 Push 全局信号量；不重建则 Push 路径永远沿用
+		// 包级 init 时的 BulkDefaultMaxConcurrency=10000，等于无上限。
+		// 触发场景: ConfigMap 改 pipeline.backend.max_concurrency 后 hot-reload 立即生效。
+		BulkGlobalPushSemaphore = utils.NewWeightedSemaphore(BulkDefaultMaxConcurrency)
 
 		defaultPipelineNums = conf.GetInt(ConfKeyPipeLineDefaultNums)
 		initPipeLineNums(conf)
+		// Fix: 重建全局流量限速器，使 pipeline.total_flow_bytes 启动后 hot-reload 立即生效。
+		define.RebuildGlobalFlowLimiter()
 	}))
 }

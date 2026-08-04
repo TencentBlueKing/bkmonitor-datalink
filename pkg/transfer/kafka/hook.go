@@ -71,7 +71,9 @@ func initConfiguration(c define.Configuration) {
 	c.RegisterAlias("kafka.backend.buffer_size", pipeline.ConfKeyPayloadBufferSize)
 	c.RegisterAlias("kafka.backend.flush_interval", pipeline.ConfKeyPayloadFlushInterval)
 	c.RegisterAlias("kafka.backend.flush_reties", pipeline.ConfKeyPayloadFlushReties)
-	c.RegisterAlias("kafka.backend.max_concurrency", pipeline.ConfKeyPayloadFlushConcurrency)
+	// Fix: 之前 alias 到 ConfKeyPayloadFlushConcurrency (=pipeline.backend.concurrency),
+	// 导致用户设的 kafka.backend.max_concurrency 实际被写入 per-pipeline concurrency 字段,
+	// max_concurrency 自身永远拿不到用户配置。改为不再 alias,让 ConfKeyPayloadFlushMaxConcurrency 生效。
 }
 
 func init() {

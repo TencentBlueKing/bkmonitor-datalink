@@ -259,11 +259,48 @@ func TestParserQueryStringMappingAvailability(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		fieldsMap metadata.FieldsMap
+		query     string
 		expected  string
 	}{
 		"missing mapping falls back to native query string": {
 			fieldsMap: metadata.FieldsMap{},
+			query:     `NOT (message:"ignored phrase")`,
 			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT (message:\"ignored phrase\")"}}`,
+		},
+		"missing mapping normalizes case insensitive boolean operators": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `(NOT client_id:"demo-a" AND NOT client_id:"demo-b") and action:req-* and endpoint:edge-*`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"(NOT client_id:\"demo-a\" AND NOT client_id:\"demo-b\") AND action:req-* AND endpoint:edge-*"}}`,
+		},
+		"missing mapping keeps boolean words inside quoted text": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `message:"告警 and 恢复" and level:error`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"message:\"告警 and 恢复\" AND level:error"}}`,
+		},
+		"missing mapping adapts single quoted phrases before normalizing operators": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:'error and warning' and status:ok`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:\"error and warning\" AND status:ok"}}`,
+		},
+		"missing mapping keeps boolean words used as terms": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `message:and and level:error`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"message:and AND level:error"}}`,
+		},
+		"missing mapping normalizes lowercase not and or": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `not client_id:"demo-a" or status:ignored`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT client_id:\"demo-a\" OR status:ignored"}}`,
+		},
+		"missing mapping drops trailing and": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:error AND status:active AND`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:error AND status:active"}}`,
+		},
+		"missing mapping drops trailing or": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `status:active or`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"status:active"}}`,
 		},
 		"known text field keeps match phrase": {
 			fieldsMap: metadata.FieldsMap{
@@ -273,6 +310,7 @@ func TestParserQueryStringMappingAvailability(t *testing.T) {
 					IsAnalyzed: true,
 				},
 			},
+			query:    `NOT (message:"ignored phrase")`,
 			expected: `{"bool":{"must_not":{"match_phrase":{"message":{"query":"ignored phrase"}}}}}`,
 		},
 		"known keyword field keeps term": {
@@ -282,13 +320,14 @@ func TestParserQueryStringMappingAvailability(t *testing.T) {
 					FieldType: KeyWord,
 				},
 			},
+			query:    `NOT (message:"ignored phrase")`,
 			expected: `{"bool":{"must_not":{"term":{"message":"ignored phrase"}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			query := NewFormatFactory(ctx).
 				WithFieldMap(tc.fieldsMap).
-				ParserQueryString(ctx, `NOT (message:"ignored phrase")`, false)
+				ParserQueryString(ctx, tc.query, false)
 			require.NotNil(t, query)
 			body, err := query.Source()
 			require.NoError(t, err)

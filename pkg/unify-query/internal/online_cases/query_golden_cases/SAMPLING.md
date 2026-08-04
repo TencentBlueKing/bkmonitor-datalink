@@ -129,6 +129,8 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 
 2026-07-27 又从一条可关联的生产问题请求中确认了 ES mapping 元数据暂时为空、search 数据面仍可用的形态。脱敏后的 `es_query_string_missing_mapping_phrase_001` 保留 aggregate query、否定引号短语、空 mapping 依赖和最终 search 两阶段输出。修复前相同 fixture 将短语生成 `term`，修复后回退原生 `query_string`，RED→GREEN 的唯一预期差异位于 search DSL；该问题驱动 case 不改变 W1～W7 分类采样收敛统计。
 
+2026-08-04 在同一空 mapping 回退路径中确认了混合大小写布尔运算符的语义缺口。新增 `es_query_string_missing_mapping_mixed_case_boolean_001`，保留脱敏后的复合否定、通配条件和小写 `and` 结构。修复前 handler 将小写运算符原样交给 ES 原生 `query_string`，修复后只把语法树中的布尔运算 token 规范化为大写，引号内容和字段值中的同名词保持不变；该问题驱动 case 同样不改变 W1～W7 分类采样收敛统计。
+
 ### 请求级 ES 批处理形态扩充
 
 2026-07-29 基于用户提供的生产 Trace 查询页面形态和当前 APM→UQ 源码调用链，新增 `es_raw_explicit_multi_rt_batch_001`。该 case 只保留两个显式 `query_list` RT、相同 TraceID 过滤条件、同一实际 ES 连接和顶层 `is_es_batch=true`；原始 TraceID、应用、空间、结果表、索引和集群均未进入正式数据集。
@@ -204,12 +206,13 @@ W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取
 
 2026-07-23 的 9 个新增 case，以及 2026-07-24 为 #1403、#1404、#1405、#1408 新增的 4 个 case，其问题形态均来自已合并 PR 的问题描述、回归测试和代码修复，不保留原始 trace ID。每个 case 均使用同一份脱敏 request、固定 route/dependencies，在对应修复 PR 的第一父提交先得到 RED，再在当前代码得到 GREEN；当前 expected 由真实 handler 生成并标记为 `post_fix_handler_replay`。它们的 `source.kind` 均为 `merged_pr`，不声称来自已关联的生产日志或 trace，也不计入 W1～W7 分类采样的 production output 收敛统计。
 
-#1420 的 input 形态来自可关联的生产日志和 trace，因此使用 `source.kind=production_log`；正确 expected 由修复后的真实 handler 回放生成并标记为 `post_fix_handler_replay`、`post_fix_expected`，不计入 W1～W7 分类采样窗口的新增形似统计。
+#1420 及本次空 mapping 小写布尔后续回归的 input 形态来自可关联的生产日志和 trace，因此使用 `source.kind=production_log`；正确 expected 由修复后的真实 handler 回放生成并标记为 `post_fix_handler_replay`、`post_fix_expected`，不计入 W1～W7 分类采样窗口的新增形似统计。
 
 历史 RED 的判定点如下：
 
 | PR | 修复前可观察差异 |
 | --- | --- |
+| #1420 后续 | 空 mapping 下小写布尔运算符原样进入原生 `query_string`，与 UQ 的大小写不敏感语义不一致 |
 | #1420 | 空 mapping 下否定短语被生成 `must_not term`，而不是交给原生 `query_string` 解析 |
 | #1408 | 两张物理表中一张缺少 `__shard_key__`，handler 以多表 UNION 字段缺失返回 HTTP 400；修复后整体回退到 `dtEventTimeStamp` 时间桶 |
 | #1405 | raw 查询生成 `NULL AS _value_` 和 `ORDER BY NULL DESC`，而不是回退使用别名前字段 `dtEventTimeStamp` |

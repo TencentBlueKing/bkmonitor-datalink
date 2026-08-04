@@ -86,6 +86,65 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt Option) Node {
 	return visitor
 }
 
+// NormalizeBooleanOperators uppercases case-insensitive boolean operators while
+// preserving identical words used as terms or quoted text.
+func NormalizeBooleanOperators(q string) string {
+	lexer := gen.NewLuceneLexer(antlr.NewInputStream(q))
+	lexerErrorListener := NewCustomErrorListener()
+	lexer.RemoveErrorListeners()
+	lexer.AddErrorListener(lexerErrorListener)
+
+	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	parser := gen.NewLuceneParser(tokens)
+	parserErrorListener := NewCustomErrorListener()
+	parser.RemoveErrorListeners()
+	parser.AddErrorListener(parserErrorListener)
+
+	query := parser.TopLevelQuery()
+	if lexerErrorListener.HasErrors() || parserErrorListener.HasErrors() || query == nil {
+		return q
+	}
+
+	normalizer := &booleanOperatorNormalizer{
+		BaseLuceneParserListener: &gen.BaseLuceneParserListener{},
+		query:                    []rune(q),
+	}
+	antlr.ParseTreeWalkerDefault.Walk(normalizer, query)
+	return string(normalizer.query)
+}
+
+type booleanOperatorNormalizer struct {
+	*gen.BaseLuceneParserListener
+	query []rune
+}
+
+func (n *booleanOperatorNormalizer) EnterDisjQuery(ctx *gen.DisjQueryContext) {
+	for _, operator := range ctx.AllOR() {
+		n.replace(operator.GetSymbol(), "OR")
+	}
+}
+
+func (n *booleanOperatorNormalizer) EnterConjQuery(ctx *gen.ConjQueryContext) {
+	for _, operator := range ctx.AllAND() {
+		n.replace(operator.GetSymbol(), "AND")
+	}
+}
+
+func (n *booleanOperatorNormalizer) EnterModifier(ctx *gen.ModifierContext) {
+	if operator := ctx.NOT(); operator != nil {
+		n.replace(operator.GetSymbol(), "NOT")
+	}
+}
+
+func (n *booleanOperatorNormalizer) replace(token antlr.Token, replacement string) {
+	start, stop := token.GetStart(), token.GetStop()
+	replacementRunes := []rune(replacement)
+	if start < 0 || stop >= len(n.query) || stop-start+1 != len(replacementRunes) {
+		return
+	}
+	copy(n.query[start:stop+1], replacementRunes)
+}
+
 // CustomErrorListener captures syntax errors during parsing
 type CustomErrorListener struct {
 	*antlr.DefaultErrorListener

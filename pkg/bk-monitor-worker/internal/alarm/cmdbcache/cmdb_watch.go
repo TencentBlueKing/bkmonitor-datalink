@@ -167,7 +167,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 
 	// 请求监听资源变化事件API
 	var resp cmdb.ResourceWatchResp
-	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetPathParams(map[string]string{"bk_resource": string(resourceType)}).SetBody(params).SetResult(&resp).Request()
+	err := DoRequest(ctx, w.cmdbApi.ResourceWatch().SetContext(ctx).SetPathParams(map[string]string{"bk_resource": string(resourceType)}).SetBody(params), &resp)
 	err = api.HandleApiResultError(resp.ApiCommonRespMeta, err, "watch cmdb resource api failed")
 	if err != nil {
 		return false, err
@@ -405,19 +405,23 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 	// 如果超过全量刷新间隔时间，执行全量刷新
 	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 		// 全量刷新
+		logger.Infof("refresh all cmdb resource(%s) cache start, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
+
 		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 		if err != nil {
-			logger.Errorf("refresh all cache failed: %v, bkTenantId: %s", err, h.bkTenantId)
+			logger.Errorf("refresh all cmdb resource(%s) cache failed: %v, bkTenantId: %s", h.cacheManager.Type(), err, h.bkTenantId)
 		}
-
-		logger.Infof("refresh all cmdb resource(%s) cache, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
 
 		// 记录全量刷新时间
 		lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, h.cacheManager.Type())
 		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
 		if err != nil {
-			logger.Errorf("set last update time error: %v, bkTenantId: %s", err, h.bkTenantId)
+			logger.Errorf("refresh all cmdb resource(%s) cache  reset %s last update time error: %v, bkTenantId: %s", h.cacheManager.Type(), lastUpdateTimeKey, err, h.bkTenantId)
+		} else {
+			logger.Infof("refresh all cmdb resource(%s) cache reset %s last update time success, bkTenantId: %s", h.cacheManager.Type(), lastUpdateTimeKey, h.bkTenantId)
 		}
+
+		logger.Infof("refresh all cmdb resource(%s) cache success, bkTenantId: %s", h.cacheManager.Type(), h.bkTenantId)
 
 		return
 	}
@@ -651,7 +655,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				case <-cancelCtx.Done():
 					handler.Close()
 					return
-				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
+				case <-time.After(eventHandleInterval - time.Since(tn)):
 				}
 			}
 		}()

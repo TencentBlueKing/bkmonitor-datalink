@@ -27,4 +27,5 @@ const (
 	ProcessorTextSpliter     = "text_spliter"
 	ProcessorFieldNormalizer = "field_normalizer"
 	ProcessorMethodFilter    = "method_filter"
+	ProcessorSpanProcessor   = "span_processor"
 )

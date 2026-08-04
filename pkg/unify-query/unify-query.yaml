@@ -19,6 +19,7 @@ redis:
   dial_timeout: 1s
   read_timeout: 10s
   service_name: bkmonitorv3:spaces
+  kv_base_path: bkmonitorv3:unify-query
 victoria_metrics:
   timeout: 30s
 influxdb:
@@ -95,3 +96,5 @@ bk_data:
   cluster_space_uid:
     test:
     - bkcc__test
+storage:
+  source: consul  # consul or redis，默认为 consul

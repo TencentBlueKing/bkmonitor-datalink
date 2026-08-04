@@ -21,6 +21,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
 
 // 服务侧初始化flux实例使用
@@ -120,7 +122,7 @@ func (s *Service) reloadTableInfo() error {
 		log.Errorf(context.TODO(), "get data from consul failed,error:%s", err)
 		return err
 	}
-	hash := consul.HashIt(newData)
+	hash := utils.HashIt(newData)
 	if hash == s.tableHash {
 		log.Debugf(context.TODO(), "table hash not changed")
 		return err
@@ -137,16 +139,15 @@ func (s *Service) reloadStorage() error {
 		dTmp    model.Duration
 		err     error
 	)
-	newData, err := consul.GetInfluxdbStorageInfo()
+
+	// 使用接口多态，根据配置自动选择 Consul 或 Redis
+	provider := getStorageProvider()
+	storageData, err := provider.GetInfluxdbStorageInfo(s.ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "get storage info from consul failed,error:%s", err)
+		log.Errorf(context.TODO(), "get storage info failed,error:%s", err)
 		return err
 	}
-	hash := consul.HashIt(newData)
-	if hash == s.storageHash {
-		log.Debugf(context.TODO(), "storage hash not changed")
-		return err
-	}
+
 	dTmp, err = model.ParseDuration(Timeout)
 	if err != nil {
 		timeout = 30 * time.Second
@@ -164,12 +165,34 @@ func (s *Service) reloadStorage() error {
 		MaxSLimit:            MaxSLimit,
 		Tolerance:            Tolerance,
 	}
-	hostList := make(map[string]*inner.Host, len(newData))
-	for key, value := range newData {
+	hash := utils.HashItDeterministic(struct {
+		Storage map[string]any
+		Option  *inner.Option
+	}{
+		Storage: storageData,
+		Option:  option,
+	})
+	if hash == s.storageHash {
+		log.Debugf(context.TODO(), "storage and query options hash not changed")
+		return nil
+	}
+
+	hostList := make(map[string]*inner.Host, len(storageData))
+	for key, value := range storageData {
+		var address, username, password string
+		switch s := value.(type) {
+		case *consul.Storage:
+			address, username, password = s.Address, s.Username, s.Password
+		case *redis.Storage:
+			address, username, password = s.Address, s.Username, s.Password
+		default:
+			log.Errorf(context.TODO(), "unsupported storage type: %T", value)
+			continue
+		}
 		hostList[key] = &inner.Host{
-			Address:  value.Address,
-			Username: value.Username,
-			Password: value.Password,
+			Address:  address,
+			Username: username,
+			Password: password,
 		}
 	}
 	err = inner.ReloadStorage(s.ctx, hostList, option)
@@ -177,37 +200,60 @@ func (s *Service) reloadStorage() error {
 		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
 		return err
 	}
+
+	s.storageHash = hash
 	return nil
 }
 
 // loopReloadStorage
 func (s *Service) loopReloadStorage(ctx context.Context) error {
-	err := s.reloadStorage()
+	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
+	provider := getStorageProvider()
+	watchCh, err := provider.WatchStorageInfo(ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
-		return err
+		log.Errorf(context.TODO(), "initial watch storage failed, will retry,error:%s", err)
 	}
-	ch, err := consul.WatchStorageInfo(ctx)
-	if err != nil {
-		return err
+	if err := s.reloadStorage(); err != nil {
+		log.Errorf(context.TODO(), "initial reload storage failed, will retry,error:%s", err)
 	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		reconcileTicker := time.NewTicker(time.Minute)
+		defer reconcileTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				log.Warnf(context.TODO(), "storage reload loop exit")
 				return
-			case <-ch:
+			case _, ok := <-watchCh:
+				if !ok {
+					log.Warnf(context.TODO(), "storage watch channel closed, continue with periodic reconcile")
+					watchCh = nil
+					continue
+				}
 				log.Debugf(context.TODO(), "get storage info changed notify")
-				err = s.reloadStorage()
-				if err != nil {
-					log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
+				reloadErr := s.reloadStorage()
+				if reloadErr != nil {
+					log.Errorf(context.TODO(), "reload storage failed,error:%s", reloadErr)
+				}
+			case <-reconcileTicker.C:
+				if watchCh == nil {
+					newWatchCh, watchErr := provider.WatchStorageInfo(ctx)
+					if watchErr != nil {
+						log.Errorf(context.TODO(), "retry watch storage failed,error:%s", watchErr)
+					} else {
+						watchCh = newWatchCh
+					}
+				}
+				if reloadErr := s.reloadStorage(); reloadErr != nil {
+					log.Errorf(context.TODO(), "periodic storage reconcile failed,error:%s", reloadErr)
 				}
 			}
 		}
 	}()
+
 	return nil
 }
 
@@ -350,7 +396,7 @@ func (s *Service) reloadRouter() error {
 		log.Errorf(context.TODO(), "get query router info from consul failed,error:%s", err)
 		return err
 	}
-	hash := consul.HashIt(newData)
+	hash := utils.HashIt(newData)
 	if hash == s.routerHash {
 		log.Debugf(context.TODO(), "table hash not changed")
 		return err
@@ -367,7 +413,7 @@ func (s *Service) reloadMetricRouter() error {
 		log.Errorf(context.TODO(), "get query router info from consul failed,error:%s", err)
 		return err
 	}
-	hash := consul.HashIt(newData)
+	hash := utils.HashIt(newData)
 	if hash == s.metricHash {
 		log.Debugf(context.TODO(), "metric hash not changed")
 		return nil

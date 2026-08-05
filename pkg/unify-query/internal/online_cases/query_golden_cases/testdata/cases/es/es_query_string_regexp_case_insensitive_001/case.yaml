@@ -1,0 +1,27 @@
+id: es_query_string_regexp_case_insensitive_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/query_string/regexp/case_insensitive_uppercase/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:8e4e46459a3b8b7066b66fa81e21cbea10d33745442dc50787f5c45d828be6a1
+tags:
+  - query_ts_api
+  - raw
+  - query_string
+  - regexp
+  - case_insensitive
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产查询形态和旧行为依据已合并 PR 的公开问题说明，未保存 trace ID 或原始请求。
+  - 生产问题只保留大小写不敏感 text 字段使用大写 regexp 的结构，字段、正则内容、空间、索引和结果表均已替换。
+  - 修复前 handler 会保留大写 pattern，修复后 expected 由相同脱敏 request 和固定 fixture 通过真实 handler 回放生成。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

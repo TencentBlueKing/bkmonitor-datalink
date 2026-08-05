@@ -1,0 +1,28 @@
+id: es_query_string_unquoted_escaped_keyword_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/query_string/phrase_wildcard_unquoted_escaped_keyword/output_index_search
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-29"
+  fingerprint: sha256:82f65077f0613ff38b56008f9ff76f224bcd9661555d775542e721c687b7149c
+tags:
+  - query_ts_api
+  - raw
+  - query_string
+  - escaped_value
+  - keyword
+  - wildcard
+  - phrase
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产问题请求保留引号短语、keyword wildcard 和无引号保留字符转义的组合结构，其余标识和值均已替换。
+  - 修复前 name 的无引号值会把反斜杠带入 term，修复后 expected 必须生成 bk-log-search-api。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

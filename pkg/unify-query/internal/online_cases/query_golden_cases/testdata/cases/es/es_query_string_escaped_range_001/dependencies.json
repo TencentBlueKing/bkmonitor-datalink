@@ -1,0 +1,12 @@
+{
+  "elasticsearch": {
+    "mapping": {"golden_es_escaped_range": {"mappings": {"properties": {
+      "dtEventTimeStamp": {"type": "date"},
+      "events_total": {"type": "long"},
+      "name": {"type": "keyword"},
+      "release_date": {"type": "date"},
+      "version": {"type": "keyword"}
+    }}}},
+    "search": {"took": 1, "timed_out": false, "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}}
+  }
+}

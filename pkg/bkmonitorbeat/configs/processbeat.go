@@ -59,8 +59,8 @@ func NewProcessbeatConfig(root *Config) *ProcessbeatConfig {
 
 func (c *ProcessbeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
-	// 如果禁用或不存在采集 dataid 则没必要生成采集配置
-	if c.Disable || (c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0) {
+	// 如果禁用、没有进程配置或不存在采集 dataid 则没必要生成采集配置
+	if c.Disable || len(c.Processes) == 0 || (c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0) {
 		return tasks
 	}
 

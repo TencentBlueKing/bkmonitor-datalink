@@ -1,0 +1,22 @@
+id: vm_multi_result_table_001
+storage: vm
+enabled: true
+shape_signature: promql_range/vector_selector/eq1/data_label_route_multi/vm_query_range/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:c98bcb38a06180e454b34f66882a7cf6db3bcdd605700aff8b0af120ed265a95
+tags:
+  - promql_api
+  - query_range
+  - multi_result_table
+  - merged_output
+  - production_shape
+notes:
+  - 生产请求只保留多结果表合并形态；空间、结果表、指标、标签和集群均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

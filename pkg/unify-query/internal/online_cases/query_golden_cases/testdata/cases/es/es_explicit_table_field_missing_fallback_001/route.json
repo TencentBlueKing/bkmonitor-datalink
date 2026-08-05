@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_field_fallback",
+  "result_tables": [{"table_id": "demo_metrics.field_fallback"}],
+  "result_table_details": {
+    "demo_metrics.field_fallback": {
+      "storage_id": 2301,
+      "storage_name": "es_cluster_field_fallback",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_field_fallback",
+      "db": "golden_es_field_fallback",
+      "table_id": "demo_metrics.field_fallback",
+      "fields": ["known_metric"],
+      "data_label": "demo_metrics_field_fallback",
+      "tags_key": ["service"],
+      "source_type": "bkmonitor"
+    }
+  },
+  "storages": {"2301": {"type": "elasticsearch"}}
+}

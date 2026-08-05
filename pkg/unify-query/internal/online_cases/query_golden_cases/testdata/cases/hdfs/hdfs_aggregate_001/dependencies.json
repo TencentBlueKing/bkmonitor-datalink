@@ -1,0 +1,13 @@
+{
+  "bksql": {
+    "schema": [
+      {"Column": "thedate", "Type": "integer"},
+      {"Column": "dtEventTimeStamp", "Type": "bigint"},
+      {"Column": "dtEventTime", "Type": "varchar"},
+      {"Column": "events_total", "Type": "double"},
+      {"Column": "service", "Type": "varchar"},
+      {"Column": "status", "Type": "varchar"}
+    ],
+    "result": []
+  }
+}

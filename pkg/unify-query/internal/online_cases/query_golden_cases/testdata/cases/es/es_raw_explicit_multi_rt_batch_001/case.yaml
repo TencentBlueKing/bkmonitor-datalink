@@ -1,0 +1,29 @@
+id: es_raw_explicit_multi_rt_batch_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/explicit_multi_query_list/same_connection/same_condition/request_opt_in/output_index_msearch
+source:
+  kind: production_log
+  outputs_kind: handler_replay
+  sampled_at: "2026-07-29"
+  fingerprint: sha256:59522da43d9bca048ffcfb5242e04f6291667a433b0ded62d7e1cc9c1582898e
+tags:
+  - query_ts_api
+  - raw
+  - explicit_multi_query_list
+  - same_es_connection
+  - trace_id_condition
+  - request_opt_in
+  - msearch
+  - provisional_output
+  - production_shape
+notes:
+  - 生产 Trace 查询仅用于确认两个显式 query_list RT、相同 TraceID 条件和请求级开启字段的入口形态；原始 TraceID、应用、空间、结果表、索引和集群均未保留。
+  - 两个 RT 固定到同一脱敏 ES 连接，但各自保留独立索引发现；真实 handler 回放的最终查询输出暂定为一次 _msearch。
+  - 当前缺少能够与该生产入口唯一关联的 outbound output，因此 expected 标记为 handler_replay 和 provisional_output。
+  - output 构成为 1 input × 2 explicit query_list × 1 route each × 1 index discovery each + 1 batched search = 3 outputs。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

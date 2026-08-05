@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_influxdb",
+  "result_tables": [{"table_id": "golden_influx.cpu_summary_demo"}],
+  "result_table_details": {
+    "golden_influx.cpu_summary_demo": {
+      "storage_id": 4001,
+      "storage_name": "default",
+      "storage_type": "influxdb",
+      "cluster_name": "default",
+      "db": "golden_influx_db",
+      "table_id": "golden_influx.cpu_summary_demo",
+      "measurement": "cpu_summary_demo",
+      "fields": ["cpu_usage_value"],
+      "measurement_type": "bk_traditional_measurement",
+      "data_label": "golden_influx_cpu"
+    }
+  },
+  "storages": {"4001": {"type": "influxdb"}}
+}

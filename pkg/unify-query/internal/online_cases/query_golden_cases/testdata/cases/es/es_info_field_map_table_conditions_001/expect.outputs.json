@@ -1,0 +1,7 @@
+[
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_es_field_map_conditions"
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_union"},
+      "sql": "SHOW CREATE TABLE `golden_union_current`.doris"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_union"},
+      "sql": "SHOW CREATE TABLE `golden_union_history`.doris"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "properties": {"cluster_name": "doris_cluster_union"},
+      "sql": "SELECT *, `events_total` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM (SELECT CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`, `dtEventTime`, `dtEventTimeStamp`, `events_total`, `path`, `thedate` FROM `golden_union_history`.doris WHERE `dtEventTimeStamp` >= 1784701776000 AND `dtEventTimeStamp` <= 1784702076000 AND `dtEventTime` >= '2026-07-22 14:29:36' AND `dtEventTime` <= '2026-07-22 14:34:37' AND `thedate` = '20260722' UNION ALL SELECT CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`, `dtEventTime`, `dtEventTimeStamp`, `events_total`, `path`, `thedate` FROM `golden_union_current`.doris WHERE `dtEventTimeStamp` >= 1784701776000 AND `dtEventTimeStamp` <= 1784702076000 AND `dtEventTime` >= '2026-07-22 14:29:36' AND `dtEventTime` <= '2026-07-22 14:34:37' AND `thedate` = '20260722') AS combined_data ORDER BY `_timestamp_` ASC LIMIT 10"
+    }
+  }
+]

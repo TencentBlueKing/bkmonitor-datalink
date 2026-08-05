@@ -52,6 +52,12 @@ func (t *TSpiderSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	return t
 }
 
+func (t *TSpiderSQLExpr) WithShardKeyTimeBucket(enabled bool) SQLExpr {
+	// TSpider 表没有 Doris 的 __shard_key__ 字段，始终走 timeField 时间桶。
+	t.DorisSQLExpr.WithShardKeyTimeBucket(false)
+	return t
+}
+
 func (t *TSpiderSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	t.DorisSQLExpr.WithKeepColumns(cols)
 	return t

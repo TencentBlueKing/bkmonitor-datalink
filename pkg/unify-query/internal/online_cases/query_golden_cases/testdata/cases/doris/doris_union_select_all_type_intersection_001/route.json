@@ -1,0 +1,44 @@
+{
+  "space_uid": "bkcc__golden_doris_union",
+  "result_tables": [
+    {"table_id": "demo_doris_union.partition_current"},
+    {"table_id": "demo_doris_union.partition_history"}
+  ],
+  "result_table_details": {
+    "demo_doris_union.partition_current": {
+      "storage_id": 3301,
+      "storage_name": "doris_cluster_union",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_union",
+      "db": "golden_union_current",
+      "table_id": "demo_doris_union.partition_current",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_union",
+      "tags_key": ["path", "status"],
+      "source_type": "bklog"
+    },
+    "demo_doris_union.partition_history": {
+      "storage_id": 3301,
+      "storage_name": "doris_cluster_union",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_union",
+      "db": "golden_union_history",
+      "table_id": "demo_doris_union.partition_history",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_union",
+      "tags_key": ["path", "status"],
+      "source_type": "bklog"
+    }
+  },
+  "data_labels": {
+    "demo_doris_union": [
+      "demo_doris_union.partition_current",
+      "demo_doris_union.partition_history"
+    ]
+  },
+  "storages": {
+    "3301": {"type": "bk_sql"}
+  }
+}

@@ -61,7 +61,7 @@ func TestCollectUnionSelectFields(t *testing.T) {
 			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
 			groupFields:  []string{"`minute1`"},
 			orderFields:  []string{"`minute1` DESC"},
-			expected:     "`minute1`",
+			expected:     "`minute1`, `dtEventTimeStamp`",
 		},
 		{
 			name:         "CAST 对象字段表达式收集未加反引号 root",
@@ -150,6 +150,75 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				"`db_a`.doris": {"log": {FieldType: "text"}},
 			},
 			expectedErr: "doris multi-table union field `path` is missing from table `db_a`.doris",
+		},
+		{
+			name:         "计算平台 minuteX 内置字段会补充时间字段依赖",
+			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name:         "真实 minuteX 可与缺失物理 schema 的 dtEventTimeStamp 一起投影",
+			selectFields: []string{"`minute1`", "`dtEventTimeStamp`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"minute1":          {FieldType: "bigint"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name:         "真实 minuteX 可与无物理 schema 的 dtEventTimestamp 一起投影",
+			selectFields: []string{"`minute1`", "`dtEventTimestamp`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+				"`db_a`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			expected: "`minute1`, `dtEventTimestamp`",
+		},
+		{
+			name:         "计算平台 minuteX 缺少时间字段依赖时报错",
+			selectFields: []string{"`minute1`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"dtEventTimeStamp": {FieldType: "bigint"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			expectedErr: "doris multi-table union field `dtEventTimeStamp` is missing from table `db_a`.doris",
+		},
+		{
+			name:         "计算平台固定内置字段缺失物理表结构时允许",
+			selectFields: []string{"`dtEventTimeStamp`", "`dtEventTime`", "`localTime`", "`thedate`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"log": {FieldType: "text"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			expected: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`",
+		},
+		{
+			name:         "疑似内置时间聚合字段若是真实字段仍校验缺失",
+			selectFields: []string{"`year2024`", "COUNT(*) AS log_count"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"year2024": {FieldType: "bigint"}},
+				"`db_a`.doris": {"log": {FieldType: "text"}},
+			},
+			expectedErr: "doris multi-table union field `year2024` is missing from table `db_a`.doris",
 		},
 		{
 			name:         "对象 root 投影允许 leaf schema 校验",
@@ -340,6 +409,15 @@ func TestQueryFactoryUnionSelectListValidation(t *testing.T) {
 				},
 			},
 			expected: "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`",
+		},
+		{
+			name:         "multi table SELECT star 追加缺失物理 schema 的计算平台内置字段依赖",
+			selectFields: []string{"*", "`dtEventTimeStamp` AS `_timestamp_`", "`minute1`"},
+			tableFieldsMap: TableFieldsMap{
+				"`db_b`.doris": {"log": {FieldType: "text"}},
+				"`db_a`.doris": {"log": {FieldType: "varchar(128)"}},
+			},
+			expected: "`log`, `dtEventTimeStamp`, `minute1`",
 		},
 		{
 			name:         "multi table SELECT star 字段依赖按大小写不敏感匹配",

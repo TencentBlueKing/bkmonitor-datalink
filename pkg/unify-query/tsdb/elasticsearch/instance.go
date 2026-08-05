@@ -10,7 +10,6 @@
 package elasticsearch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,7 +27,6 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -37,6 +35,8 @@ import (
 )
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+const esIndexMetadataErrorMaxLength = 512
 
 type Instance struct {
 	tsdb.DefaultInstance
@@ -78,9 +78,10 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	indexes []string
-	start   time.Time
-	end     time.Time
+	indexes         []string
+	physicalIndexes []string
+	start           time.Time
+	end             time.Time
 
 	timeZone string
 
@@ -114,7 +115,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		maxSize: opt.MaxSize,
 		connect: opt.Connect,
 
-		headers:     opt.Headers,
+		headers:     cloneStringMap(opt.Headers),
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
 	}
@@ -131,7 +132,7 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
-	headers := metadata.Headers(ctx, i.headers)
+	headers := metadata.Headers(ctx, cloneStringMap(i.headers))
 	if len(headers) > 0 {
 		httpHeaders := make(http.Header, len(headers))
 		for k, v := range headers {
@@ -150,6 +151,17 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 	return elastic.DialContext(ctx, cliOpts...)
 }
 
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -165,48 +177,33 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 	return nil
 }
 
-// fieldMap 获取es索引的字段映射
-func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, error) {
-	if len(aliases) == 0 {
-		return nil, fmt.Errorf("query indexes is empty")
-	}
-
-	var err error
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("get mapping error: %s", r)
-		}
-		span.End(&err)
-	}()
-	span.Set("aliases", aliases)
-	cli, err := i.getClient(ctx, i.connect)
-	if err != nil {
-		return nil, fmt.Errorf("get client error: %w", err)
-	}
-	defer cli.Stop()
-
-	// 优先找 indices 接口
+func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (map[string]map[string]any, map[string]map[string]any, []string, error) {
 	settings := make(map[string]map[string]any)
 	mappings := make(map[string]map[string]any)
+
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
+	span.Set("index-get-fallback", indicesErr != nil)
 	if indicesErr != nil {
+		indexGetError := truncateString(indicesErr.Error(), esIndexMetadataErrorMaxLength)
+		span.Set("index-get-error", indexGetError)
 		// 兼容没有索引接口的情况，例如 bkbase
 		metadata.NewMessage(
 			metadata.MsgQueryES,
-			"索引查询 index 接口异常: %+v",
+			"索引查询 index 接口异常，回退 mapping 接口: aliases=%+v, error=%s",
 			aliases,
+			indexGetError,
 		).Warn(ctx)
 
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
-			return nil, metadata.NewMessage(
+			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
+			return nil, nil, nil, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
-			).Error(ctx, indicesErr)
+			).Error(ctx, err)
 		}
 
 		for index, r := range res {
@@ -221,14 +218,55 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 		}
 	}
 
+	physicalIndexes := make([]string, 0, len(mappings))
+	for index := range mappings {
+		physicalIndexes = append(physicalIndexes, index)
+	}
+	sort.Strings(physicalIndexes)
+
+	return settings, mappings, physicalIndexes, nil
+}
+
+// fieldMap 获取es索引的字段映射
+func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, error) {
+	fieldMap, _, err := i.fieldMapWithPhysicalIndexes(ctx, fieldAlias, aliases...)
+	return fieldMap, err
+}
+
+func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, error) {
+	if len(aliases) == 0 {
+		return nil, nil, fmt.Errorf("query indexes is empty")
+	}
+
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("get mapping error: %s", r)
+		}
+		span.End(&err)
+	}()
+	span.Set("aliases", aliases)
+	cli, err := i.getClient(ctx, i.connect)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get client error: %w", err)
+	}
+	defer cli.Stop()
+
+	settings, mappings, physicalIndexes, err := resolveIndexMetadata(ctx, span, cli, aliases...)
+	if err != nil {
+		return nil, nil, err
+	}
+	span.Set("mapping-length", len(mappings))
+	span.Set("physical-index-length", len(physicalIndexes))
+
 	iof := NewIndexOptionFormat(fieldAlias)
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
-		return iof.FieldsMap(), nil
+		span.Set("field-map-length", 0)
+		return iof.FieldsMap(), physicalIndexes, nil
 	}
-
-	span.Set("mapping-length", len(mappings))
 
 	indexes := make([]string, 0)
 	for k := range mappings {
@@ -246,29 +284,16 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	}
 
 	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), nil
+	return iof.FieldsMap(), physicalIndexes, nil
 }
 
-func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
-	var (
-		err error
-		qb  = qo.query
-	)
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
-	defer func() {
-		// 忽略 elastic返回的io.EOF报错
-		if errors.Is(err, io.EOF) {
-			err = nil
-		}
-		span.End(&err)
-	}()
-
+func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFactory, forceUnmappedTypes map[string]string) (*elastic.SearchSource, elastic.Query, string, error) {
 	filterQueries := make([]elastic.Query, 0)
 
 	// 过滤条件生成 elastic.query
 	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	if query != nil {
 		filterQueries = append(filterQueries, query)
@@ -277,7 +302,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// 查询时间生成 elastic.query
 	rangeQuery, err := fact.RangeQuery()
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	filterQueries = append(filterQueries, rangeQuery)
 
@@ -292,13 +317,19 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	source := elastic.NewSearchSource()
 	for _, order := range fact.Orders() {
 		fs := elastic.NewFieldSort(order.Name).Order(order.Ast)
-		if order.UnmappedType != "" {
-			fs = fs.UnmappedType(order.UnmappedType)
+		unmappedType := order.UnmappedType
+		if forceUnmappedTypes != nil && forceUnmappedTypes[order.Name] != "" {
+			unmappedType = forceUnmappedTypes[order.Name]
+		}
+		if unmappedType != "" {
+			fs = fs.UnmappedType(unmappedType)
 		}
 		source.SortBy(fs)
 	}
+	var countQuery elastic.Query
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+		countQuery = esQuery
 		source.Query(esQuery)
 	}
 	sources := fact.Source(qb.Source)
@@ -311,7 +342,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if len(qb.Aggregates) > 0 {
 		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
 		if aggErr != nil {
-			return nil, aggErr
+			return nil, nil, "", aggErr
 		}
 		source.Size(0)
 		source.Aggregation(name, agg)
@@ -326,19 +357,53 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Collapse(elastic.NewCollapseBuilder(collapse))
 	}
 	if source == nil {
-		return nil, fmt.Errorf("empty es query source")
+		return nil, nil, "", fmt.Errorf("empty es query source")
+	}
+	if option := qb.ResultTableOption; option != nil && option.ScrollID == "" && len(option.SearchAfter) > 0 {
+		source.SearchAfter(option.SearchAfter...)
 	}
 	body, _ := source.Source()
 	if body == nil {
-		return nil, fmt.Errorf("empty query body")
+		return nil, nil, "", fmt.Errorf("empty query body")
 	}
+	bodyJson, _ := json.Marshal(body)
+	return source, countQuery, string(bodyJson), nil
+}
+
+func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
+	source, countQuery, bodyString, err := buildESQuerySource(ctx, qo.query, fact, nil)
+	if err != nil {
+		return nil, err
+	}
+	return i.executeESQuery(ctx, qo, fact, source, countQuery, bodyString)
+}
+
+func (i *Instance) executeESQuery(
+	ctx context.Context,
+	qo *queryOption,
+	fact *FormatFactory,
+	source *elastic.SearchSource,
+	countQuery elastic.Query,
+	bodyString string,
+) (*elastic.SearchResult, error) {
+	var (
+		err error
+		qb  = qo.query
+	)
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
+	defer func() {
+		// 忽略 elastic返回的io.EOF报错
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		span.End(&err)
+	}()
+
 	qbString, _ := json.Marshal(qb)
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
 	span.Set("query-indexes", qo.indexes)
-	bodyJson, _ := json.Marshal(body)
-	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
 
 	metadata.NewMessage(
@@ -374,7 +439,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			}
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
-				source.SearchAfter(opt.SearchAfter...)
 				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 				return
 			}
@@ -401,6 +465,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}()
 
 	recordESQueryShards(ctx, span, qo, res)
+	if fallbackRes, retryIndexes, ok := i.tryFallbackEmptyMissingMappingIndexes(ctx, span, client, qo, fact, countQuery, err, res); ok {
+		res = fallbackRes
+		err = nil
+		retryQo := *qo
+		retryQo.indexes = retryIndexes
+		recordESQueryShardsWithPrefix(ctx, span, &retryQo, res, "fallback_retry_")
+	}
 	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
 		return nil, err
 	}
@@ -417,122 +488,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		ctx, queryCost, metadata.ElasticsearchStorageType, qo.conn.Address,
 	)
 	return res, err
-}
-
-const (
-	esShardFailureSampleLimit     = 3
-	esShardFailureReasonMaxLength = 512
-)
-
-type esShardFailureSample struct {
-	Shard  int    `json:"shard"`
-	Index  string `json:"index"`
-	Status string `json:"status,omitempty"`
-	Reason string `json:"reason,omitempty"`
-}
-
-func recordESQueryShards(ctx context.Context, span *trace.Span, qo *queryOption, res *elastic.SearchResult) {
-	if res == nil {
-		return
-	}
-
-	span.Set("timed_out", res.TimedOut)
-	if res.Shards == nil {
-		if res.TimedOut {
-			span.Set("shards_failures_count", 0)
-			log.Warnf(ctx, "es query shard abnormal index: %+v, timed_out: %v, shards info is nil", esQueryIndexes(qo), res.TimedOut)
-		}
-		return
-	}
-
-	span.Set("shards_total", res.Shards.Total)
-	span.Set("shards_successful", res.Shards.Successful)
-	span.Set("shards_failed", res.Shards.Failed)
-	span.Set("shards_skipped", res.Shards.Skipped)
-
-	if res.Shards.Failed <= 0 && !res.TimedOut {
-		return
-	}
-
-	failuresCount := countESShardFailures(res.Shards.Failures)
-	span.Set("shards_failures_count", failuresCount)
-	failuresSample := buildESShardFailureSample(res.Shards.Failures)
-	failuresSampleJson := marshalESShardFailureSample(failuresSample)
-	if len(failuresSample) > 0 {
-		span.Set("shards_failures_sample", failuresSampleJson)
-	}
-
-	log.Warnf(
-		ctx,
-		"es query shard abnormal index: %+v, timed_out: %v, shards_total: %d, shards_successful: %d, shards_failed: %d, shards_skipped: %d, failures_count: %d, failures_sample: %s",
-		esQueryIndexes(qo), res.TimedOut, res.Shards.Total, res.Shards.Successful, res.Shards.Failed, res.Shards.Skipped, failuresCount, failuresSampleJson,
-	)
-}
-
-func esQueryIndexes(qo *queryOption) []string {
-	if qo == nil {
-		return nil
-	}
-	return qo.indexes
-}
-
-func countESShardFailures(failures []*elastic.ShardOperationFailedException) int {
-	count := 0
-	for _, failure := range failures {
-		if failure != nil {
-			count++
-		}
-	}
-	return count
-}
-
-func buildESShardFailureSample(failures []*elastic.ShardOperationFailedException) []esShardFailureSample {
-	samples := make([]esShardFailureSample, 0, esShardFailureSampleLimit)
-	for _, failure := range failures {
-		if failure == nil {
-			continue
-		}
-		samples = append(samples, esShardFailureSample{
-			Shard:  failure.Shard,
-			Index:  failure.Index,
-			Status: failure.Status,
-			Reason: truncateString(marshalESShardFailureReason(failure.Reason), esShardFailureReasonMaxLength),
-		})
-		if len(samples) >= esShardFailureSampleLimit {
-			break
-		}
-	}
-	return samples
-}
-
-func marshalESShardFailureReason(reason map[string]interface{}) string {
-	if len(reason) == 0 {
-		return ""
-	}
-	reasonJson, err := json.Marshal(reason)
-	if err != nil {
-		return fmt.Sprintf("%+v", reason)
-	}
-	return string(reasonJson)
-}
-
-func marshalESShardFailureSample(failuresSample []esShardFailureSample) string {
-	failuresJson, err := json.Marshal(failuresSample)
-	if err != nil {
-		return fmt.Sprintf("%+v", failuresSample)
-	}
-	return string(failuresJson)
-}
-
-func truncateString(s string, maxLength int) string {
-	if maxLength <= 0 {
-		return ""
-	}
-	runes := []rune(s)
-	if len(runes) <= maxLength {
-		return s
-	}
-	return string(runes[:maxLength])
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory) storage.SeriesSet {
@@ -712,89 +667,51 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("instance-connect", i.connect.String())
 	span.Set("instance-query-result-table-option", query.ResultTableOption)
 
-	err = i.checkQuery(query)
+	prepared, err := i.PrepareRawQuery(ctx, query, start, end, nil)
 	if err != nil {
 		return size, total, option, err
 	}
+	span.Set("field-map-length", len(prepared.fieldMetadata.fieldMap))
 
-	rawQuery := *query
-	rawQuery.ResultTableOption = query.ResultTableOption.Clone()
+	return i.QueryPreparedRawData(ctx, prepared, dataCh)
+}
 
-	aliases, err := i.getAlias(ctx, &rawQuery, start, end)
-	if err != nil {
-		return size, total, option, err
-	}
-
-	unit := metadata.GetQueryParams(ctx).TimeUnit
-	span.Set("aliases", aliases)
-
-	qo := &queryOption{
-		indexes: aliases,
-		start:   start,
-		end:     end,
-		query:   &rawQuery,
-		conn:    i.connect,
-	}
-
-	fieldMap, err := i.fieldMap(ctx, rawQuery.FieldAlias, aliases...)
-	if err != nil {
-		return size, total, option, metadata.NewMessage(
-			metadata.MsgQueryES,
-			"字段查询异常: %+v",
-			aliases,
-		).Error(ctx, err)
-	}
-	span.Set("field-map-length", len(fieldMap))
-
-	if i.maxSize > 0 && rawQuery.Size > i.maxSize {
-		rawQuery.Size = i.maxSize
-	}
-
-	option = rawQuery.ResultTableOption
-	if option != nil {
-		if option.From != nil {
-			rawQuery.From = *option.From
+// QueryPreparedRawData executes and decodes one prepared logical raw query.
+func (i *Instance) QueryPreparedRawData(
+	ctx context.Context,
+	prepared *PreparedRawQuery,
+	dataCh chan<- map[string]any,
+) (size int64, total int64, option *metadata.ResultTableOption, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
 		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-prepared-raw")
+	defer span.End(&err)
+
+	if prepared == nil || prepared.query == nil || prepared.queryOption == nil || prepared.fact == nil || prepared.source == nil {
+		return size, total, option, fmt.Errorf("prepared raw query is incomplete")
+	}
+	if prepared.connectionKey != i.RawBatchConnectionKey(ctx) {
+		return size, total, option, fmt.Errorf("prepared raw query connection mismatch")
+	}
+	if !prepared.claimed.CompareAndSwap(false, true) {
+		return size, total, option, fmt.Errorf("prepared raw query already consumed")
 	}
 
-	labelMap := function.LabelMap(ctx, &rawQuery)
-	reverseAlias := make(map[string]string, len(rawQuery.FieldAlias))
-	for k, v := range rawQuery.FieldAlias {
-		reverseAlias[v] = k
-	}
-
-	fact := NewFormatFactory(ctx).
-		WithTransform(func(s string) string {
-			if s == "" {
-				return ""
-			}
-			// 别名替换
-			ns := s
-			if alias, ok := reverseAlias[s]; ok {
-				ns = alias
-			}
-
-			return ns
-		}, func(s string) string {
-			if s == "" {
-				return ""
-			}
-			ns := s
-
-			// 别名替换
-			if alias, ok := rawQuery.FieldAlias[s]; ok {
-				ns = alias
-			}
-			return ns
-		},
-		).
-		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(rawQuery.Field, rawQuery.TimeField, qo.start, qo.end, unit, rawQuery.Size).
-		WithFieldMap(fieldMap).
-		WithOrders(rawQuery.Orders).
-		WithIncludeValues(labelMap)
-
-	sr, err := i.esQuery(ctx, qo, fact)
+	rawQuery := prepared.query
+	fact := prepared.fact
+	option = rawQuery.ResultTableOption
+	sr, err := i.executeESQuery(
+		ctx,
+		prepared.queryOption,
+		fact,
+		prepared.source,
+		prepared.countQuery,
+		prepared.body,
+	)
 	if err != nil {
 		return size, total, option, metadata.NewMessage(
 			metadata.MsgQueryES,
@@ -802,61 +719,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		).Error(ctx, err)
 	}
 
-	from := rawQuery.From
-	option = &metadata.ResultTableOption{
-		FieldType: fact.FieldType(),
-		From:      &from,
+	size, total, option, err = decodePreparedRawResult(prepared, sr, dataCh)
+	if err != nil {
+		return size, total, option, err
 	}
-
-	if sr != nil {
-		if sr.Hits != nil {
-
-			span.Set("instance-out-list-size", len(sr.Hits.Hits))
-
-			for idx, d := range sr.Hits.Hits {
-				data := make(map[string]any)
-				decoder := json.NewDecoder(bytes.NewReader(d.Source))
-				decoder.UseNumber()
-				if err = decoder.Decode(&data); err != nil {
-					return size, total, option, err
-				}
-				fact.SetData(data)
-
-				// 注入别名：命中原始字段 key 后补写别名字段 key（与 bksql 语义保持一致）
-				rawQuery.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(fact.data)
-
-				fact.data[metadata.KeyDocID] = d.Id
-				fact.data[metadata.KeyIndex] = d.Index
-				rawQuery.DataReload(fact.data)
-
-				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
-					fact.data[FieldTime] = timeValue
-				}
-
-				if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
-					option.SearchAfter = d.Sort
-				}
-
-				dataCh <- fact.data
-			}
-
-			if sr.Hits.TotalHits != nil {
-				total = sr.Hits.TotalHits.Value
-			}
-			size = int64(len(sr.Hits.Hits))
-		}
-
-		if rawQuery.Scroll != "" {
-			var originalOption *metadata.ResultTableOption
-			originalOption = rawQuery.ResultTableOption
-
-			option.ScrollID = sr.ScrollId
-
-			if originalOption != nil {
-				option.SliceIndex = originalOption.SliceIndex
-				option.SliceMax = originalOption.SliceMax
-			}
-		}
+	if sr != nil && sr.Hits != nil {
+		span.Set("instance-out-list-size", len(sr.Hits.Hits))
 	}
 
 	span.Set("instance-out-total", total)
@@ -926,7 +794,7 @@ func (i *Instance) QuerySeriesSet(
 		query:   query,
 		conn:    i.connect,
 	}
-	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	fieldMap, physicalIndexes, err := i.fieldMapWithPhysicalIndexes(ctx, query.FieldAlias, aliases...)
 	if err != nil {
 		metadata.NewMessage(
 			metadata.MsgQueryES,
@@ -935,6 +803,7 @@ func (i *Instance) QuerySeriesSet(
 		).Warn(ctx)
 		return storage.EmptySeriesSet()
 	}
+	qo.physicalIndexes = physicalIndexes
 	span.Set("field-map-length", len(fieldMap))
 
 	var size int
@@ -1039,10 +908,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		conn:    i.connect,
 	}
 
-	fieldMap, err := i.QueryFieldMap(ctx, &labelValuesQuery, start, end)
+	fieldMap, physicalIndexes, err := i.fieldMapWithPhysicalIndexes(ctx, labelValuesQuery.FieldAlias, aliases...)
 	if err != nil {
 		return nil, err
 	}
+	qo.physicalIndexes = physicalIndexes
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 	fact := NewFormatFactory(ctx).

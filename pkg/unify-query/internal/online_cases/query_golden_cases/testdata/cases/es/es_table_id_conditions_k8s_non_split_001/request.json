@@ -1,0 +1,32 @@
+{
+  "method": "POST",
+  "path": "/query/ts/raw",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_table_conditions",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_es_table_conditions",
+    "query_list": [{
+      "data_source": "bklog",
+      "table_id": "",
+      "field_name": "events_total",
+      "reference_name": "a",
+      "limit": 10,
+      "from": 0,
+      "keep_columns": ["_time", "_value", "service"],
+      "table_id_conditions": [[
+        {"field_name": "scene", "value": ["k8s"], "op": "eq"}
+      ]],
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "order_by": ["_time"],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

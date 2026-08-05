@@ -105,6 +105,7 @@ func NewSQLExpr(key string) SQLExpr {
 				forceEq:                   true,
 				disableShardKeyTimeBucket: true,
 				disableTimeBucketCast:     true,
+				groupTimeBucketByExpr:     true,
 			},
 		}
 	default:

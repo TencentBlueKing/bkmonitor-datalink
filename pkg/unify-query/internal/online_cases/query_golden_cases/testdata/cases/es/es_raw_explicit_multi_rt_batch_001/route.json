@@ -1,0 +1,36 @@
+{
+  "space_uid": "bkcc__golden_apm_trace_batch",
+  "result_tables": [
+    {"table_id": "demo_trace_app_a.default"},
+    {"table_id": "demo_trace_app_b.default"}
+  ],
+  "result_table_details": {
+    "demo_trace_app_a.default": {
+      "storage_id": 2501,
+      "storage_name": "es_cluster_trace_batch",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_trace_batch",
+      "db": "golden_apm_trace_batch_rt_a",
+      "table_id": "demo_trace_app_a.default",
+      "fields": ["trace_id", "span_id", "service_name"],
+      "data_label": "demo_trace_app_a",
+      "tags_key": ["trace_id", "span_id", "service_name"],
+      "source_type": "bkapm"
+    },
+    "demo_trace_app_b.default": {
+      "storage_id": 2501,
+      "storage_name": "es_cluster_trace_batch",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_trace_batch",
+      "db": "golden_apm_trace_batch_rt_b",
+      "table_id": "demo_trace_app_b.default",
+      "fields": ["trace_id", "span_id", "service_name"],
+      "data_label": "demo_trace_app_b",
+      "tags_key": ["trace_id", "span_id", "service_name"],
+      "source_type": "bkapm"
+    }
+  },
+  "storages": {
+    "2501": {"type": "elasticsearch"}
+  }
+}

@@ -32,6 +32,14 @@ import (
 // 单个实体表的历史分段数量不受该值限制，会在当前批次中一次加载。
 const resultTableDetailBatchSize = cfg.DefaultDBFilterSize
 
+// resultTableDetailQueryOptionNames 与 metadata ResultTableOption 的查询选项白名单保持一致。
+// result_table_detail 只供查询端消费，清洗和写入链路使用的 option 不应进入 Redis payload。
+var resultTableDetailQueryOptionNames = []string{
+	"need_add_time",
+	"time_field",
+	models.BindingBcsClusterId,
+}
+
 type logRouteRefreshResult struct {
 	claimedTableIDs  map[string]struct{}
 	routeCount       int
@@ -498,8 +506,9 @@ func (s *SpacePusher) composeLogTableIdDetail(
 				"storage_type": models.StorageTypeBkSql, "storage_id": storageID,
 				"storage_name": cluster.ClusterName, "cluster_name": cluster.ClusterName,
 				"db": dorisDB, "measurement": models.DorisMeasurement,
-				"storage_cluster_records": history, "data_label": dataLabel,
-				"labels": labels, "field_alias": fieldAlias,
+				"options": optionsMap[tableID], "storage_cluster_records": history,
+				"data_label": dataLabel,
+				"labels":     labels, "field_alias": fieldAlias,
 			}
 		}
 	}
@@ -642,6 +651,7 @@ func loadResultTableOptions(
 		).
 		BkTenantIdEq(bkTenantId).
 		TableIDIn(tableIDs...).
+		NameIn(resultTableDetailQueryOptionNames...).
 		All(&rows); err != nil {
 		return nil, err
 	}

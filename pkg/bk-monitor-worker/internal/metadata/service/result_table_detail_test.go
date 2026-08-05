@@ -139,6 +139,25 @@ func seedMixedLogRoute(t *testing.T, db *gorm.DB, tenantID, tableID, defaultStor
 	insertDorisStorage(t, db, tableID, tenantID, 2, "mixed_doris_table", "")
 	insertCluster(t, db, tenantID, 1, "es-prod", models.StorageTypeES)
 	insertCluster(t, db, tenantID, 2, "doris-prod", models.StorageTypeDoris)
+	for _, option := range []struct {
+		name, value, valueType string
+	}{
+		{name: "need_add_time", value: "true", valueType: "bool"},
+		{name: "time_field", value: `{"name":"event_time","type":"date","unit":"millisecond"}`, valueType: "dict"},
+		{name: models.BindingBcsClusterId, value: "BCS-K8S-00000", valueType: "string"},
+		// 非查询 option 不应进入 result_table_detail。
+		{name: models.OptionIsSplitMeasurement, value: "true", valueType: "bool"},
+	} {
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_resulttableoption (table_id, bk_tenant_id, name, value, value_type) VALUES (?, ?, ?, ?, ?)`,
+			tableID, tenantID, option.name, option.value, option.valueType,
+		)
+	}
+	// 同名表的查询 option 必须按租户隔离。
+	execResultTableDetailSQL(t, db,
+		`INSERT INTO metadata_resulttableoption (table_id, bk_tenant_id, name, value, value_type) VALUES (?, ?, ?, ?, ?)`,
+		tableID, "other-tenant", "need_add_time", "false", "bool",
+	)
 	newer := time.Unix(200, 0)
 	older := time.Unix(100, 0)
 	insertClusterRecord(t, db, 11, tableID, tenantID, 1, &newer, false)
@@ -168,6 +187,16 @@ func expectedMixedHistory() []map[string]any {
 			"db": "mixed_doris_table", "measurement": models.DorisMeasurement,
 			"enable_time": int64(100),
 		},
+	}
+}
+
+func expectedLogRouteOptions() map[string]any {
+	return map[string]any{
+		"need_add_time": true,
+		"time_field": map[string]any{
+			"name": "event_time", "type": "date", "unit": "millisecond",
+		},
+		models.BindingBcsClusterId: "BCS-K8S-00000",
 	}
 }
 
@@ -292,7 +321,7 @@ func TestComposeLogTableIdDetailMixedStoragePayloads(t *testing.T) {
 			expected: map[string]any{
 				"storage_type": models.StorageTypeES, "storage_id": uint(1),
 				"db": "mixed-es-index", "measurement": models.TSGroupDefaultMeasurement,
-				"source_type": "log", "options": map[string]any{},
+				"source_type": "log", "options": expectedLogRouteOptions(),
 				"storage_cluster_records": expectedMixedHistory(), "data_label": "mixed-label",
 				"labels": map[string]any{"scene": "mixed"}, "field_alias": map[string]string{},
 			},
@@ -303,6 +332,7 @@ func TestComposeLogTableIdDetailMixedStoragePayloads(t *testing.T) {
 				"storage_type": models.StorageTypeBkSql, "storage_id": uint(2),
 				"storage_name": "doris-prod", "cluster_name": "doris-prod",
 				"db": "mixed_doris_table", "measurement": models.DorisMeasurement,
+				"options":                 expectedLogRouteOptions(),
 				"storage_cluster_records": expectedMixedHistory(), "data_label": "mixed-label",
 				"labels": map[string]any{"scene": "mixed"}, "field_alias": map[string]string{},
 			},
@@ -452,7 +482,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 		insertClusterRecord(t, db, 2, originTableID, tenantID, 2, &dorisTime, false)
 		execResultTableDetailSQL(t, db,
 			`INSERT INTO metadata_resulttableoption (table_id, bk_tenant_id, name, value, value_type) VALUES (?, ?, ?, ?, ?)`,
-			virtualTableID, tenantID, "virtual_option", "virtual-value", "string",
+			virtualTableID, tenantID, "need_add_time", "true", "bool",
 		)
 		execResultTableDetailSQL(t, db,
 			`INSERT INTO metadata_esfieldqueryaliasoption (table_id, bk_tenant_id, field_path, query_alias, is_deleted) VALUES (?, ?, ?, ?, ?)`,
@@ -471,7 +501,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 		assert.Equal(t, "entity-source", detail["source_type"])
 		assert.Equal(t, "virtual-label", detail["data_label"])
 		assert.Equal(t, map[string]any{"kind": "virtual"}, detail["labels"])
-		assert.Equal(t, map[string]any{"virtual_option": "virtual-value"}, detail["options"])
+		assert.Equal(t, map[string]any{"need_add_time": true}, detail["options"])
 		assert.Equal(t, map[string]string{"pod": "__ext.pod"}, detail["field_alias"])
 		assert.Len(t, detail["storage_cluster_records"], 2)
 	})

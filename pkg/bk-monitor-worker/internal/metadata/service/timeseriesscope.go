@@ -120,6 +120,7 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 		customreport.TimeSeriesMetricDBSchema.FieldID,
 		customreport.TimeSeriesMetricDBSchema.FieldName,
 		customreport.TimeSeriesMetricDBSchema.FieldScope,
+		customreport.TimeSeriesMetricDBSchema.ScopeID,
 	).GroupIDEq(svc.TimeSeriesGroupID).All(&existingMetrics); err != nil {
 		return nil, nil, errors.Wrap(err, "query existing TimeSeriesMetric")
 	}

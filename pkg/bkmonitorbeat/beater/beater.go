@@ -621,6 +621,15 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	oldState := bt.beaterState
 	oldConfig := bt.config
 	oldConfigEngine := bt.configEngine
+	tenantStorage := tenant.DefaultStorage()
+	tenantStorageSnapshot := tenantStorage.Snapshot()
+	tenantStorageRevision := tenantStorage.Revision()
+	restoreState := func() {
+		bt.beaterState = oldState
+		bt.config = oldConfig
+		bt.configEngine = oldConfigEngine
+		tenantStorage.Restore(tenantStorageSnapshot)
+	}
 	state := newBeaterState()
 	state.ctx = oldState.ctx
 	state.cancelFunc = oldState.cancelFunc
@@ -633,9 +642,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	err := bt.ParseConfig(cfg)
 	if err != nil {
 		logger.Errorf("MonitorBeater reload error: %v", err)
-		bt.beaterState = oldState
-		bt.config = oldConfig
-		bt.configEngine = oldConfigEngine
+		restoreState()
 		return
 	}
 
@@ -663,24 +670,24 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	err = bt.Scheduler.Reload(bt.ctx, state.config, beatTasks)
 	if err != nil {
 		logger.Errorf("Scheduler reload error: %v", err)
-		bt.beaterState = oldState
-		bt.config = oldConfig
-		bt.configEngine = oldConfigEngine
+		restoreState()
 		return
 	}
+	reloadFailed := false
 	err = bt.KeywordScheduler.Reload(bt.ctx, state.config, keywordTasks)
 	if err != nil {
 		logger.Errorf("keywordScheduler reload error: %v", err)
-		bt.beaterState = oldState
-		bt.config = oldConfig
-		bt.configEngine = oldConfigEngine
+		restoreState()
+		reloadFailed = true
 	}
 	err = bt.ListenScheduler.Reload(bt.ctx, state.config, listenTasks)
 	if err != nil {
 		logger.Errorf("listenScheduler reload error: %v", err)
-		bt.beaterState = oldState
-		bt.config = oldConfig
-		bt.configEngine = oldConfigEngine
+		restoreState()
+		reloadFailed = true
+	}
+	if !reloadFailed {
+		tenantStorage.MarkApplied(tenantStorageRevision)
 	}
 	metricsReloaded := false
 	if bt.config.BizID != oldConfig.BizID || bt.config.CloudID != oldConfig.CloudID || bt.config.IP != oldConfig.IP {

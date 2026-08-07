@@ -52,3 +52,21 @@ func TestStorageResolveTaskDataID(t *testing.T) {
 		t.Fatal("unexpected task should not be stored")
 	}
 }
+
+func TestStorageRetriesPendingUpdateUntilApplied(t *testing.T) {
+	storage := NewStorage()
+	storage.SetExpectedTasks([]string{"basereport"})
+	tasks := map[string]int32{"basereport": 2001}
+
+	if updated := storage.UpdateTaskDataIDs(tasks); !updated {
+		t.Fatal("expected first data ID response to trigger reload")
+	}
+	if updated := storage.UpdateTaskDataIDs(tasks); !updated {
+		t.Fatal("expected unapplied data ID response to retry reload")
+	}
+
+	storage.MarkApplied(storage.Revision())
+	if updated := storage.UpdateTaskDataIDs(tasks); updated {
+		t.Fatal("expected applied data ID response not to trigger reload")
+	}
+}

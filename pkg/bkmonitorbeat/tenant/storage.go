@@ -18,12 +18,85 @@ type Storage struct {
 	tasks              map[string]int32 // 与 gse 通信获取
 	expectedTasks      map[string]struct{}
 	expectedConfigured bool
+	revision           uint64
+	appliedRevision    uint64
+}
+
+// Snapshot is an immutable copy of Storage state used by config reload rollback.
+type Snapshot struct {
+	tasks              map[string]int32
+	expectedTasks      map[string]struct{}
+	expectedConfigured bool
+	revision           uint64
+	appliedRevision    uint64
 }
 
 func NewStorage() *Storage {
 	return &Storage{
 		tasks:         make(map[string]int32),
 		expectedTasks: make(map[string]struct{}),
+	}
+}
+
+// Snapshot returns a copy of the current storage state.
+func (s *Storage) Snapshot() Snapshot {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	tasks := make(map[string]int32, len(s.tasks))
+	for task, dataID := range s.tasks {
+		tasks[task] = dataID
+	}
+	expectedTasks := make(map[string]struct{}, len(s.expectedTasks))
+	for task := range s.expectedTasks {
+		expectedTasks[task] = struct{}{}
+	}
+
+	return Snapshot{
+		tasks:              tasks,
+		expectedTasks:      expectedTasks,
+		expectedConfigured: s.expectedConfigured,
+		revision:           s.revision,
+		appliedRevision:    s.appliedRevision,
+	}
+}
+
+// Restore replaces storage state with a previous snapshot.
+func (s *Storage) Restore(snapshot Snapshot) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	tasks := make(map[string]int32, len(snapshot.tasks))
+	for task, dataID := range snapshot.tasks {
+		tasks[task] = dataID
+	}
+	expectedTasks := make(map[string]struct{}, len(snapshot.expectedTasks))
+	for task := range snapshot.expectedTasks {
+		expectedTasks[task] = struct{}{}
+	}
+
+	s.tasks = tasks
+	s.expectedTasks = expectedTasks
+	s.expectedConfigured = snapshot.expectedConfigured
+	s.revision = snapshot.revision
+	s.appliedRevision = snapshot.appliedRevision
+}
+
+// Revision returns the current mapping revision.
+func (s *Storage) Revision() uint64 {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	return s.revision
+}
+
+// MarkApplied records the newest mapping revision used by a successful reload.
+func (s *Storage) MarkApplied(revision uint64) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	if revision > s.appliedRevision && revision <= s.revision {
+		s.appliedRevision = revision
 	}
 }
 
@@ -45,10 +118,15 @@ func (s *Storage) SetExpectedTasks(tasks []string) {
 	for _, task := range tasks {
 		expectedTasks[task] = struct{}{}
 	}
+	mappingUpdated := false
 	for task := range s.tasks {
 		if _, ok := expectedTasks[task]; !ok {
 			delete(s.tasks, task)
+			mappingUpdated = true
 		}
+	}
+	if mappingUpdated {
+		s.revision++
 	}
 
 	s.expectedTasks = expectedTasks
@@ -87,7 +165,10 @@ func (s *Storage) UpdateTaskDataIDs(tasks map[string]int32) bool {
 		s.tasks[task] = dataID
 		updated = true
 	}
-	return updated
+	if updated {
+		s.revision++
+	}
+	return updated || s.revision != s.appliedRevision
 }
 
 var defaultStorage = NewStorage()

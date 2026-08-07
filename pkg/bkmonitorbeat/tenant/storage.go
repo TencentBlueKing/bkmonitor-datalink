@@ -10,38 +10,84 @@
 package tenant
 
 import (
-	"reflect"
 	"sync"
 )
 
 type Storage struct {
-	mut   sync.Mutex
-	tasks map[string]int32 // 与 gse 通信获取
+	mut                sync.RWMutex
+	tasks              map[string]int32 // 与 gse 通信获取
+	expectedTasks      map[string]struct{}
+	expectedConfigured bool
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		tasks: make(map[string]int32),
+		tasks:         make(map[string]int32),
+		expectedTasks: make(map[string]struct{}),
 	}
 }
 
 func (s *Storage) GetTaskDataID(task string) (int32, bool) {
-	s.mut.Lock()
-	defer s.mut.Unlock()
+	s.mut.RLock()
+	defer s.mut.RUnlock()
 
 	dst, ok := s.tasks[task]
 	return dst, ok
+}
+
+// SetExpectedTasks records tasks that must use tenant DataIDs. Existing mappings
+// are retained only when the task remains configured.
+func (s *Storage) SetExpectedTasks(tasks []string) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	expectedTasks := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		expectedTasks[task] = struct{}{}
+	}
+	for task := range s.tasks {
+		if _, ok := expectedTasks[task]; !ok {
+			delete(s.tasks, task)
+		}
+	}
+
+	s.expectedTasks = expectedTasks
+	s.expectedConfigured = true
+}
+
+// ResolveTaskDataID returns a fetched tenant DataID when present. An expected
+// task without a mapping is disabled instead of falling back to a static ID.
+func (s *Storage) ResolveTaskDataID(task string, fallback int32) int32 {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	if dataID, ok := s.tasks[task]; ok {
+		return dataID
+	}
+	if _, ok := s.expectedTasks[task]; ok {
+		return 0
+	}
+	return fallback
 }
 
 func (s *Storage) UpdateTaskDataIDs(tasks map[string]int32) bool {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	if reflect.DeepEqual(tasks, s.tasks) {
-		return false
+	updated := false
+	for task, dataID := range tasks {
+		if s.expectedConfigured {
+			if _, ok := s.expectedTasks[task]; !ok {
+				continue
+			}
+		}
+		if oldDataID, ok := s.tasks[task]; ok && oldDataID == dataID {
+			continue
+		}
+		s.tasks[task] = dataID
+		updated = true
 	}
-	s.tasks = tasks
-	return true
+	return updated
 }
 
 var defaultStorage = NewStorage()

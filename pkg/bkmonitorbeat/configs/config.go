@@ -227,8 +227,5 @@ func (c *Config) GetTaskConfigList() []define.TaskConfig {
 
 func (c *Config) GetGatherUpDataID() int32 {
 	storage := tenant.DefaultStorage()
-	if v, ok := storage.GetTaskDataID(define.ModuleGatherUpBeat); ok {
-		return v
-	}
-	return c.GatherUpBeat.DataID
+	return storage.ResolveTaskDataID(define.ModuleGatherUpBeat, c.GatherUpBeat.DataID)
 }

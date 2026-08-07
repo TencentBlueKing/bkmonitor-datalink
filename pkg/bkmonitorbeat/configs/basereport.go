@@ -94,14 +94,12 @@ type BasereportConfig struct {
 
 func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
+	storage := tenant.DefaultStorage()
+	c.DataID = storage.ResolveTaskDataID(define.ModuleBasereport, c.DataID)
+
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {
 		return tasks
-	}
-
-	storage := tenant.DefaultStorage()
-	if v, ok := storage.GetTaskDataID(define.ModuleBasereport); ok {
-		c.DataID = v
 	}
 
 	tasks = append(tasks, c)

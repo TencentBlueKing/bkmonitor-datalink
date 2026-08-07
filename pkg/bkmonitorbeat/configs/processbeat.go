@@ -81,19 +81,13 @@ func (c *ProcessbeatConfig) InitIdent() error {
 
 	storage := tenant.DefaultStorage()
 	if c.PortDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
-			c.PortDataId = v
-		}
+		c.PortDataId = storage.ResolveTaskDataID(define.ModuleProcessbeat+"_port", c.PortDataId)
 	}
 	if c.TopDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
-			c.TopDataId = v
-		}
+		c.TopDataId = storage.ResolveTaskDataID(define.ModuleProcessbeat+"_top", c.TopDataId)
 	}
 	if c.PerfDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
-			c.PerfDataId = v
-		}
+		c.PerfDataId = storage.ResolveTaskDataID(define.ModuleProcessbeat+"_perf", c.PerfDataId)
 	}
 
 	return c.initIdent(c)

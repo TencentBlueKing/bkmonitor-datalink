@@ -234,6 +234,11 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
 	}
+	if baseConfig.EnableMultiTenant {
+		tenant.DefaultStorage().SetExpectedTasks(baseConfig.MultiTenantTasks)
+	} else {
+		tenant.DefaultStorage().SetExpectedTasks(nil)
+	}
 	err = bt.initHostIDWatcher(baseConfig)
 	if err != nil {
 		return fmt.Errorf("init hostid failed,error:%s", err)

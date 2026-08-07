@@ -199,21 +199,33 @@ func (c *Client) loop() {
 }
 
 type Pacer struct {
-	maxSeconds int
-	count      int
+	maxSeconds     int
+	nextMinSeconds int
 }
 
 func newPacer(maxSeconds int) *Pacer {
 	return &Pacer{
-		maxSeconds: maxSeconds,
+		maxSeconds:     maxSeconds,
+		nextMinSeconds: 2 * 60,
 	}
 }
 
 func (p *Pacer) Next() int {
-	p.count++
+	if p.maxSeconds <= 0 {
+		return 0
+	}
+	if p.nextMinSeconds >= p.maxSeconds {
+		return p.maxSeconds
+	}
 
-	n := 1 << p.count
-	seconds := (n * 60) + (rand.Int() % (n * 60))
+	minSeconds := p.nextMinSeconds
+	if minSeconds > p.maxSeconds/2 {
+		p.nextMinSeconds = p.maxSeconds
+	} else {
+		p.nextMinSeconds = minSeconds * 2
+	}
+
+	seconds := minSeconds + rand.Intn(minSeconds)
 	if seconds > p.maxSeconds {
 		return p.maxSeconds
 	}

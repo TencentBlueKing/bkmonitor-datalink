@@ -1,0 +1,26 @@
+id: es_query_string_missing_mapping_mixed_case_boolean_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/aggregate/query_string/mixed_case_boolean/mapping_empty/output_index_search
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-08-04"
+  fingerprint: sha256:9f7374bb2d8921598154a8c5469b4b398dfde16183960de35007be35f95a0c23
+tags:
+  - query_ts_api
+  - aggregation
+  - query_string
+  - missing_mapping
+  - case_insensitive_boolean
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产问题形态仅保留 mapping 为空时混合大小写布尔查询的结构，所有标识和值均已不可逆替换。
+  - 正确 output 仅规范化布尔运算符，字段解析仍由实际搜索分片的原生 query_string 完成。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -11,11 +11,15 @@
 package utils
 
 import (
+	"io"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var realPod = &corev1.Pod{
@@ -104,6 +108,25 @@ func TestGetPodWorkloadType(t *testing.T) {
 	assert.Equal(t, "v-workload-type", GetPodWorkloadType(vclusterPod, "real-workload-type"))
 }
 
+func TestGetWorkloadName(t *testing.T) {
+	tests := []struct {
+		name         string
+		workloadName string
+		kind         string
+		expected     string
+	}{
+		{name: "deployment managed replicaset", workloadName: "nginx-7d8b49557c", kind: "ReplicaSet", expected: "nginx"},
+		{name: "standalone replicaset", workloadName: "standalone", kind: "ReplicaSet", expected: "standalone"},
+		{name: "non replicaset", workloadName: "nginx-0", kind: "StatefulSet", expected: "nginx-0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, GetWorkloadName(tt.workloadName, tt.kind))
+		})
+	}
+}
+
 func TestGetLabels(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"aaa": "bbb",
@@ -115,6 +138,24 @@ func TestGetLabels(t *testing.T) {
 		"controller-revision-hash":           "statefulset-test-41xlw9ny-7b746545cd",
 		"statefulset.kubernetes.io/pod-name": "statefulset-test-41xlw9ny-0",
 	}, GetLabels(vclusterPod))
+}
+
+func TestGetLabelsMalformedVclusterAnnotationDoesNotPanic(t *testing.T) {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(io.Discard)))
+
+	for _, labelsText := range []string{
+		"missing-separator",
+		"=\"empty-key\"",
+		"empty-value=",
+		"invalid-json=not-json",
+	} {
+		pod := vclusterPod.DeepCopy()
+		pod.Annotations[config.VclusterLabelsAnnotationKey] = labelsText
+
+		assert.NotPanics(t, func() {
+			assert.Empty(t, GetLabels(pod))
+		}, labelsText)
+	}
 }
 
 func TestGetAnnotations(t *testing.T) {

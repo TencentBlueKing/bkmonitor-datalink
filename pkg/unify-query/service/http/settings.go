@@ -10,6 +10,7 @@
 package http
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -85,6 +86,21 @@ const (
 	LabelValuesDefaultLimitConfigPath = "http.label_values.default_limit"
 )
 
+const (
+	QueryRawESBatchMaxMembersConfigPath            = "http.query.raw.es_batch.max_members"
+	QueryRawESBatchMaxBodyBytesConfigPath          = "http.query.raw.es_batch.max_body_bytes"
+	QueryRawESBatchMaxConcurrentSearchesConfigPath = "http.query.raw.es_batch.max_concurrent_searches"
+	DefaultQueryRawESBatchMaxMembers               = 16
+	DefaultQueryRawESBatchMaxBodyBytes             = 1048576
+	DefaultQueryRawESBatchMaxConcurrentSearches    = 4
+)
+
+type queryRawESBatchSettings struct {
+	maxMembers            int
+	maxBodyBytes          int
+	maxConcurrentSearches int
+}
+
 var (
 	IPAddress           string
 	Port                int
@@ -111,4 +127,22 @@ var (
 	ScrollWindowTimeout      string
 	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
+
+	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
 )
+
+func defaultQueryRawESBatchSettings() *queryRawESBatchSettings {
+	return &queryRawESBatchSettings{
+		maxMembers:            DefaultQueryRawESBatchMaxMembers,
+		maxBodyBytes:          DefaultQueryRawESBatchMaxBodyBytes,
+		maxConcurrentSearches: DefaultQueryRawESBatchMaxConcurrentSearches,
+	}
+}
+
+func getQueryRawESBatchSettings() queryRawESBatchSettings {
+	settings := queryRawESBatchSettingsSnapshot.Load()
+	if settings == nil {
+		settings = defaultQueryRawESBatchSettings()
+	}
+	return *settings
+}

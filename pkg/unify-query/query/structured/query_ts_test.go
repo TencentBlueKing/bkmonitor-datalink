@@ -31,6 +31,20 @@ import (
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+func TestQueryTsIsESBatchJSON(t *testing.T) {
+	var queryTs QueryTs
+	require.NoError(t, json.Unmarshal([]byte(`{"is_es_batch":true}`), &queryTs))
+	assert.True(t, queryTs.IsESBatch)
+
+	content, err := json.Marshal(QueryTs{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(content), "is_es_batch")
+
+	content, err = json.Marshal(QueryTs{IsESBatch: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"instant":false,"not_time_align":false,"is_es_batch":true}`, string(content))
+}
+
 func TestQueryToMetric(t *testing.T) {
 	db := "result_table"
 	tableID := influxdb.ResultTableInfluxDB

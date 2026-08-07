@@ -1,0 +1,106 @@
+[
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_apm_trace_batch_rt_a"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_apm_trace_batch_rt_b"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/_msearch",
+    "query": {
+      "max_concurrent_searches": ["4"]
+    },
+    "body": [
+      {
+        "index": ["golden_apm_trace_batch_rt_a"]
+      },
+      {
+        "_source": {
+          "includes": ["_time", "trace_id", "span_id", "service_name"]
+        },
+        "from": 0,
+        "query": {
+          "bool": {
+            "filter": [
+              {
+                "match_phrase": {
+                  "trace_id": {
+                    "query": "trace_value_alpha"
+                  }
+                }
+              },
+              {
+                "range": {
+                  "dtEventTimeStamp": {
+                    "format": "epoch_second",
+                    "from": 1784701776,
+                    "include_lower": true,
+                    "include_upper": true,
+                    "to": 1784702076
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "size": 20,
+        "sort": [
+          {
+            "dtEventTimeStamp": {
+              "order": "asc",
+              "unmapped_type": "date"
+            }
+          }
+        ]
+      },
+      {
+        "index": ["golden_apm_trace_batch_rt_b"]
+      },
+      {
+        "_source": {
+          "includes": ["_time", "trace_id", "span_id", "service_name"]
+        },
+        "from": 0,
+        "query": {
+          "bool": {
+            "filter": [
+              {
+                "match_phrase": {
+                  "trace_id": {
+                    "query": "trace_value_alpha"
+                  }
+                }
+              },
+              {
+                "range": {
+                  "dtEventTimeStamp": {
+                    "format": "epoch_second",
+                    "from": 1784701776,
+                    "include_lower": true,
+                    "include_upper": true,
+                    "to": 1784702076
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "size": 20,
+        "sort": [
+          {
+            "dtEventTimeStamp": {
+              "order": "asc",
+              "unmapped_type": "date"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

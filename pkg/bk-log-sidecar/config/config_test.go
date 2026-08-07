@@ -14,7 +14,43 @@ import (
 	"flag"
 	"reflect"
 	"testing"
+	"time"
 )
+
+func TestPeriodicReconcileFlags(t *testing.T) {
+	originalFlagSet := flag.CommandLine
+	originalBkEnvs := append([]string(nil), BkEnvs...)
+	originalInterval := PeriodicReconcileInterval
+	originalJitter := PeriodicReconcileJitter
+	t.Cleanup(func() {
+		flag.CommandLine = originalFlagSet
+		BkEnvs = originalBkEnvs
+		PeriodicReconcileInterval = originalInterval
+		PeriodicReconcileJitter = originalJitter
+	})
+
+	flag.CommandLine = flag.NewFlagSet("periodic-reconcile-test", flag.ContinueOnError)
+	FlagInit()
+	if PeriodicReconcileInterval != DefaultPeriodicReconcileInterval {
+		t.Fatalf("unexpected default interval: %s", PeriodicReconcileInterval)
+	}
+	if PeriodicReconcileJitter != DefaultPeriodicReconcileJitter {
+		t.Fatalf("unexpected default jitter: %v", PeriodicReconcileJitter)
+	}
+	if err := flag.CommandLine.Parse([]string{
+		"--periodic-reconcile-interval=2m",
+		"--periodic-reconcile-jitter=0.35",
+	}); err != nil {
+		t.Fatalf("parse periodic reconcile flags: %v", err)
+	}
+
+	if PeriodicReconcileInterval != 2*time.Minute {
+		t.Fatalf("unexpected interval: %s", PeriodicReconcileInterval)
+	}
+	if PeriodicReconcileJitter != 0.35 {
+		t.Fatalf("unexpected jitter: %v", PeriodicReconcileJitter)
+	}
+}
 
 func TestBkEnvFlag(t *testing.T) {
 	tests := []struct {

@@ -13,8 +13,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 func TestTimeSeriesScope_isMatchAutoRules(t *testing.T) {
@@ -120,4 +122,45 @@ func TestTimeSeriesScope_determineScopeNameForNewMetric(t *testing.T) {
 		assert.Equal(t, "env||cpu", scopeName)
 		assert.False(t, createFromDefault)
 	})
+}
+
+func TestCollectMetricsAndDimensionsPreservesExistingScope(t *testing.T) {
+	const existingScopeID = uint(321)
+	cleanupMetrics := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
+		{
+			GroupID:   testGroupID,
+			ScopeID:   existingScopeID,
+			TableID:   "test_is_active.existing_scope_metric",
+			FieldName: "existing_scope_metric",
+			IsActive:  true,
+		},
+	})
+	defer cleanupMetrics()
+
+	db := mysql.GetDBSession().DB
+	db.Delete(&customreport.TimeSeriesScope{}, "group_id = ?", testGroupID)
+	scope := customreport.TimeSeriesScope{
+		ID:        existingScopeID,
+		GroupID:   testGroupID,
+		ScopeName: "custom_scope",
+	}
+	require.NoError(t, scope.Create(db))
+	defer db.Delete(&customreport.TimeSeriesScope{}, "group_id = ?", testGroupID)
+
+	svc := NewTimeSeriesGroupSvc(&customreport.TimeSeriesGroup{
+		TimeSeriesGroupID:     testGroupID,
+		MetricGroupDimensions: "[]",
+	})
+	scopeNameToMetrics, _, err := collectMetricsAndDimensions(
+		&svc,
+		[]map[string]any{
+			{
+				"field_name":  "existing_scope_metric",
+				"field_scope": "default",
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, scopeNameToMetrics["custom_scope"], 1)
+	assert.NotContains(t, scopeNameToMetrics, "default")
 }

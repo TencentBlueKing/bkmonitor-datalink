@@ -50,6 +50,12 @@ func setupTestData(t *testing.T, groupID uint, metrics []customreport.TimeSeries
 		if metric.LastModifyTime.IsZero() {
 			metric.LastModifyTime = time.Now()
 		}
+		if metric.FieldConfig == "" {
+			metric.FieldConfig = "{}"
+		}
+		if metric.FieldScope == "" {
+			metric.FieldScope = "default"
+		}
 
 		// 记录原始的 IsActive 值
 		originalIsActive := metric.IsActive
@@ -58,10 +64,10 @@ func setupTestData(t *testing.T, groupID uint, metrics []customreport.TimeSeries
 		// 直接插入所有字段，包括 is_active
 		err := db.Exec(`
 			INSERT INTO metadata_timeseriesmetric 
-			(group_id, table_id, field_name, tag_list, last_modify_time, last_index, label, is_active, field_config, field_scope)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, metric.GroupID, metric.TableID, metric.FieldName, metric.TagList,
-			metric.LastModifyTime, metric.LastIndex, metric.Label, originalIsActive, "{}", "default").Error
+			(group_id, scope_id, table_id, field_name, tag_list, last_modify_time, last_index, label, is_active, field_config, field_scope)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, metric.GroupID, metric.ScopeID, metric.TableID, metric.FieldName, metric.TagList,
+			metric.LastModifyTime, metric.LastIndex, metric.Label, originalIsActive, metric.FieldConfig, metric.FieldScope).Error
 		require.NoError(t, err)
 
 		// 验证插入是否成功
@@ -161,6 +167,49 @@ func TestUpdateExistingMetricToActive(t *testing.T) {
 	err = customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(testGroupID).FieldNameEq("metric3").One(&metric3After)
 	require.NoError(t, err)
 	assert.True(t, metric3After.IsActive, "metric3 should be true after update")
+}
+
+// TestRestoreDisabledMetric 测试被用户禁用的指标再次被发现后恢复 scope 并清空禁用配置
+func TestRestoreDisabledMetric(t *testing.T) {
+	tagListStr, _ := jsonx.MarshalString([]string{"tag1", "tag2"})
+	cleanup := setupTestData(t, testGroupID, []customreport.TimeSeriesMetric{
+		{
+			GroupID:     testGroupID,
+			ScopeID:     DISABLE_SCOPE_ID,
+			TableID:     "test_is_active.metric_disabled",
+			FieldName:   "metric_disabled",
+			TagList:     tagListStr,
+			FieldConfig: `{"disabled":true}`,
+			IsActive:    true,
+		},
+	})
+	defer cleanup()
+
+	const restoredScopeID = uint(123)
+	metricInfo := createMetricInfo("metric_disabled", time.Now().Unix())
+	metricInfo["scope_id"] = restoredScopeID
+
+	svc := &TimeSeriesMetricSvc{}
+	needPush, err := svc.BulkRefreshTSMetrics(
+		testTenantID,
+		testGroupID,
+		testTableID,
+		[]map[string]any{metricInfo},
+		true,
+	)
+	require.NoError(t, err)
+	assert.True(t, needPush)
+
+	db := mysql.GetDBSession().DB
+	var restoredMetric customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).
+		GroupIDEq(testGroupID).
+		FieldNameEq("metric_disabled").
+		One(&restoredMetric)
+	require.NoError(t, err)
+	assert.Equal(t, restoredScopeID, restoredMetric.ScopeID)
+	assert.JSONEq(t, "{}", restoredMetric.FieldConfig)
+	assert.True(t, restoredMetric.IsActive)
 }
 
 // TestSetMetricToInactiveWhenNotInList 测试不在返回列表中的已存在指标，is_active 应该设置为 False

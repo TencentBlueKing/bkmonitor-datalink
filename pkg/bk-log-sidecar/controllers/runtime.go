@@ -19,13 +19,12 @@ import (
 )
 
 // NewRuntime new Runtime
-func NewRuntime(runtimeVersion string) define.Runtime {
+func NewRuntime(runtimeVersion string) (define.Runtime, error) {
 	// example: "docker://19.3.1", "containerd://1.4.1"
 	if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeContainerd)) {
 		parts := strings.Split(runtimeVersion, "://")
 		if len(parts) < 2 {
-			utils.CheckError(fmt.Errorf("runtime init failed, invalid version format: %s", runtimeVersion))
-			return nil
+			return nil, fmt.Errorf("runtime init failed, invalid version format: %s", runtimeVersion)
 		}
 
 		version := parts[1]
@@ -35,8 +34,6 @@ func NewRuntime(runtimeVersion string) define.Runtime {
 		return NewContainerdRuntime(true)
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeDocker)) {
 		return NewDockerRuntime()
-	} else {
-		utils.CheckError(fmt.Errorf("runtime init failed, unknown version: %s", runtimeVersion))
 	}
-	return nil
+	return nil, fmt.Errorf("runtime init failed, unknown version: %s", runtimeVersion)
 }

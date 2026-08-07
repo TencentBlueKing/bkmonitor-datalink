@@ -107,6 +107,9 @@ type QueryTs struct {
 	// IsMergeDB 是否启用合并 db 特性
 	IsMergeDB bool `json:"is_merge_db,omitempty"`
 
+	// IsESBatch 是否启用 query_raw 的 ES 批量查询
+	IsESBatch bool `json:"is_es_batch,omitempty"`
+
 	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
 	AddDimensions []string `json:"add_dimensions,omitempty"`
 }

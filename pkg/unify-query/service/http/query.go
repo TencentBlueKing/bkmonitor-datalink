@@ -339,6 +339,50 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		sendWg sync.WaitGroup
 	)
 
+	esBatchSettings := getQueryRawESBatchSettings()
+	if queryTs.IsESBatch {
+		go func() {
+			runRawQueryExecutionProducer(dataCh, errCh, func() {
+				executeQueryRawWithESBatch(
+					ctx,
+					queryTs,
+					queryRef,
+					esBatchSettings,
+					&rawQueryExecutionSink{
+						dataCh:             dataCh,
+						errCh:              errCh,
+						resultTableOptions: resultTableOptions,
+						successedPaths:     &successedPaths,
+						total:              &total,
+						lock:               &lock,
+						allLabelMap:        allLabelMap,
+						allFieldsMap:       allFieldsMap,
+					},
+				)
+			})
+		}()
+
+		receiveWg.Wait()
+		if errorMessage.Len() > 0 {
+			partialDetail := strings.TrimSpace(errorMessage.String())
+			if successedPaths.Load() > 0 {
+				span.Set("partial_errors", partialDetail)
+				const warnPrefix = "查询原始数据部分失败: "
+				fullMsg := warnPrefix + partialDetail
+				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+					fullMsg = existing.Message + "; " + fullMsg
+				}
+				metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
+			} else {
+				err = metadata.NewMessage(
+					metadata.MsgQueryRaw,
+					"查询原始数据报错",
+				).Error(ctx, errors.New(partialDetail))
+			}
+		}
+		return total, list, resultTableOptions, routeInfo, err
+	}
+
 	p, _ := ants.NewPool(QueryMaxRouting)
 	defer p.Release()
 

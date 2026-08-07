@@ -13,11 +13,12 @@ package define
 import (
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 )
 
 // parsedContainerConfig 解析 ContainerLogConfig.Config() 产物中关注的字段
@@ -46,7 +47,9 @@ func newContainerLogConfig(mounts []Mount, paths []string) *ContainerLogConfig {
 	}
 }
 
-func parseContainerConfig(t *testing.T, content []byte) parsedContainerConfig {
+func parseContainerConfig(t *testing.T, cfg *ContainerLogConfig) parsedContainerConfig {
+	content, err := cfg.Config()
+	assert.NoError(t, err)
 	var parsed parsedContainerConfig
 	assert.NoError(t, yaml.Unmarshal(content, &parsed))
 	assert.Len(t, parsed.Local, 1)
@@ -72,7 +75,7 @@ func TestContainerLogConfigMounts(t *testing.T) {
 			{HostPath: "/data/pvc-dst", ContainerPath: "/data/real"},
 		}
 		cfg := newContainerLogConfig(mounts, paths)
-		parsed := parseContainerConfig(t, cfg.Config())
+		parsed := parseContainerConfig(t, cfg)
 
 		// 原始 paths 原样保留
 		assert.Equal(t, paths, parsed.Local[0].Path)
@@ -91,7 +94,7 @@ func TestContainerLogConfigMounts(t *testing.T) {
 			{HostPath: "/data/pvc-b", ContainerPath: "/data/b"}, // 重复项
 		}
 		cfg := newContainerLogConfig(mounts, paths)
-		parsed := parseContainerConfig(t, cfg.Config())
+		parsed := parseContainerConfig(t, cfg)
 
 		// 去重后按 container_path 升序：/data/a 在 /data/b 前
 		assert.Equal(t, []Mount{
@@ -109,7 +112,7 @@ func TestContainerLogConfigMounts(t *testing.T) {
 			{HostPath: "/data/pvc-x", ContainerPath: ""},
 		}
 		cfg := newContainerLogConfig(mounts, paths)
-		parsed := parseContainerConfig(t, cfg.Config())
+		parsed := parseContainerConfig(t, cfg)
 
 		mountsOut := parsed.Local[0].Mounts
 		assert.Equal(t, []Mount{
@@ -125,7 +128,7 @@ func TestContainerLogConfigMounts(t *testing.T) {
 
 	t.Run("无挂载保持原行为", func(t *testing.T) {
 		cfg := newContainerLogConfig(nil, paths)
-		parsed := parseContainerConfig(t, cfg.Config())
+		parsed := parseContainerConfig(t, cfg)
 		assert.Empty(t, parsed.Local[0].Mounts)
 		assert.Equal(t, paths, parsed.Local[0].Path)
 	})
@@ -136,7 +139,7 @@ func TestContainerLogConfigMounts(t *testing.T) {
 			{HostPath: "/data/pvc-x", ContainerPath: ""},
 		}
 		cfg := newContainerLogConfig(mounts, paths)
-		parsed := parseContainerConfig(t, cfg.Config())
+		parsed := parseContainerConfig(t, cfg)
 		assert.Empty(t, parsed.Local[0].Mounts)
 	})
 }

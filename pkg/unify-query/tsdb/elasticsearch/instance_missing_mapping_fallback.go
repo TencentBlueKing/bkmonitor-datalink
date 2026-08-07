@@ -103,6 +103,63 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	queryErr error,
 	res *elastic.SearchResult,
 ) (*elastic.SearchResult, []string, bool) {
+	return i.tryFallbackEmptyMissingMappingIndexesWithObservation(
+		ctx, span, client, qo, fact, countQuery, queryErr, res, true,
+	)
+}
+
+// tryFallbackEmptyMissingMappingIndexesForBatch applies the same narrow
+// missing-mapping fallback to one _msearch child. Prepared queries already own
+// their physical-index snapshot, so this path never performs another metadata
+// lookup and deliberately suppresses member indexes, fields and query bodies
+// from traces and logs.
+func (i *Instance) tryFallbackEmptyMissingMappingIndexesForBatch(
+	ctx context.Context,
+	client *elastic.Client,
+	prepared *PreparedRawQuery,
+	res *elastic.SearchResult,
+) (*elastic.SearchResult, bool, bool) {
+	if prepared == nil ||
+		prepared.queryOption == nil ||
+		prepared.queryOption.query == nil ||
+		prepared.fact == nil ||
+		prepared.countQuery == nil ||
+		client == nil ||
+		!canFallbackMissingMappingQuery(prepared.queryOption.query) {
+		return nil, false, false
+	}
+	if _, ok := allMissingMappingSortFailures(nil, res); !ok {
+		return nil, false, false
+	}
+	if len(prepared.queryOption.physicalIndexes) == 0 {
+		return nil, true, false
+	}
+
+	fallbackRes, _, ok := i.tryFallbackEmptyMissingMappingIndexesWithObservation(
+		ctx,
+		&trace.Span{},
+		client,
+		prepared.queryOption,
+		prepared.fact,
+		prepared.countQuery,
+		nil,
+		res,
+		false,
+	)
+	return fallbackRes, true, ok
+}
+
+func (i *Instance) tryFallbackEmptyMissingMappingIndexesWithObservation(
+	ctx context.Context,
+	span *trace.Span,
+	client *elastic.Client,
+	qo *queryOption,
+	fact *FormatFactory,
+	countQuery elastic.Query,
+	queryErr error,
+	res *elastic.SearchResult,
+	recordDetails bool,
+) (*elastic.SearchResult, []string, bool) {
 	if client == nil || qo == nil || qo.query == nil || fact == nil || countQuery == nil {
 		return nil, nil, false
 	}
@@ -168,11 +225,15 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexes(
 	span.Set("fallback_retry_indexes", retryIndexes)
 	span.Set("fallback_retry_body", retryBody)
 
-	log.Warnf(
-		ctx,
-		"es missing mapping fallback triggered fields: %+v, failed_indexes: %+v, retry_indexes: %+v, matched_docs: %d",
-		failedFields, failedIndexes, retryIndexes, matchedDocs,
-	)
+	if recordDetails {
+		log.Warnf(
+			ctx,
+			"es missing mapping fallback triggered fields: %+v, failed_indexes: %+v, retry_indexes: %+v, matched_docs: %d",
+			failedFields, failedIndexes, retryIndexes, matchedDocs,
+		)
+	} else {
+		log.Warnf(ctx, "es raw batch child missing mapping fallback triggered")
+	}
 
 	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(retrySource).Do(ctx)
 	if retryErr != nil {

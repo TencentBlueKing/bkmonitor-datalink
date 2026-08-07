@@ -106,7 +106,7 @@ func TestGetFeatureFlags(t *testing.T) {
 		assert.Equal(t, featureFlagConfig, string(data))
 	})
 
-	// 测试用例 2: 配置不存在（Redis 返回空数据）
+	// 测试用例 2: 配置不存在（交由上层回退到 Consul）
 	t.Run("配置不存在", func(t *testing.T) {
 		mr, err := miniredis.Run()
 		if err != nil {
@@ -122,8 +122,9 @@ func TestGetFeatureFlags(t *testing.T) {
 		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
 		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.Nil(t, err)
-		assert.NotNil(t, data)
-		assert.Equal(t, "{}", string(data))
+		if data != nil {
+			t.Fatalf("expected missing Redis key to return nil, got %q", data)
+		}
 	})
 
 	// 测试用例 3: Redis client 未初始化
@@ -149,6 +150,8 @@ func TestGetFeatureFlags(t *testing.T) {
 		defer client.Close()
 
 		ffClient := NewFeatureFlagClient(client, "bkmonitorv3:unify-query")
+		err = client.Set(ctx, ffClient.GetFeatureFlagsPath(), "{}", 0).Err()
+		assert.Nil(t, err)
 		data, err := ffClient.GetFeatureFlags(ctx)
 		assert.Nil(t, err)
 		assert.NotNil(t, data)

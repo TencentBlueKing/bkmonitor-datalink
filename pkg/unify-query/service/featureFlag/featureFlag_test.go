@@ -7,24 +7,41 @@ package featureFlag
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 )
 
 type featureFlagProviderStub struct {
-	data []byte
+	data     []byte
+	err      error
+	watch    <-chan any
+	watchErr error
+	path     string
+	calls    *[]string
+	name     string
 }
 
 func (p *featureFlagProviderStub) GetFeatureFlags(context.Context) ([]byte, error) {
-	return p.data, nil
+	if p.calls != nil {
+		*p.calls = append(*p.calls, p.name)
+	}
+	return p.data, p.err
 }
 
 func (p *featureFlagProviderStub) WatchFeatureFlags(context.Context) (<-chan any, error) {
+	if p.watch != nil || p.watchErr != nil {
+		return p.watch, p.watchErr
+	}
 	return make(chan any), nil
 }
 
 func (p *featureFlagProviderStub) GetFeatureFlagsPath() string {
+	if p.path != "" {
+		return p.path
+	}
 	return "test-feature-flags"
 }
 
@@ -91,5 +108,119 @@ func TestReconcileFeatureFlagsRefreshesInitializedClientOnChange(t *testing.T) {
 	}
 	if value := inner.BoolVariation(ctx, user, "test-flag", false); !value {
 		t.Fatal("expected invalid schema refresh to preserve the last valid Feature Flag value")
+	}
+}
+
+func TestFallbackFeatureFlagProviderUsesConsulWhenRedisSnapshotIsMissing(t *testing.T) {
+	var calls []string
+	redisProvider := &featureFlagProviderStub{
+		name:  "redis",
+		calls: &calls,
+	}
+	consulProvider := &featureFlagProviderStub{
+		name:  "consul",
+		calls: &calls,
+		data:  featureFlagConfig(false),
+	}
+	provider := newFallbackFeatureFlagProvider(redisProvider, consulProvider)
+
+	data, err := provider.GetFeatureFlags(context.Background())
+	if err != nil {
+		t.Fatalf("get feature flags failed: %v", err)
+	}
+	if string(data) != string(featureFlagConfig(false)) {
+		t.Fatalf("expected Consul snapshot, got %q", data)
+	}
+	if len(calls) != 2 || calls[0] != "redis" || calls[1] != "consul" {
+		t.Fatalf("expected Redis then Consul reads, got %v", calls)
+	}
+}
+
+func TestFallbackFeatureFlagProviderUsesRedisWhenSnapshotExists(t *testing.T) {
+	var calls []string
+	redisProvider := &featureFlagProviderStub{
+		name:  "redis",
+		calls: &calls,
+		data:  featureFlagConfig(true),
+	}
+	consulProvider := &featureFlagProviderStub{
+		name:  "consul",
+		calls: &calls,
+		data:  featureFlagConfig(false),
+	}
+	provider := newFallbackFeatureFlagProvider(redisProvider, consulProvider)
+
+	data, err := provider.GetFeatureFlags(context.Background())
+	if err != nil {
+		t.Fatalf("get feature flags failed: %v", err)
+	}
+	if string(data) != string(featureFlagConfig(true)) {
+		t.Fatalf("expected Redis snapshot, got %q", data)
+	}
+	if len(calls) != 1 || calls[0] != "redis" {
+		t.Fatalf("expected only Redis to be read, got %v", calls)
+	}
+}
+
+func TestFallbackFeatureFlagProviderUsesConsulWhenRedisReadFails(t *testing.T) {
+	redisProvider := &featureFlagProviderStub{err: errors.New("redis unavailable")}
+	consulProvider := &featureFlagProviderStub{data: featureFlagConfig(false)}
+	provider := newFallbackFeatureFlagProvider(redisProvider, consulProvider)
+
+	data, err := provider.GetFeatureFlags(context.Background())
+	if err != nil {
+		t.Fatalf("get feature flags failed: %v", err)
+	}
+	if string(data) != string(featureFlagConfig(false)) {
+		t.Fatalf("expected Consul snapshot, got %q", data)
+	}
+}
+
+func TestFallbackFeatureFlagProviderWatchesRedisAndConsul(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	redisWatch := make(chan any, 1)
+	consulWatch := make(chan any, 1)
+	provider := newFallbackFeatureFlagProvider(
+		&featureFlagProviderStub{watch: redisWatch},
+		&featureFlagProviderStub{watch: consulWatch},
+	)
+
+	merged, err := provider.WatchFeatureFlags(ctx)
+	if err != nil {
+		t.Fatalf("watch feature flags failed: %v", err)
+	}
+
+	redisWatch <- "redis change"
+	select {
+	case <-merged:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for Redis feature flag notification")
+	}
+
+	consulWatch <- "consul change"
+	select {
+	case <-merged:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for Consul feature flag notification")
+	}
+
+	close(redisWatch)
+	close(consulWatch)
+	select {
+	case _, ok := <-merged:
+		if ok {
+			select {
+			case _, ok = <-merged:
+				if ok {
+					t.Fatal("expected merged feature flag watcher to close")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for merged feature flag watcher to close")
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for merged feature flag watcher to close")
 	}
 }

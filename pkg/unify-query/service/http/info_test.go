@@ -15,24 +15,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-
-	featureFlagService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/featureFlag"
 )
 
-func TestNormalizeFeatureFlagSource(t *testing.T) {
-	if got := normalizeFeatureFlagSource("redis"); got != "redis" {
-		t.Fatalf("expected redis source, got %q", got)
-	}
-	if got := normalizeFeatureFlagSource("invalid"); got != "consul" {
-		t.Fatalf("expected invalid source to fall back to consul, got %q", got)
-	}
-}
-
-func TestHandleFeatureFlagRejectsCrossSourceRefresh(t *testing.T) {
-	originalSource := featureFlagService.DataSource
-	featureFlagService.DataSource = "redis"
-	defer func() { featureFlagService.DataSource = originalSource }()
-
+func TestHandleFeatureFlagDoesNotRejectSourceParameter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	writer := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(writer)
@@ -40,7 +25,7 @@ func TestHandleFeatureFlagRejectsCrossSourceRefresh(t *testing.T) {
 
 	HandleFeatureFlag(ctx)
 
-	if writer.Code != http.StatusBadRequest {
-		t.Fatalf("expected cross-source refresh to be rejected, got status %d", writer.Code)
+	if writer.Code != http.StatusOK {
+		t.Fatalf("expected source parameter not to reject fallback refresh, got status %d", writer.Code)
 	}
 }

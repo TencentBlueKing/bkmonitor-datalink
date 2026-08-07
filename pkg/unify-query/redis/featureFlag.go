@@ -60,8 +60,8 @@ func (f *FeatureFlagClient) GetFeatureFlags(ctx context.Context) ([]byte, error)
 	data, err := f.client.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, goRedis.Nil) {
-			// 若Key 不存在，返回空数据
-			return []byte("{}"), nil
+			// Key 不存在时返回 nil，由上层 Feature Flag Provider 回退到 Consul。
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get feature flags from redis: %w", err)
 	}

@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	featureFlagService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/featureFlag"
 	influxdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/influxdb"
-	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 	tsdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
 	innerTsdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -137,60 +136,13 @@ func HandleFeatureFlag(c *gin.Context) {
 	ctx := c.Request.Context()
 	res := ""
 	refresh := c.Query("r")
-	configuredSource := normalizeFeatureFlagSource(featureFlagService.DataSource)
-	source := configuredSource
-	if requestedSource := c.Query("source"); requestedSource != "" {
-		source = normalizeFeatureFlagSource(requestedSource)
-	}
-	if refresh != "" && source != configuredSource {
-		c.String(
-			400,
-			"refresh source %s does not match configured feature flag source %s",
-			source,
-			configuredSource,
-		)
-		return
-	}
 
 	if refresh != "" {
 		res += "refresh feature flag\n"
-		var provider featureFlagService.FeatureFlagProvider
-		var path string
-
-		// 根据 source 参数创建对应的 provider
-		if source == "redis" {
-			redisClient := redis.Client()
-			if redisClient == nil {
-				res += "redis client is not initialized\n"
-			} else {
-				basePath := redisService.KVBasePath
-				if basePath == "" {
-					res += "redis kv base path is not configured\n"
-				} else {
-					ffClient := redis.NewFeatureFlagClient(redisClient, basePath)
-					provider = ffClient
-				}
-			}
-		} else {
-			// 默认使用 consul,处理输入异常情况
-			provider = consul.NewFeatureFlagProvider()
-		}
-
-		if provider != nil {
-			path = provider.GetFeatureFlagsPath()
-			if source == "redis" {
-				res += fmt.Sprintf("redis feature flags key: %s\n", path)
-			} else {
-				res += fmt.Sprintf("consul feature flags path: %s\n", path)
-			}
-		}
-
-		if provider == nil {
-			res += fmt.Sprintf("%s feature flag provider is not initialized\n", source)
-		} else if err := featureFlagService.RefreshFeatureFlags(ctx); err != nil {
+		if err := featureFlagService.RefreshFeatureFlags(ctx); err != nil {
 			res += fmt.Sprintf("refresh feature flags err %s\n", err.Error())
 		} else {
-			res += "feature flags refreshed from configured source\n"
+			res += "feature flags refreshed from redis, consul fallback\n"
 		}
 		res += fmt.Sprintln("-------------------------------")
 	}
@@ -233,13 +185,6 @@ func HandleFeatureFlag(c *gin.Context) {
 	}
 
 	c.String(200, res)
-}
-
-func normalizeFeatureFlagSource(source string) string {
-	if source == "redis" {
-		return "redis"
-	}
-	return "consul"
 }
 
 // HandleSpacePrint : 打印路由信息

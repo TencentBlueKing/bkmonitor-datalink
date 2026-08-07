@@ -11,7 +11,10 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -205,6 +208,141 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 	return true, nil
 }
 
+// HSetManyWithCompareAndPublish 批量比较并更新 hash 中的 JSON 数据，返回实际发生变化的 field 数。
+// 方法本身不切批；参数和临时内存随 field 数及 payload 大小线性增长，调用方负责限制批次。
+// values 为空时直接返回；isPublish 为 true 时，仅为实际发生变化的 field 逐个发布通知。
+func (r *Instance) HSetManyWithCompareAndPublish(
+	key string, values map[string]string, channelName string, isPublish bool,
+) (int, error) {
+	if len(values) == 0 {
+		return 0, nil
+	}
+	if key == "" {
+		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: key is empty")
+	}
+	if isPublish && channelName == "" {
+		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: channelName is empty when publish is enabled")
+	}
+
+	fields := make([]string, 0, len(values))
+	for field := range values {
+		if field == "" {
+			return 0, fmt.Errorf("HSetManyWithCompareAndPublish: field is empty")
+		}
+		fields = append(fields, field)
+	}
+	// map 的遍历顺序不稳定。固定顺序既便于定位问题，也让发布顺序可预测。
+	sort.Strings(fields)
+
+	oldValues, err := r.Client.HMGet(r.ctx, key, fields...).Result()
+	if err != nil {
+		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: hmget key %q failed: %w", key, err)
+	}
+	if len(oldValues) != len(fields) {
+		return 0, fmt.Errorf(
+			"HSetManyWithCompareAndPublish: hmget key %q returned %d values for %d fields",
+			key, len(oldValues), len(fields),
+		)
+	}
+
+	changedFields := make([]string, 0, len(fields))
+	for i, field := range fields {
+		oldValue, exists, err := redisStringValue(oldValues[i])
+		if err != nil {
+			return 0, fmt.Errorf(
+				"HSetManyWithCompareAndPublish: decode old value for key %q field %q failed: %w",
+				key, field, err,
+			)
+		}
+
+		newValue := values[field]
+		if exists {
+			// 原始字节相等是大 payload 的低成本快路径，只有字节不同时才解析 JSON。
+			if oldValue == newValue {
+				continue
+			}
+			// 保持单字段接口的兼容语义：JSON 解析失败时视为不相等，用新值修复旧缓存。
+			if equal, compareErr := resultTableDetailJSONEqual(oldValue, newValue); compareErr == nil && equal {
+				continue
+			}
+		}
+		changedFields = append(changedFields, field)
+	}
+
+	if len(changedFields) == 0 {
+		return 0, nil
+	}
+
+	pipe := r.Client.Pipeline()
+	defer pipe.Close()
+	// HMGET 在 pipeline 外先完成一次读往返；随后一条 HSET 写完所有变化 field。
+	// pipeline 只合并 HSET/PUBLISH 的网络往返，并不提供事务性；发布时每个 field
+	// 仍对应一条独立的 PUBLISH 命令。
+	hsetArgs := make([]any, 0, len(changedFields)*2)
+	for _, field := range changedFields {
+		hsetArgs = append(hsetArgs, field, values[field])
+	}
+	pipe.HSet(r.ctx, key, hsetArgs...)
+	if isPublish {
+		for _, field := range changedFields {
+			pipe.Publish(r.ctx, channelName, field)
+		}
+	}
+	if _, err := pipe.Exec(r.ctx); err != nil {
+		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: update key %q failed: %w", key, err)
+	}
+
+	for range changedFields {
+		metrics.RedisCount(key, "HSet")
+	}
+	return len(changedFields), nil
+}
+
+// resultTableDetailJSONEqual 延续原有 JSON 语义比较，但 storage_cluster_records
+// 必须保留数组顺序；分段顺序决定 UQ 推导的时间区间，不能按集合视为相等。
+func resultTableDetailJSONEqual(oldValue, newValue string) (bool, error) {
+	var oldObject, newObject map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(oldValue), &oldObject); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal([]byte(newValue), &newObject); err != nil {
+		return false, err
+	}
+
+	oldRecords, oldHasRecords := oldObject["storage_cluster_records"]
+	newRecords, newHasRecords := newObject["storage_cluster_records"]
+	if oldHasRecords != newHasRecords {
+		return false, nil
+	}
+	if oldHasRecords {
+		var oldSegments, newSegments any
+		if err := json.Unmarshal(oldRecords, &oldSegments); err != nil {
+			return false, err
+		}
+		if err := json.Unmarshal(newRecords, &newSegments); err != nil {
+			return false, err
+		}
+		if !reflect.DeepEqual(oldSegments, newSegments) {
+			return false, nil
+		}
+	}
+
+	return jsonx.CompareJson(oldValue, newValue)
+}
+
+func redisStringValue(value any) (string, bool, error) {
+	switch value := value.(type) {
+	case nil:
+		return "", false, nil
+	case string:
+		return value, true, nil
+	case []byte:
+		return string(value), true, nil
+	default:
+		return "", false, fmt.Errorf("unexpected redis value type %T", value)
+	}
+}
+
 // HSet 原生 hset 方法
 func (r *Instance) HSet(key, field, value string) error {
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
@@ -276,6 +414,25 @@ func (r *Instance) HKeys(key string) ([]string, error) {
 		return nil, err
 	}
 	return fields, nil
+}
+
+// HScanFields 分页扫描 hash 并只向调用方返回 field。Redis HSCAN 仍会传回 field/value
+// 对，本方法只是在客户端丢弃 value，因此分页限制的是单次峰值，不会消除总网络传输。
+// count 只是分页提示；返回数量可能偏离 count，cursor 非零时也可能返回空页。
+// HSCAN 不是一致性快照，并发修改时可能重复或遗漏，调用方应容忍重复并持续扫描到 cursor=0。
+func (r *Instance) HScanFields(key string, cursor uint64, count int64) ([]string, uint64, error) {
+	values, nextCursor, err := r.Client.HScan(r.ctx, key, cursor, "*", count).Result()
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(values)%2 != 0 {
+		return nil, 0, fmt.Errorf("hscan key %q returned odd field/value count %d", key, len(values))
+	}
+	fields := make([]string, 0, len(values)/2)
+	for index := 0; index < len(values); index += 2 {
+		fields = append(fields, values[index])
+	}
+	return fields, nextCursor, nil
 }
 
 // HDel delete hash set

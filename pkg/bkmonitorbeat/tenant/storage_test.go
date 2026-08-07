@@ -11,7 +11,7 @@ package tenant
 
 import "testing"
 
-func TestStorageUpdateTaskDataIDsKeepsMissingTasks(t *testing.T) {
+func TestStorageUpdateTaskDataIDsReplacesSnapshot(t *testing.T) {
 	storage := NewStorage()
 	storage.UpdateTaskDataIDs(map[string]int32{
 		"basereport":    1001,
@@ -25,8 +25,8 @@ func TestStorageUpdateTaskDataIDsKeepsMissingTasks(t *testing.T) {
 	if got, ok := storage.GetTaskDataID("basereport"); !ok || got != 2001 {
 		t.Fatalf("basereport data ID = (%d, %v), want (2001, true)", got, ok)
 	}
-	if got, ok := storage.GetTaskDataID("exceptionbeat"); !ok || got != 1000 {
-		t.Fatalf("exceptionbeat data ID = (%d, %v), want (1000, true)", got, ok)
+	if got, ok := storage.GetTaskDataID("exceptionbeat"); ok {
+		t.Fatalf("exceptionbeat data ID = (%d, %v), want missing after authoritative snapshot replacement", got, ok)
 	}
 }
 
@@ -94,7 +94,10 @@ func TestStorageCandidateResolverDoesNotAffectCommittedTasks(t *testing.T) {
 		t.Fatalf("committed exceptionbeat data ID = %d, want 2000", got)
 	}
 
-	if updated := storage.UpdateTaskDataIDs(map[string]int32{"exceptionbeat": 3000}); !updated {
+	if updated := storage.UpdateTaskDataIDs(map[string]int32{
+		"basereport":    2001,
+		"exceptionbeat": 3000,
+	}); !updated {
 		t.Fatal("expected committed exceptionbeat update to be accepted")
 	}
 	if got := storage.ResolveTaskDataID("exceptionbeat", 1000); got != 3000 {

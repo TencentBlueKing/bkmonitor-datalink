@@ -10,6 +10,7 @@
 package tenant
 
 import (
+	"reflect"
 	"sync"
 )
 
@@ -138,27 +139,26 @@ func (s *Storage) ResolveTaskDataID(task string, fallback int32) int32 {
 	return fallback
 }
 
+// UpdateTaskDataIDs replaces mappings with the latest Metadata response.
 func (s *Storage) UpdateTaskDataIDs(tasks map[string]int32) bool {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	updated := false
+	nextTasks := make(map[string]int32, len(tasks))
 	for task, dataID := range tasks {
 		if s.expectedConfigured {
 			if _, ok := s.expectedTasks[task]; !ok {
 				continue
 			}
 		}
-		if oldDataID, ok := s.tasks[task]; ok && oldDataID == dataID {
-			continue
-		}
-		s.tasks[task] = dataID
-		updated = true
+		nextTasks[task] = dataID
 	}
-	if updated {
+	if !reflect.DeepEqual(s.tasks, nextTasks) {
+		s.tasks = nextTasks
 		s.revision++
+		return true
 	}
-	return updated || s.revision != s.appliedRevision
+	return s.revision != s.appliedRevision
 }
 
 var defaultStorage = NewStorage()

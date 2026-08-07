@@ -25,7 +25,8 @@ const (
 )
 
 type ExceptionBeatConfig struct {
-	BaseTaskParam `config:"_,inline"`
+	BaseTaskParam        `config:"_,inline"`
+	tenantDataIDResolver tenant.DataIDResolver
 
 	CheckBit               int           `config:",ignore"`
 	CheckMethod            string        `config:"check_bit"`
@@ -40,6 +41,10 @@ type ExceptionBeatConfig struct {
 	CoreFileReportGap      time.Duration `config:"corefile_report_gap"`
 	CoreFilePattern        string        `config:"corefile_pattern"`
 	CoreFileMatchRegex     string        `config:"corefile_match_regex"`
+}
+
+func (c *ExceptionBeatConfig) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
 }
 
 var DefaultExceptionBeatConfig = ExceptionBeatConfig{
@@ -57,14 +62,11 @@ var DefaultExceptionBeatConfig = ExceptionBeatConfig{
 
 func (c *ExceptionBeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
+	c.DataID = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleExceptionbeat, c.DataID)
+
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {
 		return tasks
-	}
-
-	storage := tenant.DefaultStorage()
-	if v, ok := storage.GetTaskDataID(define.ModuleExceptionbeat); ok {
-		c.DataID = v
 	}
 
 	tasks = append(tasks, c)

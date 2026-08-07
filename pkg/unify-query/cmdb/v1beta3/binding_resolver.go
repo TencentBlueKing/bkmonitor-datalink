@@ -283,7 +283,7 @@ func (r *BindingResolver) fetchFromRedis(ctx context.Context, tenantID, spaceUID
 		} else if info.BkBizID != bizID {
 			return nil, fmt.Errorf("SurrealDBBinding route biz mismatch: key=%s field=%s binding_bk_biz_id=%s request_bk_biz_id=%s", key, field, info.BkBizID, bizID)
 		}
-		if info.Phase != "" && info.Phase != "Ok" {
+		if info.Phase != "Ok" {
 			return nil, fmt.Errorf("SurrealDBBinding route is not ready: key=%s field=%s phase=%s", key, field, info.Phase)
 		}
 		if info.Database == "" || info.Namespace == "" {

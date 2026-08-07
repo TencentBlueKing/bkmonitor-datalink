@@ -88,11 +88,12 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			d := cmdb.RelationMultiResourceResponseData{
 				Code: http.StatusOK,
 			}
+			var queryErr error
 
 			timestamp := cast.ToString(qry.Timestamp)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
-			if err != nil {
-				d.Message = err.Error()
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if queryErr != nil {
+				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
 			}
 
@@ -173,15 +174,16 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			d := cmdb.RelationMultiResourceRangeResponseData{
 				Code: http.StatusOK,
 			}
+			var queryErr error
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
-			if err != nil {
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if queryErr != nil {
 				d.Message = metadata.NewMessage(
 					metadata.MsgQueryRelation,
 					"关联数据查询异常",
-				).Error(ctx, err).Error()
+				).Error(ctx, queryErr).Error()
 				d.Code = http.StatusBadRequest
 			}
 

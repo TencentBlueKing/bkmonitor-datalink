@@ -294,7 +294,7 @@ func (b *SurrealQueryBuilder) buildRootSource() string {
 	if recordID, ok := b.rootRecordID(); ok {
 		return recordID
 	}
-	return string(b.request.SourceType)
+	return escapeSurrealIdentifier(string(b.request.SourceType))
 }
 
 // rootRecordID 按 Schema 中声明的主键顺序构造复合 Record ID，确保生成结果稳定且与入参 map 顺序无关。
@@ -314,7 +314,7 @@ func (b *SurrealQueryBuilder) rootRecordID() (string, bool) {
 		}
 		pairs = append(pairs, escapeSurrealRecordIDPart(key)+"="+escapeSurrealRecordIDPart(value))
 	}
-	return fmt.Sprintf("%s:⟨%s⟩", b.request.SourceType, strings.Join(pairs, ",")), true
+	return fmt.Sprintf("%s:⟨%s⟩", escapeSurrealIdentifier(string(b.request.SourceType)), strings.Join(pairs, ",")), true
 }
 
 // escapeSurrealRecordIDPart 转义 Record ID 尖括号内容中的反斜杠和结束符，避免破坏 SurrealQL 语法。
@@ -327,7 +327,7 @@ func escapeSurrealRecordIDPart(value string) string {
 func (b *SurrealQueryBuilder) buildRootSelect() string {
 	sourceType := b.request.SourceType
 	rootFields := b.rootEntityDataFields(sourceType)
-	livenessTable := GetLivenessRecordTableName(sourceType)
+	livenessTable := surrealTableName(GetLivenessRecordTableName(sourceType))
 	livenessIDField := GetLivenessIDField(sourceType)
 
 	return fmt.Sprintf(`{
@@ -438,11 +438,11 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	if b.useActiveEdgeServing(relationType) {
 		return b.buildServingRelationQuery(hop, rel, "$parent.id", sqlIndent2)
 	}
-	relationTable := string(relationType)
-	relationLivenessTable := GetRelationLivenessRecordTableName(relationType)
-	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
+	relationTable := surrealTableName(string(relationType))
+	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
+	targetLivenessTable := surrealTableName(GetLivenessRecordTableName(rel.TargetType))
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
-	keyName := relationTable + rel.KeySuffix
+	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
@@ -525,11 +525,11 @@ func (b *SurrealQueryBuilder) buildNestedHopSelect(hop int, currentType Resource
 // buildNestedRelationQuery 构建嵌套的关系查询（用于 hop2+）
 func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string) string {
 	relationType := rel.Schema.RelationType
-	relationTable := string(relationType)
-	relationLivenessTable := GetRelationLivenessRecordTableName(relationType)
-	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
+	relationTable := surrealTableName(string(relationType))
+	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
+	targetLivenessTable := surrealTableName(GetLivenessRecordTableName(rel.TargetType))
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
-	keyName := relationTable + rel.KeySuffix
+	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
 
 	var fieldsBuilder strings.Builder
@@ -614,12 +614,12 @@ func (b *SurrealQueryBuilder) buildDeeperNestedHopSelect(hop int, currentType Re
 // buildDeeperNestedRelationQuery 构建更深层嵌套的关系查询
 func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string, indentLevel int) string {
 	relationType := rel.Schema.RelationType
-	relationTable := string(relationType)
-	relationLivenessTable := GetRelationLivenessRecordTableName(relationType)
-	targetLivenessTable := GetLivenessRecordTableName(rel.TargetType)
+	relationTable := surrealTableName(string(relationType))
+	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
+	targetLivenessTable := surrealTableName(GetLivenessRecordTableName(rel.TargetType))
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 
-	keyName := relationTable + rel.KeySuffix
+	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	indent := strings.Repeat(sqlIndent1, indentLevel)
 	innerIndent := strings.Repeat(sqlIndent1, indentLevel+1)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
@@ -676,13 +676,13 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 // serving 时段是边与目标存活时段的物化交集，因此同时作为二者的存活时段返回。
 func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQueryInfo, parentRef, indent string) string {
 	relationType := rel.Schema.RelationType
-	table := string(relationType) + "_active_edge_serving"
+	table := surrealTableName(string(relationType) + "_active_edge_serving")
 	matchField, targetIDField, targetDataField, targetTypeField := "source_id", "target_id", "target_data", "target_type"
 	if rel.WhereField == fieldOut {
 		matchField, targetIDField, targetDataField, targetTypeField = "target_id", "source_id", "source_data", "source_type"
 	}
 
-	keyName := string(relationType) + rel.KeySuffix
+	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	direction := ""
 	if rel.Schema.Category == RelationCategoryDynamic {
 		direction = fmt.Sprintf("\n%s        direction: '%s',", indent, rel.Direction)
@@ -772,7 +772,7 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		}
 	}
 
-	livenessTable := GetLivenessRecordTableName(b.request.SourceType)
+	livenessTable := surrealTableName(GetLivenessRecordTableName(b.request.SourceType))
 	livenessIDField := GetLivenessIDField(b.request.SourceType)
 	conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
 
@@ -845,4 +845,12 @@ func escapeSurrealIdentifier(identifier string) string {
 		return identifier
 	}
 	return "⟨" + strings.ReplaceAll(identifier, "⟩", `\⟩`) + "⟩"
+}
+
+func surrealTableName(name string) string {
+	return escapeSurrealIdentifier(name)
+}
+
+func surrealObjectKey(name string) string {
+	return escapeSurrealIdentifier(name)
 }

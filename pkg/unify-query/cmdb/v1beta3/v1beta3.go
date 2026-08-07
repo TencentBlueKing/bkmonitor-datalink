@@ -181,7 +181,7 @@ func (m *Model) QueryResourceMatcher(
 		return "", nil, nil, "", nil, err
 	}
 
-	responsePaths := convertResourcePathToResources(paths)
+	responsePaths := legacyResponsePath(paths, len(matchers) == 0)
 
 	span.Set("paths-count", len(responsePaths))
 	span.Set("matchers-count", len(matchers))
@@ -851,6 +851,9 @@ func parseTimestamp(ts string) (int64, error) {
 	sec, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
 		return 0, err
+	}
+	if sec < 0 {
+		return 0, fmt.Errorf("timestamp must be greater than or equal to 0, got %q", ts)
 	}
 	if sec < 1e12 {
 		return sec * 1000, nil
@@ -1558,7 +1561,26 @@ func resourcePathForRangeQuery(graphs []*LivenessGraph, paths []resourcePath, re
 	if len(paths) == 0 {
 		return nil
 	}
-	return resourcePathTypes(paths[0])
+	if ordered := sortPathsForQuery(paths); len(ordered) > 0 {
+		// 旧 v1beta1 在所有候选路径都成功但没有目标时，会把每一次成功
+		// 查询的 path 写入 hitPath，最终返回最后一次执行的路径。
+		return resourcePathTypes(ordered[len(ordered)-1])
+	}
+	return nil
+}
+
+func legacyResponsePath(paths []resourcePath, emptyResult bool) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	if !emptyResult {
+		return convertResourcePathToResources(paths)
+	}
+	ordered := sortPathsForQuery(paths)
+	if len(ordered) == 0 {
+		return nil
+	}
+	return convertResourcePathToResources([]resourcePath{ordered[len(ordered)-1]})
 }
 
 func resourcePathCandidatesFromRangeTargetGraphs(

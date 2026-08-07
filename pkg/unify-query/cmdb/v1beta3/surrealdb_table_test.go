@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 )
 
@@ -630,6 +631,206 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			require.Len(t, actualResponse.QuerySyncRequests, tt.expectedRequestCount)
 		})
 	}
+}
+
+func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeHost: {
+				primaryKeys: []string{"bk_host_id"},
+				fieldTypes:  map[string]string{"bk_host_id": "integer"},
+			},
+			ResourceTypeModule: {
+				primaryKeys: []string{"bk_module_id"},
+				fieldTypes:  map[string]string{"bk_module_id": "integer"},
+			},
+		},
+		[]RelationSchema{{
+			RelationType: RelationHostWithModule,
+			Category:     RelationCategoryStatic,
+			FromType:     ResourceTypeHost,
+			ToType:       ResourceTypeModule,
+		}},
+	)
+
+	forwardResponse := tableActiveEdgeServingResponseJSON(
+		t,
+		ResourceTypeHost,
+		"host:⟨bk_host_id=38268⟩",
+		map[string]string{"bk_host_id": "38268"},
+		"host_with_module:⟨38268||10259⟩",
+		ResourceTypeModule,
+		"module:⟨bk_module_id=10259⟩",
+		map[string]string{"bk_module_id": "10259"},
+	)
+	reverseResponse := tableActiveEdgeServingResponseJSON(
+		t,
+		ResourceTypeModule,
+		"module:⟨bk_module_id=10259⟩",
+		map[string]string{"bk_module_id": "10259"},
+		"host_with_module:⟨38268||10259⟩",
+		ResourceTypeHost,
+		"host:⟨bk_host_id=38268⟩",
+		map[string]string{"bk_host_id": "38268"},
+	)
+
+	tests := []struct {
+		name                   string
+		requestJSON            string
+		responseJSON           string
+		expectedPath           []string
+		expectedMatchers       cmdb.Matchers
+		expectedMatchClause    string
+		expectedDataProjection string
+	}{
+		{
+			name:                   "forward serving response returns module primary key matcher",
+			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"host","source_info":{"bk_host_id":"38268"},"target_type":"module","look_back_delta":600000}`,
+			responseJSON:           forwardResponse,
+			expectedPath:           []string{"host", "module"},
+			expectedMatchers:       cmdb.Matchers{{"bk_module_id": "10259"}},
+			expectedMatchClause:    "source_id = $parent.id",
+			expectedDataProjection: "entity_data: target_data",
+		},
+		{
+			name:                   "reverse serving response returns host primary key matcher",
+			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"module","source_info":{"bk_module_id":"10259"},"target_type":"host","look_back_delta":600000}`,
+			responseJSON:           reverseResponse,
+			expectedPath:           []string{"module", "host"},
+			expectedMatchers:       cmdb.Matchers{{"bk_host_id": "38268"}},
+			expectedMatchClause:    "target_id = $parent.id",
+			expectedDataProjection: "entity_data: source_data",
+		},
+	}
+
+	oldRelations := ActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = oldRelations
+	})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
+			responses := tableActiveEdgeServingResponsesBySurrealQL(t, req, provider, tt.responseJSON)
+			server := newSurrealDBMockServer(t, responses)
+			t.Cleanup(server.Close)
+
+			restoreQueryURL := setTableBKBaseQueryURLForTest(server.URL)
+			t.Cleanup(restoreQueryURL)
+
+			resolver := &BindingResolver{cache: make(map[string]*bindingCacheEntry)}
+			resolver.storeCache(tableMockBindingCacheKey, tableMockBindingInfo())
+
+			model, err := NewModel(context.Background(), &BKBaseSurrealDBClient{curl: &curl.HttpCurl{}})
+			require.NoError(t, err)
+			model.SetResolver(resolver)
+			model.SetSchemaProvider(provider)
+
+			graphs, paths, matchers, err := model.queryLivenessGraph(
+				context.Background(),
+				&req,
+				graphQueryModeInstant,
+				0,
+				0,
+				0,
+			)
+			require.NoError(t, err)
+			require.NotEmpty(t, graphs)
+			assert.Equal(t, tt.expectedPath, convertResourcePathToResources(paths))
+			assert.Equal(t, tt.expectedMatchers, matchers)
+
+			requests := server.Requests()
+			require.Len(t, requests, 1)
+			assert.Equal(t, PreferStorageSurrealDB, requests[0].Body["prefer_storage"])
+			assert.Equal(t, tableMockDatabase, requests[0].SQLPayload.ResultTableID)
+
+			dsl := requests[0].SQLPayload.DSL
+			assert.Contains(t, dsl, "FROM host_with_module_active_edge_serving")
+			assert.Contains(t, dsl, tt.expectedMatchClause)
+			assert.Contains(t, dsl, tt.expectedDataProjection)
+			assert.Contains(t, dsl, "active_period_start_ms <= $end_ms")
+			assert.Contains(t, dsl, "active_period_end_ms >= $start_ms")
+			assert.NotContains(t, dsl, "host_with_module_liveness_record")
+		})
+	}
+}
+
+func tableActiveEdgeServingResponsesBySurrealQL(
+	t *testing.T,
+	req QueryRequest,
+	provider SchemaProvider,
+	responseJSON string,
+) map[surrealQL]string {
+	t.Helper()
+
+	req.Normalize()
+	adjustMaxHopsForUnconstrainedPath(&req, provider)
+	pFinder := NewPathFinder(
+		WithAllowedCategories(req.AllowedRelationTypes...),
+		WithDynamicDirection(req.DynamicRelationDirection),
+		WithMaxHops(req.MaxHops),
+		WithSchemaProvider(provider),
+		WithNamespace(req.SchemaNamespace()),
+	)
+	paths, err := pFinder.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+
+	builder := NewSurrealQueryBuilderForPath(&req, provider, paths[0])
+	configureBuilderForGraphQueryMode(builder, graphQueryModeInstant)
+	return map[surrealQL]string{
+		surrealQL(tableMockUseNSDBStatement + builder.Build()): responseJSON,
+	}
+}
+
+func tableActiveEdgeServingResponseJSON(
+	t *testing.T,
+	rootType ResourceType,
+	rootID string,
+	rootData map[string]string,
+	relationID string,
+	targetType ResourceType,
+	targetID string,
+	targetData map[string]string,
+) string {
+	t.Helper()
+
+	response := map[string]any{
+		"result": true,
+		"code":   "00",
+		"data": map[string]any{
+			"list": []any{
+				map[string]any{
+					"result": map[string]any{
+						"root": map[string]any{
+							"entity_type": string(rootType),
+							"entity_id":   rootID,
+							"entity_data": rootData,
+						},
+						"hop1": map[string]any{
+							string(RelationHostWithModule): []any{
+								map[string]any{
+									"hop":               1,
+									"relation_type":     string(RelationHostWithModule),
+									"relation_category": string(RelationCategoryStatic),
+									"relation_id":       relationID,
+									"target": map[string]any{
+										"entity_type": string(targetType),
+										"entity_id":   targetID,
+										"entity_data": targetData,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(response)
+	require.NoError(t, err)
+	return string(data)
 }
 
 type tableResourceDefinition struct {

@@ -115,6 +115,24 @@ func TestBindingResolverRejectsNotReadyRedisRoute(t *testing.T) {
 	assert.Contains(t, err.Error(), "not ready")
 }
 
+func TestBindingResolverRejectsRedisRouteWithoutPhase(t *testing.T) {
+	ctx := contextWithTenantForBindingResolverTest("tenant-a")
+	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
+	defer restoreBindingRedisKey()
+
+	resolver := &BindingResolver{
+		redisLookup: func(ctx context.Context, key, field string) (string, error) {
+			return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2"}`, nil
+		},
+		cache: make(map[string]*bindingCacheEntry),
+	}
+
+	_, err := resolver.Resolve(ctx, "bkcc__2")
+
+	require.ErrorContains(t, err, "not ready")
+	assert.Contains(t, err.Error(), "phase=")
+}
+
 func TestBindingResolverRejectsRedisRouteForDifferentBiz(t *testing.T) {
 	ctx := contextWithTenantForBindingResolverTest("tenant-a")
 	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")

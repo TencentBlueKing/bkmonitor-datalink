@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1642,6 +1643,19 @@ func TestQueryResourceMatcherRejectsNegativeLookBackDelta(t *testing.T) {
 	assert.Contains(t, err.Error(), "look_back_delta must be greater than or equal to 0")
 }
 
+func TestParseTimestampRejectsNegativeValues(t *testing.T) {
+	for _, input := range []string{"-1", "-62135596800"} {
+		t.Run(input, func(t *testing.T) {
+			_, err := parseTimestamp(input)
+			require.ErrorContains(t, err, "timestamp must be greater than or equal to 0")
+		})
+	}
+
+	seconds, err := parseTimestamp("0")
+	require.NoError(t, err)
+	assert.Zero(t, seconds)
+}
+
 func TestExecuteGraphQueryRequiresSpaceUIDForBindingExecutor(t *testing.T) {
 	model := &Model{
 		executor: &mockBindingGraphQueryExecutor{},
@@ -1993,6 +2007,39 @@ func TestEscapeSurrealIdentifier(t *testing.T) {
 			assert.Equal(t, expected, escapeSurrealIdentifier(identifier))
 		})
 	}
+}
+
+func TestSurrealQueryBuilderEscapesSchemaDerivedTableNames(t *testing.T) {
+	provider := NewSchemaProviderFromRelation(relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"custom-resource": {"resource-id"},
+			"custom-target":   {"target-id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "custom-relation",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "custom-resource",
+				ToType:       "custom-target",
+			},
+		},
+	}))
+
+	sql := NewSurrealQueryBuilderWithSchemaProvider(&QueryRequest{
+		Timestamp:          600000,
+		LookBackDelta:      600000,
+		SourceType:         "custom-resource",
+		SourceInfo:         map[string]string{"resource-id": "resource-1"},
+		TargetType:         "custom-target",
+		TargetTypeExplicit: true,
+		MaxHops:            1,
+	}, provider).Build()
+
+	assert.Contains(t, sql, "FROM ⟨custom-resource⟩")
+	assert.Contains(t, sql, "⟨custom-resource_liveness_record⟩")
+	assert.Contains(t, sql, "⟨custom-relation⟩:")
+	assert.Contains(t, sql, "FROM ⟨custom-relation⟩")
+	assert.Contains(t, sql, "⟨custom-relation_liveness_record⟩")
 }
 
 func TestQueryLivenessGraphRejectsInvalidTypedPrimaryKey(t *testing.T) {
@@ -2947,6 +2994,16 @@ func TestSortPathsForQueryPrefersShorterPaths(t *testing.T) {
 	assert.Equal(t, "container", paths[0].Steps[1].ResourceType, "sort should not mutate caller paths")
 }
 
+func TestLegacyResponsePathUsesLastExecutedPathForEmptyResult(t *testing.T) {
+	paths := []resourcePath{
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "container"}, {ResourceType: "pod"}}},
+		{Steps: []resourcePathStep{{ResourceType: "system"}, {ResourceType: "pod"}}},
+	}
+
+	assert.Equal(t, []string{"system", "container", "pod"}, legacyResponsePath(paths, true))
+	assert.Equal(t, []string{"system", "container", "pod"}, legacyResponsePath(paths, false))
+}
+
 func TestQueryLivenessGraphPathByPathStopsAfterFirstTargetHit(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
@@ -3164,6 +3221,25 @@ func TestBKBaseSurrealDBClientConvertsListForParser(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, graphs, 1)
 	assert.Equal(t, "node:1", graphs[0].GetNode("node:1").ResourceID)
+}
+
+func TestBKBaseSurrealDBClientReadsUpdatedTimeoutPerRequest(t *testing.T) {
+	previousTimeout := BKBaseSurrealDBTimeout
+	t.Cleanup(func() { BKBaseSurrealDBTimeout = previousTimeout })
+
+	BKBaseSurrealDBTimeout = time.Second
+	client := NewBKBaseSurrealDBClient()
+	BKBaseSurrealDBTimeout = 7 * time.Second
+	mockCurl := &mockBKBaseCurl{response: BKBaseResponse{
+		Result: true,
+		Data:   &BKBaseData{List: []map[string]any{}},
+	}}
+	client.curl = mockCurl
+
+	_, err := client.Execute(context.Background(), "SELECT * FROM node", 0, 100)
+
+	require.NoError(t, err)
+	assert.Equal(t, 7*time.Second, mockCurl.options.Timeout)
 }
 
 func TestBKBaseSurrealDBClientRejectsNilDataOnSuccessfulResponse(t *testing.T) {

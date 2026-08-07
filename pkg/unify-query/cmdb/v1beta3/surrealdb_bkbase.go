@@ -59,8 +59,7 @@ var (
 // 每次 Execute 接收 resultTableID / namespace / database 参数，由调用方从
 // SurrealDBBinding 的 metadata.annotations 解析而来（见 binding_resolver）。
 type BKBaseSurrealDBClient struct {
-	timeout time.Duration
-	curl    curl.Curl
+	curl curl.Curl
 }
 
 // BKBaseSQLPayload 是塞进 body.sql 字段的 JSON 字符串（bkbase 协议要求）。
@@ -94,14 +93,20 @@ type BKBaseData struct {
 }
 
 func NewBKBaseSurrealDBClient() *BKBaseSurrealDBClient {
-	timeout := BKBaseSurrealDBTimeout
-	if timeout <= 0 {
-		timeout = DefaultBKBaseSurrealDBTimeout
-	}
 	return &BKBaseSurrealDBClient{
-		timeout: timeout,
-		curl:    &curl.HttpCurl{},
+		curl: &curl.HttpCurl{},
 	}
+}
+
+// currentTimeout reads the current configuration for every request. The
+// client is lazily created and reused by GetModel, so keeping the timeout only
+// in the constructor would make a later LoadConfig update ineffective until
+// the process restarted.
+func (c *BKBaseSurrealDBClient) currentTimeout() time.Duration {
+	if BKBaseSurrealDBTimeout > 0 {
+		return BKBaseSurrealDBTimeout
+	}
+	return DefaultBKBaseSurrealDBTimeout
 }
 
 // Execute 通过 bkbase query_sync 接口转发 SurrealQL 查询。
@@ -201,7 +206,7 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		UrlPath:          url,
 		Headers:          metadata.Headers(ctx, dataAPI.Headers(map[string]string{"Content-Type": "application/json"})),
 		Body:             requestBody,
-		Timeout:          c.timeout,
+		Timeout:          c.currentTimeout(),
 		MaxResponseBytes: int64(effectiveMaxResponseBytes()),
 	}, &resp)
 	httpDuration := time.Since(httpStarted)

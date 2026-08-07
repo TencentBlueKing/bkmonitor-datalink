@@ -1,0 +1,639 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package v1beta3
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+)
+
+func TestPathFinder_FindAllPaths(t *testing.T) {
+	testCases := []struct {
+		Name             string
+		Source           ResourceType
+		Target           ResourceType
+		PathResource     []ResourceType
+		AllowedCategory  []RelationCategory
+		DynamicDirection TraversalDirection
+		MaxHops          int
+		Expected         []resourcePath
+		ExpectError      bool
+	}{
+		{
+			Name:            "node_to_system_static",
+			Source:          ResourceTypeNode,
+			Target:          ResourceTypeSystem,
+			AllowedCategory: []RelationCategory{RelationCategoryStatic},
+			MaxHops:         2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
+				}},
+			},
+		},
+		{
+			Name:             "empty_path_resource_keeps_direct_only_semantics",
+			Source:           ResourceTypeNode,
+			Target:           ResourceTypeSystem,
+			PathResource:     []ResourceType{""},
+			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
+			DynamicDirection: DirectionBoth,
+			MaxHops:          3,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
+				}},
+			},
+		},
+		{
+			Name:             "system_to_pod_dynamic_outbound",
+			Source:           ResourceTypeSystem,
+			Target:           ResourceTypePod,
+			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
+			DynamicDirection: DirectionOutbound,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
+				}},
+			},
+		},
+		{
+			Name:             "pod_to_system_dynamic_outbound",
+			Source:           ResourceTypePod,
+			Target:           ResourceTypeSystem,
+			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
+			DynamicDirection: DirectionOutbound,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+				}},
+			},
+		},
+		{
+			Name:             "pod_to_system_dynamic_inbound",
+			Source:           ResourceTypePod,
+			Target:           ResourceTypeSystem,
+			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
+			DynamicDirection: DirectionInbound,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+				}},
+			},
+		},
+		{
+			Name:             "pod_to_system_dynamic_both",
+			Source:           ResourceTypePod,
+			Target:           ResourceTypeSystem,
+			AllowedCategory:  []RelationCategory{RelationCategoryDynamic},
+			DynamicDirection: DirectionBoth,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+				}},
+				{Steps: []resourcePathStep{
+					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+				}},
+			},
+		},
+		{
+			Name:             "system_to_node_static_and_dynamic",
+			Source:           ResourceTypeSystem,
+			Target:           ResourceTypeNode,
+			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
+			DynamicDirection: DirectionOutbound,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "node", RelationType: "node_with_system", Category: "static", Direction: "inbound"},
+				}},
+				{Steps: []resourcePathStep{
+					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
+				}},
+			},
+		},
+		{
+			Name:             "node_to_system_static_and_dynamic_both",
+			Source:           ResourceTypeNode,
+			Target:           ResourceTypeSystem,
+			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
+			DynamicDirection: DirectionBoth,
+			MaxHops:          2,
+			Expected: []resourcePath{
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
+				}},
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+				}},
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+				}},
+			},
+		},
+		{
+			Name:             "node_to_system_static_and_dynamic_both_maxhops3",
+			Source:           ResourceTypeNode,
+			Target:           ResourceTypeSystem,
+			AllowedCategory:  []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic},
+			DynamicDirection: DirectionBoth,
+			MaxHops:          3,
+			Expected: []resourcePath{
+				// 1跳: node -> system (静态)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "system", RelationType: "node_with_system", Category: "static", Direction: "outbound"},
+				}},
+				// 3跳: node -> pod -> apm_service_instance -> system (静态)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "apm_service_instance", RelationType: "apm_service_instance_with_pod", Category: "static", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "apm_service_instance_with_system", Category: "static", Direction: "outbound"},
+				}},
+				// 2跳: node -> pod -> system (动态 outbound)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+				}},
+				// 2跳: node -> pod -> system (动态 inbound)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+				}},
+				// 3跳: node -> datasource -> pod -> system (动态 outbound)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
+					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+				}},
+				// 3跳: node -> datasource -> pod -> system (动态 inbound)
+				{Steps: []resourcePathStep{
+					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
+					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
+					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+				}},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			opts := []PathFinderOption{
+				WithMaxHops(tc.MaxHops),
+			}
+			if len(tc.AllowedCategory) > 0 {
+				opts = append(opts, WithAllowedCategories(tc.AllowedCategory...))
+			}
+			if tc.DynamicDirection != "" {
+				opts = append(opts, WithDynamicDirection(tc.DynamicDirection))
+			}
+
+			pf := NewPathFinder(opts...)
+			paths, err := pf.FindAllPaths(tc.Source, tc.Target, tc.PathResource)
+
+			if tc.ExpectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.Expected, paths)
+		})
+	}
+}
+
+func TestPathFinderFindAllPathsSameResourceUsesDynamicSelfRelation(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "system_to_system",
+				Category:     relation.RelationCategoryDynamic,
+				FromType:     "system",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryDynamic),
+		WithDynamicDirection(DirectionOutbound),
+		WithMaxHops(1),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, nil)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "system"},
+		{
+			ResourceType: "system",
+			RelationType: "system_to_system",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderFindAllPathsSameResourceUsesBothDirectionsForStaticSelfRelation(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"service": {"service"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "service_with_service",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "service",
+				ToType:       "service",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(1),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeService, ResourceTypeService, nil)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{
+		{Steps: []resourcePathStep{
+			{ResourceType: "service"},
+			{
+				ResourceType: "service",
+				RelationType: "service_with_service",
+				Category:     "static",
+				Direction:    "outbound",
+			},
+		}},
+		{Steps: []resourcePathStep{
+			{ResourceType: "service"},
+			{
+				ResourceType: "service",
+				RelationType: "service_with_service",
+				Category:     "static",
+				Direction:    "inbound",
+			},
+		}},
+	}, paths)
+}
+
+func TestPathFinderFindAllPathsSameResourceWithPathResourceSearchesConstrainedPath(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "system_to_pod",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "system",
+				ToType:        "pod",
+				IsDirectional: true,
+			},
+			{
+				RelationName:  "pod_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryDynamic),
+		WithDynamicDirection(DirectionOutbound),
+		WithMaxHops(2),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypeSystem, ResourceTypeSystem, []ResourceType{ResourceTypePod})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "system"},
+		{
+			ResourceType: "pod",
+			RelationType: "system_to_pod",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+		{
+			ResourceType: "system",
+			RelationType: "pod_to_system",
+			Category:     "dynamic",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderFindAllPathsPathResourceAllowsUnconstrainedIntermediateHops(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"node":   {"node"},
+			"system": {"bk_target_ip"},
+			"host":   {"bk_host_id"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "node_with_pod",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "pod",
+			},
+			{
+				RelationName: "node_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "system",
+			},
+			{
+				RelationName: "host_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "host",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(3),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeHost, []ResourceType{ResourceTypeSystem})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "node",
+			RelationType: "node_with_pod",
+			Category:     "static",
+			Direction:    "inbound",
+		},
+		{
+			ResourceType: "system",
+			RelationType: "node_with_system",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+		{
+			ResourceType: "host",
+			RelationType: "host_with_system",
+			Category:     "static",
+			Direction:    "inbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderPathResourceRequiresContiguousResources(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"source": {"source"},
+			"b":      {"b"},
+			"x":      {"x"},
+			"c":      {"c"},
+			"target": {"target"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{RelationName: "source_with_b", Category: relation.RelationCategoryStatic, FromType: "source", ToType: "b"},
+			{RelationName: "b_with_x", Category: relation.RelationCategoryStatic, FromType: "b", ToType: "x"},
+			{RelationName: "x_with_c", Category: relation.RelationCategoryStatic, FromType: "x", ToType: "c"},
+			{RelationName: "c_with_target", Category: relation.RelationCategoryStatic, FromType: "c", ToType: "target"},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(4),
+	)
+
+	_, err := pf.FindAllPaths("source", "target", []ResourceType{"b", "c"})
+
+	assert.Error(t, err)
+}
+
+func TestPathFinderEndpointOnlyPathResourceAllowsIndirectPaths(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"node":   {"node"},
+			"system": {"bk_target_ip"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "node_with_pod",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "pod",
+			},
+			{
+				RelationName: "node_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(2),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, []ResourceType{ResourceTypeSystem})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "node",
+			RelationType: "node_with_pod",
+			Category:     "static",
+			Direction:    "inbound",
+		},
+		{
+			ResourceType: "system",
+			RelationType: "node_with_system",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderFullEndpointPathResourceKeepsDirectConstraint(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"node":   {"node"},
+			"system": {"bk_target_ip"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName: "pod_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "pod",
+				ToType:       "system",
+			},
+			{
+				RelationName: "node_with_pod",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "pod",
+			},
+			{
+				RelationName: "node_with_system",
+				Category:     relation.RelationCategoryStatic,
+				FromType:     "node",
+				ToType:       "system",
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(2),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, []ResourceType{ResourceTypePod, ResourceTypeSystem})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "system",
+			RelationType: "pod_with_system",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+}
+
+func TestPathFinderSkipsReverseTraversalForDirectionalStaticRelations(t *testing.T) {
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"system": {"bk_target_ip"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "pod_to_system_static",
+				Category:      relation.RelationCategoryStatic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	pf := NewPathFinder(
+		WithSchemaProvider(NewSchemaProviderFromRelation(provider)),
+		WithAllowedCategories(RelationCategoryStatic),
+		WithMaxHops(1),
+	)
+
+	paths, err := pf.FindAllPaths(ResourceTypePod, ResourceTypeSystem, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
+		{ResourceType: "pod"},
+		{
+			ResourceType: "system",
+			RelationType: "pod_to_system_static",
+			Category:     "static",
+			Direction:    "outbound",
+		},
+	}}}, paths)
+
+	_, err = pf.FindAllPaths(ResourceTypeSystem, ResourceTypePod, nil)
+	assert.Error(t, err)
+}
+
+func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing.T) {
+	config := relation.DefaultStaticProviderConfig()
+
+	var found bool
+	for _, schema := range config.RelationSchemas {
+		if schema.RelationName != "pod_to_system" {
+			continue
+		}
+		found = true
+		assert.True(t, schema.IsDirectional)
+		assert.Equal(t, relation.ResourceType("pod"), schema.FromType)
+		assert.Equal(t, relation.ResourceType("system"), schema.ToType)
+	}
+
+	assert.True(t, found)
+
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"pod":    {"pod"},
+			"system": {"system"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "pod_to_system",
+				Category:      relation.RelationCategoryDynamic,
+				FromType:      "pod",
+				ToType:        "system",
+				IsDirectional: true,
+			},
+		},
+	})
+	relationDef, ok := provider.FindRelationByResourceTypes(
+		relation.NamespaceAll,
+		"pod",
+		"system",
+		relation.DirectionTypeDirectional,
+	)
+	assert.True(t, ok)
+	assert.True(t, relationDef.IsDirectional)
+	assert.Equal(t, "pod_to_system", relationDef.Name)
+
+	_, reverseOK := provider.FindRelationByResourceTypes(
+		relation.NamespaceAll,
+		"system",
+		"pod",
+		relation.DirectionTypeDirectional,
+	)
+	assert.False(t, reverseOK)
+}

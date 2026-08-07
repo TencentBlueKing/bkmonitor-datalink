@@ -33,7 +33,15 @@ type FieldDefinition struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Required  bool   `json:"required"`
+	Type      string `json:"type,omitempty"`
 }
+
+const (
+	FieldTypeString  = "string"
+	FieldTypeInteger = "integer"
+	FieldTypeNumber  = "number"
+	FieldTypeBoolean = "boolean"
+)
 
 type ResourceDefinition struct {
 	Namespace string                 `json:"namespace"`
@@ -134,11 +142,12 @@ const (
 )
 
 type RelationSchema struct {
-	RelationName RelationName
-	Category     RelationCategory
-	FromType     ResourceType
-	ToType       ResourceType
-	IsBelongsTo  bool
+	RelationName  RelationName
+	Category      RelationCategory
+	FromType      ResourceType
+	ToType        ResourceType
+	IsDirectional bool
+	IsBelongsTo   bool
 }
 
 func ToResourceType(rd *ResourceDefinition) ResourceType {
@@ -161,10 +170,11 @@ func ToRelationCategory(category string) RelationCategory {
 
 func ToRelationSchema(rd *RelationDefinition) RelationSchema {
 	return RelationSchema{
-		RelationName: ToRelationName(rd),
-		Category:     ToRelationCategory(rd.Category),
-		FromType:     ResourceType(rd.FromResource),
-		ToType:       ResourceType(rd.ToResource),
-		IsBelongsTo:  rd.IsBelongsTo,
+		RelationName:  ToRelationName(rd),
+		Category:      ToRelationCategory(rd.Category),
+		FromType:      ResourceType(rd.FromResource),
+		ToType:        ResourceType(rd.ToResource),
+		IsDirectional: rd.IsDirectional,
+		IsBelongsTo:   rd.IsBelongsTo,
 	}
 }

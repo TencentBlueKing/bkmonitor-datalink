@@ -1,0 +1,438 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package v1beta3
+
+import (
+	"strconv"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+)
+
+type LivenessGraph struct {
+	QueryStart      int64                    `json:"query_start"`
+	QueryEnd        int64                    `json:"query_end"`
+	RootID          string                   `json:"root_id,omitempty"`
+	Nodes           map[string]*NodeLiveness `json:"nodes"`
+	Edges           map[string]*EdgeLiveness `json:"edges"`
+	Adjacency       map[string][]string      `json:"adjacency"`
+	TraversalErrors []string                 `json:"traversal_errors,omitempty"`
+}
+
+type NodeLiveness struct {
+	ResourceID   string            `json:"resource_id"`
+	ResourceType ResourceType      `json:"resource_type"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	RawPeriods   []*VisiblePeriod  `json:"raw_periods"`
+}
+
+type EdgeLiveness struct {
+	RelationID   string             `json:"relation_id"`
+	RelationType RelationType       `json:"relation_type"`
+	Category     RelationCategory   `json:"category"`
+	Direction    TraversalDirection `json:"direction,omitempty"`
+	FromID       string             `json:"from_id"`
+	ToID         string             `json:"to_id"`
+	RawPeriods   []*VisiblePeriod   `json:"raw_periods"`
+}
+
+type TargetPath struct {
+	Target       *NodeLiveness
+	ResourcePath []ResourceType
+	NodePeriods  [][]*VisiblePeriod
+	EdgePeriods  [][]*VisiblePeriod
+}
+
+func NewLivenessGraph(queryStart, queryEnd int64) *LivenessGraph {
+	return &LivenessGraph{
+		QueryStart: queryStart,
+		QueryEnd:   queryEnd,
+		Nodes:      make(map[string]*NodeLiveness),
+		Edges:      make(map[string]*EdgeLiveness),
+		Adjacency:  make(map[string][]string),
+	}
+}
+
+func (g *LivenessGraph) AddNode(node *NodeLiveness) {
+	g.Nodes[node.ResourceID] = node
+	if _, exists := g.Adjacency[node.ResourceID]; !exists {
+		g.Adjacency[node.ResourceID] = []string{}
+	}
+}
+
+func (g *LivenessGraph) AddEdge(edge *EdgeLiveness) {
+	key := edge.RelationID
+	if existing := g.Edges[key]; existing != nil && !sameEdgeLiveness(existing, edge) {
+		// 动态关系和非定向自关联可能复用同一个 relation_id 表达不同方向。
+		// 图内 key 必须带方向和端点，否则后解析到的边会覆盖先解析到的边，导致路径抽取少边。
+		key = directionalEdgeKey(edge)
+	}
+	_, exists := g.Edges[key]
+	g.Edges[key] = edge
+	if !exists {
+		g.Adjacency[edge.FromID] = append(g.Adjacency[edge.FromID], key)
+	}
+}
+
+func sameEdgeLiveness(left, right *EdgeLiveness) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.RelationID == right.RelationID &&
+		left.Direction == right.Direction &&
+		left.FromID == right.FromID &&
+		left.ToID == right.ToID
+}
+
+func directionalEdgeKey(edge *EdgeLiveness) string {
+	return edge.RelationID + "\x00" + string(edge.Direction) + "\x00" + edge.FromID + "\x00" + edge.ToID
+}
+
+func (g *LivenessGraph) GetNode(resourceID string) *NodeLiveness {
+	return g.Nodes[resourceID]
+}
+
+func (g *LivenessGraph) GetEdge(relationID string) *EdgeLiveness {
+	if edge := g.Edges[relationID]; edge != nil {
+		return edge
+	}
+	for _, edge := range g.Edges {
+		if edge.RelationID == relationID {
+			return edge
+		}
+	}
+	return nil
+}
+
+func (g *LivenessGraph) AddTraversalError(errMsg string) {
+	g.TraversalErrors = append(g.TraversalErrors, errMsg)
+}
+
+func (g *LivenessGraph) GetOutEdges(resourceID string) []*EdgeLiveness {
+	relationIDs := g.Adjacency[resourceID]
+	edges := make([]*EdgeLiveness, 0, len(relationIDs))
+	for _, rid := range relationIDs {
+		if edge := g.Edges[rid]; edge != nil {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
+}
+
+func mergeLivenessGraphsByRoot(graphs []*LivenessGraph) []*LivenessGraph {
+	mergedByRoot := make(map[string]*LivenessGraph)
+	rootOrder := make([]string, 0, len(graphs))
+
+	for _, graph := range graphs {
+		if graph == nil {
+			continue
+		}
+		rootKey := graph.RootID
+		if rootKey == "" {
+			rootIDs := graph.rootNodeIDs()
+			if len(rootIDs) > 0 {
+				rootKey = rootIDs[0]
+			}
+		}
+		if rootKey == "" {
+			rootKey = "\x00anonymous-root\x00" + strconv.Itoa(len(rootOrder))
+		}
+
+		merged := mergedByRoot[rootKey]
+		if merged == nil {
+			merged = NewLivenessGraph(graph.QueryStart, graph.QueryEnd)
+			merged.RootID = graph.RootID
+			mergedByRoot[rootKey] = merged
+			rootOrder = append(rootOrder, rootKey)
+		}
+		mergeLivenessGraphInto(merged, graph)
+	}
+
+	result := make([]*LivenessGraph, 0, len(rootOrder))
+	for _, rootKey := range rootOrder {
+		if graph := mergedByRoot[rootKey]; graph != nil {
+			result = append(result, graph)
+		}
+	}
+	return result
+}
+
+func mergeLivenessGraphInto(dst, src *LivenessGraph) {
+	if dst == nil || src == nil {
+		return
+	}
+	if dst.RootID == "" {
+		dst.RootID = src.RootID
+	}
+	for _, node := range src.Nodes {
+		dst.AddNode(node)
+	}
+	for _, edge := range src.Edges {
+		dst.AddEdge(edge)
+	}
+	for _, errMsg := range src.TraversalErrors {
+		dst.AddTraversalError(errMsg)
+	}
+}
+
+func (g *LivenessGraph) ExtractTargetMatchersWithID(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTarget bool,
+) map[string]cmdb.Matcher {
+	result := make(map[string]cmdb.Matcher)
+	if g == nil || len(g.Nodes) == 0 {
+		return result
+	}
+
+	for _, path := range g.TargetPaths(targetType, pathResource, includeRootTarget) {
+		node := path.Target
+		if _, exists := result[node.ResourceID]; !exists {
+			matcher := make(cmdb.Matcher, len(node.Labels))
+			for k, v := range node.Labels {
+				matcher[k] = v
+			}
+			result[node.ResourceID] = matcher
+		}
+	}
+
+	return result
+}
+
+func (g *LivenessGraph) TargetPaths(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTargetOptions ...bool,
+) []*TargetPath {
+	return g.targetPaths(targetType, pathResource, true, includeRootTargetOptions...)
+}
+
+func (g *LivenessGraph) TargetPathsFromFilteredInstantQuery(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTargetOptions ...bool,
+) []*TargetPath {
+	// instant SurrealQL 已对路径上的 node/relation 逐级做了判活过滤，并且为减少响应体
+	// 不投影 periods。这里不能再要求 periods 有公共交集，否则空投影会把已命中的路径丢弃。
+	return g.targetPaths(targetType, pathResource, false, includeRootTargetOptions...)
+}
+
+func (g *LivenessGraph) TargetPathsForRange(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	includeRootTargetOptions ...bool,
+) []*TargetPath {
+	// range 查询要对齐旧 VM 的 step 窗口语义，候选路径不能先按全路径精确时间交集剪掉。
+	return g.targetPaths(targetType, pathResource, false, includeRootTargetOptions...)
+}
+
+func (g *LivenessGraph) targetPaths(
+	targetType ResourceType,
+	pathResource []ResourceType,
+	requireCommonOverlap bool,
+	includeRootTargetOptions ...bool,
+) []*TargetPath {
+	if g == nil || len(g.Nodes) == 0 {
+		return nil
+	}
+
+	includeRootTarget := true
+	if len(includeRootTargetOptions) > 0 {
+		includeRootTarget = includeRootTargetOptions[0]
+	}
+
+	var result []*TargetPath
+	for _, rootID := range g.rootNodeIDs() {
+		root := g.Nodes[rootID]
+		if root == nil {
+			continue
+		}
+		pathConstraint, directOnly := normalizePathResource(root.ResourceType, targetType, pathResource)
+		visited := map[string]bool{rootID: true}
+		g.collectTargetPaths(rootID, targetType, pathConstraint, nil, nil, nil, visited, includeRootTarget, directOnly, requireCommonOverlap, &result)
+	}
+	return result
+}
+
+func (g *LivenessGraph) collectTargetPaths(
+	nodeID string,
+	targetType ResourceType,
+	pathResource []ResourceType,
+	resourcePath []ResourceType,
+	nodePeriods [][]*VisiblePeriod,
+	edgePeriods [][]*VisiblePeriod,
+	visited map[string]bool,
+	includeRootTarget bool,
+	directOnly bool,
+	requireCommonOverlap bool,
+	result *[]*TargetPath,
+) {
+	node := g.Nodes[nodeID]
+	if node == nil {
+		return
+	}
+	currentResourcePath := append(append([]ResourceType{}, resourcePath...), node.ResourceType)
+	currentNodePeriods := append(append([][]*VisiblePeriod{}, nodePeriods...), node.RawPeriods)
+
+	if node.ResourceType == targetType &&
+		// path_resource 对齐旧 VM 的连续片段语义；例如 [B,C] 只能命中 A->B->C->D，
+		// 不能命中 A->B->X->C->D，否则会把调用方没有允许的中间跳数也返回出去。
+		containsContiguousResourcePath(currentResourcePath, pathResource) &&
+		(includeRootTarget || len(edgePeriods) > 0) &&
+		(!directOnly || len(edgePeriods) <= 1) &&
+		(!requireCommonOverlap || g.pathOverlapsQuery(currentNodePeriods, edgePeriods)) {
+		*result = append(*result, &TargetPath{
+			Target:       node,
+			ResourcePath: currentResourcePath,
+			NodePeriods:  currentNodePeriods,
+			EdgePeriods:  edgePeriods,
+		})
+	}
+
+	for _, edge := range g.outEdgesFromMap(nodeID) {
+		allowSelfLoop := !includeRootTarget && edge.ToID == nodeID && len(edgePeriods) == 0 && node.ResourceType == targetType
+		if visited[edge.ToID] && !allowSelfLoop {
+			continue
+		}
+		target := g.Nodes[edge.ToID]
+		if target == nil {
+			continue
+		}
+		if !allowSelfLoop {
+			visited[edge.ToID] = true
+		}
+		// 显式 source_type == target_type 查询要返回真实自关联边，而不是 root 本身。
+		// 因此第一跳允许 source->source 自环绕过 visited；后续仍按 visited 防止普通环路递归。
+		nextEdgePeriods := append(append([][]*VisiblePeriod{}, edgePeriods...), edge.RawPeriods)
+		g.collectTargetPaths(
+			edge.ToID,
+			targetType,
+			pathResource,
+			currentResourcePath,
+			currentNodePeriods,
+			nextEdgePeriods,
+			visited,
+			includeRootTarget,
+			directOnly,
+			requireCommonOverlap,
+			result,
+		)
+		if !allowSelfLoop {
+			visited[edge.ToID] = false
+		}
+	}
+}
+
+func (g *LivenessGraph) rootNodeIDs() []string {
+	if g.RootID != "" {
+		if _, ok := g.Nodes[g.RootID]; ok {
+			return []string{g.RootID}
+		}
+	}
+
+	incoming := make(map[string]bool, len(g.Edges))
+	for _, edge := range g.Edges {
+		incoming[edge.ToID] = true
+	}
+	roots := make([]string, 0, len(g.Nodes))
+	for id := range g.Nodes {
+		if !incoming[id] {
+			roots = append(roots, id)
+		}
+	}
+	if len(roots) > 0 {
+		return roots
+	}
+	for id := range g.Nodes {
+		roots = append(roots, id)
+	}
+	return roots
+}
+
+func (g *LivenessGraph) outEdgesFromMap(resourceID string) []*EdgeLiveness {
+	relationIDs := g.Adjacency[resourceID]
+	edges := make([]*EdgeLiveness, 0, len(relationIDs))
+	seen := make(map[string]bool, len(relationIDs))
+	for _, relationID := range relationIDs {
+		edge := g.Edges[relationID]
+		if edge != nil {
+			edges = append(edges, edge)
+			seen[relationID] = true
+		}
+	}
+	for relationID, edge := range g.Edges {
+		if seen[relationID] || edge.FromID != resourceID {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	return edges
+}
+
+func (g *LivenessGraph) pathOverlapsQuery(nodePeriods, edgePeriods [][]*VisiblePeriod) bool {
+	periodGroups := make([][]*VisiblePeriod, 0, len(nodePeriods)+len(edgePeriods))
+	periodGroups = append(periodGroups, nodePeriods...)
+	periodGroups = append(periodGroups, edgePeriods...)
+	if len(periodGroups) == 0 {
+		return false
+	}
+
+	if g.QueryStart == 0 && g.QueryEnd == 0 {
+		// 单测或离线构图可能没有查询窗口；这种场景只要求每一段都有可见区间，
+		// 不再强行和一个不存在的时间窗口做交集。
+		for _, periods := range periodGroups {
+			if len(nonNilPeriods(periods)) == 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	candidates := []VisiblePeriod{{Start: g.QueryStart, End: g.QueryEnd}}
+	for _, periods := range periodGroups {
+		candidates = intersectVisiblePeriods(candidates, periods)
+		if len(candidates) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func nonNilPeriods(periods []*VisiblePeriod) []*VisiblePeriod {
+	result := make([]*VisiblePeriod, 0, len(periods))
+	for _, period := range periods {
+		if period != nil {
+			result = append(result, period)
+		}
+	}
+	return result
+}
+
+func intersectVisiblePeriods(left []VisiblePeriod, right []*VisiblePeriod) []VisiblePeriod {
+	result := make([]VisiblePeriod, 0)
+	for _, l := range left {
+		for _, r := range right {
+			if r == nil {
+				continue
+			}
+			start := l.Start
+			if r.Start > start {
+				start = r.Start
+			}
+			end := l.End
+			if r.End < end {
+				end = r.End
+			}
+			if start <= end {
+				result = append(result, VisiblePeriod{Start: start, End: end})
+			}
+		}
+	}
+	return result
+}

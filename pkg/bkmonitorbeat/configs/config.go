@@ -69,7 +69,8 @@ func (cc *ConcurrencyLimitConfig) Clean() {
 
 // Config : global config
 type Config struct {
-	TaskTypeMapping map[string]define.TaskMetaConfig `config:"_"`
+	TaskTypeMapping      map[string]define.TaskMetaConfig `config:"_"`
+	tenantDataIDResolver tenant.DataIDResolver
 
 	CheckInterval    time.Duration `config:"check_interval" validate:"positive"`
 	CleanUpTimeout   time.Duration `config:"clean_up_timeout" validate:"min=1s"`
@@ -174,6 +175,21 @@ func NewConfig() *Config {
 	return config
 }
 
+// SetTenantDataIDResolver sets the tenant DataID view used by this config.
+func (c *Config) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
+	c.BaseReportTask.tenantDataIDResolver = resolver
+	c.ExceptionBeatTask.tenantDataIDResolver = resolver
+	c.ProcessBeatTask.tenantDataIDResolver = resolver
+}
+
+func resolveTenantDataID(resolver tenant.DataIDResolver, task string, fallback int32) int32 {
+	if resolver == nil {
+		resolver = tenant.DefaultStorage()
+	}
+	return resolver.ResolveTaskDataID(task, fallback)
+}
+
 // GetTaskTypeMapping :
 func (c *Config) GetTaskTypeMapping() map[string]define.TaskMetaConfig {
 	return c.TaskTypeMapping
@@ -226,6 +242,5 @@ func (c *Config) GetTaskConfigList() []define.TaskConfig {
 }
 
 func (c *Config) GetGatherUpDataID() int32 {
-	storage := tenant.DefaultStorage()
-	return storage.ResolveTaskDataID(define.ModuleGatherUpBeat, c.GatherUpBeat.DataID)
+	return resolveTenantDataID(c.tenantDataIDResolver, define.ModuleGatherUpBeat, c.GatherUpBeat.DataID)
 }

@@ -71,21 +71,36 @@ func TestStorageRetriesPendingUpdateUntilApplied(t *testing.T) {
 	}
 }
 
-func TestStorageRestorePreservesConcurrentUpdate(t *testing.T) {
+func TestStorageCandidateResolverDoesNotAffectCommittedTasks(t *testing.T) {
 	storage := NewStorage()
-	storage.SetExpectedTasks([]string{"basereport"})
-	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 2001})
-	storage.MarkApplied(storage.Revision())
-	snapshot := storage.Snapshot()
-
 	storage.SetExpectedTasks([]string{"basereport", "exceptionbeat"})
-	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001})
-	storage.Restore(snapshot)
+	storage.UpdateTaskDataIDs(map[string]int32{
+		"basereport":    2001,
+		"exceptionbeat": 2000,
+	})
+	storage.MarkApplied(storage.Revision())
+	candidate := storage.NewResolver([]string{"basereport", "gather_up_beat"})
 
-	if got := storage.ResolveTaskDataID("basereport", 1001); got != 3001 {
-		t.Fatalf("concurrent basereport data ID after restore = %d, want 3001", got)
+	if got := candidate.ResolveTaskDataID("exceptionbeat", 1000); got != 1000 {
+		t.Fatalf("candidate exceptionbeat data ID = %d, want static data ID 1000", got)
 	}
-	if updated := storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001}); !updated {
-		t.Fatal("expected concurrent update to remain pending after restore")
+	if got := candidate.ResolveTaskDataID("basereport", 1001); got != 2001 {
+		t.Fatalf("candidate basereport data ID = %d, want 2001", got)
+	}
+	if got := candidate.ResolveTaskDataID("gather_up_beat", 1100017); got != 0 {
+		t.Fatalf("candidate gather-up data ID = %d, want 0 before mapping is available", got)
+	}
+	if got := storage.ResolveTaskDataID("exceptionbeat", 1000); got != 2000 {
+		t.Fatalf("committed exceptionbeat data ID = %d, want 2000", got)
+	}
+
+	if updated := storage.UpdateTaskDataIDs(map[string]int32{"exceptionbeat": 3000}); !updated {
+		t.Fatal("expected committed exceptionbeat update to be accepted")
+	}
+	if got := storage.ResolveTaskDataID("exceptionbeat", 1000); got != 3000 {
+		t.Fatalf("committed exceptionbeat data ID after update = %d, want 3000", got)
+	}
+	if got := candidate.ResolveTaskDataID("exceptionbeat", 1000); got != 1000 {
+		t.Fatalf("candidate exceptionbeat data ID after update = %d, want static data ID 1000", got)
 	}
 }

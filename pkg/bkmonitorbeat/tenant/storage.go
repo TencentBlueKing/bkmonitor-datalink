@@ -22,10 +22,14 @@ type Storage struct {
 	appliedRevision    uint64
 }
 
-// Snapshot is an immutable copy of Storage state used by config reload rollback.
-type Snapshot struct {
-	expectedTasks      map[string]struct{}
-	expectedConfigured bool
+// DataIDResolver resolves task DataIDs against a fixed expected-task view.
+type DataIDResolver interface {
+	ResolveTaskDataID(task string, fallback int32) int32
+}
+
+type resolver struct {
+	storage       *Storage
+	expectedTasks map[string]struct{}
 }
 
 func NewStorage() *Storage {
@@ -35,34 +39,30 @@ func NewStorage() *Storage {
 	}
 }
 
-// Snapshot returns a copy of the current storage state.
-func (s *Storage) Snapshot() Snapshot {
-	s.mut.RLock()
-	defer s.mut.RUnlock()
-
-	expectedTasks := make(map[string]struct{}, len(s.expectedTasks))
-	for task := range s.expectedTasks {
+// NewResolver returns an isolated expected-task view over fetched DataIDs.
+func (s *Storage) NewResolver(tasks []string) DataIDResolver {
+	expectedTasks := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
 		expectedTasks[task] = struct{}{}
 	}
-
-	return Snapshot{
-		expectedTasks:      expectedTasks,
-		expectedConfigured: s.expectedConfigured,
+	return &resolver{
+		storage:       s,
+		expectedTasks: expectedTasks,
 	}
 }
 
-// Restore reverts expected tasks without overwriting concurrently fetched mappings.
-func (s *Storage) Restore(snapshot Snapshot) {
-	s.mut.Lock()
-	defer s.mut.Unlock()
-
-	expectedTasks := make(map[string]struct{}, len(snapshot.expectedTasks))
-	for task := range snapshot.expectedTasks {
-		expectedTasks[task] = struct{}{}
+func (r *resolver) ResolveTaskDataID(task string, fallback int32) int32 {
+	if _, ok := r.expectedTasks[task]; !ok {
+		return fallback
 	}
 
-	s.expectedTasks = expectedTasks
-	s.expectedConfigured = snapshot.expectedConfigured
+	r.storage.mut.RLock()
+	defer r.storage.mut.RUnlock()
+
+	if dataID, ok := r.storage.tasks[task]; ok {
+		return dataID
+	}
+	return 0
 }
 
 // Revision returns the current mapping revision.

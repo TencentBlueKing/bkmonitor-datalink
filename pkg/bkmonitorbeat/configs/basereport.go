@@ -77,8 +77,9 @@ type NetConfig struct {
 
 // BasereportConfig
 type BasereportConfig struct {
-	BaseTaskParam `config:"_,inline"`
-	TimeTolerate  int64 `config:"time_tolerate"`
+	BaseTaskParam        `config:"_,inline"`
+	TimeTolerate         int64 `config:"time_tolerate"`
+	tenantDataIDResolver tenant.DataIDResolver
 
 	// module detail configs
 	Cpu  CpuConfig  `config:"cpu"`
@@ -94,8 +95,7 @@ type BasereportConfig struct {
 
 func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
-	storage := tenant.DefaultStorage()
-	c.DataID = storage.ResolveTaskDataID(define.ModuleBasereport, c.DataID)
+	c.DataID = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleBasereport, c.DataID)
 
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {

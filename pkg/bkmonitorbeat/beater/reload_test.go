@@ -28,7 +28,7 @@ var (
 	registerRegexpValidatorErr  error
 )
 
-func TestReloadRestoresTenantStorageOnParseFailure(t *testing.T) {
+func TestReloadKeepsTenantStorageOnParseFailure(t *testing.T) {
 	registerRegexpValidatorOnce.Do(func() {
 		registerRegexpValidatorErr = ucfg.RegisterValidator("regexp", validator.ValidateRegex)
 	})

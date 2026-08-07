@@ -25,7 +25,8 @@ const (
 )
 
 type ExceptionBeatConfig struct {
-	BaseTaskParam `config:"_,inline"`
+	BaseTaskParam        `config:"_,inline"`
+	tenantDataIDResolver tenant.DataIDResolver
 
 	CheckBit               int           `config:",ignore"`
 	CheckMethod            string        `config:"check_bit"`
@@ -57,8 +58,7 @@ var DefaultExceptionBeatConfig = ExceptionBeatConfig{
 
 func (c *ExceptionBeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
-	storage := tenant.DefaultStorage()
-	c.DataID = storage.ResolveTaskDataID(define.ModuleExceptionbeat, c.DataID)
+	c.DataID = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleExceptionbeat, c.DataID)
 
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {

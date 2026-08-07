@@ -158,6 +158,7 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 	if err != nil {
 		return nil, err
 	}
+	commitTenantDataIDConfig(bt.config)
 	bt.rawConfig = cfg
 	configs.SetContainerMode(beat.IsContainerMode())
 	state.heartBeatTicker = time.NewTicker(bt.config.HeartBeat.Period)
@@ -234,17 +235,18 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
 	}
-	if baseConfig.EnableMultiTenant {
-		tenant.DefaultStorage().SetExpectedTasks(baseConfig.MultiTenantTasks)
-	} else {
-		tenant.DefaultStorage().SetExpectedTasks(nil)
-	}
 	err = bt.initHostIDWatcher(baseConfig)
 	if err != nil {
 		return fmt.Errorf("init hostid failed,error:%s", err)
 	}
 
+	var tenantTasks []string
+	if baseConfig.EnableMultiTenant {
+		tenantTasks = baseConfig.MultiTenantTasks
+	}
+	tenantResolver := tenant.DefaultStorage().NewResolver(tenantTasks)
 	bt.configEngine = NewBaseConfigEngine(ctx)
+	bt.configEngine.(*BaseConfigEngine).SetTenantDataIDResolver(tenantResolver)
 	err = bt.configEngine.Init(cfg, bt)
 	if err != nil {
 		return fmt.Errorf("init configEngine failed: %v", err)
@@ -279,6 +281,14 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	}
 
 	return nil
+}
+
+func commitTenantDataIDConfig(config *configs.Config) {
+	var tasks []string
+	if config.EnableMultiTenant {
+		tasks = config.MultiTenantTasks
+	}
+	tenant.DefaultStorage().SetExpectedTasks(tasks)
 }
 
 // GetTasks 生成任务对象
@@ -622,13 +632,11 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	oldConfig := bt.config
 	oldConfigEngine := bt.configEngine
 	tenantStorage := tenant.DefaultStorage()
-	tenantStorageSnapshot := tenantStorage.Snapshot()
 	tenantStorageRevision := tenantStorage.Revision()
 	restoreState := func() {
 		bt.beaterState = oldState
 		bt.config = oldConfig
 		bt.configEngine = oldConfigEngine
-		tenantStorage.Restore(tenantStorageSnapshot)
 	}
 	state := newBeaterState()
 	state.ctx = oldState.ctx
@@ -687,6 +695,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 		reloadFailed = true
 	}
 	if !reloadFailed {
+		commitTenantDataIDConfig(bt.config)
 		tenantStorage.MarkApplied(tenantStorageRevision)
 	}
 	metricsReloaded := false

@@ -254,6 +254,9 @@ func (ce *BaseConfigEngine) GetBasicMetaConfig(ucfgConfig *ucfg.Config) (define.
 		logger.Errorf("get task by type failed,error:%v", err)
 		return nil, err
 	}
+	if setter, ok := taskMetaConfig.(configs.TenantDataIDResolverSetter); ok {
+		setter.SetTenantDataIDResolver(ce.tenantDataIDResolver)
+	}
 	return taskMetaConfig, nil
 }
 

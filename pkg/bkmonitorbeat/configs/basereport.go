@@ -93,6 +93,10 @@ type BasereportConfig struct {
 	ReportRoute   bool `config:"report_route"`
 }
 
+func (c *BasereportConfig) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
+}
+
 func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
 	c.DataID = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleBasereport, c.DataID)

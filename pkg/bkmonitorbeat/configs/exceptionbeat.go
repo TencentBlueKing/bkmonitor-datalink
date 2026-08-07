@@ -43,6 +43,10 @@ type ExceptionBeatConfig struct {
 	CoreFileMatchRegex     string        `config:"corefile_match_regex"`
 }
 
+func (c *ExceptionBeatConfig) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
+}
+
 var DefaultExceptionBeatConfig = ExceptionBeatConfig{
 	CheckBit:               0,
 	CheckMethod:            "",

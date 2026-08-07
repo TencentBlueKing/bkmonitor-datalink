@@ -17,6 +17,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/go-ucfg"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs/validator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
@@ -74,5 +75,61 @@ func TestReloadKeepsTenantStorageOnParseFailure(t *testing.T) {
 	}
 	if updated := storage.UpdateTaskDataIDs(map[string]int32{define.ModuleBasereport: 2001}); !updated {
 		t.Fatal("expected failed reload to keep tenant data ID pending for retry")
+	}
+}
+
+func TestSameTenantClientConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		old  *configs.Config
+		new  *configs.Config
+		want bool
+	}{
+		{
+			name: "unchanged multi-tenant client",
+			old: &configs.Config{
+				EnableMultiTenant:  true,
+				GseMessageEndpoint: "/var/run/gse.sock",
+				MultiTenantTasks:   []string{"basereport", "exceptionbeat"},
+			},
+			new: &configs.Config{
+				EnableMultiTenant:  true,
+				GseMessageEndpoint: "/var/run/gse.sock",
+				MultiTenantTasks:   []string{"exceptionbeat", "basereport"},
+			},
+			want: true,
+		},
+		{
+			name: "enable changed",
+			old:  &configs.Config{EnableMultiTenant: false},
+			new:  &configs.Config{EnableMultiTenant: true},
+			want: false,
+		},
+		{
+			name: "endpoint changed",
+			old:  &configs.Config{EnableMultiTenant: true, GseMessageEndpoint: "/old"},
+			new:  &configs.Config{EnableMultiTenant: true, GseMessageEndpoint: "/new"},
+			want: false,
+		},
+		{
+			name: "tasks changed",
+			old:  &configs.Config{EnableMultiTenant: true, MultiTenantTasks: []string{"basereport"}},
+			new:  &configs.Config{EnableMultiTenant: true, MultiTenantTasks: []string{"exceptionbeat"}},
+			want: false,
+		},
+		{
+			name: "disabled client ignores inactive options",
+			old:  &configs.Config{EnableMultiTenant: false, GseMessageEndpoint: "/old"},
+			new:  &configs.Config{EnableMultiTenant: false, GseMessageEndpoint: "/new"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sameTenantClientConfig(tt.old, tt.new); got != tt.want {
+				t.Fatalf("sameTenantClientConfig() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

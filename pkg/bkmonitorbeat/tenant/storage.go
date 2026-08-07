@@ -29,8 +29,8 @@ type DataIDResolver interface {
 }
 
 type resolver struct {
-	storage       *Storage
 	expectedTasks map[string]struct{}
+	tasks         map[string]int32
 }
 
 func NewStorage() *Storage {
@@ -40,16 +40,30 @@ func NewStorage() *Storage {
 	}
 }
 
-// NewResolver returns an isolated expected-task view over fetched DataIDs.
+// NewResolver returns an immutable view over expected tasks and fetched DataIDs.
 func (s *Storage) NewResolver(tasks []string) DataIDResolver {
+	resolver, _ := s.NewResolverSnapshot(tasks)
+	return resolver
+}
+
+// NewResolverSnapshot returns an immutable resolver and its mapping revision.
+func (s *Storage) NewResolverSnapshot(tasks []string) (DataIDResolver, uint64) {
 	expectedTasks := make(map[string]struct{}, len(tasks))
 	for _, task := range tasks {
 		expectedTasks[task] = struct{}{}
 	}
-	return &resolver{
-		storage:       s,
-		expectedTasks: expectedTasks,
+
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+	fetchedTasks := make(map[string]int32, len(s.tasks))
+	for task, dataID := range s.tasks {
+		fetchedTasks[task] = dataID
 	}
+
+	return &resolver{
+		expectedTasks: expectedTasks,
+		tasks:         fetchedTasks,
+	}, s.revision
 }
 
 func (r *resolver) ResolveTaskDataID(task string, fallback int32) int32 {
@@ -57,10 +71,7 @@ func (r *resolver) ResolveTaskDataID(task string, fallback int32) int32 {
 		return fallback
 	}
 
-	r.storage.mut.RLock()
-	defer r.storage.mut.RUnlock()
-
-	if dataID, ok := r.storage.tasks[task]; ok {
+	if dataID, ok := r.tasks[task]; ok {
 		return dataID
 	}
 	return 0
@@ -72,6 +83,25 @@ func (s *Storage) Revision() uint64 {
 	defer s.mut.RUnlock()
 
 	return s.revision
+}
+
+// NeedsRefresh reports whether expected DataIDs are missing or not yet applied.
+func (s *Storage) NeedsRefresh() bool {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	if !s.expectedConfigured || len(s.expectedTasks) == 0 {
+		return false
+	}
+	if s.revision != s.appliedRevision {
+		return true
+	}
+	for task := range s.expectedTasks {
+		if _, ok := s.tasks[task]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // MarkApplied records the newest mapping revision used by a successful reload.

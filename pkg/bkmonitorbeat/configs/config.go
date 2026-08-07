@@ -133,6 +133,11 @@ type Config struct {
 	SelfStatsTask      *SelfStatsConfig       `config:"selfstats_task"`
 }
 
+// TenantDataIDResolverSetter is implemented by task configs using tenant DataIDs.
+type TenantDataIDResolverSetter interface {
+	SetTenantDataIDResolver(tenant.DataIDResolver)
+}
+
 // NewConfig : new config struct
 func NewConfig() *Config {
 	config := &Config{
@@ -178,9 +183,9 @@ func NewConfig() *Config {
 // SetTenantDataIDResolver sets the tenant DataID view used by this config.
 func (c *Config) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
 	c.tenantDataIDResolver = resolver
-	c.BaseReportTask.tenantDataIDResolver = resolver
-	c.ExceptionBeatTask.tenantDataIDResolver = resolver
-	c.ProcessBeatTask.tenantDataIDResolver = resolver
+	c.BaseReportTask.SetTenantDataIDResolver(resolver)
+	c.ExceptionBeatTask.SetTenantDataIDResolver(resolver)
+	c.ProcessBeatTask.SetTenantDataIDResolver(resolver)
 }
 
 func resolveTenantDataID(resolver tenant.DataIDResolver, task string, fallback int32) int32 {

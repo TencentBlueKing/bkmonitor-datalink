@@ -107,3 +107,58 @@ func TestStorageCandidateResolverDoesNotAffectCommittedTasks(t *testing.T) {
 		t.Fatalf("candidate exceptionbeat data ID after update = %d, want static data ID 1000", got)
 	}
 }
+
+func TestStorageCandidateResolverKeepsDataIDSnapshot(t *testing.T) {
+	storage := NewStorage()
+	storage.SetExpectedTasks([]string{"basereport"})
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 2001})
+	candidate := storage.NewResolver([]string{"basereport"})
+
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001})
+
+	if got := candidate.ResolveTaskDataID("basereport", 1001); got != 2001 {
+		t.Fatalf("candidate basereport data ID after storage update = %d, want immutable snapshot 2001", got)
+	}
+}
+
+func TestStorageResolverSnapshotCapturesRevision(t *testing.T) {
+	storage := NewStorage()
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 2001})
+
+	resolver, revision := storage.NewResolverSnapshot([]string{"basereport"})
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001})
+
+	if revision != 1 {
+		t.Fatalf("snapshot revision = %d, want 1", revision)
+	}
+	if got := resolver.ResolveTaskDataID("basereport", 1001); got != 2001 {
+		t.Fatalf("snapshot data ID = %d, want 2001", got)
+	}
+}
+
+func TestStorageNeedsRefreshUntilExpectedSnapshotIsApplied(t *testing.T) {
+	storage := NewStorage()
+	storage.SetExpectedTasks([]string{"basereport", "exceptionbeat"})
+	if !storage.NeedsRefresh() {
+		t.Fatal("missing expected data IDs must require refresh")
+	}
+
+	storage.UpdateTaskDataIDs(map[string]int32{
+		"basereport":    2001,
+		"exceptionbeat": 2000,
+	})
+	if !storage.NeedsRefresh() {
+		t.Fatal("unapplied complete snapshot must require refresh")
+	}
+
+	storage.MarkApplied(storage.Revision())
+	if storage.NeedsRefresh() {
+		t.Fatal("applied complete snapshot must not require refresh")
+	}
+
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 2001})
+	storage.MarkApplied(storage.Revision())
+	if !storage.NeedsRefresh() {
+		t.Fatal("applied partial snapshot must still require refresh")
+	}
+}

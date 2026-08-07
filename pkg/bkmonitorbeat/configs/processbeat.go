@@ -50,6 +50,10 @@ type ProcessbeatConfig struct {
 	confs     map[string]ProcessbeatPortConfig   // id -> config
 }
 
+func (c *ProcessbeatConfig) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
+}
+
 func NewProcessbeatConfig(root *Config) *ProcessbeatConfig {
 	config := &ProcessbeatConfig{
 		BaseTaskParam: NewBaseTaskParam(),

@@ -46,13 +46,14 @@ const (
 
 // beaterState beater运行状态
 type beaterState struct {
-	config          *configs.Config
-	name            string
-	version         string
-	ctx             context.Context
-	cancelFunc      context.CancelFunc
-	heartBeatTicker *time.Ticker
-	tcli            *tenant.Client
+	config               *configs.Config
+	name                 string
+	version              string
+	ctx                  context.Context
+	cancelFunc           context.CancelFunc
+	heartBeatTicker      *time.Ticker
+	tcli                 *tenant.Client
+	tenantDataIDRevision uint64
 
 	Scheduler        define.Scheduler
 	KeywordScheduler define.Scheduler
@@ -244,7 +245,8 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	if baseConfig.EnableMultiTenant {
 		tenantTasks = baseConfig.MultiTenantTasks
 	}
-	tenantResolver := tenant.DefaultStorage().NewResolver(tenantTasks)
+	tenantResolver, tenantRevision := tenant.DefaultStorage().NewResolverSnapshot(tenantTasks)
+	bt.tenantDataIDRevision = tenantRevision
 	bt.configEngine = NewBaseConfigEngine(ctx)
 	bt.configEngine.(*BaseConfigEngine).SetTenantDataIDResolver(tenantResolver)
 	err = bt.configEngine.Init(cfg, bt)
@@ -289,6 +291,35 @@ func commitTenantDataIDConfig(config *configs.Config) {
 		tasks = config.MultiTenantTasks
 	}
 	tenant.DefaultStorage().SetExpectedTasks(tasks)
+}
+
+func sameTenantClientConfig(oldConfig, newConfig *configs.Config) bool {
+	if oldConfig.EnableMultiTenant != newConfig.EnableMultiTenant {
+		return false
+	}
+	if !oldConfig.EnableMultiTenant {
+		return true
+	}
+	if oldConfig.GseMessageEndpoint != newConfig.GseMessageEndpoint {
+		return false
+	}
+	oldTasks := make(map[string]struct{}, len(oldConfig.MultiTenantTasks))
+	for _, task := range oldConfig.MultiTenantTasks {
+		oldTasks[task] = struct{}{}
+	}
+	newTasks := make(map[string]struct{}, len(newConfig.MultiTenantTasks))
+	for _, task := range newConfig.MultiTenantTasks {
+		newTasks[task] = struct{}{}
+	}
+	if len(oldTasks) != len(newTasks) {
+		return false
+	}
+	for task := range oldTasks {
+		if _, ok := newTasks[task]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // GetTasks 生成任务对象
@@ -632,7 +663,15 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	oldConfig := bt.config
 	oldConfigEngine := bt.configEngine
 	tenantStorage := tenant.DefaultStorage()
-	tenantStorageRevision := tenantStorage.Revision()
+	candidateConfig := configs.NewConfig()
+	if err := cfg.Unpack(candidateConfig); err != nil {
+		logger.Errorf("MonitorBeater reload error: %v", err)
+		return
+	}
+	if !sameTenantClientConfig(oldConfig, candidateConfig) {
+		logger.Errorf("tenant client config cannot be reloaded; restart bkmonitorbeat to apply the change")
+		return
+	}
 	restoreState := func() {
 		bt.beaterState = oldState
 		bt.config = oldConfig
@@ -645,6 +684,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	state.Scheduler = oldState.Scheduler
 	state.KeywordScheduler = oldState.KeywordScheduler
 	state.ListenScheduler = oldState.ListenScheduler
+	state.tcli = oldState.tcli
 
 	bt.beaterState = state
 	err := bt.ParseConfig(cfg)
@@ -653,7 +693,6 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 		restoreState()
 		return
 	}
-
 	tasks := bt.GetTasks()
 	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
@@ -696,7 +735,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	}
 	if !reloadFailed {
 		commitTenantDataIDConfig(bt.config)
-		tenantStorage.MarkApplied(tenantStorageRevision)
+		tenantStorage.MarkApplied(bt.tenantDataIDRevision)
 	}
 	metricsReloaded := false
 	if bt.config.BizID != oldConfig.BizID || bt.config.CloudID != oldConfig.CloudID || bt.config.IP != oldConfig.IP {

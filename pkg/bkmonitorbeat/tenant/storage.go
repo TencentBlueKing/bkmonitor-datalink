@@ -24,11 +24,8 @@ type Storage struct {
 
 // Snapshot is an immutable copy of Storage state used by config reload rollback.
 type Snapshot struct {
-	tasks              map[string]int32
 	expectedTasks      map[string]struct{}
 	expectedConfigured bool
-	revision           uint64
-	appliedRevision    uint64
 }
 
 func NewStorage() *Storage {
@@ -43,43 +40,29 @@ func (s *Storage) Snapshot() Snapshot {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
 
-	tasks := make(map[string]int32, len(s.tasks))
-	for task, dataID := range s.tasks {
-		tasks[task] = dataID
-	}
 	expectedTasks := make(map[string]struct{}, len(s.expectedTasks))
 	for task := range s.expectedTasks {
 		expectedTasks[task] = struct{}{}
 	}
 
 	return Snapshot{
-		tasks:              tasks,
 		expectedTasks:      expectedTasks,
 		expectedConfigured: s.expectedConfigured,
-		revision:           s.revision,
-		appliedRevision:    s.appliedRevision,
 	}
 }
 
-// Restore replaces storage state with a previous snapshot.
+// Restore reverts expected tasks without overwriting concurrently fetched mappings.
 func (s *Storage) Restore(snapshot Snapshot) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	tasks := make(map[string]int32, len(snapshot.tasks))
-	for task, dataID := range snapshot.tasks {
-		tasks[task] = dataID
-	}
 	expectedTasks := make(map[string]struct{}, len(snapshot.expectedTasks))
 	for task := range snapshot.expectedTasks {
 		expectedTasks[task] = struct{}{}
 	}
 
-	s.tasks = tasks
 	s.expectedTasks = expectedTasks
 	s.expectedConfigured = snapshot.expectedConfigured
-	s.revision = snapshot.revision
-	s.appliedRevision = snapshot.appliedRevision
 }
 
 // Revision returns the current mapping revision.
@@ -95,6 +78,13 @@ func (s *Storage) MarkApplied(revision uint64) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
+	if s.expectedConfigured {
+		for task := range s.tasks {
+			if _, ok := s.expectedTasks[task]; !ok {
+				delete(s.tasks, task)
+			}
+		}
+	}
 	if revision > s.appliedRevision && revision <= s.revision {
 		s.appliedRevision = revision
 	}
@@ -104,12 +94,16 @@ func (s *Storage) GetTaskDataID(task string) (int32, bool) {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
 
+	if s.expectedConfigured {
+		if _, ok := s.expectedTasks[task]; !ok {
+			return 0, false
+		}
+	}
 	dst, ok := s.tasks[task]
 	return dst, ok
 }
 
-// SetExpectedTasks records tasks that must use tenant DataIDs. Existing mappings
-// are retained only when the task remains configured.
+// SetExpectedTasks records tasks that must use tenant DataIDs.
 func (s *Storage) SetExpectedTasks(tasks []string) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
@@ -117,16 +111,6 @@ func (s *Storage) SetExpectedTasks(tasks []string) {
 	expectedTasks := make(map[string]struct{}, len(tasks))
 	for _, task := range tasks {
 		expectedTasks[task] = struct{}{}
-	}
-	mappingUpdated := false
-	for task := range s.tasks {
-		if _, ok := expectedTasks[task]; !ok {
-			delete(s.tasks, task)
-			mappingUpdated = true
-		}
-	}
-	if mappingUpdated {
-		s.revision++
 	}
 
 	s.expectedTasks = expectedTasks
@@ -139,11 +123,17 @@ func (s *Storage) ResolveTaskDataID(task string, fallback int32) int32 {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
 
+	if s.expectedConfigured {
+		if _, ok := s.expectedTasks[task]; !ok {
+			return fallback
+		}
+		if dataID, ok := s.tasks[task]; ok {
+			return dataID
+		}
+		return 0
+	}
 	if dataID, ok := s.tasks[task]; ok {
 		return dataID
-	}
-	if _, ok := s.expectedTasks[task]; ok {
-		return 0
 	}
 	return fallback
 }

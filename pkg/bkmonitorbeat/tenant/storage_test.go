@@ -70,3 +70,22 @@ func TestStorageRetriesPendingUpdateUntilApplied(t *testing.T) {
 		t.Fatal("expected applied data ID response not to trigger reload")
 	}
 }
+
+func TestStorageRestorePreservesConcurrentUpdate(t *testing.T) {
+	storage := NewStorage()
+	storage.SetExpectedTasks([]string{"basereport"})
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 2001})
+	storage.MarkApplied(storage.Revision())
+	snapshot := storage.Snapshot()
+
+	storage.SetExpectedTasks([]string{"basereport", "exceptionbeat"})
+	storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001})
+	storage.Restore(snapshot)
+
+	if got := storage.ResolveTaskDataID("basereport", 1001); got != 3001 {
+		t.Fatalf("concurrent basereport data ID after restore = %d, want 3001", got)
+	}
+	if updated := storage.UpdateTaskDataIDs(map[string]int32{"basereport": 3001}); !updated {
+		t.Fatal("expected concurrent update to remain pending after restore")
+	}
+}

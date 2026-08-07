@@ -25,7 +25,10 @@ func TestExpectedTenantDataIDsDisableStaticFallback(t *testing.T) {
 		define.ModuleProcessbeat + "_port",
 		define.ModuleGatherUpBeat,
 	})
-	t.Cleanup(func() { storage.SetExpectedTasks(nil) })
+	t.Cleanup(func() {
+		storage.SetExpectedTasks(nil)
+		storage.MarkApplied(storage.Revision())
+	})
 
 	baseReport := &BasereportConfig{BaseTaskParam: NewBaseTaskParam()}
 	baseReport.DataID = 1001

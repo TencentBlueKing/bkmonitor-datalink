@@ -39,7 +39,10 @@ func TestReloadRestoresTenantStorageOnParseFailure(t *testing.T) {
 	storage := tenant.DefaultStorage()
 	storage.SetExpectedTasks([]string{define.ModuleBasereport})
 	storage.UpdateTaskDataIDs(map[string]int32{define.ModuleBasereport: 2001})
-	t.Cleanup(func() { storage.SetExpectedTasks(nil) })
+	t.Cleanup(func() {
+		storage.SetExpectedTasks(nil)
+		storage.MarkApplied(storage.Revision())
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

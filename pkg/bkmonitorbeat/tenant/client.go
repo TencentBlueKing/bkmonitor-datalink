@@ -145,7 +145,7 @@ type AgentMsgRequest struct {
 }
 
 func newInstanceID() (string, error) {
-	buf := make([]byte, 16)
+	buf := make([]byte, 8)
 	if _, err := cryptorand.Read(buf); err != nil {
 		return "", err
 	}
@@ -158,7 +158,12 @@ func (c *Client) nextMessageID() string {
 
 	c.maxIssued++
 	// Metadata treats message IDs as opaque values and echoes them in responses.
-	return fmt.Sprintf("bkmonitorbeat.%s.%s.%d", TypeFetchHostDataID, c.instanceID, c.maxIssued)
+	return fmt.Sprintf(
+		"bkmonitorbeat.%s.%s.%s",
+		TypeFetchHostDataID,
+		c.instanceID,
+		strconv.FormatUint(c.maxIssued, 36),
+	)
 }
 
 func (c *Client) responseSequence(messageID string) (uint64, bool) {
@@ -170,7 +175,7 @@ func (c *Client) responseSequence(messageID string) (uint64, bool) {
 	if sequenceText == "" || strings.Contains(sequenceText, ".") {
 		return 0, false
 	}
-	sequence, err := strconv.ParseUint(sequenceText, 10, 64)
+	sequence, err := strconv.ParseUint(sequenceText, 36, 64)
 	if err != nil || sequence == 0 {
 		return 0, false
 	}

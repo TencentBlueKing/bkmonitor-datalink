@@ -11,6 +11,8 @@ package tenant
 
 import (
 	"fmt"
+	"math"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +23,31 @@ func TestPacerNextStaysWithinMaximum(t *testing.T) {
 		if got <= 0 || got > 3600 {
 			t.Fatalf("Next() = %d, want value in (0, 3600]", got)
 		}
+	}
+}
+
+func TestMessageIDFitsMetadataLimit(t *testing.T) {
+	client := &Client{
+		instanceID: strings.Repeat("f", 16),
+		maxIssued:  math.MaxUint64 - 1,
+	}
+
+	messageID := client.nextMessageID()
+	if got := len(messageID); got > 64 {
+		t.Fatalf("message ID length = %d, want <= 64: %s", got, messageID)
+	}
+	if sequence, ok := client.responseSequence(messageID); !ok || sequence != math.MaxUint64 {
+		t.Fatalf("parsed sequence = (%d, %v), want (%d, true)", sequence, ok, uint64(math.MaxUint64))
+	}
+}
+
+func TestInstanceIDUsesEightRandomBytes(t *testing.T) {
+	instanceID, err := newInstanceID()
+	if err != nil {
+		t.Fatalf("newInstanceID() error: %v", err)
+	}
+	if got := len(instanceID); got != 16 {
+		t.Fatalf("instance ID length = %d, want 16", got)
 	}
 }
 

@@ -162,3 +162,32 @@ func TestStorageNeedsRefreshUntilExpectedSnapshotIsApplied(t *testing.T) {
 		t.Fatal("applied partial snapshot must still require refresh")
 	}
 }
+
+func TestStorageNeedsRefreshIgnoresStaticTemplateTasks(t *testing.T) {
+	storage := NewStorage()
+	storage.SetExpectedTasks([]string{
+		"basereport",
+		"processbeat_perf",
+		"processbeat_port",
+		"global_heartbeat",
+		"gather_up_beat",
+		"timesync",
+		"dmesg",
+		"exceptionbeat",
+	})
+	storage.UpdateTaskDataIDs(map[string]int32{
+		"basereport":       2001,
+		"processbeat_perf": 2007,
+		"processbeat_port": 2013,
+		"gather_up_beat":   2100017,
+		"exceptionbeat":    2000,
+	})
+	storage.MarkApplied(storage.Revision())
+
+	if storage.NeedsRefresh() {
+		t.Fatal("static template tasks must not keep tenant DataID polling in short-retry mode")
+	}
+	if got := storage.ResolveTaskDataID("timesync", 1100030); got != 1100030 {
+		t.Fatalf("timesync data ID = %d, want static fallback 1100030", got)
+	}
+}

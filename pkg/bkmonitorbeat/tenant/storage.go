@@ -12,6 +12,8 @@ package tenant
 import (
 	"reflect"
 	"sync"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
 type Storage struct {
@@ -33,6 +35,29 @@ type resolver struct {
 	tasks         map[string]int32
 }
 
+func isTenantDataIDTask(task string) bool {
+	switch task {
+	case define.ModuleBasereport,
+		define.ModuleExceptionbeat,
+		define.ModuleProcessbeat + "_perf",
+		define.ModuleProcessbeat + "_port",
+		define.ModuleGatherUpBeat:
+		return true
+	default:
+		return false
+	}
+}
+
+func newExpectedTaskSet(tasks []string) map[string]struct{} {
+	expectedTasks := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		if isTenantDataIDTask(task) {
+			expectedTasks[task] = struct{}{}
+		}
+	}
+	return expectedTasks
+}
+
 func NewStorage() *Storage {
 	return &Storage{
 		tasks:         make(map[string]int32),
@@ -48,10 +73,7 @@ func (s *Storage) NewResolver(tasks []string) DataIDResolver {
 
 // NewResolverSnapshot returns an immutable resolver and its mapping revision.
 func (s *Storage) NewResolverSnapshot(tasks []string) (DataIDResolver, uint64) {
-	expectedTasks := make(map[string]struct{}, len(tasks))
-	for _, task := range tasks {
-		expectedTasks[task] = struct{}{}
-	}
+	expectedTasks := newExpectedTaskSet(tasks)
 
 	s.mut.RLock()
 	defer s.mut.RUnlock()
@@ -139,12 +161,7 @@ func (s *Storage) SetExpectedTasks(tasks []string) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	expectedTasks := make(map[string]struct{}, len(tasks))
-	for _, task := range tasks {
-		expectedTasks[task] = struct{}{}
-	}
-
-	s.expectedTasks = expectedTasks
+	s.expectedTasks = newExpectedTaskSet(tasks)
 	s.expectedConfigured = true
 }
 

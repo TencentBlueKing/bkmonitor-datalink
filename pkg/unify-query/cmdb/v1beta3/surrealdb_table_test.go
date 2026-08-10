@@ -518,6 +518,63 @@ func TestSurrealDBResponseParsing(t *testing.T) {
 	}
 }
 
+func TestNormalizeBKBaseGraphRows(t *testing.T) {
+	directGraphRow := map[string]any{
+		"root": map[string]any{"entity_id": "node:node-1"},
+		"hop1": map[string]any{},
+	}
+	wrappedGraphRow := map[string]any{
+		"result": map[string]any{
+			"root": map[string]any{"entity_id": "node:node-1"},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		rows     []map[string]any
+		expected []any
+		errText  string
+	}{
+		{
+			name:     "direct RETURN graph row",
+			rows:     []map[string]any{directGraphRow},
+			expected: []any{map[string]any{"result": directGraphRow}},
+		},
+		{
+			name:     "wrapped SELECT graph row",
+			rows:     []map[string]any{wrappedGraphRow},
+			expected: []any{wrappedGraphRow},
+		},
+		{
+			name:     "empty graph result",
+			rows:     []map[string]any{},
+			expected: []any{},
+		},
+		{
+			name:    "non graph row is rejected",
+			rows:    []map[string]any{{"count": 1}},
+			errText: "data.list[0]: missing field root or result for graph row",
+		},
+		{
+			name:    "non object result wrapper is rejected",
+			rows:    []map[string]any{{"result": []any{}}},
+			errText: "data.list[0].result: expected object, got []interface {}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual, err := normalizeBKBaseGraphRows(tt.rows)
+			if tt.errText != "" {
+				require.EqualError(t, err, "parse bkbase response: "+tt.errText)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
 func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 	provider := newTableSchemaProvider(
 		map[ResourceType]tableResourceDefinition{

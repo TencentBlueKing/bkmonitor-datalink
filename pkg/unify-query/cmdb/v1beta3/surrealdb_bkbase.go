@@ -237,19 +237,9 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	span.Set("bkbase-network-overhead", networkOverhead)
 	span.Set("response-list-count", len(resp.Data.List))
 
-	// 转换响应格式为标准 SurrealDB 响应格式
-	// BKBase 返回格式: {"data": {"list": [...]}}
-	// 标准格式: [{"result": [...]}]
-	list := make([]any, 0, len(resp.Data.List))
-	for _, item := range resp.Data.List {
-		// query_sync returns the row itself in data.list, while older mocks and
-		// some SurrealDB HTTP clients retain a per-row result wrapper. Normalize
-		// both forms to the parser's statement-result shape.
-		if _, exists := item[ResponseFieldResult]; exists {
-			list = append(list, item)
-			continue
-		}
-		list = append(list, map[string]any{ResponseFieldResult: item})
+	list, err := normalizeBKBaseGraphRows(resp.Data.List)
+	if err != nil {
+		return nil, err
 	}
 	// parser 只依赖标准 SurrealDB 客户端形态：[{"result": [...]}]。
 	// BKBase query_sync 的 data.list 在这里包一层 result，可以让解析器和单测 mock 共用同一套结构。
@@ -268,6 +258,27 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	}
 	span.Set("graph-count", len(graphs))
 	return graphs, nil
+}
+
+// normalizeBKBaseGraphRows adapts the two response shapes emitted by BKBase
+// query_sync for graph queries. SELECT result returns a per-row result wrapper,
+// while RETURN {root: ..., hopN: ...} returns the graph row directly.
+func normalizeBKBaseGraphRows(rows []map[string]any) ([]any, error) {
+	list := make([]any, 0, len(rows))
+	for index, row := range rows {
+		if result, exists := row[ResponseFieldResult]; exists {
+			if _, ok := result.(map[string]any); !ok {
+				return nil, fmt.Errorf("parse bkbase response: data.list[%d].%s: expected object, got %T", index, ResponseFieldResult, result)
+			}
+			list = append(list, row)
+			continue
+		}
+		if _, exists := row[ResponseFieldRoot]; !exists {
+			return nil, fmt.Errorf("parse bkbase response: data.list[%d]: missing field %s or %s for graph row", index, ResponseFieldRoot, ResponseFieldResult)
+		}
+		list = append(list, map[string]any{ResponseFieldResult: row})
+	}
+	return list, nil
 }
 
 func validateBindingIdentifier(kind, value string) error {

@@ -21,12 +21,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jarcoal/httpmock"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -471,19 +473,26 @@ func TestRawBatchExecuteTransportStatusDoesNotFanOut(t *testing.T) {
 	}
 }
 
-func TestRawBatchSpanDoesNotExposeMemberDetails(t *testing.T) {
+func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing.T) {
 	recorder := setupESTraceRecorder(t)
 	const (
-		indexSentinel = "sensitive-index-sentinel"
-		querySentinel = "sensitive-query-sentinel"
-		userSentinel  = "sensitive-user-sentinel"
-		passSentinel  = "sensitive-password-sentinel"
+		firstIndexSentinel  = "sensitive-index-first"
+		secondIndexSentinel = "sensitive-index-second"
+		querySentinel       = "trace-query-sentinel"
+		firstTableID        = "trace.app.first"
+		secondTableID       = "trace.app.second"
+		userSentinel        = "sensitive-user-sentinel"
+		passSentinel        = "sensitive-password-sentinel"
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			writer,
-			`{"responses":[{"status":200,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`,
+			`{"responses":[`+
+				`{"took":932,"timed_out":true,"status":200,"_shards":{"total":8,"successful":7,"failed":1},`+
+				`"hits":{"total":{"value":23,"relation":"eq"},"hits":[]}},`+
+				`{"took":41,"timed_out":false,"status":404,"_shards":{"total":4,"successful":4,"failed":0},`+
+				`"error":{"type":"index_not_found_exception","reason":"must-not-leak"}}]}`,
 		)
 	}))
 	defer server.Close()
@@ -493,35 +502,192 @@ func TestRawBatchSpanDoesNotExposeMemberDetails(t *testing.T) {
 		UserName: userSentinel,
 		Password: passSentinel,
 	}
-	prepared := rawBatchPrepared(
+	queryBody := `{"query":{"term":{"message":"` + querySentinel + `"}}}`
+	first := rawBatchPrepared(
 		t,
 		connect,
-		[]string{indexSentinel},
-		`{"query":{"term":{"message":"`+querySentinel+`"}}}`,
+		[]string{firstIndexSentinel},
+		queryBody,
 		0,
 	)
-	batch := rawSingleBatch(t, prepared)
+	first.query.TableID = firstTableID
+	second := rawBatchPrepared(t, connect, []string{secondIndexSentinel}, queryBody, 0)
+	second.query.TableID = secondTableID
+	batch := rawBatchFromMembers(t, []RawBatchMember{
+		{Ordinal: 7, Prepared: first},
+		{Ordinal: 9, Prepared: second},
+	})
 	results, err := rawBatchInstance(t, connect).ExecuteRawBatch(context.Background(), batch, 4)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
+	require.Len(t, results, 2)
 
 	attributes := endedSpanAttrs(t, recorder)
 	renderedAttributes := fmt.Sprint(attributes)
 	for _, sentinel := range []string{
 		server.URL,
-		indexSentinel,
-		querySentinel,
+		firstIndexSentinel,
+		secondIndexSentinel,
 		userSentinel,
 		passSentinel,
+		"must-not-leak",
 	} {
 		assert.NotContains(t, renderedAttributes, sentinel)
 	}
+	queryBodyAttribute, ok := esSpanAttrString(attributes, "query-body")
+	require.True(t, ok)
+	assert.Equal(t, queryBody, queryBodyAttribute)
+	queryBodySize, ok := esSpanAttrInt(attributes, "query-body-size")
+	require.True(t, ok)
+	assert.EqualValues(t, len([]byte(queryBody)), queryBodySize)
+	queryBodyTruncated, ok := esSpanAttrBool(attributes, "query-body-truncated")
+	require.True(t, ok)
+	assert.False(t, queryBodyTruncated)
+	sharedQueryBody, ok := esSpanAttrBool(attributes, "es_batch_shared_query_body")
+	require.True(t, ok)
+	assert.True(t, sharedQueryBody)
+
+	memberOrdinals, ok := esSpanAttrIntSlice(attributes, "es_batch_member_ordinals")
+	require.True(t, ok)
+	assert.Equal(t, []int64{7, 9}, memberOrdinals)
+	memberTableIDs, ok := esSpanAttrStringSlice(attributes, "es_batch_member_table_ids")
+	require.True(t, ok)
+	assert.Equal(t, []string{firstTableID, secondTableID}, memberTableIDs)
+	memberIndexCounts, ok := esSpanAttrIntSlice(attributes, "es_batch_member_index_counts")
+	require.True(t, ok)
+	assert.Equal(t, []int64{1, 1}, memberIndexCounts)
+
+	childTookMillis, ok := esSpanAttrIntSlice(attributes, "es_batch_child_took_millis")
+	require.True(t, ok)
+	assert.Equal(t, []int64{932, 41}, childTookMillis)
+	childTimedOutOrdinals, ok := esSpanAttrIntSlice(attributes, "es_batch_child_timed_out_ordinals")
+	require.True(t, ok)
+	assert.Equal(t, []int64{7}, childTimedOutOrdinals)
+	childStatuses, ok := esSpanAttrIntSlice(attributes, "es_batch_child_statuses")
+	require.True(t, ok)
+	assert.Equal(t, []int64{200, 404}, childStatuses)
+	childTotalHits, ok := esSpanAttrIntSlice(attributes, "es_batch_child_total_hits")
+	require.True(t, ok)
+	assert.Equal(t, []int64{23, 0}, childTotalHits)
+	childShardsTotal, ok := esSpanAttrIntSlice(attributes, "es_batch_child_shards_total")
+	require.True(t, ok)
+	assert.Equal(t, []int64{8, 4}, childShardsTotal)
+	childShardsSuccessful, ok := esSpanAttrIntSlice(attributes, "es_batch_child_shards_successful")
+	require.True(t, ok)
+	assert.Equal(t, []int64{7, 4}, childShardsSuccessful)
+	childShardsFailed, ok := esSpanAttrIntSlice(attributes, "es_batch_child_shards_failed")
+	require.True(t, ok)
+	assert.Equal(t, []int64{1, 0}, childShardsFailed)
+	childErrorTypes, ok := esSpanAttrStringSlice(attributes, "es_batch_child_error_types")
+	require.True(t, ok)
+	assert.Equal(t, []string{"shard_failure", "index_not_found_exception"}, childErrorTypes)
+
 	memberCount, ok := esSpanAttrInt(attributes, "es_batch_member_count")
 	require.True(t, ok)
-	assert.EqualValues(t, 1, memberCount)
+	assert.EqualValues(t, 2, memberCount)
 	bodyBytes, ok := esSpanAttrInt(attributes, "es_batch_body_bytes")
 	require.True(t, ok)
 	assert.Positive(t, bodyBytes)
+}
+
+func TestRawBatchSpanTruncatesOversizedSharedQueryBody(t *testing.T) {
+	recorder := setupESTraceRecorder(t)
+	const maxQueryBodyLength = 16 * 1024
+	queryBody := strings.Repeat("x", maxQueryBodyLength+1)
+	connect, instance, server := rawBatchTestServer(
+		t,
+		http.StatusOK,
+		`{"responses":[{"status":200,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`,
+	)
+	defer server.Close()
+
+	batch := rawSingleBatch(t, rawBatchPrepared(t, connect, []string{"index-a"}, queryBody, 0))
+	_, err := instance.ExecuteRawBatch(context.Background(), batch, 0)
+	require.NoError(t, err)
+
+	attributes := endedSpanAttrs(t, recorder)
+	queryBodyAttribute, ok := esSpanAttrString(attributes, "query-body")
+	require.True(t, ok)
+	assert.Equal(t, queryBody[:maxQueryBodyLength], queryBodyAttribute)
+	queryBodySize, ok := esSpanAttrInt(attributes, "query-body-size")
+	require.True(t, ok)
+	assert.EqualValues(t, len([]byte(queryBody)), queryBodySize)
+	queryBodyTruncated, ok := esSpanAttrBool(attributes, "query-body-truncated")
+	require.True(t, ok)
+	assert.True(t, queryBodyTruncated)
+}
+
+func TestRawBatchSpanTruncatesSharedQueryBodyOnUTF8Boundary(t *testing.T) {
+	recorder := setupESTraceRecorder(t)
+	const maxQueryBodyBytes = 16 * 1024
+	queryBody := strings.Repeat("查", maxQueryBodyBytes/3+1)
+	connect, instance, server := rawBatchTestServer(
+		t,
+		http.StatusOK,
+		`{"responses":[{"status":200,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`,
+	)
+	defer server.Close()
+
+	batch := rawSingleBatch(t, rawBatchPrepared(t, connect, []string{"index-a"}, queryBody, 0))
+	_, err := instance.ExecuteRawBatch(context.Background(), batch, 0)
+	require.NoError(t, err)
+
+	attributes := endedSpanAttrs(t, recorder)
+	queryBodyAttribute, ok := esSpanAttrString(attributes, "query-body")
+	require.True(t, ok)
+	assert.LessOrEqual(t, len([]byte(queryBodyAttribute)), maxQueryBodyBytes)
+	assert.True(t, utf8.ValidString(queryBodyAttribute))
+	assert.True(t, strings.HasPrefix(queryBody, queryBodyAttribute))
+	queryBodyTruncated, ok := esSpanAttrBool(attributes, "query-body-truncated")
+	require.True(t, ok)
+	assert.True(t, queryBodyTruncated)
+}
+
+func TestRawBatchSpanOmitsQueryBodyWhenMembersDiffer(t *testing.T) {
+	recorder := setupESTraceRecorder(t)
+	connect, instance, server := rawBatchTestServer(
+		t,
+		http.StatusOK,
+		`{"responses":[`+
+			`{"status":200,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}},`+
+			`{"status":200,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`,
+	)
+	defer server.Close()
+
+	batch := rawBatchFromMembers(t, []RawBatchMember{
+		{Ordinal: 0, Prepared: rawBatchPrepared(t, connect, []string{"index-a"}, `{"query":{"term":{"level":"info"}}}`, 0)},
+		{Ordinal: 1, Prepared: rawBatchPrepared(t, connect, []string{"index-b"}, `{"query":{"term":{"level":"error"}}}`, 0)},
+	})
+	_, err := instance.ExecuteRawBatch(context.Background(), batch, 0)
+	require.NoError(t, err)
+
+	attributes := endedSpanAttrs(t, recorder)
+	sharedQueryBody, ok := esSpanAttrBool(attributes, "es_batch_shared_query_body")
+	require.True(t, ok)
+	assert.False(t, sharedQueryBody)
+	_, ok = esSpanAttrString(attributes, "query-body")
+	assert.False(t, ok)
+	_, ok = esSpanAttrInt(attributes, "query-body-size")
+	assert.False(t, ok)
+	_, ok = esSpanAttrBool(attributes, "query-body-truncated")
+	assert.False(t, ok)
+}
+
+func esSpanAttrIntSlice(attrs []attribute.KeyValue, key string) ([]int64, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsInt64Slice(), true
+		}
+	}
+	return nil, false
+}
+
+func esSpanAttrStringSlice(attrs []attribute.KeyValue, key string) ([]string, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key {
+			return kv.Value.AsStringSlice(), true
+		}
+	}
+	return nil, false
 }
 
 func TestRawBatchExecuteClaimsPreparedMembersOnce(t *testing.T) {

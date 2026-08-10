@@ -501,6 +501,23 @@ func TestSurrealDBResponseParsing(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:       "bkbase root record miss returns no graph",
+			queryStart: 1769910000000,
+			queryEnd:   1776910000000,
+			bkbaseResponse: `{
+  "result": true,
+  "code": "00",
+  "data": {
+    "total_records": 1,
+    "device": "surrealdb",
+    "list": [
+      {"__ids": []}
+    ]
+  }
+}`,
+			expected: []tableGraphSummary{},
+		},
 	}
 
 	for _, tt := range tests {
@@ -549,6 +566,19 @@ func TestNormalizeBKBaseGraphRows(t *testing.T) {
 			name:     "empty graph result",
 			rows:     []map[string]any{},
 			expected: []any{},
+		},
+		{
+			name: "missing root record row is skipped",
+			rows: []map[string]any{
+				{"__ids": []any{}},
+				directGraphRow,
+			},
+			expected: []any{map[string]any{"result": directGraphRow}},
+		},
+		{
+			name:    "non empty root record marker is rejected",
+			rows:    []map[string]any{{"__ids": []any{"node:node-1"}}},
+			errText: "data.list[0]: missing field root or result for graph row",
 		},
 		{
 			name:    "non graph row is rejected",

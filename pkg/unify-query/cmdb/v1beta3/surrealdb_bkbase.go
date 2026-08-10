@@ -266,6 +266,9 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 func normalizeBKBaseGraphRows(rows []map[string]any) ([]any, error) {
 	list := make([]any, 0, len(rows))
 	for index, row := range rows {
+		if isBKBaseMissingRecordRow(row) {
+			continue
+		}
 		if result, exists := row[ResponseFieldResult]; exists {
 			if _, ok := result.(map[string]any); !ok {
 				return nil, fmt.Errorf("parse bkbase response: data.list[%d].%s: expected object, got %T", index, ResponseFieldResult, result)
@@ -279,6 +282,22 @@ func normalizeBKBaseGraphRows(rows []map[string]any) ([]any, error) {
 		list = append(list, map[string]any{ResponseFieldResult: row})
 	}
 	return list, nil
+}
+
+// isBKBaseMissingRecordRow identifies the query_sync representation of a
+// missing SurrealDB record. A graph query with root-record-ID optimization is
+// a valid no-match when BKBase returns exactly {"__ids": []}; it must produce
+// an empty graph rather than a parser failure.
+func isBKBaseMissingRecordRow(row map[string]any) bool {
+	if len(row) != 1 {
+		return false
+	}
+	ids, exists := row["__ids"]
+	if !exists {
+		return false
+	}
+	array, ok := responseArray(ids)
+	return ok && len(array) == 0
 }
 
 func validateBindingIdentifier(kind, value string) error {

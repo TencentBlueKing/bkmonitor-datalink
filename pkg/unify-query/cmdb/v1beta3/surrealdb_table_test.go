@@ -410,7 +410,7 @@ func TestSurrealDBResponseParsing(t *testing.T) {
 		expected       []tableGraphSummary
 	}{
 		{
-			name:       "bkbase query_sync list parses host module relation graph",
+			name:       "bkbase query_sync direct list row parses host module relation graph",
 			queryStart: 1769910000000,
 			queryEnd:   1776910000000,
 			bkbaseResponse: `{
@@ -424,8 +424,7 @@ func TestSurrealDBResponseParsing(t *testing.T) {
     ],
     "list": [
       {
-        "result": {
-          "root": {
+        "root": {
             "entity_type": "host",
             "entity_id": "host:⟨38268⟩",
             "entity_data": {
@@ -466,7 +465,6 @@ func TestSurrealDBResponseParsing(t *testing.T) {
               }
             ]
           }
-        }
       }
     ]
   }

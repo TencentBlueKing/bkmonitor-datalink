@@ -242,7 +242,14 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 	// 标准格式: [{"result": [...]}]
 	list := make([]any, 0, len(resp.Data.List))
 	for _, item := range resp.Data.List {
-		list = append(list, item)
+		// query_sync returns the row itself in data.list, while older mocks and
+		// some SurrealDB HTTP clients retain a per-row result wrapper. Normalize
+		// both forms to the parser's statement-result shape.
+		if _, exists := item[ResponseFieldResult]; exists {
+			list = append(list, item)
+			continue
+		}
+		list = append(list, map[string]any{ResponseFieldResult: item})
 	}
 	// parser 只依赖标准 SurrealDB 客户端形态：[{"result": [...]}]。
 	// BKBase query_sync 的 data.list 在这里包一层 result，可以让解析器和单测 mock 共用同一套结构。

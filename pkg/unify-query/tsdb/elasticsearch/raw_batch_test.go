@@ -489,7 +489,7 @@ func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing
 		_, _ = io.WriteString(
 			writer,
 			`{"responses":[`+
-				`{"took":932,"timed_out":true,"status":200,"_shards":{"total":8,"successful":7,"failed":1},`+
+				`{"took":932,"timed_out":true,"_shards":{"total":8,"successful":7,"failed":1},`+
 				`"hits":{"total":{"value":23,"relation":"eq"},"hits":[]}},`+
 				`{"took":41,"timed_out":false,"status":404,"_shards":{"total":4,"successful":4,"failed":0},`+
 				`"error":{"type":"index_not_found_exception","reason":"must-not-leak"}}]}`,

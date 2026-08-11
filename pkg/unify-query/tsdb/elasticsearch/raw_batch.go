@@ -456,7 +456,12 @@ func recordRawBatchResponseTrace(
 			continue
 		}
 		tookMillis[index] = child.TookInMillis
-		statuses[index] = int64(child.Status)
+		status := child.Status
+		if status == 0 && child.Error == nil {
+			// Successful _msearch responses may omit the status field.
+			status = http.StatusOK
+		}
+		statuses[index] = int64(status)
 		totalHits[index] = child.TotalHits()
 		if child.TimedOut {
 			timedOutOrdinals = append(timedOutOrdinals, int64(members[index].Ordinal))

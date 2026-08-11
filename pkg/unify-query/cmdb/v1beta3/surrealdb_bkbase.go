@@ -162,7 +162,9 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		// SurrealDBBinding 注入，否则同一个 result_table_id 在多租户场景下会查到错误 database。
 		finalDSL = fmt.Sprintf("USE NS `%s` DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
-	// DSL 可能包含资源标识等敏感查询条件，Trace 仅记录摘要用于关联排障，不再写入原文。
+	// 记录最终发给 BKBase 的完整 DSL，便于通过 UQ trace 直接复现下游查询。
+	// 认证信息不在 DSL 中；请求鉴权字段仍不会写入 trace。
+	span.Set("dsl", finalDSL)
 	dslHash := sha256.Sum256([]byte(finalDSL))
 	span.Set("dsl-hash", fmt.Sprintf("%x", dslHash))
 	span.Set("dsl-bytes", len(finalDSL))

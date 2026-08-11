@@ -306,9 +306,8 @@ type Orders []Order
 
 type AllConditions [][]ConditionField
 
-// MergeAllConditions returns source AND target while preserving AllConditions
-// as disjunctive normal form: outer groups are OR branches and inner fields are
-// AND clauses.
+// MergeAllConditions 将 source 和 target 做 AND 合并，并保持 AllConditions 的析取范式：
+// 外层分组表示 OR 分支，内层字段表示 AND 条件。
 func MergeAllConditions(source, target AllConditions) AllConditions {
 	if len(source) == 0 {
 		return target

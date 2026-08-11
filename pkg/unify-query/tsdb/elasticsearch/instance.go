@@ -919,14 +919,15 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, 0).
 		WithFieldMap(fieldMap)
 
-	// 添加 exists 条件确保字段存在
-	labelValuesQuery.AllConditions = append(labelValuesQuery.AllConditions, []metadata.ConditionField{
-		{
+	// 枚举字段存在性需要与完整业务条件表达式相与，而不是新增 OR 分支。
+	labelValuesQuery.AllConditions = metadata.MergeAllConditions(
+		labelValuesQuery.AllConditions,
+		metadata.AllConditions{{{
 			DimensionName: name,
 			Value:         []string{},
 			Operator:      metadata.ConditionExisted,
-		},
-	})
+		}}},
+	)
 
 	labelValuesQuery.Aggregates = append(labelValuesQuery.Aggregates, metadata.Aggregate{
 		Name:       Cardinality,

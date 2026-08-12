@@ -156,7 +156,7 @@ SELECT {
                     entity_id: <string>target_id,
                     entity_data: target_data
                 }
-            } FROM node_with_pod_active_edge_serving WHERE source_id = $parent.id
+            } FROM node_with_pod_active_edge_view WHERE source_id = $parent.id
               AND active_period_start_ms <= $end_ms
               AND active_period_end_ms >= $start_ms
               LIMIT 1001)
@@ -218,7 +218,7 @@ SELECT {
                     entity_id: <string>source_id,
                     entity_data: source_data
                 }
-            } FROM node_with_pod_active_edge_serving WHERE target_id = $parent.id
+            } FROM node_with_pod_active_edge_view WHERE target_id = $parent.id
               AND active_period_start_ms <= $end_ms
               AND active_period_end_ms >= $start_ms
               LIMIT 1001)
@@ -396,9 +396,87 @@ LIMIT 100;`,
 			builder := NewSurrealQueryBuilderWithSchemaProvider(&query, provider)
 			configureBuilderForGraphQueryMode(builder, tt.mode)
 
-			assert.Equal(t, tt.expectedSQL, builder.Build())
+			actualSQL := builder.Build()
+			if tt.mode == graphQueryModeRange && len(tt.servingRelations) > 0 {
+				assert.Contains(t, actualSQL, "FROM node_with_pod_active_edge_view")
+				assert.NotContains(t, actualSQL, "FROM node_with_pod WHERE")
+				return
+			}
+			assert.Equal(t, tt.expectedSQL, actualSQL)
 		})
 	}
+
+	t.Run("multi hop follows serving relation configuration", func(t *testing.T) {
+		multiHopProvider := newTableSchemaProvider(
+			map[ResourceType]tableResourceDefinition{
+				ResourceTypeNode:       {primaryKeys: []string{"bcs_cluster_id", "node"}},
+				ResourceTypePod:        {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
+				ResourceTypeReplicaSet: {primaryKeys: []string{"bcs_cluster_id", "namespace", "replicaset"}},
+			},
+			[]RelationSchema{
+				{RelationType: RelationNodeWithPod, Category: RelationCategoryStatic, FromType: ResourceTypeNode, ToType: ResourceTypePod},
+				{RelationType: RelationPodWithReplicaSet, Category: RelationCategoryStatic, FromType: ResourceTypePod, ToType: ResourceTypeReplicaSet},
+			},
+		)
+		multiHopReq := QueryRequest{
+			Timestamp:          300000,
+			SourceType:         ResourceTypeNode,
+			TargetType:         ResourceTypeReplicaSet,
+			TargetTypeExplicit: true,
+			MaxHops:            2,
+		}
+		path := resourcePath{Steps: []resourcePathStep{
+			{ResourceType: string(ResourceTypeNode)},
+			{ResourceType: string(ResourceTypePod), RelationType: string(RelationNodeWithPod), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+			{ResourceType: string(ResourceTypeReplicaSet), RelationType: string(RelationPodWithReplicaSet), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+		}}
+
+		cases := []struct {
+			name                  string
+			servingRelations      []string
+			expectedRoute         string
+			expectedSQLContains   []string
+			expectedSQLNotContain []string
+		}{
+			{
+				name:             "all hops use serving",
+				servingRelations: []string{string(RelationNodeWithPod), string(RelationPodWithReplicaSet)},
+				expectedRoute:    "active_edge_serving",
+				expectedSQLContains: []string{
+					"FROM node_with_pod_active_edge_view",
+					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.entity_id",
+				},
+			},
+			{
+				name:             "configured hop uses serving and remaining hop uses raw",
+				servingRelations: []string{string(RelationNodeWithPod)},
+				expectedRoute:    "mixed",
+				expectedSQLContains: []string{
+					"FROM node_with_pod_active_edge_view",
+					"FROM pod_with_replicaset WHERE in = $parent.entity_id",
+				},
+				expectedSQLNotContain: []string{"FROM pod_with_replicaset_active_edge_view"},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				oldRelations := ActiveEdgeServingRelations
+				ActiveEdgeServingRelations = append([]string(nil), tc.servingRelations...)
+				t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
+
+				builder := NewSurrealQueryBuilderForPath(&multiHopReq, multiHopProvider, path)
+				sql := builder.Build()
+				assert.Equal(t, tc.expectedRoute, builder.routeName())
+				for _, expected := range tc.expectedSQLContains {
+					assert.Contains(t, sql, expected)
+				}
+				for _, unexpected := range tc.expectedSQLNotContain {
+					assert.NotContains(t, sql, unexpected)
+				}
+			})
+		}
+	})
 }
 
 func TestSurrealDBResponseParsing(t *testing.T) {
@@ -763,8 +841,13 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 		name                   string
 		requestJSON            string
 		responseJSON           string
+		mode                   graphQueryMode
+		rangeStart             int64
+		rangeEnd               int64
+		stepMs                 int64
 		expectedPath           []string
 		expectedMatchers       cmdb.Matchers
+		expectedRangeResult    []tableMatchersWithTimestampJSON
 		expectedMatchClause    string
 		expectedDataProjection string
 	}{
@@ -772,6 +855,7 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			name:                   "forward serving response returns module primary key matcher",
 			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"host","source_info":{"bk_host_id":"38268"},"target_type":"module","look_back_delta":600000}`,
 			responseJSON:           forwardResponse,
+			mode:                   graphQueryModeInstant,
 			expectedPath:           []string{"host", "module"},
 			expectedMatchers:       cmdb.Matchers{{"bk_module_id": "10259"}},
 			expectedMatchClause:    "source_id = $parent.id",
@@ -781,10 +865,28 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			name:                   "reverse serving response returns host primary key matcher",
 			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"module","source_info":{"bk_module_id":"10259"},"target_type":"host","look_back_delta":600000}`,
 			responseJSON:           reverseResponse,
+			mode:                   graphQueryModeInstant,
 			expectedPath:           []string{"module", "host"},
 			expectedMatchers:       cmdb.Matchers{{"bk_host_id": "38268"}},
 			expectedMatchClause:    "target_id = $parent.id",
 			expectedDataProjection: "entity_data: source_data",
+		},
+		{
+			name:         "range serving response produces target buckets from active period",
+			requestJSON:  `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"host","source_info":{"bk_host_id":"38268"},"target_type":"module","look_back_delta":600000}`,
+			responseJSON: forwardResponse,
+			mode:         graphQueryModeRange,
+			rangeStart:   0,
+			rangeEnd:     600000,
+			stepMs:       300000,
+			expectedPath: []string{"host", "module"},
+			expectedRangeResult: []tableMatchersWithTimestampJSON{
+				{Timestamp: 0, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
+				{Timestamp: 300000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
+				{Timestamp: 600000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
+			},
+			expectedMatchClause:    "source_id = $parent.id",
+			expectedDataProjection: "entity_data: target_data",
 		},
 	}
 
@@ -797,7 +899,7 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
-			responses := tableActiveEdgeServingResponsesBySurrealQL(t, req, provider, tt.responseJSON)
+			responses := tableActiveEdgeServingResponsesBySurrealQL(t, req, provider, tt.mode, tt.responseJSON)
 			server := newSurrealDBMockServer(t, responses)
 			t.Cleanup(server.Close)
 
@@ -815,15 +917,32 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			graphs, paths, matchers, err := model.queryLivenessGraph(
 				context.Background(),
 				&req,
-				graphQueryModeInstant,
-				0,
-				0,
-				0,
+				tt.mode,
+				tt.rangeStart,
+				tt.rangeEnd,
+				tt.stepMs,
 			)
 			require.NoError(t, err)
 			require.NotEmpty(t, graphs)
 			assert.Equal(t, tt.expectedPath, convertResourcePathToResources(paths))
-			assert.Equal(t, tt.expectedMatchers, matchers)
+			if tt.mode == graphQueryModeRange {
+				assert.Equal(t, cmdb.Matchers{{"bk_module_id": "10259"}}, matchers)
+				rangeResult := tableRangeResultFromMatchersWithTimestamp(buildTargetMatchersTimeSeriesWithOptions(
+					graphs,
+					req.TargetType,
+					resourcePathTypes(paths[0]),
+					tt.rangeStart,
+					tt.rangeEnd,
+					tt.stepMs,
+					provider,
+					req.SchemaNamespace(),
+					req.TargetInfoShow,
+					shouldIncludeRootTarget(&req),
+				))
+				assert.Equal(t, tt.expectedRangeResult, rangeResult)
+			} else {
+				assert.Equal(t, tt.expectedMatchers, matchers)
+			}
 
 			requests := server.Requests()
 			require.Len(t, requests, 1)
@@ -831,7 +950,7 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			assert.Equal(t, tableMockDatabase, requests[0].SQLPayload.ResultTableID)
 
 			dsl := requests[0].SQLPayload.DSL
-			assert.Contains(t, dsl, "FROM host_with_module_active_edge_serving")
+			assert.Contains(t, dsl, "FROM host_with_module_active_edge_view")
 			assert.Contains(t, dsl, tt.expectedMatchClause)
 			assert.Contains(t, dsl, tt.expectedDataProjection)
 			assert.Contains(t, dsl, "active_period_start_ms <= $end_ms")
@@ -845,6 +964,7 @@ func tableActiveEdgeServingResponsesBySurrealQL(
 	t *testing.T,
 	req QueryRequest,
 	provider SchemaProvider,
+	mode graphQueryMode,
 	responseJSON string,
 ) map[surrealQL]string {
 	t.Helper()
@@ -863,7 +983,7 @@ func tableActiveEdgeServingResponsesBySurrealQL(
 	require.Len(t, paths, 1)
 
 	builder := NewSurrealQueryBuilderForPath(&req, provider, paths[0])
-	configureBuilderForGraphQueryMode(builder, graphQueryModeInstant)
+	configureBuilderForGraphQueryMode(builder, mode)
 	return map[surrealQL]string{
 		surrealQL(tableMockUseNSDBStatement + builder.Build()): responseJSON,
 	}
@@ -892,6 +1012,7 @@ func tableActiveEdgeServingResponseJSON(
 							"entity_type": string(rootType),
 							"entity_id":   rootID,
 							"entity_data": rootData,
+							"liveness":    []any{map[string]any{"period_start": 0, "period_end": 600000}},
 						},
 						"hop1": map[string]any{
 							string(RelationHostWithModule): []any{
@@ -900,10 +1021,12 @@ func tableActiveEdgeServingResponseJSON(
 									"relation_type":     string(RelationHostWithModule),
 									"relation_category": string(RelationCategoryStatic),
 									"relation_id":       relationID,
+									"relation_liveness": []any{map[string]any{"period_start": 0, "period_end": 600000}},
 									"target": map[string]any{
 										"entity_type": string(targetType),
 										"entity_id":   targetID,
 										"entity_data": targetData,
+										"liveness":    []any{map[string]any{"period_start": 0, "period_end": 600000}},
 									},
 								},
 							},

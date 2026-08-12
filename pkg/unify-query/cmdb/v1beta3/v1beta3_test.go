@@ -2716,7 +2716,7 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 			}}},
 		},
 		{
-			name: "higher priority path error is not hidden by lower priority hit",
+			name: "higher priority path error continues to lower priority hit",
 			responseForSQL: func(sql string) graphQueryResponse {
 				if strings.Contains(sql, "system_to_pod") {
 					return graphQueryResponse{err: errors.New("direct path unavailable")}
@@ -2726,7 +2726,19 @@ func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 				}
 				return graphQueryResponse{}
 			},
-			expectedError: "direct path unavailable",
+			expectedMatchers: cmdb.Matchers{{"pod": "via-container"}},
+			expectedPaths: []resourcePath{{Steps: []resourcePathStep{
+				{ResourceType: "system"},
+				{ResourceType: "container", RelationType: "system_to_container", Category: "dynamic", Direction: "outbound"},
+				{ResourceType: "pod", RelationType: "container_to_pod", Category: "dynamic", Direction: "outbound"},
+			}}},
+		},
+		{
+			name: "all path errors return aggregate error",
+			responseForSQL: func(sql string) graphQueryResponse {
+				return graphQueryResponse{err: errors.New("query failed for candidate path")}
+			},
+			expectedError: "query failed for",
 		},
 		{
 			name: "empty direct path continues to next matching path",

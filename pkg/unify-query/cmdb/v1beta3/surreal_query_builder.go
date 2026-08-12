@@ -63,6 +63,8 @@ type SurrealQueryBuilder struct {
 	projectLiveness            bool
 	queryMode                  graphQueryMode
 	activeEdgeServingRelations map[RelationType]struct{}
+	servingHopCount            int
+	pathHopCount               int
 }
 
 type pathTransition struct {
@@ -113,11 +115,7 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 }
 
 func (b *SurrealQueryBuilder) useActiveEdgeServing(relationType RelationType) bool {
-	if b == nil ||
-		b.queryMode != graphQueryModeInstant ||
-		b.request.MaxHops != 1 ||
-		!b.request.TargetTypeExplicit ||
-		b.request.SourceType == b.request.TargetType {
+	if b == nil {
 		return false
 	}
 	_, ok := b.activeEdgeServingRelations[relationType]
@@ -133,7 +131,23 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 
 	builder := NewSurrealQueryBuilderWithSchemaProvider(pathRequest, provider)
 	builder.transitions = buildTransitionsFromPaths([]resourcePath{path})
+	builder.pathHopCount = maxInt(0, len(path.Steps)-1)
+	for _, step := range path.Steps[1:] {
+		if _, ok := builder.activeEdgeServingRelations[RelationType(step.RelationType)]; ok {
+			builder.servingHopCount++
+		}
+	}
 	return builder
+}
+
+func (b *SurrealQueryBuilder) routeName() string {
+	if b == nil || b.servingHopCount == 0 {
+		return "raw"
+	}
+	if b.servingHopCount == b.pathHopCount {
+		return "active_edge_serving"
+	}
+	return "mixed"
 }
 
 // WithoutLivenessProjection 保留存活性过滤条件，但不在 SELECT 结果中投影存活时段。
@@ -525,6 +539,9 @@ func (b *SurrealQueryBuilder) buildNestedHopSelect(hop int, currentType Resource
 // buildNestedRelationQuery 构建嵌套的关系查询（用于 hop2+）
 func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string) string {
 	relationType := rel.Schema.RelationType
+	if b.useActiveEdgeServing(relationType) {
+		return b.buildServingRelationQuery(hop, rel, "$parent.entity_id", sqlIndent5)
+	}
 	relationTable := surrealTableName(string(relationType))
 	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
 	targetLivenessTable := surrealTableName(GetLivenessRecordTableName(rel.TargetType))
@@ -614,6 +631,9 @@ func (b *SurrealQueryBuilder) buildDeeperNestedHopSelect(hop int, currentType Re
 // buildDeeperNestedRelationQuery 构建更深层嵌套的关系查询
 func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string, indentLevel int) string {
 	relationType := rel.Schema.RelationType
+	if b.useActiveEdgeServing(relationType) {
+		return b.buildServingRelationQuery(hop, rel, "$parent.entity_id", strings.Repeat(sqlIndent1, indentLevel))
+	}
 	relationTable := surrealTableName(string(relationType))
 	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
 	targetLivenessTable := surrealTableName(GetLivenessRecordTableName(rel.TargetType))
@@ -676,7 +696,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 // serving 时段是边与目标存活时段的物化交集，因此同时作为二者的存活时段返回。
 func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQueryInfo, parentRef, indent string) string {
 	relationType := rel.Schema.RelationType
-	table := surrealTableName(string(relationType) + "_active_edge_serving")
+	table := surrealTableName(string(relationType) + "_active_edge_view")
 	matchField, targetIDField, targetDataField, targetTypeField := "source_id", "target_id", "target_data", "target_type"
 	if rel.WhereField == fieldOut {
 		matchField, targetIDField, targetDataField, targetTypeField = "target_id", "source_id", "source_data", "source_type"
@@ -696,7 +716,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 
 	nested := ""
 	if hop < b.request.MaxHops {
-		nextHop := b.buildNestedHopSelect(hop+1, rel.TargetType, targetIDField)
+		nextHop := b.buildNestedHopSelect(hop+1, rel.TargetType, ResponseFieldEntityID)
 		nested = fmt.Sprintf(",\n%s            hop%d: %s", indent, hop+1, nextHop)
 	}
 

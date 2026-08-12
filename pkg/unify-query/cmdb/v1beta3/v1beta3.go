@@ -11,6 +11,7 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
@@ -543,20 +545,17 @@ func (m *Model) executeGraphQueryPathByPath(
 	var graphFragments []*LivenessGraph
 	successCount := 0
 	graphFragmentCount := 0
+	var pathErrors []error
+	failedPathIdentities := make([]string, 0)
 	var graphFilterDuration time.Duration
 	// 候选路径按优先级串行执行，首条命中目标的路径即可确定最终响应，后续低优先级路径无需再查询。
 	for idx, path := range queryPaths {
 		result := m.executeOneGraphQueryPath(ctx, req, provider, path, idx, start, end, mode, runner)
 		span.Set("completed-path-count", idx+1)
 		if result.err != nil {
-			span.Set("successful-path-count", successCount)
-			span.Set("failed-path-count", 1)
-			span.Set("target-hit-path-count", 0)
-			span.Set("graph-fragment-count", graphFragmentCount)
-			span.Set("selection-result", "path-error")
-			span.Set("failed-path-index", idx)
-			span.Set("failed-path-identity", resourcePathSortKey(path))
-			return nil, nil, result.err
+			pathErrors = append(pathErrors, fmt.Errorf("path %s: %w", resourcePathSortKey(path), result.err))
+			failedPathIdentities = append(failedPathIdentities, resourcePathSortKey(path))
+			continue
 		}
 
 		successCount++
@@ -566,7 +565,8 @@ func (m *Model) executeGraphQueryPathByPath(
 		graphFilterDuration += time.Since(graphFilterStarted)
 		if hasTarget {
 			span.Set("successful-path-count", successCount)
-			span.Set("failed-path-count", 0)
+			span.Set("failed-path-count", len(pathErrors))
+			span.Set("failed-path-identities", failedPathIdentities)
 			span.Set("target-hit-path-count", 1)
 			span.Set("graph-fragment-count", graphFragmentCount)
 			span.Set("graph-filter-duration", graphFilterDuration)
@@ -584,10 +584,15 @@ func (m *Model) executeGraphQueryPathByPath(
 	}
 
 	span.Set("successful-path-count", successCount)
-	span.Set("failed-path-count", 0)
+	span.Set("failed-path-count", len(pathErrors))
+	span.Set("failed-path-identities", failedPathIdentities)
 	span.Set("target-hit-path-count", 0)
 	span.Set("graph-fragment-count", graphFragmentCount)
 	span.Set("graph-filter-duration", graphFilterDuration)
+	if len(pathErrors) > 0 {
+		span.Set("selection-result", "no-target-with-path-errors")
+		return nil, nil, errors.Join(pathErrors...)
+	}
 	mergedGraphs := mergeLivenessGraphsByRoot(graphFragments)
 	if len(mergedGraphs) > 0 {
 		span.Set("selection-result", "root-only")
@@ -674,6 +679,20 @@ func (m *Model) executeOneGraphQueryPath(
 	buildStarted := time.Now()
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
+	route := builder.routeName()
+	span.Set("query-route", route)
+	span.Set("path-hop-count", builder.pathHopCount)
+	span.Set("active-edge-serving-hop-count", builder.servingHopCount)
+	metric.CMDBRelationRouteInc(ctx, route, string(mode), "started")
+	queryStarted := time.Now()
+	defer func() {
+		metric.CMDBRelationRouteSecond(ctx, time.Since(queryStarted), route, string(mode))
+		resultStatus := "success"
+		if result.err != nil {
+			resultStatus = "error"
+		}
+		metric.CMDBRelationRouteInc(ctx, route, string(mode), resultStatus)
+	}()
 	sql := builder.Build()
 	span.Set("surrealql-build-duration", time.Since(buildStarted))
 	span.Set("surrealql-bytes", len(sql))

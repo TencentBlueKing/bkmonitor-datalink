@@ -208,26 +208,27 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 	return true, nil
 }
 
-// HSetManyWithCompareAndPublish 批量比较并更新 hash 中的 JSON 数据，返回实际发生变化的 field 数。
+// HSetManyWithCompareAndPublish 批量比较并更新 hash 中的 JSON 数据，返回实际成功写入的 field 列表。
+// 返回列表按字典序稳定排序；未发生变化或写入失败时不会返回 field。
 // 方法本身不切批；参数和临时内存随 field 数及 payload 大小线性增长，调用方负责限制批次。
 // values 为空时直接返回；isPublish 为 true 时，仅为实际发生变化的 field 逐个发布通知。
 func (r *Instance) HSetManyWithCompareAndPublish(
 	key string, values map[string]string, channelName string, isPublish bool,
-) (int, error) {
+) ([]string, error) {
 	if len(values) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	if key == "" {
-		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: key is empty")
+		return nil, fmt.Errorf("HSetManyWithCompareAndPublish: key is empty")
 	}
 	if isPublish && channelName == "" {
-		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: channelName is empty when publish is enabled")
+		return nil, fmt.Errorf("HSetManyWithCompareAndPublish: channelName is empty when publish is enabled")
 	}
 
 	fields := make([]string, 0, len(values))
 	for field := range values {
 		if field == "" {
-			return 0, fmt.Errorf("HSetManyWithCompareAndPublish: field is empty")
+			return nil, fmt.Errorf("HSetManyWithCompareAndPublish: field is empty")
 		}
 		fields = append(fields, field)
 	}
@@ -236,10 +237,10 @@ func (r *Instance) HSetManyWithCompareAndPublish(
 
 	oldValues, err := r.Client.HMGet(r.ctx, key, fields...).Result()
 	if err != nil {
-		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: hmget key %q failed: %w", key, err)
+		return nil, fmt.Errorf("HSetManyWithCompareAndPublish: hmget key %q failed: %w", key, err)
 	}
 	if len(oldValues) != len(fields) {
-		return 0, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"HSetManyWithCompareAndPublish: hmget key %q returned %d values for %d fields",
 			key, len(oldValues), len(fields),
 		)
@@ -249,7 +250,7 @@ func (r *Instance) HSetManyWithCompareAndPublish(
 	for i, field := range fields {
 		oldValue, exists, err := redisStringValue(oldValues[i])
 		if err != nil {
-			return 0, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"HSetManyWithCompareAndPublish: decode old value for key %q field %q failed: %w",
 				key, field, err,
 			)
@@ -270,7 +271,7 @@ func (r *Instance) HSetManyWithCompareAndPublish(
 	}
 
 	if len(changedFields) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	pipe := r.Client.Pipeline()
@@ -289,13 +290,13 @@ func (r *Instance) HSetManyWithCompareAndPublish(
 		}
 	}
 	if _, err := pipe.Exec(r.ctx); err != nil {
-		return 0, fmt.Errorf("HSetManyWithCompareAndPublish: update key %q failed: %w", key, err)
+		return nil, fmt.Errorf("HSetManyWithCompareAndPublish: update key %q failed: %w", key, err)
 	}
 
 	for range changedFields {
 		metrics.RedisCount(key, "HSet")
 	}
-	return len(changedFields), nil
+	return changedFields, nil
 }
 
 // resultTableDetailJSONEqual 延续原有 JSON 语义比较，但 storage_cluster_records

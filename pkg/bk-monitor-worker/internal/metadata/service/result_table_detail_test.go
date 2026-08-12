@@ -73,6 +73,22 @@ func execResultTableDetailSQL(t *testing.T, db *gorm.DB, query string, args ...a
 	require.NoError(t, db.Exec(query, args...).Error)
 }
 
+func TestLogTableIDDetailWriteResults(t *testing.T) {
+	redisValues := map[string]string{
+		"changed.__default__|tenant-a": `{"storage_id":1}`,
+		"unchanged.metric|tenant-a":    `{"storage_id":2}`,
+	}
+	var logs []string
+	logTableIDDetailWriteResults(redisValues, []string{"changed.__default__|tenant-a"}, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+
+	assert.Equal(t, []string{
+		`writeTableIdDetail: table_id [changed.__default__|tenant-a] changed, detail [{"storage_id":1}]`,
+		`writeTableIdDetail: table_id [unchanged.metric|tenant-a] not change`,
+	}, logs)
+}
+
 func insertResultTable(t *testing.T, db *gorm.DB, tableID, tenantID, defaultStorage string, dataLabel *string, labels string) {
 	insertResultTableWithState(t, db, tableID, tenantID, defaultStorage, dataLabel, labels, false, true)
 }

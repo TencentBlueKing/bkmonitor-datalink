@@ -140,7 +140,7 @@ func TestHSetManyWithCompareAndPublishWithoutPublish(t *testing.T) {
 	}, "", false)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 2, changed)
+	assert.Equal(t, []string{"changed", "missing"}, changed)
 	// 一次 HMGET，加上一条包含两个变化 field 的 HSET。
 	assert.Equal(t, 2, server.CommandCount()-before)
 	assert.Equal(t, `{"a":1}`, server.HGet(key, "exact"))
@@ -148,6 +148,24 @@ func TestHSetManyWithCompareAndPublishWithoutPublish(t *testing.T) {
 	assert.Equal(t, `{"a":1,"b":2}`, server.HGet(key, "semantic"))
 	assert.Equal(t, `{"a":2}`, server.HGet(key, "changed"))
 	assert.Equal(t, `{"a":3}`, server.HGet(key, "missing"))
+}
+
+func TestHSetManyWithCompareAndPublishReturnsNoChangedFields(t *testing.T) {
+	instance, server := newIsolatedRedis(t)
+	key := "result_table_detail"
+	server.HSet(key, "exact", `{"a":1}`)
+	server.HSet(key, "semantic", `{"a":1,"b":2}`)
+
+	before := server.CommandCount()
+	changed, err := instance.HSetManyWithCompareAndPublish(key, map[string]string{
+		"exact":    `{"a":1}`,
+		"semantic": `{ "b": 2, "a": 1 }`,
+	}, "", false)
+
+	assert.NoError(t, err)
+	assert.Empty(t, changed)
+	// 所有 field 都未变化时只执行一次 HMGET，不写 Redis。
+	assert.Equal(t, 1, server.CommandCount()-before)
 }
 
 func TestHSetManyWithCompareAndPublishPublishesChangedFields(t *testing.T) {
@@ -169,11 +187,11 @@ func TestHSetManyWithCompareAndPublishPublishesChangedFields(t *testing.T) {
 		"changed":   `{"a":2}`,
 	}, channelName, true)
 	assert.NoError(t, err)
-	assert.Equal(t, 2, changed)
+	assert.Equal(t, []string{"changed", "missing"}, changed)
 	// 一次 HMGET、一条多 field HSET、两个逐 field PUBLISH。
 	assert.Equal(t, 4, server.CommandCount()-before)
 
-	messages := make([]string, 0, changed)
+	messages := make([]string, 0, len(changed))
 	for range changed {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		message, receiveErr := pubsub.ReceiveMessage(ctx)
@@ -189,7 +207,7 @@ func TestHSetManyWithCompareAndPublishEmptyAndValidation(t *testing.T) {
 
 	changed, err := instance.HSetManyWithCompareAndPublish("", nil, "", true)
 	assert.NoError(t, err)
-	assert.Zero(t, changed)
+	assert.Empty(t, changed)
 
 	_, err = instance.HSetManyWithCompareAndPublish("", map[string]string{"field": `{}`}, "", false)
 	assert.Error(t, err)
@@ -207,7 +225,7 @@ func TestHSetManyWithCompareAndPublishReturnsPipelineError(t *testing.T) {
 		"result_table_detail", map[string]string{"field": `{"a":1}`}, "", false,
 	)
 	assert.ErrorIs(t, err, errPipelineTest)
-	assert.Zero(t, changed)
+	assert.Empty(t, changed)
 	assert.Empty(t, server.HGet("result_table_detail", "field"))
 }
 
@@ -220,7 +238,7 @@ func TestHSetManyWithCompareAndPublishReturnsHMGetError(t *testing.T) {
 		"result_table_detail", map[string]string{"field": `{"a":1}`}, "", false,
 	)
 	assert.Error(t, err)
-	assert.Zero(t, changed)
+	assert.Empty(t, changed)
 }
 
 func TestHSetManyWithCompareAndPublishHandlesLargeBatch(t *testing.T) {
@@ -233,7 +251,9 @@ func TestHSetManyWithCompareAndPublishHandlesLargeBatch(t *testing.T) {
 	before := server.CommandCount()
 	changed, err := instance.HSetManyWithCompareAndPublish("result_table_detail", values, "", false)
 	assert.NoError(t, err)
-	assert.Equal(t, 500, changed)
+	assert.Len(t, changed, 500)
+	assert.Contains(t, changed, "field-0")
+	assert.Contains(t, changed, "field-499")
 	// 大批量读取和写入分别只有一条 HMGET/HSET。
 	assert.Equal(t, 2, server.CommandCount()-before)
 }
@@ -251,7 +271,7 @@ func TestHSetManyWithCompareAndPublishPreservesStorageSegmentOrder(t *testing.T)
 	)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 1, changed)
+	assert.Equal(t, []string{field}, changed)
 	assert.Equal(t, newValue, server.HGet(key, field))
 }
 

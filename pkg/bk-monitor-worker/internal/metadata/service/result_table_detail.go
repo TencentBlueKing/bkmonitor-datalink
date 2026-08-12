@@ -485,6 +485,11 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		case models.StorageTypeES:
 			storageID := targetES.StorageClusterID
 			cluster, exists := clusterMap[storageID]
+			// 退避到 origin 的 cluster
+			if !exists {
+				storageID = originES.StorageClusterID
+				cluster, exists = clusterMap[storageID]
+			}
 			if !exists || cluster.ClusterType != models.StorageTypeES || esDB == "" || esSourceType == "" {
 				logger.Errorf("compose log detail: ES config incomplete, tenant [%s], table_id [%s], cluster_id [%d]", bkTenantId, tableID, storageID)
 				continue
@@ -498,6 +503,12 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		case models.StorageTypeDoris:
 			storageID := targetDoris.StorageClusterID
 			cluster, exists := clusterMap[storageID]
+			// 退避到 origin 的 cluster
+			if !exists {
+				storageID = originDoris.StorageClusterID
+				cluster, exists = clusterMap[storageID]
+			}
+
 			if !exists || cluster.ClusterType != models.StorageTypeDoris || dorisDB == "" {
 				logger.Errorf("compose log detail: Doris config incomplete, tenant [%s], table_id [%s], cluster_id [%d]", bkTenantId, tableID, storageID)
 				continue
@@ -549,10 +560,32 @@ func (s *SpacePusher) writeTableIdDetail(
 		return nil
 	}
 
-	_, err := redis.GetStorageRedisInstance().HSetManyWithCompareAndPublish(
+	changedFields, err := redis.GetStorageRedisInstance().HSetManyWithCompareAndPublish(
 		cfg.ResultTableDetailKey, redisValues, cfg.ResultTableDetailChannel, isPublish,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	logTableIDDetailWriteResults(redisValues, changedFields, logger.Infof)
+	return nil
+}
+
+func logTableIDDetailWriteResults(
+	redisValues map[string]string, changedFields []string, infof func(string, ...any),
+) {
+	changedFieldSet := make(map[string]struct{}, len(changedFields))
+	for _, field := range changedFields {
+		changedFieldSet[field] = struct{}{}
+	}
+	// 直接使用 Redis field 输出最终状态，因此日志中的 table_id 已包含日志表格式
+	// 规范化和多租户后缀，可以与 Redis 数据及发布消息精确对应。
+	for _, field := range sortedStringMapKeys(redisValues) {
+		if _, changed := changedFieldSet[field]; changed {
+			infof("writeTableIdDetail: table_id [%s] changed, detail [%s]", field, redisValues[field])
+			continue
+		}
+		infof("writeTableIdDetail: table_id [%s] not change", field)
+	}
 }
 
 func loadResultTableMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map[string]resulttable.ResultTable, error) {

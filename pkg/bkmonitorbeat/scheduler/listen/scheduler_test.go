@@ -33,7 +33,21 @@ type reloadTestTask struct {
 func (t *reloadTestTask) Run(context.Context, chan<- define.Event) {}
 
 func newReloadTestTask(ident string, gatherUpDataID int32) define.Task {
-	taskConfig := configs.NewMetricBeatConfig()
+	return newReloadTestTaskWithType(ident, configs.ConfigTypeMetric, gatherUpDataID)
+}
+
+type reloadTestTaskConfig struct {
+	*configs.MetricBeatConfig
+	taskType string
+}
+
+func (c *reloadTestTaskConfig) GetType() string { return c.taskType }
+
+func newReloadTestTaskWithType(ident, taskType string, gatherUpDataID int32) define.Task {
+	taskConfig := &reloadTestTaskConfig{
+		MetricBeatConfig: configs.NewMetricBeatConfig(),
+		taskType:         taskType,
+	}
 	taskConfig.SetIdent(ident)
 	return &reloadTestTask{BaseTask: tasks.BaseTask{
 		GlobalConfig: &reloadTestConfig{gatherUpDataID: gatherUpDataID},
@@ -55,6 +69,33 @@ func TestPlanReloadReplacesTaskWhenGatherUpDataIDChanges(t *testing.T) {
 	}
 	if len(addList) != 1 || addList[0] != newTask {
 		t.Fatalf("add list = %v, want the task with the new gather-up data ID", addList)
+	}
+}
+
+func TestPlanReloadReplacesOnlyMetricbeatWhenGatherUpDataIDChanges(t *testing.T) {
+	taskTypes := []string{
+		configs.ConfigTypeMetric,
+		configs.ConfigTypeTrap,
+		configs.ConfigTypeKubeevent,
+		configs.ConfigTypeDmesg,
+	}
+	currentTasks := make(map[string]define.Task, len(taskTypes))
+	newTasks := make([]define.Task, 0, len(taskTypes))
+	for _, taskType := range taskTypes {
+		currentTasks[taskType] = newReloadTestTaskWithType(taskType, taskType, 100)
+		newTasks = append(newTasks, newReloadTestTaskWithType(taskType, taskType, 200))
+	}
+
+	deleteList, addList := planReloadTasks(currentTasks, newTasks)
+
+	if len(deleteList) != 1 || deleteList[0] != configs.ConfigTypeMetric {
+		t.Fatalf("delete list = %v, want [%s]", deleteList, configs.ConfigTypeMetric)
+	}
+	if len(addList) != 1 {
+		t.Fatalf("add list count = %d, want 1", len(addList))
+	}
+	if got := addList[0].GetConfig().GetType(); got != configs.ConfigTypeMetric {
+		t.Fatalf("added task type = %s, want %s", got, configs.ConfigTypeMetric)
 	}
 }
 

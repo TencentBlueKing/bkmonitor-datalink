@@ -148,6 +148,12 @@ func planReloadTasks(currentTasks map[string]define.Task, newTasks []define.Task
 }
 
 func gatherUpDataIDChanged(currentTask, newTask define.Task) bool {
+	// Only metricbeat caches the global gather-up DataID. Other listen tasks
+	// must keep their listeners running when this mapping changes.
+	if currentTask.GetConfig().GetType() != define.ModuleMetricbeat ||
+		newTask.GetConfig().GetType() != define.ModuleMetricbeat {
+		return false
+	}
 	return currentTask.GetGlobalConfig().GetGatherUpDataID() != newTask.GetGlobalConfig().GetGatherUpDataID()
 }
 

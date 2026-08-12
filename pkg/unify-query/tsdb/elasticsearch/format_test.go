@@ -43,6 +43,62 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"match_phrase":{"key":{"query":"val-1"}}}}`,
 		},
+		"condition and existed field in same group": {
+			conditions: metadata.AllConditions{{
+				{
+					DimensionName: "level",
+					Value:         []string{"__uq_conditions_should_match_nothing__"},
+					Operator:      structured.ConditionEqual,
+				},
+				{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				},
+			}},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"level":{"query":"__uq_conditions_should_match_nothing__"}}},{"exists":{"field":"path"}}]}}}`,
+		},
+		"condition and existed field in separate groups": {
+			conditions: metadata.AllConditions{
+				{{
+					DimensionName: "level",
+					Value:         []string{"__uq_conditions_should_match_nothing__"},
+					Operator:      structured.ConditionEqual,
+				}},
+				{{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				}},
+			},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"level":{"query":"__uq_conditions_should_match_nothing__"}}},{"exists":{"field":"path"}}]}}}`,
+		},
+		"OR condition groups AND existed field": {
+			conditions: metadata.MergeAllConditions(
+				metadata.AllConditions{
+					{{
+						DimensionName: "level",
+						Value:         []string{"info"},
+						Operator:      structured.ConditionEqual,
+					}},
+					{{
+						DimensionName: "level",
+						Value:         []string{"warn"},
+						Operator:      structured.ConditionEqual,
+					}},
+				},
+				metadata.AllConditions{{{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				}}},
+			),
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"level":{"query":"info"}}},{"exists":{"field":"path"}}]}},{"bool":{"must":[{"match_phrase":{"level":{"query":"warn"}}},{"exists":{"field":"path"}}]}}]}}}`,
+		},
+		"empty conditions AND existed field": {
+			conditions: metadata.MergeAllConditions(nil, metadata.AllConditions{{{
+				DimensionName: "path",
+				Operator:      structured.ConditionExisted,
+			}}}),
+			expected: `{"query":{"exists":{"field":"path"}}}`,
+		},
 		"query 2": {
 			conditions: metadata.AllConditions{
 				{

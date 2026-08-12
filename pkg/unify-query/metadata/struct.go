@@ -306,6 +306,28 @@ type Orders []Order
 
 type AllConditions [][]ConditionField
 
+// MergeAllConditions 将 source 和 target 做 AND 合并，并保持 AllConditions 的析取范式：
+// 外层分组表示 OR 分支，内层字段表示 AND 条件。
+func MergeAllConditions(source, target AllConditions) AllConditions {
+	if len(source) == 0 {
+		return target
+	}
+	if len(target) == 0 {
+		return source
+	}
+
+	merged := make(AllConditions, 0, len(source)*len(target))
+	for _, sourceGroup := range source {
+		for _, targetGroup := range target {
+			group := make([]ConditionField, 0, len(sourceGroup)+len(targetGroup))
+			group = append(group, sourceGroup...)
+			group = append(group, targetGroup...)
+			merged = append(merged, group)
+		}
+	}
+	return merged
+}
+
 type QueryList []*Query
 
 type QueryMetric struct {

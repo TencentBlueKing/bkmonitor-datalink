@@ -20,6 +20,7 @@ const (
 	RootRecordIDEnabledConfigPath        = "cmdb.v1beta3.root_record_id.enabled"
 	DefaultLookBackDeltaConfigPath       = "cmdb.v1beta3.look_back_delta"
 	ActiveEdgeServingRelationsConfigPath = "cmdb.v1beta3.active_edge_serving.relations"
+	VMPreferredRelationsConfigPath       = "cmdb.v1beta3.vm_preferred.relations"
 )
 
 var (
@@ -37,6 +38,7 @@ var (
 	RootRecordIDEnabled        = false
 	DefaultLookBackDelta       = int64(86400000) // 24小时（毫秒）
 	ActiveEdgeServingRelations = []string{}
+	VMPreferredRelations       = []string{}
 )
 
 // effectiveMaxEdgesPerHop 返回单个节点每跳允许展开的最大边数，并为非法配置提供安全默认值。

@@ -28,6 +28,7 @@ func setDefaultConfig() {
 	viper.SetDefault(RootRecordIDEnabledConfigPath, false)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
+	viper.SetDefault(VMPreferredRelationsConfigPath, []string{})
 
 	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
 	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
@@ -48,6 +49,7 @@ func LoadConfig() {
 	RootRecordIDEnabled = viper.GetBool(RootRecordIDEnabledConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
+	VMPreferredRelations = viper.GetStringSlice(VMPreferredRelationsConfigPath)
 
 	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)
 	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)

@@ -39,6 +39,35 @@ type mockGraphQueryExecutor struct {
 	mu     sync.Mutex
 }
 
+type mockCMDB struct {
+	instantMatchers cmdb.Matchers
+	rangeMatchers   []cmdb.MatchersWithTimestamp
+	instantErr      error
+	rangeErr        error
+	instantCalls    int
+	rangeCalls      int
+	instantPath     []cmdb.Resource
+	rangePath       []cmdb.Resource
+}
+
+func (m *mockCMDB) QueryResourceMatcher(
+	_ context.Context, _, _ string, _ string, target, source cmdb.Resource,
+	indexMatcher, _ cmdb.Matcher, _ bool, pathResource []cmdb.Resource,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
+	m.instantCalls++
+	m.instantPath = append([]cmdb.Resource(nil), pathResource...)
+	return source, indexMatcher, []string{string(source), string(target)}, target, m.instantMatchers, m.instantErr
+}
+
+func (m *mockCMDB) QueryResourceMatcherRange(
+	_ context.Context, _, _ string, _ string, _, _ string, target, source cmdb.Resource,
+	indexMatcher, _ cmdb.Matcher, _ bool, pathResource []cmdb.Resource,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	m.rangeCalls++
+	m.rangePath = append([]cmdb.Resource(nil), pathResource...)
+	return source, indexMatcher, []string{string(source), string(target)}, target, m.rangeMatchers, m.rangeErr
+}
+
 type failingRelationSchemaProvider struct {
 	relation.SchemaProvider
 	listResourceErr error
@@ -1620,6 +1649,93 @@ func TestQueryResourceMatcherRangeFiltersTargetsBySelectedResourcePath(t *testin
 	assert.Equal(t, []string{"node", "pod"}, rangePath)
 	require.NotEmpty(t, rangeResult)
 	assert.Equal(t, []cmdb.Matcher{{"pod": "direct"}}, rangeResult[0].Matchers)
+
+	t.Run("configured single hop prefers vm and falls back on errors", func(t *testing.T) {
+		previousVMRelations := VMPreferredRelations
+		VMPreferredRelations = []string{string(RelationNodeWithPod)}
+		t.Cleanup(func() { VMPreferredRelations = previousVMRelations })
+
+		vmModel := &mockCMDB{
+			instantMatchers: cmdb.Matchers{{"pod": "vm"}},
+			rangeMatchers: []cmdb.MatchersWithTimestamp{{
+				Timestamp: 0,
+				Matchers:  []cmdb.Matcher{{"pod": "vm"}},
+			}},
+		}
+		model.SetVMModelResolver(func(context.Context, string) (cmdb.CMDB, error) { return vmModel, nil })
+
+		executor.mu.Lock()
+		executor.sqls = nil
+		executor.mu.Unlock()
+		_, _, vmPath, _, vmMatchers, vmErr := model.QueryResourceMatcher(
+			ctx, "10m", "test-space", "600", "pod", "node",
+			cmdb.Matcher{"node": "node-1"}, nil, false, nil,
+		)
+		require.NoError(t, vmErr)
+		assert.Equal(t, []string{"node", "pod"}, vmPath)
+		assert.Equal(t, cmdb.Matchers{{"pod": "vm"}}, vmMatchers)
+		assert.Equal(t, []cmdb.Resource{""}, vmModel.instantPath)
+		executor.mu.Lock()
+		assert.Empty(t, executor.sqls)
+		executor.mu.Unlock()
+
+		_, _, vmRangePath, _, vmRangeResult, vmRangeErr := model.QueryResourceMatcherRange(
+			ctx, "10m", "test-space", "60s", "0", "600", "pod", "node",
+			cmdb.Matcher{"node": "node-1"}, nil, false, nil,
+		)
+		require.NoError(t, vmRangeErr)
+		assert.Equal(t, []string{"node", "pod"}, vmRangePath)
+		assert.Equal(t, vmModel.rangeMatchers, vmRangeResult)
+		assert.Equal(t, []cmdb.Resource{""}, vmModel.rangePath)
+		executor.mu.Lock()
+		assert.Empty(t, executor.sqls)
+		executor.mu.Unlock()
+
+		vmModel.instantErr = errors.New("vm unavailable")
+		_, _, fallbackPath, _, fallbackMatchers, fallbackErr := model.QueryResourceMatcher(
+			ctx, "10m", "test-space", "600", "pod", "node",
+			cmdb.Matcher{"node": "node-1"}, nil, false, nil,
+		)
+		require.NoError(t, fallbackErr)
+		assert.Equal(t, []string{"node", "pod"}, fallbackPath)
+		assert.Equal(t, cmdb.Matchers{{"pod": "direct"}}, fallbackMatchers)
+		executor.mu.Lock()
+		require.Len(t, executor.sqls, 1)
+		assert.Contains(t, executor.sqls[0], "node_with_pod")
+		executor.sqls = nil
+		executor.mu.Unlock()
+
+		vmModel.instantErr = nil
+		vmModel.rangeErr = errors.New("vm range unavailable")
+		_, _, fallbackRangePath, _, fallbackRangeResult, fallbackRangeErr := model.QueryResourceMatcherRange(
+			ctx, "10m", "test-space", "60s", "0", "600", "pod", "node",
+			cmdb.Matcher{"node": "node-1"}, nil, false, nil,
+		)
+		require.NoError(t, fallbackRangeErr)
+		assert.Equal(t, []string{"node", "pod"}, fallbackRangePath)
+		require.NotEmpty(t, fallbackRangeResult)
+		assert.Equal(t, []cmdb.Matcher{{"pod": "direct"}}, fallbackRangeResult[0].Matchers)
+		executor.mu.Lock()
+		require.Len(t, executor.sqls, 1)
+		assert.Contains(t, executor.sqls[0], "node_with_pod")
+		executor.sqls = nil
+		executor.mu.Unlock()
+
+		vmModel.rangeErr = nil
+		_, _, multiHopPath, _, multiHopMatchers, multiHopErr := model.QueryResourceMatcher(
+			ctx, "10m", "test-space", "600", "pod", "node",
+			cmdb.Matcher{"node": "node-1"}, nil, false, []cmdb.Resource{"system"},
+		)
+		require.NoError(t, multiHopErr)
+		assert.Equal(t, []string{"node", "system", "pod"}, multiHopPath)
+		assert.Equal(t, cmdb.Matchers{{"pod": "indirect"}}, multiHopMatchers)
+		assert.Equal(t, 2, vmModel.instantCalls)
+		assert.Equal(t, 2, vmModel.rangeCalls)
+		executor.mu.Lock()
+		require.Len(t, executor.sqls, 1)
+		assert.Contains(t, executor.sqls[0], "node_with_system")
+		executor.mu.Unlock()
+	})
 }
 
 func TestQueryResourceMatcherRejectsNegativeLookBackDelta(t *testing.T) {

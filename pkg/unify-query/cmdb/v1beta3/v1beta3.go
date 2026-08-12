@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
@@ -50,6 +51,7 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 		}
 		// 为默认 Model 注入 binding 解析器
 		model.SetResolver(GetBindingResolver())
+		model.SetVMModelResolver(v1beta1.GetModel)
 		defaultModel = model
 	}
 	return defaultModel, nil
@@ -91,6 +93,7 @@ type Model struct {
 	resolver         *BindingResolver
 	schemaProvider   SchemaProvider
 	schemaProviderMu sync.RWMutex
+	vmModelResolver  func(context.Context, string) (cmdb.CMDB, error)
 }
 
 // NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
@@ -106,6 +109,10 @@ func (m *Model) SetExecutor(executor GraphQueryExecutor) {
 // SetResolver 注入 binding 解析器（生产路径用；测试可以留空）
 func (m *Model) SetResolver(resolver *BindingResolver) {
 	m.resolver = resolver
+}
+
+func (m *Model) SetVMModelResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
+	m.vmModelResolver = resolver
 }
 
 // SetSchemaProvider 注入校验、路径发现和 SQL 生成共用的 Schema；传入 nil 时保持现有配置不变。
@@ -176,6 +183,20 @@ func (m *Model) QueryResourceMatcher(
 		DisableRootLimit:    true,
 	}
 	req.Normalize()
+
+	if relationType, ok := m.vmPreferredRelation(req); ok {
+		span.Set("preferred-route", "vm")
+		span.Set("preferred-relation", relationType)
+		metric.CMDBRelationRouteInc(ctx, "vm", string(graphQueryModeInstant), "started")
+		vmStarted := time.Now()
+		vmSource, vmMatcher, vmPaths, vmTarget, vmMatchers, vmErr := m.queryVMInstant(
+			ctx, lookBackDelta, spaceUid, ts, target, source, indexMatcher, expandMatcher, expandShow,
+		)
+		m.recordVMPreferredResult(ctx, span, graphQueryModeInstant, vmStarted, vmErr)
+		if vmErr == nil {
+			return vmSource, vmMatcher, vmPaths, vmTarget, vmMatchers, nil
+		}
+	}
 
 	_, paths, matchers, err := m.QueryLivenessGraph(ctx, req)
 	if err != nil {
@@ -270,6 +291,20 @@ func (m *Model) QueryResourceMatcherRange(
 	}
 	req.Normalize()
 
+	if relationType, ok := m.vmPreferredRelation(req); ok {
+		span.Set("preferred-route", "vm")
+		span.Set("preferred-relation", relationType)
+		metric.CMDBRelationRouteInc(ctx, "vm", string(graphQueryModeRange), "started")
+		vmStarted := time.Now()
+		vmSource, vmMatcher, vmPaths, vmTarget, vmResult, vmErr := m.queryVMRange(
+			ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexMatcher, expandMatcher, expandShow,
+		)
+		m.recordVMPreferredResult(ctx, span, graphQueryModeRange, vmStarted, vmErr)
+		if vmErr == nil {
+			return vmSource, vmMatcher, vmPaths, vmTarget, vmResult, nil
+		}
+	}
+
 	graphs, candidatePaths, _, err := m.queryLivenessGraph(ctx, req, graphQueryModeRange, start, end, stepMs)
 	if err != nil {
 		span.Set("failure-stage", "graph-query")
@@ -311,6 +346,95 @@ func (m *Model) QueryResourceMatcherRange(
 	span.Set("result-count", len(result))
 
 	return cmdb.Resource(req.SourceType), cmdb.Matcher(req.SourceInfo), paths, cmdb.Resource(req.TargetType), result, nil
+}
+
+func (m *Model) vmPreferredRelation(req *QueryRequest) (RelationType, bool) {
+	if m == nil || m.vmModelResolver == nil || req == nil || !req.TargetTypeExplicit || len(VMPreferredRelations) == 0 {
+		return "", false
+	}
+	pathConstraint, _ := normalizePathResource(req.SourceType, req.TargetType, req.PathResource)
+	if len(pathConstraint) > 0 {
+		return "", false
+	}
+
+	pf := NewPathFinder(
+		WithAllowedCategories(req.AllowedRelationTypes...),
+		WithDynamicDirection(req.DynamicRelationDirection),
+		WithMaxHops(1),
+		WithSchemaProvider(m.getSchemaProvider()),
+		WithNamespace(req.SchemaNamespace()),
+	)
+	paths, err := pf.FindAllPaths(req.SourceType, req.TargetType, []ResourceType{""})
+	if err != nil || len(paths) != 1 || len(paths[0].Steps) != 2 {
+		return "", false
+	}
+
+	relationType := RelationType(paths[0].Steps[1].RelationType)
+	for _, configured := range VMPreferredRelations {
+		if RelationType(configured) == relationType {
+			return relationType, true
+		}
+	}
+	return "", false
+}
+
+func (m *Model) queryVMInstant(
+	ctx context.Context,
+	lookBackDelta, spaceUID, timestamp string,
+	target, source cmdb.Resource,
+	indexMatcher, expandMatcher cmdb.Matcher,
+	expandShow bool,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
+	model, err := m.vmModelResolver(ctx, spaceUID)
+	if err != nil {
+		return "", nil, nil, "", nil, err
+	}
+	if model == nil {
+		return "", nil, nil, "", nil, errors.New("vm model is nil")
+	}
+	return model.QueryResourceMatcher(
+		ctx, lookBackDelta, spaceUID, timestamp, target, source,
+		indexMatcher, expandMatcher, expandShow, []cmdb.Resource{""},
+	)
+}
+
+func (m *Model) queryVMRange(
+	ctx context.Context,
+	lookBackDelta, spaceUID, step, start, end string,
+	target, source cmdb.Resource,
+	indexMatcher, expandMatcher cmdb.Matcher,
+	expandShow bool,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	model, err := m.vmModelResolver(ctx, spaceUID)
+	if err != nil {
+		return "", nil, nil, "", nil, err
+	}
+	if model == nil {
+		return "", nil, nil, "", nil, errors.New("vm model is nil")
+	}
+	return model.QueryResourceMatcherRange(
+		ctx, lookBackDelta, spaceUID, step, start, end, target, source,
+		indexMatcher, expandMatcher, expandShow, []cmdb.Resource{""},
+	)
+}
+
+func (m *Model) recordVMPreferredResult(
+	ctx context.Context,
+	span *trace.Span,
+	mode graphQueryMode,
+	started time.Time,
+	err error,
+) {
+	metric.CMDBRelationRouteSecond(ctx, time.Since(started), "vm", string(mode))
+	result := "success"
+	if err != nil {
+		result = "error"
+		span.Set("vm-preferred-error", err.Error())
+		span.Set("vm-preferred-result", "fallback")
+	} else {
+		span.Set("vm-preferred-result", "success")
+	}
+	metric.CMDBRelationRouteInc(ctx, "vm", string(mode), result)
 }
 
 // QueryLivenessGraph 执行图查询，返回图数据、路径和目标 Matchers

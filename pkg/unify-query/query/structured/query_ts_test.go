@@ -31,6 +31,20 @@ import (
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+func TestQueryTsIsESBatchJSON(t *testing.T) {
+	var queryTs QueryTs
+	require.NoError(t, json.Unmarshal([]byte(`{"is_es_batch":true}`), &queryTs))
+	assert.True(t, queryTs.IsESBatch)
+
+	content, err := json.Marshal(QueryTs{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(content), "is_es_batch")
+
+	content, err = json.Marshal(QueryTs{IsESBatch: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"instant":false,"not_time_align":false,"is_es_batch":true}`, string(content))
+}
+
 func TestQueryToMetric(t *testing.T) {
 	db := "result_table"
 	tableID := influxdb.ResultTableInfluxDB
@@ -682,7 +696,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				SQL:           "SELECT dtEventTimeStamp, gseIndex FROM `2_bklog_unit_test` WHERE gseIndex > 0 LIMIT 20",
 			},
-			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test` WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
+			wantSQL: "SELECT NULL AS dtEventTimeStamp, NULL AS gseIndex FROM `2_bklog_unit_test` WHERE NULL > 0 AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 20",
 		},
 		{
 			// 无用户 SQL：走 buildSQL 路径，SELECT 中包含内置字段 _value_ / _timestamp_
@@ -694,7 +708,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				Limit:         10,
 			},
-			wantSQL: "SELECT *, NULL AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_unit_test`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' LIMIT 10",
+			wantSQL: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_unit_test`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' LIMIT 10",
 		},
 		{
 			// 用户自定义 SQL 仅聚合（count），仍追加时间窗口（与带 SELECT 列表的 user sql 一致）
@@ -706,7 +720,7 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 				ReferenceName: "a",
 				SQL:           "SELECT count(*) FROM 2_bklog_unit_test LIMIT 1",
 			},
-			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test` WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
+			wantSQL: "SELECT count(*) FROM `2_bklog_unit_test` WHERE (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') LIMIT 1",
 		},
 		{
 			// Doris：反引号库表 + count，时间条件以 AND 追加

@@ -8,7 +8,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator v1.0.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
-	github.com/apache/thrift v0.16.0
+	github.com/apache/thrift v0.17.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
@@ -20,13 +20,13 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.0
 	github.com/grafana/jfr-parser v0.11.0
-	github.com/jaegertracing/jaeger v1.34.1
+	github.com/jaegertracing/jaeger v1.38.0
 	github.com/klauspost/pgzip v1.2.6
 	github.com/liuwenping/go-fastping v0.0.0-20201022032547-03cfc2cff8ee
 	github.com/matttproud/golang_protobuf_extensions v1.0.4
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger v0.52.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin v0.52.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger v0.61.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin v0.61.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/planetscale/vtprotobuf v0.6.0
@@ -38,8 +38,8 @@ require (
 	github.com/rs/cors v1.8.2
 	github.com/spf13/cast v1.5.0
 	github.com/stretchr/testify v1.9.0
-	go.opentelemetry.io/collector/pdata v0.52.0
-	go.opentelemetry.io/collector/semconv v0.52.0
+	go.opentelemetry.io/collector/pdata v0.61.0
+	go.opentelemetry.io/collector/semconv v0.61.0
 	go.uber.org/atomic v1.11.0
 	go.uber.org/automaxprocs v1.5.2
 	golang.org/x/exp v0.0.0-20231226003508-02704c960a9b
@@ -103,7 +103,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
 	github.com/hashicorp/consul/api v1.14.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
-	github.com/hashicorp/go-hclog v1.2.0 // indirect
+	github.com/hashicorp/go-hclog v1.2.2 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
@@ -131,8 +131,8 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/natefinch/npipe v0.0.0-20160621034901-c1b8fa8bdcce // indirect
 	github.com/nightlyone/lockfile v1.0.0 // indirect
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.52.0 // indirect
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/opencensus v0.52.0 // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.61.0 // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/opencensus v0.61.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
@@ -145,7 +145,7 @@ require (
 	github.com/prometheus/procfs v0.11.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/spf13/afero v1.9.2 // indirect
-	github.com/spf13/cobra v1.4.0 // indirect
+	github.com/spf13/cobra v1.5.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect

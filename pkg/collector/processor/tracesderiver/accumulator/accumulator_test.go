@@ -199,7 +199,7 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	assert.Equal(t, count, metrics.DataPointCount())
 
 	dp := testkits.FirstGaugeDataPoint(metrics)
-	assert.Equal(t, value, dp.DoubleVal())
+	assert.Equal(t, value, dp.DoubleValue())
 
 	name := testkits.FirstMetric(metrics).Name()
 	assert.Equal(t, "bk_apm_metric", name)
@@ -259,7 +259,7 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	assert.Equal(t, 1, metrics.MetricCount())
 	assert.Equal(t, 1, metrics.DataPointCount())
 
-	val := testkits.FirstGaugeDataPoint(metrics).DoubleVal()
+	val := testkits.FirstGaugeDataPoint(metrics).DoubleValue()
 	assert.Equal(t, float64(10), val)
 	accumulator.Stop()
 }

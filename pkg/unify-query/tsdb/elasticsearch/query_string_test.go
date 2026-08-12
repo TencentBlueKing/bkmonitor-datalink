@@ -87,10 +87,19 @@ func TestQsToDsl(t *testing.T) {
 			FieldName: "__ext.labels.app_kubernetes_io_instance",
 			FieldType: KeyWord,
 		},
+		"__ext.container_name": {
+			FieldName: "__ext.container_name",
+			FieldType: KeyWord,
+		},
+		"__ext.bk_bcs_cluster_id": {
+			FieldName: "__ext.bk_bcs_cluster_id",
+			FieldType: KeyWord,
+		},
 	}
 
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
+		name     string
 		q        string
 		expected string
 		err      error
@@ -118,6 +127,16 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `__ext.labels.app_kubernetes_io_instance : bcs-cluster-manager AND log: GSE Agent 安装失败* AND log: InstallGSEAgentTask*`,
 			expected: `{"bool":{"must":[{"term":{"__ext.labels.app_kubernetes_io_instance":"bcs-cluster-manager"}},{"match_phrase":{"log":{"query":"GSE"}}},{"wildcard":{"log":{"value":"installgseagenttask*"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"Agent"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"安装失败*"}}]}}`,
+		},
+		{
+			name:     "unquoted escaped keyword value",
+			q:        `__ext.container_name: bk\-log\-search\-api`,
+			expected: `{"term":{"__ext.container_name":"bk-log-search-api"}}`,
+		},
+		{
+			name:     "production query with unquoted escaped keyword value",
+			q:        `log: "\"pathname\": \"/app/venv/lib64" AND __ext.bk_bcs_cluster_id: BCS* AND __ext.container_name: bk\-log\-search\-api`,
+			expected: `{"bool":{"must":[{"match_phrase":{"log":{"query":"pathname\": \"/app/venv/lib64"}}},{"wildcard":{"__ext.bk_bcs_cluster_id":{"value":"BCS*"}}},{"term":{"__ext.container_name":"bk-log-search-api"}}]}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
@@ -208,7 +227,11 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"exists":{"field":"events.attributes.message.detail"}}`,
 		},
 	} {
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+		name := c.name
+		if name == "" {
+			name = fmt.Sprintf("%d", i)
+		}
+		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			node := lucene_parser.ParseLuceneWithVisitor(ctx, c.q, lucene_parser.Option{
 				FieldsMap: testMapping,
@@ -226,6 +249,92 @@ func TestQsToDsl(t *testing.T) {
 			} else {
 				t.Logf("Query: %s, ES result: %v", c.q, node != nil)
 			}
+		})
+	}
+}
+
+func TestParserQueryStringMappingAvailability(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	for name, tc := range map[string]struct {
+		fieldsMap metadata.FieldsMap
+		query     string
+		expected  string
+	}{
+		"missing mapping falls back to native query string": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `NOT (message:"ignored phrase")`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT (message:\"ignored phrase\")"}}`,
+		},
+		"missing mapping normalizes case insensitive boolean operators": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `(NOT client_id:"demo-a" AND NOT client_id:"demo-b") and action:req-* and endpoint:edge-*`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"(NOT client_id:\"demo-a\" AND NOT client_id:\"demo-b\") AND action:req-* AND endpoint:edge-*"}}`,
+		},
+		"missing mapping keeps boolean words inside quoted text": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `message:"告警 and 恢复" and level:error`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"message:\"告警 and 恢复\" AND level:error"}}`,
+		},
+		"missing mapping adapts single quoted phrases before normalizing operators": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:'error and warning' and status:ok`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:\"error and warning\" AND status:ok"}}`,
+		},
+		"missing mapping keeps boolean words used as terms": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `message:and and level:error`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"message:and AND level:error"}}`,
+		},
+		"missing mapping normalizes lowercase not and or": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `not client_id:"demo-a" or status:ignored`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"NOT client_id:\"demo-a\" OR status:ignored"}}`,
+		},
+		"missing mapping drops trailing and": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `log:error AND status:active AND`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"log:error AND status:active"}}`,
+		},
+		"missing mapping drops trailing or": {
+			fieldsMap: metadata.FieldsMap{},
+			query:     `status:active or`,
+			expected:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"status:active"}}`,
+		},
+		"known text field keeps match phrase": {
+			fieldsMap: metadata.FieldsMap{
+				"message": {
+					FieldName:  "message",
+					FieldType:  Text,
+					IsAnalyzed: true,
+				},
+			},
+			query:    `NOT (message:"ignored phrase")`,
+			expected: `{"bool":{"must_not":{"match_phrase":{"message":{"query":"ignored phrase"}}}}}`,
+		},
+		"known keyword field keeps term": {
+			fieldsMap: metadata.FieldsMap{
+				"message": {
+					FieldName: "message",
+					FieldType: KeyWord,
+				},
+			},
+			query:    `NOT (message:"ignored phrase")`,
+			expected: `{"bool":{"must_not":{"term":{"message":"ignored phrase"}}}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := NewFormatFactory(ctx).
+				WithFieldMap(tc.fieldsMap).
+				ParserQueryString(ctx, tc.query, false)
+			require.NotNil(t, query)
+			body, err := query.Source()
+			require.NoError(t, err)
+
+			bodyJSON, err := json.Marshal(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(bodyJSON))
 		})
 	}
 }

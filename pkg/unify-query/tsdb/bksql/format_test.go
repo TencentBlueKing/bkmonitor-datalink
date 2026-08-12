@@ -249,6 +249,66 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT CAST(__ext['container_id'] AS STRING) AS `__ext__bk_46__container_id`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `dtEventTime` >= '2025-03-14 15:05:45' AND `dtEventTime` <= '2025-03-20 15:35:46' AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY __ext__bk_46__container_id, _timestamp_",
 		},
+		"Doris 原始查询携带字段别名时不应生成 NULL 投影和排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"dtEventTimeStamp": "dtEventTimeStampNanos",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' ORDER BY `dtEventTimeStamp` DESC LIMIT 10000",
+		},
+		"Doris 原始查询未投影 _value_ 时应跳过 _value 排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"dtEventTimeStamp": "dtEventTimeStampNanos",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: sql_expr.FieldValue,
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
+		"Doris 原始查询缺失非时间字段别名时应跳过排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: "pod_namespace",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -294,7 +354,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 	start := time.Unix(1741795260, 0)
 	end := time.Unix(1741796260, 0)
 
-	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
+	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
 
 	t.Run("without_fields_map", func(t *testing.T) {
 		tests := []struct {
@@ -340,7 +400,15 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				dbs:     []string{"db_a", "db_b"},
 				field:   "login_rate",
 				userSQL: "SELECT 1 FROM tbl",
-				wantSQL: "SELECT 1 FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+				wantSQL: "SELECT 1 FROM (SELECT 1 FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT 1 FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+			},
+			{
+				name:    "multi_db_select_all_allowed",
+				db:      "unused_when_dbs_set",
+				dbs:     []string{"db_a", "db_b"},
+				field:   "login_rate",
+				userSQL: "SELECT * FROM tbl",
+				wantSQL: "SELECT * FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
 			},
 			{
 				name:    "parenthesized_or_and_is_not_null_limit_offset",

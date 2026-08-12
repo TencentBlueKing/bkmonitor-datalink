@@ -142,7 +142,7 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
 		status := calculator.Calc(utils.CalcSpanDuration(span), rule.ApdexT)
-		attrs.UpsertString(rule.Destination, status)
+		attrs.PutString(rule.Destination, status)
 	})
 }
 
@@ -159,8 +159,8 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 	pdMetrics := record.Data.(pmetric.Metrics)
 	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		name := metric.Name()
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
+		switch metric.Type() {
+		case pmetric.MetricTypeGauge:
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
@@ -177,7 +177,7 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
 				if v, ok := attrs.Get(keyKind); ok {
-					kind = spanKindMap[v.StringVal()]
+					kind = spanKindMap[v.Str()]
 				}
 
 				predicateKeys := config.GetPredicateKeys(kind)
@@ -196,8 +196,8 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 				}
 
 				calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
-				status := calculator.Calc(dp.DoubleVal(), rule.ApdexT)
-				attrs.UpsertString(rule.Destination, status)
+				status := calculator.Calc(dp.DoubleValue(), rule.ApdexT)
+				attrs.PutString(rule.Destination, status)
 			}
 		}
 	})

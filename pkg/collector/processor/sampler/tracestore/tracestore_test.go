@@ -37,24 +37,24 @@ func TestStorage(t *testing.T) {
 		traces := g.Generate()
 		span := testkits.FirstSpan(traces)
 
-		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, byte(i)})
-		spanID := pcommon.NewSpanID([8]byte{1, byte(i)})
+		traceID := pcommon.TraceID([16]byte{1, 2, 3, byte(i)})
+		spanID := pcommon.SpanID([8]byte{1, byte(i)})
 		span.SetTraceID(traceID)
 		span.SetSpanID(spanID)
 		storage.Set(TraceKey{TraceID: traceID, SpanID: spanID}, traces)
 	}
 
 	for i := 0; i < 10; i++ {
-		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, byte(i)})
-		spanID := pcommon.NewSpanID([8]byte{1, byte(i)})
+		traceID := pcommon.TraceID([16]byte{1, 2, 3, byte(i)})
+		spanID := pcommon.SpanID([8]byte{1, byte(i)})
 
 		traces, ok := storage.Get(TraceKey{TraceID: traceID, SpanID: spanID})
 		assert.True(t, ok)
 		assert.Equal(t, 1, traces.SpanCount())
 	}
 
-	traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 1})
-	spanID := pcommon.NewSpanID([8]byte{1, 1})
+	traceID := pcommon.TraceID([16]byte{1, 2, 3, 1})
+	spanID := pcommon.SpanID([8]byte{1, 1})
 
 	storage.Del(TraceKey{TraceID: traceID, SpanID: spanID})
 

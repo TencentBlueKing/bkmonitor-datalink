@@ -66,7 +66,7 @@ func TraceID() pcommon.TraceID {
 	for i := 0; i < 16; i++ {
 		ret[i] = b[i]
 	}
-	return pcommon.NewTraceID(ret)
+	return pcommon.TraceID(ret)
 }
 
 // SpanID 随机生成 SpanID
@@ -78,7 +78,7 @@ func SpanID() pcommon.SpanID {
 	for i := 0; i < 8; i++ {
 		ret[i] = b[i]
 	}
-	return pcommon.NewSpanID(ret)
+	return pcommon.SpanID(ret)
 }
 
 // AttributeMap 随机生成指定 key 和类型的 attributeMap
@@ -87,13 +87,13 @@ func AttributeMap(keys []string, valueType string) pcommon.Map {
 	for _, key := range keys {
 		switch valueType {
 		case "int":
-			m.UpsertInt(key, rand.Int63())
+			m.PutInt(key, rand.Int63())
 		case "bool":
-			m.UpsertBool(key, rand.Int31()%2 == 0)
+			m.PutBool(key, rand.Int31()%2 == 0)
 		case "float":
-			m.UpsertDouble(key, rand.Float64())
+			m.PutDouble(key, rand.Float64())
 		default:
-			m.UpsertString(key, String(24))
+			m.PutString(key, String(24))
 		}
 	}
 	return m

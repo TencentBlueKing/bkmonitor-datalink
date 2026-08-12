@@ -1,0 +1,22 @@
+id: es_reference_001
+storage: es
+enabled: true
+shape_signature: query_ts_reference/range/es/count_by1/order_by_value/limit1000/condition1/output_index_search
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:8de71ba7197c68a5e7003c667691a3b3532636d4b6dab67c58a79d24295d3a6a
+tags:
+  - query_ts_reference_api
+  - aggregation
+  - order_by
+  - limit
+  - production_shape
+notes:
+  - 生产样本仅保留 reference handler 的查询结构；空间、索引、字段、条件值和集群均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -143,7 +144,7 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 			}
 			values = append(values, v.AsString())
 		}
-		rs.Attributes().UpsertString(action.Destination, strings.Join(values, action.Separator))
+		rs.Attributes().PutString(action.Destination, strings.Join(values, action.Separator))
 	}
 
 	switch record.RecordType {
@@ -176,7 +177,7 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 // addAction 新增维度
 func (p *resourceFilter) addAction(record *define.Record, config Config) {
 	handle := func(rs pcommon.Resource, action AddAction) {
-		rs.Attributes().UpsertString(action.Label, action.Value)
+		rs.Attributes().PutString(action.Label, action.Value)
 	}
 
 	switch record.RecordType {
@@ -267,9 +268,9 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 		rs.Attributes().Remove(action.Source)
 		if action.ExtractPattern != "" {
 			extractedValue := p.extractByRegex(copyValue.AsString(), action)
-			rs.Attributes().UpsertString(action.Destination, extractedValue)
+			rs.Attributes().PutString(action.Destination, extractedValue)
 		} else {
-			rs.Attributes().Upsert(action.Destination, copyValue)
+			copyValue.CopyTo(rs.Attributes().PutEmpty(action.Destination))
 		}
 	}
 
@@ -412,7 +413,7 @@ func upsertStringIfMissingOrEmpty(attrs pcommon.Map, key, value string, placehol
 			}
 		}
 	}
-	attrs.UpsertString(key, value)
+	attrs.PutString(key, value)
 }
 
 // fromMetadataAction 补充 metadata 字段
@@ -422,11 +423,11 @@ func (p *resourceFilter) fromMetadataAction(record *define.Record, config Config
 			switch field {
 			case "*": // 补充所有 metadata 维度
 				for k, v := range record.Metadata {
-					rs.Attributes().InsertString(k, v)
+					utils.InsertString(rs.Attributes(), k, v)
 				}
 			default:
 				if v, ok := record.Metadata[field]; ok {
-					rs.Attributes().InsertString(field, v)
+					utils.InsertString(rs.Attributes(), field, v)
 				}
 			}
 		}
@@ -447,7 +448,7 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 		for _, field := range action.Keys {
 			switch field {
 			case define.TokenAppName:
-				rs.Attributes().InsertString(field, record.Token.AppName)
+				utils.InsertString(rs.Attributes(), field, record.Token.AppName)
 			}
 		}
 	}
@@ -480,11 +481,11 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 		if !ok || v.AsString() == "" {
 			switch action.Type {
 			case "string":
-				rs.Attributes().UpsertString(action.Key, action.StringValue())
+				rs.Attributes().PutString(action.Key, action.StringValue())
 			case "int":
-				rs.Attributes().UpsertInt(action.Key, int64(action.IntValue()))
+				rs.Attributes().PutInt(action.Key, int64(action.IntValue()))
 			case "bool":
-				rs.Attributes().UpsertBool(action.Key, action.BoolValue())
+				rs.Attributes().PutBool(action.Key, action.BoolValue())
 			}
 		}
 	}
@@ -540,12 +541,12 @@ func (p *resourceFilter) keepOriginTraceIdAction(record *define.Record) {
 			switch strings.ToLower(v.AsString()) {
 			case sdkSkyWalking:
 				if src, ok := rs.Get(keySw8TraceID); ok {
-					rs.InsertString(keyOriginTraceID, src.AsString())
+					utils.InsertString(rs, keyOriginTraceID, src.AsString())
 					// 删除 sw8.trace_id 冗余字段
 					rs.Remove(keySw8TraceID)
 				}
 			case sdkOpenTelemetry:
-				rs.InsertString(keyOriginTraceID, span.TraceID().HexString())
+				utils.InsertString(rs, keyOriginTraceID, span.TraceID().HexString())
 			}
 		})
 		record.Data = pdTraces

@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
@@ -134,7 +135,7 @@ func createTracesWithResourceSpan(resourceAttrs map[string]string) (ptrace.Trace
 	traces := ptrace.NewTraces()
 	rs := traces.ResourceSpans().AppendEmpty()
 	for k, v := range resourceAttrs {
-		rs.Resource().Attributes().InsertString(k, v)
+		utils.InsertString(rs.Resource().Attributes(), k, v)
 	}
 	return traces, rs
 }
@@ -161,7 +162,7 @@ func makeOpenTelemetryTraces(spanCount int) ptrace.Traces {
 	data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: spanCount}).Generate()
 	// Add SDK name to Resource attributes for all resource spans
 	foreach.SpansSliceResource(data, func(rs pcommon.Resource) {
-		rs.Attributes().InsertString(keySdkName, sdkOpenTelemetry)
+		utils.InsertString(rs.Attributes(), keySdkName, sdkOpenTelemetry)
 	})
 	return data
 }
@@ -171,8 +172,8 @@ func makeSkyWalkingTraces(spanCount int, traceID string) ptrace.Traces {
 	data := generator.NewTracesGenerator(define.TracesOptions{SpanCount: spanCount}).Generate()
 	// Add SDK name and sw8.trace_id to Resource attributes for all resource spans
 	foreach.SpansSliceResource(data, func(rs pcommon.Resource) {
-		rs.Attributes().InsertString(keySw8TraceID, traceID)
-		rs.Attributes().InsertString(keySdkName, sdkSkyWalking)
+		utils.InsertString(rs.Attributes(), keySw8TraceID, traceID)
+		utils.InsertString(rs.Attributes(), keySdkName, sdkSkyWalking)
 	})
 	return data
 }
@@ -180,15 +181,15 @@ func makeSkyWalkingTraces(spanCount int, traceID string) ptrace.Traces {
 // addOpenTelemetryResourceSpan adds an OpenTelemetry resource span to traces
 func addOpenTelemetryResourceSpan(traces ptrace.Traces, traceID pcommon.TraceID, spanCount int) {
 	rs := traces.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().InsertString(keySdkName, sdkOpenTelemetry)
+	utils.InsertString(rs.Resource().Attributes(),keySdkName, sdkOpenTelemetry)
 	addScopeSpanWithSpans(rs, "", traceID, spanCount)
 }
 
 // addSkyWalkingResourceSpan adds a SkyWalking resource span to traces
 func addSkyWalkingResourceSpan(traces ptrace.Traces, traceID pcommon.TraceID, spanCount int) {
 	rs := traces.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().InsertString(keySdkName, sdkSkyWalking)
-	rs.Resource().Attributes().InsertString(keySw8TraceID, traceID.HexString())
+	utils.InsertString(rs.Resource().Attributes(), keySdkName, sdkSkyWalking)
+	utils.InsertString(rs.Resource().Attributes(), keySw8TraceID, traceID.HexString())
 	addScopeSpanWithSpans(rs, "", traceID, spanCount)
 }
 
@@ -211,10 +212,10 @@ processor:
 		testkits.AssertAttrsStringKeyVal(t, attrs, "resource_final", "key1::key2:key3:key4")
 	}
 	prepareAttrs := func(attrs pcommon.Map) {
-		attrs.UpsertString(resourceKey1, "key1")
-		attrs.UpsertString(resourceKey2, "key2")
-		attrs.UpsertString(resourceKey3, "key3")
-		attrs.UpsertString(resourceKey4, "key4")
+		attrs.PutString(resourceKey1, "key1")
+		attrs.PutString(resourceKey2, "key2")
+		attrs.PutString(resourceKey3, "key3")
+		attrs.PutString(resourceKey4, "key4")
 	}
 
 	t.Run("traces", func(t *testing.T) {
@@ -569,7 +570,7 @@ func assertFromRecordEmptyFallback(
 	t.Helper()
 
 	if initial != nil {
-		attrs.InsertString("net.host.ip", *initial)
+	    utils.InsertString(attrs, "net.host.ip", *initial)
 	}
 
 	testkits.MustProcess(t, factory, record)
@@ -639,7 +640,7 @@ processor:
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
 		data := makeTracesRecord(1, "bool")
-		testkits.FirstSpanAttrs(data).InsertString("net.host.ip", "127.1.0.1")
+		testkits.FirstSpanAttrs(data).PutString("net.host.ip", "127.1.0.1")
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -661,10 +662,10 @@ processor:
 		time.Sleep(time.Second) // wait for syncing
 		data := makeTracesRecord(1, "bool")
 		attrs := testkits.FirstSpanAttrs(data)
-		attrs.InsertString("net.host.ip", "127.1.0.1")
-		attrs.InsertString("k8s.bcs.cluster.id", "")
-		attrs.InsertString("k8s.namespace.name", "")
-		attrs.InsertString("k8s.pod.name", "existing-pod")
+		utils.InsertString(attrs, "net.host.ip", "127.1.0.1")
+		utils.InsertString(attrs, "k8s.bcs.cluster.id", "")
+		utils.InsertString(attrs, "k8s.namespace.name", "")
+		utils.InsertString(attrs, "k8s.pod.name", "existing-pod")
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -685,7 +686,7 @@ processor:
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
 		data := makeTracesRecord(1, "bool")
-		testkits.FirstSpanAttrs(data).InsertString("client.ip", "127.1.0.2")
+		testkits.FirstSpanAttrs(data).PutString("client.ip", "127.1.0.2")
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -707,8 +708,8 @@ processor:
 		time.Sleep(time.Second) // wait for syncing
 		data := makeTracesRecord(1, "bool")
 		attrs := testkits.FirstSpanAttrs(data)
-		attrs.InsertString("net.host.ip", "")
-		attrs.InsertString("client.ip", "127.1.0.2")
+		utils.InsertString(attrs, "net.host.ip", "")
+		utils.InsertString(attrs, "client.ip", "127.1.0.2")
 
 		record := define.Record{
 			RecordType: define.RecordTraces,
@@ -729,7 +730,7 @@ processor:
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
 		data := makeMetricsRecord(1, "bool")
-		testkits.FirstMetricAttrs(data).InsertString("net.host.ip", "127.1.0.3")
+		testkits.FirstMetricAttrs(data).PutString("net.host.ip", "127.1.0.3")
 
 		record := define.Record{
 			RecordType: define.RecordMetrics,
@@ -750,7 +751,7 @@ processor:
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
 		data := makeLogsRecord(1, 10, "bool")
-		testkits.FirstLogRecordAttrs(data).InsertString("net.host.ip", "127.1.0.3")
+		testkits.FirstLogRecordAttrs(data).PutString("net.host.ip", "127.1.0.3")
 
 		record := define.Record{
 			RecordType: define.RecordLogs,
@@ -891,7 +892,7 @@ processor:
 			Data:       makeTracesRecord(1, "bool"),
 		}
 
-		testkits.FirstSpanAttrs(record.Data).InsertString("service.name", "app.v1")
+		testkits.FirstSpanAttrs(record.Data).PutString("service.name", "app.v1")
 
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstSpanAttrs(record.Data)
@@ -917,7 +918,7 @@ processor:
 			Data:       makeMetricsRecord(1, "bool"),
 		}
 
-		testkits.FirstMetricAttrs(record.Data).InsertString("service.name", "app.v1")
+		testkits.FirstMetricAttrs(record.Data).PutString("service.name", "app.v1")
 
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstMetricAttrs(record.Data)
@@ -943,7 +944,7 @@ processor:
 			Data:       makeLogsRecord(1, 10, "bool"),
 		}
 
-		testkits.FirstLogRecordAttrs(record.Data).InsertString("service.name", "app.v1")
+		testkits.FirstLogRecordAttrs(record.Data).PutString("service.name", "app.v1")
 
 		testkits.MustProcess(t, factory, record)
 		attrs := testkits.FirstLogRecordAttrs(record.Data)
@@ -1139,9 +1140,9 @@ processor:
 
 		// 修改原始值以包含前缀和后缀
 		attrs := testkits.FirstSpanAttrs(record.Data)
-		attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
-		attrs.UpsertString("service.namespace", "Dev")
-		attrs.UpsertString("net.host.ip", "127.0.0.1")
+		attrs.PutString("telemetry.target", "BCS.test.helloworld")
+		attrs.PutString("service.namespace", "Dev")
+		attrs.PutString("net.host.ip", "127.0.0.1")
 
 		testkits.MustProcess(t, factory, record)
 
@@ -1174,7 +1175,7 @@ processor:
 			}
 			// 修改原始值以包含前缀和后缀
 			attrs := testkits.FirstSpanAttrs(record.Data)
-			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+			attrs.PutString("telemetry.target", "BCS.test.helloworld")
 
 			testkits.MustProcess(t, factory, record)
 
@@ -1189,7 +1190,7 @@ processor:
 			}
 			// 修改原始值以包含前缀和后缀
 			attrs := testkits.FirstMetricAttrs(record.Data)
-			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+			attrs.PutString("telemetry.target", "BCS.test.helloworld")
 
 			testkits.MustProcess(t, factory, record)
 
@@ -1204,7 +1205,7 @@ processor:
 			}
 			// 修改原始值以包含前缀和后缀
 			attrs := testkits.FirstLogRecordAttrs(record.Data)
-			attrs.UpsertString("telemetry.target", "BCS.test.helloworld")
+			attrs.PutString("telemetry.target", "BCS.test.helloworld")
 
 			testkits.MustProcess(t, factory, record)
 
@@ -1241,12 +1242,12 @@ func TestRegroupResourceSpansByTraceID(t *testing.T) {
 
 		// Resource span 1: contains 2 spans with traceID A
 		rs1 := orig.ResourceSpans().AppendEmpty()
-		rs1.Resource().Attributes().InsertString("service.name", "svc1")
+		rs1.Resource().Attributes().PutString("service.name", "svc1")
 		addScopeSpanWithSpans(rs1, "scope1", traceIDA, 2)
 
 		// Resource span 2: contains 1 span with traceID A and 1 span with traceID B
 		rs2 := orig.ResourceSpans().AppendEmpty()
-		rs2.Resource().Attributes().InsertString("service.name", "svc2")
+		rs2.Resource().Attributes().PutString("service.name", "svc2")
 		ss2 := rs2.ScopeSpans().AppendEmpty()
 		ss2.Scope().SetName("scope2")
 		createSpanInScopeSpan(ss2, traceIDA)

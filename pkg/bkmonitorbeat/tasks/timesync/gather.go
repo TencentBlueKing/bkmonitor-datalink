@@ -11,9 +11,7 @@ package timesync
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -107,15 +105,7 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 	dims := map[string]string{}
 	if env == "host" {
 		info, _ := gse.GetAgentInfo()
-		dims = map[string]string{
-			"bk_cloud_id":  strconv.Itoa(int(info.Cloudid)),
-			"bk_target_ip": info.IP,
-			"bk_agent_id":  info.BKAgentID,
-			"bk_host_id":   strconv.Itoa(int(info.HostID)),
-			"bk_biz_id":    strconv.Itoa(int(info.BKBizID)),
-			"node_id":      fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
-			"hostname":     info.Hostname,
-		}
+		dims = tasks.HostDimension(info)
 	}
 	return &Metrics{
 		Metrics:   metrics,

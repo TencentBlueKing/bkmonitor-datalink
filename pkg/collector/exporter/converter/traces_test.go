@@ -12,7 +12,9 @@ package converter
 import (
 	"testing"
 
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
@@ -120,6 +122,36 @@ func TestTracesInjectTokenFieldsZeroValue(t *testing.T) {
 	data := events[0].Data()
 	assert.Equal(t, int32(0), data["bk_biz_id"])
 	assert.Equal(t, "", data["app_name"])
+}
+
+func TestTracesTraceStateAsRaw(t *testing.T) {
+	traces := ptrace.NewTraces()
+	resourceSpans := traces.ResourceSpans().AppendEmpty()
+	span := resourceSpans.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	span.TraceState().FromRaw("rojo=00f067aa0ba902b7")
+
+	link := span.Links().AppendEmpty()
+	link.TraceState().FromRaw("congo=t61rcWkgMzE")
+
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       traces,
+		Token:      define.Token{TracesDataId: 1001},
+	}
+
+	events := make([]define.Event, 0)
+	gather := func(evts ...define.Event) { events = append(events, evts...) }
+
+	var conv tracesConverter
+	conv.Convert(&record, gather)
+
+	assert.Equal(t, 1, len(events))
+	data := events[0].Data()
+	assert.Equal(t, "rojo=00f067aa0ba902b7", data["trace_state"])
+
+	links, ok := data["links"].([]common.MapStr)
+	assert.True(t, ok)
+	assert.Equal(t, "congo=t61rcWkgMzE", links[0]["trace_state"])
 }
 
 func BenchmarkTracesConvert_10_Span(b *testing.B) {

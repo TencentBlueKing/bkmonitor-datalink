@@ -82,6 +82,18 @@ type DorisSQLExpr struct {
 	// 而是直接使用 = / != 进行精确匹配。适用于 TSpider 等不支持全文检索的存储。
 	forceEq bool
 
+	// disableShardKeyTimeBucket 为 true 时，分钟级时间聚合也使用 timeField。
+	// TSpider 以及字段结构不完整或没有 __shard_key__ 的 Doris 表，需要走该兼容路径。
+	disableShardKeyTimeBucket bool
+
+	// disableTimeBucketCast 为 true 时，timeField 时间桶不生成 CAST(... AS INT)。
+	// TSpider 的 MySQL 语法检查不兼容该 CAST 写法。
+	disableTimeBucketCast bool
+
+	// groupTimeBucketByExpr 为 true 时，使用完整时间桶表达式分组。
+	// TSpider 的语义检查不会将 SELECT 别名识别为 GROUP BY 字段。
+	groupTimeBucketByExpr bool
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -113,6 +125,13 @@ func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	return d
 }
 
+// WithShardKeyTimeBucket 用显式开关控制是否启用 __shard_key__ 时间分桶。
+// BKBase 返回的部分 Doris 表结构不包含 __shard_key__ 时，上层会关闭该开关。
+func (d *DorisSQLExpr) WithShardKeyTimeBucket(enabled bool) SQLExpr {
+	d.disableShardKeyTimeBucket = !enabled
+	return d
+}
+
 func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	d.keepColumns = cols
 	return d
@@ -120,6 +139,14 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 
 func (d *DorisSQLExpr) FieldMap() metadata.FieldsMap {
 	return d.fieldsMap
+}
+
+func (d *DorisSQLExpr) useShardKeyTimeBucket(window time.Duration) bool {
+	if d.disableShardKeyTimeBucket || int64(window.Seconds())%60 != 0 {
+		return false
+	}
+
+	return true
 }
 
 func (d *DorisSQLExpr) ParserQueryString(ctx context.Context, qs string) (string, error) {
@@ -143,16 +170,22 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 	return "", nil
 }
 
-func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (sql string, err error) {
+	return d.parserSQL(ctx, q, tables, where, offset, limit, tableFieldsMap, true)
+}
+
+func (d *DorisSQLExpr) parserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap, rejectSelectAllUnion bool) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
 		AddIgnoreField: func(s string) {
 			d.ignoreFieldSet.Add(strings.ToUpper(s))
 		},
-		Tables: tables,
-		Where:  where,
-		Offset: offset,
-		Limit:  limit,
+		Tables:               tables,
+		Where:                where,
+		TableFieldsMap:       tableFieldsMap,
+		RejectSelectAllUnion: rejectSelectAllUnion,
+		Offset:               offset,
+		Limit:                limit,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -177,6 +210,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	var (
 		window         time.Duration
 		timeZoneOffset int64
+		// valueProjected 标记 SELECT 中是否真的生成了 `_value_`，避免 raw 查询跳过 NULL 投影后仍按 `_value` 排序。
+		valueProjected bool
 	)
 
 	dimensionSet = set.New[string]([]string{FieldValue}...)
@@ -210,10 +245,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+			valueProjected = true
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
+			valueProjected = true
 		}
 
 		if agg.Window > 0 {
@@ -238,17 +275,24 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			timeZoneOffset *= -1
 		}
 
-		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
+		// Doris 按分钟聚合时优先使用 __shard_key__；当上层根据字段表关闭该优化时回退到 timeField。
 		var timeField string
-		if int64(window.Seconds())%60 == 0 {
+		if d.useShardKeyTimeBucket(window) {
 			windowMinutes := int(window.Minutes())
 			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh2, timeZoneOffset/6e4)
+		} else if d.disableTimeBucketCast {
+			timeField = fmt.Sprintf(`(FLOOR((%s %s %d) / %d) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		} else {
 			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		}
 
-		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
-		groupByFields = append(groupByFields, TimeStamp)
+		if d.groupTimeBucketByExpr {
+			selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, timeField)
+		} else {
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, TimeStamp)
+		}
 
 		// 只有时间聚合的条件下，才可以使用时间聚合排序
 		dimensionSet.Add(FieldTime)
@@ -277,8 +321,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			selectFields = append(selectFields, SelectAll)
 		}
 
-		if valueField != "" {
+		if valueField != "" && valueField != metadata.Null {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
+			valueProjected = true
 		}
 		if d.timeField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, TimeStamp))
@@ -298,6 +343,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		var orderField string
 		switch order.Name {
 		case FieldValue:
+			if !valueProjected {
+				continue
+			}
 			orderField = Value
 		case FieldTime:
 			orderField = TimeStamp
@@ -305,7 +353,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			orderField = order.Name
 		}
 
-		orderField, _ = d.dimTransform(orderField)
+		orderField = d.orderFieldTransform(orderField)
+		if orderField == "" {
+			continue
+		}
 
 		// 移除重复的排序字段
 		if orderNameSet.Existed(orderField) {
@@ -321,6 +372,19 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
+}
+
+func (d *DorisSQLExpr) orderFieldTransform(field string) string {
+	transformed, _ := d.dimTransform(field)
+	if transformed != metadata.Null {
+		return transformed
+	}
+
+	if field == d.timeField {
+		return fmt.Sprintf("`%s`", normalizeDorisFieldName(field))
+	}
+
+	return ""
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -652,7 +716,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		return ns, as
 	}
 
-	ns = s
+	ns = normalizeDorisFieldName(s)
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
@@ -710,6 +774,18 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
 	return ns, as
+}
+
+func normalizeDorisFieldName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' {
+		return s
+	}
+	name := s[1 : len(s)-1]
+	if strings.Contains(name, "`") {
+		return s
+	}
+	return name
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

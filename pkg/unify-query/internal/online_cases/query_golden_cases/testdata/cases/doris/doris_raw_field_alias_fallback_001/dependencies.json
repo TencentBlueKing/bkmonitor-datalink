@@ -1,0 +1,11 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "log", "Type": "text"}
+    ],
+    "result": []
+  }
+}

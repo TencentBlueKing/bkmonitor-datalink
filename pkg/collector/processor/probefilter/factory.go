@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -110,7 +111,7 @@ func (p *probeFilter) addAttrsAction(record *define.Record, config Config) {
 					if !rule.Enabled {
 						continue
 					}
-					if v, ok := span.Attributes().Get(attributeSpanLayer); ok && v.StringVal() == rule.Type {
+					if v, ok := span.Attributes().Get(attributeSpanLayer); ok && v.Str() == rule.Type {
 						processAddAttrs(span, rule, rs)
 					}
 				}
@@ -139,12 +140,12 @@ func matchAddAttrsRules(span ptrace.Span, rule Rule, attrs pcommon.Map) bool {
 		switch filter.Type {
 		case typeService:
 			v, ok := attrs.Get(filter.Field)
-			if ok && filter.Value == v.StringVal() {
+			if ok && filter.Value == v.Str() {
 				return true
 			}
 		case typeInterface:
 			v, ok := span.Attributes().Get(filter.Field)
-			if ok && filter.Value == v.StringVal() {
+			if ok && filter.Value == v.Str() {
 				return true
 			}
 		}
@@ -163,7 +164,7 @@ func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
 	headers := make(map[string]string)
 	v, ok := span.Attributes().Get(attributeHttpHeaders)
 	if ok {
-		matched := commonRegexp.FindAllStringSubmatch(v.StringVal(), -1)
+		matched := commonRegexp.FindAllStringSubmatch(v.Str(), -1)
 		for _, item := range matched {
 			headers[item[1]] = item[2]
 		}
@@ -183,7 +184,7 @@ func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
 	params := make(map[string]string)
 	v, ok = span.Attributes().Get(attributeHttpParams)
 	if ok {
-		matched := commonRegexp.FindAllStringSubmatch(v.StringVal(), -1)
+		matched := commonRegexp.FindAllStringSubmatch(v.Str(), -1)
 		for _, item := range matched {
 			params[item[1]] = item[2]
 		}
@@ -193,15 +194,15 @@ func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
 	switch rule.Target {
 	case targetCookie:
 		if val, ok := cookies[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			utils.InsertString(span.Attributes(), key, val)
 		}
 	case targetHeader:
 		if val, ok := headers[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			utils.InsertString(span.Attributes(), key, val)
 		}
 	case targetParams:
 		if val, ok := params[rule.Field]; ok {
-			span.Attributes().InsertString(key, val)
+			utils.InsertString(span.Attributes(), key, val)
 		}
 	}
 }

@@ -53,7 +53,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 	metrics := g.Generate()
 	dp := testkits.FirstGaugeDataPoint(metrics)
 	dp.SetTimestamp(0)
-	dp.SetDoubleVal(1024)
+	dp.SetDoubleValue(1024)
 	assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
 
 	var conv metricsConverter
@@ -85,8 +85,8 @@ func TestConvertHistogramMetrics(t *testing.T) {
 
 	dp := testkits.FirstHistogramPoint(metrics)
 	dp.SetTimestamp(0)
-	dp.SetMExplicitBounds([]float64{1, 2, 3})
-	dp.SetMBucketCounts([]uint64{4, 3, 2, 1})
+	dp.ExplicitBounds().FromRaw([]float64{1, 2, 3})
+	dp.BucketCounts().FromRaw([]uint64{4, 3, 2, 1})
 	dp.SetSum(100)
 	dp.SetCount(10)
 	dp.SetMin(1)
@@ -246,7 +246,7 @@ func TestConvertSumMetrics(t *testing.T) {
 
 	dp := testkits.FirstSumPoint(metrics)
 	dp.SetTimestamp(0)
-	dp.SetDoubleVal(10241)
+	dp.SetDoubleValue(10241)
 	assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
 
 	var conv metricsConverter

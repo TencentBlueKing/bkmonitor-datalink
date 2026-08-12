@@ -30,6 +30,9 @@ func podMonitorID(obj *promv1.PodMonitor) string {
 }
 
 func (c *Operator) handlePodMonitorAdd(obj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
@@ -51,6 +54,9 @@ func (c *Operator) handlePodMonitorAdd(obj any) {
 }
 
 func (c *Operator) handlePodMonitorUpdate(oldObj any, newObj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	old, ok := oldObj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", oldObj)
@@ -87,6 +93,9 @@ func (c *Operator) handlePodMonitorUpdate(oldObj any, newObj any) {
 }
 
 func (c *Operator) handlePodMonitorDelete(obj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)

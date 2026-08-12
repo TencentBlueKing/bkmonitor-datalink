@@ -55,6 +55,18 @@ func runString(ctx context.Context, s string, userEnvs map[string]string, userna
 			logger.Infof("item:%s", item)
 		}
 	}
+
+	// Pre-check all executables exist before forking, to avoid pidfd leak on
+	// exec failure in Go < 1.23.1 (go.dev/issue/69284: fork succeeds, allocates
+	// pidfd via CLONE_PIDFD, but exec fails and pidfd is never closed).
+	for _, cs := range sp {
+		if len(cs) > 0 {
+			if _, err := exec.LookPath(cs[0]); err != nil {
+				return "", fmt.Errorf("executable not found %q: %w", cs[0], err)
+			}
+		}
+	}
+
 	notify := make(chan error, 1)
 	defer close(notify)
 

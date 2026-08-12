@@ -1,0 +1,20 @@
+{
+  "space_uid": "bkcc__golden_tspider_raw",
+  "result_tables": [{"table_id": "demo_tspider_raw.partition_1"}],
+  "result_table_details": {
+    "demo_tspider_raw.partition_1": {
+      "storage_id": 3102,
+      "storage_name": "",
+      "storage_type": "bk_sql",
+      "cluster_name": "",
+      "db": "golden_tspider_raw_table",
+      "table_id": "demo_tspider_raw.partition_1",
+      "measurement": "",
+      "fields": ["events_total"],
+      "data_label": "demo_tspider_raw",
+      "tags_key": ["service", "status"],
+      "source_type": "bkdata"
+    }
+  },
+  "storages": {"3102": {"type": "bk_sql"}}
+}

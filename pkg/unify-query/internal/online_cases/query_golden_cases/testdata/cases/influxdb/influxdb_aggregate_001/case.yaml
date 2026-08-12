@@ -1,0 +1,17 @@
+id: influxdb_aggregate_001
+storage: influxdb
+enabled: true
+shape_signature: query_ts/range/influxdb/mean_by1/condition1/group_time_fill/output1
+source:
+  kind: production_log
+  outputs_kind: handler_replay
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:4ec0c0e153025d6f165e9cd9c3332778cebf82200c1c18b31e06dea9b709507a
+tags: [query_ts_api, aggregation, condition, production_shape, provisional_output]
+notes:
+  - 生产请求仅保留查询结构，空间、数据库、measurement、字段、条件值和集群均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

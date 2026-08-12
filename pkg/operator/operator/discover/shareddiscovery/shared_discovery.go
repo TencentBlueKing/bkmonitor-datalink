@@ -152,24 +152,27 @@ func Register(uk string, createFunc func() (*SharedDiscovery, error)) error {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
-	sharedDiscoveryRefs[uk]++
-	if _, ok := sharedDiscoveryMap[uk]; !ok {
-		sd, err := createFunc()
-		if err != nil {
-			logger.Errorf("failed to create shared discovery (%s): %v", uk, err)
-			return err
-		}
-		gWg.Add(2)
-		go func() {
-			defer gWg.Done()
-			sd.watch()
-		}()
-		go func() {
-			defer gWg.Done()
-			sd.start()
-		}()
-		sharedDiscoveryMap[uk] = sd
+	if _, ok := sharedDiscoveryMap[uk]; ok {
+		sharedDiscoveryRefs[uk]++
+		return nil
 	}
+
+	sd, err := createFunc()
+	if err != nil {
+		logger.Errorf("failed to create shared discovery (%s): %v", uk, err)
+		return err
+	}
+	gWg.Add(2)
+	go func() {
+		defer gWg.Done()
+		sd.watch()
+	}()
+	go func() {
+		defer gWg.Done()
+		sd.start()
+	}()
+	sharedDiscoveryMap[uk] = sd
+	sharedDiscoveryRefs[uk]++
 
 	return nil
 }

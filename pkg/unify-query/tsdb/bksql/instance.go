@@ -225,6 +225,9 @@ func needFieldMap(query *metadata.Query) bool {
 	if query == nil {
 		return false
 	}
+	if isTSpiderQuery(query) {
+		return true
+	}
 	switch query.Measurement {
 	case sql_expr.Doris, sql_expr.HDFS:
 		return true
@@ -235,14 +238,62 @@ func needFieldMap(query *metadata.Query) bool {
 	}
 }
 
+func queryPhysicalTables(query *metadata.Query) []string {
+	if query == nil {
+		return nil
+	}
+
+	dbs := query.DBs
+	if len(dbs) == 0 && query.DB != "" {
+		dbs = []string{query.DB}
+	}
+
+	tables := make([]string, 0, len(dbs))
+	for _, db := range dbs {
+		if db == "" {
+			continue
+		}
+		tables = append(tables, formatPhysicalTableName(db, query.Measurement))
+	}
+	return tables
+}
+
+func shouldDisableShardKeyTimeBucket(query *metadata.Query, fieldsMap metadata.FieldsMap, tableFieldsMap TableFieldsMap, timeField string) bool {
+	if query == nil || query.Measurement != sql_expr.Doris {
+		return false
+	}
+
+	tables := queryPhysicalTables(query)
+	if len(tables) > 0 {
+		for _, table := range tables {
+			tableFields, ok := tableFieldsMap[table]
+			if !ok {
+				// 无法证明该物理表包含 __shard_key__ 时，不启用 shard key 时间桶优化。
+				return true
+			}
+			if !tableFields.Field(sql_expr.ShardKey).Existed() {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 没有逐表信息时退回合并字段表判断；只有字段表能证明 timeField 存在时，
+	// 才用它判断 __shard_key__ 缺失，避免字段表为空或不完整时误判。
+	if !fieldsMap.Field(timeField).Existed() {
+		return false
+	}
+	return !fieldsMap.Field(sql_expr.ShardKey).Existed()
+}
+
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
 	f := NewQueryFactory(ctx, query).
 		WithRangeTime(start, end)
 
-	// Doris / HDFS 均需获取字段表结构；TSpider 单段 table_id（Measurement 为空）+ 用户 SQL 与 NewQueryFactory 中
-	// TSpiderSQLExpr 路径一致，同样需要 FieldsMap，否则 dimTransform 会将未知列变为 NULL。
+	// Doris / HDFS 均需获取字段表结构；TSpider 与 Doris 共用 SQL 表达式，也需要 FieldsMap，
+	// 否则 dimTransform 会将未知列变为 NULL。
 	if needFieldMap(query) {
-		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
+		fieldsMap, tableFieldsMap, err := i.queryFieldMaps(ctx, query, start, end)
 		if err != nil {
 			return nil, err
 		}
@@ -254,26 +305,30 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 				keepColumns = append(keepColumns, k)
 			}
 		}
-		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
+		f.WithFieldsMap(fieldsMap).WithTableFieldsMap(tableFieldsMap).WithKeepColumns(keepColumns)
+		if shouldDisableShardKeyTimeBucket(query, fieldsMap, tableFieldsMap, f.timeField) {
+			f.WithShardKeyTimeBucket(false)
+		}
 	}
 
 	return f, nil
 }
 
 func (i *Instance) Table(query *metadata.Query) string {
-	table := fmt.Sprintf("`%s`", query.DB)
-	if query.Measurement != "" {
-		table += "." + query.Measurement
-	}
-	return table
+	return formatPhysicalTableName(query.DB, query.Measurement)
 }
 
 // QueryFieldMap 查询字段映射
 func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, error) {
+	fieldsMap, _, err := i.queryFieldMaps(ctx, query, start, end)
+	return fieldsMap, err
+}
+
+func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldsMap, TableFieldsMap, error) {
 	var err error
 
 	if query == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	defer func() {
@@ -294,26 +349,33 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 
 	if len(dbs) == 0 {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return nil, err
+		return nil, nil, err
 	}
 
 	fieldsMap := make(metadata.FieldsMap)
+	tableFieldsMap := make(TableFieldsMap)
+	needTSpiderFieldMap := isTSpiderQuery(query)
+	var (
+		fieldMapTables  []string
+		lastFieldMapErr error
+	)
 
 	// 多表的字段进行合并查询，进行倒序遍历
 	for idx := len(dbs) - 1; idx >= 0; idx-- {
 		db := dbs[idx]
-		table := fmt.Sprintf("`%s`", db)
-		if f.query.Measurement != "" {
-			table += "." + f.query.Measurement
-		}
+		table := formatPhysicalTableName(db, f.query.Measurement)
+		fieldMapTables = append(fieldMapTables, table)
 
 		sql := f.expr.DescribeTableSQL(table)
 		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))
 		if err != nil {
+			lastFieldMapErr = err
 			continue
 		}
+		normalized := normalizeFieldsMap(res, query.FieldAlias)
+		tableFieldsMap[table] = normalized
 
-		for k, v := range res {
+		for k, v := range normalized {
 			if k == "" || v.FieldType == "" {
 				continue
 			}
@@ -322,17 +384,37 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 				continue
 			}
 
-			v.AliasName = query.FieldAlias.AliasName(k)
-			v.FieldName = k
-			ks := strings.Split(k, ".")
-			v.OriginField = ks[0]
-			v.TokenizeOnChars = make([]string, 0)
-
 			fieldsMap[k] = v
 		}
 	}
 
-	return fieldsMap, nil
+	if needTSpiderFieldMap && len(fieldsMap) == 0 {
+		tableNames := strings.Join(fieldMapTables, ", ")
+		if lastFieldMapErr != nil {
+			err = fmt.Errorf("query tspider field map failed for %s: %w", tableNames, lastFieldMapErr)
+			return nil, nil, err
+		}
+		err = fmt.Errorf("query tspider field map empty for %s", tableNames)
+		return nil, nil, err
+	}
+
+	return fieldsMap, tableFieldsMap, nil
+}
+
+func normalizeFieldsMap(fieldsMap metadata.FieldsMap, fieldAlias metadata.FieldAlias) metadata.FieldsMap {
+	normalized := make(metadata.FieldsMap, len(fieldsMap))
+	for k, v := range fieldsMap {
+		if k == "" || v.FieldType == "" {
+			continue
+		}
+		v.AliasName = fieldAlias.AliasName(k)
+		v.FieldName = k
+		ks := strings.Split(k, ".")
+		v.OriginField = ks[0]
+		v.TokenizeOnChars = make([]string, 0)
+		normalized[k] = v
+	}
+	return normalized
 }
 
 // QueryRawData 直接查询原始返回

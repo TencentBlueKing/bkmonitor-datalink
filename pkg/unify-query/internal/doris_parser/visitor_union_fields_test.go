@@ -1,0 +1,1032 @@
+package doris_parser
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type unionSelectTestNode struct {
+	baseNode
+	value string
+}
+
+func (n *unionSelectTestNode) String() string {
+	return n.value
+}
+
+func TestCollectColumnNamesFromSQLForUnion(t *testing.T) {
+	tests := []struct {
+		name        string
+		sql         string
+		ignoreNames map[string]struct{}
+		expected    []string
+	}{
+		{
+			name:     "select alias 与真实字段同名时保留真实字段",
+			sql:      "`host` AS ip, `ip`",
+			expected: []string{"`host`", "`ip`"},
+		},
+		{
+			name:     "字符串字面量里的反引号不当作字段",
+			sql:      "regexp_extract(`log`, '`user`=(\\\\d+)', 1) AS user_id",
+			expected: []string{"`log`"},
+		},
+		{
+			name:     "双引号字符串里的标识符不当作字段",
+			sql:      `regexp_extract(log, "user=(\\d+)", 1) AS user_id`,
+			expected: []string{"`log`"},
+		},
+		{
+			name:     "数字科学计数法不当作字段",
+			sql:      "1e3",
+			expected: nil,
+		},
+		{
+			name:        "GROUP/ORDER 引用外层聚合 alias 时不下推",
+			sql:         "`_value_` DESC",
+			ignoreNames: map[string]struct{}{"_value_": {}},
+			expected:    nil,
+		},
+		{
+			name:        "GROUP/ORDER 引用外层 alias 时大小写不敏感",
+			sql:         "C DESC",
+			ignoreNames: map[string]struct{}{"c": {}},
+			expected:    nil,
+		},
+		{
+			name:     "dotted 引用只收集 root 字段",
+			sql:      "__ext.cluster.extra.name_space, `path`",
+			expected: []string{"`__ext`", "`path`"},
+		},
+		{
+			name:     "反引号 keyword 字段保留为真实字段",
+			sql:      "`time`, `path`",
+			expected: []string{"`time`", "`path`"},
+		},
+		{
+			name:     "Doris 谓词操作符不当作字段",
+			sql:      "`log` MATCH 'err', `message` MATCH_ANY 'x', `path` MATCH_PHRASE_PREFIX 'z', `trace_id` MATCH_REGEXP '.*', log RLIKE 'err', path LIKE '%!_%' ESCAPE '!', log = 'a' XOR path = 'b'",
+			expected: []string{"`log`", "`message`", "`path`", "`trace_id`"},
+		},
+		{
+			name:     "TIMESTAMPDIFF 时间单位不当作字段",
+			sql:      "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days",
+			expected: []string{"`start_time`", "`end_time`"},
+		},
+		{
+			name:     "Doris 当前时间和 INTERVAL 字面量不当作字段",
+			sql:      "dtEventTime >= CURRENT_DATE - INTERVAL 1 DAY AND update_time < CURRENT_TIMESTAMP",
+			expected: []string{"`dtEventTime`", "`update_time`"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, collectColumnNamesFromSQL(tt.sql, tt.ignoreNames))
+		})
+	}
+}
+
+func TestCollectAliasesFromSQLForUnion(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		expected map[string]struct{}
+	}{
+		{
+			name:     "跳过字符串里的 AS 文本",
+			sql:      "COUNT(regexp_extract(log, ' AS path ', 1)) AS user_id",
+			expected: map[string]struct{}{"user_id": {}},
+		},
+		{
+			name:     "跳过括号内 CAST 类型 AS",
+			sql:      "CAST(log AS TEXT) AS log_text",
+			expected: map[string]struct{}{"log_text": {}},
+		},
+		{
+			name:     "收集反引号 alias",
+			sql:      "COUNT(*) AS `log_count`",
+			expected: map[string]struct{}{"log_count": {}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, collectAliasesFromSQL(tt.sql))
+		})
+	}
+}
+
+func TestStatementUnionSelectListFallbacks(t *testing.T) {
+	tests := []struct {
+		name      string
+		selectSQL string
+		groupSQL  string
+		orderSQL  string
+		tables    []string
+		expected  string
+	}{
+		{
+			name:      "混合 wildcard 保留 SELECT star 语义",
+			selectSQL: "*, `log`",
+			expected:  Star,
+		},
+		{
+			name:      "未加反引号的对象字段表达式保守回退",
+			selectSQL: "CAST(__ext['pod'] AS TEXT) AS pod, COUNT(*) AS cnt",
+			groupSQL:  "pod",
+			expected:  "`__ext`",
+		},
+		{
+			name:      "CAST 普通字段表达式保留源字段",
+			selectSQL: "CAST(log AS TEXT) AS log_text, `path`",
+			expected:  "`log`, `path`",
+		},
+		{
+			name:      "COUNT star 不增加字段依赖",
+			selectSQL: "`minute1`, COUNT(*) AS log_count",
+			groupSQL:  "`minute1`",
+			orderSQL:  "`minute1` DESC",
+			expected:  "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name:      "纯 COUNT star 多表 union 使用常量投影",
+			selectSQL: "COUNT(*) AS log_count",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
+		{
+			name:      "可识别字段按首次出现顺序去重",
+			selectSQL: "`path`, COUNT(*) AS cnt",
+			groupSQL:  "`path`",
+			orderSQL:  "`path` DESC",
+			expected:  "`path`",
+		},
+		{
+			name:      "字符串里的 AS 不会误跳过 GROUP BY 字段",
+			selectSQL: "regexp_extract(log, ' AS path ', 1) AS user_id",
+			groupSQL:  "path",
+			expected:  "`log`, `path`",
+		},
+		{
+			name:      "算术乘法不是 wildcard",
+			selectSQL: "a * b AS value",
+			expected:  "`a`, `b`",
+		},
+		{
+			name:      "纯数字科学计数法多表 union 使用常量投影",
+			selectSQL: "1e3",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
+		{
+			name:      "DISTINCT star 按 wildcard 处理",
+			selectSQL: "DISTINCT(*)",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
+		{
+			name:      "混合 DISTINCT star 按 wildcard 处理",
+			selectSQL: "DISTINCT(*), `log`",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
+		{
+			name:      "混合 DISTINCT 空格 star 按 wildcard 处理",
+			selectSQL: "DISTINCT *, `log`",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  Star,
+		},
+		{
+			name:      "ORDER BY 大小写不同的 alias 不下推",
+			selectSQL: "COUNT(*) AS c",
+			orderSQL:  "C DESC",
+			tables:    []string{"`db_b`.doris", "`db_a`.doris"},
+			expected:  unionDummyProjection,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := &Statement{
+				Tables: tt.tables,
+				nodeMap: map[string]Node{
+					SelectItem: &unionSelectTestNode{value: tt.selectSQL},
+					GroupItem:  &unionSelectTestNode{value: tt.groupSQL},
+					OrderItem:  &unionSelectTestNode{value: tt.orderSQL},
+				},
+			}
+			assert.Equal(t, tt.expected, stmt.unionSelectList())
+		})
+	}
+}
+
+func TestStatementUnionSelectListExpandsMultiTableWildcard(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+				"path":                    {FieldType: "text"},
+				"value":                   {FieldType: "bigint"},
+				"status":                  {FieldType: "text"},
+				"extra":                   {FieldType: "bigint"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "double"},
+				"dimensions.only_current": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+				"value":                   {FieldType: "int"},
+				"status":                  {FieldType: "bigint"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `value` AS `_value_`"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`, `value`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListExpandsWildcardWithBuiltinPlatformDependencies(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"log": {FieldType: "text"}},
+			"`db_a`.doris": {"log": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dtEventTimeStamp` AS `_timestamp_`, `minute1`"},
+		},
+	}
+
+	assert.Equal(t, "`log`, `dtEventTimeStamp`, `minute1`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListExpandsDistinctStar(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "varchar(128)"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "DISTINCT(*)"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListUsesSafeCommonCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "bigint"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, CAST(dimensions['retry_count'] AS BIGINT) AS `dimensions.retry_count`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListPreservesDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(20,4)"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(30,8)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['amount'] AS DECIMAL(30,8)) AS `dimensions.amount`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListSkipsUnsafeDecimalCastType(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,18)"},
+				"path":              {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.amount": {FieldType: "decimal(38,0)"},
+				"path":              {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListPreservesDatetimePrecisionForObjectLeaf(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.time": {FieldType: "datetimev2(3)"},
+			},
+			"`db_a`.doris": {
+				"dimensions.time": {FieldType: "datetimev2(6)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['time'] AS DATETIMEV2(6)) AS `dimensions.time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListDoesNotMergeObjectLeafWithDifferentCase(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"path":             {FieldType: "text"},
+				"resource.TraceID": {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"path":             {FieldType: "varchar(128)"},
+				"resource.traceid": {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*"},
+		},
+	}
+
+	assert.Equal(t, "`path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsExpandedObjectLeafDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, `dimensions.pipelineName`"},
+		},
+	}
+
+	assert.Equal(t, "CAST(dimensions['pipelineName'] AS TEXT) AS `dimensions.pipelineName`, `path`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListRejectsSelectAllWithObjectDependency(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"path":                    {FieldType: "text"},
+			},
+			"`db_a`.doris": {
+				"dimensions.pipelineName": {FieldType: "varchar(128)"},
+				"path":                    {FieldType: "varchar(128)"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "*, dimensions['pipelineName'] AS pipeline_name"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "cannot be combined with field dependency `dimensions`")
+}
+
+func TestStatementUnionSelectListRejectsQualifiedMultiTableWildcard(t *testing.T) {
+	stmt := &Statement{
+		Tables:               []string{"`db_b`.doris", "`db_a`.doris"},
+		RejectSelectAllUnion: true,
+		TableFieldsMap: TableFieldsMap{
+			"`db_b`.doris": {"path": {FieldType: "text"}},
+			"`db_a`.doris": {"path": {FieldType: "text"}},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "t.*"},
+		},
+	}
+
+	assert.Equal(t, Star, stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "SELECT *")
+}
+
+func TestStatementUnionSelectListValidatesTableSchema(t *testing.T) {
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		nodeMap        map[string]Node
+		expected       string
+		errContains    string
+	}{
+		{
+			name: "投影字段缺失时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`, COUNT(*) AS c"},
+				GroupItem:  &unionSelectTestNode{value: "`path`"},
+			},
+			expected:    "`path`",
+			errContains: "missing from table `db_his`.doris",
+		},
+		{
+			name: "WHERE 谓词操作符不当作字段",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`log` RLIKE 'err'"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE MATCH 和 ESCAPE 不当作字段",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":  {FieldType: "text"},
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`log` MATCH 'err' AND `path` LIKE '%!_%' ESCAPE '!'"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE 当前时间和 INTERVAL 字面量不当作字段",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dtEventTime": {FieldType: "datetime"},
+					"path":        {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"dtEventTime": {FieldType: "datetime"},
+					"path":        {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`dtEventTime` >= CURRENT_DATE - INTERVAL 1 DAY"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE 字段缺失时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path":      {FieldType: "text"},
+					"new_field": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`new_field` = 'x'"},
+			},
+			expected:    "`path`",
+			errContains: "field `new_field` is missing from table `db_his`.doris",
+		},
+		{
+			name: "计算平台 minuteX 内置字段会补充时间字段依赖",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"log":              {FieldType: "text"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+				OrderItem:  &unionSelectTestNode{value: "`minute1` DESC"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "真实 minuteX 可与缺失物理 schema 的 dtEventTimeStamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1":          {FieldType: "bigint"},
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimeStamp`"},
+			},
+			expected: "`minute1`, `dtEventTimeStamp`",
+		},
+		{
+			name: "真实 minuteX 可与无物理 schema 的 dtEventTimestamp 一起投影",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"minute1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`, `dtEventTimestamp`"},
+			},
+			expected: "`minute1`, `dtEventTimestamp`",
+		},
+		{
+			name: "计算平台 minuteX 缺少时间字段依赖时报错",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dtEventTimeStamp": {FieldType: "bigint"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`minute1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`minute1`"},
+			},
+			expected:    "`minute1`, `dtEventTimeStamp`",
+			errContains: "field `dtEventTimeStamp` is missing from table `db_current`.doris",
+		},
+		{
+			name: "计算平台固定内置字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`"},
+				OrderItem:  &unionSelectTestNode{value: "`dtEventTimeStamp` DESC"},
+			},
+			expected: "`dtEventTimeStamp`, `dtEventTime`, `localTime`, `thedate`",
+		},
+		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log":      {FieldType: "text"},
+					"year2024": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`year2024`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`year2024`"},
+			},
+			expected:    "`year2024`",
+			errContains: "field `year2024` is missing from table `db_his`.doris",
+		},
+		{
+			name: "疑似内置时间聚合字段若是真实字段仍校验类型",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"day1": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"day1": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` type mismatch",
+		},
+		{
+			name: "未支持的时间聚合字段缺失时仍校验缺失",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"log": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"log": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`day1`, COUNT(*) AS log_count"},
+				GroupItem:  &unionSelectTestNode{value: "`day1`"},
+			},
+			expected:    "`day1`",
+			errContains: "field `day1` is missing from table `db_his`.doris",
+		},
+		{
+			name: "WHERE 计算平台内置字段不要求出现在物理表结构",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path": {FieldType: "text"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`minute1` >= '202607142052' AND dtEventTimeStamp > 1 AND localTime != ''"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "WHERE-only 字段类型不同但未投影时允许",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"path":   {FieldType: "text"},
+					"status": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "`path`"},
+				WhereItem:  &unionSelectTestNode{value: "`status` IS NOT NULL"},
+			},
+			expected: "`path`",
+		},
+		{
+			name: "只有 WHERE 字段类型不同但未投影时允许",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"status": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"status": {FieldType: "bigint"},
+				},
+			},
+			nodeMap: map[string]Node{
+				SelectItem: &unionSelectTestNode{value: "COUNT(*) AS c"},
+				WhereItem:  &unionSelectTestNode{value: "`status` IS NOT NULL"},
+			},
+			expected: unionDummyProjection,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap:        tt.nodeMap,
+			}
+
+			assert.Equal(t, tt.expected, stmt.unionSelectList())
+			if tt.errContains != "" {
+				assert.ErrorContains(t, stmt.Error(), tt.errContains)
+				return
+			}
+			assert.NoError(t, stmt.Error())
+		})
+	}
+}
+
+func TestStatementUnionSelectListValidatesRequestedObjectLeaf(t *testing.T) {
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		selectSQL      string
+		groupSQL       string
+		expected       string
+	}{
+		{
+			name: "requested leaf",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"dimensions.pipelineName": {FieldType: "text"},
+					"dimensions.retry_count":  {FieldType: "int"},
+				},
+				"`db_current`.doris": {
+					"dimensions.pipelineName": {FieldType: "varchar"},
+					"dimensions.retry_count":  {FieldType: "double"},
+				},
+			},
+			selectSQL: "dimensions['pipelineName'], COUNT(*) AS c",
+			groupSQL:  "dimensions['pipelineName']",
+			expected:  "`dimensions`",
+		},
+		{
+			name: "requested leaf keeps root case-insensitive",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+			},
+			selectSQL: "Resource['TraceID']",
+			expected:  "`Resource`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodeMap := map[string]Node{
+				SelectItem: &unionSelectTestNode{value: tt.selectSQL},
+			}
+			if tt.groupSQL != "" {
+				nodeMap[GroupItem] = &unionSelectTestNode{value: tt.groupSQL}
+			}
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap:        nodeMap,
+			}
+
+			assert.Equal(t, tt.expected, stmt.unionSelectList())
+			assert.NoError(t, stmt.Error())
+		})
+	}
+}
+
+func TestStatementUnionSelectListValidatesRootObjectLeavesDeterministically(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	for i := 0; i < 1000; i++ {
+		assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+		assert.NoError(t, stmt.Error())
+	}
+}
+
+func TestStatementUnionSelectListValidatesRootObjectLeafCase(t *testing.T) {
+	tests := []struct {
+		name           string
+		tableFieldsMap TableFieldsMap
+		errContains    string
+	}{
+		{
+			name: "rejects leaf case mismatch",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"resource.traceid": {FieldType: "text"},
+				},
+			},
+			errContains: "field `resource.TraceID` is missing from table `db_current`.doris",
+		},
+		{
+			name: "allows root case difference",
+			tableFieldsMap: TableFieldsMap{
+				"`db_his`.doris": {
+					"resource.TraceID": {FieldType: "text"},
+				},
+				"`db_current`.doris": {
+					"Resource.TraceID": {FieldType: "text"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := &Statement{
+				Tables:         []string{"`db_his`.doris", "`db_current`.doris"},
+				TableFieldsMap: tt.tableFieldsMap,
+				nodeMap: map[string]Node{
+					SelectItem: &unionSelectTestNode{value: "resource"},
+				},
+			}
+
+			assert.Equal(t, "`resource`", stmt.unionSelectList())
+			if tt.errContains != "" {
+				assert.ErrorContains(t, stmt.Error(), tt.errContains)
+				return
+			}
+			assert.NoError(t, stmt.Error())
+		})
+	}
+}
+
+func TestStatementUnionSelectListRejectsRootObjectLeafMismatch(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "double"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "dimensions"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "field `dimensions.retry_count` type mismatch")
+}
+
+func TestStatementUnionSelectListAllowsDorisV2TimeTypes(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"event_date": {FieldType: "DATE"},
+				"event_time": {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"event_date": {FieldType: "DATEV2"},
+				"event_time": {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "event_date, event_time"},
+		},
+	}
+
+	assert.Equal(t, "`event_date`, `event_time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListAllowsTimestampdiffTimeUnit(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"start_time": {FieldType: "DATETIME"},
+				"end_time":   {FieldType: "DATETIME"},
+			},
+			"`db_current`.doris": {
+				"start_time": {FieldType: "DATETIMEV2"},
+				"end_time":   {FieldType: "DATETIMEV2"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "TIMESTAMPDIFF(DAY, start_time, end_time) AS duration_days"},
+		},
+	}
+
+	assert.Equal(t, "`start_time`, `end_time`", stmt.unionSelectList())
+	assert.NoError(t, stmt.Error())
+}
+
+func TestStatementUnionSelectListValidatesQuotedObjectLeaf(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"dimensions.pipelineName": {FieldType: "text"},
+				"dimensions.retry_count":  {FieldType: "int"},
+			},
+			"`db_current`.doris": {
+				"dimensions.retry_count": {FieldType: "int"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`dimensions`['pipelineName'], COUNT(*) AS c"},
+			GroupItem:  &unionSelectTestNode{value: "`dimensions`['pipelineName']"},
+		},
+	}
+
+	assert.Equal(t, "`dimensions`", stmt.unionSelectList())
+	assert.ErrorContains(t, stmt.Error(), "missing from table `db_current`.doris")
+}
+
+func TestStatementSubQueryUnionInheritsTableSchema(t *testing.T) {
+	subQuery := &Statement{
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`path`"},
+			TableItem:  &unionSelectTestNode{value: "`ignored`.doris"},
+		},
+	}
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		TableFieldsMap: TableFieldsMap{
+			"`db_his`.doris": {
+				"log": {FieldType: "text"},
+			},
+			"`db_current`.doris": {
+				"path": {FieldType: "text"},
+			},
+		},
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`path`"},
+			TableItem: &TableNode{
+				SubQuery: subQuery,
+				Alias:    "s",
+			},
+		},
+	}
+
+	_ = stmt.String()
+	assert.ErrorContains(t, stmt.Error(), "missing from table `db_his`.doris")
+}
+
+func TestStatementMultiTableUnionWrapsWhereFragments(t *testing.T) {
+	stmt := &Statement{
+		Tables: []string{"`db_his`.doris", "`db_current`.doris"},
+		Where:  "`dtEventTimeStamp` >= 1",
+		nodeMap: map[string]Node{
+			SelectItem: &unionSelectTestNode{value: "`log`"},
+			WhereItem:  &unionSelectTestNode{value: "`log` = 'a' OR `log` = 'b'"},
+		},
+	}
+
+	expected := "SELECT `log` FROM (SELECT `log` FROM `db_his`.doris WHERE (`log` = 'a' OR `log` = 'b') AND (`dtEventTimeStamp` >= 1) UNION ALL SELECT `log` FROM `db_current`.doris WHERE (`log` = 'a' OR `log` = 'b') AND (`dtEventTimeStamp` >= 1)) AS combined_data"
+	assert.Equal(t, expected, stmt.String())
+}

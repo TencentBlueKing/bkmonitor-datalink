@@ -22,7 +22,6 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -886,7 +885,6 @@ func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []st
 		storage.DorisStorageDBSchema.TableID,
 		storage.DorisStorageDBSchema.BkbaseTableID,
 		storage.DorisStorageDBSchema.OriginTableId,
-		storage.DorisStorageDBSchema.StorageClusterID,
 	)
 
 	// 如果过滤结果表存在，则添加过滤条件
@@ -917,37 +915,20 @@ func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []st
 		return err
 	}
 
-	originTableIdList := lo.Uniq(lo.FilterMap(dorisStorageList, func(doris storage.DorisStorage, _ int) (string, bool) {
+	originTableIdSet := make(map[string]struct{})
+	for _, doris := range dorisStorageList {
 		if doris.OriginTableId != "" {
-			return doris.OriginTableId, true
+			originTableIdSet[doris.OriginTableId] = struct{}{}
 		}
-		return "", false
-	}))
+	}
+	originTableIdList := make([]string, 0, len(originTableIdSet))
+	for tableId := range originTableIdSet {
+		originTableIdList = append(originTableIdList, tableId)
+	}
 	originDorisMap, err := s.getDorisStorageMap(originTableIdList)
 	if err != nil {
 		logger.Errorf("PushDorisTableIdDetail: failed to get origin doris storage map, error: %s", err)
 		return err
-	}
-
-	storageClusterIDList := lo.Uniq(lo.FilterMap(append(dorisStorageList, lo.Values(originDorisMap)...), func(doris storage.DorisStorage, _ int) (uint, bool) {
-		if doris.StorageClusterID != 0 {
-			return doris.StorageClusterID, true
-		}
-		return 0, false
-	}))
-	storageClusterNameMap := make(map[uint]string, len(storageClusterIDList))
-	if len(storageClusterIDList) > 0 {
-		var storageClusterList []storage.ClusterInfo
-		if err = storage.NewClusterInfoQuerySet(db).
-			Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).
-			ClusterIDIn(storageClusterIDList...).
-			All(&storageClusterList); err != nil {
-			logger.Errorf("PushDorisTableIdDetail: failed to get doris cluster info map, error: %s", err)
-			return err
-		}
-		for _, cluster := range storageClusterList {
-			storageClusterNameMap[cluster.ClusterID] = cluster.ClusterName
-		}
 	}
 
 	// 获取查询别名映射关系
@@ -961,7 +942,6 @@ func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []st
 	wg := &sync.WaitGroup{}
 	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
-	errCh := make(chan error, len(dorisStorageList))
 	wg.Add(len(dorisStorageList))
 	for _, doris := range dorisStorageList {
 		ch <- struct{}{}
@@ -981,21 +961,9 @@ func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []st
 				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
-			realTableId := tableId
-			if doris.OriginTableId != "" {
-				realTableId = doris.OriginTableId
-			}
-			clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
-			if err != nil {
-				logger.Errorf("PushDorisTableIdDetail:failed to get storage cluster records, table_id: %s, real_table_id: %s, error: %s", tableId, realTableId, err)
-				errCh <- errors.Wrapf(err, "failed to get storage cluster records, table_id: %s, real_table_id: %s", tableId, realTableId)
-				return
-			}
-
-			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, storageClusterNameMap, clusterRecords, fieldAliasSettings)
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(doris, rtMetaMap[tableId], originDorisMap, fieldAliasSettings)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
-				errCh <- errors.Wrapf(err, "compose doris table id detail error, table_id: %s", tableId)
 				return
 			}
 			// 多租户模式下，redis key 需要补充租户ID后缀
@@ -1006,17 +974,12 @@ func (s *SpacePusher) PushDorisTableIdDetail(bkTenantId string, tableIdList []st
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, redisKey, detailStr, cfg.ResultTableDetailChannel, redisKey)
 			if err != nil {
 				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
-				errCh <- errors.Wrapf(err, "push and publish doris table id detail error, table_id: %s", tableId)
 				return
 			}
 			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
 		}(doris, wg, ch)
 	}
 	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		return err
-	}
 	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
 	return nil
 }
@@ -1172,7 +1135,6 @@ func (s *SpacePusher) getDorisStorageMap(tableIDList []string) (map[string]stora
 			storage.DorisStorageDBSchema.TableID,
 			storage.DorisStorageDBSchema.BkbaseTableID,
 			storage.DorisStorageDBSchema.OriginTableId,
-			storage.DorisStorageDBSchema.StorageClusterID,
 		).TableIDIn(chunkTableIDList...).All(&dorisStorageList); err != nil {
 			return nil, err
 		}
@@ -1334,7 +1296,7 @@ func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, 
 		realTableId = storageIns.OriginTableId
 	}
 
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId, tableId)
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
 	if err != nil {
 		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
 		return "", "", err
@@ -1388,18 +1350,12 @@ func (s *SpacePusher) composeEsTableIdDetail(bkTenantId string, tableId string, 
 	return tableId, detailStr, err
 }
 
-func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, storageClusterNameMap map[uint]string, clusterRecords []map[string]any, fieldAliasSettings map[string]string) (string, string, error) {
+func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMeta resultTableDetailMeta, originDorisMap map[string]storage.DorisStorage, fieldAliasSettings map[string]string) (string, string, error) {
 	tableId := doris.TableID
 	bkbaseTableId := doris.BkbaseTableID
-	storageClusterID := doris.StorageClusterID
-	if (bkbaseTableId == "" || storageClusterID == 0) && doris.OriginTableId != "" {
+	if bkbaseTableId == "" && doris.OriginTableId != "" {
 		if originDoris, ok := originDorisMap[doris.OriginTableId]; ok {
-			if bkbaseTableId == "" {
-				bkbaseTableId = originDoris.BkbaseTableID
-			}
-			if storageClusterID == 0 {
-				storageClusterID = originDoris.StorageClusterID
-			}
+			bkbaseTableId = originDoris.BkbaseTableID
 		}
 	}
 	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s], origin_table_id [%s]", tableId, bkbaseTableId, doris.OriginTableId)
@@ -1413,16 +1369,12 @@ func (s *SpacePusher) composeDorisTableIdDetail(doris storage.DorisStorage, rtMe
 
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type":            models.StorageTypeBkSql,
-		"storage_id":              storageClusterID,
-		"storage_name":            storageClusterNameMap[storageClusterID],
-		"cluster_name":            storageClusterNameMap[storageClusterID],
-		"db":                      bkbaseTableId,
-		"measurement":             models.DorisMeasurement,
-		"storage_cluster_records": clusterRecords,
-		"data_label":              rtMeta.DataLabel,
-		"labels":                  rtMeta.Labels,
-		"field_alias":             fieldAliasSettings, // 添加字段别名
+		"storage_type": models.StorageTypeBkSql,
+		"db":           bkbaseTableId,
+		"measurement":  models.DorisMeasurement,
+		"data_label":   rtMeta.DataLabel,
+		"labels":       rtMeta.Labels,
+		"field_alias":  fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
 		return tableId, "", err

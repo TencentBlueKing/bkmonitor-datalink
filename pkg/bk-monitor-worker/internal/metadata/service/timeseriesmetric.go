@@ -47,6 +47,11 @@ func metricKey(fieldName, fieldScope string) string {
 
 // BulkRefreshTSMetrics 更新或创建时序指标数据
 func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId uint, tableId string, metricInfoList []map[string]any, isAutoDiscovery bool) (bool, error) {
+	if !isAutoDiscovery {
+		logger.Infof("BulkRefreshTSMetrics: group_id [%v] table_id [%s] is whitelist mode, skip managing TimeSeriesMetric", groupId, tableId)
+		return false, nil
+	}
+
 	// 当 metricInfoList 为空时，可能是上游异常、限流或拉取失败，跳过更新操作以避免误将所有指标标记为不活跃
 	if len(metricInfoList) == 0 {
 		logger.Warnf("BulkRefreshTSMetrics: metricInfoList is empty for group_id [%v], skip update to avoid marking all metrics as inactive due to potential upstream issues", groupId)
@@ -212,6 +217,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 		customreport.TimeSeriesMetricDBSchema.FieldName,
 		customreport.TimeSeriesMetricDBSchema.FieldScope,
 		customreport.TimeSeriesMetricDBSchema.TagList,
+		customreport.TimeSeriesMetricDBSchema.FieldConfig,
 		customreport.TimeSeriesMetricDBSchema.LastModifyTime,
 		customreport.TimeSeriesMetricDBSchema.IsActive,
 		customreport.TimeSeriesMetricDBSchema.ScopeID,
@@ -285,6 +291,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 			needUpdateIsActive = true
 			tsm.IsActive = isActive
 		}
+		needUpdateFieldConfig := false
 		if scopeID, ok := metricInfo["scope_id"]; ok && tsm.ScopeID == 0 {
 			switch v := scopeID.(type) {
 			case uint:
@@ -292,6 +299,10 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 			case float64:
 				tsm.ScopeID = uint(v)
 			}
+			// 与 Python 逻辑保持一致：指标从 disabled 状态恢复时，
+			// 除了重新分配 scope_id，还需要清空包含 disabled=true 的字段配置。
+			tsm.FieldConfig = "{}"
+			needUpdateFieldConfig = true
 			isNeedUpdate = true
 		}
 		if isNeedUpdate {
@@ -301,6 +312,9 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 			}
 			if tsm.ScopeID != 0 {
 				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.ScopeID)
+			}
+			if needUpdateFieldConfig {
+				updateFields = append(updateFields, customreport.TimeSeriesMetricDBSchema.FieldConfig)
 			}
 			if tsm.Update(db, updateFields...) != nil {
 				logger.Errorf("BulkUpdateMetrics:update TimeSeriesMetric group_id [%v] field_name [%s] field_scope [%s] scope_id [%v] with tag_list [%s] last_modify_time [%v] is_active [%v] failed, %v", groupId, tsm.FieldName, tsm.FieldScope, tsm.ScopeID, tsm.TagList, tsm.LastModifyTime, tsm.IsActive, err)

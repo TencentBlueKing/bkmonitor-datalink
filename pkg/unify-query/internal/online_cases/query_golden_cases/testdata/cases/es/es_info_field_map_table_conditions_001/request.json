@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/query/ts/info/field_map",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_field_map_conditions",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "data_source": "bklog",
+    "table_id": "",
+    "metric_name": "",
+    "table_id_conditions": [[
+      {"field_name": "scene", "value": ["k8s"], "op": "eq"},
+      {"field_name": "stream", "value": ["file"], "op": "eq"}
+    ]],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC"
+  }
+}

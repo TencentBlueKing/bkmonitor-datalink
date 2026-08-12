@@ -12,6 +12,7 @@ package metricsbuilder
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 type Metric struct {
@@ -34,7 +35,7 @@ func New(kvs ...ResourceKv) *Builder {
 	pbMetrics := pmetric.NewMetrics()
 	rs := pbMetrics.ResourceMetrics().AppendEmpty()
 	for _, kv := range kvs {
-		rs.Resource().Attributes().InsertString(kv.Key, kv.Value)
+		utils.InsertString(rs.Resource().Attributes(), kv.Key, kv.Value)
 	}
 	scopeMetrics := rs.ScopeMetrics().AppendEmpty()
 	scopeMetrics.Metrics()
@@ -47,15 +48,15 @@ func (b Builder) Get() pmetric.Metrics {
 
 func (b Builder) Build(name string, ms ...Metric) {
 	metrics := b.metricSlice.AppendEmpty()
-	metrics.SetDataType(pmetric.MetricDataTypeGauge)
+	metrics.SetEmptyGauge()
 	metrics.SetName(name)
 
 	for _, m := range ms {
 		metric := metrics.Gauge().DataPoints().AppendEmpty()
-		metric.SetDoubleVal(m.Val)
+		metric.SetDoubleValue(m.Val)
 		metric.SetTimestamp(m.Ts)
 		for k, v := range m.Dimensions {
-			metric.Attributes().UpsertString(k, v)
+			metric.Attributes().PutString(k, v)
 		}
 	}
 }

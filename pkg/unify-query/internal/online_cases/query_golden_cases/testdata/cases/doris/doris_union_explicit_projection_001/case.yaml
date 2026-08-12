@@ -1,0 +1,26 @@
+id: doris_union_explicit_projection_001
+storage: doris
+enabled: true
+shape_signature: query_ts_raw/range/doris/merge_db2/explicit_projection/schema_drift/output3
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:bedc9c664e31298b3522f6cc216481c21367a7e034f1084b35939111a201431b
+tags:
+  - query_ts_raw_api
+  - merge_db
+  - explicit_projection
+  - schema_drift
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 回归 Doris 两张物理表字段集合不一致时，内层 UNION 只投影外层 raw 查询实际依赖的公共字段，不再使用 SELECT *。
+  - 生产查询形态和旧行为依据已合并 PR 的公开问题说明与回归测试，未保存 trace ID 或原始请求。
+  - 请求、路由、物理表、字段和集群均为离线占位数据，不含真实生产标识。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -34,10 +34,10 @@ func (Matcher) Match(span ptrace.Span, mappings map[string]string, replaceType s
 		default:
 			switch replaceType {
 			case ReplaceForce:
-				span.Attributes().UpsertString(k, v)
+				span.Attributes().PutString(k, v)
 			default:
 				if _, ok := span.Attributes().Get(k); !ok {
-					span.Attributes().UpsertString(k, v)
+					span.Attributes().PutString(k, v)
 				}
 			}
 		}

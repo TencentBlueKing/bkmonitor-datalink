@@ -71,10 +71,10 @@ func NewTracesGenerator(opts define.TracesOptions) *TracesGenerator {
 func (g *TracesGenerator) Generate() ptrace.Traces {
 	pdTraces := ptrace.NewTraces()
 	rs := pdTraces.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
+	rs.Resource().Attributes().PutString("service.name", "generator.service")
 	g.resources.CopyTo(rs.Resource().Attributes())
 	for k, v := range g.opts.Resources {
-		rs.Resource().Attributes().UpsertString(k, v)
+		rs.Resource().Attributes().PutString(k, v)
 	}
 
 	now := time.Now()
@@ -88,7 +88,7 @@ func (g *TracesGenerator) Generate() ptrace.Traces {
 		span.SetKind(ptrace.SpanKind(g.opts.SpanKind))
 		g.attributes.CopyTo(span.Attributes())
 		for k, v := range g.opts.Attributes {
-			span.Attributes().UpsertString(k, v)
+			span.Attributes().PutString(k, v)
 		}
 
 		for j := 0; j < g.opts.EventCount; j++ {

@@ -29,6 +29,9 @@ func serviceMonitorID(obj *promv1.ServiceMonitor) string {
 }
 
 func (c *Operator) handleServiceMonitorAdd(obj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
@@ -50,6 +53,9 @@ func (c *Operator) handleServiceMonitorAdd(obj any) {
 }
 
 func (c *Operator) handleServiceMonitorUpdate(oldObj any, newObj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	old, ok := oldObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
@@ -86,6 +92,9 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj any, newObj any) {
 }
 
 func (c *Operator) handleServiceMonitorDelete(obj any) {
+	c.monitorReconcileMut.Lock()
+	defer c.monitorReconcileMut.Unlock()
+
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)

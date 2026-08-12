@@ -38,10 +38,10 @@ func TestSplitDifferentTracesIntoDifferentBatches(t *testing.T) {
 	firstSpan := ils.Spans().AppendEmpty()
 	firstSpan.SetName("first-batch-first-span")
 
-	firstSpan.SetTraceID(pcommon.NewTraceID([16]byte{1, 2, 3, 4}))
+	firstSpan.SetTraceID(pcommon.TraceID([16]byte{1, 2, 3, 4}))
 	secondSpan := ils.Spans().AppendEmpty()
 	secondSpan.SetName("first-batch-second-span")
-	secondSpan.SetTraceID(pcommon.NewTraceID([16]byte{2, 3, 4, 5}))
+	secondSpan.SetTraceID(pcommon.TraceID([16]byte{2, 3, 4, 5}))
 
 	// test
 	out := SplitTraces(inBatch)
@@ -76,14 +76,14 @@ func TestSplitTracesWithNilTraceID(t *testing.T) {
 	ils := rs.ScopeSpans().AppendEmpty()
 	ils.SetSchemaUrl("https://opentelemetry.io/schemas/1.6.1")
 	firstSpan := ils.Spans().AppendEmpty()
-	firstSpan.SetTraceID(pcommon.NewTraceID([16]byte{}))
+	firstSpan.SetTraceID(pcommon.NewTraceIDEmpty())
 
 	// test
 	batches := SplitTraces(inBatch)
 
 	// verify
 	assert.Len(t, batches, 1)
-	assert.Equal(t, pcommon.NewTraceID([16]byte{}), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
+	assert.Equal(t, pcommon.NewTraceIDEmpty(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
 	assert.Equal(t, rs.SchemaUrl(), batches[0].ResourceSpans().At(0).SchemaUrl())
 	assert.Equal(t, ils.SchemaUrl(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).SchemaUrl())
 }
@@ -106,10 +106,10 @@ func TestSplitSameTraceIntoDifferentBatches(t *testing.T) {
 	firstILS.Spans().EnsureCapacity(2)
 	firstSpan := firstILS.Spans().AppendEmpty()
 	firstSpan.SetName("first-batch-first-span")
-	firstSpan.SetTraceID(pcommon.NewTraceID([16]byte{1, 2, 3, 4}))
+	firstSpan.SetTraceID(pcommon.TraceID([16]byte{1, 2, 3, 4}))
 	secondSpan := firstILS.Spans().AppendEmpty()
 	secondSpan.SetName("first-batch-second-span")
-	secondSpan.SetTraceID(pcommon.NewTraceID([16]byte{1, 2, 3, 4}))
+	secondSpan.SetTraceID(pcommon.TraceID([16]byte{1, 2, 3, 4}))
 
 	// the second ILS has one span
 	secondILS := rs.ScopeSpans().AppendEmpty()
@@ -119,7 +119,7 @@ func TestSplitSameTraceIntoDifferentBatches(t *testing.T) {
 	secondLibrary.SetName("second-library")
 	thirdSpan := secondILS.Spans().AppendEmpty()
 	thirdSpan.SetName("second-batch-first-span")
-	thirdSpan.SetTraceID(pcommon.NewTraceID([16]byte{1, 2, 3, 4}))
+	thirdSpan.SetTraceID(pcommon.TraceID([16]byte{1, 2, 3, 4}))
 
 	// test
 	batches := SplitTraces(inBatch)
@@ -130,7 +130,7 @@ func TestSplitSameTraceIntoDifferentBatches(t *testing.T) {
 	// first batch
 	assert.Equal(t, rs.SchemaUrl(), batches[0].ResourceSpans().At(0).SchemaUrl())
 	assert.Equal(t, firstILS.SchemaUrl(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).SchemaUrl())
-	assert.Equal(t, pcommon.NewTraceID([16]byte{1, 2, 3, 4}), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
+	assert.Equal(t, pcommon.TraceID([16]byte{1, 2, 3, 4}), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
 	assert.Equal(t, firstLibrary.Name(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Scope().Name())
 	assert.Equal(t, firstSpan.Name(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name())
 	assert.Equal(t, secondSpan.Name(), batches[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1).Name())
@@ -138,7 +138,7 @@ func TestSplitSameTraceIntoDifferentBatches(t *testing.T) {
 	// second batch
 	assert.Equal(t, rs.SchemaUrl(), batches[1].ResourceSpans().At(0).SchemaUrl())
 	assert.Equal(t, secondILS.SchemaUrl(), batches[1].ResourceSpans().At(0).ScopeSpans().At(0).SchemaUrl())
-	assert.Equal(t, pcommon.NewTraceID([16]byte{1, 2, 3, 4}), batches[1].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
+	assert.Equal(t, pcommon.TraceID([16]byte{1, 2, 3, 4}), batches[1].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
 	assert.Equal(t, secondLibrary.Name(), batches[1].ResourceSpans().At(0).ScopeSpans().At(0).Scope().Name())
 	assert.Equal(t, thirdSpan.Name(), batches[1].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name())
 }

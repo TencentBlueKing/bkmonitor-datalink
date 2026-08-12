@@ -44,9 +44,14 @@ type ProcessbeatConfig struct {
 	ConvergePID          bool                    `config:"converge_pid" yaml:"converge_pid"`
 	MaxNoListenPorts     int                     `config:"max_nolisten_ports" yaml:"max_nolisten_ports`
 	Disable              bool                    `config:"disable" yaml:"disable"`
+	tenantDataIDResolver tenant.DataIDResolver
 
 	namestore map[string][]ProcessbeatPortConfig // name -> configs
 	confs     map[string]ProcessbeatPortConfig   // id -> config
+}
+
+func (c *ProcessbeatConfig) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	c.tenantDataIDResolver = resolver
 }
 
 func NewProcessbeatConfig(root *Config) *ProcessbeatConfig {
@@ -59,8 +64,8 @@ func NewProcessbeatConfig(root *Config) *ProcessbeatConfig {
 
 func (c *ProcessbeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
-	// 如果禁用或不存在采集 dataid 则没必要生成采集配置
-	if c.Disable || (c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0) {
+	// 如果禁用、没有进程配置或不存在采集 dataid 则没必要生成采集配置
+	if c.Disable || len(c.Processes) == 0 || (c.PortDataId == 0 && c.TopDataId == 0 && c.PerfDataId == 0) {
 		return tasks
 	}
 
@@ -79,21 +84,14 @@ func (c *ProcessbeatConfig) GetPeriod() time.Duration { return c.Period }
 func (c *ProcessbeatConfig) InitIdent() error {
 	// 需要在计算 indent 之前进行 dataid 替换 否则 reload 不会生效
 
-	storage := tenant.DefaultStorage()
 	if c.PortDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
-			c.PortDataId = v
-		}
+		c.PortDataId = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleProcessbeat+"_port", c.PortDataId)
 	}
 	if c.TopDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
-			c.TopDataId = v
-		}
+		c.TopDataId = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleProcessbeat+"_top", c.TopDataId)
 	}
 	if c.PerfDataId != 0 {
-		if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
-			c.PerfDataId = v
-		}
+		c.PerfDataId = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleProcessbeat+"_perf", c.PerfDataId)
 	}
 
 	return c.initIdent(c)

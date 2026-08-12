@@ -47,6 +47,19 @@ const (
 )
 
 const (
+	RouteSeriesWrapValid = "valid"
+	RouteSeriesWrapZero  = "zero"
+	RouteSeriesWrapNone  = "none"
+)
+
+const (
+	RouteSeriesFilterBeforeStart        = "before_start"
+	RouteSeriesFilterAfterEnd           = "after_end"
+	RouteSeriesFilterNoOverlap          = "no_overlap"
+	RouteSeriesFilterZeroRangeCandidate = "zero_range_candidate"
+)
+
+const (
 	_ = 1 << (10 * iota)
 	KB
 	MB
@@ -182,6 +195,24 @@ var (
 		},
 		[]string{"route", "query_mode"},
 	)
+
+	routeSeriesWrapTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "route_series_wrap_total",
+			Help:      "unify-query route series wrapping count by wrap kind and merge function",
+		},
+		[]string{"wrap_kind", "merge_func", "version", "commit_id"},
+	)
+
+	routeSeriesFilterSamplesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "route_series_filter_samples_total",
+			Help:      "unify-query route series samples handled by route range filter",
+		},
+		[]string{"merge_func", "reason", "version", "commit_id"},
+	)
 )
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
@@ -265,6 +296,32 @@ func CMDBRelationRouteInc(ctx context.Context, route, queryMode, result string) 
 func CMDBRelationRouteSecond(ctx context.Context, duration time.Duration, route, queryMode string) {
 	metric, _ := cmdbRelationRouteSeconds.GetMetricWithLabelValues(route, queryMode)
 	observe(ctx, metric, duration.Seconds())
+}
+
+func RouteSeriesWrapInc(ctx context.Context, wrapKind, mergeFunc string) {
+	switch wrapKind {
+	case RouteSeriesWrapValid, RouteSeriesWrapZero, RouteSeriesWrapNone:
+	default:
+		return
+	}
+	params := append([]string{}, wrapKind, mergeFunc, config.Version, config.CommitHash)
+	metric, _ := routeSeriesWrapTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+func RouteSeriesFilterSamplesAdd(ctx context.Context, mergeFunc, reason string, val float64) {
+	if val <= 0 {
+		return
+	}
+	switch reason {
+	case RouteSeriesFilterBeforeStart, RouteSeriesFilterAfterEnd, RouteSeriesFilterNoOverlap,
+		RouteSeriesFilterZeroRangeCandidate:
+	default:
+		return
+	}
+	params := append([]string{}, mergeFunc, reason, config.Version, config.CommitHash)
+	metric, _ := routeSeriesFilterSamplesTotal.GetMetricWithLabelValues(params...)
+	counterAdd(ctx, metric, val)
 }
 
 func gaugeSet(

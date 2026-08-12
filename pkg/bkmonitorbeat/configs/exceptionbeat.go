@@ -62,6 +62,10 @@ var DefaultExceptionBeatConfig = ExceptionBeatConfig{
 
 func (c *ExceptionBeatConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
+	if c.DataID == 0 {
+		return tasks
+	}
+
 	c.DataID = resolveTenantDataID(c.tenantDataIDResolver, define.ModuleExceptionbeat, c.DataID)
 
 	// 说明没有任务 有且仅有一个任务

@@ -101,3 +101,24 @@ func TestExpectedTenantDataIDsDisableStaticFallback(t *testing.T) {
 		t.Fatalf("gather-up data ID = %d, want 2100017", got)
 	}
 }
+
+func TestTenantDataIDsDoNotEnableDisabledBuiltinTasks(t *testing.T) {
+	storage := tenant.NewStorage()
+	storage.UpdateTaskDataIDs(map[string]int32{
+		define.ModuleBasereport:    2001,
+		define.ModuleExceptionbeat: 2000,
+	})
+
+	globalConfig := NewConfig()
+	globalConfig.SetTenantDataIDResolver(storage.NewResolver([]string{
+		define.ModuleBasereport,
+		define.ModuleExceptionbeat,
+	}))
+
+	if got := len(globalConfig.BaseReportTask.GetTaskConfigList()); got != 0 {
+		t.Fatalf("basereport task count = %d, want 0 when static data ID disables the task", got)
+	}
+	if got := len(globalConfig.ExceptionBeatTask.GetTaskConfigList()); got != 0 {
+		t.Fatalf("exceptionbeat task count = %d, want 0 when static data ID disables the task", got)
+	}
+}

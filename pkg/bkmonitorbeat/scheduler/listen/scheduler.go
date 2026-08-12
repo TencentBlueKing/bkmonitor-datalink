@@ -112,35 +112,7 @@ func (s *Scheduler) Wait() {
 
 func (s *Scheduler) Reload(ctx context.Context, conf define.Config, newTasks []define.Task) error {
 	logger.Info("listen scheduler reload")
-	deleteList := make([]string, 0)
-	for key := range s.tasks {
-		exist := false
-		for _, newTask := range newTasks {
-			if newTask.GetConfig().GetIdent() == key {
-				exist = true
-				break
-			}
-		}
-		// 新任务里不存在该任务，则需要关闭
-		if !exist {
-			deleteList = append(deleteList, key)
-		}
-	}
-
-	addList := make([]define.Task, 0)
-	for _, newTask := range newTasks {
-		exist := false
-		for key := range s.tasks {
-			if newTask.GetConfig().GetIdent() == key {
-				exist = true
-				break
-			}
-		}
-		// 新增该任务
-		if !exist {
-			addList = append(addList, newTask)
-		}
-	}
+	deleteList, addList := planReloadTasks(s.tasks, newTasks)
 
 	// 由于涉及到端口占用，只能先删后增
 	logger.Infof("listen scheduler remove %d tasks", len(deleteList))
@@ -148,6 +120,35 @@ func (s *Scheduler) Reload(ctx context.Context, conf define.Config, newTasks []d
 	logger.Infof("listen scheduler start %d tasks", len(addList))
 	s.addTasks(addList)
 	return nil
+}
+
+func planReloadTasks(currentTasks map[string]define.Task, newTasks []define.Task) ([]string, []define.Task) {
+	newTasksByIdent := make(map[string]define.Task, len(newTasks))
+	for _, task := range newTasks {
+		newTasksByIdent[task.GetConfig().GetIdent()] = task
+	}
+
+	deleteList := make([]string, 0)
+	for ident, currentTask := range currentTasks {
+		newTask, exists := newTasksByIdent[ident]
+		if !exists || gatherUpDataIDChanged(currentTask, newTask) {
+			deleteList = append(deleteList, ident)
+		}
+	}
+
+	addList := make([]define.Task, 0)
+	for _, newTask := range newTasks {
+		currentTask, exists := currentTasks[newTask.GetConfig().GetIdent()]
+		if !exists || gatherUpDataIDChanged(currentTask, newTask) {
+			addList = append(addList, newTask)
+		}
+	}
+
+	return deleteList, addList
+}
+
+func gatherUpDataIDChanged(currentTask, newTask define.Task) bool {
+	return currentTask.GetGlobalConfig().GetGatherUpDataID() != newTask.GetGlobalConfig().GetGatherUpDataID()
 }
 
 func (s *Scheduler) removeTasks(taskIndents []string) {
